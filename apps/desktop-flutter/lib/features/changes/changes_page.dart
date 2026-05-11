@@ -12272,7 +12272,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       animation: _composerSignal!,
       child: textFieldSubtree,
       builder: (context, textField) {
-        final hasText = widget.controller.text.trim().isNotEmpty;
+        final hasText = widget.controller.text.trim().length >= 20;
         final isFocused = widget.focusNode.hasFocus;
         final innerRadius = math.max(0.0, effectiveRadius - 1.5);
 
@@ -13077,17 +13077,13 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
     final t = widget.tokens;
     final btnRadius = (widget.fieldRadius * 0.65).clamp(5.0, 8.0);
 
-    // Icon colour: full accent when empty & enabled, dimmed when there's
-    // already text (de-emphasise without hiding), muted when disabled.
-    // [unread] forces full opacity even with text-present so the
-    // "you have results to read" cue isn't lost behind composer text.
+    // Icon colour: full accent when enabled, dimmed after 20+ chars
+    // of composer text (de-emphasise without hiding), muted when disabled.
     final iconOpacity = !widget.enabled
         ? 0.30
-        : widget.unread
-            ? 1.0
-            : widget.hasText && !_hovered
-                ? 0.50
-                : 1.0;
+        : widget.hasText && !_hovered
+            ? 0.70
+            : 1.0;
 
     // Background: persistent half-lit wash when [unread] (no drawer
     // is open, but a terminal record waits for the user). Hover /

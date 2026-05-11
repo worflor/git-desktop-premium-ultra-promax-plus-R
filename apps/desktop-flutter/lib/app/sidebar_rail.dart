@@ -1246,6 +1246,7 @@ class _ProjectItemState extends State<_ProjectItem>
   int? _cachedContributorCount;
   String? _cachedRepoSize;
   String? _cachedLastActive;
+  bool _extendedStatsProbed = false;
 
   @override
   void initState() {
@@ -1267,6 +1268,7 @@ class _ProjectItemState extends State<_ProjectItem>
       _cachedContributorCount = null;
       _cachedRepoSize = null;
       _cachedLastActive = null;
+      _extendedStatsProbed = false;
       _detectReadmeAsync();
       _resolveRemoteAndWeb();
       _probeRepoStats();
@@ -1339,9 +1341,6 @@ class _ProjectItemState extends State<_ProjectItem>
       final results = await Future.wait([
         runGitProbe(pathAtCallTime, ['rev-list', '--count', 'HEAD']),
         runGitProbe(pathAtCallTime, ['ls-files']),
-        runGitProbe(pathAtCallTime, ['shortlog', '-sn', '--all', '--no-merges']),
-        runGitProbe(pathAtCallTime, ['count-objects', '-vH']),
-        runGitProbe(pathAtCallTime, ['log', '-1', '--format=%cr']),
       ]);
       if (!mounted || pathAtCallTime != widget.path) return;
       final commitCount = results[0].exitCode == 0
@@ -1350,30 +1349,68 @@ class _ProjectItemState extends State<_ProjectItem>
       final fileCount = results[1].exitCode == 0
           ? results[1].stdout.toString().trim().split('\n').where((l) => l.isNotEmpty).length
           : null;
-      int? contribCount;
-      if (results[2].exitCode == 0) {
-        contribCount = results[2].stdout.toString().trim()
-            .split('\n').where((l) => l.isNotEmpty).length;
-      }
-      String? repoSize;
-      if (results[3].exitCode == 0) {
-        final sizeMatch = RegExp(r'size-pack:\s*(.+)')
-            .firstMatch(results[3].stdout.toString());
-        if (sizeMatch != null) repoSize = sizeMatch.group(1)!.trim();
-      }
-      String? lastActive;
-      if (results[4].exitCode == 0) {
-        final raw = results[4].stdout.toString().trim();
-        if (raw.isNotEmpty) lastActive = raw;
-      }
       setState(() {
         _cachedCommitCount = commitCount;
         _cachedFileCount = fileCount;
+      });
+    } catch (_) {/* silent — broken repo */}
+  }
+
+  Future<void> _probeExtendedStats() async {
+    if (_extendedStatsProbed) return;
+    _extendedStatsProbed = true;
+    final pathAtCallTime = widget.path;
+    try {
+      final results = await Future.wait([
+        runGitProbe(pathAtCallTime, ['shortlog', '-sn', '--no-merges', 'HEAD']),
+        runGitProbe(pathAtCallTime, ['count-objects', '-v']),
+        runGitProbe(pathAtCallTime, ['log', '-1', '--format=%ct']),
+      ]);
+      if (!mounted || pathAtCallTime != widget.path) return;
+      int? contribCount;
+      if (results[0].exitCode == 0) {
+        contribCount = results[0].stdout.toString().trim()
+            .split('\n').where((l) => l.isNotEmpty).length;
+      }
+      String? repoSize;
+      if (results[1].exitCode == 0) {
+        final sizeMatch = RegExp(r'size-pack:\s*(\d+)')
+            .firstMatch(results[1].stdout.toString());
+        if (sizeMatch != null) {
+          final kb = int.tryParse(sizeMatch.group(1)!);
+          if (kb != null) repoSize = _compactSize(kb);
+        }
+      }
+      String? lastActive;
+      if (results[2].exitCode == 0) {
+        final ts = int.tryParse(results[2].stdout.toString().trim());
+        if (ts != null) lastActive = _compactAge(ts);
+      }
+      setState(() {
         _cachedContributorCount = contribCount;
         _cachedRepoSize = repoSize;
         _cachedLastActive = lastActive;
       });
     } catch (_) {/* silent — broken repo */}
+  }
+
+  static String _compactSize(int kb) {
+    if (kb < 1024) return '$kb KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.round()} MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(1)} GB';
+  }
+
+  static String _compactAge(int unixSeconds) {
+    final delta = DateTime.now().difference(
+        DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000));
+    if (delta.inMinutes < 1) return 'now';
+    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
+    if (delta.inHours < 24) return '${delta.inHours}h ago';
+    if (delta.inDays < 30) return '${delta.inDays}d ago';
+    if (delta.inDays < 365) return '${delta.inDays ~/ 30}mo ago';
+    return '${delta.inDays ~/ 365}y ago';
   }
 
   /// Open the project's web page in the system browser. No-op if
@@ -1667,6 +1704,7 @@ class _ProjectItemState extends State<_ProjectItem>
         onHoverChanged: (h) {
           if (h == _hovered) return;
           setState(() => _hovered = h);
+          if (h) _probeExtendedStats();
         },
         onPressedChanged: (p) {
           if (p == _pressed) return;
@@ -2133,6 +2171,21 @@ class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
         .then((p) => p.setBool(_prefsKey, _page2.value));
   }
 
+  Widget _cell(String num, String label, TextStyle numStyle, TextStyle labelStyle) {
+    return Expanded(
+      child: Center(
+        child: Text.rich(
+          TextSpan(children: [
+            TextSpan(text: num, style: numStyle),
+            TextSpan(text: ' $label', style: labelStyle),
+          ]),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
@@ -2150,71 +2203,47 @@ class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
       color: t.textFaint,
       fontWeight: FontWeight.w400,
     );
-    final dot = TextSpan(
-      text: '   ·   ',
-      style: labelStyle.copyWith(
-        color: t.textFaint.withValues(alpha: 0.5),
-      ),
-    );
 
-    final spans = <InlineSpan>[];
+    final cells = <Widget>[];
     final fc = widget.fileCount;
     if (fc != null && fc > 0) {
-      spans.add(TextSpan(text: _compact(fc), style: numStyle));
-      spans.add(TextSpan(text: ' files', style: labelStyle));
+      cells.add(_cell(_compact(fc), 'files', numStyle, labelStyle));
     }
 
     if (_page2.value) {
       final sz = widget.repoSize;
-      if (sz != null && spans.isNotEmpty) {
-        spans.add(dot);
-        final sizeMatch = RegExp(r'^([\d.]+)\s*(.+)$').firstMatch(sz);
-        if (sizeMatch != null) {
-          spans.add(TextSpan(text: sizeMatch.group(1)!, style: numStyle));
-          spans.add(TextSpan(text: ' ${sizeMatch.group(2)!}', style: labelStyle));
-        } else {
-          spans.add(TextSpan(text: sz, style: numStyle));
-        }
+      if (sz != null) {
+        final parts = sz.split(' ');
+        cells.add(_cell(parts[0], parts.length > 1 ? parts.sublist(1).join(' ') : '', numStyle, labelStyle));
       }
       final la = widget.lastActive;
       if (la != null) {
-        if (spans.isNotEmpty) spans.add(dot);
-        final timeMatch = RegExp(r'^(\d+)\s+(.+)$').firstMatch(la);
-        if (timeMatch != null) {
-          spans.add(TextSpan(text: timeMatch.group(1)!, style: numStyle));
-          spans.add(TextSpan(text: ' ${timeMatch.group(2)!}', style: labelStyle));
+        final m = RegExp(r'^(\d+\w*)(\s+.*)$').firstMatch(la);
+        if (m != null) {
+          cells.add(_cell(m.group(1)!, m.group(2)!.trim(), numStyle, labelStyle));
         } else {
-          spans.add(TextSpan(text: la, style: numStyle));
+          cells.add(_cell(la, '', numStyle, labelStyle));
         }
       }
     } else {
       final cc = widget.commitCount;
       if (cc != null && cc > 0) {
-        if (spans.isNotEmpty) spans.add(dot);
-        spans.add(TextSpan(text: _compact(cc), style: numStyle));
-        spans.add(TextSpan(text: ' commits', style: labelStyle));
+        cells.add(_cell(_compact(cc), 'commits', numStyle, labelStyle));
       }
       final contrib = widget.contributorCount;
       if (contrib != null && contrib > 0) {
-        if (spans.isNotEmpty) spans.add(dot);
-        spans.add(TextSpan(text: '$contrib \u{263A}', style: numStyle));
+        cells.add(_cell('$contrib', '\u{263A}', numStyle, labelStyle));
       }
     }
 
-    if (spans.isEmpty) return const SizedBox.shrink();
+    if (cells.isEmpty) return const SizedBox.shrink();
 
     return GestureDetector(
       onTap: _toggle,
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        child: Center(
-          child: Text.rich(
-            TextSpan(children: spans),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
+        child: Row(children: cells),
       ),
     );
   }

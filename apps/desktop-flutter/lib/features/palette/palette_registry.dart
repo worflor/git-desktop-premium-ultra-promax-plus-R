@@ -1086,7 +1086,7 @@ String _themeLabel(AppThemeId id) => switch (id) {
       AppThemeId.blackboard => 'Blackboard',
       AppThemeId.crafty => 'Crafty',
       AppThemeId.barbie => 'Barbie',
-      AppThemeId.entrapta => 'Entrapta',
+      AppThemeId.entropy => 'Lady Entropy',
     };
 
 String _normPath(String p) => p.replaceAll('\\', '/').toLowerCase();

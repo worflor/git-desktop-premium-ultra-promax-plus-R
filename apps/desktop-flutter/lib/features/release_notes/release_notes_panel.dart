@@ -436,7 +436,7 @@ const _changelog = <_ReleaseNote>[
       'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
       'Claude model-list extraction got some outside-the-app binary surgery. Not a visible app feature, but it keeps the provider/model wiring honest.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
-      'New Entrapta theme, based on Entrapta from She-Ra and the Princesses of Power.',
+      'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
     ],
   ),
   _ReleaseNote(

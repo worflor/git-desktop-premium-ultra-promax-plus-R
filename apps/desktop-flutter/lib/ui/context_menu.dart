@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'motion.dart';
 import 'tokens.dart';
@@ -113,7 +114,7 @@ class AppContextMenu extends StatelessWidget {
             ));
           }
         case StatusMenuSection(:final child):
-          children.add(child);
+          children.add(_IntrinsicPassive(child: child));
         case TileChipMenuSection(
               :final tiles, :final chips, :final toolChips):
           children.add(_TileChipMenuSection(
@@ -1164,5 +1165,19 @@ class _ContextMenuTileState extends State<_ContextMenuTile> {
       ),
     );
   }
+}
+
+class _IntrinsicPassive extends SingleChildRenderObjectWidget {
+  const _IntrinsicPassive({required Widget child}) : super(child: child);
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderIntrinsicPassive();
+}
+
+class _RenderIntrinsicPassive extends RenderProxyBox {
+  @override
+  double computeMinIntrinsicWidth(double height) => 0;
+  @override
+  double computeMaxIntrinsicWidth(double height) => 0;
 }
 

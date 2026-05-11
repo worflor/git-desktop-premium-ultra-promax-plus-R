@@ -46,7 +46,7 @@ enum AppThemeId {
   blackboard,
   crafty,
   barbie,
-  entrapta,
+  entropy,
 }
 
 enum SurfaceMaterialMode { solid, glass, phosphor }
@@ -71,7 +71,7 @@ enum ThemeParticles {
   /// sparkle — distinct from `ethereal`'s diffuse dots or `stardust`'s
   /// cosmic points.
   glitter,
-  /// Entrapta. Paired dot-eyes playing freeze tag — chasers (red)
+  /// Lady Entropy. Paired dot-eyes playing freeze tag — chasers (red)
   /// hunt runners (magenta), tagged bots power down, nearby runners
   /// can revive them. Wall-clock dt sim like whisps, not tiled.
   botEyes,
@@ -124,7 +124,7 @@ enum ThemeTextEffect {
   shimmer,    // bibble: two-color gold→magenta band sweeps L→R across
               // changed chars, once per morph. not hue-cycling — that's
               // iridescent's job.
-  dataScrawl,  // entrapta: arriving chars land rotated + offset, then
+  dataScrawl,  // lady entropy: arriving chars land rotated + offset, then
                // snap to grid. leaving chars jitter out. neighbors get
                // a cyan→magenta tint pulse.
 }
@@ -214,12 +214,17 @@ class GlassMaterial {
   final double roughness;
   final Color absorption;
   final Color? lightColor;
+  /// Hue-angle spread (degrees) distributed across surface tones.
+  /// 0 = uniform lightColor on every surface. 35 = ±17.5° variation
+  /// so panels at different tones catch different-temperature light.
+  final double tintSpread;
 
   const GlassMaterial({
     this.ior = 1.52,
     this.roughness = 0.05,
     this.absorption = const Color(0x00000000),
     this.lightColor,
+    this.tintSpread = 0,
   });
 
   /// Used by solid themes as a no-op placeholder; never reaches the shader.
@@ -1539,8 +1544,8 @@ final _tokens = <AppThemeId, AppTokens>{
       Alignment.bottomRight,
     ],
   ),
-  AppThemeId.entrapta: AppTokens._(
-    id: AppThemeId.entrapta,
+  AppThemeId.entropy: AppTokens._(
+    id: AppThemeId.entropy,
     isDark: true,
     colors: const [
       0xFF0A0515, // 0  bg0           — near-black, deep purple void
@@ -1555,7 +1560,7 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF7E6E98, // 9  textMuted     — muted purple
       0xFF00E5FF, // 10 stateAdded    — cyan (edge-light activation)
       0xFFE040FB, // 11 stateModified — hot magenta (bot eyes shift)
-      0xFFFF1744, // 12 stateDeleted  — red (Entrapta's red-eyed bot)
+      0xFFFF1744, // 12 stateDeleted  — red (the chaser's eyes)
       0xFFFF9100, // 13 stateConflicted — amber (Fright Zone warning)
       0xFF00E5FF, // 14 stateStaged   — cyan (ready, edge-lit)
       0xFFE040FB, // 15 accentBright  — hot magenta (THE color)
@@ -2102,8 +2107,8 @@ const themeDefinitions = <AppThemeDefinition>[
   ),
   AppThemeDefinition(
     ThemeOption(
-      AppThemeId.entrapta,
-      'Entrapta',
+      AppThemeId.entropy,
+      'Lady Entropy',
       'i brought snacks to the end of the world. let\'s see what breaks.',
     ),
     SurfaceMaterialShader(
@@ -2132,6 +2137,7 @@ const themeDefinitions = <AppThemeDefinition>[
         roughness: 0.10,
         absorption: Color.fromARGB(255, 0, 3, 1),
         lightColor: Color(0xFFE080D0),
+        tintSpread: 35,
       ),
     ),
   ),

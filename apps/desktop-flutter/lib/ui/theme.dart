@@ -317,7 +317,7 @@ List<String>? _fontFallbackFor(AppThemeId id) {
     case AppThemeId.nacre:
     case AppThemeId.loverboy:
       return const ['Georgia', 'Times New Roman', 'serif'];
-    case AppThemeId.entrapta:
+    case AppThemeId.entropy:
       return const ['Consolas', 'Courier New', 'monospace'];
   }
 }
@@ -386,7 +386,7 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
           fillColor: Colors.white,
           borderColor: t.accentBright,
         ),
-      AppThemeId.entrapta => _BotEyeSliderThumbShape(
+      AppThemeId.entropy => _BotEyeSliderThumbShape(
           size: 20,
           irisColor: t.accentBright,
           glowColor: t.accentBright.withValues(alpha: 0.35),
@@ -552,7 +552,7 @@ class _ThemedSliderTrackShape extends SliderTrackShape
           tokens.accentBright.withValues(alpha: 0.45),
           width: 0.9,
         );
-      case AppThemeId.entrapta:
+      case AppThemeId.entropy:
         _drawTrackGlow(
           canvas,
           trackRRect,

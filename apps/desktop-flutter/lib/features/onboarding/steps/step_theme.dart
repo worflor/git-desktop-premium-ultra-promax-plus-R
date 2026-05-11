@@ -300,7 +300,6 @@ class _ThemeRowState extends State<_ThemeRow> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final labelCellWidth = _computeMaxThemeLabelWidth();
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) {
@@ -342,11 +341,7 @@ class _ThemeRowState extends State<_ThemeRow> {
             children: [
               _RadioDot(selected: widget.committed, tokens: t),
               const SizedBox(width: _kThemeRadioGap),
-              SizedBox(
-                // Label cell is pinned to the widest possible theme name
-                // across all themes at their own typography. No theme
-                // can force this row to reflow.
-                width: labelCellWidth,
+              Expanded(
                 child: Text(
                   widget.option.label,
                   maxLines: 1,

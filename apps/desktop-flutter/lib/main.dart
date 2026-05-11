@@ -645,7 +645,7 @@ double _rootTextureOpacity(AppTokens tokens) {
     // 0.45 keeps the root atmospheric; per-surface gloss still
     // renders at full strength on cards and buttons.
     AppThemeId.barbie => 0.45,
-    AppThemeId.entrapta => 0.85,
+    AppThemeId.entropy => 0.85,
     _ => 1,
   };
 }

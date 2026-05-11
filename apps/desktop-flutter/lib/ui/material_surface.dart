@@ -255,6 +255,7 @@ class MaterialSurface extends StatelessWidget {
           tokens: t,
           shader: themeDefinitionFor(t.id).shader,
           radius: resolvedRadius,
+          surfaceTone: tone,
           child: content,
         ),
       );
@@ -386,7 +387,7 @@ class MaterialRuntimeCache {
       // shader already paints rim + specular per surface; glaze on
       // top would fight the fresnel lip and flatten the read
       AppThemeId.barbie => 0.08,
-      AppThemeId.entrapta => 0.14,
+      AppThemeId.entropy => 0.14,
       _ => 0.1,
     };
     return SurfaceMaterialRuntime(
@@ -739,12 +740,14 @@ class _MaterialShaderBackdrop extends StatelessWidget {
   final AppTokens tokens;
   final SurfaceMaterialShader shader;
   final double radius;
+  final AppMaterialTone surfaceTone;
   final Widget child;
 
   const _MaterialShaderBackdrop({
     required this.tokens,
     required this.shader,
     required this.radius,
+    this.surfaceTone = AppMaterialTone.surface1,
     required this.child,
   });
 
@@ -782,14 +785,22 @@ class _MaterialShaderBackdrop extends StatelessWidget {
   ) {
     switch (shader.mode) {
       case SurfaceMaterialMode.glass:
-        // biased larger than clip radius so the meniscus reads gloopier
         final cornerR = math.max(radius * 1.6, 12.0);
         final gm = shader.glassMaterial;
+        var light = gm.lightColor ?? tokens.accentBright;
+        if (gm.tintSpread > 0) {
+          final shift = (surfaceTone.index / AppMaterialTone.values.length -
+                  0.5) *
+              gm.tintSpread;
+          final hsv = HSVColor.fromColor(light);
+          light =
+              hsv.withHue(((hsv.hue + shift) % 360 + 360) % 360).toColor();
+        }
         return ThemeShaders.glassShader(
           width: width,
           height: height,
           absorption: gm.absorption,
-          lightColor: gm.lightColor ?? tokens.accentBright,
+          lightColor: light,
           tiltX: pulse.tilt.dx,
           tiltY: pulse.tilt.dy,
           time: pulse.time,
