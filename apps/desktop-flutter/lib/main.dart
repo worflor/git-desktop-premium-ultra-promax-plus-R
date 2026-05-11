@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui show Gradient, Image;
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:provider/provider.dart';
@@ -527,7 +528,7 @@ class _AppFrameState extends State<_AppFrame> {
                 ),
               ),
             if (t.id == AppThemeId.petrichor)
-              const Positioned.fill(
+              Positioned.fill(
                 child: IgnorePointer(
                   child: _PetrichorFog(),
                 ),
@@ -2442,8 +2443,46 @@ class _Bot {
       };
 }
 
-class _PetrichorFog extends StatelessWidget {
+class _PetrichorFog extends StatefulWidget {
   const _PetrichorFog();
+
+  @override
+  State<_PetrichorFog> createState() => _PetrichorFogState();
+}
+
+class _PetrichorFogState extends State<_PetrichorFog> {
+  static const _prefsKey = 'petrichor_fog_seconds';
+  double _sessionAge = 0;
+  final Stopwatch _sw = Stopwatch();
+  Timer? _persistTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _sw.start();
+    _persistTimer = Timer.periodic(
+        const Duration(seconds: 60), (_) => _persist());
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _sessionAge = prefs.getDouble(_prefsKey) ?? 0;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _persistTimer?.cancel();
+    _persist();
+    super.dispose();
+  }
+
+  void _persist() {
+    final total = _sessionAge + _sw.elapsed.inMilliseconds / 1000;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setDouble(_prefsKey, total);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2456,6 +2495,7 @@ class _PetrichorFog extends StatelessWidget {
             time: value.time,
             tiltX: value.tilt.dx,
             tiltY: value.tilt.dy,
+            sessionAge: _sessionAge + _sw.elapsed.inMilliseconds / 1000,
           ),
         ),
       ),
@@ -2467,10 +2507,12 @@ class _PetrichorFogPainter extends CustomPainter {
   final double time;
   final double tiltX;
   final double tiltY;
+  final double sessionAge;
   const _PetrichorFogPainter({
     required this.time,
     required this.tiltX,
     required this.tiltY,
+    this.sessionAge = 0,
   });
 
   @override
@@ -2482,6 +2524,7 @@ class _PetrichorFogPainter extends CustomPainter {
       tiltX: tiltX,
       tiltY: tiltY,
       intensity: 0.12,
+      sessionAge: sessionAge,
     );
     if (shader == null) return;
     canvas.drawRect(
@@ -2494,7 +2537,8 @@ class _PetrichorFogPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PetrichorFogPainter old) =>
-      old.time != time || old.tiltX != tiltX || old.tiltY != tiltY;
+      old.time != time || old.tiltX != tiltX || old.tiltY != tiltY ||
+      old.sessionAge != sessionAge;
 }
 
 /// Loverboy app-root cellular background, now a real Conway's Game of

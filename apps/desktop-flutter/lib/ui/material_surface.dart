@@ -376,21 +376,7 @@ class MaterialRuntimeCache {
     final glow = ambient ?? Colors.white;
     final glowColor =
         glow.withValues(alpha: (0.2 * shader.luminescence).clamp(0.0, 0.8));
-    final glazeStrength = switch (tokens.id) {
-      AppThemeId.aether => 0.16,
-      AppThemeId.quanta => 0.18,
-      AppThemeId.redshift => 0.12,
-      AppThemeId.halo => 0.18,
-      // Low glaze so the dark-iridescent texture and rim/ink carry
-      // the luminescence instead of the Kirby-style glaze wash.
-      AppThemeId.loverboy => 0.06,
-      // shader already paints rim + specular per surface; glaze on
-      // top would fight the fresnel lip and flatten the read
-      AppThemeId.barbie => 0.08,
-      AppThemeId.entropy => 0.14,
-      AppThemeId.petrichor => 0.04,
-      _ => 0.1,
-    };
+    final glazeStrength = shader.glazeStrength;
     return SurfaceMaterialRuntime(
       filter: glass < 0.5 || clampedBlur < 0.25
           ? null

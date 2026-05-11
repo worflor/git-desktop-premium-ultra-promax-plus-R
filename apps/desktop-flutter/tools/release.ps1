@@ -12,7 +12,8 @@
 param(
     [ValidateSet('dev','beta','stable')]
     [string]$Channel = 'beta',
-    [string]$BaseUrl = $env:MANIFOLD_UPDATE_BASE_URL
+    [string]$BaseUrl = $env:MANIFOLD_UPDATE_BASE_URL,
+    [string]$Cohort = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +63,7 @@ try {
     )
     if ($sha)     { $defines += "--dart-define=MANIFOLD_GIT_SHA=$sha" }
     if ($BaseUrl) { $defines += "--dart-define=MANIFOLD_UPDATE_BASE_URL=$BaseUrl" }
+    if ($Cohort)  { $defines += "--dart-define=BUILD_COHORT=$Cohort" }
 
     # Step 1: Dart AOT + CMake configure (flutter assemble runs here).
     Write-Host "==> flutter build windows --release (dart AOT + cmake configure)" -ForegroundColor Cyan
@@ -95,7 +97,8 @@ try {
     Write-Host "==> done" -ForegroundColor Green
     Write-Host "    channel : $Channel"
     Write-Host "    version : $version"
-    if ($sha) { Write-Host "    sha     : $sha" }
+    if ($sha)    { Write-Host "    sha     : $sha" }
+    if ($Cohort) { Write-Host "    cohort  : $Cohort" }
     Write-Host "    cores   : $cores"
     Write-Host "    exe     : $exePath"
     Write-Host "    lnk     : $lnkPath"

@@ -10,6 +10,7 @@ uniform vec2  uSize;
 uniform float uTime;
 uniform vec2  uTilt;
 uniform float uIntensity;
+uniform float uSessionAge; // cumulative seconds across launches
 
 out vec4 fragColor;
 
@@ -59,7 +60,10 @@ void main() {
     vec2 vig = uv - 0.5;
     float v = 1.0 - dot(vig, vig) * 0.8;
 
-    float alpha = fog * v * uIntensity;
+    // Dense in the first minute, thins over hours.
+    // exp(-age/1800) decays to 0.5 at ~20 minutes, 0.37 at 30 min.
+    float ageFactor = 0.5 + 0.5 * exp(-uSessionAge / 1800.0);
+    float alpha = fog * v * uIntensity * ageFactor;
 
     vec3 col = vec3(0.70, 0.76, 0.82);
     fragColor = vec4(col * alpha, alpha);

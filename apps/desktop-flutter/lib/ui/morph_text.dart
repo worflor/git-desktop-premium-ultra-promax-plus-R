@@ -103,7 +103,8 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
     }
     _fromText = _toText;
     _toText = widget.text;
-    _ops = _computeOps(_fromText, _toText);
+    _ops = _computeOps(_fromText, _toText,
+        context.surfaceShader.textEffect.maxDrift);
     _invalidateLayouts();
     _ac
       ..duration = context.surfaceShader.duration
@@ -247,7 +248,7 @@ class _MorphOp {
   const _MorphOp(this.fromIdx, this.toIdx);
 }
 
-List<_MorphOp> _computeOps(String from, String to) {
+List<_MorphOp> _computeOps(String from, String to, [int maxDrift = 4]) {
   final n = from.length, m = to.length;
   if (n == 0) return [for (var j = 0; j < m; j++) _MorphOp(-1, j)];
   if (m == 0) return [for (var i = 0; i < n; i++) _MorphOp(i, -1)];
@@ -287,7 +288,6 @@ List<_MorphOp> _computeOps(String from, String to) {
   final result = ops.reversed.toList();
   // Split keeps where index displacement > maxDrift into
   // remove + insert so distant matches fade instead of sliding.
-  const maxDrift = 4;
   for (var k = 0; k < result.length; k++) {
     final op = result[k];
     if (op.fromIdx >= 0 && op.toIdx >= 0) {

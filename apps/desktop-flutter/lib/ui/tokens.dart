@@ -128,6 +128,14 @@ enum ThemeTextEffect {
                // snap to grid. leaving chars jitter out. neighbors get
                // a cyan→magenta tint pulse.
   settle,      // petrichor: pure opacity fade, zero spatial movement.
+  ;
+
+  int get maxDrift => switch (this) {
+        settle => 1,
+        burn || warmth => 6,
+        blockify || emeraldStamp => 5,
+        _ => 4,
+      };
 }
 
 const defaultThemeId = AppThemeId.aether;
@@ -289,10 +297,9 @@ class SurfaceMaterialShader {
   /// glyph picks it up without widget-level changes.
   final List<Shadow>? textShadow;
   final SurfaceMaterialGeometry geometry;
-  /// PBR glass parameters. Only consulted when [mode] == glass.
   final GlassMaterial glassMaterial;
-  /// CRT phosphor parameters. Only consulted when [mode] == phosphor.
   final PhosphorMaterial phosphorMaterial;
+  final double glazeStrength;
 
   const SurfaceMaterialShader({
     required this.mode,
@@ -313,6 +320,7 @@ class SurfaceMaterialShader {
     this.geometry = const SurfaceMaterialGeometry(),
     this.glassMaterial = GlassMaterial.none,
     this.phosphorMaterial = PhosphorMaterial.none,
+    this.glazeStrength = 0.1,
   });
 
   Duration get duration {
@@ -1649,13 +1657,12 @@ const themeDefinitions = <AppThemeDefinition>[
         fontScale: 1.12,
         letterSpacingEm: 0.035,
       ),
-      // Crown glass, pristine polish. Warm-white light leans into the
-      // angelic "halo" identity; every other term stays physical.
       glassMaterial: GlassMaterial(
         ior: 1.52,
         roughness: 0.02,
         lightColor: Color(0xFFFDECC5),
       ),
+      glazeStrength: 0.18,
     ),
   ),
   AppThemeDefinition(
@@ -1714,6 +1721,7 @@ const themeDefinitions = <AppThemeDefinition>[
         roughness: 0.18,
         lightColor: Color(0xFFD0DBE2),
       ),
+      glazeStrength: 0.04,
     ),
   ),
   AppThemeDefinition(
@@ -1820,6 +1828,7 @@ const themeDefinitions = <AppThemeDefinition>[
         fontScale: 1.08,
         letterSpacingEm: 0.025,
       ),
+      glazeStrength: 0.06,
     ),
   ),
   AppThemeDefinition(
@@ -1842,14 +1851,12 @@ const themeDefinitions = <AppThemeDefinition>[
       textEffect: ThemeTextEffect.twinkle,
       parallaxStrength: 0.26,
       interaction: ThemeInteraction.warp,
-      // Fused silica: lower IOR than crown, optically the purest kind of
-      // glass. A whisper of red absorption casts transmitted light cool —
-      // "somewhere between the last star and the first thought."
       glassMaterial: GlassMaterial(
         ior: 1.46,
         roughness: 0.03,
         absorption: Color.fromARGB(255, 1, 0, 0),
       ),
+      glazeStrength: 0.16,
     ),
   ),
   AppThemeDefinition(
@@ -1875,13 +1882,11 @@ const themeDefinitions = <AppThemeDefinition>[
       geometry: SurfaceMaterialGeometry(
         letterSpacingEm: 0.02,
       ),
-      // Dense flint glass: higher IOR = stronger Cauchy dispersion, so the
-      // rim throws a visible prismatic fringe — the chromatic pop quanta's
-      // sparkle/quantum-particle identity asks for. Clear body.
       glassMaterial: GlassMaterial(
         ior: 1.62,
         roughness: 0.04,
       ),
+      glazeStrength: 0.18,
     ),
   ),
   AppThemeDefinition(
@@ -1960,15 +1965,13 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: 'JetBrains Mono',
         letterSpacingEm: 0.01,
       ),
-      // Soft-flint IOR + slightly rougher surface reads as heat-warped
-      // glass. Heavy green/blue absorption transmits red only — the
-      // spacetime-Doppler metaphor baked into the material.
       glassMaterial: GlassMaterial(
         ior: 1.55,
         roughness: 0.08,
         absorption: Color.fromARGB(255, 0, 2, 3),
         lightColor: Color(0xFFE06050),
       ),
+      glazeStrength: 0.12,
     ),
   ),
   AppThemeDefinition(
@@ -2109,6 +2112,7 @@ const themeDefinitions = <AppThemeDefinition>[
         fontScale: 1.06,
         letterSpacingEm: 0.018,
       ),
+      glazeStrength: 0.08,
     ),
   ),
   AppThemeDefinition(
@@ -2145,6 +2149,7 @@ const themeDefinitions = <AppThemeDefinition>[
         lightColor: Color(0xFFE080D0),
         tintSpread: 35,
       ),
+      glazeStrength: 0.14,
     ),
   ),
 ];

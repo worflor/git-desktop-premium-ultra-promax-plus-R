@@ -54,6 +54,8 @@ abstract final class BuildInfo {
       String.fromEnvironment('MANIFOLD_GIT_SHA', defaultValue: '');
   static const String _updateBaseDefine =
       String.fromEnvironment('MANIFOLD_UPDATE_BASE_URL', defaultValue: '');
+  static const String _cohortDefine =
+      String.fromEnvironment('BUILD_COHORT', defaultValue: '');
 
   /// Resolved channel for this binary. Falls back to dev in debug
   /// builds and stable in release builds when the define is absent —
@@ -78,6 +80,9 @@ abstract final class BuildInfo {
   /// server configured" — POLL FOR UPDATES surfaces that explicitly
   /// instead of silently failing.
   static String get updateBaseUrl => _updateBaseDefine;
+
+  static String? get cohort =>
+      _cohortDefine.isEmpty ? null : _cohortDefine;
 
   /// Human display: "0.2.0-beta.1 (a1b2c3d)" when both available, or
   /// just the version, or "dev" when the build wasn't tagged.

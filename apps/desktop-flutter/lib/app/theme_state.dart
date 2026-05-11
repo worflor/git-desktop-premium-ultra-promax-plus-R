@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../backend/settings_store.dart';
+import '../ui/theme_shaders.dart';
 import '../ui/tokens.dart';
 
 enum KeybindingProfile { classic, compact }
@@ -80,6 +81,7 @@ class ThemeState extends ChangeNotifier {
   void _setThemeInMemory(AppThemeId id) {
     _themeId = id;
     _tokens = AppTokens.fromId(id);
+    ThemeShaders.warmFor(id);
   }
 
   Future<void> setSidebarWidth(double w) async {

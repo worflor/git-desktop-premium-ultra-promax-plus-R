@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 import 'dart:ui' show FragmentProgram;
 
+import 'tokens.dart';
+
 /// Cached `FragmentProgram` loader. Each shader asset compiles ONCE on
 /// first access and the resulting program is reused across every paint
 /// call for the lifetime of the app. Per-paint cost is just creating a
@@ -452,7 +454,6 @@ class ThemeShaders {
     return null;
   }
 
-  /// Uniforms: 0..1 uSize, 2 uTime, 3..4 uTilt, 5 uIntensity
   static ui.FragmentShader? petrichorFogShader({
     required double width,
     required double height,
@@ -460,6 +461,7 @@ class ThemeShaders {
     double tiltX = 0,
     double tiltY = 0,
     double intensity = 0.06,
+    double sessionAge = 0,
   }) {
     final program = petrichorFog();
     if (program == null) return null;
@@ -470,7 +472,29 @@ class ThemeShaders {
       ..setFloat(2, time)
       ..setFloat(3, tiltX)
       ..setFloat(4, tiltY)
-      ..setFloat(5, intensity);
+      ..setFloat(5, intensity)
+      ..setFloat(6, sessionAge);
     return s;
+  }
+
+  static void warmFor(AppThemeId id) {
+    glass();
+    switch (id) {
+      case AppThemeId.kirby:
+        cellshade();
+      case AppThemeId.nacre:
+        iridescent();
+      case AppThemeId.loverboy:
+        darkIridescent();
+        loveboyBg();
+      case AppThemeId.barbie:
+        plastic();
+      case AppThemeId.phosphor:
+        phosphor();
+      case AppThemeId.petrichor:
+        petrichorFog();
+      default:
+        break;
+    }
   }
 }

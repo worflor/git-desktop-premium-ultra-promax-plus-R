@@ -235,6 +235,20 @@ Duration _durationFor(ThemeInteraction mode) => switch (mode) {
       ThemeInteraction.none => Duration.zero,
     };
 
+class FeedbackGeometry {
+  final Offset origin;
+  final double nx;
+  final double ny;
+  final double biasX;
+  final double biasY;
+
+  FeedbackGeometry(this.origin, Size size)
+      : nx = (origin.dx / size.width).clamp(0.0, 1.0),
+        ny = (origin.dy / size.height).clamp(0.0, 1.0),
+        biasX = -(origin.dx / size.width - 0.5) * 0.4,
+        biasY = -(origin.dy / size.height - 0.5) * 0.4;
+}
+
 CustomPainter _feedbackPainter({
   required ThemeInteraction mode,
   required Color accent,
@@ -323,12 +337,11 @@ class _EtchPainter extends CustomPainter {
         : 1 - (t - 0.3) / 0.7;
     final a = (pulse * 0.65).clamp(0.0, 1.0);
 
-    final nx = (origin.dx / size.width).clamp(0.0, 1.0);
-    final ny = (origin.dy / size.height).clamp(0.0, 1.0);
-    final topW = 1.0 - ny;
-    final botW = ny;
-    final leftW = 1.0 - nx;
-    final rightW = nx;
+    final g = FeedbackGeometry(origin, size);
+    final topW = 1.0 - g.ny;
+    final botW = g.ny;
+    final leftW = 1.0 - g.nx;
+    final rightW = g.nx;
 
     final dark = Paint()..strokeWidth = 1.2;
     final light = Paint()..strokeWidth = 1.0;
@@ -403,13 +416,12 @@ class _VibrationPainter extends CustomPainter {
     final rng = math.Random(seed);
     // Paint hoisted: color is constant across all 6 specks this frame,
     // so we only allocate one Paint per paint() call instead of per-speck.
-    final biasX = -(origin.dx / size.width - 0.5) * 0.4;
-    final biasY = -(origin.dy / size.height - 0.5) * 0.4;
+    final g = FeedbackGeometry(origin, size);
     final paint = Paint()
       ..color = color.withValues(alpha: (fade * 0.6).clamp(0.0, 1.0));
     for (var i = 0; i < specks; i++) {
-      final dx = (rng.nextDouble() - 0.5 + biasX) * size.width * 0.6;
-      final dy = (rng.nextDouble() - 0.5 + biasY) * size.height * 0.6;
+      final dx = (rng.nextDouble() - 0.5 + g.biasX) * size.width * 0.6;
+      final dy = (rng.nextDouble() - 0.5 + g.biasY) * size.height * 0.6;
       final jitter = math.sin(t * math.pi * 8 + i) * 1.8;
       final r = 1.5 + rng.nextDouble() * 1.5;
       canvas.drawCircle(origin.translate(dx + jitter, dy), r, paint);

@@ -2701,8 +2701,15 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
 /// Status row at the top of the Release Deployment card.
 /// Shows what binary the user is actually running — version, channel,
 /// and short sha when available — so DEV vs BETA vs STABLE is honest.
-class _BuildInfoRow extends StatelessWidget {
+class _BuildInfoRow extends StatefulWidget {
   const _BuildInfoRow();
+
+  @override
+  State<_BuildInfoRow> createState() => _BuildInfoRowState();
+}
+
+class _BuildInfoRowState extends State<_BuildInfoRow> {
+  bool _showCohort = false;
 
   @override
   Widget build(BuildContext context) {
@@ -2711,6 +2718,8 @@ class _BuildInfoRow extends StatelessWidget {
     final channelLabel = channel.id.toUpperCase();
     final version = BuildInfo.version.isEmpty ? 'dev' : BuildInfo.version;
     final sha = BuildInfo.gitSha;
+    final cohort = BuildInfo.cohort;
+    final fingerprint = _showCohort && cohort != null ? cohort : sha;
     return Row(
       children: [
         Container(
@@ -2742,14 +2751,19 @@ class _BuildInfoRow extends StatelessWidget {
             fontFamily: AppFonts.mono,
           ),
         ),
-        if (sha != null) ...[
+        if (fingerprint != null) ...[
           const SizedBox(width: 6),
-          Text(
-            sha,
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 11,
-              fontFamily: AppFonts.mono,
+          GestureDetector(
+            onDoubleTap: cohort != null
+                ? () => setState(() => _showCohort = !_showCohort)
+                : null,
+            child: Text(
+              fingerprint,
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                fontFamily: AppFonts.mono,
+              ),
             ),
           ),
         ],
