@@ -1739,16 +1739,17 @@ class _SettingsPageState extends State<SettingsPage>
                   Expanded(
                     child: _CheckboxRow(
                       label: 'Capture crash diagnostics',
-                      description: 'Anonymised crash snapshots.',
-                      value: preferences.crashReportingEnabled,
-                      onChanged: _saveCrashReporting,
+                      description: 'Coming soon.',
+                      value: false,
+                      enabled: false,
+                      onChanged: (_) {},
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 20),
               Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   _DeckButton(
                     label: _releaseChecking
@@ -1758,15 +1759,10 @@ class _SettingsPageState extends State<SettingsPage>
                     enabled: !_releaseChecking,
                     onTap: () => unawaited(_pollForUpdates()),
                   ),
-                  const SizedBox(width: 8),
-                  _DeckButton(
-                    label: 'OPEN DOWNLOAD',
-                    icon: Icons.system_update_alt_outlined,
-                    enabled: _releaseCheck?.hasUpdate == true &&
-                        (_releaseCheck?.manifest?.downloadUrl?.isNotEmpty ??
-                            false),
-                    onTap: () => unawaited(_forceDeploy()),
-                  ),
+                  if (_releaseCheck != null) ...[
+                    const SizedBox(width: 10),
+                    _PollResultLabel(result: _releaseCheck!),
+                  ],
                   const Spacer(),
                   _ResetQuitControl(
                     onKeepRepos: () =>
@@ -1776,10 +1772,6 @@ class _SettingsPageState extends State<SettingsPage>
                   ),
                 ],
               ),
-              if (_releaseCheck != null) ...[
-                const SizedBox(height: 12),
-                _ReleaseCheckBanner(result: _releaseCheck!),
-              ],
             ],
           ),
         ),
@@ -2920,36 +2912,51 @@ class _BuildInfoRowState extends State<_BuildInfoRow> {
   }
 }
 
-class _ReleaseCheckBanner extends StatelessWidget {
+class _PollResultLabel extends StatefulWidget {
   final ReleaseCheckResult result;
+  const _PollResultLabel({required this.result});
 
-  const _ReleaseCheckBanner({required this.result});
+  @override
+  State<_PollResultLabel> createState() => _PollResultLabelState();
+}
+
+class _PollResultLabelState extends State<_PollResultLabel>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ac;
+
+  @override
+  void initState() {
+    super.initState();
+    _ac = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 300))
+      ..forward();
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted) _ac.reverse();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final isError = result.status == ReleaseCheckStatus.networkError ||
-        result.status == ReleaseCheckStatus.parseError;
-    final isUpdate = result.status == ReleaseCheckStatus.updateAvailable;
-    final color = isError
-        ? t.stateDeleted
-        : isUpdate
-            ? t.accentBright
-            : t.stateAdded;
-    final message = _messageFor(result);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
+    final r = widget.result;
+    final isError = r.status == ReleaseCheckStatus.networkError ||
+        r.status == ReleaseCheckStatus.parseError;
+    final color = isError ? t.stateDeleted : t.textMuted;
+    final message = _messageFor(r);
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: _ac, curve: Curves.easeOut),
       child: Text(
         message,
         style: TextStyle(
-          color: isError ? t.textStrong : color,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
+          color: color,
+          fontSize: 11,
+          fontFamily: AppFonts.mono,
         ),
       ),
     );
@@ -2959,26 +2966,17 @@ class _ReleaseCheckBanner extends StatelessWidget {
     final channel = r.channel.toUpperCase();
     switch (r.status) {
       case ReleaseCheckStatus.upToDate:
-        return 'Up to date on $channel.';
+        return 'up to date';
       case ReleaseCheckStatus.updateAvailable:
-        final m = r.manifest!;
-        return '$channel ${m.version} is available.';
+        return '${r.manifest!.version} available';
       case ReleaseCheckStatus.notConfigured:
-        // errorDetail surfaces deployment-specific reasons (e.g. an
-        // HTTP base URL got rejected for not being HTTPS). The plain
-        // case is "no MANIFOLD_UPDATE_BASE_URL was set at build time."
-        final detail = r.errorDetail;
-        return detail != null && detail.isNotEmpty
-            ? 'Update server not configured: $detail'
-            : 'No update server configured for this build.';
+        return 'no update server';
       case ReleaseCheckStatus.notFound:
-        return 'No releases on the $channel channel yet.';
+        return 'no $channel releases';
       case ReleaseCheckStatus.networkError:
-        final detail = r.errorDetail ?? 'unreachable';
-        return 'Update check failed: $detail';
+        return 'unreachable';
       case ReleaseCheckStatus.parseError:
-        final detail = r.errorDetail ?? 'invalid manifest';
-        return 'Update check failed: $detail';
+        return 'bad manifest';
     }
   }
 }
@@ -3155,9 +3153,8 @@ class _KeybindChip extends StatelessWidget {
       height: 28,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: t.chromeBorder.withValues(alpha: 0.05),
+        color: t.chromeBorder.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.10)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -3177,23 +3174,16 @@ class _KeybindChip extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: t.surface2,
+              color: t.chromeBorder.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(4),
               border: Border.all(
-                color: t.chromeBorder.withValues(alpha: 0.30),
+                color: t.chromeBorder.withValues(alpha: 0.06),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: t.chromeBorder.withValues(alpha: 0.15),
-                  offset: const Offset(0, 1.5),
-                  blurRadius: 0,
-                ),
-              ],
             ),
             child: Text(
               key_,
               style: TextStyle(
-                color: t.textStrong,
+                color: t.textMuted,
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 fontFamily: AppFonts.mono,

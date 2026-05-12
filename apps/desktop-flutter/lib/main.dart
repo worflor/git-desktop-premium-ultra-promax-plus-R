@@ -59,6 +59,16 @@ import 'ui/undo_pill.dart';
 const bool _kFpsProbe =
     kDebugMode || bool.fromEnvironment('FPS_PROBE', defaultValue: false);
 
+class _SmoothScrollBehavior extends MaterialScrollBehavior {
+  const _SmoothScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const BouncingScrollPhysics(
+        decelerationRate: ScrollDecelerationRate.normal,
+      );
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -320,6 +330,7 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
       title: identity.shortName,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(tokens),
+      scrollBehavior: const _SmoothScrollBehavior(),
       home: const _RootTickerMute(
         child: LiquidGlassProviderWithSwitcher(),
       ),

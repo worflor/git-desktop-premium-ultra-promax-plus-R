@@ -330,7 +330,14 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   /// something IS moving) would stall visible motion, so the bounds
   /// below are intentionally generous.
   static const double _birthGrowWindowMs = 2400.0;
+  static const _continuousElements = {_Element.starfield};
+
   bool _hasLiveMotion(double nowMs) {
+    // Shader-driven elements animate every frame while visible.
+    for (final e in _continuousElements) {
+      final birth = _birth[e];
+      if (birth != null && birth >= 0) return true;
+    }
     if (_tipDragging) return true;
     if (_tipDragOffset.distance > 0.1 || _tipVelocity.distance > 1.0) {
       return true;
@@ -339,9 +346,6 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     for (final v in _spokeVel.values) {
       if (v.distance > 1.0) return true;
     }
-    // Rope uses verlet integration — "velocity" is the delta between
-    // current and previous positions. If any segment has moved more
-    // than a pixel between ticks, consider it alive.
     final ropePos = _ropePos;
     final ropePrev = _ropePrev;
     if (ropePos != null && ropePrev != null) {
@@ -350,12 +354,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
         if ((ropePos[i] - ropePrev[i]).distanceSquared > 1.0) return true;
       }
     }
-    // Any element still inside its growth window needs frames so the
-    // entrance animation plays. Birth stamps are either negative
-    // (not yet triggered — no motion to draw) or a positive birth
-    // time; we only care about the latter and only while the element
-    // is still "young".
     for (final entry in _birth.entries) {
+      if (_continuousElements.contains(entry.key)) continue;
       final birth = entry.value;
       if (birth < 0) continue;
       if (nowMs - birth < _birthGrowWindowMs) return true;
@@ -363,9 +363,6 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     for (final ripple in _recurrentRipples) {
       if (nowMs - ripple.birthMs < 1300) return true;
     }
-    // Muse dreaming: source ignition fired but no subsequent event has
-    // arrived (brainstorm LLM call in flight). Keep the ticker alive so
-    // the breathing pulse renders rather than freezing the canvas.
     if (_phase == _Phase.ignited && _recurrentRipples.isEmpty) return true;
     return false;
   }
