@@ -12595,6 +12595,51 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
             ),
           ),
         ),
+        const SizedBox(height: 4),
+        Opacity(
+          opacity: 0.3,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: t.chromeAccent.withValues(alpha: 0.08),
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 5,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: t.textFaint,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  'lsp · coming soon',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    color: t.textFaint,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'planned',
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontFamily: AppFonts.mono,
+                    letterSpacing: 0.8,
+                    color: t.textFaint.withValues(alpha: 0.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
