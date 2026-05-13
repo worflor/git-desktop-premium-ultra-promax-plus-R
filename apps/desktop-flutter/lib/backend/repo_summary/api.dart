@@ -223,7 +223,124 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
       neighborNames: List<String>.unmodifiable(neighborNames),
       fileCount: r.paths.length,
       themes: themes,
+      cohesion: r.cohesion,
+      internalWeight: r.internalWeight,
+      externalWeight: r.externalWeight,
     ));
+  }
+
+  // Build per-file profiles from pipeline data.
+  final regionIdByPath = <String, int>{};
+  for (var i = 0; i < regionResult.regions.length; i++) {
+    for (final path in regionResult.regions[i].paths) {
+      regionIdByPath[path] = i;
+    }
+  }
+  final fileProfiles = <FileProfile>[];
+  for (final f in activeFiles) {
+    final roles = rolesByPath[f.path];
+    final primaryRole = roles == null
+        ? 'source'
+        : roles.isTest
+            ? 'test'
+            : roles.isDoc
+                ? 'doc'
+                : roles.isGenerated
+                    ? 'generated'
+                    : roles.isManifest
+                        ? 'manifest'
+                        : roles.isLockfile
+                            ? 'lockfile'
+                            : roles.isMigration
+                                ? 'migration'
+                                : roles.isFixture
+                                    ? 'fixture'
+                                    : 'source';
+    fileProfiles.add(FileProfile(
+      path: f.path,
+      relevance: relevance.score[f.path] ?? 0.0,
+      centrality: regionResult.fileCentrality[f.path] ?? 0.0,
+      activity: relevance.temporalMass[f.path] ?? 0.0,
+      authenticity: relevance.authenticity[f.path] ?? 1.0,
+      lineCount: f.lineCount,
+      role: primaryRole,
+      regionId: regionIdByPath[f.path] ?? 0,
+      well: wellByPath[f.path],
+    ));
+  }
+
+  // Build coupling edges — top edges by weight, capped at 100.
+  final couplingEdges = <CouplingEdge>[];
+  if (coupling != null) {
+    final allEdges = <CouplingEdge>[];
+    final seen = <String>{};
+    for (final path in activePaths) {
+      if (!coupling.containsPath(path)) continue;
+      for (final entry in coupling.jaccardEntriesOf(path)) {
+        if (!activeSet.contains(entry.key)) continue;
+        if (entry.value <= 0.0) continue;
+        final key = path.compareTo(entry.key) < 0
+            ? '$path\x00${entry.key}'
+            : '${entry.key}\x00$path';
+        if (!seen.add(key)) continue;
+        allEdges.add(CouplingEdge(
+          source: path,
+          target: entry.key,
+          weight: entry.value,
+        ));
+      }
+    }
+    allEdges.sort((a, b) => b.weight.compareTo(a.weight));
+    couplingEdges.addAll(allEdges.take(100));
+  }
+
+  // Build region links from cross-region weights.
+  final regionLinks = <RegionLink>[];
+  {
+    final seenPairs = <String>{};
+    for (var i = 0; i < regionResult.regions.length; i++) {
+      final r = regionResult.regions[i];
+      for (final nid in r.neighborIds) {
+        if (nid < 0 || nid >= regionResult.regions.length) continue;
+        final key = i < nid ? '$i:$nid' : '$nid:$i';
+        if (!seenPairs.add(key)) continue;
+        // Cross-weight between regions i and nid: sum coupling edges
+        // between their file sets.
+        var crossWeight = 0.0;
+        if (coupling != null) {
+          final nPaths = regionResult.regions[nid].paths.toSet();
+          for (final path in r.paths) {
+            if (!coupling.containsPath(path)) continue;
+            for (final entry in coupling.jaccardEntriesOf(path)) {
+              if (nPaths.contains(entry.key) && entry.value > 0.0) {
+                crossWeight += entry.value;
+              }
+            }
+          }
+        }
+        if (crossWeight > 0.0) {
+          regionLinks.add(RegionLink(
+            sourceRegionId: i < nid ? i : nid,
+            targetRegionId: i < nid ? nid : i,
+            weight: crossWeight,
+          ));
+        }
+      }
+    }
+  }
+
+  // Extract archetype distances from spectrogeometry.
+  final archetypeDistances = <String, double>{};
+  var canonicality = 0.0;
+  if (geometry != null) {
+    final u = geometry.universality;
+    archetypeDistances['tree'] = u.toTree;
+    archetypeDistances['modular'] = u.toModular;
+    archetypeDistances['bulk'] = u.toBulk;
+    archetypeDistances['crystalline'] = u.toCrystalline;
+    archetypeDistances['poisson'] = u.toPoisson;
+    archetypeDistances['goe'] = u.toGoe;
+    canonicality = u.canonicality;
   }
 
   // Glance — active-only, TransportRoles-driven.
@@ -263,6 +380,11 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
     generatedAt: generatedAt,
     totalHarvested: harvest.trackedCount,
     historyStarved: historyStarved,
+    files: List<FileProfile>.unmodifiable(fileProfiles),
+    couplingEdges: List<CouplingEdge>.unmodifiable(couplingEdges),
+    regionLinks: List<RegionLink>.unmodifiable(regionLinks),
+    archetypeDistances: Map<String, double>.unmodifiable(archetypeDistances),
+    canonicality: canonicality,
   );
 }
 
@@ -363,6 +485,8 @@ List<BackboneEntry> _buildBackbone({
       lineCount: file.lineCount,
       regionName: regionByPath[path] ?? 'unassigned',
       purpose: extractPurpose(file, maxChars: 180),
+      centrality: fileCentrality[path] ?? 0.0,
+      keystoneScore: entry.value,
     ));
   }
   return out;

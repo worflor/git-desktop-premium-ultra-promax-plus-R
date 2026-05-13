@@ -67,7 +67,7 @@ ThemeData _buildTheme(AppTokens t) {
     colorScheme: colorScheme,
     scaffoldBackgroundColor: t.bg0,
     fontFamily: fontFamily,
-    extensions: [AppThemeExtension(t)],
+    extensions: [AppThemeExtension(t), const PostureField()],
     cardTheme: CardThemeData(
       color: opaqueSurface,
       surfaceTintColor: Colors.transparent,

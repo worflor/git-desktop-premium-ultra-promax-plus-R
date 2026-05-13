@@ -833,6 +833,7 @@ List<PaletteEntry> _aiEntries(
         AiActivityKind.review => 'Code Review',
         AiActivityKind.muse => 'Muse Result',
         AiActivityKind.ask => 'AI Answer',
+        AiActivityKind.present => 'Presentation',
       };
       entries.add(PaletteEntry(
         id: 'ai.view.${r.kind.name}',

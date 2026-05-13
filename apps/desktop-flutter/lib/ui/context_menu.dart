@@ -50,13 +50,14 @@ Future<void> showAppContextMenu(
               onPointerDown: (_) => dismiss(),
             ),
           ),
-          Positioned(
-            left: globalPos.dx,
-            top: globalPos.dy,
-            child: AppContextMenu(
-              tokens: t,
-              sections: sections,
-              onDismiss: dismiss,
+          Positioned.fill(
+            child: CustomSingleChildLayout(
+              delegate: ViewportClampDelegate(desired: globalPos),
+              child: AppContextMenu(
+                tokens: t,
+                sections: sections,
+                onDismiss: dismiss,
+              ),
             ),
           ),
         ],
@@ -65,6 +66,36 @@ Future<void> showAppContextMenu(
   );
   overlay.insert(entry);
   return completer.future;
+}
+
+class ViewportClampDelegate extends SingleChildLayoutDelegate {
+  final Offset desired;
+  final double margin;
+  final Alignment anchor;
+  ViewportClampDelegate({
+    required this.desired,
+    this.margin = 8.0,
+    this.anchor = Alignment.topLeft,
+  });
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints.loose(constraints.biggest);
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final ax = childSize.width * (anchor.x + 1) / 2;
+    final ay = childSize.height * (anchor.y + 1) / 2;
+    final dx = desired.dx - ax;
+    final dy = desired.dy - ay;
+    final maxX = math.max(margin, size.width - childSize.width - margin);
+    final maxY = math.max(margin, size.height - childSize.height - margin);
+    return Offset(dx.clamp(margin, maxX), dy.clamp(margin, maxY));
+  }
+
+  @override
+  bool shouldRelayout(ViewportClampDelegate old) =>
+      old.desired != desired || old.margin != margin || old.anchor != anchor;
 }
 
 class AppContextMenu extends StatelessWidget {
@@ -334,26 +365,29 @@ mixin _SubmenuController<W extends StatefulWidget> on State<W> {
         // Re-resolve items each rebuild so keepOpen toggles re-read
         // mutated state (checkmarks, counts).
         final freshItems = submenuItems ?? const <AppContextMenuItem>[];
-        return Positioned(
-          left: anchor.left,
-          top: anchor.top,
-          child: MouseRegion(
-            onEnter: (_) {
-              _submenuHovered = true;
-              _submenuCloseTimer?.cancel();
-            },
-            onExit: (_) {
-              _submenuHovered = false;
-              _scheduleSubmenuClose();
-            },
-            child: AppContextMenu(
-              tokens: t,
-              sections: [ListMenuSection(freshItems)],
-              onDismiss: () {
-                closeSubmenu();
-                bubbleDismiss();
+        return Positioned.fill(
+          child: CustomSingleChildLayout(
+            delegate: ViewportClampDelegate(
+              desired: Offset(anchor.left, anchor.top),
+            ),
+            child: MouseRegion(
+              onEnter: (_) {
+                _submenuHovered = true;
+                _submenuCloseTimer?.cancel();
               },
-              onItemChanged: () => _submenuEntry?.markNeedsBuild(),
+              onExit: (_) {
+                _submenuHovered = false;
+                _scheduleSubmenuClose();
+              },
+              child: AppContextMenu(
+                tokens: t,
+                sections: [ListMenuSection(freshItems)],
+                onDismiss: () {
+                  closeSubmenu();
+                  bubbleDismiss();
+                },
+                onItemChanged: () => _submenuEntry?.markNeedsBuild(),
+              ),
             ),
           ),
         );

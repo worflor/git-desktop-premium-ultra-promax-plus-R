@@ -443,8 +443,7 @@ class _CandidateCardState extends State<_CandidateCard>
     final c = widget.candidate;
     final inc = widget.includedPaths;
     if (c.members.isEmpty) return false;
-    if (c.members.any((p) => !inc.contains(p))) return false;
-    return inc.length == c.members.length;
+    return c.members.every(inc.contains);
   }
 
   @override

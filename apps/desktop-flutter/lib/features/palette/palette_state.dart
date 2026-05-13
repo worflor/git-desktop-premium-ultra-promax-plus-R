@@ -14,6 +14,8 @@ import '../../backend/storage_paths.dart';
 import 'palette_async_providers.dart';
 import '../../app/ai_activity_state.dart';
 import '../../app/external_tools_state.dart';
+import '../../app/wick_state.dart';
+import '../../backend/wick.dart' show WickPosture, WickQueryResponse, WickUnit;
 import 'palette_entry.dart';
 import 'palette_prefix.dart';
 import 'palette_registry.dart';
@@ -51,6 +53,9 @@ class PaletteState extends ChangeNotifier {
   ExternalToolsState? _toolsState;
 
   List<PalettePrefix> _prefixes = [];
+  WickState? _wickState;
+  List<WickUnit> _wickEntries = [];
+  WickPosture? _wickPosture;
 
   Map<String, Map<String, int>> _allFrequency = {};
   Map<String, Map<String, DateTime>> _allRecency = {};
@@ -70,6 +75,10 @@ class PaletteState extends ChangeNotifier {
   bool get isLoading => _isLoading;
   PaletteEntry? get selected =>
       _selectedIndex < _results.length ? _results[_selectedIndex] : null;
+
+  List<WickUnit> get wickEntries => _wickEntries;
+  WickPosture? get wickPosture => _wickPosture;
+  bool get hasWickResults => _wickEntries.isNotEmpty;
 
   bool get hasPendingConfirm =>
       _pendingConfirmId != null &&
@@ -103,6 +112,7 @@ class PaletteState extends ChangeNotifier {
     _aiActivity = context.read<AiActivityState>();
     _logosState = context.read<LogosGitState>();
     _toolsState = context.read<ExternalToolsState>();
+    _wickState = context.read<WickState>();
     _warmingEntryId = null;
     _pendingConfirmId = null;
     _pendingConfirmAt = null;
@@ -138,6 +148,8 @@ class PaletteState extends ChangeNotifier {
         buildStaticEntries(context, callbacks, forgeByPath: forgeByPath);
     _staticEntries = _rebuilder!(_forgeCache);
     _asyncEntries = [];
+    _wickEntries = [];
+    _wickPosture = null;
     _query = '';
     _selectedIndex = 0;
     _isLoading = false;
@@ -197,8 +209,11 @@ class PaletteState extends ChangeNotifier {
     _generation++;
     _debounce?.cancel();
     _debounce = null;
+    _wickState?.cancelActiveQuery();
     _staticEntries = [];
     _asyncEntries = [];
+    _wickEntries = [];
+    _wickPosture = null;
     _results = [];
     _query = '';
     _selectedIndex = 0;
@@ -241,6 +256,8 @@ class PaletteState extends ChangeNotifier {
       }
     } else {
       _asyncEntries = [];
+      _wickEntries = [];
+      _wickPosture = null;
       _reScore();
     }
   }
@@ -275,11 +292,31 @@ class PaletteState extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    final results = await searchWithCache(repoPath, query, _gitCache);
+    final gitFuture = searchWithCache(repoPath, query, _gitCache);
+    final wickFuture = _searchWick(repoPath, query);
+
+    final results = await gitFuture;
     if (gen != _generation) return;
     _asyncEntries = results;
+
+    final wickResult = await wickFuture;
+    if (gen != _generation) return;
+    if (wickResult != null && wickResult.packet.isNotEmpty) {
+      _wickEntries = wickResult.packet;
+      _wickPosture = wickResult.posture;
+    } else {
+      _wickEntries = [];
+      _wickPosture = null;
+    }
     _isLoading = false;
     _reScore();
+  }
+
+  Future<WickQueryResponse?> _searchWick(String repoPath, String query) async {
+    if (query.length < 3) return null;
+    final wick = _wickState;
+    if (wick == null || !wick.available) return null;
+    return wick.query(repoPath, query);
   }
 
   bool get isWarming => _warmingEntryId != null;

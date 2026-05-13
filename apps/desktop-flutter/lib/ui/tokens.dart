@@ -2189,6 +2189,57 @@ extension BuildContextTokens on BuildContext {
   AppTokens get tokens => Theme.of(this).extension<AppThemeExtension>()!.tokens;
   AppThemeDefinition get themeDefinition => themeDefinitionFor(tokens.id);
   SurfaceMaterialShader get surfaceShader => themeDefinition.shader;
+
+  PostureField get posture =>
+      Theme.of(this).extension<PostureField>() ?? const PostureField();
+}
+
+/// Perceptual confidence field that propagates through the widget tree.
+/// Product of Wick search confidence and structural canonicality.
+/// Widgets read `context.posture` to adjust border weight, motion
+/// curves, and hue shift — the app's body language.
+class PostureField extends ThemeExtension<PostureField> {
+  /// 0.0 = uncertain/flinching, 1.0 = fully decisive.
+  final double confidence;
+
+  /// Structural canonicality of the active repo — how load-bearing
+  /// the coupling graph is. 0 = loose, 1 = crystalline.
+  final double canonicality;
+
+  const PostureField({this.confidence = 0.5, this.canonicality = 0.5});
+
+  /// Combined field strength. Widgets use this as the single scalar
+  /// for visual adjustments.
+  double get intensity => confidence * 0.6 + canonicality * 0.4;
+
+  /// Motion curve tightens with confidence.
+  Curve get motionCurve =>
+      intensity > 0.7 ? Curves.easeOutCubic : Curves.easeOut;
+
+  /// Border weight thickens with structural certainty.
+  double get borderWeight => 0.5 + intensity * 1.0;
+
+  @override
+  ThemeExtension<PostureField> copyWith({
+    double? confidence,
+    double? canonicality,
+  }) =>
+      PostureField(
+        confidence: confidence ?? this.confidence,
+        canonicality: canonicality ?? this.canonicality,
+      );
+
+  @override
+  ThemeExtension<PostureField> lerp(
+    covariant PostureField? other,
+    double t,
+  ) {
+    if (other == null) return this;
+    return PostureField(
+      confidence: confidence + (other.confidence - confidence) * t,
+      canonicality: canonicality + (other.canonicality - canonicality) * t,
+    );
+  }
 }
 
 extension ClusterColors on AppTokens {

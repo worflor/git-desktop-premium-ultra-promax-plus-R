@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../backend/ai.dart' show cliProviderIds;
@@ -19,6 +20,8 @@ import '../../backend/file_coupling.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/release_check.dart';
 import '../../backend/settings_store.dart';
+import '../../app/wick_state.dart';
+import '../../ui/context_menu.dart';
 import '../../backend/storage_paths.dart';
 import '../../backend/system_browser.dart';
 import '../../backend/undo_controller.dart';
@@ -1612,6 +1615,8 @@ class _SettingsPageState extends State<SettingsPage>
           child: const _ExternalToolsCard(),
         ),
         ),
+        const SizedBox(height: 10),
+        const _WickIntegrationCard(),
         const SizedBox(height: 10),
         const _SettingsGap(),
         KeyedSubtree(
@@ -4807,7 +4812,6 @@ class _ModelPickerField extends StatefulWidget {
 }
 
 class _ModelPickerFieldState extends State<_ModelPickerField> {
-  final _link = LayerLink();
   final _triggerKey = GlobalKey();
   OverlayEntry? _entry;
 
@@ -4848,6 +4852,9 @@ class _ModelPickerFieldState extends State<_ModelPickerField> {
   Widget _buildOverlayContent(BuildContext ctx) {
     final box = _triggerKey.currentContext?.findRenderObject() as RenderBox?;
     final width = box?.size.width ?? 240.0;
+    final target = box != null
+        ? box.localToGlobal(Offset(0, box.size.height))
+        : Offset.zero;
     return Stack(
       children: [
         Positioned.fill(
@@ -4856,20 +4863,19 @@ class _ModelPickerFieldState extends State<_ModelPickerField> {
             behavior: HitTestBehavior.translucent,
           ),
         ),
-        CompositedTransformFollower(
-          link: _link,
-          showWhenUnlinked: false,
-          targetAnchor: Alignment.bottomLeft,
-          followerAnchor: Alignment.topLeft,
-          child: SizedBox(
-            width: width,
-            child: _ModelPickerOverlay(
-              models: widget.models,
-              selectedValue: widget.value,
-              providers: widget.providers,
-              customControllers: widget.customControllers,
-              onSelect: _select,
-              onCustomSubmit: _submitCustom,
+        Positioned.fill(
+          child: CustomSingleChildLayout(
+            delegate: ViewportClampDelegate(desired: target),
+            child: SizedBox(
+              width: width,
+              child: _ModelPickerOverlay(
+                models: widget.models,
+                selectedValue: widget.value,
+                providers: widget.providers,
+                customControllers: widget.customControllers,
+                onSelect: _select,
+                onCustomSubmit: _submitCustom,
+              ),
             ),
           ),
         ),
@@ -4896,10 +4902,8 @@ class _ModelPickerFieldState extends State<_ModelPickerField> {
       label = widget.value.split(':').last;
     }
 
-    return CompositedTransformTarget(
-      link: _link,
-      child: AppInputShell(
-        key: _triggerKey,
+    return AppInputShell(
+      key: _triggerKey,
         focused: _isOpen,
         child: GestureDetector(
           onTap: _toggle,
@@ -4921,8 +4925,7 @@ class _ModelPickerFieldState extends State<_ModelPickerField> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -12472,6 +12475,127 @@ class _ScrollSectionBubble extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _WickIntegrationCard extends StatefulWidget {
+  const _WickIntegrationCard();
+
+  @override
+  State<_WickIntegrationCard> createState() => _WickIntegrationCardState();
+}
+
+class _WickIntegrationCardState extends State<_WickIntegrationCard> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(
+      text: context.read<WickState>().customPath,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final current = context.read<WickState>().customPath;
+    if (_ctrl.text != current) _ctrl.text = current;
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _browse() async {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select wick executable',
+      type: FileType.any,
+    );
+    if (result != null && result.files.single.path != null) {
+      _ctrl.text = result.files.single.path!;
+      _apply(_ctrl.text);
+    }
+  }
+
+  void _apply(String path) {
+    context.read<WickState>().setCustomPath(path);
+    _persistWickPath(path);
+  }
+
+  Future<void> _persistWickPath(String path) async {
+    final current = await SettingsStore.load();
+    await SettingsStore.persist(current.copyWith(wickExePath: path));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final wick = context.watch<WickState>();
+    final live = wick.available;
+    final statusColor = live ? t.stateAdded : t.textFaint;
+    final hint = live ? 'wick · connected' : 'wick · path to executable';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SettingsSubtitle('& Integrations'),
+        const SizedBox(height: 8),
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: _browse,
+            child: Container(
+              height: 26,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: live
+                      ? t.stateAdded.withValues(alpha: 0.25)
+                      : t.chromeAccent.withValues(alpha: 0.15),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 5,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: statusColor,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      _ctrl.text.isEmpty ? hint : _ctrl.text,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontFamily: AppFonts.mono,
+                        color: _ctrl.text.isEmpty ? t.textFaint : t.textNormal,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Text(
+                    'alpha',
+                    style: TextStyle(
+                      fontSize: 8,
+                      fontFamily: AppFonts.mono,
+                      letterSpacing: 0.8,
+                      color: t.textFaint.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

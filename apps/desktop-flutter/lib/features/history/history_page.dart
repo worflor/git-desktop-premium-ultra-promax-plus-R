@@ -41,13 +41,6 @@ const double _kVertInset = 8;
 const double _kHorizPad = 4;
 const double _kLeftPad = 6;
 
-/// Minimum number of lanes the timeline strip allocates vertical space
-/// for, regardless of the current layout's actual lane count. With
-/// previews disabled today's layouts only ever use lane 0; on hover
-/// we add lane 1. Reserving 2 lanes' worth always means the strip's
-/// height never changes when a preview appears, which was the
-/// original "shifts the whole UI" complaint. Cheap — empty lanes are
-/// just unused vertical space inside the same dark surface.
 const int _kReservedLaneCount = 2;
 const double _kMinLaneH = 42;
 const double _kScaleFocus = 0.45;
@@ -117,59 +110,15 @@ class _LensMetric {
 
 _GLayout _buildLayout(
   List<CommitHistoryEntry> entries, {
-  /// When non-null, lane assignment becomes a pure set-membership:
-  /// commits reachable from the repo's trunk (default branch) go on
-  /// lane 0; everything else goes on lane 1. This gives the current
-  /// branch's diverged commits their own visually-offset lane, so a
-  /// worktree on `feat/foo` reads as "this is the branch, that's the
-  /// trunk" instead of one flat line identical to main.
-  /// When null, falls back to classic git-log multi-parent lane
-  /// tracking (works but produces a flat line for any linear-parent
-  /// history — which is what this override is here to correct).
   Set<String>? trunkHashes,
-
-  /// Hovered-desk preview commits, folded into the layout AS NODES
-  /// (not as a separate overlay). They're flagged `isPreview = true`
-  /// and assigned lane 1 so they sit on the diverged-branch rail
-  /// alongside the regular off-trunk nodes. They occupy the FIRST
-  /// rows of the output (rows 0..M-1) because they're temporally
-  /// newer than HEAD — leftmost positions in this newest-on-the-left
-  /// timeline. The full real commit list is preserved (no trimming);
-  /// the rail grows to accommodate both lanes.
   List<CommitHistoryEntry> previewCommits = const [],
 }) {
-  final visibleHashes = entries.map((e) => e.commitHash).toSet();
-  final activeLanes = <String?>[];
+  final visibleHashes = entries.map((e) => e.commitHash).toSet()
+    ..addAll(previewCommits.map((e) => e.commitHash));
   final hashToNode = <String, _GNode>{};
   int laneCount = 1;
-
-  int reserveLane(String hash, {int? preferred}) {
-    final existing = activeLanes.indexWhere((h) => h == hash);
-    if (existing >= 0) return existing;
-    if (preferred != null &&
-        preferred < activeLanes.length &&
-        activeLanes[preferred] == null) {
-      activeLanes[preferred] = hash;
-      return preferred;
-    }
-    final empty = activeLanes.indexWhere((h) => h == null);
-    if (empty >= 0) {
-      activeLanes[empty] = hash;
-      return empty;
-    }
-    activeLanes.add(hash);
-    return activeLanes.length - 1;
-  }
-
   final nodes = <_GNode>[];
 
-  // Preview nodes occupy rows 0..M-1 — they're newer than HEAD, so
-  // newest-on-the-left places them first. Lane 1 puts them on the
-  // diverged-branch rail above the trunk. visibleHashes is the SET
-  // of every entry that will appear in the layout (preview + real),
-  // so a preview commit's parent edge can land on the merge-base
-  // (a lane-0 real node) — drawn through the same edge-paint loop
-  // as everything else, no special-casing.
   for (int i = 0; i < previewCommits.length; i++) {
     final entry = previewCommits[i];
     final visibleParents = entry.parentHashes
@@ -191,35 +140,14 @@ _GLayout _buildLayout(
   for (int i = 0; i < entries.length; i++) {
     final row = realRowOffset + i;
     final entry = entries[i];
-    int lane;
-    if (trunkHashes != null) {
-      // Trunk-aware path: every commit reachable from the trunk
-      // branch tip lives on lane 0 (the baseline rail); anything not
-      // reachable from trunk — i.e. the diverged tip of our current
-      // branch — sits on lane 1. The painter already offsets lane N
-      // by laneStep, so the visual fork appears for free at the
-      // merge-base where the first diverged commit's parent edge
-      // crosses from lane 1 back down to lane 0.
-      lane = trunkHashes.contains(entry.commitHash) ? 0 : 1;
-    } else {
-      lane = activeLanes.indexWhere((h) => h == entry.commitHash);
-      if (lane < 0) lane = reserveLane(entry.commitHash);
-      activeLanes[lane] = null;
-    }
-
     final parents =
         entry.parentHashes.where((h) => visibleHashes.contains(h)).toList();
-    if (trunkHashes == null) {
-      if (parents.isNotEmpty) reserveLane(parents[0], preferred: lane);
-      for (int p = 1; p < parents.length; p++) reserveLane(parents[p]);
 
-      while (activeLanes.isNotEmpty && activeLanes.last == null) {
-        activeLanes.removeLast();
-      }
-      laneCount = max(laneCount, max(lane + 1, activeLanes.length));
-    } else {
-      laneCount = max(laneCount, lane + 1);
-    }
+    final lane = (trunkHashes != null &&
+            !trunkHashes.contains(entry.commitHash))
+        ? 1
+        : 0;
+    laneCount = max(laneCount, lane + 1);
 
     final node =
         _GNode(entry: entry, row: row, lane: lane, visibleParents: parents);
@@ -244,7 +172,6 @@ _GLayout _buildLayout(
     }
   }
 
-  // Build hash→index once so the painter can drop its per-paint map.
   final hashToIndex = <String, int>{
     for (var i = 0; i < nodes.length; i++) nodes[i].entry.commitHash: i,
   };
@@ -443,21 +370,29 @@ class _TimelinePainter extends CustomPainter {
     // (was ~500 string-keyed entries on a long history).
     final hashToIndex = layout.hashToIndex;
 
-    // Rail
-    final railY = vertInset + laneStep / 2;
-    final leftX =
-        baseXs.isNotEmpty ? max(baseXs.first - _kNodeRadius, 0.0) : 0.0;
-    final rightX =
-        baseXs.isNotEmpty ? min(baseXs.last + _kNodeRadius, width) : width;
-    canvas.drawLine(
-      Offset(leftX, railY),
-      Offset(rightX, railY),
-      Paint()
-        ..color = tokens.chromeAccent.withValues(alpha: 0.22)
-        ..strokeWidth = 1.8
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke,
-    );
+    // Rails — one per lane that has nodes.
+    final railPaint = Paint()
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final lanesUsed = <int>{};
+    for (final n in layout.nodes) lanesUsed.add(n.lane);
+    for (final lane in lanesUsed) {
+      final laneNodes = <int>[];
+      for (var i = 0; i < layout.nodes.length; i++) {
+        if (layout.nodes[i].lane == lane) laneNodes.add(i);
+      }
+      if (laneNodes.isEmpty) continue;
+      final lx = baseXs.length > laneNodes.first
+          ? max(baseXs[laneNodes.first] - _kNodeRadius, 0.0) : 0.0;
+      final rx = baseXs.length > laneNodes.last
+          ? min(baseXs[laneNodes.last] + _kNodeRadius, width) : width;
+      final ry = vertInset + lane * laneStep + laneStep / 2;
+      railPaint.color = lane == 0
+          ? tokens.chromeAccent.withValues(alpha: 0.22)
+          : tokens.textMuted.withValues(alpha: 0.14);
+      canvas.drawLine(Offset(lx, ry), Offset(rx, ry), railPaint);
+    }
 
     // Two reusable Paints (mainline vs. branch) + one reusable Path
     // shared across every edge. Previously allocated ~2 objects per
@@ -473,6 +408,11 @@ class _TimelinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     final edgePath = Path();
+    final forkPaint = Paint()
+      ..color = tokens.chromeAccent.withValues(alpha: 0.45)
+      ..strokeWidth = 1.8
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
     // Hoisted preview-stagger constants — used to fade in the edge
     // that lands at a preview node alongside the node itself, so the
     // edge geometry doesn't pop into existence before the node it
@@ -493,38 +433,31 @@ class _TimelinePainter extends CustomPainter {
       final to = metrics[toIdx];
       final fromNode = layout.nodes[fromIdx];
 
+      final isCrossLane = edge.fromLane != edge.toLane;
+      final isMainline = !isCrossLane && edge.fromLane == 0;
+
       final dx = to.x - from.x;
       final dy = to.y - from.y;
-      final dist2 = dx * dx + dy * dy;
-      if (dist2 < 0.01) continue;
-      // Sqrt once — downstream math needs scalar distance.
-      final dist = sqrt(dist2);
+      final dist = sqrt(dx * dx + dy * dy);
+      if (dist < 0.01) continue;
       final inv = 1.0 / dist;
-      final nx = dx * inv;
-      final ny = dy * inv;
-      final startX = from.x + nx * (_kNodeRadius * from.scale);
-      final startY = from.y + ny * (_kNodeRadius * from.scale);
-      final endX = to.x - nx * (_kNodeRadius * to.scale);
-      final endY = to.y - ny * (_kNodeRadius * to.scale);
-
-      final isMainline = edge.fromLane == 0 && edge.toLane == 0;
-      final isSameLane = edge.fromLane == edge.toLane;
+      final fromR = _kNodeRadius * from.scale;
+      final toR = _kNodeRadius * to.scale;
+      final startX = from.x + dx * inv * fromR;
+      final startY = from.y + dy * inv * fromR;
+      final endX = to.x - dx * inv * toR;
+      final endY = to.y - dy * inv * toR;
 
       edgePath.reset();
       edgePath.moveTo(startX, startY);
-      if (isSameLane) {
-        edgePath.lineTo(endX, endY);
-      } else {
-        final ctrlX = startX + (endX - startX) * 0.48;
-        edgePath.cubicTo(ctrlX, startY, ctrlX, endY, endX, endY);
-      }
+      edgePath.lineTo(endX, endY);
       // Steady-state: just draw with the canonical paint. Preview
       // edges allocate a per-frame Paint for the alpha lerp, but only
       // during the populate-in window — once `previewIntroT2` rests
       // at 1.0 the paint is identical to `branchEdgePaint` and we
       // could skip the alloc; the cost is negligible at the rare
       // hover-active rate so kept simple.
-      Paint paint = isMainline ? mainlineEdgePaint : branchEdgePaint;
+      Paint paint = isCrossLane ? forkPaint : isMainline ? mainlineEdgePaint : branchEdgePaint;
       if (fromNode.isPreview && previewIntroT2 < 1.0) {
         final previewIdx = fromNode.row;
         final clampedIdx = previewIdx < previewStaggerN

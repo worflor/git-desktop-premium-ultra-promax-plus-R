@@ -8,6 +8,7 @@ import '../../ui/form_controls.dart';
 import '../../ui/motion.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
+import '../../backend/wick.dart' show WickPosture, WickUnit;
 import 'palette_entry.dart';
 import 'palette_state.dart';
 
@@ -244,8 +245,15 @@ class _CommandPaletteState extends State<CommandPalette> {
             duration: context.motion(AppMotion.snap),
             child: TopProgressLine(color: t.accentBright),
           ),
+          if (palette.hasWickResults)
+            _WickSummarySection(
+              entries: palette.wickEntries,
+              posture: palette.wickPosture,
+              onFileSelected: widget.onFileSelected,
+              onClose: widget.onClose,
+            ),
           Expanded(
-            child: palette.results.isEmpty
+            child: palette.results.isEmpty && !palette.hasWickResults
                 ? _EmptyState(query: palette.query)
                 : _buildResultList(palette),
           ),
@@ -321,7 +329,7 @@ class _PaletteResultRowState extends State<_PaletteResultRow> {
         : widget.isConfirming
             ? t.danger.withValues(alpha: 0.15)
             : isHighlighted
-                ? t.itemHoverBg
+                ? t.surface1
                 : Colors.transparent;
 
     return MouseRegion(
@@ -634,6 +642,209 @@ class _EmptyState extends StatelessWidget {
         child: Text(
           query.isEmpty ? 'type to search' : 'no results',
           style: TextStyle(fontSize: 12, color: t.textFaint),
+        ),
+      ),
+    );
+  }
+}
+
+class _WickSummarySection extends StatefulWidget {
+  final List<WickUnit> entries;
+  final WickPosture? posture;
+  final void Function(String filePath) onFileSelected;
+  final VoidCallback onClose;
+
+  const _WickSummarySection({
+    required this.entries,
+    required this.posture,
+    required this.onFileSelected,
+    required this.onClose,
+  });
+
+  @override
+  State<_WickSummarySection> createState() => _WickSummarySectionState();
+}
+
+class _WickSummarySectionState extends State<_WickSummarySection> {
+  bool _expanded = false;
+  int _selectedIndex = -1;
+
+  double get _postureOpacity => switch (widget.posture) {
+        WickPosture.decisive => 1.0,
+        WickPosture.exploring => 0.7,
+        WickPosture.reaching => 0.45,
+        _ => 0.3,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final units = widget.entries;
+    if (units.isEmpty) return const SizedBox.shrink();
+
+    final borderColor = t.accentBright.withValues(alpha: _postureOpacity * 0.4);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: borderColor, width: 1),
+          borderRadius: BorderRadius.circular(6),
+          color: t.surface0.withValues(alpha: 0.4),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHeader(t, units),
+            if (_expanded) ..._buildExpandedResults(t, units),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(AppTokens t, List<WickUnit> units) {
+    final fileNames = units
+        .take(4)
+        .map((u) => u.fileName)
+        .toSet()
+        .join(' · ');
+    final suffix = units.length > 4 ? ' · …' : '';
+    return InkWell(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          children: [
+            Text(
+              '${units.length} match${units.length == 1 ? '' : 'es'} in files',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: t.accentBright.withValues(alpha: _postureOpacity),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '$fileNames$suffix',
+                style: TextStyle(fontSize: 11, color: t.textFaint),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            Icon(
+              _expanded ? Icons.expand_less : Icons.expand_more,
+              size: 14,
+              color: t.textFaint,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildExpandedResults(AppTokens t, List<WickUnit> units) {
+    final isDecisive = widget.posture == WickPosture.decisive;
+    final staggerMs = switch (widget.posture) {
+      WickPosture.decisive => 0,
+      WickPosture.exploring => 40,
+      WickPosture.reaching => 80,
+      _ => 60,
+    };
+    return [
+      for (var i = 0; i < units.length && i < 8; i++)
+        isDecisive
+            ? _buildResultRow(t, units[i], i)
+            : TweenAnimationBuilder<double>(
+                key: ValueKey('wick-$i-${units[i].id}'),
+                tween: Tween(begin: 0.0, end: 1.0),
+                duration: Duration(milliseconds: 200 + staggerMs * i),
+                curve: Curves.easeOut,
+                builder: (_, opacity, child) =>
+                    Opacity(opacity: opacity, child: child),
+                child: _buildResultRow(t, units[i], i),
+              ),
+    ];
+  }
+
+  Widget _buildResultRow(AppTokens t, WickUnit unit, int index) {
+    final isSelected = index == _selectedIndex;
+    var snippet = unit.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // Strip Wick's [path: ...] prefix — the filename is already shown.
+    snippet = snippet.replaceFirst(RegExp(r'^\[path:[^\]]*\]\s*'), '');
+    if (snippet.length > 80) snippet = '${snippet.substring(0, 80)}…';
+    final isGhost = unit.reason.kind == 'neighborhood' ||
+        unit.reason.kind == 'transport';
+    final ghostAlpha = isGhost ? 0.45 : 1.0;
+    final reasonLabel = isGhost ? 'coupled' : unit.reason.kind;
+    return InkWell(
+      onTap: () {
+        widget.onFileSelected(unit.filePath);
+        widget.onClose();
+      },
+      onHover: (hovering) {
+        if (hovering) setState(() => _selectedIndex = index);
+      },
+      child: Container(
+        color: isSelected ? t.surface1 : null,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Opacity(
+          opacity: ghostAlpha,
+          child: Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Text(
+                      unit.fileName,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: isGhost ? FontWeight.w400 : FontWeight.w600,
+                        color: t.textNormal,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        snippet,
+                        style: TextStyle(fontSize: 10, color: t.textFaint),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  border: isGhost
+                      ? Border.all(
+                          color: t.accentBright.withValues(alpha: 0.15))
+                      : null,
+                  color: isGhost
+                      ? Colors.transparent
+                      : t.accentBright.withValues(
+                          alpha:
+                              unit.reason.kind == 'direct' ? 0.15 : 0.07),
+                ),
+                child: Text(
+                  reasonLabel,
+                  style: TextStyle(
+                    fontSize: 8,
+                  color: t.accentBright.withValues(
+                    alpha: unit.reason.kind == 'direct' ? 0.9 : 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
         ),
       ),
     );

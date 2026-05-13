@@ -108,6 +108,7 @@ class AppSettingsSnapshot {
   /// See `external_tools.dart` for the model + preset starters.
   final List<ExternalTool> externalTools;
   final int changesPanelWidthPx;
+  final String wickExePath;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -148,6 +149,7 @@ class AppSettingsSnapshot {
     required this.bondDockOpenedOnce,
     required this.externalTools,
     required this.changesPanelWidthPx,
+    this.wickExePath = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -189,6 +191,7 @@ class AppSettingsSnapshot {
         'bondDockOpenedOnce': bondDockOpenedOnce,
         'externalTools': [for (final t in externalTools) t.toJson()],
         'changesPanelWidthPx': changesPanelWidthPx,
+        'wickExePath': wickExePath,
       };
 
   factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
@@ -414,6 +417,7 @@ class AppSettingsSnapshot {
         json['changesPanelWidthPx'],
         defaults.changesPanelWidthPx,
       ).clamp(220, 520),
+      wickExePath: json['wickExePath'] as String? ?? '',
     );
   }
 
@@ -456,6 +460,7 @@ class AppSettingsSnapshot {
     bool? bondDockOpenedOnce,
     List<ExternalTool>? externalTools,
     int? changesPanelWidthPx,
+    String? wickExePath,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -509,6 +514,7 @@ class AppSettingsSnapshot {
       bondDockOpenedOnce: bondDockOpenedOnce ?? this.bondDockOpenedOnce,
       externalTools: externalTools ?? this.externalTools,
       changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
+      wickExePath: wickExePath ?? this.wickExePath,
     );
   }
 }

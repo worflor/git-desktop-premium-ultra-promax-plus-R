@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -50,6 +51,7 @@ import 'repository_state.dart';
 import 'repository_xray_state.dart';
 import 'symbol_frequency_state.dart';
 import 'theme_state.dart';
+import 'wick_state.dart';
 import 'worktree_state.dart';
 import '../backend/undo_controller.dart';
 
@@ -171,6 +173,11 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         context
             .read<SymbolFrequencyState>()
             .invalidateAllExcept(activeRepoPath);
+        if (activeRepoPath != null) {
+          final wick = context.read<WickState>();
+          wick.setActiveRepo(activeRepoPath);
+          unawaited(wick.indexRepo(activeRepoPath));
+        }
       });
     }
 
@@ -3275,125 +3282,123 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
           ),
         ),
         // Panel
-        Positioned(
-          top: widget.top,
-          left: widget.left,
-          child: FadeTransition(
-            opacity: _fade,
-            child: ClipRect(
-              child: AnimatedBuilder(
-                animation: _reveal,
-                builder: (_, child) => Align(
-                  alignment: Alignment.topCenter,
-                  heightFactor: _reveal.value,
-                  child: child,
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: widget.minWidth,
-                        decoration: BoxDecoration(
-                          color: Color.alphaBlend(t.inputBg, t.bg0),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: borderColor),
-                          // offset.dy > blurRadius → shadow only goes downward
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black
-                                  .withValues(alpha: t.isDark ? 0.45 : 0.18),
-                              blurRadius: 10,
-                              offset: const Offset(0, 12),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            GestureDetector(
-                              onTap: widget.onDismiss,
-                              child: MouseRegion(
-                                cursor: SystemMouseCursors.click,
-                                child: SizedBox(
-                                  height: widget.pillHeight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 8),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        AppIcon(
-                                            name: 'git-branch',
-                                            size: 11,
-                                            color: t.accentBright),
-                                        const SizedBox(width: 5),
-                                        Flexible(
-                                          child: ThemeMorphText(
-                                            widget.currentBranch,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            softWrap: false,
-                                            style: TextStyle(
-                                              color: t.textNormal,
-                                              fontSize: 10.5,
-                                              fontWeight: FontWeight.w600,
+        Positioned.fill(
+          child: CustomSingleChildLayout(
+            delegate: ViewportClampDelegate(
+              desired: Offset(widget.left, widget.top),
+            ),
+            child: FadeTransition(
+              opacity: _fade,
+              child: ClipRect(
+                child: AnimatedBuilder(
+                  animation: _reveal,
+                  builder: (_, child) => Align(
+                    alignment: Alignment.topCenter,
+                    heightFactor: _reveal.value,
+                    child: child,
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: widget.minWidth,
+                          decoration: BoxDecoration(
+                            color: Color.alphaBlend(t.inputBg, t.bg0),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: borderColor),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black
+                                    .withValues(alpha: t.isDark ? 0.45 : 0.18),
+                                blurRadius: 10,
+                                offset: const Offset(0, 12),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              GestureDetector(
+                                onTap: widget.onDismiss,
+                                child: MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: SizedBox(
+                                    height: widget.pillHeight,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          AppIcon(
+                                              name: 'git-branch',
+                                              size: 11,
+                                              color: t.accentBright),
+                                          const SizedBox(width: 5),
+                                          Flexible(
+                                            child: ThemeMorphText(
+                                              widget.currentBranch,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
+                                              style: TextStyle(
+                                                color: t.textNormal,
+                                                fontSize: 10.5,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        // Chevron pointing down (open state)
-                                        Transform.rotate(
-                                          angle: math.pi / 2,
-                                          child: AppIcon(
-                                              name: 'chevron-right',
-                                              size: 10,
-                                              color: t.textMuted),
-                                        ),
-                                      ],
+                                          const SizedBox(width: 4),
+                                          Transform.rotate(
+                                            angle: math.pi / 2,
+                                            child: AppIcon(
+                                                name: 'chevron-right',
+                                                size: 10,
+                                                color: t.textMuted),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            // Divider between pill header and branch list
-                            Container(
-                              height: 1,
-                              color: borderColor.withValues(alpha: 0.5),
-                            ),
-                            _PanelBody(
-                              branches: widget.branches,
-                              loading: widget.loading,
-                              switching: widget.switching,
-                              currentBranch: widget.currentBranch,
-                              onCheckout: widget.onCheckout,
-                              onOpenAsDesk: widget.onOpenAsDesk,
-                              onCreateDeskFromHead: widget.onCreateDeskFromHead,
-                              branchesOpenAsDesks: widget.branchesOpenAsDesks,
-                              onNavigate: widget.onNavigate,
-                              onBranchHover: (b) =>
-                                  setState(() => _hoveredBranch = b),
-                              t: t,
-                            ),
-                          ],
+                              Container(
+                                height: 1,
+                                color: borderColor.withValues(alpha: 0.5),
+                              ),
+                              _PanelBody(
+                                branches: widget.branches,
+                                loading: widget.loading,
+                                switching: widget.switching,
+                                currentBranch: widget.currentBranch,
+                                onCheckout: widget.onCheckout,
+                                onOpenAsDesk: widget.onOpenAsDesk,
+                                onCreateDeskFromHead: widget.onCreateDeskFromHead,
+                                branchesOpenAsDesks: widget.branchesOpenAsDesks,
+                                onNavigate: widget.onNavigate,
+                                onBranchHover: (b) =>
+                                    setState(() => _hoveredBranch = b),
+                                t: t,
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      // ── Issues side panel — always present so the popout
-                      // functions as the issue hub (list, filter, create).
-                      const SizedBox(width: 6),
-                      _IssuesSidePanel(
-                        localIssues: widget.issues,
-                        remoteIssues: widget.remoteIssues,
-                        branchRemoteIssues: widget.branchRemoteIssues,
-                        hoveredBranch: _hoveredBranch,
-                        borderColor: borderColor,
-                        onCreateIssue: widget.onCreateIssue,
-                        t: t,
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        _IssuesSidePanel(
+                          localIssues: widget.issues,
+                          remoteIssues: widget.remoteIssues,
+                          branchRemoteIssues: widget.branchRemoteIssues,
+                          hoveredBranch: _hoveredBranch,
+                          borderColor: borderColor,
+                          onCreateIssue: widget.onCreateIssue,
+                          t: t,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -3734,15 +3739,12 @@ class _NewDeskRowState extends State<_NewDeskRow> {
             .where((s) => s.isNotEmpty)
             .toList()
         : const <String>[];
-    final phrase = await dreamFromDiff(
+    return dreamBranchSlug(
       repoPath: repoPath,
       diffText: diffText,
       engine: engine,
       recentSubjects: subjects,
     );
-    if (phrase == null) return null;
-    final slug = slugifyForBranch(phrase);
-    return slug.isEmpty ? null : slug;
   }
 
   @override

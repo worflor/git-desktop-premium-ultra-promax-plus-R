@@ -261,4 +261,160 @@ void main() {
           dreamCommitPhrase(probe: probe, mind: mind), isNull);
     });
   });
+
+  group('qualifierFromDiffSymbols', () {
+    test('extracts dominant theme across 2+ symbols', () {
+      final q = qualifierFromDiffSymbols(
+        ['retryCount', 'handleRetry'],
+      );
+      expect(q, 'retry');
+    });
+
+    test('returns null when no sub-token spans 2+ symbols', () {
+      expect(qualifierFromDiffSymbols(['fooBar', 'bazQux']), isNull);
+    });
+
+    test('filters boring roots', () {
+      expect(
+        qualifierFromDiffSymbols([
+          'getValue', 'setState', 'getState', 'setValue',
+        ]),
+        isNull,
+      );
+    });
+
+    test('returns null on empty list', () {
+      expect(qualifierFromDiffSymbols([]), isNull);
+    });
+
+    test('picks the most frequent non-boring root', () {
+      final q = qualifierFromDiffSymbols([
+        'cacheStore', 'cacheLayer', 'cacheManager',
+        'retryLogic', 'retryHandler', 'retryPolicy',
+      ]);
+      expect(q, anyOf('cache', 'retry'));
+    });
+  });
+
+  group('ProbeStats addRatio', () {
+    test('returns 1.0 for pure addition', () {
+      const s = ProbeStats(
+        primaryCount: 1, mMatches: 0, abMatches: 0, mSymbols: 0,
+        coherence: 1.0, addedLineCount: 10, removedLineCount: 0,
+      );
+      expect(s.addRatio, 1.0);
+    });
+
+    test('returns 0.0 for pure removal', () {
+      const s = ProbeStats(
+        primaryCount: 1, mMatches: 0, abMatches: 0, mSymbols: 0,
+        coherence: 1.0, addedLineCount: 0, removedLineCount: 10,
+      );
+      expect(s.addRatio, 0.0);
+    });
+
+    test('returns 0.5 for empty diff', () {
+      const s = ProbeStats(
+        primaryCount: 0, mMatches: 0, abMatches: 0, mSymbols: 0,
+        coherence: 1.0,
+      );
+      expect(s.addRatio, 0.5);
+    });
+  });
+
+  group('dreamCommitPhrase with diffSymbols', () {
+    test('qualifies path phrase with dominant symbol theme', () {
+      final engine = _fixtureEngine();
+      final probe = DiffProbe(
+        sourceWeights: const {'lib/auth/spectral_ricci.dart': 1.0},
+        primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+        suggestedTemperature: 1.0,
+        stats: const ProbeStats(
+          primaryCount: 1, mMatches: 0, abMatches: 0,
+          mSymbols: 3, coherence: 1.0,
+        ),
+        diffSymbols: const ['retryCount', 'maxRetries', 'handleRetry'],
+      );
+      final mind = LogosMind(engine: engine);
+      final phrase = dreamCommitPhrase(
+        probe: probe,
+        mind: mind,
+        recentSubjects: const ['refactor auth', 'add logging'],
+      );
+      expect(phrase, isNotNull);
+      expect(phrase!, contains('retry'),
+          reason: '"retry" spans 2+ symbols → qualifies the path phrase');
+      expect(phrase, contains('spectral ricci'),
+          reason: 'path phrase stays as coherence anchor');
+    });
+
+    test('falls back to path phrase when no symbols', () {
+      final engine = _fixtureEngine();
+      final probe = DiffProbe(
+        sourceWeights: const {'lib/auth/AuthToken.dart': 1.0},
+        primaryPaths: const {'lib/auth/AuthToken.dart'},
+        suggestedTemperature: 1.0,
+        stats: const ProbeStats(
+          primaryCount: 1, mMatches: 0, abMatches: 0,
+          mSymbols: 0, coherence: 1.0,
+        ),
+      );
+      final mind = LogosMind(engine: engine);
+      final phrase = dreamCommitPhrase(
+        probe: probe, mind: mind, recentSubjects: const [],
+      );
+      expect(phrase, isNotNull);
+      expect(phrase!, contains('auth token'),
+          reason: 'no symbols → path fallback');
+    });
+
+    test('structural verb fires on strong add signal', () {
+      final engine = _fixtureEngine();
+      final probe = DiffProbe(
+        sourceWeights: const {'lib/auth/spectral_ricci.dart': 1.0},
+        primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+        suggestedTemperature: 1.0,
+        stats: const ProbeStats(
+          primaryCount: 1, mMatches: 0, abMatches: 0,
+          mSymbols: 2, coherence: 1.0,
+          addedLineCount: 30, removedLineCount: 2,
+        ),
+        diffSymbols: const ['cacheLayer', 'cacheStore'],
+      );
+      final mind = LogosMind(engine: engine);
+      final phrase = dreamCommitPhrase(
+        probe: probe, mind: mind, recentSubjects: const [],
+      );
+      expect(phrase, isNotNull);
+      expect(phrase!.startsWith('add '), isTrue,
+          reason: '94% adds → structural "add"');
+    });
+
+    test('different symbols on same file produce different phrases', () {
+      final engine = _fixtureEngine();
+      makeProbe(List<String> syms) => DiffProbe(
+            sourceWeights: const {'lib/auth/spectral_ricci.dart': 1.0},
+            primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+            suggestedTemperature: 1.0,
+            stats: const ProbeStats(
+              primaryCount: 1, mMatches: 0, abMatches: 0,
+              mSymbols: 2, coherence: 1.0,
+            ),
+            diffSymbols: syms,
+          );
+      final mind = LogosMind(engine: engine);
+      final subjects = const ['refactor core', 'add feature'];
+
+      final phraseA = dreamCommitPhrase(
+        probe: makeProbe(const ['retryLogic', 'retryHandler']),
+        mind: mind, recentSubjects: subjects,
+      );
+      final phraseB = dreamCommitPhrase(
+        probe: makeProbe(const ['cacheLayer', 'cacheStore']),
+        mind: mind, recentSubjects: subjects,
+      );
+      expect(phraseA, isNot(equals(phraseB)),
+          reason: 'different symbols → different phrases');
+    });
+  });
 }

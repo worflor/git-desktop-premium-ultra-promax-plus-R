@@ -431,6 +431,7 @@ const _changelog = <_ReleaseNote>[
     date: '2026-05-09',
     bullets: [
       'Welcome to the first non-internal release. We have:',
+      'Beep beep, Wick.exe alpha integration is here for those who have the binary. It is unreleased, extremely alpha, and somehow already fits like it was supposed to be there.',
       'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
       'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
       'Settings got shorter to scroll through. The three AI feature blocks are collapsed into one stage, Diagnostics now defaults to the UI section because it is usually the least dramatic one, and the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',

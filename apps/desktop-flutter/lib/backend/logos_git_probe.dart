@@ -72,11 +72,17 @@ class DiffProbe {
   /// Per-axis diagnostic counts for observability.
   final ProbeStats stats;
 
+  /// M-axis identifiers extracted from the diff's +/- lines. Already
+  /// computed for pickaxe lookup — stored here so dream phrasing can
+  /// reuse them without a second extraction pass.
+  final List<String> diffSymbols;
+
   const DiffProbe({
     required this.sourceWeights,
     required this.primaryPaths,
     required this.suggestedTemperature,
     required this.stats,
+    this.diffSymbols = const [],
   });
 
   /// Empty probe — no sources. `diffuse` will return empty.
@@ -105,6 +111,12 @@ class ProbeStats {
   /// files whose identifier overlap with change-set peers was the signal.
   /// Tracked so SSE can calibrate symbol-axis utility per regime.
   final int symbolMatches;
+
+  /// +/- line counts from the diff (excluding headers). Feeds dream's
+  /// structural verb selection (add vs remove vs refactor).
+  final int addedLineCount;
+  final int removedLineCount;
+
   const ProbeStats({
     required this.primaryCount,
     required this.mMatches,
@@ -112,7 +124,14 @@ class ProbeStats {
     required this.mSymbols,
     required this.coherence,
     this.symbolMatches = 0,
+    this.addedLineCount = 0,
+    this.removedLineCount = 0,
   });
+
+  double get addRatio {
+    final total = addedLineCount + removedLineCount;
+    return total == 0 ? 0.5 : addedLineCount / total;
+  }
 
   @override
   String toString() =>
@@ -303,6 +322,21 @@ class LogosGitProbeBuilder {
       if (engine.symbolEdges[path]?.isNotEmpty ?? false) symbolMatches++;
     }
 
+    // Count +/- lines for dream's structural verb selection.
+    var addedLines = 0;
+    var removedLines = 0;
+    for (final line in diffText.split('\n')) {
+      if (line.isEmpty) continue;
+      final c = line.codeUnitAt(0);
+      if (c == 0x2B) {
+        if (line.length >= 3 && line.codeUnitAt(1) == 0x2B && line.codeUnitAt(2) == 0x2B && (line.length == 3 || line.codeUnitAt(3) == 0x20)) continue;
+        addedLines++;
+      } else if (c == 0x2D) {
+        if (line.length >= 3 && line.codeUnitAt(1) == 0x2D && line.codeUnitAt(2) == 0x2D && (line.length == 3 || line.codeUnitAt(3) == 0x20)) continue;
+        removedLines++;
+      }
+    }
+
     return DiffProbe(
       sourceWeights: weights,
       primaryPaths: primaryPaths,
@@ -314,7 +348,10 @@ class LogosGitProbeBuilder {
         mSymbols: addedRemovedSymbols.length,
         coherence: coherence,
         symbolMatches: symbolMatches,
+        addedLineCount: addedLines,
+        removedLineCount: removedLines,
       ),
+      diffSymbols: addedRemovedSymbols,
     );
   }
 

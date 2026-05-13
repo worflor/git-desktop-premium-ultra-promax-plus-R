@@ -23,6 +23,7 @@ dependencies:
   # Used by logos_git.dart for @visibleForTesting annotations. Pins the
   # transitive dep as a direct dep so it's legal to import.
   meta: ^1.17.0
+  ffi: ^2.1.3
 
 dev_dependencies:
   flutter_test:

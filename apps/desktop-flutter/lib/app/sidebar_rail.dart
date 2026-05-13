@@ -1937,6 +1937,7 @@ class _AiKindBadge extends StatelessWidget {
       AiActivityKind.review => 'review',
       AiActivityKind.muse => 'muse',
       AiActivityKind.ask => 'ask',
+      AiActivityKind.present => 'present',
     };
     if (record.isRunning) return '$kind running';
     if (record.isError) return '$kind failed (unread)';
@@ -1975,6 +1976,8 @@ class _AiKindBadge extends StatelessWidget {
         return AnimatedBubbleIcon(state: state, color: color, size: size);
       case AiActivityKind.ask:
         return Icon(Icons.diamond_outlined, size: size, color: color);
+      case AiActivityKind.present:
+        return Icon(Icons.open_in_browser, size: size, color: color);
     }
   }
 

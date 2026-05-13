@@ -129,6 +129,11 @@ class _PrimaryCommitAction {
   });
 }
 
+String _tokensLabel(int chars) {
+  final t = chars ~/ 4;
+  return t >= 1000 ? '${(t / 1000).toStringAsFixed(1)}k' : '$t';
+}
+
 class ChangesPage extends StatefulWidget {
   const ChangesPage({super.key});
   @override
@@ -5924,16 +5929,14 @@ class _ChangesPageState extends State<ChangesPage> {
                                         onToggleIncluded: (path, value) =>
                                             _toggleIncluded(path, value),
                                         onCarve: (paths) {
-                                          // Carve / untie reshape the
-                                          // selection but don't close
-                                          // open drawers — the user
-                                          // can re-run from the
-                                          // toolbar if they want
-                                          // results for the new set.
                                           setState(() {
-                                            _includedPaths
-                                              ..clear()
-                                              ..addAll(paths);
+                                            final allIncluded = paths.every(
+                                                _includedPaths.contains);
+                                            if (allIncluded) {
+                                              _includedPaths.removeAll(paths);
+                                            } else {
+                                              _includedPaths.addAll(paths);
+                                            }
                                             _actionError = null;
                                           });
                                         },
@@ -7504,14 +7507,21 @@ class _MusePaneState extends State<_MusePane> {
                 ),
               if (keptLine.isNotEmpty) ...[
                 const SizedBox(width: 6),
-                // Flexible, not Expanded, so the text takes only what
-                // it needs. Ellipsizes only when the window is truly
-                // narrow (kept line exceeds available space after
-                // icon + Muse + guardrail label).
                 Flexible(
                   child: Text('· $keptLine',
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: t.textFaint, fontSize: 11)),
+                ),
+              ],
+              if (widget.result != null) ...[
+                const Spacer(),
+                Text(
+                  '${_tokensLabel(widget.result!.promptCharacters)} → ${_tokensLabel(widget.result!.diffCharacters)}',
+                  style: TextStyle(
+                    fontFamily: AppFonts.mono,
+                    fontSize: 9,
+                    color: t.textFaint.withValues(alpha: 0.6),
+                  ),
                 ),
               ],
             ],
@@ -8405,6 +8415,15 @@ class _CommitReviewPane extends StatelessWidget {
                               ),
                             ),
                           ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
+                            style: TextStyle(
+                              fontFamily: AppFonts.mono,
+                              fontSize: 9,
+                              color: tokens.textFaint.withValues(alpha: 0.6),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -8434,7 +8453,7 @@ class _CommitReviewPane extends StatelessWidget {
                     ],
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 2),
                 Row(
                   children: [
                     Expanded(
@@ -13710,7 +13729,6 @@ class _MergeResolveSplitButton extends StatefulWidget {
 }
 
 class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
-  final LayerLink _link = LayerLink();
   OverlayEntry? _entry;
   bool _hoverMain = false;
   bool _hoverChev = false;
@@ -13725,11 +13743,14 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
         .toList();
     if (alt.isEmpty) return;
     _entry = OverlayEntry(builder: (ctx) {
-      final menuCard = CompositedTransformFollower(
-        link: _link,
-        followerAnchor: Alignment.topRight,
-        targetAnchor: Alignment.bottomRight,
-        offset: const Offset(0, 6),
+      final box = context.findRenderObject() as RenderBox;
+      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
+          + const Offset(0, 6);
+      final menuCard = CustomSingleChildLayout(
+        delegate: ViewportClampDelegate(
+          desired: target,
+          anchor: Alignment.topRight,
+        ),
         child: MaterialSurface(
           tone: AppMaterialTone.surface1,
           radius: ctx.surfaceShader.geometry.cardRadius,
@@ -13772,7 +13793,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
             onPointerDown: (_) => _closeMenu(),
           ),
         ),
-        Positioned(child: menuCard),
+        Positioned.fill(child: menuCard),
       ]);
     });
     overlay.insert(_entry!);
@@ -13798,10 +13819,8 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
         ai.labelForCategory(widget.defaultCategoryId, widget.defaultCategoryId);
     final modelValue = ai.modelSelections[widget.defaultCategoryId] ?? '';
     final modelDisplay = _modelDisplayName(modelValue);
-    return CompositedTransformTarget(
-      link: _link,
-      child: MouseRegion(
-        child: Row(
+    return MouseRegion(
+      child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             // Main label
@@ -13900,8 +13919,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 

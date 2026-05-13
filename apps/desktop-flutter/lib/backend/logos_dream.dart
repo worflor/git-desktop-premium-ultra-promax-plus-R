@@ -23,6 +23,7 @@
 
 import 'dart:math' as math;
 
+import 'engram_tokenizer.dart' show splitIdentifier;
 import 'logos_field.dart';
 import 'logos_git.dart';
 import 'logos_git_probe.dart';
@@ -173,6 +174,63 @@ String pickWeightedVerb(
   return items.first.key;
 }
 
+const _boringRoots = <String>{
+  'get', 'set', 'new', 'old', 'data', 'type', 'list', 'item',
+  'index', 'key', 'node', 'state', 'init', 'test', 'mock',
+  'build', 'create', 'widget', 'context', 'model', 'view',
+  'page', 'screen', 'event', 'action', 'handler', 'callback',
+  'param', 'arg', 'args', 'config', 'option', 'options',
+  'util', 'utils', 'helper', 'base', 'abstract', 'impl',
+  'default', 'override', 'super', 'self', 'this', 'that',
+  'value', 'result', 'info', 'name', 'path', 'file',
+};
+
+/// Extract a single qualifying word from the M-axis diff symbols.
+/// Returns a dominant sub-token that appears across multiple symbols
+/// (a real theme, not noise). Returns null when no clear theme exists.
+///
+/// This qualifies the path phrase ("wick" + "palette state" → "wick
+/// palette state") rather than replacing it — path phrases are always
+/// more coherent than recombined sub-token fragments.
+String? qualifierFromDiffSymbols(List<String> symbols) {
+  if (symbols.isEmpty) return null;
+
+  final freq = <String, int>{};
+  for (final sym in symbols) {
+    final subs = splitIdentifier(sym);
+    final seen = <String>{};
+    for (final sub in subs) {
+      if (_boringRoots.contains(sub) || sub.length < 3) continue;
+      if (seen.add(sub)) freq[sub] = (freq[sub] ?? 0) + 1;
+    }
+  }
+
+  // Only surface a qualifier when it appears across 2+ distinct
+  // symbols — that's a genuine theme, not a single identifier echoing.
+  final candidates = freq.entries
+      .where((e) => e.value >= 2)
+      .toList()
+    ..sort((a, b) {
+      final cmp = b.value.compareTo(a.value);
+      if (cmp != 0) return cmp;
+      return b.key.length.compareTo(a.key.length);
+    });
+
+  if (candidates.isEmpty) return null;
+  return candidates.first.key;
+}
+
+/// Choose a structural verb from the probe's add/remove line ratio.
+/// Returns null when the signal is too ambiguous to override the
+/// history-based verb.
+String? _structuralVerb(ProbeStats stats) {
+  if (stats.addedLineCount + stats.removedLineCount == 0) return null;
+  final ratio = stats.addRatio;
+  if (ratio >= 0.80) return 'add';
+  if (ratio <= 0.20) return 'remove';
+  return null;
+}
+
 /// Small set of vowels used for a/an agreement at render time.
 final _vowelSoundRegex = RegExp(r'^[aeiouAEIOU]');
 
@@ -210,30 +268,55 @@ String? dreamCommitPhrase({
   bool includeDreamedModifier = true,
 }) {
   if (probe.sourceWeights.length < minSources) return null;
-  // Rank source files by weight and gather the top phrases from the
-  // actual diff — not from the mind's speculative neighborhood. The
-  // strongest file is the subject; the next distinct phrases become
-  // modifiers. This keeps the dream grounded in what the user actually
-  // touched rather than what the engine imagines.
   final ranked = probe.sourceWeights.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   if (ranked.isEmpty) return null;
 
-  final subjectPhrase = phraseForPath(ranked.first.key);
+  // Subject phrase from the top-weight path. Optionally qualified
+  // by a dominant sub-token from the M-axis symbols when a clear
+  // theme spans 3+ identifiers (e.g. "wick" + "palette state" →
+  // "wick palette state"). Path phrases stay as the coherence anchor.
+  var subjectPhrase = phraseForPath(ranked.first.key);
   if (subjectPhrase.isEmpty) return null;
+  final qualifier = qualifierFromDiffSymbols(probe.diffSymbols);
+  if (qualifier != null && !subjectPhrase.contains(qualifier)) {
+    subjectPhrase = '$qualifier $subjectPhrase';
+  }
 
   final trimmedSubjects =
       recentSubjects.take(maxVerbsConsidered).toList(growable: false);
   final verbCounts = harvestVerbCounts(trimmedSubjects);
-  final verbRng = math.Random(_diffHash(probe.sourceWeights).abs());
-  final verb = verbCounts.isEmpty
-      ? defaultVerb
-      : pickWeightedVerb(
-          verbCounts,
-          rng: verbRng,
-          rarePreference: 0.15,
-          fallback: defaultVerb,
-        );
+  final verbRng = math.Random(
+    _diffHash(probe.sourceWeights, symbols: probe.diffSymbols).abs(),
+  );
+
+  // Structural verb from add/remove ratio, blended with repo voice.
+  String verb;
+  final structVerb = _structuralVerb(probe.stats);
+  if (structVerb != null) {
+    final inRepoVoice = verbCounts.containsKey(structVerb);
+    final strongSignal =
+        probe.stats.addRatio >= 0.85 || probe.stats.addRatio <= 0.15;
+    verb = (inRepoVoice || strongSignal)
+        ? structVerb
+        : (verbCounts.isEmpty
+            ? defaultVerb
+            : pickWeightedVerb(
+                verbCounts,
+                rng: verbRng,
+                rarePreference: 0.15,
+                fallback: defaultVerb,
+              ));
+  } else {
+    verb = verbCounts.isEmpty
+        ? defaultVerb
+        : pickWeightedVerb(
+            verbCounts,
+            rng: verbRng,
+            rarePreference: 0.15,
+            fallback: defaultVerb,
+          );
+  }
 
   // Modifiers from the OTHER files in the actual diff, not from
   // speculative mind queries. Keeps the phrase honest about what
@@ -275,7 +358,7 @@ String? dreamCommitPhrase({
         ? const [r'$S', 'with', r'$M1']
         : const [r'$S'];
   } else {
-    final h = _diffHash(probe.sourceWeights).abs();
+    final h = _diffHash(probe.sourceWeights, symbols: probe.diffSymbols).abs();
     skeleton = matching[h % matching.length].slots;
   }
 
@@ -551,12 +634,20 @@ List<_PhraseStructure> _harvestPhraseStructures(
 /// Same diff → same hash → stable template / dream selections across
 /// repeated runs. Different diffs → different hashes → structures
 /// rotate naturally without explicit state.
-int _diffHash(Map<String, double> weights) {
-  var h = 0x811c9dc5; // fnv-1a offset basis; arbitrary, just a seed
+int _diffHash(Map<String, double> weights, {List<String> symbols = const []}) {
+  var h = 0x811c9dc5;
   final keys = weights.keys.toList()..sort();
   for (final k in keys) {
-    h = (h ^ k.hashCode) * 0x01000193;
-    h &= 0x7fffffff;
+    for (var i = 0; i < k.length; i++) {
+      h = (h ^ k.codeUnitAt(i)) * 0x01000193;
+      h &= 0x7fffffff;
+    }
+  }
+  for (final s in symbols) {
+    for (var i = 0; i < s.length; i++) {
+      h = (h ^ s.codeUnitAt(i)) * 0x01000193;
+      h &= 0x7fffffff;
+    }
   }
   return h;
 }
@@ -633,8 +724,6 @@ Future<({String? phrase, LogosFieldCharacter? character})>
 String slugifyForBranch(String phrase, {int maxLen = 48}) {
   if (phrase.isEmpty) return '';
   var out = phrase.toLowerCase();
-  // Replace any run of non-[a-z0-9-] with a single space, then
-  // squeeze spaces into hyphens.
   out = out.replaceAll(RegExp(r'[^a-z0-9-]+'), ' ');
   out = out.replaceAll(RegExp(r'\s+'), '-');
   out = out.replaceAll(RegExp(r'-+'), '-');
@@ -643,5 +732,48 @@ String slugifyForBranch(String phrase, {int maxLen = 48}) {
     out = out.substring(0, maxLen).replaceAll(RegExp(r'-+$'), '');
   }
   return out;
+}
+
+/// Async branch-name dream with structural verb prefix. Produces
+/// names like `add/wick-palette-integration` or `remove/legacy-tracking`.
+/// Falls back to plain slug when no structural verb is detected.
+Future<String?> dreamBranchSlug({
+  required String repoPath,
+  required String diffText,
+  required LogosGit engine,
+  List<String> recentSubjects = const [],
+}) async {
+  if (diffText.isEmpty) return null;
+  final probe = await buildDiffProbe(
+    repoPath: repoPath,
+    diffText: diffText,
+    engine: engine,
+  );
+  if (probe.sourceWeights.isEmpty) return null;
+
+  final ranked = probe.sourceWeights.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  if (ranked.isEmpty) return null;
+
+  var noun = phraseForPath(ranked.first.key);
+  if (noun.isEmpty) return null;
+  final qualifier = qualifierFromDiffSymbols(probe.diffSymbols);
+  if (qualifier != null && !noun.contains(qualifier)) {
+    noun = '$qualifier $noun';
+  }
+
+  var verb = _structuralVerb(probe.stats);
+  if (verb == null && recentSubjects.isNotEmpty) {
+    final counts = harvestVerbCounts(recentSubjects.take(40).toList());
+    if (counts.isNotEmpty) {
+      verb = pickWeightedVerb(
+        counts,
+        rng: math.Random(_diffHash(probe.sourceWeights, symbols: probe.diffSymbols).abs()),
+      );
+    }
+  }
+  final slug = slugifyForBranch(noun);
+  if (slug.isEmpty) return null;
+  return verb != null ? '$verb/$slug' : slug;
 }
 

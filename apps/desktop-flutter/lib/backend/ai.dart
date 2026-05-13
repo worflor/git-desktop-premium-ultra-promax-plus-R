@@ -21,6 +21,7 @@ import 'logos_vis_events.dart';
 import 'git.dart';
 import 'git_result.dart';
 import 'process_utils.dart';
+import 'win_job_object.dart';
 import 'package:meta/meta.dart';
 
 import 'ai_context_engine.dart';
@@ -660,6 +661,7 @@ Future<GitResult<String>> runAsk({
   bool fastMode = false,
   bool supportsReasoning = true,
   String commandLabelPrefix = 'ai.ask',
+  int? maxTokens,
 }) async {
   try {
     if (prompt.trim().isEmpty) {
@@ -688,6 +690,7 @@ Future<GitResult<String>> runAsk({
       reasoningEffort: reasoningEffort,
       fastMode: fastMode,
       supportsReasoning: supportsReasoning,
+      maxTokens: maxTokens,
     );
     if (!result.ok || result.output == null) {
       return GitResult.err(result.error ?? 'Provider returned no answer.');
@@ -7863,6 +7866,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   String? reasoningEffort,
   bool fastMode = false,
   bool supportsReasoning = true,
+  int? maxTokens,
 }) async {
   if (provider.kind == _ProviderKind.apiProvider && provider.apiProvider != null) {
     final entry = _apiKeysSnapshot[provider.id];
@@ -7884,6 +7888,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       model: modelId,
       credentials: creds,
       reasoningEffort: effectiveEffort,
+      maxTokens: maxTokens,
     ));
     if (apiResult.text == null) {
       return _ProviderPromptResult(
@@ -7907,7 +7912,8 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     final geminiModel = modelId.startsWith('gemini ')
         ? modelId.substring('gemini '.length)
         : modelId;
-    final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
+    final apiResult = await _runGeminiApiRequest(prompt, geminiModel,
+        maxTokens: maxTokens);
     if (apiResult.text == null) {
       return _ProviderPromptResult(
         ok: false,
@@ -9014,6 +9020,7 @@ Future<_CommandResult?> _runCommandWithTimeout(
       invocation.args,
       runInShell: false,
     );
+    WinJobObject.assignProcess(process.pid);
     final stdoutFuture = process.stdout.transform(utf8.decoder).join();
     final stderrFuture = process.stderr.transform(utf8.decoder).join();
 
@@ -9095,7 +9102,7 @@ Future<_CommandResult?> _runObservedProcess({
         runInShell: false,
         environment: environment.isEmpty ? null : environment,
       );
-      // Close Dart's stdin pipe immediately — input comes from the file.
+      WinJobObject.assignProcess(process.pid);
       try {
         await process.stdin.close();
       } catch (_) {}
@@ -9107,6 +9114,7 @@ Future<_CommandResult?> _runObservedProcess({
         runInShell: false,
         environment: environment.isEmpty ? null : environment,
       );
+      WinJobObject.assignProcess(process.pid);
       // Non-Windows or no stdin payload — use pipe normally.
       try {
         if (stdinPayload != null) {
@@ -9364,7 +9372,8 @@ Future<String?> _geminiApiEnsureProject() async {
 /// Call the Gemini Code Assist generateContent API directly.
 /// Returns the model's text response, or null on failure.
 Future<({String? text, String? error, int inputTokens, int outputTokens})>
-    _runGeminiApiRequest(String prompt, String modelAlias) async {
+    _runGeminiApiRequest(String prompt, String modelAlias,
+        {int? maxTokens}) async {
   final token = await _geminiApiEnsureToken();
   if (token == null) {
     return (
@@ -9402,6 +9411,7 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
       ],
       'generationConfig': {
         'temperature': 0.3,
+        if (maxTokens != null) 'maxOutputTokens': maxTokens,
       },
     },
   });

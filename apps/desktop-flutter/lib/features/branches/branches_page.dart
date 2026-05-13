@@ -577,15 +577,12 @@ class _BranchesPageState extends State<BranchesPage> {
             .where((s) => s.isNotEmpty)
             .toList()
         : const <String>[];
-    final phrase = await dreamFromDiff(
+    return dreamBranchSlug(
       repoPath: repoPath,
       diffText: diffText,
       engine: engine,
       recentSubjects: subjects,
     );
-    if (phrase == null) return null;
-    final slug = slugifyForBranch(phrase);
-    return slug.isEmpty ? null : slug;
   }
 
   @override
@@ -8774,7 +8771,6 @@ class _MergeMenuAnchor extends StatefulWidget {
 }
 
 class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
-  final LayerLink _link = LayerLink();
   OverlayEntry? _entry;
   bool _deleteBranchAfter = false;
 
@@ -8782,6 +8778,9 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
     final overlay = Overlay.of(context);
     _entry = OverlayEntry(builder: (ctx) {
       final t = ctx.tokens;
+      final box = context.findRenderObject() as RenderBox;
+      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
+          + const Offset(0, 6);
       return Stack(
         children: [
           Positioned.fill(
@@ -8790,12 +8789,12 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
               onPointerDown: (_) => _close(),
             ),
           ),
-          Positioned(
-            child: CompositedTransformFollower(
-              link: _link,
-              followerAnchor: Alignment.topRight,
-              targetAnchor: Alignment.bottomRight,
-              offset: const Offset(0, 6),
+          Positioned.fill(
+            child: CustomSingleChildLayout(
+              delegate: ViewportClampDelegate(
+                desired: target,
+                anchor: Alignment.topRight,
+              ),
               child: Material(
                 color: Colors.transparent,
                 child: IntrinsicWidth(
@@ -8901,13 +8900,10 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
 
   @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
-      link: _link,
-      child: _ActionButton(
-        label: '[m] merge ▾',
-        tone: _ActionTone.primary,
-        onTap: widget.enabled ? _open : () {},
-      ),
+    return _ActionButton(
+      label: '[m] merge ▾',
+      tone: _ActionTone.primary,
+      onTap: widget.enabled ? _open : () {},
     );
   }
 }
@@ -11989,7 +11985,6 @@ class _PatchResolveSplitButton extends StatefulWidget {
 }
 
 class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
-  final LayerLink _link = LayerLink();
   OverlayEntry? _entry;
   bool _hoverMain = false;
   bool _hoverChev = false;
@@ -12019,6 +12014,9 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
         .toList();
     if (alt.isEmpty) return;
     _entry = OverlayEntry(builder: (ctx) {
+      final box = context.findRenderObject() as RenderBox;
+      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
+          + const Offset(0, 6);
       return Stack(children: [
         Positioned.fill(
           child: Listener(
@@ -12026,12 +12024,12 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
             onPointerDown: (_) => _closeMenu(),
           ),
         ),
-        Positioned(
-          child: CompositedTransformFollower(
-            link: _link,
-            followerAnchor: Alignment.topRight,
-            targetAnchor: Alignment.bottomRight,
-            offset: const Offset(0, 6),
+        Positioned.fill(
+          child: CustomSingleChildLayout(
+            delegate: ViewportClampDelegate(
+              desired: target,
+              anchor: Alignment.topRight,
+            ),
             child: MaterialSurface(
               tone: AppMaterialTone.surface1,
               radius: ctx.surfaceShader.geometry.cardRadius,
@@ -12102,23 +12100,21 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
     final label = ai.labelForCategory(defaultCategory, defaultCategory);
     final modelValue = ai.modelSelections[defaultCategory] ?? '';
     final modelDisplay = _modelDisplay(modelValue);
-    return CompositedTransformTarget(
-      link: _link,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            onEnter: (_) => setState(() => _hoverMain = true),
-            onExit: (_) => setState(() => _hoverMain = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap:
-                  widget.busy ? null : () => widget.onAction(defaultCategory),
-              child: Tooltip(
-                message: modelDisplay.isEmpty
-                    ? 'apply with patch from $label'
-                    : 'apply with patch from $label  ·  $modelDisplay',
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hoverMain = true),
+          onExit: (_) => setState(() => _hoverMain = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap:
+                widget.busy ? null : () => widget.onAction(defaultCategory),
+            child: Tooltip(
+              message: modelDisplay.isEmpty
+                  ? 'apply with patch from $label'
+                  : 'apply with patch from $label  ·  $modelDisplay',
                 child: AnimatedContainer(
                   duration: context.motion(shader.duration),
                   curve: shader.safeCurve,
@@ -12189,8 +12185,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 }
 

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -8,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/ai_activity_state.dart';
+import '../../app/ai_settings_state.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../backend/aperture_sweep.dart'
@@ -15,10 +18,12 @@ import '../../backend/aperture_sweep.dart'
 import '../../backend/dtos.dart';
 import '../../backend/engram_fit.dart'
     show branchLabelConverging, branchLabelDiverging, branchLabelSteady;
+import '../../backend/ai.dart';
 import '../../backend/repo_summary/api.dart';
 import '../../backend/repo_summary/types.dart' as rs;
 import '../../components/icons/app_icons.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/form_controls.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
@@ -52,16 +57,34 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
   String? _selectedPivotHash;
   String? _selectedStratumId;
 
+  // Summary state — hoisted here so it survives tab switches and
+  // panel close/reopen within the same repo session.
+  rs.RepoDoc? _summaryDoc;
+  String? _summaryMarkdown;
+  String? _summaryError;
+  String? _summaryPresentedHtml;
+  String? _summaryRepoPath;
+
+  void _onSummaryStateChanged(
+    rs.RepoDoc? doc, String? markdown, String? error, String? presentedHtml,
+  ) {
+    _summaryDoc = doc;
+    _summaryMarkdown = markdown;
+    _summaryError = error;
+    _summaryPresentedHtml = presentedHtml;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Provider's `context.select` asserts `debugDoingBuild`, which is
-    // only true during `build` — not during `didChangeDependencies`.
-    // The narrowing subscription lives in [build] below; here we just
-    // need a one-shot READ of the active path to decide whether to
-    // kick off a post-frame load. `context.read` is the valid accessor
-    // outside build.
     final repoPath = context.read<RepositoryState>().activePath;
+    if (repoPath != _summaryRepoPath) {
+      _summaryRepoPath = repoPath;
+      _summaryDoc = null;
+      _summaryMarkdown = null;
+      _summaryError = null;
+      _summaryPresentedHtml = null;
+    }
     final xrayState = context.read<RepositoryXrayState>();
     if (repoPath == null) {
       _lastLoadedRepoPath = null;
@@ -220,6 +243,11 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                         _selectedPivotHash == hash ? null : hash),
                 onStratumSelected: (id) => setState(() => _selectedStratumId =
                     _selectedStratumId == id ? null : id),
+                summaryDoc: _summaryDoc,
+                summaryMarkdown: _summaryMarkdown,
+                summaryError: _summaryError,
+                summaryPresentedHtml: _summaryPresentedHtml,
+                onSummaryStateChanged: _onSummaryStateChanged,
               );
               final inspector = _InspectorPanel(
                 view: _view,
@@ -316,6 +344,11 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                               onStratumSelected: (id) => setState(() =>
                                   _selectedStratumId =
                                       _selectedStratumId == id ? null : id),
+                              summaryDoc: _summaryDoc,
+                              summaryMarkdown: _summaryMarkdown,
+                              summaryError: _summaryError,
+                              summaryPresentedHtml: _summaryPresentedHtml,
+                              onSummaryStateChanged: _onSummaryStateChanged,
                               mapObstacle: obstacle,
                             ),
                           ),
@@ -676,6 +709,13 @@ class _MainViewport extends StatelessWidget {
   /// (treemap-interior coords). Ignored for non-map views.
   final Rect? mapObstacle;
 
+  final rs.RepoDoc? summaryDoc;
+  final String? summaryMarkdown;
+  final String? summaryError;
+  final String? summaryPresentedHtml;
+  final void Function(rs.RepoDoc?, String?, String?, String?)
+      onSummaryStateChanged;
+
   const _MainViewport({
     required this.view,
     required this.snapshot,
@@ -691,6 +731,11 @@ class _MainViewport extends StatelessWidget {
     required this.onHotspotSelected,
     required this.onPivotSelected,
     required this.onStratumSelected,
+    required this.summaryDoc,
+    required this.summaryMarkdown,
+    required this.summaryError,
+    required this.summaryPresentedHtml,
+    required this.onSummaryStateChanged,
     this.mapObstacle,
   });
 
@@ -719,7 +764,14 @@ class _MainViewport extends StatelessWidget {
             selectedSignalId: selectedSignalId,
             onSignalSelected: onSignalSelected,
           ),
-        _XrayView.summary => _SummaryView(repoPath: snapshot.header.repoPath),
+        _XrayView.summary => _SummaryView(
+          repoPath: snapshot.header.repoPath,
+          initialDoc: summaryDoc,
+          initialMarkdown: summaryMarkdown,
+          initialError: summaryError,
+          initialPresentedHtml: summaryPresentedHtml,
+          onStateChanged: onSummaryStateChanged,
+        ),
       },
     );
   }
@@ -4308,28 +4360,78 @@ class _EventCard extends StatelessWidget {
 
 class _SummaryView extends StatefulWidget {
   final String repoPath;
-  const _SummaryView({required this.repoPath});
+  final rs.RepoDoc? initialDoc;
+  final String? initialMarkdown;
+  final String? initialError;
+  final String? initialPresentedHtml;
+  final void Function(rs.RepoDoc?, String?, String?, String?) onStateChanged;
+
+  const _SummaryView({
+    required this.repoPath,
+    required this.initialDoc,
+    required this.initialMarkdown,
+    required this.initialError,
+    required this.initialPresentedHtml,
+    required this.onStateChanged,
+  });
   @override
   State<_SummaryView> createState() => _SummaryViewState();
 }
 
 class _SummaryViewState extends State<_SummaryView> {
   bool _generating = false;
-  rs.RepoDoc? _doc;
-  String? _markdown;
-  String? _error;
+  bool _presenting = false;
+  int _presentPromptChars = 0;
+  int _presentOutputChars = 0;
+  late rs.RepoDoc? _doc = widget.initialDoc;
+  late String? _markdown = widget.initialMarkdown;
+  late String? _error = widget.initialError;
+  late String? _presentedHtml = widget.initialPresentedHtml;
+  bool _presentMode = false;
+  final _presentCtrl = TextEditingController();
+  final _presentFocus = FocusNode();
+  final _keyboardFocus = FocusNode();
+
+  void _pushState() {
+    widget.onStateChanged(_doc, _markdown, _error, _presentedHtml);
+  }
+
+  @override
+  void dispose() {
+    _presentCtrl.dispose();
+    _presentFocus.dispose();
+    _keyboardFocus.dispose();
+    super.dispose();
+  }
+
+  void _enterPresentMode() {
+    if (_presentMode) return;
+    setState(() => _presentMode = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _presentFocus.requestFocus();
+    });
+  }
+
+  void _exitPresentMode() {
+    if (!_presentMode) return;
+    setState(() => _presentMode = false);
+  }
 
   @override
   void didUpdateWidget(covariant _SummaryView old) {
     super.didUpdateWidget(old);
-    // Repo switched — drop cached doc so the user doesn't see stale
-    // content. The generation path also guards against completing with
-    // stale data, but this covers the passive case where the user
-    // switches repos without re-generating.
     if (old.repoPath != widget.repoPath) {
       _doc = null;
       _markdown = null;
       _error = null;
+      _presentedHtml = null;
+      _generating = false;
+      _presenting = false;
+      _presentMode = false;
+      _presentCtrl.clear();
+      _presentPromptChars = 0;
+      _presentOutputChars = 0;
     }
   }
 
@@ -4341,34 +4443,33 @@ class _SummaryViewState extends State<_SummaryView> {
       _error = null;
     });
     try {
-      // Run the full pipeline on a background isolate so the UI stays
-      // responsive on large repos. `generateRepoSummary` reaches into
-      // the git subprocess + diagnostics writers, which use plugin
-      // channels — those need the binary messenger bootstrapped inside
-      // the worker isolate. We pass the root-isolate token alongside
-      // the repo path and initialise the messenger as the first thing
-      // the worker does.
       final rootToken = RootIsolateToken.instance!;
       final doc = await compute<_SummaryJob, rs.RepoDoc>(
         _runSummaryJob,
         _SummaryJob(rootToken: rootToken, repoPath: repoPath),
       );
       if (!mounted) return;
-      // Guard: if the user switched repos while we were generating,
-      // discard the stale result.
-      if (widget.repoPath != repoPath) return;
+      if (widget.repoPath != repoPath) {
+        setState(() => _generating = false);
+        return;
+      }
       setState(() {
         _doc = doc;
         _markdown = repoDocToMarkdown(doc);
         _generating = false;
       });
+      _pushState();
     } on Object catch (e) {
       if (!mounted) return;
-      if (widget.repoPath != repoPath) return;
+      if (widget.repoPath != repoPath) {
+        setState(() => _generating = false);
+        return;
+      }
       setState(() {
-        _error = 'Generation failed: $e';
+        _error = 'Analysis failed: $e';
         _generating = false;
       });
+      _pushState();
     }
   }
 
@@ -4410,22 +4511,271 @@ class _SummaryViewState extends State<_SummaryView> {
     }
   }
 
+  Future<void> _runPresent() async {
+    if (_presenting) return;
+    final md = _markdown;
+    final doc = _doc;
+    if (md == null || doc == null) return;
+    final repoPath = widget.repoPath;
+    final repoName = doc.repoName;
+    final aiSettings = context.read<AiSettingsState>();
+    final activity = context.read<AiActivityState>();
+    final categoryId = aiSettings.presentModelCategoryId;
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No AI model configured.'),
+        duration: Duration(seconds: 3),
+      ));
+      return;
+    }
+
+    final scopeKey = 'present:$repoPath';
+    setState(() => _presenting = true);
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.present,
+      scopeKey: scopeKey,
+      scopeLabel: _presentCtrl.text.trim().isEmpty
+          ? null
+          : _presentCtrl.text.trim(),
+    );
+
+    try {
+      final dataJson = const JsonEncoder.withIndent('  ').convert(doc.toJson());
+      final userDirection = _presentCtrl.text.trim();
+      final customPrompt = aiSettings.presentPrompt.trim();
+
+      final instruction = customPrompt.isNotEmpty
+          ? customPrompt
+          : 'You are a production designer building a one-page interactive '
+              'experience. Your audience has never seen this codebase. Your '
+              'job is to make them *feel* its shape — what it does, how it\'s '
+              'organized, where the weight sits, how the pieces connect — in '
+              'under sixty seconds of scrolling.\n\n'
+              'You have one input: a structured RepoDoc (JSON) measured '
+              'from the repository\'s actual git history and file structure. '
+              'Every number is evidence. The JSON IS the source of truth — '
+              'render it, don\'t re-interpret it.\n\n'
+              'THE DATA\n'
+              '- files[]: every active file. centrality = structural importance '
+              '(0-1). activity = how actively changed. authenticity = signal vs '
+              'noise (0 = mechanical churn, 1 = intentional work). role = '
+              'source/test/doc/etc. regionId = which cluster it belongs to. '
+              'well = semantic concept.\n'
+              '- couplingEdges[]: files that change together, with strength. '
+              'This IS the dependency structure — not imports, but co-evolution.\n'
+              '- regions[]: clusters of related files. cohesion = how self-'
+              'contained (0-1). themes = what the cluster is about. '
+              'neighborNames = which other regions it talks to.\n'
+              '- regionLinks[]: the weight of connections between regions.\n'
+              '- backbone[]: the load-bearing files. keystoneScore combines '
+              'centrality with stability — high score = important AND reliable.\n'
+              '- archetypeDistances: proximity to 6 architecture shapes '
+              '(lower = closer). tree = spine with branches. modular = '
+              'independent clusters. bulk = one big ball. crystalline = '
+              'regular lattice. poisson = loosely coupled. goe = richly '
+              'interconnected.\n'
+              '- stats: the numbers at a glance.\n\n'
+              'CREATIVE DIRECTION\n'
+              'Build something someone would want to send to their team. '
+              'Use the data to drive real visualizations — graphs, charts, '
+              'spatial layouts, whatever the data calls for. Let the '
+              'topology of the code inform the topology of the page. '
+              'Surprise with craft, not with noise.\n\n'
+              'CONSTRAINTS\n'
+              'Single self-contained HTML file. All CSS and JS inline. '
+              'Zero external dependencies. Output the HTML directly — no '
+              'explanation, no markdown fences, no preamble.';
+
+      final parts = <String>[instruction];
+      if (userDirection.isNotEmpty) {
+        parts.add('\nUSER DIRECTION\n$userDirection');
+      }
+      parts.add('\n---\n\n## Repository Data\n```json\n$dataJson\n```');
+      final prompt = parts.join('\n');
+      _presentPromptChars = prompt.length;
+
+      final effort = aiSettings.resolveEffort(categoryId, modelValue);
+      final modelInfo = aiSettings.runtimeModelCategories
+          .expand((c) => c.models)
+          .where((m) => m.value == modelValue)
+          .firstOrNull;
+
+      final r = await runAsk(
+        repositoryPath: repoPath,
+        modelValue: modelValue,
+        prompt: prompt,
+        reasoningEffort: effort.effort,
+        fastMode: effort.fast,
+        supportsReasoning: modelInfo?.supportsReasoning ?? true,
+        commandLabelPrefix: 'ai.present',
+        maxTokens: 65536,
+      );
+
+      if (!mounted) return;
+      if (widget.repoPath != repoPath) {
+        setState(() => _presenting = false);
+        return;
+      }
+      if (!r.ok) {
+        activity.fail(
+          repoPath: repoPath,
+          kind: AiActivityKind.present,
+          error: r.error ?? 'Present failed.',
+          scopeKey: scopeKey,
+        );
+        setState(() => _presenting = false);
+        _pushState();
+        return;
+      }
+
+      var html = (r.data ?? '').trim();
+      if (html.startsWith('```')) {
+        final firstNewline = html.indexOf('\n');
+        if (firstNewline != -1) html = html.substring(firstNewline + 1);
+        if (html.endsWith('```')) {
+          html = html.substring(0, html.length - 3).trimRight();
+        }
+      }
+      if (!html.startsWith('<') && !html.startsWith('<!')) {
+        final doctype = html.indexOf('<!');
+        final tag = html.indexOf('<html');
+        final first = doctype >= 0 && (tag < 0 || doctype < tag)
+            ? doctype
+            : tag;
+        if (first > 0) html = html.substring(first);
+      }
+
+      _presentOutputChars = html.length;
+      final tempDir = Directory.systemTemp;
+      final safeName = repoName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-.]'), '_');
+      final filePath =
+          '${tempDir.path}${Platform.pathSeparator}$safeName-present.html';
+      await File(filePath).writeAsString(html);
+
+      if (Platform.isWindows) {
+        await Process.run(
+          'cmd',
+          ['/c', 'start', '""', '"${filePath.replaceAll('/', '\\')}"'],
+          runInShell: true,
+        );
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [filePath]);
+      } else {
+        await Process.run('xdg-open', [filePath]);
+      }
+
+      if (!mounted) return;
+      if (widget.repoPath != repoPath) {
+        setState(() => _presenting = false);
+        return;
+      }
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.present,
+        result: AiPresentResult(html: html, filePath: filePath),
+        scopeKey: scopeKey,
+      );
+      activity.markSeen(
+        repoPath: repoPath,
+        kind: AiActivityKind.present,
+      );
+      setState(() {
+        _presenting = false;
+        _presentedHtml = html;
+      });
+      _pushState();
+    } on Object catch (e) {
+      if (!mounted) return;
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.present,
+        error: 'Present failed: $e',
+        scopeKey: scopeKey,
+      );
+      setState(() => _presenting = false);
+      _pushState();
+    }
+  }
+
+  Future<void> _downloadPresentation() async {
+    final html = _presentedHtml;
+    if (html == null) return;
+    final defaultName = '${_doc?.repoName ?? 'repo'}-presentation.html';
+    try {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save presentation',
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: const ['html'],
+      );
+      if (path == null) return;
+      await File(path).writeAsString(html);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved to $path'),
+        duration: const Duration(seconds: 3),
+      ));
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Save failed: $e'),
+        duration: const Duration(seconds: 4),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final aiSettings = context.watch<AiSettingsState>();
+    final categoryId = aiSettings.presentModelCategoryId;
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    final hasModel = modelValue.isNotEmpty;
+    final categoryLabel =
+        aiSettings.labelForCategory(categoryId, 'Quality').toLowerCase();
+    final canPresent = _markdown != null && hasModel;
+
     return _PanelBlock(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _SummaryToolbar(
-            generating: _generating,
-            hasDoc: _markdown != null,
-            onGenerate: _runGenerate,
-            onCopy: _markdown == null ? null : _copyToClipboard,
-            onSave: _markdown == null ? null : _saveToFile,
-          ),
-          const SizedBox(height: 8),
-          Expanded(child: _summaryBody()),
-        ],
+      child: KeyboardListener(
+        focusNode: _keyboardFocus,
+        onKeyEvent: (event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.escape &&
+              _presentMode &&
+              !_presenting) {
+            _exitPresentMode();
+          }
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SummaryToolbar(
+              generating: _generating,
+              presenting: _presenting,
+              presentMode: _presentMode,
+              hasDoc: _markdown != null,
+              hasModel: hasModel,
+              hasPresentation: _presentedHtml != null,
+              presentCategoryLabel: categoryLabel,
+              onGenerate: _runGenerate,
+              onCopy: _markdown == null ? null : _copyToClipboard,
+              onSave: _markdown == null ? null : _saveToFile,
+              onPresentTap: canPresent ? _enterPresentMode : null,
+              onPresentSubmit:
+                  canPresent && !_presenting ? _runPresent : null,
+              onPresentDismiss: _exitPresentMode,
+              onDownloadPresentation:
+                  _presentedHtml == null ? null : _downloadPresentation,
+              presentController: _presentCtrl,
+              presentFocusNode: _presentFocus,
+              presentPromptChars: _presentPromptChars,
+              presentOutputChars: _presentOutputChars,
+            ),
+            const SizedBox(height: 8),
+            Expanded(child: _summaryBody()),
+          ],
+        ),
       ),
     );
   }
@@ -4469,7 +4819,7 @@ class _SummaryViewState extends State<_SummaryView> {
     if (md == null) {
       return Center(
         child: Text(
-          'Press Generate to produce a markdown summary of this repo.',
+          'Run Logos analysis to map this repository\'s structure and regions.',
           style: TextStyle(color: t.textMuted, fontSize: 12),
           textAlign: TextAlign.center,
         ),
@@ -4525,37 +4875,130 @@ class _SummaryViewState extends State<_SummaryView> {
   }
 }
 
+String _tokensK(int chars) {
+  final t = chars ~/ 4;
+  return t >= 1000 ? '${(t / 1000).toStringAsFixed(1)}k' : '$t';
+}
+
 class _SummaryToolbar extends StatelessWidget {
   const _SummaryToolbar({
     required this.generating,
+    required this.presenting,
+    required this.presentMode,
     required this.hasDoc,
+    required this.hasModel,
+    required this.hasPresentation,
+    required this.presentCategoryLabel,
     required this.onGenerate,
     required this.onCopy,
     required this.onSave,
+    required this.onPresentTap,
+    required this.onPresentSubmit,
+    required this.onPresentDismiss,
+    required this.onDownloadPresentation,
+    required this.presentController,
+    required this.presentFocusNode,
+    this.presentPromptChars = 0,
+    this.presentOutputChars = 0,
   });
   final bool generating;
+  final bool presenting;
+  final bool presentMode;
   final bool hasDoc;
+  final bool hasModel;
+  final bool hasPresentation;
+  final String presentCategoryLabel;
   final VoidCallback onGenerate;
   final VoidCallback? onCopy;
   final VoidCallback? onSave;
+  final VoidCallback? onPresentTap;
+  final VoidCallback? onPresentSubmit;
+  final VoidCallback onPresentDismiss;
+  final VoidCallback? onDownloadPresentation;
+  final TextEditingController presentController;
+  final FocusNode presentFocusNode;
+  final int presentPromptChars;
+  final int presentOutputChars;
 
   @override
   Widget build(BuildContext context) {
+    final submitLabel = presenting
+        ? 'presenting with $presentCategoryLabel…'
+        : 'present with $presentCategoryLabel';
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       child: Row(
         children: [
           _SummaryActionButton(
-            label: hasDoc ? 'Regenerate' : 'Generate',
+            label: hasDoc ? 'Re-analyze' : 'Analyze',
             icon: 'sync',
             primary: true,
             loading: generating,
             onTap: generating ? null : onGenerate,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _SummaryActionButton(label: 'Copy', icon: 'check', onTap: onCopy),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _SummaryActionButton(label: 'Save', icon: 'fetch', onTap: onSave),
+          if (hasPresentation && presentMode) ...[
+            const SizedBox(width: 6),
+            _SummaryActionButton(
+              label: 'Download',
+              icon: 'fetch',
+              onTap: onDownloadPresentation,
+            ),
+          ],
+          const Spacer(),
+          if (presentMode) ...[
+            _SummaryActionButton(
+              label: 'Exit',
+              icon: 'check',
+              onTap: onPresentDismiss,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 280),
+                child: AppTextField(
+                  controller: presentController,
+                  focusNode: presentFocusNode,
+                  hintText: 'direction',
+                  height: 28,
+                  fontSize: 11.5,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  enabled: !presenting,
+                  onSubmitted: (_) => onPresentSubmit?.call(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            _SummaryActionButton(
+              label: submitLabel,
+              icon: 'push',
+              primary: true,
+              loading: presenting,
+              onTap: onPresentSubmit,
+            ),
+            if (presentPromptChars > 0) ...[
+              const SizedBox(width: 8),
+              Text(
+                '${_tokensK(presentPromptChars)} → ${_tokensK(presentOutputChars)}',
+                style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 9,
+                  color: context.tokens.textFaint.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ] else ...[
+            _SummaryActionButton(
+              label: !hasModel
+                  ? 'no AI model configured'
+                  : 'present with $presentCategoryLabel',
+              icon: 'push',
+              onTap: onPresentTap,
+            ),
+          ],
         ],
       ),
     );
@@ -4584,26 +5027,22 @@ class _SummaryActionButton extends StatelessWidget {
         ? t.textMuted
         : (primary ? t.accentBright : t.textNormal);
     final bg = primary && !disabled
-        ? t.accentBright.withValues(alpha: 0.12)
+        ? t.accentBright.withValues(alpha: 0.10)
         : Colors.transparent;
     final radius = BorderRadius.circular(6);
-    // HoverableTap supplies cursor + per-theme InteractionFeedback —
-    // replaces the prior InkWell which had no Material ancestor and
-    // rendered no visible ripple on the dark xray panel.
     return HoverableTap(
       onTap: onTap,
       borderRadius: radius,
       builder: (context, hovered) => AnimatedContainer(
         duration: AppMotion.snap,
         curve: AppMotion.snapCurve,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: hovered && !disabled
               ? (primary
-                  ? t.accentBright.withValues(alpha: 0.18)
-                  : t.itemHoverBg)
+                  ? t.accentBright.withValues(alpha: 0.16)
+                  : t.chromeBorder.withValues(alpha: 0.15))
               : bg,
-          border: Border.all(color: t.chromeBorder, width: 1),
           borderRadius: radius,
         ),
         child: Row(
@@ -4619,11 +5058,11 @@ class _SummaryActionButton extends StatelessWidget {
               )
             else
               AppIcon(name: icon, size: 12, color: fg),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               label,
               style: TextStyle(
-                color: fg, fontSize: 12, fontWeight: FontWeight.w500,
+                color: fg, fontSize: 11.5, fontWeight: FontWeight.w500,
               ),
             ),
           ],

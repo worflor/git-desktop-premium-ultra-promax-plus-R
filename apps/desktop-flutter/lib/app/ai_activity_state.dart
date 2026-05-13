@@ -17,6 +17,9 @@ enum AiActivityKind {
 
   /// `runAsk` — shape/ask prose answer over the working tree.
   ask,
+
+  /// Present — AI-generated interactive HTML from Logos summary.
+  present,
 }
 
 /// Runtime status of an [AiActivityRecord]. `done` and `error` are
@@ -58,6 +61,12 @@ class AiAskResult extends AiActivityResult {
   /// The model's prose answer.
   final String answer;
   const AiAskResult(this.answer);
+}
+
+class AiPresentResult extends AiActivityResult {
+  final String html;
+  final String filePath;
+  const AiPresentResult({required this.html, required this.filePath});
 }
 
 /// One slot of AI activity, scoped to a (repo, kind) pair. The state

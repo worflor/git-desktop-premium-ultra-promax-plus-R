@@ -29,6 +29,7 @@ import 'app/settings_navigation_state.dart';
 import 'app/sidebar_org_state.dart';
 import 'app/sidebar_rail.dart';
 import 'app/tool_detection_state.dart';
+import 'app/wick_state.dart';
 import 'app/window_activity.dart';
 import 'app/theme_state.dart';
 import 'backend/ipc/bridge_context.dart';
@@ -166,9 +167,17 @@ void main() async {
   unawaited(
     toolDetectionState.detect(ExternalToolPresets.detectableExecutables),
   );
+  final wickState = WickState();
+  if (settings.wickExePath.isNotEmpty) {
+    wickState.setCustomPath(settings.wickExePath);
+  } else {
+    unawaited(wickState.detectWick());
+  }
 
   // Pre-warm the most-recently-used repo's LogosGit engine in the
-  // background. By the time the user clicks through the repo picker
+  // background. Wick's index completion invalidates the Logos engine
+  // so it rebuilds with fresh structural data.
+  // By the time the user clicks through the repo picker
   // (or if they auto-land on the MRU), the engine's git-log walks,
   // engram file index, and graph build have already happened in
   // another isolate — what used to be a visible 1–2s repo-switch
@@ -266,6 +275,7 @@ void main() async {
         ChangeNotifierProvider.value(value: externalToolsState),
         ChangeNotifierProvider.value(value: sidebarOrgState),
         ChangeNotifierProvider.value(value: toolDetectionState),
+        ChangeNotifierProvider.value(value: wickState),
         ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
         ChangeNotifierProvider.value(value: diagnosticsState),
         ChangeNotifierProvider.value(value: appIdentityState),

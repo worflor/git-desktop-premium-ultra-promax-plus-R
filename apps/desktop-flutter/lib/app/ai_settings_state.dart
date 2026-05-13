@@ -36,6 +36,9 @@ class AiSettingsState extends ChangeNotifier {
   String _musePromptPath = '';
   String _museBrainstormModelCategoryId = 'fast';
   String _museSynthesisModelCategoryId = 'quality';
+  String _presentModelCategoryId = 'quality';
+  String _presentPrompt = '';
+  String _presentPromptPath = '';
   List<AiProviderStatus> _runtimeProviders = const [];
   String? _runtimeProvidersError;
   bool _runtimeProvidersLoading = false;
@@ -61,6 +64,9 @@ class AiSettingsState extends ChangeNotifier {
   String get musePromptPath => _musePromptPath;
   String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
   String get museSynthesisModelCategoryId => _museSynthesisModelCategoryId;
+  String get presentModelCategoryId => _presentModelCategoryId;
+  String get presentPrompt => _presentPrompt;
+  String get presentPromptPath => _presentPromptPath;
   List<AiProviderStatus> get runtimeProviders => _runtimeProvidersView;
   String? get runtimeProvidersError => _runtimeProvidersError;
   bool get runtimeProvidersLoading => _runtimeProvidersLoading;
@@ -99,6 +105,8 @@ class AiSettingsState extends ChangeNotifier {
     final reviewPathFuture = AiSettingsStore.reviewCommitPromptPath();
     final musePromptFuture = AiSettingsStore.loadMusePrompt();
     final musePathFuture = AiSettingsStore.musePromptPath();
+    final presentPromptFuture = AiSettingsStore.loadPresentPrompt();
+    final presentPathFuture = AiSettingsStore.presentPromptPath();
 
     final snapshot = await snapshotFuture;
     _modelSelections = Map<String, String>.from(snapshot.modelSelections);
@@ -114,6 +122,7 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
     _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
     _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
+    _presentModelCategoryId = snapshot.presentModelCategoryId;
 
     _commitMessagePrompt = await commitPromptFuture;
     _commitMessagePromptPath = await commitPathFuture;
@@ -121,6 +130,8 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitPromptPath = await reviewPathFuture;
     _musePrompt = await musePromptFuture;
     _musePromptPath = await musePathFuture;
+    _presentPrompt = await presentPromptFuture;
+    _presentPromptPath = await presentPathFuture;
     await loadApiProviderKeys();
     _apiKeys = currentApiKeys;
     _loaded = true;
@@ -195,6 +206,10 @@ class AiSettingsState extends ChangeNotifier {
     }
     if (!activeCategoryIds.contains(_museBrainstormModelCategoryId)) {
       _museBrainstormModelCategoryId = categories.last.id;
+      changed = true;
+    }
+    if (!activeCategoryIds.contains(_presentModelCategoryId)) {
+      _presentModelCategoryId = categories.last.id;
       changed = true;
     }
 
@@ -306,6 +321,20 @@ class AiSettingsState extends ChangeNotifier {
     if (_museSynthesisModelCategoryId == categoryId) return;
     _museSynthesisModelCategoryId = categoryId;
     await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setPresentModelCategoryId(String categoryId) async {
+    if (_presentModelCategoryId == categoryId) return;
+    _presentModelCategoryId = categoryId;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setPresentPrompt(String value) async {
+    if (_presentPrompt == value) return;
+    _presentPrompt = value;
+    await AiSettingsStore.persistPresentPrompt(value);
     notifyListeners();
   }
 
@@ -468,6 +497,7 @@ class AiSettingsState extends ChangeNotifier {
         reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,
         museBrainstormModelCategoryId: _museBrainstormModelCategoryId,
         museSynthesisModelCategoryId: _museSynthesisModelCategoryId,
+        presentModelCategoryId: _presentModelCategoryId,
       ),
     );
   }

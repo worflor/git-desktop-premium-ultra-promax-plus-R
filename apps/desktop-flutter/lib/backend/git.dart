@@ -2768,20 +2768,12 @@ Future<GitResult<List<WorktreeData>>> listWorktrees(String repo) async {
   return GitResult.ok(worktrees);
 }
 
-/// Creates a worktree at the given path for the given branch.
-/// Ensures `.manifold/` is in `.git/info/exclude` so app-managed desk
-/// directories are never tracked by git.
-Future<GitResult<String>> addWorktree(
-  String repo,
-  String worktreePath,
-  String branch, {
-  /// When true, creates a new branch from HEAD at the given name alongside
-  /// the worktree. Uses `git worktree add -b <branch> <path>`.
-  bool createNewBranch = false,
-}) async {
-  // Append `.manifold/` to .git/info/exclude if not already present.
+/// Ensures `.manifold/` is in `.git/info/exclude` so app-managed
+/// directories (desks, wick index) are never tracked by git. Uses the
+/// repo-local exclude mechanism (not .gitignore) to avoid dirtying the
+/// working tree. Idempotent; non-fatal on failure.
+Future<void> ensureManifoldExcluded(String repo) async {
   try {
-    // Resolve .git (handles worktree pointers + submodules).
     final gitDirResult = await Process.run(
       'git',
       ['rev-parse', '--git-common-dir'],
@@ -2789,9 +2781,6 @@ Future<GitResult<String>> addWorktree(
     );
     if (gitDirResult.exitCode == 0) {
       final gitDir = (gitDirResult.stdout as String).trim();
-      // Use the path package's robust isAbsolute check — it handles
-      // POSIX paths, Windows drive letters (C:\...), AND UNC paths
-      // (\\server\share\...) correctly on each platform.
       final absGitDir = p.isAbsolute(gitDir) ? gitDir : p.join(repo, gitDir);
       final excludeFile = File(p.join(absGitDir, 'info', 'exclude'));
       final existing =
@@ -2803,17 +2792,27 @@ Future<GitResult<String>> addWorktree(
       }
     }
   } catch (error) {
-    // Non-fatal — worktree creation can proceed even if we couldn't edit
-    // exclude — but surface it via diagnostics so a persistent failure
-    // (e.g. permissions, read-only FS) gets noticed. If exclude stays
-    // unwritten, users could accidentally commit .manifold/ contents.
     DiagnosticsState.instance.recordCommandLifecycleEvent(
       type: 'failure',
-      command: 'worktree.exclude_write',
+      command: 'manifold.exclude_write',
       errorCode: 'exclude.write_failed',
       message: error.toString(),
     );
   }
+}
+
+/// Creates a worktree at the given path for the given branch.
+/// Ensures `.manifold/` is in `.git/info/exclude` so app-managed desk
+/// directories are never tracked by git.
+Future<GitResult<String>> addWorktree(
+  String repo,
+  String worktreePath,
+  String branch, {
+  /// When true, creates a new branch from HEAD at the given name alongside
+  /// the worktree. Uses `git worktree add -b <branch> <path>`.
+  bool createNewBranch = false,
+}) async {
+  await ensureManifoldExcluded(repo);
 
   final args = createNewBranch
       ? ['worktree', 'add', '-b', branch, worktreePath]
