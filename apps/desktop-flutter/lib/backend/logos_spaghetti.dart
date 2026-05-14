@@ -19,7 +19,6 @@
 // match a theorem's prediction or they don't.
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'logos_core.dart';
 import 'logos_git.dart';

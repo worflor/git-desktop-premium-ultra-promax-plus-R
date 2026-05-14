@@ -36,7 +36,6 @@ class WorktreeState extends ChangeNotifier {
   List<WorktreeData> _desks = const [];
   bool _loading = false;
   String? _error;
-  String? _loadedForPath;
   int _requestId = 0;
   DateTime _lastRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _minRefreshInterval = Duration(seconds: 3);
@@ -85,7 +84,7 @@ class WorktreeState extends ChangeNotifier {
     final active = _repo.activePath;
     if (active == null) {
       _desks = const [];
-      _loadedForPath = null;
+
       notifyListeners();
       return;
     }
@@ -95,7 +94,7 @@ class WorktreeState extends ChangeNotifier {
     if (!stillInKnownDesks) {
       // New repo — the prior repo's worktree list no longer applies.
       _desks = const [];
-      _loadedForPath = null;
+
       refreshFor(active);
       return;
     }
@@ -124,7 +123,6 @@ class WorktreeState extends ChangeNotifier {
       _loading = false;
       if (result.ok) {
         _desks = result.data!;
-        _loadedForPath = repoPath;
         _error = null;
       } else {
         _desks = const [];

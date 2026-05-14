@@ -1686,7 +1686,6 @@ List<RepositoryXrayHotspotData> _buildHotspots(
 ///  • Directory hotspots fill the gap between strata and files.
 /// Enrichment now reads the already-parsed `--name-status` commit
 /// stream in-memory, so these caps are pure data-volume bounds.
-const int _mapStratumCandidateCap = 12;
 const int _mapHotspotCandidateCap = 40;
 const int _mapDirHotspotCandidateCap = 16;
 
@@ -1855,26 +1854,85 @@ List<RepositoryXrayStratumData> _buildStrata(
 ) {
   final entries = dirTouches.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
-  final picked = entries.take(_mapStratumCandidateCap).toList();
+  // Emergent cap: include every directory whose touch count is at
+  // least 2% of the top directory's count. The treemap layout sizes
+  // tiles proportionally, so low-weight directories render as thin
+  // slivers — present but not dominant. Legacy islands, dormant
+  // modules, and small utilities surface naturally without a
+  // hardcoded cap.
+  final floor = entries.isEmpty
+      ? 0
+      : (entries.first.value * 0.02).ceil();
+  final picked = entries
+      .where((e) => e.value >= floor)
+      .toList();
   final dirPaths = [for (final e in picked) e.key];
   final enriched = _enrichPathsFromCommits(
     filePaths: const <String>[],
     dirPaths: dirPaths,
     commits: commits,
   );
-  return [
+
+  final strata = [
     for (final entry in picked)
       RepositoryXrayStratumData(
         id: entry.key,
-        label: _stratumLabelForPrefix(entry.key),
         pathPrefix: entry.key,
         touchCount: entry.value,
         ownerCount: enriched[entry.key]?.authors.length ?? 0,
         lastTouchedAt: enriched[entry.key]?.recentDateStr ?? '',
-        summary: 'Touched ${entry.value} times in filtered history.',
         aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
       ),
   ];
+
+  // Assign roles emergently. The stratum with the highest aliveRatio
+  // (most metabolically active per touch) gets `current`. If a
+  // migration pair exists under the same root directory, the older
+  // half becomes `legacy`.
+  return _assignStratumRoles(strata);
+}
+
+List<RepositoryXrayStratumData> _assignStratumRoles(
+    List<RepositoryXrayStratumData> strata) {
+  if (strata.isEmpty) return strata;
+
+  // The stratum with the highest aliveRatio is the most metabolically
+  // active surface — that's the "current" working area. No name
+  // matching, purely data-driven.
+  var bestIdx = 0;
+  var bestRatio = strata[0].aliveRatio;
+  for (var i = 1; i < strata.length; i++) {
+    if (strata[i].aliveRatio > bestRatio) {
+      bestRatio = strata[i].aliveRatio;
+      bestIdx = i;
+    }
+  }
+  final currentRoot = strata[bestIdx].pathPrefix.split('/').first;
+  final currentRatio = bestRatio;
+
+  return [
+    for (var i = 0; i < strata.length; i++)
+      RepositoryXrayStratumData(
+        id: strata[i].id,
+        role: i == bestIdx
+            ? StratumRole.current
+            : _isLegacySibling(strata[i], currentRoot, currentRatio)
+                ? StratumRole.legacy
+                : StratumRole.zone,
+        pathPrefix: strata[i].pathPrefix,
+        touchCount: strata[i].touchCount,
+        ownerCount: strata[i].ownerCount,
+        lastTouchedAt: strata[i].lastTouchedAt,
+        aliveMass: strata[i].aliveMass,
+      ),
+  ];
+}
+
+bool _isLegacySibling(
+    RepositoryXrayStratumData s, String currentRoot, double currentRatio) {
+  if (s.pathPrefix.split('/').first != currentRoot) return false;
+  if (currentRatio <= 0) return false;
+  return s.aliveRatio < currentRatio * 0.2;
 }
 
 List<RepositoryXrayPivotCommitData> _buildPivotCommits(
@@ -2423,15 +2481,6 @@ String _directoryPrefixForPath(String path) {
   return '[root]';
 }
 
-String _stratumLabelForPrefix(String prefix) {
-  if (prefix.contains('flutter')) {
-    return 'Current surface';
-  }
-  if (prefix.contains('desktop')) {
-    return 'Architecture stratum';
-  }
-  return 'Repo zone';
-}
 
 int _nonEmptyLineCount(String output) {
   return output.split('\n').where((line) => line.trim().isNotEmpty).length;

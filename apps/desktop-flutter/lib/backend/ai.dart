@@ -29,6 +29,7 @@ import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
+import 'logos_mind.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_semantic_bands.dart';
 import 'logos_git_probe.dart';
@@ -54,7 +55,6 @@ const _cliProviderSpecs = <_ProviderSpec>[
 final Set<String> cliProviderIds =
     Set.unmodifiable(_cliProviderSpecs.map((s) => s.id));
 
-List<_ProviderSpec> _apiProviderSpecs = const [];
 List<_ProviderSpec> _allProviderSpecs = List.unmodifiable(_cliProviderSpecs);
 AiApiKeysSnapshot _apiKeysSnapshot = AiApiKeysSnapshot.empty();
 
@@ -111,7 +111,6 @@ void _rebuildApiProviderSpecs() {
       ));
     }
   }
-  _apiProviderSpecs = specs;
   _allProviderSpecs = List.unmodifiable([..._cliProviderSpecs, ...specs]);
 }
 
@@ -161,7 +160,6 @@ const _providerRuntimeTimeout = Duration(minutes: 20);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
-const _claudeModelDiscoveryTimeout = Duration(seconds: 12);
 const _maxPromptChars = 260000;
 
 /// Single budget for the diff section of the prompt body. Replaces the
@@ -205,14 +203,12 @@ const _diffTimeoutSeconds = 50;
 const _previewMaxLength = 800;
 const _truncationSuffix = '...';
 const _findingOriginDraft = 'draft';
-const _findingOriginVerification = 'verification';
 const _findingIdPrefixDraft = 'F';
 const _findingIdPrefixVerification = 'V';
 const _unknownPlaceholder = '-';
 
 final _modelAssignmentRegex = RegExp(r'^model\s*=');
 final _migrationEntryRegex = RegExp(r'^"([^"]+)"\s*=\s*"([^"]+)"');
-final _backtickContentRegex = RegExp(r'`([^`]+)`');
 final _findingTagRegex = RegExp(
   r'<finding\b([^>]*)>([\s\S]*?)</finding>',
   caseSensitive: false,
@@ -221,7 +217,6 @@ final _observationTagRegex = RegExp(
   r'<observation\b([^>]*)>([\s\S]*?)</observation>',
   caseSensitive: false,
 );
-final _xmlTagRegex = RegExp(r'<(\w+)>([\s\S]*?)</\1>', caseSensitive: false);
 final _xmlAttrRegex = RegExp(r'(\w+)="([^"]*)"');
 
 class _ModelParse {
@@ -699,6 +694,516 @@ Future<GitResult<String>> runAsk({
   } catch (error) {
     return GitResult.err('Ask failed: $error');
   }
+}
+
+/// Logos-guided hypothesis-conditioned debugging engine.
+///
+/// Takes a messy symptom string + optional prior rounds and produces
+/// structured, falsifiable hypotheses. Each round is one Logos
+/// retrieval + one LLM shot — non-agentic, human-in-the-loop.
+///
+/// Logos decides WHAT evidence to look at (MindQuery.text for round 1,
+/// MindQuery.weighted from prior suspect files for round 2+). The model
+/// does CAUSAL REASONING on Logos-selected evidence. Output is always
+/// structured: hypothesis + invariant + evidence + falsifier.
+Future<GitResult<AiDebugData>> runDebug({
+  required String repositoryPath,
+  required String modelValue,
+  required String symptom,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
+  List<DebugRound> priorRounds = const [],
+  String userAnswer = '',
+}) async {
+  try {
+    if (symptom.trim().isEmpty) {
+      return GitResult.err('Symptom description is empty.');
+    }
+    final modelParse = _parseModelValue(modelValue);
+    if (!modelParse.ok) return GitResult.err(modelParse.error!);
+    final provider = modelParse.data!.provider;
+    final modelId = modelParse.data!.modelId;
+
+    final availability = await _inspectProviderCached(provider);
+    if (!availability.ready || availability.resolution == null) {
+      return GitResult.err(
+        'Provider ${provider.id} is not ready. ${_formatProviderHealth(availability)}',
+      );
+    }
+
+    final engine = await resolveLogosGit(repositoryPath);
+    if (engine == null) {
+      return GitResult.err('Logos engine not ready for this repository.');
+    }
+
+    final mind = LogosMind(engine: engine);
+    final round = priorRounds.length + 1;
+
+    // Logos retrieval: symptom-seeded (R1) or hypothesis-weighted (R2+).
+    MindResponse response;
+    double temperature;
+    if (priorRounds.isEmpty) {
+      temperature = 0.5;
+      response = mind.ask(
+        MindQuery.text(symptom),
+        temperature: temperature,
+        topN: 12,
+      );
+    } else {
+      temperature = 1.5;
+      final weights = <String, double>{};
+      for (final h in priorRounds.last.hypotheses) {
+        for (final src in h.sources) {
+          weights[src.path] =
+              (weights[src.path] ?? 0) + src.score * h.confidence;
+        }
+      }
+      if (weights.isEmpty) {
+        response = mind.ask(
+          MindQuery.text('$symptom $userAnswer'),
+          temperature: temperature,
+          topN: 16,
+        );
+      } else {
+        response = mind.ask(
+          MindQuery.weighted(weights),
+          temperature: temperature,
+          topN: 16,
+        );
+      }
+    }
+
+    // Fallback chain if Logos text query found nothing:
+    // 1. git grep for symptom keywords
+    // 2. Recently changed files as a last resort
+    if (response.candidates.isEmpty) {
+      final keywords = symptom
+          .toLowerCase()
+          .split(RegExp(r'[^a-z0-9_]+'))
+          .where((t) => t.length >= 3)
+          .take(8)
+          .toList();
+      if (keywords.isNotEmpty) {
+        try {
+          final grepResult = await Process.run(
+            'git',
+            [
+              'grep', '-l', '-i', '--all-match',
+              ...keywords.expand((k) => ['-e', k]),
+            ],
+            workingDirectory: repositoryPath,
+          );
+          if (grepResult.exitCode == 0) {
+            final paths = (grepResult.stdout as String)
+                .split('\n')
+                .map((l) => l.trim())
+                .where((l) => l.isNotEmpty)
+                .take(12)
+                .toList();
+            if (paths.isNotEmpty) {
+              final weights = <String, double>{
+                for (final p in paths) p: 1.0,
+              };
+              response = mind.ask(
+                MindQuery.weighted(weights),
+                temperature: 0.8,
+                topN: 12,
+              );
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Last resort: use recently changed files as seeds.
+    if (response.candidates.isEmpty) {
+      try {
+        final logResult = await Process.run(
+          'git',
+          ['log', '--oneline', '-20', '--name-only', '--format='],
+          workingDirectory: repositoryPath,
+        );
+        if (logResult.exitCode == 0) {
+          final paths = (logResult.stdout as String)
+              .split('\n')
+              .map((l) => l.trim())
+              .where((l) => l.isNotEmpty)
+              .toSet()
+              .take(15)
+              .toList();
+          if (paths.isNotEmpty) {
+            final weights = <String, double>{
+              for (final p in paths) p: 0.5,
+            };
+            response = mind.ask(
+              MindQuery.weighted(weights),
+              temperature: 1.5,
+              topN: 12,
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Read file content for top candidates under budget.
+    // If Logos/grep found nothing, we still proceed — the model gets
+    // the symptom + repo structure context and can still hypothesize.
+    const fileBudget = 120000;
+    var remaining = fileBudget;
+    final fileContents = <String, String>{};
+    for (final cand in response.candidates) {
+      if (remaining <= 0) break;
+      if (isSensitivePath(cand.path)) continue;
+      try {
+        final file = File(p.join(repositoryPath, cand.path));
+        if (!await file.exists()) continue;
+        final content = await file.readAsString();
+        final toInclude =
+            content.length > remaining ? content.substring(0, remaining) : content;
+        fileContents[cand.path] = toInclude;
+        remaining -= toInclude.length;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    // Build prompt.
+    final prompt = _buildDebugPrompt(
+      symptom: symptom,
+      candidates: response.candidates,
+      fileContents: fileContents,
+      priorRounds: priorRounds,
+      userAnswer: userAnswer,
+    );
+
+    final secretHit = detectLikelySecretInPrompt(prompt);
+    if (secretHit != null) {
+      return GitResult.err(
+          'Blocked — evidence files contain what looks like a $secretHit.');
+    }
+
+    final effort = fastMode || !supportsReasoning ? null : reasoningEffort;
+    final result = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: prompt,
+      repositoryPath: repositoryPath,
+      reasoningEffort: effort,
+      fastMode: fastMode,
+      supportsReasoning: supportsReasoning,
+    );
+
+    if (!result.ok || result.output == null) {
+      return GitResult.err(result.error ?? 'Provider returned no output.');
+    }
+
+    final parsed = _parseDebugOutput(
+      result.output!,
+      providerId: provider.id,
+      modelId: modelId,
+      symptom: symptom,
+      round: round,
+      promptChars: prompt.length,
+      candidates: response.candidates,
+      fileContents: fileContents,
+      priorRounds: priorRounds,
+      userAnswer: userAnswer,
+      temperature: temperature,
+    );
+
+    if (parsed != null) return GitResult.ok(parsed);
+
+    // Fallback: wrap raw output as degraded hypothesis.
+    return GitResult.ok(AiDebugData(
+      providerId: provider.id,
+      modelId: modelId,
+      symptom: symptom,
+      round: round,
+      hypotheses: [
+        AiDebugHypothesis(
+          statement: result.output!.trim(),
+          confidence: 0.0,
+        ),
+      ],
+      promptCharacters: prompt.length,
+      candidatesConsidered: response.candidates.length,
+      filesRead: fileContents.length,
+      parseWarnings: const ['Could not parse structured output.'],
+      roundHistory: [
+        ...priorRounds,
+        DebugRound(
+          roundNumber: round,
+          userInput: round == 1 ? symptom : userAnswer,
+          hypotheses: [
+            AiDebugHypothesis(
+              statement: result.output!.trim(),
+              confidence: 0.0,
+            ),
+          ],
+          filesExamined: fileContents.keys.toList(),
+          timestamp: DateTime.now(),
+        ),
+      ],
+    ));
+  } catch (error) {
+    return GitResult.err('Debug failed: $error');
+  }
+}
+
+String _buildDebugPrompt({
+  required String symptom,
+  required List<MindCandidate> candidates,
+  required Map<String, String> fileContents,
+  required List<DebugRound> priorRounds,
+  required String userAnswer,
+}) {
+  final buf = StringBuffer();
+  buf.writeln('You are a debugging analyst. You receive a bug symptom and '
+      'evidence files selected by a code-relevance engine. Produce '
+      'structured hypotheses about what is broken and why.');
+  buf.writeln();
+  buf.writeln('You do NOT fix bugs. You do NOT write code. You identify '
+      'the most likely causal chain and tell the human what to verify.');
+  buf.writeln();
+  buf.writeln('<symptom>${symptom.length > 5000 ? symptom.substring(0, 5000) : symptom}</symptom>');
+
+  if (priorRounds.isNotEmpty) {
+    buf.writeln();
+    buf.writeln('<prior_rounds>');
+    for (final r in priorRounds) {
+      buf.writeln('  <round n="${r.roundNumber}">');
+      for (final h in r.hypotheses) {
+        buf.writeln('    <hypothesis confidence="${h.confidence.toStringAsFixed(2)}">${h.statement}</hypothesis>');
+      }
+      buf.writeln('  </round>');
+    }
+    if (userAnswer.isNotEmpty) {
+      buf.writeln('  <user_response>$userAnswer</user_response>');
+    }
+    buf.writeln('</prior_rounds>');
+  }
+
+  buf.writeln();
+  if (fileContents.isEmpty) {
+    buf.writeln('<evidence>');
+    buf.writeln('No specific files were identified by the relevance engine.');
+    buf.writeln('Base your hypotheses on the symptom description alone.');
+    buf.writeln('Ask pressure questions to narrow down which subsystems to investigate.');
+    buf.writeln('</evidence>');
+  } else {
+  buf.writeln('<evidence>');
+  for (final entry in fileContents.entries) {
+    final cand = candidates
+        .where((c) => c.path == entry.key)
+        .firstOrNull;
+    final score = cand?.score.toStringAsFixed(3) ?? '0';
+    final grounding = cand?.grounding.join('; ') ?? '';
+    buf.writeln('<file path="${entry.key}" logos_score="$score" grounding="$grounding">');
+    final lines = entry.value.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      buf.writeln('${i + 1}\t${lines[i]}');
+    }
+    buf.writeln('</file>');
+  }
+  buf.writeln('</evidence>');
+  }
+
+  buf.writeln();
+  buf.writeln('Respond with EXACTLY this XML structure:');
+  buf.writeln();
+  buf.writeln('<hypotheses>');
+  buf.writeln('  <hypothesis confidence="0.XX">');
+  buf.writeln('    <statement>One sentence: what is broken and why.</statement>');
+  buf.writeln('    <invariant>The specific invariant being violated.</invariant>');
+  buf.writeln('    <evidence_for>');
+  buf.writeln('      <cite path="file.dart" line="42">Why this supports the hypothesis.</cite>');
+  buf.writeln('    </evidence_for>');
+  buf.writeln('    <evidence_against>');
+  buf.writeln('      <cite path="other.dart" line="17">What would refute this.</cite>');
+  buf.writeln('    </evidence_against>');
+  buf.writeln('    <falsifier>A specific test to disprove this.</falsifier>');
+  buf.writeln('    <pressure>');
+  buf.writeln('      <question>A clarifying question for the user.</question>');
+  buf.writeln('    </pressure>');
+  buf.writeln('  </hypothesis>');
+  buf.writeln('</hypotheses>');
+  buf.writeln();
+  buf.writeln('Rules:');
+  buf.writeln('- Emit 1-3 hypotheses, ranked by confidence (highest first).');
+  buf.writeln('- Each hypothesis MUST have evidence_for citing specific file:line.');
+  buf.writeln('- Confidence: 0.3 = plausible guess, 0.7 = strong evidence, 0.9 = near certain.');
+  buf.writeln('- BEFORE claiming a bug, verify the code does not already defend against it.');
+  buf.writeln('  Look for guards: scheduleMicrotask, try/catch, null checks, deferred execution,');
+  buf.writeln('  comments explaining why a dangerous-looking pattern is intentionally safe.');
+  buf.writeln('  If a mitigation exists, state it in evidence_against and lower confidence.');
+  buf.writeln('- Falsifier must be actionable — "check if X" not "maybe Y".');
+  buf.writeln('- Pressure questions should narrow the hypothesis space.');
+  if (priorRounds.isNotEmpty) {
+    buf.writeln('- Revise confidence based on user response. Drop falsified hypotheses.');
+  }
+  return buf.toString();
+}
+
+AiDebugData? _parseDebugOutput(
+  String raw, {
+  required String providerId,
+  required String modelId,
+  required String symptom,
+  required int round,
+  required int promptChars,
+  required List<MindCandidate> candidates,
+  required Map<String, String> fileContents,
+  required List<DebugRound> priorRounds,
+  required String userAnswer,
+  required double temperature,
+}) {
+  final hypothesesBlock =
+      RegExp(r'<hypotheses>(.*?)</hypotheses>', dotAll: true)
+          .firstMatch(raw)
+          ?.group(1);
+  if (hypothesesBlock == null) return null;
+
+  final hypotheses = <AiDebugHypothesis>[];
+  final warnings = <String>[];
+
+  final hypRe = RegExp(
+    r'<hypothesis\s+confidence="([^"]*)">(.*?)</hypothesis>',
+    dotAll: true,
+  );
+
+  for (final m in hypRe.allMatches(hypothesesBlock)) {
+    final confStr = m.group(1) ?? '0.5';
+    final body = m.group(2) ?? '';
+
+    final confidence =
+        (double.tryParse(confStr) ?? 0.5).clamp(0.0, 1.0);
+    final statement = _extractTagContent(body, 'statement');
+    final invariant = _extractTagContent(body, 'invariant');
+    final falsifier = _extractTagContent(body, 'falsifier');
+
+    // Partial recovery: if statement is missing, fall back to invariant
+    // or the raw body. Don't silently drop a hypothesis that has evidence.
+    var effectiveStatement = statement?.trim() ?? '';
+    if (effectiveStatement.isEmpty) {
+      effectiveStatement = invariant?.trim() ?? '';
+    }
+    if (effectiveStatement.isEmpty) {
+      final stripped = body
+          .replaceAll(RegExp(r'<[^>]+>'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      effectiveStatement = stripped.length > 200
+          ? '${stripped.substring(0, 200)}…'
+          : stripped;
+    }
+    if (effectiveStatement.isEmpty) {
+      warnings.add('Dropped hypothesis with no recoverable content.');
+      continue;
+    }
+    if (statement == null || statement.trim().isEmpty) {
+      warnings.add('Recovered hypothesis from partial XML (missing statement tag).');
+    }
+
+    final evidenceFor = _extractCites(body, 'evidence_for');
+    final evidenceAgainst = _extractCites(body, 'evidence_against');
+
+    final pressureBlock = _extractTagContent(body, 'pressure') ?? '';
+    final questions = <String>[];
+    for (final qm in RegExp(r'<question>(.*?)</question>', dotAll: true)
+        .allMatches(pressureBlock)) {
+      final q = qm.group(1)?.trim();
+      if (q != null && q.isNotEmpty) questions.add(q);
+    }
+
+    final sources = <DebugEvidenceSource>[];
+    for (final cite in [...evidenceFor, ...evidenceAgainst]) {
+      // Label format: "path:line — reason" or "path — reason"
+      // Split on " — " first, then strip any :line suffix.
+      final beforeReason = cite.split(' — ').first;
+      final path = beforeReason.contains(':')
+          ? beforeReason.substring(0, beforeReason.indexOf(':'))
+          : beforeReason;
+      final cand = candidates.where((c) => c.path == path).firstOrNull;
+      if (cand != null) {
+        sources.add(DebugEvidenceSource(
+          path: path,
+          score: cand.score,
+          grounding: cand.grounding,
+        ));
+      }
+    }
+
+    // Temper model confidence with spectral grounding depth.
+    // Mean Logos score of cited sources measures how close the
+    // evidence is to the retrieval center. Low grounding = the
+    // model is citing peripheral files = confidence should drop.
+    final groundingDepth = sources.isEmpty
+        ? 0.1
+        : sources.map((s) => s.score).reduce((a, b) => a + b) /
+            sources.length;
+    final groundedConfidence =
+        (confidence * groundingDepth).clamp(0.0, 1.0);
+
+    hypotheses.add(AiDebugHypothesis(
+      statement: effectiveStatement,
+      brokenInvariant: invariant?.trim() ?? '',
+      evidenceFor: evidenceFor,
+      evidenceAgainst: evidenceAgainst,
+      confidence: groundedConfidence,
+      falsifier: falsifier?.trim() ?? '',
+      pressureQuestions: questions,
+      sources: sources,
+    ));
+  }
+
+  if (hypotheses.isEmpty) return null;
+
+  final filesExamined = fileContents.keys.toList();
+  return AiDebugData(
+    providerId: providerId,
+    modelId: modelId,
+    symptom: symptom,
+    round: round,
+    hypotheses: hypotheses,
+    promptCharacters: promptChars,
+    candidatesConsidered: candidates.length,
+    filesRead: fileContents.length,
+    parseWarnings: warnings,
+    roundHistory: [
+      ...priorRounds,
+      DebugRound(
+        roundNumber: round,
+        userInput: round == 1 ? symptom : userAnswer,
+        hypotheses: hypotheses,
+        filesExamined: filesExamined,
+        timestamp: DateTime.now(),
+      ),
+    ],
+  );
+}
+
+String? _extractTagContent(String body, String tag) {
+  final m =
+      RegExp('<$tag>(.*?)</$tag>', dotAll: true).firstMatch(body);
+  return m?.group(1);
+}
+
+List<String> _extractCites(String body, String wrapperTag) {
+  final block = _extractTagContent(body, wrapperTag) ?? '';
+  final cites = <String>[];
+  for (final m in RegExp(
+    r'<cite\s+path="([^"]*)"(?:\s+line="([^"]*)")?\s*>(.*?)</cite>',
+    dotAll: true,
+  ).allMatches(block)) {
+    final path = m.group(1) ?? '';
+    final line = m.group(2);
+    final reason = m.group(3)?.trim() ?? '';
+    final label = line != null ? '$path:$line — $reason' : '$path — $reason';
+    cites.add(label);
+  }
+  return cites;
 }
 
 /// Paths we will NEVER send to an AI provider, regardless of what the
@@ -2009,10 +2514,7 @@ Future<({String text, LogosEmissionRecord? record})>
       // the well-expansion paths labeled so reviewers can see that
       // arm of the diffusion contributed.
       final wellExpansionPaths = <String>{};
-      String? lane;
-
       if (idea.kRe != null && idea.kIm != null && kSpaceReady) {
-        lane = 'semantic';
         ideasEmbedded++;
         final nearest = nearestRowsInTable(
           ktable,
@@ -2076,7 +2578,6 @@ Future<({String text, LogosEmissionRecord? record})>
           if (bucket != null) matched.addAll(bucket);
         }
         if (matched.isNotEmpty) {
-          lane = 'fuzzy';
           ideasViaFuzzy++;
           final capped = matched.take(8);
           for (final p in capped) {
@@ -3933,37 +4434,6 @@ String? _extractOpenCodeModelDetail(dynamic value) {
   return details.join(' | ');
 }
 
-_ProviderModelDiscovery _parseClaudeModelsOutput(String stdout) {
-  final models = <String>[];
-  final modelDetails = <String, String>{};
-  final seen = <String>{};
-  for (final line in stdout.split('\n')) {
-    final trimmed = line.trim();
-    if (!trimmed.startsWith('|') || trimmed.contains('---')) {
-      continue;
-    }
-    final cells = trimmed
-        .split('|')
-        .map((cell) => cell.trim())
-        .where((cell) => cell.isNotEmpty)
-        .toList();
-    if (cells.length < 2) {
-      continue;
-    }
-    final match = _backtickContentRegex.firstMatch(cells[1]);
-    final modelId = match?.group(1)?.trim();
-    if (modelId == null || modelId.isEmpty || !seen.add(modelId)) {
-      continue;
-    }
-    models.add(modelId);
-    final label = cells.first;
-    if (label.isNotEmpty) {
-      modelDetails[modelId] = label;
-    }
-  }
-  return _ProviderModelDiscovery(models: models, modelDetails: modelDetails);
-}
-
 String _formatTokenLimit(int tokens) {
   if (tokens >= 1000000) {
     return '${(tokens / 1000000).toStringAsFixed(1)}m';
@@ -5637,7 +6107,6 @@ Future<({String text, LogosEmissionRecord? record})>
     final engine = result.engine;
     final probe = result.probe;
     final scores = result.scores;
-    final resolvedT = result.resolvedT;
     final residualByPath =
         result.evidence?.residualByPath ?? const <String, LogosResidualView>{};
 
@@ -7186,7 +7655,7 @@ Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
   void flush() {
     if (currentPath == null) return;
     if (currentMetadata.isNotEmpty) {
-      out[currentPath!] = List.unmodifiable(currentMetadata);
+      out[currentPath] = List.unmodifiable(currentMetadata);
     }
   }
 
@@ -8723,8 +9192,8 @@ String? _parseOpenCodeJsonl(String stdout) {
   if (response.isNotEmpty) {
     return response;
   }
-  if (errorMessage != null && errorMessage!.trim().isNotEmpty) {
-    return 'OpenCode error: ${_stripAnsi(errorMessage!.trim())}';
+  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
+    return 'OpenCode error: ${_stripAnsi(errorMessage.trim())}';
   }
   return null;
 }

@@ -1,5 +1,4 @@
 import 'git.dart';
-import 'git_result.dart';
 import 'spectral_constants.dart' as sc;
 
 enum ShadowType { revert, reset, abandonedBranch }

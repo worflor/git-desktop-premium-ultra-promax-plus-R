@@ -1,7 +1,6 @@
 import '../../app/ai_activity_state.dart';
 import '../../app/external_tools_state.dart';
 import '../../backend/external_tools.dart';
-import '../../backend/git.dart' as git;
 import '../../backend/logos_git.dart';
 import '../../backend/system_paths.dart';
 import 'palette_entry.dart';
@@ -73,7 +72,7 @@ class AskPrefix extends PalettePrefix {
         tags: rp != active ? const {EntryTag.repoChild} : const {},
         onExecute: () {
           if (rp != active) cb.onRepoSwitch(rp);
-          ai.requestAskWithQuery(rp, body);
+          ai.requestDebugWithQuery(rp, body);
           cb.onModeChanged(0);
         },
       );

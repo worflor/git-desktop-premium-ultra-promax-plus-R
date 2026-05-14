@@ -78,6 +78,7 @@ class _HoverInfo {
 
 class _CommitSeismographState extends State<CommitSeismograph>
     with SingleTickerProviderStateMixin {
+  static const Duration _wakeAuthored = Duration(milliseconds: 360);
   List<String> _focus = const [];
   late SeismographNode _root;
   late FocusNode _focusNode;
@@ -101,10 +102,36 @@ class _CommitSeismographState extends State<CommitSeismograph>
     _focusNode = FocusNode(debugLabel: 'CommitSeismograph');
     _wakeCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 360),
-    )..forward();
+      duration: _wakeAuthored,
+    );
     _filterCtrl = TextEditingController();
     _filterFocus = FocusNode(debugLabel: 'CommitSeismographFilter');
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncWakeDuration();
+  }
+
+  void _syncWakeDuration() {
+    final scaled = context.motionRead(_wakeAuthored);
+    if (scaled == Duration.zero) {
+      _wakeCtrl.value = 1.0;
+    } else {
+      _wakeCtrl.duration = scaled;
+      if (!_wakeCtrl.isAnimating && _wakeCtrl.value == 0) {
+        _wakeCtrl.forward();
+      }
+    }
+  }
+
+  void _wakeForward() {
+    if (context.reduceMotionRead) {
+      _wakeCtrl.value = 1.0;
+    } else {
+      _wakeCtrl.forward(from: 0);
+    }
   }
 
   @override
@@ -135,7 +162,7 @@ class _CommitSeismographState extends State<CommitSeismograph>
       if (_wakeCtrl.isAnimating) {
         _wakeCtrl.value = 1.0;
       } else {
-        _wakeCtrl.forward(from: 0);
+        _wakeForward();
       }
     } else if (!identical(oldWidget.detail.files, widget.detail.files)) {
       _root = buildSeismographTree(widget.detail.files);
@@ -148,7 +175,7 @@ class _CommitSeismographState extends State<CommitSeismograph>
       _focus = List.unmodifiable(path);
       _hover = null;
     });
-    _wakeCtrl.forward(from: 0);
+    _wakeForward();
   }
 
   void _setHover(_HoverInfo? info) {
@@ -1173,6 +1200,7 @@ class _SegmentState extends State<_Segment> {
                       addColor: t.stateAdded,
                       delColor: t.stateDeleted,
                       neutralColor: t.textFaint,
+                      bg: t.bg0,
                       isLeaf: seg.isLeaf,
                       hovered: _hovered,
                     ),
@@ -1380,6 +1408,7 @@ class _SplitBar extends StatelessWidget {
   final Color addColor;
   final Color delColor;
   final Color neutralColor;
+  final Color bg;
   final bool isLeaf;
   final bool hovered;
 
@@ -1389,6 +1418,7 @@ class _SplitBar extends StatelessWidget {
     required this.addColor,
     required this.delColor,
     required this.neutralColor,
+    required this.bg,
     required this.isLeaf,
     required this.hovered,
   });
@@ -1417,8 +1447,12 @@ class _SplitBar extends StatelessWidget {
       // doubles as a redundant cue for everyone in low light.
       const glyphBudget = 11.0;
       final canShowGlyph = w >= glyphBudget * 1.4;
-      final glyphStyle = TextStyle(
-        color: neutralColor.withValues(alpha: 0.55),
+      final addBg = Color.alphaBlend(
+          addColor.withValues(alpha: addAlpha), bg);
+      final delBg = Color.alphaBlend(
+          delColor.withValues(alpha: delAlpha), bg);
+      TextStyle glyphOn(Color surface) => TextStyle(
+        color: AppTokens.contrastGlyph(surface),
         fontSize: 9,
         fontFamily: AppFonts.mono,
         fontWeight: FontWeight.w700,
@@ -1438,12 +1472,12 @@ class _SplitBar extends StatelessWidget {
         if (canShowGlyph && addH >= glyphBudget)
           Positioned(
             left: 2, top: (h - delH - addH) + 1,
-            child: Text('+', style: glyphStyle),
+            child: Text('+', style: glyphOn(addBg)),
           ),
         if (canShowGlyph && delH >= glyphBudget)
           Positioned(
             left: 2, bottom: 1,
-            child: Text('−', style: glyphStyle),
+            child: Text('−', style: glyphOn(delBg)),
           ),
       ]);
     });
@@ -1545,6 +1579,7 @@ class CommitSeismographRail extends StatefulWidget {
 
 class _CommitSeismographRailState extends State<CommitSeismographRail>
     with SingleTickerProviderStateMixin {
+  static const Duration _wakeAuthored = Duration(milliseconds: 280);
   late AnimationController _wake;
   // Index of the bar the user is hovering with a drag (scrub gesture).
   // Distinct from the per-bar mouse hover so bars far from the cursor
@@ -1556,8 +1591,20 @@ class _CommitSeismographRailState extends State<CommitSeismographRail>
     super.initState();
     _wake = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 280),
-    )..forward();
+      duration: _wakeAuthored,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scaled = context.motionRead(_wakeAuthored);
+    if (scaled == Duration.zero) {
+      _wake.value = 1.0;
+    } else {
+      _wake.duration = scaled;
+      if (!_wake.isAnimating && _wake.value == 0) _wake.forward();
+    }
   }
 
   @override
@@ -1565,7 +1612,11 @@ class _CommitSeismographRailState extends State<CommitSeismographRail>
     super.didUpdateWidget(old);
     // New commit selected mid-diff (from elsewhere) → re-wake.
     if (old.detail.commitHash != widget.detail.commitHash) {
-      _wake.forward(from: 0);
+      if (context.reduceMotionRead) {
+        _wake.value = 1.0;
+      } else {
+        _wake.forward(from: 0);
+      }
     }
   }
 

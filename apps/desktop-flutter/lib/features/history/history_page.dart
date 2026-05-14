@@ -11,7 +11,6 @@ import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
-import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
@@ -766,29 +765,34 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// painter does ONE `Color.lerp` per node per frame (gray→target)
   /// instead of two (gray→target AND churnA→churnB at netRatio).
   Map<String, Color> _churnTargetColors = const {};
-  int _cacheVersion = 0;
 
-  /// 0 → 1 fade controller for the gray→churn-color crossfade. Driven
-  /// from `_rebuildChurnMaps`. The painter receives this as `repaint:`
-  /// and lerps each node's color from `fallbackNodeColor` toward its
-  /// computed churn color over the controller's value.
+  static const Duration _churnAuthored = Duration(milliseconds: 320);
+  static const Duration _previewAuthored = Duration(milliseconds: 1800);
+
   late final AnimationController _churnIntroCtrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 320),
+    duration: _churnAuthored,
   );
 
-  /// 0 → 1 controller driving the preview-overlay populate-in.
-  /// Slower than the churn intro because it's the centerpiece of the
-  /// hover gesture — the user is meant to *watch* it land. Stagger
-  /// per-node is computed inside the painter from this single value.
   late final AnimationController _previewIntroCtrl = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1800),
+    duration: _previewAuthored,
   );
 
   static String _signatureOf(List<CommitHistoryEntry> commits) {
     if (commits.isEmpty) return '';
     return '${commits.length}|${commits.first.commitHash}|${commits.last.commitHash}';
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final churnScaled = context.motionRead(_churnAuthored);
+    _churnIntroCtrl.duration =
+        churnScaled == Duration.zero ? Duration.zero : churnScaled;
+    final previewScaled = context.motionRead(_previewAuthored);
+    _previewIntroCtrl.duration =
+        previewScaled == Duration.zero ? Duration.zero : previewScaled;
   }
 
   @override
@@ -860,10 +864,11 @@ class _TimelineStripState extends State<_TimelineStrip>
       out[hash] = Color.lerp(a, b, tLerp)!;
     });
     _churnTargetColors = out;
-    _cacheVersion = widget.detailCacheVersion;
-    // Crossfade the new colors in from the gray fallback. Same anim
-    // for first-load AND subsequent refreshes — uniform feel.
-    _churnIntroCtrl.forward(from: 0);
+    if (context.reduceMotionRead) {
+      _churnIntroCtrl.value = 1.0;
+    } else {
+      _churnIntroCtrl.forward(from: 0);
+    }
   }
 
   @override
@@ -898,7 +903,11 @@ class _TimelineStripState extends State<_TimelineStrip>
     if (previewChanged) {
       _previewIntroCtrl.reset();
       if (widget.previewCommits.isNotEmpty) {
-        _previewIntroCtrl.forward();
+        if (context.reduceMotionRead) {
+          _previewIntroCtrl.value = 1.0;
+        } else {
+          _previewIntroCtrl.forward();
+        }
       }
     }
   }
@@ -2481,11 +2490,11 @@ class _CommitRowState extends State<_CommitRow> {
         setState(() => _pressed = p);
       },
       child: AnimatedScale(
-        duration: AppMotion.snap,
+        duration: context.motion(AppMotion.snap),
         curve: AppMotion.snapCurve,
         scale: _pressed ? 0.99 : 1.0,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding: const EdgeInsets.fromLTRB(0, 9, 12, 9),
           decoration: BoxDecoration(
             color: widget.isSelected
@@ -2752,7 +2761,7 @@ class _ReflogRowState extends State<_ReflogRow> {
             ? null
             : (d) => widget.onSecondaryTap!(d.globalPosition),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
           color: _hovered ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0),
           child: Opacity(
@@ -3315,7 +3324,7 @@ class _HistoryMiniButtonState extends State<_HistoryMiniButton> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: chrome.background,
@@ -3747,7 +3756,7 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
+          duration: context.motion(const Duration(milliseconds: 90)),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: _hovered
@@ -3819,30 +3828,38 @@ class _PreviewCommitRow extends StatefulWidget {
 
 class _PreviewCommitRowState extends State<_PreviewCommitRow>
     with SingleTickerProviderStateMixin {
+  static const Duration _authored = Duration(milliseconds: 260);
+  static const Duration _staggerBudget = Duration(milliseconds: 1400);
   late final AnimationController _ac;
+  bool _kicked = false;
+
   @override
   void initState() {
     super.initState();
-    // Per-row stagger: later rows start animating later so the
-    // sequence reads as populate-in. Total budget is capped at ~1.4s
-    // regardless of preview count — a desk with 80 commits would
-    // otherwise animate for over a minute. Beyond ~20 rows we collapse
-    // the stagger so the tail lands quickly while the head still
-    // reads visually.
-    const staggerBudget = Duration(milliseconds: 1400);
+    _ac = AnimationController(vsync: this, duration: _authored);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_kicked) return;
+    _kicked = true;
+    final scaled = context.motionRead(_authored);
+    if (scaled == Duration.zero) {
+      _ac.value = 1.0;
+      return;
+    }
+    _ac.duration = scaled;
     final staggerCount = widget.totalPreview <= 20
         ? widget.totalPreview
         : 20;
-    final perStep = staggerBudget ~/ staggerCount.clamp(1, 1 << 30);
+    final perStep = _staggerBudget ~/ staggerCount.clamp(1, 1 << 30);
     final delay = perStep *
         (widget.indexInPreview < staggerCount
             ? widget.indexInPreview
             : staggerCount);
-    _ac = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-    );
-    Future<void>.delayed(delay, () {
+    final scaledDelay = context.motionRead(delay);
+    Future<void>.delayed(scaledDelay, () {
       if (!mounted) return;
       _ac.forward();
     });

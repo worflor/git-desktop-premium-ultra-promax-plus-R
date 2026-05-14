@@ -718,7 +718,7 @@ class LogosMind {
     }
     if (strongestSeed != null && strongestCoupling > 0) {
       grounding.add(
-          'co-moves with ${_displayPath(strongestSeed!)} '
+          'co-moves with ${_displayPath(strongestSeed)} '
           '(coupling ${strongestCoupling.toStringAsFixed(2)})');
     }
     // Engram — only when match is meaningful.

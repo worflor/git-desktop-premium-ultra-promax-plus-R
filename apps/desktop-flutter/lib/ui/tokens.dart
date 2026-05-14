@@ -436,6 +436,11 @@ class AppTokens {
   Color get danger => _dangerOverride ?? stateDeleted;
   Color get inputFocusBorder => _inputFocusBorderOverride ?? focusRing;
 
+  static Color contrastGlyph(Color background) =>
+      background.computeLuminance() > 0.45
+          ? const Color(0xFF1A1A1A)
+          : const Color(0xFFEEEEEE);
+
   AppTokens._({
     required this.id,
     required this.isDark,

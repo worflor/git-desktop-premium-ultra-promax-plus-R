@@ -121,7 +121,6 @@ class GiteaRepoCoords {
       if (colonIdx < 0) return null;
       path = '/${trimmed.substring(colonIdx + 1)}';
     }
-    if (path == null) return null;
     if (path.endsWith('.git')) path = path.substring(0, path.length - 4);
     final segments = path.split('/').where((s) => s.isNotEmpty).toList();
     if (segments.length < 2) return null;

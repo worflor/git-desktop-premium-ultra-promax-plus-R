@@ -1310,7 +1310,7 @@ FileClusters clusterFiles(
     final mean = count > 0 ? sum / count : 0.25;
     threshold = mean.clamp(0.15, 0.50);
   }
-  final effectiveThreshold = threshold ?? 0.25;
+  final effectiveThreshold = threshold;
 
   // Index paths so we can refer to them by int everywhere.
   final pathIndex = <String, int>{

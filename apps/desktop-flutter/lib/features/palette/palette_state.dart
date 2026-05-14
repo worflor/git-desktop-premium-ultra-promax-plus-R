@@ -302,7 +302,7 @@ class PaletteState extends ChangeNotifier {
     final wickResult = await wickFuture;
     if (gen != _generation) return;
     if (wickResult != null && wickResult.packet.isNotEmpty) {
-      _wickEntries = wickResult.packet;
+      _wickEntries = wickResult.packet..sort((a, b) => a.rank.compareTo(b.rank));
       _wickPosture = wickResult.posture;
     } else {
       _wickEntries = [];

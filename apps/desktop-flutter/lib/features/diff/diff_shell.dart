@@ -3696,8 +3696,9 @@ class _DiffShellState extends State<DiffShell> {
             onRhymeTap: (targetIdx) {
               if (!_scrollCtrl.hasClients) return;
               final offset = targetIdx * _lineItemExtent;
-              _scrollCtrl.animateTo(
+              _scrollCtrl.motionAnimateTo(
                 offset.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
+                context: context,
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutCubic,
               );
@@ -3710,7 +3711,7 @@ class _DiffShellState extends State<DiffShell> {
         right: 0,
         child: AnimatedOpacity(
           opacity: widget.loading ? 1 : 0,
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           child: LinearProgressIndicator(
             minHeight: 2,
             color: t.accentBright.withValues(alpha: 0.7),
@@ -4331,11 +4332,11 @@ class _DiffLineState extends State<DiffLineView> {
                 offset: (widget.hovered && !_lineHover)
                     ? Offset.zero
                     : const Offset(-0.06, 0),
-                duration: const Duration(milliseconds: 120),
+                duration: context.motion(const Duration(milliseconds: 120)),
                 curve: Curves.easeOutCubic,
                 child: AnimatedOpacity(
                   opacity: (widget.hovered && !_lineHover) ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 100),
+                  duration: context.motion(const Duration(milliseconds: 100)),
                   curve: Curves.easeOutCubic,
                   child: IntrinsicWidth(
                     child: Container(
@@ -5290,7 +5291,7 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           width: 24,
           height: 24,
           decoration: BoxDecoration(
@@ -5862,7 +5863,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         return Align(
           alignment: Alignment.topLeft,
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 170),
+            duration: context.motion(const Duration(milliseconds: 170)),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeInCubic,
             transitionBuilder: (child, animation) {

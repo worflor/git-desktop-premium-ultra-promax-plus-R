@@ -52,7 +52,6 @@ import 'dart:collection';
 import 'dart:convert' show utf8;
 import 'dart:typed_data';
 
-import 'logos_core.dart';
 import 'logos_signature.dart';
 
 /// Monotone Lamport timestamp + peer identifier. Total ordering

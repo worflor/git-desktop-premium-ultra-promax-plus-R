@@ -811,15 +811,15 @@ List<PaletteEntry> _aiEntries(
       },
     ),
     PaletteEntry(
-      id: 'ai.trigger.ask',
-      label: 'Ask ${repoPath.split('/').last.split('\\').last}',
-      subtitle: 'ask: [question]',
+      id: 'ai.trigger.debug',
+      label: 'Debug ${repoPath.split('/').last.split('\\').last}',
+      subtitle: 'describe a symptom',
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'AI',
       chipTone: ChipTone.chromatic1,
       onExecute: () {
-        aiActivity.requestDrawerOpen(repoPath, AiActivityKind.ask);
+        aiActivity.requestDrawerOpen(repoPath, AiActivityKind.debug);
         cb.onModeChanged(0);
       },
     ),
@@ -832,8 +832,8 @@ List<PaletteEntry> _aiEntries(
         AiActivityKind.generate => 'Commit Message',
         AiActivityKind.review => 'Code Review',
         AiActivityKind.muse => 'Muse Result',
-        AiActivityKind.ask => 'AI Answer',
         AiActivityKind.present => 'Presentation',
+        AiActivityKind.debug => 'Debug Result',
       };
       entries.add(PaletteEntry(
         id: 'ai.view.${r.kind.name}',

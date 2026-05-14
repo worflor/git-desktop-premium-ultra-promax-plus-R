@@ -169,6 +169,12 @@ class _ManifoldPaneState extends State<ManifoldPane>
   /// mount, always increasing; units are seconds, converted to
   /// breath-cycles at consumption so the existing tempo is preserved.
   late final Stopwatch _wallClock;
+  /// 0→1 scalar multiplied into comet radius + link alpha. During the
+  /// reduce-motion teleport it ramps 1→0 (implode) then 0→1 (explode)
+  /// so the scene dissolves to nothing and reappears at its new state
+  /// instead of freezing mid-frame.
+  late final AnimationController _materialize;
+  VoidCallback? _onImplodeComplete;
 
   ManifoldPerspective _from = ManifoldPerspective.eigenshape;
   ManifoldPerspective _to = ManifoldPerspective.eigenshape;
@@ -213,6 +219,18 @@ class _ManifoldPaneState extends State<ManifoldPane>
       value: 1.0,
     );
     _wallClock = Stopwatch()..start();
+    _materialize = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+      value: 1.0,
+    )..addStatusListener((status) {
+      if (status == AnimationStatus.dismissed) {
+        final cb = _onImplodeComplete;
+        _onImplodeComplete = null;
+        if (cb != null) cb();
+        _materialize.forward();
+      }
+    });
   }
 
   @override
@@ -222,20 +240,30 @@ class _ManifoldPaneState extends State<ManifoldPane>
     Duration derived(int multiplier) =>
         context.motion(shader.duration * multiplier);
 
+    final reduce = context.reduceMotionRead;
     final introDesired = derived(ManifoldTuning.introDurationMult);
-    if (introDesired > Duration.zero && _intro.duration != introDesired) {
+    if (reduce) {
+      _intro.value = 1.0;
+    } else if (_intro.duration != introDesired) {
       _intro.duration = introDesired;
     }
-    // Perspective morph physically remaps comet positions; longer
-    // slerp lets the user read the flow instead of a flat-lerp snap.
     final slerpDesired = derived(ManifoldTuning.slerpDurationMult);
-    if (slerpDesired > Duration.zero && _slerp.duration != slerpDesired) {
+    if (reduce) {
+      _slerp.value = 1.0;
+    } else if (_slerp.duration != slerpDesired) {
       _slerp.duration = slerpDesired;
     }
-    // Focus-ring acquisition — snappy by design. One shader-unit,
-    // lands in ~80-180ms depending on theme.
+    final landingDesired = derived(ManifoldTuning.focusRingDurationMult);
+    if (reduce) {
+      if (_landing.isAnimating) _landing.stop();
+    } else if (_landing.duration != landingDesired) {
+      _landing.duration = landingDesired;
+    }
     final focusRingDesired = derived(ManifoldTuning.focusRingDurationMult);
-    if (focusRingDesired > Duration.zero) {
+    if (reduce) {
+      _chartFocusRing.value = _chartFocusRing.value;
+      _tangentFocusRing.value = _tangentFocusRing.value;
+    } else {
       if (_chartFocusRing.duration != focusRingDesired) {
         _chartFocusRing.duration = focusRingDesired;
       }
@@ -280,13 +308,23 @@ class _ManifoldPaneState extends State<ManifoldPane>
         old.context.transportEdges.length !=
             widget.context.transportEdges.length;
     if (shapeChanged) {
-      _intro
-        ..reset()
-        ..forward();
       _chartCursor = null;
       _tangentCursor = null;
       _chartFocus = null;
       _tangentFocus = null;
+      if (context.reduceMotionRead) {
+        _onImplodeComplete = () {
+          if (!mounted) return;
+          setState(() {
+            _intro.value = 1.0;
+          });
+        };
+        _materialize.reverse();
+      } else {
+        _intro
+          ..reset()
+          ..forward();
+      }
     }
     if (lineChanged) {
       // Reset perspective to Eigenshape on line change — it's the
@@ -306,30 +344,35 @@ class _ManifoldPaneState extends State<ManifoldPane>
     _landing.dispose();
     _chartFocusRing.dispose();
     _tangentFocusRing.dispose();
+    _materialize.dispose();
     _wallClock.stop();
     super.dispose();
   }
 
   void _setPerspective(ManifoldPerspective next) {
     if (_to == next) return;
-    setState(() {
-      _from = _to;
-      _to = next;
-      _slerp
-        ..reset()
-        ..forward();
-      // Kick the landing flash at slerp-start, not on completion. Its
-      // 560ms ease overlaps the slerp settle (~420ms) so the pulse
-      // peaks as the scene lands — fused motion, not a sequential
-      // "rotate, then pop".
-      _landing
-        ..reset()
-        ..forward();
-      // Focus survives the slerp on purpose: the focused comet's
-      // projected position morphs smoothly with the camera, so the
-      // ring rides the motion. A moved cursor during or after the
-      // slerp naturally re-hit-tests against the new layout.
-    });
+    if (context.reduceMotionRead) {
+      _onImplodeComplete = () {
+        if (!mounted) return;
+        setState(() {
+          _from = _to;
+          _to = next;
+          _slerp.value = 1.0;
+        });
+      };
+      _materialize.reverse();
+    } else {
+      setState(() {
+        _from = _to;
+        _to = next;
+        _slerp
+          ..reset()
+          ..forward();
+        _landing
+          ..reset()
+          ..forward();
+      });
+    }
   }
 
   CometCamera _camera(Map<ManifoldPerspective, CometCamera> map) {
@@ -348,6 +391,7 @@ class _ManifoldPaneState extends State<ManifoldPane>
         _landing,
         _chartFocusRing,
         _tangentFocusRing,
+        _materialize,
       ]),
       builder: (_, __) {
         final introT = _intro.value;
@@ -361,9 +405,12 @@ class _ManifoldPaneState extends State<ManifoldPane>
         // it — a proper modulo, not a reset.
         final breathPeriodSec =
             ManifoldTuning.breathCycle.inMicroseconds / 1e6;
-        final breathTime = breathPeriodSec <= 0
+        final breathTime = !_breath.isAnimating
             ? 0.0
-            : _wallClock.elapsedMicroseconds / 1e6 / breathPeriodSec;
+            : breathPeriodSec <= 0
+                ? 0.0
+                : _wallClock.elapsedMicroseconds / 1e6 / breathPeriodSec;
+        final materialize = _materialize.value;
         final chartCamera = _camera(_chartPerspectives);
         final tangentCamera = _camera(_tangentPerspectives);
         // Themes whose text effect is `none` stay silent on arrival —
@@ -420,6 +467,7 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               model: widget.context,
                               introT: introT,
                               breathT: breathTime,
+                              materialize: materialize,
                               camera: chartCamera,
                               perspectiveFrom: _from,
                               perspectiveTo: _to,
@@ -459,6 +507,7 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               model: widget.context,
                               introT: introT,
                               breathT: breathTime,
+                              materialize: materialize,
                               camera: tangentCamera,
                               perspectiveFrom: _from,
                               perspectiveTo: _to,
@@ -1534,6 +1583,7 @@ class _ChartSurface extends StatelessWidget {
   final DiffPinnedContextModel model;
   final double introT;
   final double breathT;
+  final double materialize;
   final CometCamera camera;
   final ManifoldPerspective perspectiveFrom;
   final ManifoldPerspective perspectiveTo;
@@ -1552,6 +1602,7 @@ class _ChartSurface extends StatelessWidget {
     required this.model,
     required this.introT,
     required this.breathT,
+    this.materialize = 1.0,
     required this.camera,
     required this.perspectiveFrom,
     required this.perspectiveTo,
@@ -1632,6 +1683,7 @@ class _ChartSurface extends StatelessWidget {
                   links: data.links,
                   introT: introT,
                   breathT: breathT,
+                  materialize: materialize,
                   luminescence: shader.luminescence,
                   edgeIntensity: shader.edgeIntensity,
                   focusedIndex: focus,
@@ -2054,6 +2106,7 @@ class _TangentSurface extends StatelessWidget {
   final DiffPinnedContextModel model;
   final double introT;
   final double breathT;
+  final double materialize;
   final CometCamera camera;
   final ManifoldPerspective perspectiveFrom;
   final ManifoldPerspective perspectiveTo;
@@ -2071,6 +2124,7 @@ class _TangentSurface extends StatelessWidget {
     required this.model,
     required this.introT,
     required this.breathT,
+    this.materialize = 1.0,
     required this.camera,
     required this.perspectiveFrom,
     required this.perspectiveTo,
@@ -2155,6 +2209,7 @@ class _TangentSurface extends StatelessWidget {
                   links: data.links,
                   introT: introT,
                   breathT: breathT,
+                  materialize: materialize,
                   luminescence: shader.luminescence,
                   edgeIntensity: shader.edgeIntensity,
                   focusedIndex: focus,
@@ -2177,6 +2232,7 @@ class _TangentCompositePainter extends CustomPainter {
   final List<CometLink> links;
   final double introT;
   final double breathT;
+  final double materialize;
   final double luminescence;
   final double edgeIntensity;
   final int? focusedIndex;
@@ -2190,6 +2246,7 @@ class _TangentCompositePainter extends CustomPainter {
     required this.links,
     required this.introT,
     required this.breathT,
+    this.materialize = 1.0,
     required this.luminescence,
     required this.edgeIntensity,
     this.focusedIndex,
@@ -2204,6 +2261,7 @@ class _TangentCompositePainter extends CustomPainter {
       flows: flows,
       introT: introT,
       breathT: breathT,
+      materialize: materialize,
       luminescence: luminescence,
       edgeIntensity: edgeIntensity,
       camera: camera,
@@ -2214,6 +2272,7 @@ class _TangentCompositePainter extends CustomPainter {
       links: links,
       introT: introT,
       breathT: breathT,
+      materialize: materialize,
       luminescence: luminescence,
       edgeIntensity: edgeIntensity,
       focusedIndex: focusedIndex,
@@ -2228,6 +2287,7 @@ class _TangentCompositePainter extends CustomPainter {
   bool shouldRepaint(covariant _TangentCompositePainter old) =>
       old.introT != introT ||
       old.breathT != breathT ||
+      old.materialize != materialize ||
       old.luminescence != luminescence ||
       old.edgeIntensity != edgeIntensity ||
       old.focusedIndex != focusedIndex ||

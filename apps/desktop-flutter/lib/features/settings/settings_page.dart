@@ -74,9 +74,10 @@ class _SettingsPageState extends State<SettingsPage>
   };
   // Drives a brief border / bg pulse on the focused section header
   // after deep-link. Forward-only — fires once per focus request.
+  static const Duration _focusFlashAuthored = Duration(milliseconds: 900);
   late final AnimationController _focusFlash = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 900),
+    duration: _focusFlashAuthored,
   );
   SettingsSection? _flashingSection;
   final Map<String, TextEditingController> _categoryLabelControllers = {};
@@ -191,20 +192,32 @@ class _SettingsPageState extends State<SettingsPage>
     if (ctx == null) return;
     Scrollable.ensureVisible(
       ctx,
-      duration: AppMotion.fluid,
+      duration: context.motionRead(AppMotion.fluid),
       curve: AppMotion.fluidCurve,
       alignment: 0.08,
     );
     setState(() => _flashingSection = section);
-    _focusFlash
-      ..stop()
-      ..value = 0
-      ..forward().whenComplete(() {
+    if (context.reduceMotionRead) {
+      _focusFlash.value = 0.5;
+      Future.delayed(const Duration(milliseconds: 600), () {
         if (!mounted) return;
         if (_flashingSection == section) {
           setState(() => _flashingSection = null);
         }
       });
+    } else {
+      final flashDur = context.motionRead(_focusFlashAuthored);
+      _focusFlash
+        ..stop()
+        ..duration = flashDur
+        ..value = 0
+        ..forward().whenComplete(() {
+          if (!mounted) return;
+          if (_flashingSection == section) {
+            setState(() => _flashingSection = null);
+          }
+        });
+    }
   }
 
   @override
@@ -389,23 +402,6 @@ class _SettingsPageState extends State<SettingsPage>
     } catch (_) {
       if (!mounted) return;
       setState(() => _actionError = 'Failed to save update channel.');
-    }
-  }
-
-  Future<void> _saveCrashReporting(bool value) async {
-    setState(() {
-      _actionError = null;
-    });
-    try {
-      await context.read<PreferencesState>().setCrashReportingEnabled(value);
-      if (!mounted) {
-        return;
-      }
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _actionError = 'Failed to save crash reporting policy.');
     }
   }
 
@@ -813,17 +809,6 @@ class _SettingsPageState extends State<SettingsPage>
     // settings.json from in-memory state and undo the purge. Process.exit
     // skips that lifecycle entirely.
     exit(0);
-  }
-
-  Future<void> _forceDeploy() async {
-    final url = _releaseCheck?.manifest?.downloadUrl;
-    if (url == null || url.isEmpty) return;
-    try {
-      await openInSystemBrowser(url);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _actionError = 'Could not open the download URL.');
-    }
   }
 
   List<_ProviderCard> _buildProviderCards() {
@@ -1470,7 +1455,7 @@ class _SettingsPageState extends State<SettingsPage>
                 },
               ),
               AnimatedSize(
-                duration: AppMotion.fade,
+                duration: context.motion(AppMotion.fade),
                 curve: AppMotion.fadeCurve,
                 alignment: Alignment.topCenter,
                 clipBehavior: Clip.hardEdge,
@@ -2134,7 +2119,7 @@ class _ReleaseNotesButtonState extends State<_ReleaseNotesButton> {
           onTap: widget.onTap,
           behavior: HitTestBehavior.opaque,
           child: AnimatedContainer(
-            duration: AppMotion.snap,
+            duration: context.motion(AppMotion.snap),
             width: 28,
             height: 28,
             alignment: Alignment.center,
@@ -2193,7 +2178,7 @@ class _ReplayOnboardingButtonState extends State<_ReplayOnboardingButton> {
           onTap: widget.onTap,
           behavior: HitTestBehavior.opaque,
           child: AnimatedContainer(
-            duration: AppMotion.snap,
+            duration: context.motion(AppMotion.snap),
             width: 28,
             height: 28,
             alignment: Alignment.center,
@@ -2587,7 +2572,7 @@ class _ChannelRibbonItem extends StatelessWidget {
         child: Opacity(
           opacity: enabled ? 1.0 : 0.35,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
+            duration: context.motion(const Duration(milliseconds: 120)),
             margin: const EdgeInsets.only(right: 16),
             padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
@@ -2750,7 +2735,7 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
           // same heartbeat the channel items use for active-state
           // transitions.
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 120),
+            duration: context.motion(const Duration(milliseconds: 120)),
             switchInCurve: Curves.easeOut,
             switchOutCurve: Curves.easeIn,
             transitionBuilder: (child, anim) =>
@@ -2822,7 +2807,7 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 120),
+                duration: context.motion(const Duration(milliseconds: 120)),
                 style: TextStyle(
                   color: color,
                   fontSize: 10,
@@ -2927,17 +2912,34 @@ class _PollResultLabel extends StatefulWidget {
 
 class _PollResultLabelState extends State<_PollResultLabel>
     with SingleTickerProviderStateMixin {
+  static const Duration _authored = Duration(milliseconds: 300);
   late final AnimationController _ac;
+  bool _kicked = false;
 
   @override
   void initState() {
     super.initState();
-    _ac = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 300))
-      ..forward();
-    Future.delayed(const Duration(seconds: 6), () {
-      if (mounted) _ac.reverse();
-    });
+    _ac = AnimationController(vsync: this, duration: _authored);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_kicked) return;
+    _kicked = true;
+    final scaled = context.motionRead(_authored);
+    if (scaled == Duration.zero) {
+      _ac.value = 1.0;
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted) _ac.value = 0.0;
+      });
+    } else {
+      _ac.duration = scaled;
+      _ac.forward();
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted) _ac.reverse();
+      });
+    }
   }
 
   @override
@@ -4240,7 +4242,7 @@ class _ReasoningEffortRowState extends State<_ReasoningEffortRow> {
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
+                    duration: context.motion(const Duration(milliseconds: 120)),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
@@ -4473,7 +4475,7 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
     )!;
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: context.motion(const Duration(milliseconds: 150)),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -7291,10 +7293,10 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           scale: chrome.scale,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             constraints: const BoxConstraints(minHeight: 24),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -7411,7 +7413,7 @@ class _TelemetrySwitcherItemState extends State<_TelemetrySwitcherItem> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+          duration: context.motion(const Duration(milliseconds: 120)),
           margin: const EdgeInsets.only(right: 20),
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
@@ -7808,7 +7810,7 @@ class _DeckButtonState extends State<_DeckButton> {
         child: Opacity(
           opacity: widget.enabled ? 1.0 : 0.4,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
+            duration: context.motion(const Duration(milliseconds: 120)),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: _hovered && widget.enabled
@@ -7887,11 +7889,11 @@ class _ResetQuitControlState extends State<_ResetQuitControl> {
     return TapRegion(
       onTapOutside: (_) => _collapse(),
       child: AnimatedSize(
-        duration: const Duration(milliseconds: 140),
+        duration: context.motion(const Duration(milliseconds: 140)),
         curve: Curves.easeOut,
         alignment: Alignment.centerRight,
         child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 120),
+          duration: context.motion(const Duration(milliseconds: 120)),
           switchInCurve: Curves.easeOut,
           switchOutCurve: Curves.easeIn,
           transitionBuilder: (child, anim) =>
@@ -10914,10 +10916,10 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
         child: Opacity(
           opacity: widget.enabled ? 1 : 0.4,
           child: AnimatedScale(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             scale: chrome.scale,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: context.motion(const Duration(milliseconds: 80)),
               height: 30,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
@@ -12147,7 +12149,7 @@ class _ToolModeToggle extends StatelessWidget {
         onTap: active ? null : () => onChanged(value),
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
-          duration: AppMotion.snap,
+          duration: context.motion(AppMotion.snap),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
             color: active
@@ -12341,7 +12343,7 @@ class _AiFeatureBarState extends State<_AiFeatureBar>
           child: GestureDetector(
             onTap: widget.onTap,
             child: AnimatedContainer(
-              duration: AppMotion.snap,
+              duration: context.motion(AppMotion.snap),
               curve: AppMotion.snapCurve,
               height: 36,
               decoration: BoxDecoration(
@@ -12364,7 +12366,7 @@ class _AiFeatureBarState extends State<_AiFeatureBar>
                 children: [
                   const SizedBox(width: 2),
                   AnimatedContainer(
-                    duration: AppMotion.snap,
+                    duration: context.motion(AppMotion.snap),
                     width: 3,
                     height: 20,
                     decoration: BoxDecoration(
@@ -12390,7 +12392,7 @@ class _AiFeatureBarState extends State<_AiFeatureBar>
                   ),
                   AnimatedRotation(
                     turns: active ? 0.25 : 0,
-                    duration: AppMotion.snap,
+                    duration: context.motion(AppMotion.snap),
                     curve: AppMotion.snapCurve,
                     child: Icon(
                       Icons.chevron_right_rounded,
@@ -12437,12 +12439,12 @@ class _ScrollSectionBubble extends StatelessWidget {
         return Stack(
           children: [
             AnimatedPositioned(
-              duration: AppMotion.snap,
+              duration: context.motion(AppMotion.snap),
               curve: AppMotion.snapCurve,
               right: 18,
               top: bubbleY.clamp(trackPadding, constraints.maxHeight - 40),
               child: AnimatedOpacity(
-                duration: AppMotion.fade,
+                duration: context.motion(AppMotion.fade),
                 curve: AppMotion.fadeCurve,
                 opacity: show && label.isNotEmpty ? 1.0 : 0.0,
                 child: IgnorePointer(

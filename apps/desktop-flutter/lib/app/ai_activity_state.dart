@@ -15,11 +15,11 @@ enum AiActivityKind {
   /// `runMuse` — three-phase oracle on the included selection.
   muse,
 
-  /// `runAsk` — shape/ask prose answer over the working tree.
-  ask,
-
   /// Present — AI-generated interactive HTML from Logos summary.
   present,
+
+  /// Debug — Logos-guided hypothesis-conditioned debugging.
+  debug,
 }
 
 /// Runtime status of an [AiActivityRecord]. `done` and `error` are
@@ -61,6 +61,11 @@ class AiAskResult extends AiActivityResult {
   /// The model's prose answer.
   final String answer;
   const AiAskResult(this.answer);
+}
+
+class AiDebugActivityResult extends AiActivityResult {
+  final AiDebugData data;
+  const AiDebugActivityResult(this.data);
 }
 
 class AiPresentResult extends AiActivityResult {
@@ -212,9 +217,9 @@ class AiActivityState extends ChangeNotifier {
   /// transient "intent" map on the state singleton.
   final Map<String, DrawerIntent> _pendingDrawerOpen = {};
 
-  void requestAskWithQuery(String repoPath, String query) {
+  void requestDebugWithQuery(String repoPath, String query) {
     _pendingDrawerOpen[repoPath] =
-        DrawerIntent(AiActivityKind.ask, query: query);
+        DrawerIntent(AiActivityKind.debug, query: query);
     notifyListeners();
   }
 

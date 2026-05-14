@@ -384,7 +384,6 @@ class _BranchesPageState extends State<BranchesPage> {
   // recomputing per build is fine, but caching avoids work on every
   // hover-rebuild.
   Map<int, Set<int>>? _cachedCollisionMap;
-  int _prDetailsRev = 0;
   // RECENT TOUCHERS + per-file thermal heat per PR. One scan, two
   // signals — see scanFileSignals() in git.dart. Loaded lazily on
   // expand. Pure local git; transferable to any host.
@@ -1971,7 +1970,6 @@ class _BranchesPageState extends State<BranchesPage> {
   void _invalidatePrDerivations() {
     _cachedCollisionMap = null;
     _cachedOrbitMap = null;
-    _prDetailsRev++;
   }
 
   /// Drop everything keyed on the LogosGit engine — PR shapes (which
@@ -3231,7 +3229,6 @@ class _BranchesPageState extends State<BranchesPage> {
     } else {
       _prWarmSweepToken = null;
     }
-    final status = _remoteStatus;
     if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
       return _LensLoadingNotice(label: 'Reading pull requests…');
     }
@@ -4257,7 +4254,6 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Widget _buildIssuesBody(AppTokens t, String repoPath) {
-    final status = _remoteStatus;
     final deskIssues = context.watch<DeskIssueState>().all;
     // Track DeskPrState so issue rows rebuild when a desk is promoted
     // to a local PR OR when any PR's linked-issues / verdict / state
@@ -8717,8 +8713,6 @@ class _PrActionToolbar extends StatefulWidget {
 }
 
 class _PrActionToolbarState extends State<_PrActionToolbar> {
-  bool _showMergePopover = false;
-
   @override
   Widget build(BuildContext context) {
     // Wrap instead of Row — when the narrower expanded-row constraint

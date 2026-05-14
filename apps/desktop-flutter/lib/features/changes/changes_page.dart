@@ -129,6 +129,15 @@ class _PrimaryCommitAction {
   });
 }
 
+int _stableHash(String s) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < s.length; i++) {
+    h = (h ^ s.codeUnitAt(i)) * 0x01000193;
+    h &= 0xFFFFFFFF;
+  }
+  return h;
+}
+
 String _tokensLabel(int chars) {
   final t = chars ~/ 4;
   return t >= 1000 ? '${(t / 1000).toStringAsFixed(1)}k' : '$t';
@@ -296,7 +305,7 @@ class _ChangesPageState extends State<ChangesPage> {
   // the page because they're per-render intent, not per-run identity.
   // Anything tied to a run's identity (running flag, scope key, result,
   // error) reads through the `_reviewRecord` / `_museRecord` /
-  // `_generateRecord` / `_askRecord` helpers below.
+  // `_generateRecord` / `_debugRecord` helpers below.
   bool _commitAiLoading = false;
   String? _commitAiError;
   List<AiModelCategoryData> _commitAiCategories = const [];
@@ -354,9 +363,9 @@ class _ChangesPageState extends State<ChangesPage> {
   static const int _kMaxFileDiffCacheEntries = 256;
   bool _commitOnlyMode = false;
   bool _mergeResolving = false;
-  // Ask-mode question/answer/error/in-flight all live in the per-repo
-  // AiActivityState now. See `_askRecord` below for the read path. The
-  // shape-mode composer infrastructure (composer takeover) is what
+  // Debug-mode state lives in the per-repo AiActivityState now.
+  // See `_debugRecord` below for the read path. The shape-mode
+  // composer infrastructure (composer takeover) is what
   // _shapeMode/_shapeCtrl/_shapeFocus track — unrelated to whether a
   // run is in flight.
   // Inline shape-commit mode. When true, the composer field swaps to
@@ -369,7 +378,7 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _shapeMode = false;
 
   // (formerly `_shapeActive`; now folded into [_openDrawer] above —
-  // ask drawer visibility is `_openDrawer == AiActivityKind.ask`.)
+  // debug drawer visibility is `_openDrawer == AiActivityKind.debug`.)
   final TextEditingController _shapeCtrl = TextEditingController();
   final FocusNode _shapeFocus = FocusNode();
   int _shapeCategoryIndex = 0;
@@ -621,12 +630,10 @@ class _ChangesPageState extends State<ChangesPage> {
       _activityRecord(AiActivityKind.generate);
   AiActivityRecord? get _reviewRecord => _activityRecord(AiActivityKind.review);
   AiActivityRecord? get _museRecord => _activityRecord(AiActivityKind.muse);
-  AiActivityRecord? get _askRecord => _activityRecord(AiActivityKind.ask);
-
   bool get _generateRunning => _generateRecord?.isRunning ?? false;
   bool get _reviewRunning => _reviewRecord?.isRunning ?? false;
   bool get _museRunning => _museRecord?.isRunning ?? false;
-  bool get _shaping => _askRecord?.isRunning ?? false;
+  bool get _shaping => _debugRecord?.isRunning ?? false;
 
   // (formerly `_reviewSuccess` / `_museSuccess` — replaced by the
   // transient `_reviewFlash` / `_museFlash` for celebration and
@@ -657,7 +664,7 @@ class _ChangesPageState extends State<ChangesPage> {
   // ── Drawer accessors ──────────────────────────────────────────────
   bool get _isReviewDrawerOpen => _openDrawer == AiActivityKind.review;
   bool get _isMuseDrawerOpen => _openDrawer == AiActivityKind.muse;
-  bool get _isAskDrawerOpen => _openDrawer == AiActivityKind.ask;
+
 
   /// True when the (repo, kind) record is terminal and the user
   /// hasn't acknowledged it yet — the trigger for the toolbar's
@@ -751,16 +758,17 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
-  String? get _askError =>
-      _askRecord?.isError == true ? _askRecord!.error : null;
-
-  String? get _askQuestion => _askRecord?.scopeLabel;
-  String? get _askAnswer {
-    final r = _askRecord;
+  AiActivityRecord? get _debugRecord =>
+      _activityRecord(AiActivityKind.debug);
+  bool get _isDebugDrawerOpen => _openDrawer == AiActivityKind.debug;
+  AiDebugData? get _debugResult {
+    final r = _debugRecord;
     if (r == null || !r.isDone) return null;
     final payload = r.result;
-    return payload is AiAskResult ? payload.answer : null;
+    return payload is AiDebugActivityResult ? payload.data : null;
   }
+  String? get _debugError =>
+      _debugRecord?.isError == true ? _debugRecord!.error : null;
 
   /// Convenience snapshot for setState callers that need to mutate the
   /// activity state for the active repo. Returns null when there's no
@@ -1841,28 +1849,25 @@ class _ChangesPageState extends State<ChangesPage> {
           .map((e) => e.key)
           .toList(growable: false);
 
-  /// Fire the ask and lift the result into the side panel. The
-  /// takeover happens synchronously (drawer flipped to ask) before
-  /// `_runShape` awaits anything, so the user sees a loading pane
-  /// instead of a silent pause while the model is contacted.
-  void _askInPanel(
+  /// Fire a debug run and lift the result into the side panel. The
+  /// drawer opens synchronously before `_runDebug` awaits anything, so
+  /// the user sees a loading pane instead of a silent pause.
+  void _debugInPanel(
     String repoPath,
-    RepositoryStatus status,
     String sentence,
     String categoryId,
   ) {
-    setState(() => _openDrawer = AiActivityKind.ask);
-    unawaited(_runShape(repoPath, status, sentence, categoryId));
+    setState(() => _openDrawer = AiActivityKind.debug);
+    unawaited(_runDebug(repoPath, sentence, categoryId));
   }
 
-  /// Toggle the composer's shape-mode: flips between binding the
-  /// commit draft controller and the ask-question controller. Exiting
-  /// also closes any active result panel — clicking ◈ is the single
-  /// gesture that walks away from the conversation entirely.
+  /// Toggle the composer's debug mode: flips between binding the
+  /// commit draft controller and the debug input controller. Exiting
+  /// also closes any active result panel.
   void _toggleShapeMode() {
     setState(() {
       _shapeMode = !_shapeMode;
-      if (!_shapeMode && _openDrawer == AiActivityKind.ask) {
+      if (!_shapeMode && _openDrawer == AiActivityKind.debug) {
         _openDrawer = null;
       }
     });
@@ -3856,23 +3861,20 @@ class _ChangesPageState extends State<ChangesPage> {
   /// be staged before it happens. Working tree stays untouched either
   /// way; if the AI returns garbage, `apply --check` catches it and
   /// the index is never mutated.
-  Future<void> _runShape(
+  Future<void> _runDebug(
     String repoPath,
-    RepositoryStatus status,
     String sentence,
     String categoryId,
   ) async {
-    // Defense-in-depth: ask/shape is AI — skip when hidden.
     if (context.read<PreferencesState>().hideAiFeatures) return;
     if (_shaping) return;
     final trimmed = sentence.trim();
     if (trimmed.isEmpty) return;
-    if (status.files.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No changes to shape.')),
-      );
-      return;
+
+    // If a debug result already exists, this is a refinement round.
+    final existing = _debugResult;
+    if (existing != null && existing.hypotheses.isNotEmpty) {
+      return _runDebugRefinement(repoPath, trimmed, categoryId);
     }
 
     final aiSettings = context.read<AiSettingsState>();
@@ -3889,109 +3891,108 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     final activity = context.read<AiActivityState>();
-    // Use the question text as both scope key and label — the same
-    // question on the same repo coalesces (existing record returns).
+    final scopeKey = 'debug:${_stableHash(trimmed)}:r1';
     activity.start(
       repoPath: repoPath,
-      kind: AiActivityKind.ask,
-      scopeKey: trimmed,
+      kind: AiActivityKind.debug,
+      scopeKey: scopeKey,
       scopeLabel: trimmed,
     );
     try {
-      // Grab the full working-tree diff (staged + unstaged, over every
-      // dirty file). The AI needs to see everything to decide what to
-      // include and what to exclude.
-      final diffResult = await getSelectionDiff(repoPath, status.files);
-      if (!diffResult.ok) {
-        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not read diff: ${diffResult.error}')),
-        );
-        return;
-      }
-      final fullDiffRaw = (diffResult.data ?? '').trim();
-      if (fullDiffRaw.isEmpty) {
-        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nothing to shape — diff is empty.')),
-        );
-        return;
-      }
-      // Silently drop sections for sensitive paths before the AI ever
-      // sees them. If shape ends up empty after filtering, the user
-      // gets a clean "only sensitive files dirty" message rather than
-      // a leak. No config, no toggle.
-      final fullDiff = _stripSensitivePathsFromDiff(fullDiffRaw);
-      if (fullDiff.isEmpty) {
-        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-                  'Only sensitive files are dirty — skipped, resolve by hand.')),
-        );
-        return;
-      }
-
-      final prompt = _buildAskPrompt(trimmed, fullDiff);
-      final secretHit = detectLikelySecretInPrompt(prompt);
-      if (secretHit != null) {
-        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'Blocked — dirty files look like they contain a $secretHit. Ask by hand.'),
-          ),
-        );
-        return;
-      }
-      final askEffort = aiSettings.resolveEffort(categoryId, modelValue);
-      final askModel = aiSettings.runtimeModelCategories
+      final debugEffort = aiSettings.resolveEffort(categoryId, modelValue);
+      final debugModel = aiSettings.runtimeModelCategories
           .expand((c) => c.models)
           .where((m) => m.value == modelValue)
           .firstOrNull;
-      final r = await runAsk(
+      final r = await runDebug(
         repositoryPath: repoPath,
         modelValue: modelValue,
-        prompt: prompt,
-        reasoningEffort: askEffort.effort,
-        fastMode: askEffort.fast,
-        supportsReasoning: askModel?.supportsReasoning ?? true,
-        commandLabelPrefix: 'ai.ask',
+        symptom: trimmed,
+        reasoningEffort: debugEffort.effort,
+        fastMode: debugEffort.fast,
+        supportsReasoning: debugModel?.supportsReasoning ?? true,
       );
       if (!mounted) return;
       if (!r.ok) {
         activity.fail(
           repoPath: repoPath,
-          kind: AiActivityKind.ask,
-          scopeKey: trimmed,
-          error: r.error ?? 'Ask failed.',
+          kind: AiActivityKind.debug,
+          scopeKey: scopeKey,
+          error: r.error ?? 'Debug failed.',
         );
         return;
       }
-      // Render the answer inline under the composer. The ask-mode
-      // field stays open so the user can keep asking; clearing the
-      // text leaves the scaffolding but frees the field for the next
-      // question. Escape or the close-chip on the answer card
-      // dismisses.
       activity.complete(
         repoPath: repoPath,
-        kind: AiActivityKind.ask,
-        scopeKey: trimmed,
-        result: AiAskResult(r.data ?? ''),
+        kind: AiActivityKind.debug,
+        scopeKey: scopeKey,
+        result: AiDebugActivityResult(r.data!),
       );
-      // Acknowledge immediately — the answer is rendered in-place
-      // under the composer on this page, so the sidebar pill should
-      // not also nag.
-      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.ask);
+      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.debug);
       if (mounted) setState(() => _shapeCtrl.clear());
     } catch (_) {
-      // Provider record stays in 'running' on unexpected throw —
-      // `cancel` clears it so the UI doesn't get stuck.
-      activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.debug);
+      rethrow;
+    }
+  }
+
+  Future<void> _runDebugRefinement(
+    String repoPath,
+    String answer,
+    String categoryId,
+  ) async {
+    final prior = _debugResult;
+    if (prior == null || _shaping) return;
+
+    final aiSettings = context.read<AiSettingsState>();
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) return;
+
+    final activity = context.read<AiActivityState>();
+    final round = prior.roundHistory.length + 1;
+    final scopeKey = 'debug:${_stableHash(prior.symptom)}:r$round';
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.debug,
+      scopeKey: scopeKey,
+      scopeLabel: prior.symptom,
+    );
+    try {
+      final effort = aiSettings.resolveEffort(categoryId, modelValue);
+      final model = aiSettings.runtimeModelCategories
+          .expand((c) => c.models)
+          .where((m) => m.value == modelValue)
+          .firstOrNull;
+      final r = await runDebug(
+        repositoryPath: repoPath,
+        modelValue: modelValue,
+        symptom: prior.symptom,
+        reasoningEffort: effort.effort,
+        fastMode: effort.fast,
+        supportsReasoning: model?.supportsReasoning ?? true,
+        priorRounds: prior.roundHistory,
+        userAnswer: answer,
+      );
+      if (!mounted) return;
+      if (!r.ok) {
+        activity.fail(
+          repoPath: repoPath,
+          kind: AiActivityKind.debug,
+          scopeKey: scopeKey,
+          error: r.error ?? 'Debug refinement failed.',
+        );
+        return;
+      }
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.debug,
+        scopeKey: scopeKey,
+        result: AiDebugActivityResult(r.data!),
+      );
+      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.debug);
+      if (mounted) setState(() => _shapeCtrl.clear());
+    } catch (_) {
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.debug);
       rethrow;
     }
   }
@@ -4003,118 +4004,21 @@ class _ChangesPageState extends State<ChangesPage> {
   /// shouted. Tone tracks how skeptical the user has asked the
   /// model to be about itself.
   String _askHintForGuardrail(int stage) {
+    final existing = _debugResult;
+    if (existing != null && existing.hypotheses.isNotEmpty) {
+      final nextRound = existing.round + 1;
+      return 'round $nextRound — refine or add context.';
+    }
     switch (stage) {
       case 0:
-        return 'ask whatever.';
+        return 'describe the symptom.';
       case 1:
-        return 'what\'s on your mind?';
+        return 'what\'s broken?';
       case 2:
-        return 'let me zoom in on it.';
+        return 'describe the bug.';
       default:
-        return 'i\'ll bring the receipts.';
+        return 'paste the error.';
     }
-  }
-
-  /// Ask-the-manifold prompt. Grounded prose — the model reads the
-  /// user's question, the working-tree diff, and any pinned context,
-  /// then answers in a few sentences. Explicitly NOT code-gen:
-  /// Manifold doesn't write code, it helps users read and trust what
-  /// already exists. If a fix is warranted, the answer points at
-  /// what to queue (as an issue, out-of-tool) rather than scaffolding
-  /// the change.
-  /// Hard ceiling on the diff slice shipped to the ask backend. Codex
-  /// rejects prompts over 1,048,576 chars outright with a turn/start
-  /// failure; other providers also degrade badly past ~1 MiB. 900K
-  /// leaves ~140K of breathing room for the system prompt, question,
-  /// and XML tags.
-  static const int _kAskPromptDiffBudget = 900000;
-
-  String _buildAskPrompt(String question, String fullDiff) {
-    // Clip oversized diffs at a `diff --git` boundary so the model
-    // sees whole file sections, not a sliced-off hunk. Prepend a
-    // visible marker so the AI knows it's looking at a slice and
-    // doesn't speculate about the omitted tail.
-    var clippedDiff = fullDiff;
-    var truncNote = '';
-    if (fullDiff.length > _kAskPromptDiffBudget) {
-      final boundary =
-          fullDiff.lastIndexOf('\ndiff --git', _kAskPromptDiffBudget);
-      final clip = boundary > 0 ? boundary : _kAskPromptDiffBudget;
-      clippedDiff = fullDiff.substring(0, clip);
-      final omitted = fullDiff.length - clip;
-      truncNote = '\n[diff clipped — $omitted of ${fullDiff.length} '
-          'chars omitted to fit the model\'s input budget]';
-    }
-    final buf = StringBuffer();
-    buf.writeln(
-        'You are a reading assistant embedded in a git client. You help');
-    buf.writeln(
-        'the user understand and trust the code they are looking at. You');
-    buf.writeln('never generate code, never propose edits in patch form. If a');
-    buf.writeln(
-        'fix is warranted, describe what to queue as an issue instead.');
-    buf.writeln();
-    buf.writeln('Rules:');
-    buf.writeln(
-        '  1. Answer in plain prose, 3-6 sentences. No code blocks unless');
-    buf.writeln(
-        '     quoting a short snippet from the diff to anchor an observation.');
-    buf.writeln(
-        '  2. Ground every claim in the supplied context. If you cannot');
-    buf.writeln(
-        '     ground it, say so; do not fill the gap with speculation.');
-    buf.writeln(
-        '  3. Name specific files, commit hashes, authors, or line numbers');
-    buf.writeln('     when they are in the context. Use exact references.');
-    buf.writeln(
-        '  4. Match the user\'s register. If they sound frustrated, stay');
-    buf.writeln('     dry and factual; no corporate empathy theatre.');
-    buf.writeln(
-        '  5. Never write code changes. Never scaffold diffs. Never edit');
-    buf.writeln('     files. Read, reason, cite, and stop.');
-    buf.writeln();
-    buf.writeln('<question>');
-    buf.writeln(question);
-    buf.writeln('</question>');
-    buf.writeln();
-    buf.writeln('<working_tree_diff>');
-    buf.writeln(clippedDiff);
-    if (truncNote.isNotEmpty) buf.writeln(truncNote);
-    buf.writeln('</working_tree_diff>');
-    buf.writeln();
-    buf.writeln('Answer the question.');
-    return buf.toString();
-  }
-
-  /// Walks a unified diff and drops every per-file section whose path
-  /// matches [isSensitivePath]. Works at the `diff --git` boundary so
-  /// we never split a hunk — either a file is fully included or fully
-  /// excluded. Robust against diffs that start with either `diff --git`
-  /// headers (the standard) or bare `--- a/path` pairs (rare but git
-  /// does emit these for some merge-base outputs).
-  String _stripSensitivePathsFromDiff(String fullDiff) {
-    final lines = fullDiff.split('\n');
-    final out = <String>[];
-    var skip = false;
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      if (line.startsWith('diff --git ')) {
-        // `diff --git a/path b/path` — extract the `b/` side and check.
-        final m = RegExp(r'^diff --git a/(.+) b/(.+)$').firstMatch(line);
-        final path = m?.group(2) ?? '';
-        skip = path.isNotEmpty && isSensitivePath(path);
-      } else if (line.startsWith('--- ') &&
-          i + 1 < lines.length &&
-          lines[i + 1].startsWith('+++ ')) {
-        // Bare `--- a/path` pair fallback (no `diff --git` header).
-        final path = lines[i + 1].startsWith('+++ b/')
-            ? lines[i + 1].substring('+++ b/'.length)
-            : lines[i + 1].substring('+++ '.length);
-        skip = path.isNotEmpty && isSensitivePath(path);
-      }
-      if (!skip) out.add(line);
-    }
-    return out.join('\n').trim();
   }
 
   /// Builds the merge-resolution prompt. Strict about output shape so
@@ -5260,13 +5164,13 @@ class _ChangesPageState extends State<ChangesPage> {
           final intent = aiState.consumePendingDrawerOpen(repoPath);
           if (intent == null) return;
 
-          if (intent.kind == AiActivityKind.ask &&
+          final isDebugIntent = intent.kind == AiActivityKind.debug;
+          if (isDebugIntent &&
               intent.query != null &&
               intent.query!.isNotEmpty) {
-            final status = context.read<RepositoryState>().status;
-            if (status != null) {
+            if (context.read<RepositoryState>().status != null) {
               final aiSettings = context.read<AiSettingsState>();
-              _askInPanel(repoPath, status, intent.query!,
+              _debugInPanel(repoPath, intent.query!,
                   aiSettings.commitMessageModelCategoryId);
               return;
             }
@@ -5274,9 +5178,14 @@ class _ChangesPageState extends State<ChangesPage> {
               aiState.requeueIntent(repoPath, intent.retry());
               return;
             }
-            // Exhausted retries — fall through to open drawer without query.
           }
-          _openDrawerFor(intent.kind);
+          // Debug intents without a query enter shape mode so
+          // the user can type a symptom. Other kinds open their drawer.
+          if (isDebugIntent) {
+            if (!_shapeMode) _toggleShapeMode();
+          } else {
+            _openDrawerFor(intent.kind);
+          }
         });
       }
     }
@@ -5742,35 +5651,31 @@ class _ChangesPageState extends State<ChangesPage> {
     // flows are independent per (repo, kind) slots in AiActivityState, so
     // the UI mirrors that. Generate intentionally stays clickable while
     // running so the in-handler "click again to cancel" branch can fire.
-    final canGenerate = !_actionRunning &&
-        !_commitAiLoading &&
+    // Shared base gate: all four AI buttons check these.
+    final aiBase = !_actionRunning && !_commitAiLoading;
+    final canGenerate = aiBase &&
         engineReady &&
         includedCount > 0 &&
         hasCommitAiSelection;
-    // Review can be clicked while running to re-show the spinner view, or
-    // when a persistent review exists to re-show the drawer. Disabled only
-    // when we're already viewing the running spinner (no-op click) or
-    // there's nothing to show / start. The engine-ready gate is
-    // skipped on the "show existing" path — a persisted review is
-    // independent of the live engine.
-    final canReview = !_actionRunning &&
-        !_commitAiLoading &&
-        !(_reviewRunning && _isReviewDrawerOpen) &&
+    // Review/muse: clickable when running (to re-show drawer),
+    // when a persistent result exists (to re-open), or when engine
+    // is ready for a fresh run. Same base gate as generate.
+    final canReview = aiBase &&
         includedCount > 0 &&
         (hasPersistentReview ||
             _reviewRunning ||
             (engineReady && hasReviewAiSelection));
-    // Muse mirrors review: clickable while running to surface the
-    // drawer, clickable when there's an existing same-scope record to
-    // re-show, and otherwise gated on engine-ready + AI selection.
     final hasPersistentMuse = _hasMuseStateForCurrentSelection();
-    final canMuse = !_actionRunning &&
-        !_commitAiLoading &&
-        !(_museRunning && _isMuseDrawerOpen) &&
+    final canMuse = aiBase &&
         includedCount > 0 &&
         (hasPersistentMuse ||
             _museRunning ||
             (engineReady && hasCommitAiSelection));
+    // No includedCount gate — debug targets the full repo via Logos,
+    // not just staged files. Symptom text seeds the retrieval.
+    final canDebug = aiBase &&
+        engineReady &&
+        !_shaping;
 
     return DragTarget<DeskDropPayload>(
       onWillAcceptWithDetails: (d) =>
@@ -6271,7 +6176,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                     return KeyEventResult.handled;
                                   }
                                 }
-                                // Esc in ask-mode → exit back to the
+                                // Esc in debug mode → exit back to the
                                 // commit draft. Sentence is preserved
                                 // in _shapeCtrl for next time.
                                 if (event.logicalKey ==
@@ -6289,7 +6194,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                     HardwareKeyboard.instance.isMetaPressed;
                                 if (!ctrlOrMeta) return KeyEventResult.ignored;
                                 // Ctrl/Cmd+Enter routing:
-                                //   - shape-mode → fire the ask
+                                //   - debug mode → fire the debug run
                                 //   - commit-mode → run the commit
                                 if (_shapeMode) {
                                   final text = _shapeCtrl.text.trim();
@@ -6302,7 +6207,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   }
                                   final cat = cats[_shapeCategoryIndex.clamp(
                                       0, cats.length - 1)];
-                                  _askInPanel(repoPath, status, text, cat);
+                                  _debugInPanel(repoPath, text, cat);
                                   return KeyEventResult.handled;
                                 }
                                 _commit(
@@ -6350,9 +6255,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                 return _CommitComposerField(
                                   tokens: t,
                                   // Bind the active controller based on
-                                  // shape-mode. Unbound controller keeps
-                                  // its text so exiting ask-mode restores
-                                  // the commit draft in progress.
+                                  // debug mode. Unbound controller keeps
+                                  // its text so exiting restores the
+                                  // commit draft in progress.
                                   controller:
                                       _shapeMode ? _shapeCtrl : _commitMsgCtrl,
                                   focusNode: _shapeMode
@@ -6417,7 +6322,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                   museEnabled: canMuse,
                                   museLoading: _museRunning,
                                   museSuccess: _museFlash,
-                                  museUnread: _isUnreadFor(AiActivityKind.muse),
+                                  museUnread:
+                                      _isUnreadFor(AiActivityKind.muse),
                                   museTooltip:
                                       _museTooltip(aiSettings, includedCount),
                                   onMuse: () {
@@ -6442,18 +6348,12 @@ class _ChangesPageState extends State<ChangesPage> {
                                   // Already-in-shape-mode is exempt so a
                                   // mid-resolve repo switch doesn't trap
                                   // the user with no exit affordance.
-                                  shapeEnabled: status.files.isNotEmpty &&
-                                      !_actionRunning &&
-                                      !_shaping &&
-                                      (engineReady || _shapeMode),
+                                  shapeEnabled: canDebug || _shapeMode,
                                   shapeLoading: _shaping,
                                   shapeTooltip: _shapeMode
                                       ? 'exit · restore your commit draft'
-                                      : 'ask the manifold',
-                                  onToggleShape: (status.files.isEmpty ||
-                                          (!engineReady && !_shapeMode))
-                                      ? null
-                                      : _toggleShapeMode,
+                                      : 'debug',
+                                  onToggleShape: _toggleShapeMode,
                                   hideAi: preferences.hideAiFeatures,
                                   tags: _commitTags,
                                   suggestedTags: _suggestedTags,
@@ -6505,7 +6405,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   if (cats.isEmpty) return;
                                   final cat = cats[_shapeCategoryIndex.clamp(
                                       0, cats.length - 1)];
-                                  _askInPanel(repoPath, status, text, cat);
+                                  _debugInPanel(repoPath, text, cat);
                                 },
                               )
                             else
@@ -6610,32 +6510,50 @@ class _ChangesPageState extends State<ChangesPage> {
                               _inspectSingleDiff(repoPath, path),
                         );
                       }
-                      if (_isAskDrawerOpen && !preferences.hideAiFeatures) {
+                      if (_isDebugDrawerOpen && !preferences.hideAiFeatures) {
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
                           borderAlpha: 0,
                           elevated: false,
-                          child: _ShapeAskPane(
+                          child: _DebugPane(
                             tokens: t,
                             loading: _shaping,
-                            question: _askQuestion,
-                            answer: _askAnswer,
-                            error: _askError,
+                            result: _debugResult,
+                            error: _debugError,
                             onBack: _closeDrawer,
-                            onDismissAnswer: () {
+                            onDismiss: () {
                               final site = _activitySite();
                               if (site != null) {
                                 site.state.clear(
                                   repoPath: site.repoPath,
-                                  kind: AiActivityKind.ask,
+                                  kind: AiActivityKind.debug,
                                 );
                               }
                               setState(() {});
                             },
-                            onCitationTap: (path, line) => _jumpToMultiDiffPath(
-                                path,
-                                fallbackStartLine: line),
+                            onFillComposer: (text) {
+                              _shapeCtrl.text = text;
+                              _shapeCtrl.selection = TextSelection.collapsed(
+                                  offset: text.length);
+                              // Fire refinement directly — one tap
+                              // closes the debug loop.
+                              final rp = context
+                                  .read<RepositoryState>()
+                                  .activePath;
+                              if (rp != null && !_shaping) {
+                                final cats = _shapeCategories(
+                                    context.read<AiSettingsState>());
+                                if (cats.isNotEmpty) {
+                                  final catId = cats[_shapeCategoryIndex
+                                      .clamp(0, cats.length - 1)];
+                                  _runDebugRefinement(rp, text, catId);
+                                }
+                              }
+                            },
+                            onCitationTap: (path, line) =>
+                                _jumpToMultiDiffPath(path,
+                                    fallbackStartLine: line),
                           ),
                         );
                       }
@@ -6957,7 +6875,7 @@ class _ChangesPageState extends State<ChangesPage> {
               right: 0,
               child: AnimatedOpacity(
                 opacity: statusLoading ? 1 : 0,
-                duration: const Duration(milliseconds: 80),
+                duration: context.motion(const Duration(milliseconds: 80)),
                 child: TopProgressLine(color: t.accentBright),
               ),
             ),
@@ -7788,7 +7706,7 @@ class _MusePaneState extends State<_MusePane> {
             clipBehavior: Clip.none,
             children: [
               AnimatedContainer(
-                duration: const Duration(milliseconds: 110),
+                duration: context.motion(const Duration(milliseconds: 110)),
                 curve: Curves.easeOut,
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 decoration: BoxDecoration(color: bgColor),
@@ -7856,7 +7774,7 @@ class _MusePaneState extends State<_MusePane> {
                           _brainstormExpanded = true;
                         }),
                         builder: (context, hovered) => AnimatedDefaultTextStyle(
-                          duration: AppMotion.snap,
+                          duration: context.motion(AppMotion.snap),
                           curve: AppMotion.snapCurve,
                           style: TextStyle(
                             color: hovered
@@ -7879,7 +7797,7 @@ class _MusePaneState extends State<_MusePane> {
                 top: 14 + (isPulled ? 17 : 0),
                 child: IgnorePointer(
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 110),
+                    duration: context.motion(const Duration(milliseconds: 110)),
                     curve: Curves.easeOut,
                     width: dotSize,
                     height: dotSize,
@@ -7967,7 +7885,7 @@ class _MusePaneState extends State<_MusePane> {
               return Row(
                 children: [
                   AnimatedContainer(
-                    duration: AppMotion.snap,
+                    duration: context.motion(AppMotion.snap),
                     curve: AppMotion.snapCurve,
                     child: Icon(
                       _brainstormExpanded
@@ -7979,7 +7897,7 @@ class _MusePaneState extends State<_MusePane> {
                   ),
                   const SizedBox(width: 4),
                   AnimatedDefaultTextStyle(
-                    duration: AppMotion.snap,
+                    duration: context.motion(AppMotion.snap),
                     curve: AppMotion.snapCurve,
                     style: TextStyle(
                       color: color,
@@ -8022,31 +7940,32 @@ class _MusePaneState extends State<_MusePane> {
 /// input lives in the composer (flipped via ◈); this pane only shows
 /// the loading spinner, the answer card, or the error. Matches the
 /// muse / review pane shape so the three AI panes feel like siblings.
-class _ShapeAskPane extends StatelessWidget {
+class _DebugPane extends StatelessWidget {
   final AppTokens tokens;
   final bool loading;
-  final String? question;
-  final String? answer;
+  final AiDebugData? result;
   final String? error;
   final VoidCallback onBack;
-  final VoidCallback onDismissAnswer;
-  final void Function(String path, int line) onCitationTap;
+  final VoidCallback onDismiss;
+  final void Function(String text) onFillComposer;
+  final void Function(String path, int? line) onCitationTap;
 
-  const _ShapeAskPane({
+  const _DebugPane({
     required this.tokens,
     required this.loading,
-    required this.question,
-    required this.answer,
+    required this.result,
     required this.error,
     required this.onBack,
-    required this.onDismissAnswer,
+    required this.onDismiss,
+    required this.onFillComposer,
     required this.onCitationTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = tokens;
-    final hasResult = answer != null || error != null;
+    final hasResult = result != null && result!.hypotheses.isNotEmpty;
+    final hasError = error != null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
@@ -8054,15 +7973,44 @@ class _ShapeAskPane extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.auto_awesome_outlined, size: 16, color: t.textFaint),
+              Icon(Icons.bug_report_outlined, size: 16, color: t.textFaint),
               const SizedBox(width: 8),
-              Text('Ask',
+              Text('Debug',
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 13.5,
                     fontWeight: FontWeight.w500,
                   )),
-              const Spacer(),
+              if (result != null) ...[
+                const SizedBox(width: 6),
+                Text('· round ${result!.round}',
+                    style: TextStyle(color: t.textFaint, fontSize: 11)),
+                if (result!.promptCharacters > 0) ...[
+                  const Spacer(),
+                  Text(
+                    '${_tokensLabel(result!.promptCharacters)} →',
+                    style: TextStyle(
+                      fontFamily: AppFonts.mono,
+                      fontSize: 9,
+                      color: t.textFaint.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ],
+              ],
+              if (result == null) const Spacer(),
+              const SizedBox(width: 8),
+              if (result != null || error != null)
+                InkWell(
+                  onTap: onDismiss,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text('clear',
+                        style: TextStyle(color: t.textFaint, fontSize: 11)),
+                  ),
+                ),
+              const SizedBox(width: 4),
               InkWell(
                 onTap: onBack,
                 borderRadius: BorderRadius.circular(4),
@@ -8076,7 +8024,7 @@ class _ShapeAskPane extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          if (loading && !hasResult)
+          if (loading && !hasResult && !hasError)
             Expanded(
               child: Center(
                 child: Column(
@@ -8093,11 +8041,24 @@ class _ShapeAskPane extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      question == null
-                          ? 'asking…'
-                          : 'asking · ${_truncate(question!, 60)}',
+                      'analyzing symptom…',
                       style: TextStyle(color: t.textMuted, fontSize: 11),
                     ),
+                  ],
+                ),
+              ),
+            )
+          else if (hasError && !hasResult)
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.error_outline, size: 20, color: t.danger),
+                    const SizedBox(height: 8),
+                    Text(error!,
+                        style: TextStyle(color: t.textMuted, fontSize: 11),
+                        textAlign: TextAlign.center),
                   ],
                 ),
               ),
@@ -8105,14 +8066,44 @@ class _ShapeAskPane extends StatelessWidget {
           else if (hasResult)
             Expanded(
               child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
                 padding: const EdgeInsets.only(bottom: 24),
-                child: _AskAnswerCard(
-                  tokens: t,
-                  question: question ?? '',
-                  answer: answer,
-                  error: error,
-                  onDismiss: onDismissAnswer,
-                  onCitationTap: onCitationTap,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (result!.parseWarnings.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          result!.parseWarnings.join(' '),
+                          style: TextStyle(
+                            color: t.stateModified,
+                            fontSize: 9,
+                          ),
+                        ),
+                      ),
+                    for (var i = 0; i < result!.hypotheses.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 12),
+                      _HypothesisCard(
+                        tokens: t,
+                        hypothesis: result!.hypotheses[i],
+                        index: i,
+                        onCitationTap: onCitationTap,
+                      ),
+                    ],
+                    if (result!.hypotheses.any(
+                        (h) => h.pressureQuestions.isNotEmpty)) ...[
+                      const SizedBox(height: 16),
+                      _PressureQuestionSection(
+                        tokens: t,
+                        questions: result!.hypotheses
+                            .expand((h) => h.pressureQuestions)
+                            .toSet()
+                            .toList(),
+                        onQuestionTap: onFillComposer,
+                      ),
+                    ],
+                  ],
                 ),
               ),
             )
@@ -8120,7 +8111,7 @@ class _ShapeAskPane extends StatelessWidget {
             Expanded(
               child: Center(
                 child: Text(
-                  'type a question in the composer, then press ask.',
+                  'describe a symptom, then press debug.',
                   style: TextStyle(color: t.textMuted, fontSize: 11),
                   textAlign: TextAlign.center,
                 ),
@@ -8130,9 +8121,259 @@ class _ShapeAskPane extends StatelessWidget {
       ),
     );
   }
+}
 
-  static String _truncate(String s, int max) =>
-      s.length <= max ? s : '${s.substring(0, max - 1)}…';
+class _HypothesisCard extends StatelessWidget {
+  final AppTokens tokens;
+  final AiDebugHypothesis hypothesis;
+  final int index;
+  final void Function(String path, int? line) onCitationTap;
+
+  const _HypothesisCard({
+    required this.tokens,
+    required this.hypothesis,
+    required this.index,
+    required this.onCitationTap,
+  });
+
+  /// Parse "path:line — reason" or "path — reason" into (path, line).
+  (String, int?) _parseCite(String cite) {
+    final beforeReason = cite.split(' — ').first;
+    if (beforeReason.contains(':')) {
+      final colonIdx = beforeReason.indexOf(':');
+      final path = beforeReason.substring(0, colonIdx);
+      final line = int.tryParse(beforeReason.substring(colonIdx + 1));
+      return (path, line);
+    }
+    return (beforeReason, null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final h = hypothesis;
+    final confPct = (h.confidence * 100).round();
+    final confColor = h.confidence >= 0.6
+        ? t.stateAdded
+        : h.confidence >= 0.3
+            ? t.stateModified
+            : t.stateDeleted;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: confColor.withValues(alpha: 0.5), width: 2),
+        ),
+        color: t.surface0.withValues(alpha: 0.3),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header: confidence + statement on one line
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 1),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: confColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  '$confPct%',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: AppFonts.mono,
+                    color: confColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  h.statement,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: t.textStrong,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Invariant: muted mono subtitle
+          if (h.brokenInvariant.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              h.brokenInvariant,
+              style: TextStyle(
+                fontSize: 9.5,
+                fontFamily: AppFonts.mono,
+                color: t.textFaint,
+                height: 1.3,
+              ),
+            ),
+          ],
+          // Evidence: compact cite rows with subtle labels
+          if (h.evidenceFor.isNotEmpty || h.evidenceAgainst.isNotEmpty)
+            const SizedBox(height: 6),
+          for (final e in h.evidenceFor)
+            _buildCiteLine(t, e, t.stateAdded, 'for'),
+          for (final e in h.evidenceAgainst)
+            _buildCiteLine(t, e, t.stateDeleted, 'but'),
+          // Falsifier: thin accent strip
+          if (h.falsifier.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: t.accentBright.withValues(alpha: 0.12)),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Icon(Icons.science_outlined,
+                        size: 10, color: t.accentBright.withValues(alpha: 0.6)),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      h.falsifier,
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        color: t.textMuted,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCiteLine(
+      AppTokens t, String cite, Color accentColor, String label) {
+    final (path, line) = _parseCite(cite);
+    final fileName = path.split('/').last;
+    final reason = cite.contains(' — ')
+        ? cite.split(' — ').skip(1).join(' — ')
+        : '';
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: GestureDetector(
+        onTap: () => onCitationTap(path, line),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 22,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w600,
+                    color: accentColor.withValues(alpha: 0.6),
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+              Text(
+                '$fileName${line != null ? ':$line' : ''}',
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontFamily: AppFonts.mono,
+                  color: accentColor.withValues(alpha: 0.8),
+                  decoration: TextDecoration.underline,
+                  decorationColor: accentColor.withValues(alpha: 0.25),
+                ),
+              ),
+              if (reason.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    reason,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      color: t.textFaint,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PressureQuestionSection extends StatelessWidget {
+  final AppTokens tokens;
+  final List<String> questions;
+  final void Function(String question) onQuestionTap;
+
+  const _PressureQuestionSection({
+    required this.tokens,
+    required this.questions,
+    required this.onQuestionTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('what would help narrow it down:',
+            style: TextStyle(
+              fontSize: 9,
+              color: t.textFaint,
+              letterSpacing: 0.3,
+            )),
+        const SizedBox(height: 5),
+        Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          children: [
+            for (final q in questions)
+              InkWell(
+                onTap: () => onQuestionTap(q),
+                borderRadius: BorderRadius.circular(4),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: t.chromeAccent.withValues(alpha: 0.15)),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(q,
+                      style: TextStyle(fontSize: 9.5, color: t.textMuted)),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 class _CommitReviewPane extends StatelessWidget {
@@ -9592,7 +9833,7 @@ class _InlineActionLink extends StatelessWidget {
     return HoverableTap(
       onTap: onTap,
       builder: (context, hovered) => AnimatedDefaultTextStyle(
-        duration: AppMotion.snap,
+        duration: context.motion(AppMotion.snap),
         curve: AppMotion.snapCurve,
         style: TextStyle(
           color: hovered ? tokens.textStrong : tokens.accentBright,
@@ -9603,149 +9844,6 @@ class _InlineActionLink extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Inline answer panel for the "ask the manifold" flow. Lives under
-/// the commit composer; renders the last question + its prose answer
-/// (or error) with a single dismiss affordance. Deliberately spare —
-/// the CTA-button layer that ranks entity expansions by information
-/// gain is planned but not shipped; for v1 the prose itself is the
-/// product and the panel just holds it cleanly.
-class _AskCitation {
-  final String path;
-  final int line;
-  const _AskCitation(this.path, this.line);
-}
-
-/// Pull `path:line` tokens out of an ask-answer's prose. Matches forms
-/// like `lib/foo.dart:42`, `test/bar_test.dart:100`, with typical path
-/// characters (letters, digits, underscore, slash, backslash, dot,
-/// hyphen). Dedupes on (path, line) and preserves order of first
-/// occurrence so the chips read left-to-right in citation order.
-List<_AskCitation> _extractAskCitations(String text) {
-  final re = RegExp(r'([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+):(\d+)');
-  final seen = <String>{};
-  final out = <_AskCitation>[];
-  for (final m in re.allMatches(text)) {
-    final path = m.group(1)!;
-    final line = int.tryParse(m.group(2)!);
-    if (line == null) continue;
-    // Guard: require the "path" to actually look like a file — contain
-    // a slash, or be at least 4 chars with a dot before the extension.
-    // Skips false positives like IP addresses with dotted decimals.
-    if (!path.contains('/') && !path.contains('\\') && path.length < 4) {
-      continue;
-    }
-    final key = '$path:$line';
-    if (!seen.add(key)) continue;
-    out.add(_AskCitation(path, line));
-  }
-  return out;
-}
-
-class _AskAnswerCard extends StatelessWidget {
-  final AppTokens tokens;
-  final String question;
-  final String? answer;
-  final String? error;
-  final VoidCallback onDismiss;
-  final void Function(String path, int line)? onCitationTap;
-
-  const _AskAnswerCard({
-    required this.tokens,
-    required this.question,
-    required this.answer,
-    required this.error,
-    required this.onDismiss,
-    this.onCitationTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final hasError = error != null;
-    final citations = (hasError || answer == null)
-        ? const <_AskCitation>[]
-        : _extractAskCitations(answer!);
-    return MaterialSurface(
-      tone: AppMaterialTone.panel,
-      padding: const EdgeInsets.fromLTRB(12, 10, 10, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  'asked · $question',
-                  style: TextStyle(
-                    color: tokens.textMuted,
-                    fontSize: 10.5,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ),
-              HoverableTap(
-                onTap: onDismiss,
-                borderRadius: AppRadii.xsAll,
-                builder: (context, hovered) => Padding(
-                  padding: const EdgeInsets.all(2),
-                  child: Icon(
-                    Icons.close,
-                    size: 12,
-                    color: hovered ? tokens.textStrong : tokens.textFaint,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SelectableText(
-            hasError ? 'ask failed — $error' : (answer ?? ''),
-            style: TextStyle(
-              color: hasError ? tokens.stateConflicted : tokens.textNormal,
-              fontSize: 12.5,
-              height: 1.42,
-            ),
-          ),
-          if (citations.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                for (final c in citations)
-                  GestureDetector(
-                    onTap: onCitationTap == null
-                        ? null
-                        : () => onCitationTap!(c.path, c.line),
-                    child: Text(
-                      '${_askCitationDisplayPath(c.path)}:${c.line}',
-                      style: TextStyle(
-                        color: tokens.textFaint,
-                        fontSize: 10.5,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-String _askCitationDisplayPath(String path) {
-  // Strip a leading "lib/" or "test/" for readability when the repo
-  // convention is flat. Full path still passes to the jump handler.
-  final normalised = path.replaceAll('\\', '/');
-  if (normalised.length <= 40) return normalised;
-  final parts = normalised.split('/');
-  if (parts.length <= 2) return normalised;
-  return '…/${parts.sublist(parts.length - 2).join('/')}';
 }
 
 class _SplitCommitBtn extends StatefulWidget {
@@ -9887,7 +9985,7 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                           onTapUp: (_) =>
                               setState(() => _chevronPressed = false),
                           child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 80),
+                            duration: context.motion(const Duration(milliseconds: 80)),
                             width: 32,
                             color: widget.commitOnlyMode
                                 ? t.accentBright.withValues(
@@ -10086,7 +10184,7 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                   SizedBox(
                     width: 32,
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 80),
+                      duration: context.motion(const Duration(milliseconds: 80)),
                       color: Colors.white
                           .withValues(alpha: _chevronHovered ? 0.10 : 0.0),
                       child: Center(
@@ -10217,7 +10315,7 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedOpacity(
         opacity: _hovered ? 1.0 : 0.35,
-        duration: const Duration(milliseconds: 150),
+        duration: context.motion(const Duration(milliseconds: 150)),
         curve: Curves.easeOutCubic,
         child: Tooltip(
           message: '$pct% déjà vu — ${widget.ghostCount} ghost '
@@ -10291,8 +10389,11 @@ class _ModelGlyphStrip extends StatefulWidget {
 }
 
 class _ModelGlyphStripState extends State<_ModelGlyphStrip>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, MotionLoopSync {
   late final AnimationController _ctrl;
+
+  @override
+  List<AnimationController> get motionLoops => [_ctrl];
 
   @override
   void initState() {
@@ -10300,7 +10401,7 @@ class _ModelGlyphStripState extends State<_ModelGlyphStrip>
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3000),
-    )..repeat();
+    );
   }
 
   @override
@@ -10627,7 +10728,7 @@ class _ShelfControlState extends State<_ShelfControl> {
         onEnter: (_) => setState(() => _isHoveringWholePill = true),
         onExit: (_) => setState(() => _isHoveringWholePill = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: context.motion(const Duration(milliseconds: 150)),
           curve: Curves.easeOutCubic,
           decoration: BoxDecoration(
             color: backgroundColor,
@@ -10754,7 +10855,7 @@ class _ResonanceBar extends StatelessWidget {
         child: Align(
           alignment: Alignment.centerLeft,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 280),
+            duration: context.motion(const Duration(milliseconds: 280)),
             curve: Curves.easeOut,
             width: constraints.maxWidth * fill,
             height: 2,
@@ -11296,7 +11397,7 @@ class _StashAction extends StatelessWidget {
       child: HoverableTap(
         onTap: onTap,
         builder: (context, hovered) => AnimatedDefaultTextStyle(
-          duration: AppMotion.snap,
+          duration: context.motion(AppMotion.snap),
           curve: AppMotion.snapCurve,
           style: TextStyle(
             color: hovered ? color : color.withValues(alpha: 0.7),
@@ -11467,7 +11568,7 @@ class _FileRowState extends State<_FileRow> {
               const SizedBox(width: 5),
               Expanded(
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 80),
+                  duration: context.motion(const Duration(milliseconds: 80)),
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -11514,7 +11615,7 @@ class _FileRowState extends State<_FileRow> {
                       // epoch advances don't snap.
                       Expanded(
                         child: AnimatedOpacity(
-                          duration: const Duration(milliseconds: 140),
+                          duration: context.motion(const Duration(milliseconds: 140)),
                           opacity: widget.dimOpacity,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -11620,9 +11721,6 @@ class _RailStripe extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shader = themeDefinitionFor(tokens.id).shader;
-    final reduceMotion = context.select<PreferencesState, bool>(
-      (s) => s.reduceMotion,
-    );
     // Width: 3 at rest, 5 when this row is the subject, 2.5..4.5 for peers
     // proportional to score. Creates a physical "bulge" toward strong
     // peers, fading toward weak ones.
@@ -11656,7 +11754,7 @@ class _RailStripe extends StatelessWidget {
         child: Align(
           alignment: Alignment.centerLeft,
           child: AnimatedContainer(
-            duration: reduceMotion ? Duration.zero : shader.duration,
+            duration: context.motion(shader.duration),
             curve: shader.safeCurve,
             width: width,
             decoration: BoxDecoration(
@@ -11815,7 +11913,7 @@ class _CommitComposerField extends StatefulWidget {
   /// Toggles inline shape mode. Was previously `onShape` which opened
   /// a floating popover; now the parent owns the mode flag and the
   /// composer just morphs in place.
-  final VoidCallback? onToggleShape;
+  final VoidCallback onToggleShape;
 
   /// Dreamed placeholder from the logos engine. When non-null AND the
   /// bound controller is empty, this renders in place of the plain
@@ -11868,7 +11966,7 @@ class _CommitComposerField extends StatefulWidget {
     this.shapeEnabled = false,
     this.shapeLoading = false,
     this.shapeTooltip = '',
-    this.onToggleShape,
+    required this.onToggleShape,
     this.dreamHint,
     this.dreamThinking = false,
     this.hideAi = false,
@@ -11949,31 +12047,34 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     'dear git log',
     'for-git me heaven for i hath…',
     'name this moment',
-    'yap away',
+    'yap on',
     'speak!',
+    'your mother was a hamster and your father smelt of semicolons',
   ];
   static const _titlesShort = <String>[
     'oh?',
-    'hello there',
+    'hello there:)',
+    'btw:',
     'a few words',
-    'the short version',
+    'the polite version',
     'leave a note',
-    'you were saying…',
+    'you were saying..?',
     'oh yeah, get it out',
   ];
   static const _titlesMid = <String>[
     'for the record',
     'tell the future you',
-    'what changed and why',
+    'but first?',
     'how it went',
     'in your own words',
-    'what did you just do',
+    'you did WHAT now?',
     'duly noted',
     'you have my attention',
   ];
   static const _titlesLong = <String>[
     'your dreams, please',
     'say something nice',
+    '... and then I said:',
     'posterity awaits',
     'writing more makes your bugs disappear',
     'oh wow',
@@ -12126,7 +12227,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     focus.dispose();
     if (!mounted) return;
     controller.text = editedText;
-    onChanged?.call(editedText);
+    onChanged(editedText);
     focusNode.requestFocus();
   }
 
@@ -12490,104 +12591,125 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                           ),
                         if (!widget.shapeMode)
                           Expanded(
-                            child: ConstrainedBox(
-                              constraints:
-                                  const BoxConstraints(maxHeight: 64),
-                              child: SingleChildScrollView(
-                                controller: _tagScrollCtrl,
-                                child: Wrap(
-                                  spacing: 4,
-                                  runSpacing: 4,
-                                  crossAxisAlignment:
-                                      WrapCrossAlignment.center,
-                                  children: [
-                                  for (final tag in widget.tags)
-                                    _CommitTagChip(
-                                      label: tag,
-                                      tokens: tokens,
-                                      shader: shader,
-                                      onRemove: () =>
-                                          widget.onTagRemoved(tag),
-                                    ),
-                                  AnimatedContainer(
-                                    duration:
-                                        context.motion(AppMotion.fade),
-                                    curve: shader.curve,
-                                    width: _tagFieldOpen ? 84 : 0,
-                                    clipBehavior: Clip.hardEdge,
-                                    decoration: const BoxDecoration(),
-                                    child: AnimatedOpacity(
-                                      opacity: _tagFieldOpen ? 1.0 : 0.0,
-                                      duration:
-                                          context.motion(AppMotion.snap),
-                                      curve: shader.safeCurve,
-                                      child: SizedBox(
-                                        width: 80,
-                                        child: TextField(
-                                          controller: _tagInputCtrl,
-                                          focusNode: _tagInputFocus,
-                                          style: TextStyle(
-                                            color: tokens.textStrong,
-                                            fontSize: 10,
-                                            fontFamily: AppFonts.mono,
+                            child: IgnorePointer(
+                              ignoring:
+                                  !_tagFieldOpen && widget.tags.isEmpty,
+                              child: ConstrainedBox(
+                                constraints:
+                                    const BoxConstraints(maxHeight: 64),
+                                child: SingleChildScrollView(
+                                  controller: _tagScrollCtrl,
+                                  child: Wrap(
+                                    spacing: 4,
+                                    runSpacing: 4,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      for (final tag in widget.tags)
+                                        _CommitTagChip(
+                                          label: tag,
+                                          tokens: tokens,
+                                          shader: shader,
+                                          onRemove: () =>
+                                              widget.onTagRemoved(tag),
+                                        ),
+                                      AnimatedContainer(
+                                        duration:
+                                            context.motion(AppMotion.fade),
+                                        curve: shader.curve,
+                                        width: _tagFieldOpen ? 84 : 0,
+                                        clipBehavior: Clip.hardEdge,
+                                        decoration: const BoxDecoration(),
+                                        child: AnimatedOpacity(
+                                          opacity:
+                                              _tagFieldOpen ? 1.0 : 0.0,
+                                          duration: context
+                                              .motion(AppMotion.snap),
+                                          curve: shader.safeCurve,
+                                          child: SizedBox(
+                                            width: 80,
+                                            child: TextField(
+                                              controller: _tagInputCtrl,
+                                              focusNode: _tagInputFocus,
+                                              style: TextStyle(
+                                                color: tokens.textStrong,
+                                                fontSize: 10,
+                                                fontFamily: AppFonts.mono,
+                                              ),
+                                              cursorColor:
+                                                  tokens.accentBright,
+                                              cursorHeight: 12,
+                                              decoration: InputDecoration(
+                                                isDense: true,
+                                                isCollapsed: true,
+                                                filled: true,
+                                                fillColor: tokens.inputBg,
+                                                contentPadding:
+                                                    const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 4,
+                                                        vertical: 3),
+                                                hintText: 'tag...',
+                                                hintStyle: TextStyle(
+                                                  color: tokens.textMuted
+                                                      .withValues(
+                                                          alpha: 0.45),
+                                                  fontSize: 10,
+                                                  fontFamily:
+                                                      AppFonts.mono,
+                                                  fontStyle:
+                                                      FontStyle.italic,
+                                                ),
+                                                border: OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          geo.badgeRadius),
+                                                  borderSide: BorderSide(
+                                                    color: tokens
+                                                        .chromeBorder
+                                                        .withValues(
+                                                            alpha: 0.30),
+                                                    width: 0.8,
+                                                  ),
+                                                ),
+                                                enabledBorder:
+                                                    OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          geo.badgeRadius),
+                                                  borderSide: BorderSide(
+                                                    color: tokens
+                                                        .chromeBorder
+                                                        .withValues(
+                                                            alpha: 0.30),
+                                                    width: 0.8,
+                                                  ),
+                                                ),
+                                                focusedBorder:
+                                                    OutlineInputBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                          geo.badgeRadius),
+                                                  borderSide: BorderSide(
+                                                    color: tokens
+                                                        .accentBright
+                                                        .withValues(
+                                                            alpha: 0.50),
+                                                    width: 0.8,
+                                                  ),
+                                                ),
+                                              ),
+                                              onSubmitted: (_) =>
+                                                  _submitTag(),
+                                            ),
                                           ),
-                                          cursorColor: tokens.accentBright,
-                                          cursorHeight: 12,
-                                          decoration: InputDecoration(
-                                            isDense: true,
-                                            isCollapsed: true,
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                    horizontal: 4,
-                                                    vertical: 3),
-                                            hintText: 'tag...',
-                                            hintStyle: TextStyle(
-                                              color: tokens.textMuted
-                                                  .withValues(alpha: 0.45),
-                                              fontSize: 10,
-                                              fontFamily: AppFonts.mono,
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                      geo.badgeRadius),
-                                              borderSide: BorderSide(
-                                                color: tokens.chromeBorder
-                                                    .withValues(alpha: 0.30),
-                                                width: 0.8,
-                                              ),
-                                            ),
-                                            enabledBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                      geo.badgeRadius),
-                                              borderSide: BorderSide(
-                                                color: tokens.chromeBorder
-                                                    .withValues(alpha: 0.30),
-                                                width: 0.8,
-                                              ),
-                                            ),
-                                            focusedBorder: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                      geo.badgeRadius),
-                                              borderSide: BorderSide(
-                                                color: tokens.accentBright
-                                                    .withValues(alpha: 0.50),
-                                                width: 0.8,
-                                              ),
-                                            ),
-                                          ),
-                                          onSubmitted: (_) => _submitTag(),
                                         ),
                                       ),
-                                    ),
+                                    ],
                                   ),
-                                ],
+                                ),
                               ),
-                              ),
-                              ),
+                            ),
                           )
                         else
                           const Spacer(),
@@ -12595,21 +12717,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (!widget.hideAi) ...[
-                              if (widget.onToggleShape != null) ...[
-                                _CommitAiToolbarBtn(
-                                  tokens: tokens,
-                                  enabled:
-                                      widget.shapeEnabled || widget.shapeMode,
-                                  loading: widget.shapeLoading,
-                                  success: widget.shapeMode,
-                                  tooltip: widget.shapeTooltip,
-                                  hasText: hasText,
-                                  fieldRadius: effectiveRadius,
-                                  iconKind: _AiToolbarIconKind.shape,
-                                  onTap: widget.onToggleShape!,
-                                ),
-                                const SizedBox(width: 4),
-                              ],
+                              _CommitAiToolbarBtn(
+                                tokens: tokens,
+                                enabled: widget.shapeEnabled,
+                                loading: widget.shapeLoading,
+                                success: widget.shapeMode,
+                                tooltip: widget.shapeTooltip,
+                                hasText: hasText,
+                                fieldRadius: effectiveRadius,
+                                iconKind: _AiToolbarIconKind.shape,
+                                onTap: widget.onToggleShape,
+                              ),
+                              const SizedBox(width: 4),
                               _CommitAiToolbarBtn(
                                 tokens: tokens,
                                 enabled: widget.museEnabled,
@@ -13140,7 +13259,7 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
               widget.enabled ? (_) => setState(() => _pressed = false) : null,
           onTap: widget.enabled ? widget.onTap : null,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 130),
+            duration: context.motion(const Duration(milliseconds: 130)),
             width: 26,
             height: 26,
             decoration: BoxDecoration(
@@ -13272,7 +13391,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                 ? (isSelectAll ? widget.onSelectAll : widget.onDeselectAll)
                 : null,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 110),
+              duration: context.motion(const Duration(milliseconds: 110)),
               height: 24,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
@@ -13312,7 +13431,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
     }
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 160),
+      duration: context.motion(const Duration(milliseconds: 160)),
       switchInCurve: Curves.easeOut,
       switchOutCurve: Curves.easeIn,
       transitionBuilder: (child, animation) =>
@@ -13342,7 +13461,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
         child: GestureDetector(
           onTap: widget.enabled ? onTap : null,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 110),
+            duration: context.motion(const Duration(milliseconds: 110)),
             width: 28,
             color: hovered && widget.enabled
                 ? t.secondaryBtnHoverBg
@@ -13406,7 +13525,7 @@ class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
         child: GestureDetector(
           onTap: widget.enabled ? widget.onToggle : null,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 110),
+            duration: context.motion(const Duration(milliseconds: 110)),
             height: 24,
             width: 28,
             decoration: BoxDecoration(
@@ -13527,7 +13646,7 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
         child: GestureDetector(
           onTap: widget.onAdd,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 110),
+            duration: context.motion(const Duration(milliseconds: 110)),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: tint.withValues(alpha: fillAlpha),
@@ -13604,7 +13723,7 @@ class _PanelDividerState extends State<_PanelDivider> {
           width: 8,
           child: Center(
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
+              duration: context.motion(const Duration(milliseconds: 140)),
               width: _dragging ? 2.0 : 1.0,
               color: isActive
                   ? t.accentBright.withValues(alpha: _dragging ? 0.55 : 0.30)

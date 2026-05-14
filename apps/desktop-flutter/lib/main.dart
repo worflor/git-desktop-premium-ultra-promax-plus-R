@@ -45,6 +45,7 @@ import 'features/onboarding/onboarding_flow.dart';
 import 'features/onboarding/onboarding_state.dart';
 import 'ui/design_primitives.dart';
 import 'ui/liquid_glass.dart';
+import 'ui/motion.dart';
 import 'ui/material_surface.dart';
 import 'ui/theme.dart';
 import 'ui/theme_shaders.dart';
@@ -333,9 +334,6 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
     final identity = context.watch<AppIdentityState>().identity;
     final tokens = themeState.tokens;
 
-    final onboardingComplete =
-        context.select<OnboardingState, bool>((o) => o.isComplete);
-
     return MaterialApp(
       title: identity.shortName,
       debugShowCheckedModeBanner: false,
@@ -398,7 +396,7 @@ class LiquidGlassProviderWithSwitcher extends StatelessWidget {
         // the snappy-motion mandate. AppMotion.fluid (300ms) keeps the
         // crossfade legible without lingering, and is the same tier the
         // panel-show / treemap-reflow / page-load animations use.
-        duration: AppMotion.fluid,
+        duration: context.motion(AppMotion.fluid),
         switchInCurve: AppMotion.fluidCurve,
         switchOutCurve: AppMotion.fluidCurve,
         child: onboardingComplete
@@ -2273,10 +2271,6 @@ class _ParticleBackdropPainter extends CustomPainter {
     final rng = _SourceRandom((seed * 1000).round() + orbitStride * 53);
     final fillPaint = Paint()
       ..style = PaintingStyle.fill
-      ..isAntiAlias = true;
-    final strokePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
       ..isAntiAlias = true;
 
     // Consume the same RNG sequence as the old node/ring geometry so that

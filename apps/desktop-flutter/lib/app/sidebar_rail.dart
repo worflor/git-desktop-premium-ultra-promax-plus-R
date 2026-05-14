@@ -10,7 +10,6 @@ import 'ai_activity_state.dart';
 import 'logos_git_state.dart';
 import 'sidebar_org_state.dart';
 import '../backend/external_tools.dart';
-import '../backend/logos_git.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../backend/repo_web_url.dart';
@@ -31,7 +30,6 @@ import 'window_activity.dart';
 import 'external_tools_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
-import 'settings_navigation_state.dart';
 
 bool _isGitUrl(String value) {
   final trimmed = value.trim();
@@ -435,7 +433,7 @@ class _SidebarRailState extends State<SidebarRail> {
                           org.moveToTopLevel(d.data, index: 0),
                       builder: (ctx, candidates, _) {
                         return AnimatedContainer(
-                          duration: AppMotion.snap,
+                          duration: ctx.motion(AppMotion.snap),
                           height: candidates.isNotEmpty ? 24 : 4,
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           decoration: candidates.isNotEmpty
@@ -758,7 +756,7 @@ class _GroupHeaderState extends State<_GroupHeader> {
         behavior: HitTestBehavior.opaque,
         onTap: g.headRepoPath != null ? widget.onTapHead : null,
         child: AnimatedContainer(
-          duration: AppMotion.snap,
+          duration: context.motion(AppMotion.snap),
           curve: AppMotion.snapCurve,
           margin: EdgeInsets.only(
             left: widget.depth * 14.0,
@@ -1040,7 +1038,7 @@ class _PathEntry extends StatelessWidget {
                       ? null
                       : () => onModeChanged(_RepositoryEntryMode.create),
                   builder: (context, hovered) => AnimatedDefaultTextStyle(
-                    duration: AppMotion.snap,
+                    duration: context.motion(AppMotion.snap),
                     curve: AppMotion.snapCurve,
                     style: TextStyle(
                       color: hovered ? t.textStrong : t.accentBright,
@@ -1539,15 +1537,6 @@ class _ProjectItemState extends State<_ProjectItem>
     } catch (_) {/* silent — see system_paths.dart */}
   }
 
-  /// Deep-link into Settings, scrolling to the External Tools section.
-  /// Used by both the zero-state "Open with…" entry and the
-  /// "Edit tools…" footer of a populated submenu.
-  void _openExternalToolsSettings() {
-    context
-        .read<SettingsNavigationState>()
-        .requestFocus(SettingsSection.externalTools);
-  }
-
   /// Open the right-click context menu at [globalPos]. Sections build
   /// the canonical project actions (open / terminal / open-with /
   /// copy) above a destructive forget row, separated by a divider so
@@ -1717,11 +1706,11 @@ class _ProjectItemState extends State<_ProjectItem>
           _showContextMenu(context, pos, shiftHeld: shift);
         },
         child: AnimatedScale(
-          duration: AppMotion.snap,
+          duration: context.motion(AppMotion.snap),
           curve: AppMotion.snapCurve,
           scale: _pressed ? 0.99 : 1.0,
           child: AnimatedContainer(
-            duration: AppMotion.snap,
+            duration: context.motion(AppMotion.snap),
             curve: AppMotion.snapCurve,
             margin: EdgeInsets.only(
               left: widget.depth * 14.0,
@@ -1803,7 +1792,7 @@ class _ProjectItemState extends State<_ProjectItem>
                   // AI activity badge
                   if (WindowActivity.instance.awake)
                     AnimatedPositioned(
-                      duration: AppMotion.snap,
+                      duration: context.motion(AppMotion.snap),
                       curve: AppMotion.snapCurve,
                       top: -3,
                       right: badgeRight,
@@ -1936,8 +1925,8 @@ class _AiKindBadge extends StatelessWidget {
       AiActivityKind.generate => 'commit message',
       AiActivityKind.review => 'review',
       AiActivityKind.muse => 'muse',
-      AiActivityKind.ask => 'ask',
       AiActivityKind.present => 'present',
+      AiActivityKind.debug => 'debug',
     };
     if (record.isRunning) return '$kind running';
     if (record.isError) return '$kind failed (unread)';
@@ -1974,10 +1963,10 @@ class _AiKindBadge extends StatelessWidget {
         );
       case AiActivityKind.muse:
         return AnimatedBubbleIcon(state: state, color: color, size: size);
-      case AiActivityKind.ask:
-        return Icon(Icons.diamond_outlined, size: size, color: color);
       case AiActivityKind.present:
         return Icon(Icons.open_in_browser, size: size, color: color);
+      case AiActivityKind.debug:
+        return Icon(Icons.bug_report_outlined, size: size, color: color);
     }
   }
 

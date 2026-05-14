@@ -34,7 +34,7 @@ import 'logos_git.dart';
 import 'logos_git_diagnostics.dart';
 import 'git_result.dart';
 import 'logos_git_stats.dart';
-import 'remote_types.dart' show RemoteForge, ForgeTopology, detectForge, detectAllForges;
+import 'remote_types.dart' show detectAllForges;
 import 'perf_span.dart' show perfSpan;
 import 'logos_vis_events.dart';
 import 'lru_cache.dart';

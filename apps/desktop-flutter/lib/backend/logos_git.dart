@@ -87,7 +87,6 @@ import 'spectral_state.dart';
 import 'spectral_walks.dart';
 import 'logos_git_calibration.dart' show LogosAxis;
 import 'logos_git_integrity.dart';
-import 'shadow_history.dart' show ShadowType;
 import 'spectral_constants.dart' as sc;
 import 'lru_cache.dart';
 

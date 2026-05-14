@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../backend/logos_vis_events.dart';
+import '../../ui/control_chrome.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'topology_shaders.dart';
@@ -60,9 +61,6 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   // side costs one allocation per event instead of one per frame.
   List<MapEntry<String, double>> _sourceWeightsList = const [];
   int _churn = 0;
-  int _reseedIdeaCount = 0;
-  int _reseedSemanticHits = 0;
-  int _reseedWellExpansion = 0;
   // Muse-only: brainstorm-reshaped seed map stats. Non-zero counters
   // mean phase-2 fired a reseed wavefront.
   Map<String, double> _phi = const {};
@@ -241,9 +239,6 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     } else if (event is LogosVisReseedSources) {
       _sourceWeights = event.weights;
       _sourceWeightsList = event.weights.entries.toList(growable: false);
-      _reseedIdeaCount = event.brainstormIdeas;
-      _reseedSemanticHits = event.semanticHits;
-      _reseedWellExpansion = event.wellExpansionFiles;
       _birth[_Element.sourceIgnition] = now;
       _birth[_Element.reseedWavefront] = now;
       _phase = _Phase.reseeded;
@@ -450,7 +445,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     var needsReseed = existingPos == null || existingPrev == null;
     if (!needsReseed) {
       for (var i = 0; i <= n; i++) {
-        if (!existingPos![i].isFinite || !existingPrev![i].isFinite) {
+        if (!existingPos[i].isFinite || !existingPrev[i].isFinite) {
           needsReseed = true;
           break;
         }
@@ -777,23 +772,24 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   }
 
   Widget _cancelChip(AppTokens tokens) {
-    return GestureDetector(
+    return ChromeButton(
       onTap: widget.onCancel,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: tokens.chromeBorder.withValues(alpha: 0.35),
-          ),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text(
-          'Cancel',
-          style: TextStyle(
-            color: tokens.textMuted,
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-          ),
+      borderRadius: BorderRadius.circular(999),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      chromeBuilder: ({required hovered, required pressed}) =>
+          ghostButtonChrome(
+        tokens,
+        hovered: hovered,
+        pressed: pressed,
+        enabled: true,
+        baseBorderColor: tokens.chromeBorder.withValues(alpha: 0.35),
+      ),
+      child: Text(
+        'Cancel',
+        style: TextStyle(
+          color: tokens.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );

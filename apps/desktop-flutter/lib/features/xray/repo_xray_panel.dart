@@ -974,7 +974,7 @@ class _InspectorPanel extends StatelessWidget {
           inspectorAccent = _hotspotAccent(t, hotspot.kind);
         } else if (stratum != null) {
           inspectorTitle = stratum.pathPrefix;
-          inspectorAccent = _stratumAccent(t, stratum.label);
+          inspectorAccent = _stratumAccent(t, stratum.role);
         } else {
           inspectorTitle = snapshot.header.repoName;
           inspectorAccent = t.accentBright;
@@ -1407,10 +1407,9 @@ class _StratumInspector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final accent = _stratumAccent(t, stratum.label);
+    final accent = _stratumAccent(t, stratum.role);
     return ListView(children: [
-      // Label tag
-      _Tag(text: _compactStratumLabel(stratum.label), color: accent),
+      _Tag(text: _compactStratumLabel(stratum.role), color: accent),
       const SizedBox(height: 8),
       // Path
       Text(stratum.pathPrefix,
@@ -1419,13 +1418,10 @@ class _StratumInspector extends StatelessWidget {
               fontSize: 12,
               fontWeight: FontWeight.w700,
               fontFamily: AppFonts.mono)),
-      if (stratum.summary.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        // Summary is the most valuable info
-        Text(stratum.summary,
-            style:
-                TextStyle(color: t.textNormal, fontSize: 11, height: 1.5)),
-      ],
+      const SizedBox(height: 10),
+      Text('Touched ${stratum.touchCount} times in filtered history.',
+          style:
+              TextStyle(color: t.textNormal, fontSize: 11, height: 1.5)),
       const SizedBox(height: 12),
       Row(children: [
         _InspectorStat(
@@ -2240,7 +2236,7 @@ class _TerritoryBoard extends StatelessWidget {
     double ageDaysFor(String iso) {
       final d = DateTime.tryParse(iso);
       if (d == null || newest == null) return 0.0;
-      return newest!.difference(d).inDays.toDouble().abs();
+      return newest.difference(d).inDays.toDouble().abs();
     }
     String? recencyLabelOf(String iso) {
       final age = ageDaysFor(iso);
@@ -2274,17 +2270,14 @@ class _TerritoryBoard extends StatelessWidget {
       childMap.putIfAbsent(parentId, () => []).add(h);
     }
 
-    _Parcel hotspotParcel(RepositoryXrayHotspotData h, {required bool isChild}) {
+    _Parcel hotspotParcel(RepositoryXrayHotspotData h,
+        {required bool isChild}) {
       final accent = _hotspotAccent(t, h.kind);
-      // Size = backend-computed aliveMass. No floor, no clamp — the
-      // exponential decay is the entire physics of "this code is
-      // dormant." A 5-half-life-old file gets ~0.7% of its prime mass
-      // and renders as a tiny tile, which is exactly correct.
       return _Parcel(
         key: 'h:${h.path}',
         label: _shortPath(h.path),
         accent: accent,
-        value: h.aliveMass > 0 ? h.aliveMass : h.touchCount.toDouble(),
+        value: h.touchCount.toDouble(),
         count: h.touchCount,
         // Keystone files get a compact `keystone` tag on their tile so
         // they're visible in the overview, not just the inspector pane.
@@ -2305,23 +2298,17 @@ class _TerritoryBoard extends StatelessWidget {
 
     final topLevel = <_Parcel>[];
     for (final s in strata) {
-      final accent = _stratumAccent(t, s.label);
+      final accent = _stratumAccent(t, s.role);
       final children = (childMap[s.id] ?? const <RepositoryXrayHotspotData>[])
           .map((h) => hotspotParcel(h, isChild: true))
           .toList();
-      // Stratum size = sum of every member file's aliveMass (computed
-      // backend-side). This makes legacy directories shrink in
-      // proportion to how dormant their actual contents are — a
-      // one-file-touched-today bugfix in an otherwise-frozen legacy
-      // tree no longer makes the whole tree read as "current." Pure
-      // physics, no labels, no constants.
       topLevel.add(_Parcel(
         key: 's:${s.id}',
         label: s.pathPrefix,
         accent: accent,
-        value: s.aliveMass > 0 ? s.aliveMass : s.touchCount.toDouble(),
+        value: s.touchCount.toDouble(),
         count: s.touchCount,
-        tagText: _compactStratumLabel(s.label),
+        tagText: _compactStratumLabel(s.role),
         selected: selectedStratumId == s.id,
         isChild: false,
         onTap: () => onStratumSelected(s.id),
@@ -3519,11 +3506,12 @@ String _compactCardTitle(String title) {
   return title.toLowerCase();
 }
 
-String _compactStratumLabel(String label) {
-  final lower = label.toLowerCase();
-  if (lower.contains('current')) return 'current';
-  if (lower.contains('architecture')) return 'legacy';
-  return lower;
+String _compactStratumLabel(StratumRole role) {
+  return switch (role) {
+    StratumRole.current => 'current',
+    StratumRole.legacy => 'legacy',
+    StratumRole.zone => 'repo zone',
+  };
 }
 
 Color _signalAccent(AppTokens t, String verdict) {
@@ -3540,16 +3528,12 @@ Color _signalAccent(AppTokens t, String verdict) {
   };
 }
 
-Color _stratumAccent(AppTokens t, String label) {
-  final lower = label.toLowerCase();
-  if (lower.contains('current')) return t.stateAdded;
-  // "legacy" / "architecture migration" zones → muted teal (chromeAccent)
-  // instead of amber. Amber stays reserved for activity-heat encodings
-  // (bursts and hot directories) where warmth is metaphorically correct.
-  if (lower.contains('legacy') || lower.contains('architecture')) {
-    return t.chromeAccent;
-  }
-  return t.accentBright;
+Color _stratumAccent(AppTokens t, StratumRole role) {
+  return switch (role) {
+    StratumRole.current => t.stateAdded,
+    StratumRole.legacy => t.chromeAccent,
+    StratumRole.zone => t.accentBright,
+  };
 }
 
 Color _hotspotAccent(AppTokens t, String kind) {

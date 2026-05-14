@@ -37,7 +37,6 @@
 // a repo's spectrum and a transformation on its graph, predict the
 // observable's new value without recomputing.
 
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'logos_core.dart';

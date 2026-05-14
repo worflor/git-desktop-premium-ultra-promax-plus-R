@@ -41,7 +41,6 @@ import '../backend/remote_pr_provider.dart' show detectPrProvider;
 import 'desk_drop_payload.dart';
 import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
-import 'file_coupling_state.dart';
 import 'preferences_state.dart';
 import 'window_activity.dart';
 import 'remote_issue_cache_state.dart';
@@ -233,7 +232,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 ),
                 child: TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0, end: 1),
-                  duration: context.surfaceShader.duration,
+                  duration: context.motion(context.surfaceShader.duration),
                   // safeCurve — value feeds Opacity which asserts [0, 1].
                   curve: context.surfaceShader.safeCurve,
                   builder: (context, value, child) => Opacity(
@@ -274,7 +273,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 children: [
                   Positioned.fill(
                     child: AnimatedOpacity(
-                      duration: context.surfaceShader.duration,
+                      duration: context.motion(context.surfaceShader.duration),
                       curve: context.surfaceShader.safeCurve,
                       opacity:
                           (_panel == _Panel.settings || _panel == _Panel.palette || _panel == _Panel.releaseNotes)
@@ -300,8 +299,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                   ),
                   Positioned.fill(
                     child: AnimatedSwitcher(
-                      duration: context.surfaceShader.duration,
-                      reverseDuration: context.surfaceShader.duration,
+                      duration: context.motion(context.surfaceShader.duration),
+                      reverseDuration: context.motion(context.surfaceShader.duration),
                       switchInCurve: context.surfaceShader.safeCurve,
                       switchOutCurve: context.surfaceShader.safeCurve,
                       layoutBuilder: (currentChild, previousChildren) => Stack(
@@ -1115,7 +1114,6 @@ class _DeskRow extends StatelessWidget {
       (s) => (path: s.activePath, status: s.status),
     );
     final repoActivePath = repoSnap.path;
-    final repoStatus = repoSnap.status;
     final repoState = context.read<RepositoryState>();
     final arp = activeRepoPath;
     final activeNormalized = arp == null ? null : _normalizeDeskPath(arp);
@@ -1146,7 +1144,7 @@ class _DeskRow extends StatelessWidget {
         final hasCandidate = candidates.isNotEmpty;
         final t = ctx.tokens;
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+          duration: ctx.motion(const Duration(milliseconds: 120)),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
           decoration: BoxDecoration(
@@ -2948,8 +2946,6 @@ class _BranchPillState extends State<_BranchPill> {
   OverlayEntry? _overlay;
   final _pillKey = GlobalKey();
 
-  static const _openRadius = 7.0;
-
   Future<void> _toggle() async {
     if (_open) {
       _close();
@@ -3619,7 +3615,7 @@ class _BranchRowState extends State<_BranchRow> {
                       onTap: widget.onOpenAsDesk,
                       builder: (context, hovered) =>
                           AnimatedDefaultTextStyle(
-                        duration: AppMotion.snap,
+                        duration: context.motion(AppMotion.snap),
                         curve: AppMotion.snapCurve,
                         style: TextStyle(
                           color: hovered
@@ -3639,7 +3635,7 @@ class _BranchRowState extends State<_BranchRow> {
                       onTap: widget.onOpenAsDesk,
                       builder: (context, hovered) =>
                           AnimatedDefaultTextStyle(
-                        duration: AppMotion.snap,
+                        duration: context.motion(AppMotion.snap),
                         curve: AppMotion.snapCurve,
                         style: TextStyle(
                           color: hovered ? t.textStrong : t.textMuted,
@@ -3800,7 +3796,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
                 _ctrl.clear();
               }),
               builder: (context, hovered) => AnimatedDefaultTextStyle(
-                duration: AppMotion.snap,
+                duration: context.motion(AppMotion.snap),
                 curve: AppMotion.snapCurve,
                 style: TextStyle(
                   color: hovered ? t.textStrong : t.textMuted,

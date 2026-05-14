@@ -417,6 +417,7 @@ class CometField extends CustomPainter {
   /// rotation off the raw value keeps quaternions coherent across
   /// the cycle boundary — no snap-back at the wrap.
   final double breathT;
+  final double materialize;
   final double luminescence;
   final double edgeIntensity;
   final int? focusedIndex;
@@ -443,6 +444,7 @@ class CometField extends CustomPainter {
     this.links = const [],
     required this.introT,
     required this.breathT,
+    this.materialize = 1.0,
     this.luminescence = 1,
     this.edgeIntensity = 1,
     this.focusedIndex,
@@ -668,13 +670,13 @@ class CometField extends CustomPainter {
         final double alpha;
         if (link.hoverOnly) {
           if (!isFocused) continue;
-          alpha = (0.55 * link.strength * luminescence * progress)
+          alpha = (0.55 * link.strength * luminescence * progress * materialize)
               .clamp(0.0, 0.85);
         } else {
           final base = f == null
               ? 0.18
               : (isFocused ? 0.50 : 0.06);
-          alpha = (base * link.strength * luminescence * progress)
+          alpha = (base * link.strength * luminescence * progress * materialize)
               .clamp(0.0, 0.75);
         }
         if (alpha <= 0.01) continue;
@@ -772,13 +774,11 @@ class CometField extends CustomPainter {
       if (tLocal <= 0) continue;
 
       final isGhost = c.coreMass <= 0.001;
-      final bodyAlpha = ((0.88 * (isGhost ? 0.55 : c.coreMass)) * tLocal)
+      final bodyAlpha = ((0.88 * (isGhost ? 0.55 : c.coreMass)) * tLocal * materialize)
           .clamp(0.0, 1.0);
       if (bodyAlpha <= 0.01) continue;
 
-      // Radius tracks the old ring reach so spacing density reads the
-      // same — the polyhedron literally replaces the ring+core pair.
-      final r = lay.reachRadii[i];
+      final r = lay.reachRadii[i] * materialize;
       if (r <= 0.5) continue;
 
       _paintPolyhedron(
@@ -813,7 +813,7 @@ class CometField extends CustomPainter {
         final ringScale = Curves.easeOutBack.transform(ringT);
         final alphaT = Curves.easeOutCubic.transform(ringT);
         final baseR = lay.reachRadii[f] + 3.5;
-        final r = baseR * ringScale;
+        final r = baseR * ringScale * materialize;
         if (r > 0.5) {
           final w = _strokeWidth(1.3, lay.scales[f]);
           final paint = Paint()
@@ -1066,6 +1066,7 @@ class CometField extends CustomPainter {
   bool shouldRepaint(covariant CometField old) =>
       old.introT != introT ||
       old.breathT != breathT ||
+      old.materialize != materialize ||
       old.luminescence != luminescence ||
       old.edgeIntensity != edgeIntensity ||
       old.focusedIndex != focusedIndex ||
@@ -1113,6 +1114,7 @@ class TangentFlowPainter extends CustomPainter {
   final List<TangentFlow> flows;
   final double introT;
   final double breathT;
+  final double materialize;
   final double luminescence;
   final double edgeIntensity;
   final CometCamera camera;
@@ -1122,6 +1124,7 @@ class TangentFlowPainter extends CustomPainter {
     required this.flows,
     required this.introT,
     required this.breathT,
+    this.materialize = 1.0,
     this.luminescence = 1,
     this.edgeIntensity = 1,
     this.camera = CometCamera.flat,
@@ -1177,7 +1180,7 @@ class TangentFlowPainter extends CustomPainter {
         ..moveTo(s.dx, s.dy)
         ..cubicTo(m1.dx, m1.dy, m2.dx, m2.dy, end.dx, end.dy);
 
-      final alpha = ((0.34 + 0.36 * f.strength) * luminescence * tLocal)
+      final alpha = ((0.34 + 0.36 * f.strength) * luminescence * tLocal * materialize)
           .clamp(0.0, 0.85);
       if (alpha <= 0.01) continue;
 
@@ -1271,6 +1274,7 @@ class TangentFlowPainter extends CustomPainter {
   bool shouldRepaint(covariant TangentFlowPainter old) =>
       old.introT != introT ||
       old.breathT != breathT ||
+      old.materialize != materialize ||
       old.luminescence != luminescence ||
       old.edgeIntensity != edgeIntensity ||
       old.camera.yaw != camera.yaw ||

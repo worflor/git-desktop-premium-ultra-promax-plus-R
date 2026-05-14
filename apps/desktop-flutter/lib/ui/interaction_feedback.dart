@@ -477,7 +477,6 @@ class _InkSplatPainter extends CustomPainter {
   // Hoisted Paths reused per paint — building once is cheaper than
   // re-allocating on every animation tick.
   static final Path _starPath = Path();
-  static final Path _ringPath = Path();
 
   @override
   void paint(Canvas canvas, Size size) {

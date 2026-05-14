@@ -6,7 +6,6 @@ import '../git.dart';
 import '../logos_dream.dart';
 import '../logos_git.dart';
 import '../logos_git_probe.dart';
-import '../../features/history/commit_tagger.dart' show commonPrefixLabel;
 import 'bridge_context.dart';
 
 typedef CommandHandler = Future<Map<String, dynamic>> Function(

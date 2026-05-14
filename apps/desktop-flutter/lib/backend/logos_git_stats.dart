@@ -17,9 +17,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 
 import 'file_coupling.dart';
-import 'gh.dart' as gh;
 import 'gitea_api.dart' as gitea;
-import 'glab.dart' as glab;
 import 'git_result.dart';
 import 'logos_git.dart';
 import 'logos_git_integrity.dart';

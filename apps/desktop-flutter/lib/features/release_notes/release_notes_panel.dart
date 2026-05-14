@@ -431,12 +431,13 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.1',
-    date: '2026-05-09',
+    date: '2026-05-14',
     bullets: [
       'Welcome to the first non-internal release. We have:',
-      'Beep beep, Wick.exe alpha integration is here for those who have the binary. It is unreleased, extremely alpha, and somehow already fits like it was supposed to be there.',
+      'Beep beep, Wick.exe alpha integration is here for those who have the binary. It is unreleased, extremely alpha, and already causing a suspiciously low amount of trouble.',
       'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
       'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
+      'Ask has been reworked into more of a debug engine. Very alpha.',
       'Settings got shorter to scroll through. The three AI feature blocks are collapsed into one stage, Diagnostics now defaults to the UI section because it is usually the least dramatic one, and the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
       'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
       'Claude model-list extraction got some outside-the-app binary surgery. Not a visible app feature, but it keeps the provider/model wiring honest.',
@@ -444,8 +445,9 @@ const _changelog = <_ReleaseNote>[
       'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
       'Adjusted Petrichor to keep the same rainy feel, but with shaders and more vibesss.',
       'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
-      'Theme knobs now get tiny per-theme animations overall, giving each skin a little more motion language. The exact shapes may keep shifting, but the direction is there: Petrichor turns like a droplet, Aether/Nacre/Loverboy move their glass caustics, Helix turns like a valve, Quanta snaps orientation, Redshift tightens its sight, Halo/Bibble radiate, Nightwalker opens into a blurrier void, Crafty depresses, Blackboard tilts, Kirby pops, Phosphor blinks, and Lady Entropy\'s thumb looks where you drag: iris and pupil track the value, the highlight stays loyal to the light, the pupil dilates on press, and the iris boots open on theme switch.',
+      'Theme knobs now get tiny per-theme animations overall, giving each skin a little more motion language. The exact shapes may keep shifting, but the direction is there: Petrichor droplets lean, Aether/Nacre/Loverboy move their glass caustics, Helix turns like a valve, Quanta snaps orientation, Redshift tightens its sight, Halo/Bibble radiate, Nightwalker opens into a blurrier void, Crafty depresses, Blackboard tilts, Kirby pops, Phosphor blinks, and Lady Entropy\'s thumb looks where you drag: iris and pupil track the value, the highlight stays loyal to the light, the pupil dilates on press, and the iris boots open on theme switch.',
       'More of the motion system is being taught where things came from: etch, gloss, and vibration feedback can originate from the clicked pixel; text morphs ripple in reading direction so insertions push rightward and deletions close leftward; DataScrawl leans by spatial side instead of arbitrary character parity; and tiled particles scale density with the window across stardust, quantum, embers, glitter, voxels, void rain, chalk, and inkblots.',
+      'Reduced motion and accessability passes too.',
     ],
   ),
   _ReleaseNote(
@@ -454,7 +456,7 @@ const _changelog = <_ReleaseNote>[
     bullets: [
       'Built from scratch in Flutter over about five weeks. The whole git surface is here: staging, branches, history, stash, blame, file history, parallel worktrees, and sync.',
       'Command palette handles navigation, git commands, branch operations, stash actions, settings toggles, and search across repos, branches, commits, tags, and changed files.',
-      'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea.',
+      'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea; Git and GitHub are the deepest integrations right now.',
       'PR conflict hints go past plain file overlap. Each PR gets an orbital shape from Logos diffusion; WILL FIGHT combines shared files with cross-orbit similarity, so related branches can surface as merge-order risk even when they are not editing the exact same paths.',
       'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply with 3-way merge fallback or reverse. For when you\'re not down to big git.',
       'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map.',

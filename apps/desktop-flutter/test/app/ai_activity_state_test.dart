@@ -55,14 +55,14 @@ void main() {
 
     test('complete drops the unread flag and lands typed payload', () {
       final s = AiActivityState();
-      s.start(repoPath: '/a', kind: AiActivityKind.ask, scopeKey: 'q');
+      s.start(repoPath: '/a', kind: AiActivityKind.debug, scopeKey: 'q');
       s.complete(
         repoPath: '/a',
-        kind: AiActivityKind.ask,
+        kind: AiActivityKind.debug,
         scopeKey: 'q',
         result: const AiAskResult('answer'),
       );
-      final r = s.recordFor('/a', AiActivityKind.ask)!;
+      final r = s.recordFor('/a', AiActivityKind.debug)!;
       expect(r.isDone, isTrue);
       expect(r.seen, isFalse);
       final payload = r.result;
@@ -79,18 +79,18 @@ void main() {
 
     test('markSeen is idempotent on an already-seen record', () {
       final s = AiActivityState();
-      s.start(repoPath: '/a', kind: AiActivityKind.ask, scopeKey: 'k');
+      s.start(repoPath: '/a', kind: AiActivityKind.debug, scopeKey: 'k');
       s.complete(
         repoPath: '/a',
-        kind: AiActivityKind.ask,
+        kind: AiActivityKind.debug,
         scopeKey: 'k',
         result: const AiAskResult('a'),
       );
-      s.markSeen(repoPath: '/a', kind: AiActivityKind.ask);
+      s.markSeen(repoPath: '/a', kind: AiActivityKind.debug);
       // Second markSeen should still succeed silently — and the
       // active slice should remain empty (record stays in store but
       // is filtered out by the seen flag).
-      s.markSeen(repoPath: '/a', kind: AiActivityKind.ask);
+      s.markSeen(repoPath: '/a', kind: AiActivityKind.debug);
       expect(s.activeFor('/a'), isEmpty);
     });
 
@@ -100,15 +100,15 @@ void main() {
       // the user's current state isn't overwritten.
       final s = AiActivityState();
       s.start(
-          repoPath: '/a', kind: AiActivityKind.ask, scopeKey: 'fresh');
+          repoPath: '/a', kind: AiActivityKind.debug, scopeKey: 'fresh');
       s.complete(
         repoPath: '/a',
-        kind: AiActivityKind.ask,
+        kind: AiActivityKind.debug,
         scopeKey: 'STALE',
         result: const AiAskResult('should be ignored'),
       );
       // Record is still running — the completion was rejected.
-      expect(s.recordFor('/a', AiActivityKind.ask)!.isRunning, isTrue);
+      expect(s.recordFor('/a', AiActivityKind.debug)!.isRunning, isTrue);
     });
 
     test('clearRepo only affects that repo', () {
@@ -165,17 +165,16 @@ void main() {
     });
 
     test('mutation on the SAME repo invalidates the reference', () {
-      // Use the ask kind since AiAskResult takes a plain String —
+      // Use the debug kind with AiAskResult (plain String payload) —
       // avoids pulling AiCommitReviewData / AiMuseData fixtures into
-      // this test (those are large dtos with many required fields).
-      // The cache invariant is kind-agnostic so this still pins it.
+      // this test. The cache invariant is kind-agnostic.
       final s = AiActivityState();
       s.start(
-          repoPath: '/a', kind: AiActivityKind.ask, scopeKey: 'k');
+          repoPath: '/a', kind: AiActivityKind.debug, scopeKey: 'k');
       final before = s.activeFor('/a');
       s.complete(
         repoPath: '/a',
-        kind: AiActivityKind.ask,
+        kind: AiActivityKind.debug,
         scopeKey: 'k',
         result: const AiAskResult('answer'),
       );
@@ -204,10 +203,10 @@ void main() {
     test('clear invalidates the cache for that repo', () {
       final s = AiActivityState();
       s.start(
-          repoPath: '/a', kind: AiActivityKind.ask, scopeKey: 'k');
+          repoPath: '/a', kind: AiActivityKind.debug, scopeKey: 'k');
       final before = s.activeFor('/a');
       expect(before.length, 1);
-      s.clear(repoPath: '/a', kind: AiActivityKind.ask);
+      s.clear(repoPath: '/a', kind: AiActivityKind.debug);
       final after = s.activeFor('/a');
       expect(after, isEmpty);
       expect(identical(before, after), isFalse);

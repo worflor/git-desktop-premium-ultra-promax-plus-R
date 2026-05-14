@@ -632,32 +632,35 @@ class RepositoryXrayRefSummaryData {
   });
 }
 
+enum StratumRole {
+  /// The stratum containing the app's current working surface.
+  current,
+  /// Older half of a detected migration pair under the same root.
+  legacy,
+  /// Generic stratum with no special structural role.
+  zone,
+}
+
 class RepositoryXrayStratumData {
   final String id;
-  final String label;
+  final StratumRole role;
   final String pathPrefix;
   final int touchCount;
   final int ownerCount;
   final String lastTouchedAt;
-  final String summary;
-
-  /// Sum of per-file [RepositoryXrayHotspotData.aliveMass] across every
-  /// file under this directory prefix — not just visible hotspots.
-  /// Drives the Map view's stratum tile size, replacing raw
-  /// [touchCount]. Same physics as the per-file alive mass, just
-  /// aggregated. Defaults to 0 so callers without alive-mass data
-  /// fall back to legacy sizing via the panel.
   final double aliveMass;
+
+  double get aliveRatio =>
+      touchCount > 0 ? aliveMass / touchCount : 0.0;
 
   const RepositoryXrayStratumData({
     required this.id,
-    required this.label,
+    this.role = StratumRole.zone,
     required this.pathPrefix,
     required this.touchCount,
     required this.ownerCount,
     required this.lastTouchedAt,
     this.aliveMass = 0.0,
-    required this.summary,
   });
 }
 
@@ -1294,6 +1297,81 @@ class AiCommitReviewData {
     this.draftSummary,
     this.draftReasoningReport,
     this.verificationNotes,
+  });
+}
+
+class DebugEvidenceSource {
+  final String path;
+  final double score;
+  final List<String> grounding;
+  const DebugEvidenceSource({
+    required this.path,
+    required this.score,
+    this.grounding = const [],
+  });
+}
+
+class AiDebugHypothesis {
+  final String statement;
+  final String brokenInvariant;
+  final List<String> evidenceFor;
+  final List<String> evidenceAgainst;
+  final double confidence;
+  final String falsifier;
+  final List<String> pressureQuestions;
+  final List<DebugEvidenceSource> sources;
+
+  const AiDebugHypothesis({
+    required this.statement,
+    this.brokenInvariant = '',
+    this.evidenceFor = const [],
+    this.evidenceAgainst = const [],
+    required this.confidence,
+    this.falsifier = '',
+    this.pressureQuestions = const [],
+    this.sources = const [],
+  });
+}
+
+class DebugRound {
+  final int roundNumber;
+  final String userInput;
+  final List<AiDebugHypothesis> hypotheses;
+  final List<String> filesExamined;
+  final DateTime timestamp;
+
+  const DebugRound({
+    required this.roundNumber,
+    required this.userInput,
+    required this.hypotheses,
+    this.filesExamined = const [],
+    required this.timestamp,
+  });
+}
+
+class AiDebugData {
+  final String providerId;
+  final String modelId;
+  final String symptom;
+  final int round;
+  final List<AiDebugHypothesis> hypotheses;
+  final int promptCharacters;
+  final int candidatesConsidered;
+  final int filesRead;
+  final List<String> parseWarnings;
+  final List<DebugRound> roundHistory;
+
+  const AiDebugData({
+    required this.providerId,
+    required this.modelId,
+    required this.symptom,
+    required this.round,
+    required this.hypotheses,
+    this.promptCharacters = 0,
+    this.candidatesConsidered = 0,
+    this.filesRead = 0,
+    this.parseWarnings = const [],
+    this.roundHistory = const [],
   });
 }
 

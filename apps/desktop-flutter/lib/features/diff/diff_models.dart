@@ -401,7 +401,7 @@ Map<String, String> sliceDiffByFile(String raw) {
   String? currentPath;
   void flush(int endExclusive) {
     if (sectionStart < 0 || currentPath == null) return;
-    result[currentPath!] = lines.sublist(sectionStart, endExclusive).join('\n');
+    result[currentPath] = lines.sublist(sectionStart, endExclusive).join('\n');
   }
 
   for (var i = 0; i < lines.length; i++) {
@@ -425,7 +425,7 @@ Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
 
   void flush(int endExclusive) {
     if (sectionStart < 0 || currentPath == null) return;
-    result[currentPath!] = lines.sublist(sectionStart, endExclusive).join('\n');
+    result[currentPath] = lines.sublist(sectionStart, endExclusive).join('\n');
   }
 
   for (var i = 0; i < lines.length - 1; i++) {
