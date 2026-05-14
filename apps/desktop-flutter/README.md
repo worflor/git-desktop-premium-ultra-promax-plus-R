@@ -1,6 +1,6 @@
 # git_desktop
 
-A new Flutter project.
+A new Fwutter project.
 
 ## Getting Started
 
