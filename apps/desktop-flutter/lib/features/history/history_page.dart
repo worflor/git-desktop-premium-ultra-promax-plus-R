@@ -369,9 +369,10 @@ class _TimelinePainter extends CustomPainter {
     // (was ~500 string-keyed entries on a long history).
     final hashToIndex = layout.hashToIndex;
 
-    // Rails — one per lane that has nodes.
+    // Total real (non-preview) node count for temporal gradient.
+    final realNodeCount = layout.nodes.where((n) => !n.isPreview).length;
+
     final railPaint = Paint()
-      ..strokeWidth = 1.4
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     final lanesUsed = <int>{};
@@ -382,47 +383,31 @@ class _TimelinePainter extends CustomPainter {
         if (layout.nodes[i].lane == lane) laneNodes.add(i);
       }
       if (laneNodes.isEmpty) continue;
+
+      final isMain = lane == 0;
       final lx = baseXs.length > laneNodes.first
           ? max(baseXs[laneNodes.first] - _kNodeRadius, 0.0) : 0.0;
       final rx = baseXs.length > laneNodes.last
           ? min(baseXs[laneNodes.last] + _kNodeRadius, width) : width;
       final ry = vertInset + lane * laneStep + laneStep / 2;
-      railPaint.color = lane == 0
-          ? tokens.chromeAccent.withValues(alpha: 0.22)
-          : tokens.textMuted.withValues(alpha: 0.14);
+      railPaint
+        ..color = isMain
+            ? tokens.chromeAccent.withValues(alpha: 0.14)
+            : tokens.textMuted.withValues(alpha: 0.08)
+        ..strokeWidth = isMain ? 1.0 : 0.8;
       canvas.drawLine(Offset(lx, ry), Offset(rx, ry), railPaint);
     }
 
-    // Two reusable Paints (mainline vs. branch) + one reusable Path
-    // shared across every edge. Previously allocated ~2 objects per
-    // edge per frame = up to 2000 allocs/frame on a 1000-edge graph.
-    final mainlineEdgePaint = Paint()
-      ..color = tokens.chromeAccent.withValues(alpha: 0.45)
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    final branchEdgePaint = Paint()
-      ..color = tokens.textNormal.withValues(alpha: 0.28)
-      ..strokeWidth = 1.4
+    final edgePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     final edgePath = Path();
-    final forkPaint = Paint()
-      ..color = tokens.chromeAccent.withValues(alpha: 0.45)
-      ..strokeWidth = 1.8
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    // Hoisted preview-stagger constants — used to fade in the edge
-    // that lands at a preview node alongside the node itself, so the
-    // edge geometry doesn't pop into existence before the node it
-    // points at has even started its entrance animation. Edges where
-    // both endpoints are real nodes don't pay anything for this —
-    // the alpha lerp is gated on `from.isPreview`.
     final previewIntroT2 = previewIntro.value;
     final previewStaggerN =
         previewCommits.length <= 20 ? previewCommits.length : 20;
     final previewSlide2 =
         previewStaggerN > 0 ? 1.0 / previewStaggerN : 1.0;
+    final previewOffset = previewCommits.length;
 
     for (final edge in layout.edges) {
       final fromIdx = hashToIndex[edge.from];
@@ -449,38 +434,56 @@ class _TimelinePainter extends CustomPainter {
 
       edgePath.reset();
       edgePath.moveTo(startX, startY);
-      edgePath.lineTo(endX, endY);
-      // Steady-state: just draw with the canonical paint. Preview
-      // edges allocate a per-frame Paint for the alpha lerp, but only
-      // during the populate-in window — once `previewIntroT2` rests
-      // at 1.0 the paint is identical to `branchEdgePaint` and we
-      // could skip the alloc; the cost is negligible at the rare
-      // hover-active rate so kept simple.
-      Paint paint = isCrossLane ? forkPaint : isMainline ? mainlineEdgePaint : branchEdgePaint;
+      if (isCrossLane) {
+        final midX = (startX + endX) * 0.5;
+        edgePath.cubicTo(midX, startY, midX, endY, endX, endY);
+      } else {
+        edgePath.lineTo(endX, endY);
+      }
+
+      // Temporal fade: edge inherits recency from its newer endpoint.
+      final fromRealIdx = fromIdx - previewOffset;
+      final edgeTemporal = realNodeCount <= 1 || fromRealIdx < 0
+          ? 1.0
+          : 1.0 - (fromRealIdx / (realNodeCount - 1)) * 0.5;
+
+      double baseAlpha;
+      double baseWidth;
+      Color baseColor;
+      if (isCrossLane) {
+        baseColor = tokens.textMuted;
+        baseAlpha = 0.22;
+        baseWidth = 1.2;
+      } else if (isMainline) {
+        baseColor = tokens.chromeAccent;
+        baseAlpha = 0.45;
+        baseWidth = 1.6;
+      } else {
+        baseColor = tokens.textNormal;
+        baseAlpha = 0.28;
+        baseWidth = 1.2;
+      }
+
+      double alpha = baseAlpha * edgeTemporal;
+
       if (fromNode.isPreview && previewIntroT2 < 1.0) {
         final previewIdx = fromNode.row;
         final clampedIdx = previewIdx < previewStaggerN
             ? previewIdx
             : previewStaggerN - 1;
-        // Match the node-stagger inversion: the OLDEST preview's
-        // edge lights up first, the TIP's last, so the chain reads
-        // as growing from the merge base outward to the tip.
         final invertedIdx = previewStaggerN - 1 - clampedIdx;
         final nodeStart = invertedIdx * previewSlide2;
         var localT =
             ((previewIntroT2 - nodeStart) / previewSlide2).clamp(0.0, 1.0);
         localT = 1 - pow(1 - localT, 3).toDouble();
         if (localT <= 0) continue;
-        paint = Paint()
-          ..color = (isMainline
-                  ? tokens.chromeAccent.withValues(alpha: 0.45)
-                  : tokens.textNormal.withValues(alpha: 0.28))
-              .withValues(alpha: (isMainline ? 0.45 : 0.28) * localT)
-          ..strokeWidth = paint.strokeWidth
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round;
+        alpha *= localT;
       }
-      canvas.drawPath(edgePath, paint);
+
+      edgePaint
+        ..color = baseColor.withValues(alpha: alpha)
+        ..strokeWidth = baseWidth;
+      canvas.drawPath(edgePath, edgePaint);
     }
 
     // Selected/hovered get z-priority (drawn last → on top). Skip the
@@ -504,17 +507,16 @@ class _TimelinePainter extends CustomPainter {
       drawOrder = layout.nodes;
     }
 
-    // Two reusable Paints — fill (color swaps per node) and selected
-    // ring (constant). Replaces 2 Paint allocs per commit per frame.
     final nodeFillPaint = Paint()..style = PaintingStyle.fill;
     final selectedRingPaint = Paint()
       ..color = tokens.accentBright.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
+    final refRingPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
     final fallbackNodeColor = tokens.chromeBorder.withValues(alpha: 0.7);
     final selectedNodeColor = tokens.accentBright;
-    // Hoist intro value once per paint — avoids re-reading the
-    // animation getter inside the per-node hot loop.
     final introValue = churnIntro.value;
     final introAtRest = introValue >= 1.0;
     final introAtStart = introValue <= 0.0;
@@ -526,28 +528,11 @@ class _TimelinePainter extends CustomPainter {
     // nothing for this — the per-node check is `if (node.isPreview)`
     // and the stagger math only runs inside that branch.
     final previewIntroT = previewIntro.value;
-    final previewHaloPaint = Paint()..style = PaintingStyle.fill;
-    final previewCorePaint = Paint()..style = PaintingStyle.fill;
-    // Preview nodes occupy rows 0..M-1; their row IS the preview
-    // index. Capped at 20 to bound stagger length on deep dives; past
-    // that the windows overlap so the tail still lands within the
-    // controller's duration.
     final previewStaggerCount =
         previewCommits.length <= 20 ? previewCommits.length : 20;
     final previewSlide = previewStaggerCount > 0
         ? 1.0 / previewStaggerCount
         : 1.0;
-    // Build a hash → node lookup so we can chase a preview's parent
-    // chain back to its first NON-preview ancestor (the real merge
-    // base on main). Every preview emerges from that single point
-    // instead of from its immediate preview-parent — otherwise a
-    // chain of N previews ripples in the wrong direction (each
-    // anchoring to the previous preview's *final* position rather
-    // than the merge base).
-    final hasAnyPreview = previewCommits.isNotEmpty;
-    final Map<String, _GNode>? nodeByHash = hasAnyPreview
-        ? {for (final n in layout.nodes) n.entry.commitHash: n}
-        : null;
 
     for (final node in drawOrder) {
       final hash = node.entry.commitHash;
@@ -567,106 +552,77 @@ class _TimelinePainter extends CustomPainter {
         final clampedIdx = previewIdx < previewStaggerCount
             ? previewIdx
             : previewStaggerCount - 1;
-        // Invert the stagger so the OLDEST preview (the one whose
-        // parent is on main) emerges first, and the TIP last. With
-        // the natural order, row 0 = TIP fires first and slides the
-        // entire chain length out from main — reading as "the tip
-        // is what's being added," not "the chain is growing from
-        // main outward." Reversing makes each new preview appear
-        // immediately past the previous one's resting place, so the
-        // visual is a chain extruding from the merge base.
         final invertedIdx = previewStaggerCount - 1 - clampedIdx;
         final nodeStart = invertedIdx * previewSlide;
         var localT =
             ((previewIntroT - nodeStart) / previewSlide).clamp(0.0, 1.0);
-        // Ease-out cubic for the populate feel — fast start, soft
-        // landing.
         localT = 1 - pow(1 - localT, 3).toDouble();
         if (localT <= 0) continue;
 
-        // Anchor the emergence to the merge base — the FIRST non-
-        // preview ancestor reachable up the parent chain. A 5-commit
-        // desk has previews [tip, …, oldest], each whose parent is
-        // the next-older preview; only the oldest's parent is a real
-        // commit on main. By walking past sibling previews we make
-        // every preview animate out from main directly, instead of
-        // each one chaining off its sibling's final position (which
-        // looks like the chain growing toward main rather than away
-        // from it). Falls back to the final position when the chain
-        // dead-ends off-screen (the lens has it scrolled out).
-        Offset anchor = Offset(m.x, m.y);
-        var walk = node;
-        // Bound the walk by previewCommits.length — pathological
-        // cycles (which shouldn't exist in a DAG, but defence in
-        // depth) can't loop the loop forever.
-        for (var hop = 0; hop < previewCommits.length + 1; hop++) {
-          String? pHash;
-          for (final h in walk.visibleParents) {
-            pHash = h;
-            break;
-          }
-          if (pHash == null) break;
-          final pIdx = hashToIndex[pHash];
-          if (pIdx == null) break;
-          final pNode = nodeByHash?[pHash];
-          if (pNode == null || !pNode.isPreview) {
-            // Real ancestor reached — anchor here and stop.
-            final pm = metrics[pIdx];
-            anchor = Offset(pm.x, pm.y);
-            break;
-          }
-          // Sibling preview — keep walking.
-          walk = pNode;
-        }
-        final center = Offset(
-          anchor.dx + (m.x - anchor.dx) * localT,
-          anchor.dy + (m.y - anchor.dy) * localT,
-        );
-
-        // Slightly larger than regular nodes so previews POP visually.
-        final basePreviewR = _kNodeRadius * m.scale * 1.35;
-        // Halo: a soft accent disk that contracts as the node lands.
-        previewHaloPaint.color = tokens.accentBright
-            .withValues(alpha: 0.30 * localT * (1 - localT * 0.5));
-        canvas.drawCircle(
-            center, basePreviewR * (2.4 - 1.2 * localT), previewHaloPaint);
-        // Core: scales 0.6→1.0, opacity 0→1, accent-green to read
-        // as "incoming work".
-        previewCorePaint.color =
-            tokens.stateAdded.withValues(alpha: 0.95 * localT);
-        canvas.drawCircle(
-            center, basePreviewR * (0.6 + 0.4 * localT), previewCorePaint);
+        final center = Offset(m.x, m.y);
+        final r = _kNodeRadius * m.scale;
+        nodeFillPaint.color =
+            tokens.stateAdded.withValues(alpha: 0.85 * localT);
+        canvas.drawCircle(center, r, nodeFillPaint);
         continue;
       }
 
       final churn = churnNorm[hash] ?? 0.0;
-      final r = _kNodeRadius * m.scale * (1.0 + churn * 0.5);
+      final r = _kNodeRadius * m.scale * (1.0 + churn * 0.8);
+
+      // Temporal luminance: real nodes near HEAD (low realIndex) are
+      // vivid, nodes further back fade. Preview nodes skip this.
+      final realIndex = idx - previewCommits.length;
+      final temporal = realNodeCount <= 1 || realIndex < 0
+          ? 1.0
+          : 1.0 - (realIndex / (realNodeCount - 1)) * 0.4;
 
       final Color nodeColor;
       if (isSelected) {
         nodeColor = selectedNodeColor;
       } else {
         final target = targetColors[hash];
+        Color base;
         if (target == null) {
-          nodeColor = fallbackNodeColor;
+          base = fallbackNodeColor;
         } else if (introAtRest) {
-          // Steady state — vast majority of paints. Skip the lerp.
-          nodeColor = target;
+          base = target;
         } else if (introAtStart) {
-          nodeColor = fallbackNodeColor;
+          base = fallbackNodeColor;
         } else {
-          // Only allocate a Color during the ~320ms intro fade.
-          nodeColor =
-              Color.lerp(fallbackNodeColor, target, introValue)!;
+          base = Color.lerp(fallbackNodeColor, target, introValue)!;
         }
+        nodeColor = base.withValues(alpha: base.a * temporal);
       }
+
+      // Merge convergence: merges are structurally dense — slightly
+      // larger fill so they read as junction points.
+      final isMerge = node.entry.isMerge;
+      final effectiveR = isMerge ? r * 1.12 : r;
 
       nodeFillPaint.color = nodeColor;
       final center = Offset(m.x, m.y);
-      canvas.drawCircle(center, r, nodeFillPaint);
+      canvas.drawCircle(center, effectiveR, nodeFillPaint);
 
       if (isSelected) {
-        canvas.drawCircle(center, r + 1.5, selectedRingPaint);
+        canvas.drawCircle(center, effectiveR + 1.5, selectedRingPaint);
+      }
+
+      // Ref-tip ring: nodes with branch/tag refs get a subtle ring.
+      // HEAD uses accentBright, tags use stateModified, other refs
+      // use chromeAccent. The ring says "this node has a name."
+      final refs = node.entry.refNames;
+      if (refs.isNotEmpty && !isSelected) {
+        final hasHead = refs.any((n) => n.contains('HEAD'));
+        final hasTag = refs.any((n) => n.startsWith('tag:'));
+        refRingPaint
+          ..color = hasHead
+              ? tokens.accentBright.withValues(alpha: 0.55 * temporal)
+              : hasTag
+                  ? tokens.stateModified.withValues(alpha: 0.40 * temporal)
+                  : tokens.chromeAccent.withValues(alpha: 0.35 * temporal)
+          ..strokeWidth = hasHead ? 1.4 : 1.0;
+        canvas.drawCircle(center, effectiveR + 2.0, refRingPaint);
       }
     }
   }
@@ -821,8 +777,6 @@ class _TimelineStripState extends State<_TimelineStrip>
     if (previewCount == 0) {
       _percents = realPercents;
     } else {
-      // Find the merge base: the last preview commit's parent that
-      // exists on the main branch gives us the fork point.
       double forkPercent = realPercents.isEmpty ? 100.0 : realPercents.first;
       if (widget.previewCommits.isNotEmpty) {
         final lastPreview = widget.previewCommits.last;
@@ -834,14 +788,21 @@ class _TimelineStripState extends State<_TimelineStrip>
           }
         }
       }
-      // Newest commit (index 0) at the left edge, oldest preview
-      // (last) at the fork point. Even spacing between.
-      final leftEdge = realPercents.isEmpty ? 0.0 : realPercents.first;
-      final previewPercents = List.generate(previewCount, (i) {
-        if (previewCount == 1) return (leftEdge + forkPercent) / 2;
-        final t = i / (previewCount - 1);
-        return leftEdge + (forkPercent - leftEdge) * t;
-      });
+      // Run preview commits through the same timestamp-aware spacing
+      // the main branch uses, then remap into the fork→tipSlot range
+      // so they share the DAG's visual rhythm instead of even-spacing
+      // across the full width.
+      final rawPreview = _computePercents(widget.previewCommits);
+      final gap = realPercents.isEmpty
+          ? 0.0
+          : (forkPercent - realPercents.first).abs();
+      final spreadGap = max(gap, forkPercent * 0.15);
+      final tipSlot = realPercents.isEmpty
+          ? 0.0
+          : (forkPercent - spreadGap).clamp(0.0, forkPercent);
+      final previewPercents = rawPreview.map((p) {
+        return tipSlot + (forkPercent - tipSlot) * (p / 100.0);
+      }).toList();
       _percents = [...previewPercents, ...realPercents];
     }
     _layoutSignature = _signatureOf(widget.commits);

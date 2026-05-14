@@ -53,7 +53,7 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
   String? _lastSnapshotFingerprint;
   _XrayView _view = _XrayView.map;
   String? _selectedSignalId;
-  String? _selectedHotspotPath;
+  Set<String> _selectedHotspotPaths = const {};
   String? _selectedPivotHash;
   String? _selectedStratumId;
 
@@ -165,7 +165,7 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
             setState(() {
               _includeMachineHistory = value;
               _selectedSignalId = null;
-              _selectedHotspotPath = null;
+              _selectedHotspotPaths = const {};
               _selectedPivotHash = null;
               _selectedStratumId = null;
             });
@@ -230,14 +230,26 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                 cadence: cadence,
                 pivots: pivots,
                 selectedSignalId: _selectedSignalId,
-                selectedHotspotPath: _selectedHotspotPath,
+                selectedHotspotPaths: _selectedHotspotPaths,
                 selectedPivotHash: _selectedPivotHash,
                 selectedStratumId: _selectedStratumId,
                 onSignalSelected: (id) => setState(() =>
                     _selectedSignalId = _selectedSignalId == id ? null : id),
-                onHotspotSelected: (path) => setState(() =>
-                    _selectedHotspotPath =
-                        _selectedHotspotPath == path ? null : path),
+                onHotspotSelected: (path, {bool additive = false}) {
+                  setState(() {
+                    if (additive) {
+                      final next = Set<String>.of(_selectedHotspotPaths);
+                      if (!next.remove(path)) next.add(path);
+                      _selectedHotspotPaths = next;
+                    } else {
+                      _selectedHotspotPaths =
+                          _selectedHotspotPaths.length == 1 &&
+                                  _selectedHotspotPaths.contains(path)
+                              ? const {}
+                              : {path};
+                    }
+                  });
+                },
                 onPivotSelected: (hash) => setState(() =>
                     _selectedPivotHash =
                         _selectedPivotHash == hash ? null : hash),
@@ -257,7 +269,7 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                 cadence: cadence,
                 pivots: pivots,
                 selectedSignalId: _selectedSignalId,
-                selectedHotspotPath: _selectedHotspotPath,
+                selectedHotspotPaths: _selectedHotspotPaths,
                 selectedPivotHash: _selectedPivotHash,
                 selectedStratumId: _selectedStratumId,
                 onCommitSelected: widget.onCommitSelected,
@@ -327,17 +339,27 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                               cadence: cadence,
                               pivots: pivots,
                               selectedSignalId: _selectedSignalId,
-                              selectedHotspotPath: _selectedHotspotPath,
+                              selectedHotspotPaths: _selectedHotspotPaths,
                               selectedPivotHash: _selectedPivotHash,
                               selectedStratumId: _selectedStratumId,
                               onSignalSelected: (id) => setState(() =>
                                   _selectedSignalId =
                                       _selectedSignalId == id ? null : id),
-                              onHotspotSelected: (path) => setState(() =>
-                                  _selectedHotspotPath =
-                                      _selectedHotspotPath == path
-                                          ? null
-                                          : path),
+                              onHotspotSelected: (path, {bool additive = false}) {
+                                setState(() {
+                                  if (additive) {
+                                    final next = Set<String>.of(_selectedHotspotPaths);
+                                    if (!next.remove(path)) next.add(path);
+                                    _selectedHotspotPaths = next;
+                                  } else {
+                                    _selectedHotspotPaths =
+                                        _selectedHotspotPaths.length == 1 &&
+                                                _selectedHotspotPaths.contains(path)
+                                            ? const {}
+                                            : {path};
+                                  }
+                                });
+                              },
                               onPivotSelected: (hash) => setState(() =>
                                   _selectedPivotHash =
                                       _selectedPivotHash == hash ? null : hash),
@@ -406,21 +428,21 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     if (_lastSnapshotFingerprint != snapshot.header.fingerprint) {
       _lastSnapshotFingerprint = snapshot.header.fingerprint;
       _selectedSignalId = null;
-      _selectedHotspotPath = null;
+      _selectedHotspotPaths = const {};
       _selectedPivotHash = null;
       _selectedStratumId = null;
       return;
     }
-    // Invalidate selections that no longer exist in the current filtered set
-    // (e.g. the machine-history toggle changed). Fall back to null so Overview
-    // is shown rather than forcing a different item.
     if (_selectedSignalId != null &&
         !cards.any((card) => card.id == _selectedSignalId)) {
       _selectedSignalId = null;
     }
-    if (_selectedHotspotPath != null &&
-        !hotspots.any((hotspot) => hotspot.path == _selectedHotspotPath)) {
-      _selectedHotspotPath = null;
+    if (_selectedHotspotPaths.isNotEmpty) {
+      final validPaths = hotspots.map((h) => h.path).toSet();
+      final pruned = _selectedHotspotPaths.intersection(validPaths);
+      if (pruned.length != _selectedHotspotPaths.length) {
+        _selectedHotspotPaths = pruned;
+      }
     }
     if (_selectedPivotHash != null &&
         !pivots.any((pivot) => pivot.commitHash == _selectedPivotHash)) {
@@ -697,11 +719,11 @@ class _MainViewport extends StatelessWidget {
   final List<RepositoryXrayCadenceData> cadence;
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedSignalId;
-  final String? selectedHotspotPath;
+  final Set<String> selectedHotspotPaths;
   final String? selectedPivotHash;
   final String? selectedStratumId;
   final ValueChanged<String> onSignalSelected;
-  final ValueChanged<String> onHotspotSelected;
+  final void Function(String path, {bool additive}) onHotspotSelected;
   final ValueChanged<String> onPivotSelected;
   final ValueChanged<String> onStratumSelected;
 
@@ -724,7 +746,7 @@ class _MainViewport extends StatelessWidget {
     required this.cadence,
     required this.pivots,
     required this.selectedSignalId,
-    required this.selectedHotspotPath,
+    required this.selectedHotspotPaths,
     required this.selectedPivotHash,
     required this.selectedStratumId,
     required this.onSignalSelected,
@@ -746,7 +768,7 @@ class _MainViewport extends StatelessWidget {
         _XrayView.map => _MapView(
             snapshot: snapshot,
             hotspots: hotspots,
-            selectedHotspotPath: selectedHotspotPath,
+            selectedHotspotPaths: selectedHotspotPaths,
             selectedStratumId: selectedStratumId,
             onHotspotSelected: onHotspotSelected,
             onStratumSelected: onStratumSelected,
@@ -780,9 +802,9 @@ class _MainViewport extends StatelessWidget {
 class _MapView extends StatelessWidget {
   final RepositoryXraySnapshotData snapshot;
   final List<RepositoryXrayHotspotData> hotspots;
-  final String? selectedHotspotPath;
+  final Set<String> selectedHotspotPaths;
   final String? selectedStratumId;
-  final ValueChanged<String> onHotspotSelected;
+  final void Function(String path, {bool additive}) onHotspotSelected;
   final ValueChanged<String> onStratumSelected;
 
   /// Optional rect (in the territory board's *treemap interior* coord
@@ -794,7 +816,7 @@ class _MapView extends StatelessWidget {
   const _MapView({
     required this.snapshot,
     required this.hotspots,
-    required this.selectedHotspotPath,
+    required this.selectedHotspotPaths,
     required this.selectedStratumId,
     required this.onHotspotSelected,
     required this.onStratumSelected,
@@ -816,7 +838,7 @@ class _MapView extends StatelessWidget {
       strata: snapshot.strata,
       hotspots: hotspots,
       selectedStratumId: selectedStratumId,
-      selectedHotspotPath: selectedHotspotPath,
+      selectedHotspotPaths: selectedHotspotPaths,
       onStratumSelected: onStratumSelected,
       onHotspotSelected: onHotspotSelected,
       obstacle: obstacle,
@@ -916,7 +938,7 @@ class _InspectorPanel extends StatelessWidget {
   final List<RepositoryXrayCadenceData> cadence;
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedSignalId;
-  final String? selectedHotspotPath;
+  final Set<String> selectedHotspotPaths;
   final String? selectedPivotHash;
   final String? selectedStratumId;
   final void Function(String hash)? onCommitSelected;
@@ -929,7 +951,7 @@ class _InspectorPanel extends StatelessWidget {
     required this.cadence,
     required this.pivots,
     required this.selectedSignalId,
-    required this.selectedHotspotPath,
+    required this.selectedHotspotPaths,
     required this.selectedPivotHash,
     required this.selectedStratumId,
     this.onCommitSelected,
@@ -943,12 +965,13 @@ class _InspectorPanel extends StatelessWidget {
               (item) => item!.id == selectedSignalId,
               orElse: () => null,
             );
-    final hotspot = selectedHotspotPath == null
-        ? null
-        : hotspots.cast<RepositoryXrayHotspotData?>().firstWhere(
-              (item) => item!.path == selectedHotspotPath,
-              orElse: () => null,
-            );
+    final selectedHotspots = selectedHotspotPaths.isEmpty
+        ? const <RepositoryXrayHotspotData>[]
+        : hotspots
+            .where((h) => selectedHotspotPaths.contains(h.path))
+            .toList();
+    final hotspot =
+        selectedHotspots.length == 1 ? selectedHotspots.first : null;
     final pivot = selectedPivotHash == null
         ? null
         : pivots.cast<RepositoryXrayPivotCommitData?>().firstWhere(
@@ -969,7 +992,10 @@ class _InspectorPanel extends StatelessWidget {
     final Color inspectorAccent;
     switch (view) {
       case _XrayView.map:
-        if (hotspot != null) {
+        if (selectedHotspots.length > 1) {
+          inspectorTitle = '${selectedHotspots.length} selected';
+          inspectorAccent = t.accentBright;
+        } else if (hotspot != null) {
           inspectorTitle = _shortPath(hotspot.path);
           inspectorAccent = _hotspotAccent(t, hotspot.kind);
         } else if (stratum != null) {
@@ -1011,12 +1037,17 @@ class _InspectorPanel extends StatelessWidget {
           const SizedBox(height: 10),
           Expanded(
             child: switch (view) {
-              _XrayView.map => hotspot != null
-                  ? _HotspotInspector(
-                      hotspot: hotspot, onCommitSelected: onCommitSelected)
-                  : stratum != null
-                      ? _StratumInspector(stratum: stratum)
-                      : _OverviewInspector(snapshot: snapshot),
+              _XrayView.map => selectedHotspots.length > 1
+                  ? _MultiHotspotInspector(
+                      hotspots: selectedHotspots, allHotspots: hotspots)
+                  : hotspot != null
+                      ? _HotspotInspector(
+                          hotspot: hotspot,
+                          allHotspots: hotspots,
+                          onCommitSelected: onCommitSelected)
+                      : stratum != null
+                          ? _StratumInspector(stratum: stratum)
+                          : _OverviewInspector(snapshot: snapshot),
               _XrayView.time => pivot != null
                   ? _PivotInspector(
                       pivot: pivot, onCommitSelected: onCommitSelected)
@@ -1341,13 +1372,29 @@ class _SignalInspector extends StatelessWidget {
 
 class _HotspotInspector extends StatelessWidget {
   final RepositoryXrayHotspotData hotspot;
+  final List<RepositoryXrayHotspotData> allHotspots;
   final void Function(String hash)? onCommitSelected;
-  const _HotspotInspector({required this.hotspot, this.onCommitSelected});
+  const _HotspotInspector({
+    required this.hotspot,
+    this.allHotspots = const [],
+    this.onCommitSelected,
+  });
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final aliveRatio = hotspot.touchCount > 0
+        ? hotspot.aliveMass / hotspot.touchCount
+        : 0.0;
+    final communityPeers = hotspot.spectralCommunity >= 0
+        ? allHotspots
+            .where((h) =>
+                h.spectralCommunity == hotspot.spectralCommunity &&
+                h.path != hotspot.path)
+            .take(5)
+            .toList()
+        : const <RepositoryXrayHotspotData>[];
+
     return ListView(children: [
-      // Full path in mono, truncated
       Text(hotspot.path,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
@@ -1356,7 +1403,6 @@ class _HotspotInspector extends StatelessWidget {
               fontSize: 9.5,
               fontFamily: AppFonts.mono)),
       const SizedBox(height: 12),
-      // Touch count + owner count as large numbers side-by-side
       Row(children: [
         _InspectorStat(
             value: '${hotspot.touchCount}', label: 'touches'),
@@ -1368,8 +1414,6 @@ class _HotspotInspector extends StatelessWidget {
       ]),
       if (hotspot.isKeystone) ...[
         const SizedBox(height: 10),
-        // Keystone badge — a file in the top band of pull-per-touch.
-        // Reads as a structural observation, not a hotspot ranking.
         Row(children: [
           Icon(Icons.hub_outlined, size: 11, color: t.accentBright),
           const SizedBox(width: 4),
@@ -1389,6 +1433,63 @@ class _HotspotInspector extends StatelessWidget {
       const SizedBox(height: 10),
       _InspectorRow(
           label: 'last touched', value: hotspot.lastTouchedAt),
+      _InspectorRow(
+          label: 'alive',
+          value: '${(aliveRatio * 100).round()}%'),
+      if (hotspot.spectralCommunity >= 0)
+        _InspectorRow(
+            label: 'community',
+            value: '${hotspot.spectralCommunity}'),
+      if (communityPeers.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Text('community peers',
+            style: TextStyle(
+              color: t.textFaint,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            )),
+        const SizedBox(height: 4),
+        for (final peer in communityPeers)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              _shortPath(peer.path),
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 9.5,
+                fontFamily: AppFonts.mono,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
+      if (hotspot.coupledTo.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Text('co-changers',
+            style: TextStyle(
+              color: t.textFaint,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            )),
+        const SizedBox(height: 4),
+        for (final path in hotspot.coupledTo)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              _shortPath(path),
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 9.5,
+                fontFamily: AppFonts.mono,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+      ],
       if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
         const SizedBox(height: 12),
         _MiniButton(
@@ -1397,6 +1498,83 @@ class _HotspotInspector extends StatelessWidget {
             enabled: true,
             onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
       ],
+    ]);
+  }
+}
+
+class _MultiHotspotInspector extends StatelessWidget {
+  final List<RepositoryXrayHotspotData> hotspots;
+  final List<RepositoryXrayHotspotData> allHotspots;
+  const _MultiHotspotInspector({
+    required this.hotspots,
+    required this.allHotspots,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final totalTouches =
+        hotspots.fold<int>(0, (s, h) => s + h.touchCount);
+    final communities =
+        hotspots.map((h) => h.spectralCommunity).where((c) => c >= 0).toSet();
+    final allCoupled = <String>{};
+    final internalCoupled = <String>{};
+    final selectedPaths = hotspots.map((h) => h.path).toSet();
+    for (final h in hotspots) {
+      for (final c in h.coupledTo) {
+        allCoupled.add(c);
+        if (selectedPaths.contains(c)) internalCoupled.add(c);
+      }
+    }
+
+    return ListView(children: [
+      Row(children: [
+        _InspectorStat(value: '$totalTouches', label: 'touches'),
+        const SizedBox(width: 20),
+        _InspectorStat(
+            value: '${hotspots.length}', label: 'files'),
+      ]),
+      const SizedBox(height: 10),
+      if (communities.length == 1)
+        _InspectorRow(
+            label: 'community',
+            value: '${communities.first}')
+      else if (communities.length > 1)
+        _InspectorRow(
+            label: 'communities',
+            value: communities.join(', ')),
+      if (internalCoupled.isNotEmpty)
+        _InspectorRow(
+            label: 'mutual coupling',
+            value:
+                '${internalCoupled.length} internal link${internalCoupled.length == 1 ? '' : 's'}'),
+      if (allCoupled.isNotEmpty)
+        _InspectorRow(
+            label: 'external coupling',
+            value:
+                '${allCoupled.difference(selectedPaths).length} external'),
+      const SizedBox(height: 10),
+      Text('selected',
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.5,
+          )),
+      const SizedBox(height: 4),
+      for (final h in hotspots)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Text(
+            '${_shortPath(h.path)}  ${h.touchCount}×',
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 9.5,
+              fontFamily: AppFonts.mono,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
     ]);
   }
 }
@@ -1914,7 +2092,7 @@ class _Parcel {
   final String? tagText;
   final bool selected;
   final bool isChild;
-  final VoidCallback onTap;
+  final void Function({bool additive}) onTap;
   final List<_Parcel> children;
   /// Keystone bridge-file marker. Rendered as a stronger border +
   /// warmer inner gradient stop so the tile reads as structurally
@@ -1940,6 +2118,9 @@ class _Parcel {
   /// its strongest co-changers.
   final List<String> coupledTo;
 
+  final int communityId;
+  final bool communityPeer;
+
   const _Parcel({
     required this.key,
     required this.label,
@@ -1956,6 +2137,8 @@ class _Parcel {
     this.observerCount,
     this.recencyLabel,
     this.coupledTo = const [],
+    this.communityId = -1,
+    this.communityPeer = false,
   });
 }
 
@@ -2191,9 +2374,9 @@ class _TerritoryBoard extends StatelessWidget {
   final List<RepositoryXrayStratumData> strata;
   final List<RepositoryXrayHotspotData> hotspots;
   final String? selectedStratumId;
-  final String? selectedHotspotPath;
+  final Set<String> selectedHotspotPaths;
   final ValueChanged<String> onStratumSelected;
-  final ValueChanged<String> onHotspotSelected;
+  final void Function(String path, {bool additive}) onHotspotSelected;
   final Map<String, int> observerCountByPath;
 
   /// Treemap-interior rect (i.e. relative to the LayoutBuilder area below
@@ -2207,7 +2390,7 @@ class _TerritoryBoard extends StatelessWidget {
     required this.strata,
     required this.hotspots,
     required this.selectedStratumId,
-    required this.selectedHotspotPath,
+    required this.selectedHotspotPaths,
     required this.onStratumSelected,
     required this.onHotspotSelected,
     this.obstacle,
@@ -2270,21 +2453,35 @@ class _TerritoryBoard extends StatelessWidget {
       childMap.putIfAbsent(parentId, () => []).add(h);
     }
 
+    // When hotspots are selected, collect their community IDs so
+    // peer tiles can show a subtle highlight.
+    final activeCommunities = <int>{};
+    for (final path in selectedHotspotPaths) {
+      final h = hotspots.cast<RepositoryXrayHotspotData?>().firstWhere(
+          (h) => h!.path == path,
+          orElse: () => null);
+      if (h != null && h.spectralCommunity >= 0) {
+        activeCommunities.add(h.spectralCommunity);
+      }
+    }
+
     _Parcel hotspotParcel(RepositoryXrayHotspotData h,
         {required bool isChild}) {
       final accent = _hotspotAccent(t, h.kind);
+      final isPeer = !selectedHotspotPaths.contains(h.path) &&
+          h.spectralCommunity >= 0 &&
+          activeCommunities.contains(h.spectralCommunity);
       return _Parcel(
         key: 'h:${h.path}',
         label: _shortPath(h.path),
         accent: accent,
         value: h.touchCount.toDouble(),
         count: h.touchCount,
-        // Keystone files get a compact `keystone` tag on their tile so
-        // they're visible in the overview, not just the inspector pane.
         tagText: h.isKeystone ? 'keystone' : null,
-        selected: selectedHotspotPath == h.path,
+        selected: selectedHotspotPaths.contains(h.path),
         isChild: isChild,
-        onTap: () => onHotspotSelected(h.path),
+        onTap: ({bool additive = false}) =>
+            onHotspotSelected(h.path, additive: additive),
         children: const [],
         isKeystone: h.isKeystone,
         soloOwner: h.ownerCount == 1,
@@ -2293,6 +2490,8 @@ class _TerritoryBoard extends StatelessWidget {
             : null,
         recencyLabel: recencyLabelOf(h.lastTouchedAt),
         coupledTo: h.coupledTo,
+        communityId: h.spectralCommunity,
+        communityPeer: isPeer,
       );
     }
 
@@ -2311,7 +2510,7 @@ class _TerritoryBoard extends StatelessWidget {
         tagText: _compactStratumLabel(s.role),
         selected: selectedStratumId == s.id,
         isChild: false,
-        onTap: () => onStratumSelected(s.id),
+        onTap: ({bool additive = false}) => onStratumSelected(s.id),
         children: children,
         soloOwner: s.ownerCount == 1,
         recencyLabel: recencyLabelOf(s.lastTouchedAt),
@@ -2358,24 +2557,20 @@ class _TerritoryBoard extends StatelessWidget {
                 // Lines render *above* the cells but ignore pointer events
                 // so tile interaction stays unaffected. Snappy: no fade,
                 // appears the frame the selection changes.
-                final selPath = selectedHotspotPath;
-                if (selPath != null) {
+                if (selectedHotspotPaths.isNotEmpty) {
                   final pathToRect = <String, Rect>{};
                   _collectHotspotRects(cells, pathToRect);
-                  final selRect = pathToRect[selPath];
-                  final selectedHotspot = hotspots.firstWhere(
-                    (h) => h.path == selPath,
-                    orElse: () => const RepositoryXrayHotspotData(
-                      kind: '',
-                      path: '',
-                      touchCount: 0,
-                      ownerCount: 0,
-                      lastTouchedAt: '',
-                    ),
-                  );
-                  if (selRect != null && selectedHotspot.coupledTo.isNotEmpty) {
+                  for (final selPath in selectedHotspotPaths) {
+                    final selRect = pathToRect[selPath];
+                    if (selRect == null) continue;
+                    final selHotspot = hotspots
+                        .cast<RepositoryXrayHotspotData?>()
+                        .firstWhere((h) => h!.path == selPath,
+                            orElse: () => null);
+                    if (selHotspot == null ||
+                        selHotspot.coupledTo.isEmpty) continue;
                     final targets = <Rect>[];
-                    for (final tgt in selectedHotspot.coupledTo) {
+                    for (final tgt in selHotspot.coupledTo) {
                       final r = pathToRect[tgt];
                       if (r != null && r != selRect) targets.add(r);
                     }
@@ -2497,7 +2692,13 @@ class _TerritoryCell extends StatelessWidget {
       return MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          onTap: parcel.onTap,
+          onTap: () {
+            final kb = HardwareKeyboard.instance;
+            final additive = kb.isShiftPressed ||
+                kb.isControlPressed ||
+                kb.isMetaPressed;
+            parcel.onTap(additive: additive);
+          },
           child: Tooltip(
             message: '${parcel.label}  ·  ${parcel.count}×'
                 '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${parcel.observerCount} reviewer${parcel.observerCount == 1 ? '' : 's'}' : '  ·  unreviewed') : ''}',
@@ -2534,19 +2735,15 @@ class _TerritoryCell extends StatelessWidget {
                 border: Border.all(
                   color: selected
                       ? accent.withValues(alpha: _parcelSelectedBorderAlpha)
-                      // Non-selected keystones borrow a whisper of
-                      // accent: the midpoint between the neutral
-                      // chromeBorder and a full selection border
-                      // (`(0.16 + 0.6) / 2 ≈ 0.38`, softened down to
-                      // 0.34 so the effect stays quieter than a
-                      // selection). Pure derivation from the two
-                      // existing border alphas.
-                      : parcel.isKeystone
-                          ? accent.withValues(
-                              alpha: _keystoneBorderAlpha,
-                            )
-                          : t.chromeBorder
-                              .withValues(alpha: _parcelChromeBorderAlpha),
+                      : parcel.communityPeer
+                          ? _communityColor(parcel.communityId)
+                              .withValues(alpha: 0.40)
+                          : parcel.isKeystone
+                              ? accent.withValues(
+                                  alpha: _keystoneBorderAlpha,
+                                )
+                              : t.chromeBorder.withValues(
+                                  alpha: _parcelChromeBorderAlpha),
                 ),
               ),
               child: ClipRRect(
@@ -3538,6 +3735,12 @@ Color _stratumAccent(AppTokens t, StratumRole role) {
 
 Color _hotspotAccent(AppTokens t, String kind) {
   return kind == 'directory' ? t.stateModified : t.accentBright;
+}
+
+Color _communityColor(int communityId) {
+  if (communityId < 0) return const Color(0x00000000);
+  final hue = (communityId * 137.508) % 360;
+  return HSLColor.fromAHSL(1.0, hue, 0.55, 0.55).toColor();
 }
 
 Color _cadenceAccent(AppTokens t, String kind) {
