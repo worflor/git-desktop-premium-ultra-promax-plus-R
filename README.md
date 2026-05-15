@@ -27,18 +27,17 @@ What that looks like in practice:
 
 - Manifold can map your diff to external file context automatically using repo history and the graph itself.
   - Use non-agentic LLM-powered Review Commit with logos-backed context gathering. Cheap, efficient, thorough.
-- Open any file. The client already knows what it connects to, how
-  tightly, and through which channels.
-- View changes by geometric Atlas rather than by file.
-- PRs, worktrees, and branches have Orbits.
+- Open any file. The client already knows what it connects to, how tightly, and through which channels.
+- View changes by *geometric Atlas* rather than by file.
+- PRs, worktrees, and branches have **Orbits**.
 - Summarise a repo. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
 
-Oh yeah, and it's free ♥
+Oh yeah, and it's *free* ♥
 
 ### ...in monke terms..?
 
-monke add repo. repo get analyzed. monke see where banana generater was added vs banna VIEWER (monke doesnt add descriptions. too busy making banana generators in different languages). friend send monke spaghetti repo when monke prefer banana repo. Manifold show monke around the new repo as if monke's own repo. spaghetti turned lasagna. all with manifold
+*monke add repo. repo get analyzed. monke see where banana generater was added vs banna VIEWER (monke doesnt add descriptions. too busy making banana generators in different languages). friend send monke spaghetti repo when monke prefer banana repo. Manifold show monke around the new repo as if monke's own repo. spaghetti turned lasagna. all with manifold*
 
 ## Mine, and yours
 
@@ -46,9 +45,12 @@ Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude i
 
 Cellshaded comic book page, cosmic glass in three unique perspectives... you get the point.
 
+## Pics or it didn't happen
+<it didnt happen>
+
 ## Status
 
-Pre-release. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
+Public Beta mk1. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
 
 ## Quick start
 
@@ -62,7 +64,7 @@ Needs Flutter 3.22+, Dart 3.3+, and Git on your PATH.
 
 ## On the code, openly
 
-Manifold is open source. Use it as your daily driver if it clicks for you.
+Manifold is open source. yippee!!! Use it as your daily driver if it clicks for you.
 Fork it, lift pieces for your own projects, audit it, whatever helps. If it
 ends up being the Git client someone actually reaches for, that's great.
 
@@ -72,8 +74,8 @@ when I can.
 
 Clone it, or ask an LLM to explain and understand the core. I support self learning. But...
 
-Pull requests touching the engine aren't, and this isn't a community thing. The math underneath Manifold is specific, layered, and easy to break in ways that
-don't look broken. The engine mixes:
+Pull requests touching the engine *aren't* preferred, and this isn't a community thing. The math underneath Manifold is specific, layered, and easy to break in ways that don't look broken. 
+The engine mixes:
 
 - hypercomplex algebra
 - spectral graph theory: Laplacian, heat kernel, & Ricci flow.
