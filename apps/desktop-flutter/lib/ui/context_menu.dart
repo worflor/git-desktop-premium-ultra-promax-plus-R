@@ -129,7 +129,7 @@ class AppContextMenu extends StatelessWidget {
         children.add(
           Container(
             height: 1,
-            margin: const EdgeInsets.symmetric(vertical: 4),
+            margin: const EdgeInsets.symmetric(vertical: 3),
             color: tokens.chromeBorder.withValues(alpha: 0.25),
           ),
         );
@@ -473,7 +473,7 @@ class _AppContextMenuRowState extends State<AppContextMenuRow>
     final left = flip
         ? (topLeft.dx - _kEstimatedSubmenuWidth - 4)
         : (right.dx + 4);
-    return (left: left, top: topLeft.dy - 4);
+    return (left: left, top: topLeft.dy);
   }
 
   @override
@@ -495,60 +495,48 @@ class _AppContextMenuRowState extends State<AppContextMenuRow>
             : (destructive
                 ? t.stateDeleted.withValues(alpha: 0)
                 : t.accentBright.withValues(alpha: 0)));
+    final hasTrailing = widget.item.trailing != null;
+    final rowContent = widget.item.custom != null
+        ? widget.item.custom!
+        : Row(
+            children: [
+              if (widget.item.leading != null)
+                widget.item.leading!
+              else
+                Icon(widget.item.icon, size: 14,
+                    color: widget.item.iconColor ?? fg),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  widget.item.label,
+                  style: TextStyle(color: fg, fontSize: 12),
+                ),
+              ),
+              if (hasSubmenu) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.chevron_right, size: 14, color: t.textFaint),
+              ],
+            ],
+          );
     final row = AnimatedContainer(
       duration: context.motion(const Duration(milliseconds: 90)),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: EdgeInsets.only(
+        left: 12, top: 6, bottom: 6,
+        right: hasTrailing ? 0 : 12,
+      ),
       decoration: BoxDecoration(color: bg),
-      child: widget.item.custom != null
-          ? widget.item.custom!
-          : Row(
-              children: [
-                if (widget.item.leading != null)
-                  widget.item.leading!
-                else
-                  Icon(widget.item.icon, size: 14,
-                      color: widget.item.iconColor ?? fg),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    widget.item.label,
-                    style: TextStyle(color: fg, fontSize: 12),
-                  ),
-                ),
-                if (widget.item.trailing != null) ...[
-                  const SizedBox(width: 10),
-                  widget.item.trailing!,
-                ],
-                if (hasSubmenu) ...[
-                  const SizedBox(width: 8),
-                  Icon(Icons.chevron_right, size: 14, color: t.textFaint),
-                ],
-              ],
-            ),
+      child: rowContent,
     );
-    // Inert rows short-circuit: no mouse region, no gesture, no hover
-    // state. The row renders flat and is pointer-transparent to clicks.
     if (inert) return row;
-    return MouseRegion(
+    Widget main = MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) {
         hoverEnterRespectingSubmenu();
-        // Rows open their submenu on HOVER (vs chips which open on
-        // click) — fits the cascading-list-row mental model and lets
-        // commit-configuration submenus surface without an extra click.
         if (hasSubmenu) openSubmenu();
       },
       onExit: (_) => hoverExitRespectingSubmenu(),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        // Submenu + action can coexist: hovering opens the submenu
-        // (for tweaking), clicking fires onTap (to confirm). When
-        // only a submenu is present, the row still opens on hover
-        // but a tap is a no-op — harmless either way.
-        // keepOpen rows fire onTap + onChanged WITHOUT tearing down
-        // the menu — checkbox-style rows rely on this to accept
-        // multiple toggles before the user clicks the confirming
-        // parent row.
         onTap: () {
           if (widget.item.keepOpen) {
             widget.item.onTap();
@@ -560,6 +548,16 @@ class _AppContextMenuRowState extends State<AppContextMenuRow>
         },
         child: row,
       ),
+    );
+    if (!hasTrailing) return main;
+    return Row(
+      children: [
+        Expanded(child: main),
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: widget.item.trailing!,
+        ),
+      ],
     );
   }
 }

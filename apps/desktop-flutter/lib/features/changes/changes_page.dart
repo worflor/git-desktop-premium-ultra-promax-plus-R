@@ -26,6 +26,7 @@ import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
+import 'merge_conflict_editor.dart';
 import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -298,6 +299,7 @@ class _ChangesPageState extends State<ChangesPage> {
   // to the previous section during an animated jump.
   bool _multiDiffUserDriving = false;
   bool _actionRunning = false;
+  bool _discardBatchMode = false;
 
   // ── AI flows: state is hoisted into AiActivityState (per-repo,
   // session-scoped). The fields below are LOCAL UI view state — drawer
@@ -2815,6 +2817,7 @@ class _ChangesPageState extends State<ChangesPage> {
     // an unrelated right-click).
     final inSelection = _includedPaths.contains(file.path);
     final multi = inSelection && _includedPaths.length > 1;
+    _discardBatchMode = false;
     final status = context.read<RepositoryState>().status;
     final selectedFiles = multi && status != null
         ? status.files.where((f) => _includedPaths.contains(f.path)).toList()
@@ -2950,17 +2953,25 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: isUntracked ? Icons.delete_outline : Icons.history_outlined,
-          label: multi
-              ? (isUntracked
-                  ? 'Delete $basename  +$othersCount selected…'
-                  : 'Discard changes to $basename  +$othersCount selected…')
-              : (isUntracked
-                  ? 'Delete $basename…'
-                  : 'Discard changes to $basename…'),
+          label: isUntracked
+              ? 'Delete $basename…'
+              : 'Discard changes to $basename…',
           destructive: true,
-          onTap: multi
-              ? () => _confirmDiscardFiles(context, selectedFiles, repoPath)
-              : () => _confirmDiscardFile(context, file, repoPath),
+          onTap: () {
+            if (multi && _discardBatchMode) {
+              _confirmDiscardFiles(context, selectedFiles, repoPath);
+            } else {
+              _confirmDiscardFile(context, file, repoPath);
+            }
+          },
+          trailing: multi
+              ? _DiscardBatchToggle(
+                  initial: _discardBatchMode,
+                  count: selectedFiles.length,
+                  tokens: t,
+                  onChanged: (v) => _discardBatchMode = v,
+                )
+              : null,
         ),
       ]),
       ListMenuSection([
@@ -3851,6 +3862,44 @@ class _ChangesPageState extends State<ChangesPage> {
     } finally {
       if (mounted) setState(() => _mergeResolving = false);
     }
+  }
+
+  Future<void> _openManualMergeEditor(
+      String repoPath, Set<String> conflictedPaths) async {
+    final files = <ConflictFile>[];
+    for (final path in conflictedPaths) {
+      final absPath = '$repoPath/$path';
+      final f = File(absPath.replaceAll('/', Platform.pathSeparator));
+      if (!await f.exists()) continue;
+      final content = await f.readAsString();
+      if (!content.contains('<<<<<<<')) continue;
+      files.add(parseConflictFile(path, content));
+    }
+    if (files.isEmpty) return;
+    if (!mounted) return;
+
+    // Enrich with Logos coupling/community data when available
+    final logosState = context.read<LogosGitState>();
+    var engine = logosState.engineFor(repoPath);
+    if (engine == null) {
+      await logosState.loadForRepo(repoPath);
+      if (!mounted) return;
+      engine = logosState.engineFor(repoPath);
+    }
+    if (engine != null) {
+      final changedPaths = conflictedPaths;
+      for (final cf in files) {
+        enrichConflictFileWithLogos(cf, engine, changedPaths);
+      }
+    }
+
+    final result = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => MergeEditorPage(files: files, repoPath: repoPath),
+      ),
+    );
+    if (result == null || !mounted) return;
+    await context.read<RepositoryState>().refreshStatus();
   }
 
   /// Natural-language partial staging. Takes the user's English
@@ -5792,6 +5841,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                 onResolve: (categoryId) =>
                                     _resolveMergeConflicts(
                                         repoPath, categoryId),
+                                onManualResolve: () =>
+                                    _openManualMergeEditor(
+                                        repoPath, conflictedPaths),
                               ),
                             Expanded(
                               child: Stack(children: [
@@ -13680,6 +13732,83 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
   }
 }
 
+class _DiscardBatchToggle extends StatefulWidget {
+  final bool initial;
+  final int count;
+  final AppTokens tokens;
+  final ValueChanged<bool> onChanged;
+
+  const _DiscardBatchToggle({
+    required this.initial,
+    required this.count,
+    required this.tokens,
+    required this.onChanged,
+  });
+
+  @override
+  State<_DiscardBatchToggle> createState() => _DiscardBatchToggleState();
+}
+
+class _DiscardBatchToggleState extends State<_DiscardBatchToggle> {
+  late bool _active;
+
+  @override
+  void initState() {
+    super.initState();
+    _active = widget.initial;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    return GestureDetector(
+      onTap: () {
+        setState(() => _active = !_active);
+        widget.onChanged(_active);
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _active
+                        ? t.stateDeleted.withValues(alpha: 0.6)
+                        : t.chromeBorder.withValues(alpha: 0.4),
+                    width: 1.0,
+                  ),
+                  color: _active
+                      ? t.stateDeleted.withValues(alpha: 0.4)
+                      : Colors.transparent,
+                ),
+              ),
+              if (_active) ...[
+                const SizedBox(width: 4),
+                Text(
+                  '×${widget.count}',
+                  style: TextStyle(
+                    color: t.stateDeleted.withValues(alpha: 0.7),
+                    fontSize: 9,
+                    fontFamily: AppFonts.mono,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PanelDivider extends StatefulWidget {
   final AppTokens tokens;
   final ValueChanged<double> onDrag;
@@ -13752,12 +13881,14 @@ class _MergeResolveStrip extends StatelessWidget {
   final int? totalHunks;
   final bool busy;
   final ValueChanged<String> onResolve;
+  final VoidCallback? onManualResolve;
 
   const _MergeResolveStrip({
     required this.conflictedPaths,
     required this.totalHunks,
     required this.busy,
     required this.onResolve,
+    this.onManualResolve,
   });
 
   @override
@@ -13809,6 +13940,30 @@ class _MergeResolveStrip extends StatelessWidget {
               ),
             ),
           ),
+          if (onManualResolve != null) ...[
+            ChromeButton(
+              onTap: busy ? null : onManualResolve,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              borderRadius: AppRadii.smAll,
+              chromeBuilder: ({required hovered, required pressed}) =>
+                  ghostButtonChrome(
+                t,
+                hovered: hovered,
+                pressed: pressed,
+                enabled: !busy,
+                baseBorderColor:
+                    t.chromeBorder.withValues(alpha: 0.3),
+              ),
+              child: Text('Resolve',
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  )),
+            ),
+            const SizedBox(width: 6),
+          ],
           if (defaultCategory.isEmpty)
             Text('no AI model configured',
                 style: TextStyle(

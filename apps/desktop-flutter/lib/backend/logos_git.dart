@@ -642,6 +642,7 @@ class LogosGitStats {
   /// commits that touched the path. The reviewer constellation —
   /// which humans have observed which parts of the codebase.
   final Map<String, Set<String>> reviewersByPath;
+  final Map<String, Map<String, int>> authorTouches;
 
   const LogosGitStats({
     required this.touches,
@@ -663,6 +664,7 @@ class LogosGitStats {
     this.forge = 'unknown',
     this.reviewedCommits = const {},
     this.reviewersByPath = const {},
+    this.authorTouches = const {},
     this.shadowCoupling,
   });
 
@@ -688,6 +690,7 @@ class LogosGitStats {
     String? forge,
     Map<String, Set<String>>? reviewedCommits,
     Map<String, Set<String>>? reviewersByPath,
+    Map<String, Map<String, int>>? authorTouches,
     Object? shadowCoupling = _sentinel,
   }) =>
       LogosGitStats(
@@ -711,6 +714,7 @@ class LogosGitStats {
         forge: forge ?? this.forge,
         reviewedCommits: reviewedCommits ?? this.reviewedCommits,
         reviewersByPath: reviewersByPath ?? this.reviewersByPath,
+        authorTouches: authorTouches ?? this.authorTouches,
         shadowCoupling: identical(shadowCoupling, _sentinel)
             ? this.shadowCoupling
             : shadowCoupling as FileCouplingMatrix?,
@@ -3149,9 +3153,26 @@ class LogosGit {
     return derived;
   }
 
-  /// [phiThreshold]: when non-zero, drops sub-threshold phi values during
-  /// scan (kills numerical-noise allocations on warm diffusions where
-  /// thousands of nodes carry near-zero positive phi).
+  List<MapEntry<String, int>> filesForAuthor(String author, {int limit = 20}) {
+    final map = stats.authorTouches[author];
+    if (map == null || map.isEmpty) return const [];
+    final entries = map.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries.length <= limit ? entries : entries.sublist(0, limit);
+  }
+
+  List<MapEntry<String, int>> authorsForFile(String path, {int limit = 10}) {
+    final out = <MapEntry<String, int>>[];
+    for (final entry in stats.authorTouches.entries) {
+      final count = entry.value[path];
+      if (count != null && count > 0) {
+        out.add(MapEntry(entry.key, count));
+      }
+    }
+    out.sort((a, b) => b.value.compareTo(a.value));
+    return out.length <= limit ? out : out.sublist(0, limit);
+  }
+
   List<RelevanceScore> diffuse(
     Set<String> sourceFiles, {
     double t = 1.0,

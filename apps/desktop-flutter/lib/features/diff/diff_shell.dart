@@ -2759,7 +2759,7 @@ class _DiffShellState extends State<DiffShell> {
     final painter = TextPainter(
       text: const TextSpan(
         text: 'M',
-        style: TextStyle(fontFamily: AppFonts.mono, fontSize: 12),
+        style: TextStyle(fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback, fontSize: 12),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -3669,7 +3669,7 @@ class _DiffShellState extends State<DiffShell> {
               style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: 10.5,
-                fontFamily: AppFonts.mono,
+                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
               ),
             ),
           ),
@@ -4055,7 +4055,7 @@ class _DiffLineState extends State<DiffLineView> {
                   : t.textMuted)
               : t.textMuted.withValues(alpha: 0.5),
           fontSize: 10,
-          fontFamily: AppFonts.mono,
+          fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
         ),
       ),
     );
@@ -4372,7 +4372,7 @@ class _DiffLineState extends State<DiffLineView> {
                             style: TextStyle(
                               color: t.hyperChromatic1,
                               fontSize: 9,
-                              fontFamily: AppFonts.mono,
+                              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -4494,7 +4494,7 @@ class _StageSigil extends StatelessWidget {
                     color: effective,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    fontFamily: AppFonts.mono,
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                     height: 1.0,
                   ),
                 ),
@@ -4638,7 +4638,7 @@ Widget _buildPlainDiffText(
           : semanticTint.withValues(
               alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06)),
       fontSize: fontSize,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
       height: height,
       fontWeight: fontWeight,
       fontStyle: fontStyle,
@@ -4719,7 +4719,7 @@ Widget _buildSearchText(
     text: TextSpan(
       style: TextStyle(
         fontSize: fontSize,
-        fontFamily: AppFonts.mono,
+        fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
         height: height,
         fontWeight: fontWeight,
         fontStyle: fontStyle,
@@ -5458,28 +5458,28 @@ class _HunkDropdownRow extends StatelessWidget {
     final scopeStyle = TextStyle(
       color: t.accentBright,
       fontSize: 11,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
     );
     final mutedStyle = TextStyle(
       color: t.textMuted,
       fontSize: 11,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
     );
     final fadedStyle = TextStyle(
       color: t.textMuted.withValues(alpha: 0.55),
       fontSize: 11,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
     );
     final addStyle = TextStyle(
       color: t.stateAdded,
       fontSize: 10,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
       fontWeight: FontWeight.w600,
     );
     final delStyle = TextStyle(
       color: t.stateDeleted,
       fontSize: 10,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
       fontWeight: FontWeight.w600,
     );
     final hasScope = hunk.scope.isNotEmpty;
@@ -7305,7 +7305,7 @@ class _StickyHunkHeader extends StatelessWidget {
     final labelStyle = TextStyle(
       color: tokens.accentBright,
       fontSize: 11,
-      fontFamily: AppFonts.mono,
+      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
       height: 1.3,
     );
     final leftStrip = IgnorePointer(

@@ -1,10 +1,9 @@
 import 'dart:io';
-
-import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
-import 'package:provider/provider.dart';
-
 import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../../app/ai_activity_state.dart';
 import '../../app/build_info.dart';
@@ -19,10 +18,12 @@ import '../../app/worktree_state.dart';
 import '../../backend/dtos.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
+import '../changes/merge_conflict_editor.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/repo_web_url.dart';
 import '../../backend/system_paths.dart';
 import '../../backend/undo_controller.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/tokens.dart';
 import 'palette_entry.dart';
 
@@ -77,8 +78,441 @@ List<PaletteEntry> buildStaticEntries(
     ..._settingToggleEntries(prefs),
     ..._themeEntries(theme),
     ..._infoEntries(),
+    if (repoPath != null)
+      PaletteEntry(
+        id: 'dev.test-merge-editor',
+        label: 'Test Merge Editor',
+        keywords: const ['conflict', 'merge', 'resolve', 'debug', 'dev'],
+        chipLabel: 'DEV',
+        chipTone: ChipTone.chromatic2,
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () {
+          final rp = repoPath!;
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (ctx) => _TestMergeEditorLoader(
+              repoPath: rp,
+            ),
+          ));
+        },
+      ),
+    if (engine != null)
+      PaletteEntry(
+        id: 'debug.engine',
+        label: 'Engine Status',
+        subtitle: 'LogosGit spectral engine diagnostics',
+        keywords: const ['debug', 'engine', 'logos', 'spectral', 'coupling', 'diagnostics'],
+        chipLabel: 'DEBUG',
+        chipTone: ChipTone.muted,
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () => _showEngineStatus(context, engine!),
+      ),
+    if (engine != null && status != null)
+      PaletteEntry(
+        id: 'debug.coupling',
+        label: 'File Coupling',
+        subtitle: 'Nearest co-change neighbors for staged files',
+        keywords: const ['debug', 'coupling', 'jaccard', 'neighbors', 'co-change'],
+        chipLabel: 'DEBUG',
+        chipTone: ChipTone.muted,
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () => _showCouplingInspector(context, engine!, status!),
+      ),
   ];
 }
+
+void _showEngineStatus(BuildContext context, LogosGit engine) {
+  final t = context.read<AppTokens>();
+  final s = engine.stats;
+  final coupling = s.coupling;
+  final fileCount = coupling.paths.length;
+
+  var nnz = 0;
+  for (final p in coupling.paths) {
+    for (final _ in coupling.jaccardEntriesOf(p)) {
+      nnz++;
+    }
+  }
+  nnz ~/= 2;
+  final maxPossible = fileCount * (fileCount - 1) ~/ 2;
+  final density = maxPossible > 0 ? nnz / maxPossible : 0.0;
+
+  final volCount = s.volatility.length;
+  final volEntries = s.volatility.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final topVol = volEntries.take(5);
+
+  final lines = StringBuffer()
+    ..writeln('commits        ${s.totalCommits}')
+    ..writeln('files tracked  $fileCount')
+    ..writeln('coupling edges $nnz / $maxPossible  (${(density * 100).toStringAsFixed(1)}%)')
+    ..writeln('volatility     $volCount files  μ=${s.volMean.toStringAsFixed(3)}  σ=${s.volStddev.toStringAsFixed(3)}')
+    ..writeln('forge          ${s.forge}')
+    ..writeln('')
+    ..writeln('── most volatile ──');
+  for (final e in topVol) {
+    final name = e.key.split('/').last;
+    lines.writeln('  ${e.value.toStringAsFixed(3)}  $name');
+  }
+
+  final reviewedCount = s.reviewedCommits.length;
+  final reviewerCount = <String>{};
+  for (final rs in s.reviewersByPath.values) {
+    reviewerCount.addAll(rs);
+  }
+  lines
+    ..writeln('')
+    ..writeln('── review coverage ──')
+    ..writeln('  reviewed merges  $reviewedCount')
+    ..writeln('  unique reviewers ${reviewerCount.length}');
+
+  showDialog(
+    context: context,
+    builder: (ctx) => _DebugPanel(
+      title: 'Engine Status',
+      body: lines.toString(),
+      tokens: t,
+    ),
+  );
+}
+
+void _showCouplingInspector(
+    BuildContext context, LogosGit engine, RepositoryStatus status) {
+  final t = context.read<AppTokens>();
+  final coupling = engine.stats.coupling;
+  final files = status.files.map((f) => f.path).toList();
+
+  final lines = StringBuffer();
+  var shown = 0;
+  for (final filePath in files) {
+    final basename = filePath.split('/').last;
+    final entries = coupling.jaccardEntriesOf(filePath).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final top = entries.take(5).toList();
+    if (top.isEmpty) {
+      lines.writeln('$basename  —  no coupling data');
+    } else {
+      lines.writeln(basename);
+      for (final e in top) {
+        final neighbor = e.key.split('/').last;
+        final bar = '█' * (e.value * 20).round().clamp(1, 20);
+        lines.writeln('  ${e.value.toStringAsFixed(2)}  $bar  $neighbor');
+      }
+    }
+    lines.writeln('');
+    shown++;
+    if (shown >= 12) {
+      final remaining = files.length - shown;
+      if (remaining > 0) lines.writeln('  +$remaining more files…');
+      break;
+    }
+  }
+
+  if (files.isEmpty) {
+    lines.writeln('No staged files.');
+  }
+
+  showDialog(
+    context: context,
+    builder: (ctx) => _DebugPanel(
+      title: 'File Coupling',
+      body: lines.toString(),
+      tokens: t,
+    ),
+  );
+}
+
+class _DebugPanel extends StatelessWidget {
+  final String title;
+  final String body;
+  final AppTokens tokens;
+  const _DebugPanel({
+    required this.title,
+    required this.body,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 520),
+        child: Material(
+          color: tokens.bg1,
+          borderRadius: BorderRadius.circular(8),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                ),
+              ),
+              Container(
+                height: 1,
+                color: tokens.chromeBorder.withValues(alpha: 0.2),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(
+                    body,
+                    style: TextStyle(
+                      color: tokens.textNormal,
+                      fontSize: 11,
+                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                      height: 1.6,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TestMergeEditorLoader extends StatefulWidget {
+  final String repoPath;
+  const _TestMergeEditorLoader({required this.repoPath});
+  @override
+  State<_TestMergeEditorLoader> createState() =>
+      _TestMergeEditorLoaderState();
+}
+
+class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
+  List<ConflictFile>? _files;
+  List<ConflictFile>? _filesWithoutLogos;
+  String? _error;
+  bool _building = false;
+
+  late final LogosGitState _logosState;
+
+  @override
+  void initState() {
+    super.initState();
+    _logosState = context.read<LogosGitState>();
+    _logosState.addListener(_onLogosChanged);
+    _build();
+  }
+
+  @override
+  void dispose() {
+    _logosState.removeListener(_onLogosChanged);
+    super.dispose();
+  }
+
+  void _onLogosChanged() {
+    if (_files != null) return;
+    if (_filesWithoutLogos == null) return;
+    final engine = _logosState.engineFor(widget.repoPath);
+    if (engine == null) return;
+    _enrichAll(_filesWithoutLogos!, engine);
+    setState(() => _files = _filesWithoutLogos);
+  }
+
+  Future<void> _build() async {
+    if (_building) return;
+    _building = true;
+    try {
+      _logosState.loadForRepo(widget.repoPath);
+      final files = await _buildConflictsFromHistory(
+          widget.repoPath, null);
+      if (!mounted) return;
+      _filesWithoutLogos = files;
+      final engine = _logosState.engineFor(widget.repoPath);
+      if (engine != null) {
+        _enrichAll(files, engine);
+        setState(() => _files = files);
+      } else {
+        // Show immediately without Logos; will re-enrich when engine
+        // arrives via the listener.
+        setState(() => _files = files);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      _building = false;
+    }
+  }
+
+  void _enrichAll(List<ConflictFile> files, LogosGit engine) {
+    final changedPaths = files.map((f) => f.path).toSet();
+    for (final cf in files) {
+      enrichConflictFileWithLogos(cf, engine, changedPaths);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    if (_error != null) {
+      return Scaffold(
+        backgroundColor: t.bg1,
+        body: Center(
+          child: Text(_error!,
+              style: TextStyle(color: t.stateConflicted, fontSize: 12)),
+        ),
+      );
+    }
+    if (_files == null) {
+      return Scaffold(
+        backgroundColor: t.bg1,
+        body: Center(
+          child: Text('building test conflicts from history…',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+              )),
+        ),
+      );
+    }
+    return MergeEditorPage(repoPath: widget.repoPath, files: _files!);
+  }
+}
+
+Future<List<ConflictFile>> _buildConflictsFromHistory(
+    String repoPath, LogosGit? engine) async {
+  final nameResult = await Process.run(
+    'git', ['diff', '--name-only', 'HEAD~5', 'HEAD'],
+    workingDirectory: repoPath,
+  );
+  if (nameResult.exitCode != 0) {
+    throw Exception('git diff --name-only failed');
+  }
+  final changedPaths = (nameResult.stdout as String)
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty && !l.contains(' '))
+      .toList();
+
+  final picked = <String>[];
+  for (final p in changedPaths) {
+    if (picked.length >= 3) break;
+    if (p.endsWith('.dart') || p.endsWith('.ts') || p.endsWith('.js') ||
+        p.endsWith('.py') || p.endsWith('.rs') || p.endsWith('.go') ||
+        p.endsWith('.yaml') || p.endsWith('.json') || p.endsWith('.md')) {
+      picked.add(p);
+    }
+  }
+  if (picked.isEmpty && changedPaths.isNotEmpty) {
+    picked.addAll(changedPaths.take(2));
+  }
+  if (picked.isEmpty) throw Exception('no changed files in last 5 commits');
+
+  final files = <ConflictFile>[];
+  for (final path in picked) {
+    final headResult = await Process.run(
+      'git', ['show', 'HEAD:$path'],
+      workingDirectory: repoPath,
+    );
+    final oldResult = await Process.run(
+      'git', ['show', 'HEAD~5:$path'],
+      workingDirectory: repoPath,
+    );
+    if (headResult.exitCode != 0 || oldResult.exitCode != 0) continue;
+
+    final headContent = headResult.stdout as String;
+    final oldContent = oldResult.stdout as String;
+    final headLines = headContent.split('\n');
+    final oldLines = oldContent.split('\n');
+    if (headLines.length < 3 || oldLines.length < 3) continue;
+
+    final conflictText =
+        _buildSyntheticConflict(path, headLines, oldLines);
+    if (conflictText == null) continue;
+
+    final cf = parseConflictFile(path, conflictText,
+        oursBranch: 'HEAD', theirsBranch: 'HEAD~5');
+
+    if (engine != null) {
+      enrichConflictFileWithLogos(cf, engine, changedPaths.toSet());
+    }
+    files.add(cf);
+  }
+
+  if (files.isEmpty) throw Exception('could not build conflicts from history');
+  return files;
+}
+
+String? _buildSyntheticConflict(
+    String path, List<String> headLines, List<String> oldLines) {
+  // Find regions where the files differ and wrap them in conflict markers
+  final buf = StringBuffer();
+  final headSet = headLines.toSet();
+  final oldSet = oldLines.toSet();
+  var hi = 0;
+  var oi = 0;
+  var conflictCount = 0;
+
+  while (hi < headLines.length && oi < oldLines.length) {
+    if (headLines[hi] == oldLines[oi]) {
+      buf.writeln(headLines[hi]);
+      hi++;
+      oi++;
+      continue;
+    }
+    // Found a difference — collect the diverging block
+    final headBlock = <String>[];
+    final oldBlock = <String>[];
+    // Scan ahead in head to find next matching line
+    var scanH = hi;
+    var scanO = oi;
+    while (scanH < headLines.length && !oldSet.contains(headLines[scanH])) {
+      headBlock.add(headLines[scanH]);
+      scanH++;
+    }
+    while (scanO < oldLines.length && !headSet.contains(oldLines[scanO])) {
+      oldBlock.add(oldLines[scanO]);
+      scanO++;
+    }
+    if (headBlock.isEmpty && oldBlock.isEmpty) {
+      // Stuck — skip one line from each
+      headBlock.add(headLines[hi]);
+      oldBlock.add(oldLines[oi]);
+      scanH = hi + 1;
+      scanO = oi + 1;
+    }
+    if (headBlock.isNotEmpty || oldBlock.isNotEmpty) {
+      buf.writeln('<<<<<<< HEAD');
+      for (final l in headBlock) {
+        buf.writeln(l);
+      }
+      buf.writeln('=======');
+      for (final l in oldBlock) {
+        buf.writeln(l);
+      }
+      buf.writeln('>>>>>>> HEAD~5');
+      conflictCount++;
+    }
+    hi = scanH;
+    oi = scanO;
+    if (conflictCount >= 4) break;
+  }
+  // Remaining lines from head
+  while (hi < headLines.length) {
+    buf.writeln(headLines[hi++]);
+  }
+
+  if (conflictCount == 0) return null;
+  return buf.toString();
+}
+
 
 // ── Predictive (hot files from spectral momentum) ──────────────────
 
@@ -359,6 +793,7 @@ List<PaletteEntry> _repoSubEntries(
       ],
     ]);
   }
+
   return entries;
 }
 

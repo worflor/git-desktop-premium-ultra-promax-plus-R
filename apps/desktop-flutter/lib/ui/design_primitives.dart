@@ -12,14 +12,22 @@ class AppFonts {
 
   /// Primary monospace family. Use for code, hashes, line numbers,
   /// file paths, anywhere fixed-width metrics matter.
+  ///
+  /// Always pair with [monoFallback] via `fontFamilyFallback` so
+  /// glyphs missing from JetBrainsMono (emoji, CJK, symbols) fall
+  /// through to platform fonts. Callers that use [mono] without
+  /// the fallback will render tofu for those glyphs.
   static const String mono = 'JetBrainsMono';
 
   /// Fallback chain for monospace. Cross-platform — Consolas (Windows),
-  /// Menlo (macOS), Courier New (universal), generic monospace last.
+  /// Menlo (macOS), Courier New (universal), emoji fonts, then generic.
   static const List<String> monoFallback = [
     'Consolas',
     'Menlo',
     'Courier New',
+    'Segoe UI Emoji',
+    'Apple Color Emoji',
+    'Noto Color Emoji',
     'monospace',
   ];
 }

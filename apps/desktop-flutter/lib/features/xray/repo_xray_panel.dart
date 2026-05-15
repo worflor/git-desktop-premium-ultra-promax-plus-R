@@ -1224,8 +1224,45 @@ class _OverviewInspector extends StatelessWidget {
         : linearRatio > 0.15
             ? 'merge-heavy'
             : 'mostly linear';
+    final mergeLabel = rs.mergeCommitCount == 0
+        ? ''
+        : ' · ${rs.mergeCommitCount} merge${rs.mergeCommitCount == 1 ? '' : 's'}';
+
+    // Structure line: branches · remotes · tags
+    final structParts = <String>[
+      '${rs.localBranchCount} branch${rs.localBranchCount == 1 ? '' : 'es'}',
+      if (rs.remoteBranchCount > 0)
+        '${rs.remoteBranchCount} remote',
+      if (rs.tagCount > 0)
+        '${rs.tagCount} tag${rs.tagCount == 1 ? '' : 's'}'
+      else
+        'no tags',
+    ];
+    final structLine = structParts.join(' · ');
+
+    // Shape line: shape · worktrees · stashes
+    final shapeParts = <String>[
+      '$shapeHint$mergeLabel',
+      if (rs.worktreeCount > 1) '${rs.worktreeCount} worktrees',
+      if (rs.stashCount > 0)
+        '${rs.stashCount} stash${rs.stashCount == 1 ? '' : 'es'}',
+    ];
+    final shapeLine = shapeParts.join(' · ');
+
+    final labelStyle = TextStyle(
+      color: t.textFaint,
+      fontSize: 9,
+      fontWeight: FontWeight.w600,
+      letterSpacing: 0.5,
+    );
+    final valueStyle = TextStyle(
+      color: t.textMuted,
+      fontSize: 10,
+      fontFamily: AppFonts.mono,
+    );
 
     return ListView(children: [
+      // Hero: commit count
       Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
@@ -1237,87 +1274,74 @@ class _OverviewInspector extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                   fontFamily: AppFonts.mono)),
           const SizedBox(width: 6),
-          Text('commits',
+          Text(
+              machineCount > 0
+                  ? 'human · $machineCount machine'
+                  : 'commits',
               style: TextStyle(color: t.textMuted, fontSize: 11)),
         ],
       ),
-      if (machineCount > 0) ...[
-        const SizedBox(height: 2),
-        Text('+$machineCount machine',
-            style: TextStyle(
-                color: t.textFaint,
-                fontSize: 10,
-                fontFamily: AppFonts.mono)),
-      ],
 
       const SizedBox(height: 14),
 
-      _InspectorRow(
-        label: 'branches',
-        value: rs.remoteBranchCount > 0
-            ? '${rs.localBranchCount} local · ${rs.remoteBranchCount} remote'
-            : '${rs.localBranchCount} local',
-      ),
+      // Structure
+      Text(structLine, style: valueStyle),
+      const SizedBox(height: 4),
+      Text(shapeLine, style: valueStyle),
+
+      const SizedBox(height: 12),
+
+      // Reference
+      _InspectorRow(label: 'branch', value: h.branch),
       const SizedBox(height: 5),
-      _InspectorRow(
-        label: 'tags',
-        value: rs.tagCount == 0 ? 'none' : '${rs.tagCount}',
-      ),
-      if (rs.stashCount > 0) ...[
+      _InspectorRow(label: 'head', value: h.headShortHash),
+      if (rs.renameCommitCount > 0) ...[
         const SizedBox(height: 5),
         _InspectorRow(
-            label: 'stashes', value: '${rs.stashCount}'),
-      ],
-      if (rs.worktreeCount > 1) ...[
-        const SizedBox(height: 5),
-        _InspectorRow(
-            label: 'worktrees', value: '${rs.worktreeCount}'),
+            label: 'renames', value: '${rs.renameCommitCount}'),
       ],
       if (rs.noteCount > 0) ...[
         const SizedBox(height: 5),
         _InspectorRow(label: 'notes', value: '${rs.noteCount}'),
       ],
 
-      const SizedBox(height: 10),
-
+      // Engine internals — full depth for power users
+      const SizedBox(height: 14),
+      Text('engine', style: labelStyle),
+      const SizedBox(height: 6),
       _InspectorRow(
-        label: 'shape',
-        value: rs.mergeCommitCount == 0
-            ? shapeHint
-            : '$shapeHint · ${rs.mergeCommitCount} merges',
+        label: 'gradient',
+        value: flow.gradientMass.toStringAsFixed(2),
       ),
-      const SizedBox(height: 5),
+      const SizedBox(height: 3),
       _InspectorRow(
-        label: 'flow',
-        value:
-            'g ${flow.gradientMass.toStringAsFixed(2)} Â· c ${flow.curlMass.toStringAsFixed(2)} Â· h ${flow.harmonicMass.toStringAsFixed(2)}',
+        label: 'curl',
+        value: flow.curlMass.toStringAsFixed(2),
       ),
-      const SizedBox(height: 5),
+      const SizedBox(height: 3),
+      _InspectorRow(
+        label: 'harmonic',
+        value: flow.harmonicMass.toStringAsFixed(2),
+      ),
+      const SizedBox(height: 3),
       _InspectorRow(
         label: 'stress',
-        value:
-            '${flow.structuralStress.toStringAsFixed(2)} Â· conf ${flow.confidence.toStringAsFixed(2)}',
+        value: flow.structuralStress.toStringAsFixed(2),
       ),
-      if (rs.renameCommitCount > 0) ...[
-        const SizedBox(height: 5),
-        _InspectorRow(
-            label: 'renames', value: '${rs.renameCommitCount}'),
-      ],
+      const SizedBox(height: 3),
+      _InspectorRow(
+        label: 'confidence',
+        value: flow.confidence.toStringAsFixed(2),
+      ),
       if (si.hiddenRefCount > 0) ...[
-        const SizedBox(height: 5),
+        const SizedBox(height: 3),
         _InspectorRow(
             label: 'hidden refs', value: '${si.hiddenRefCount}'),
       ],
 
-      const SizedBox(height: 10),
-
-      _InspectorRow(label: 'branch', value: h.branch),
-      const SizedBox(height: 5),
-      _InspectorRow(label: 'head', value: h.headShortHash),
-
       const SizedBox(height: 14),
       Text(
-        'probed ${_relativeTime(h.computedAt)}',
+        'scanned ${_relativeTime(h.computedAt)}',
         style: TextStyle(
           color: t.textFaint,
           fontSize: 9.5,
@@ -1433,16 +1457,13 @@ class _HotspotInspector extends StatelessWidget {
       const SizedBox(height: 10),
       _InspectorRow(
           label: 'last touched', value: hotspot.lastTouchedAt),
-      _InspectorRow(
-          label: 'alive',
-          value: '${(aliveRatio * 100).round()}%'),
-      if (hotspot.spectralCommunity >= 0)
+      if (aliveRatio < 0.95)
         _InspectorRow(
-            label: 'community',
-            value: '${hotspot.spectralCommunity}'),
+            label: 'alive',
+            value: '${(aliveRatio * 100).round()}%'),
       if (communityPeers.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        Text('community peers',
+        const SizedBox(height: 12),
+        Text('cluster peers',
             style: TextStyle(
               color: t.textFaint,
               fontSize: 9,
@@ -1452,21 +1473,35 @@ class _HotspotInspector extends StatelessWidget {
         const SizedBox(height: 4),
         for (final peer in communityPeers)
           Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Text(
-              _shortPath(peer.path),
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 9.5,
-                fontFamily: AppFonts.mono,
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(children: [
+              Container(
+                width: 5,
+                height: 5,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _communityColor(peer.spectralCommunity)
+                      .withValues(alpha: 0.5),
+                ),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  _shortPath(peer.path),
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9.5,
+                    fontFamily: AppFonts.mono,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
           ),
       ],
       if (hotspot.coupledTo.isNotEmpty) ...[
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text('co-changers',
             style: TextStyle(
               color: t.textFaint,
@@ -1477,17 +1512,30 @@ class _HotspotInspector extends StatelessWidget {
         const SizedBox(height: 4),
         for (final path in hotspot.coupledTo)
           Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Text(
-              _shortPath(path),
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 9.5,
-                fontFamily: AppFonts.mono,
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(children: [
+              Container(
+                width: 5,
+                height: 5,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: t.chromeAccent.withValues(alpha: 0.4),
+                ),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  _shortPath(path),
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9.5,
+                    fontFamily: AppFonts.mono,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
           ),
       ],
       if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
@@ -1525,6 +1573,19 @@ class _MultiHotspotInspector extends StatelessWidget {
         if (selectedPaths.contains(c)) internalCoupled.add(c);
       }
     }
+    final externalCount = allCoupled.difference(selectedPaths).length;
+
+    // Prose summary of coupling + community structure
+    final couplingParts = <String>[
+      if (internalCoupled.isNotEmpty)
+        '${internalCoupled.length} mutual',
+      if (externalCount > 0) '$externalCount external',
+    ];
+    final communityLabel = communities.length == 1
+        ? 'cluster ${communities.first}'
+        : communities.length > 1
+            ? '${communities.length} clusters'
+            : null;
 
     return ListView(children: [
       Row(children: [
@@ -1533,47 +1594,60 @@ class _MultiHotspotInspector extends StatelessWidget {
         _InspectorStat(
             value: '${hotspots.length}', label: 'files'),
       ]),
-      const SizedBox(height: 10),
-      if (communities.length == 1)
-        _InspectorRow(
-            label: 'community',
-            value: '${communities.first}')
-      else if (communities.length > 1)
-        _InspectorRow(
-            label: 'communities',
-            value: communities.join(', ')),
-      if (internalCoupled.isNotEmpty)
-        _InspectorRow(
-            label: 'mutual coupling',
-            value:
-                '${internalCoupled.length} internal link${internalCoupled.length == 1 ? '' : 's'}'),
-      if (allCoupled.isNotEmpty)
-        _InspectorRow(
-            label: 'external coupling',
-            value:
-                '${allCoupled.difference(selectedPaths).length} external'),
-      const SizedBox(height: 10),
-      Text('selected',
+      if (couplingParts.isNotEmpty || communityLabel != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          [
+            if (communityLabel != null) communityLabel,
+            if (couplingParts.isNotEmpty)
+              '${couplingParts.join(' · ')} coupling',
+          ].join(' · '),
           style: TextStyle(
-            color: t.textFaint,
-            fontSize: 9,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.5,
-          )),
-      const SizedBox(height: 4),
+            color: t.chromeAccent,
+            fontSize: 10,
+            fontFamily: AppFonts.mono,
+          ),
+        ),
+      ],
+      const SizedBox(height: 14),
       for (final h in hotspots)
         Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Text(
-            '${_shortPath(h.path)}  ${h.touchCount}×',
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 9.5,
-              fontFamily: AppFonts.mono,
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: h.spectralCommunity >= 0
+                    ? _communityColor(h.spectralCommunity)
+                        .withValues(alpha: 0.6)
+                    : t.textFaint.withValues(alpha: 0.3),
+              ),
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                _shortPath(h.path),
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '${h.touchCount}×',
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 9.5,
+                fontFamily: AppFonts.mono,
+              ),
+            ),
+          ]),
         ),
     ]);
   }
@@ -1596,10 +1670,6 @@ class _StratumInspector extends StatelessWidget {
               fontSize: 12,
               fontWeight: FontWeight.w700,
               fontFamily: AppFonts.mono)),
-      const SizedBox(height: 10),
-      Text('Touched ${stratum.touchCount} times in filtered history.',
-          style:
-              TextStyle(color: t.textNormal, fontSize: 11, height: 1.5)),
       const SizedBox(height: 12),
       Row(children: [
         _InspectorStat(
@@ -1612,6 +1682,10 @@ class _StratumInspector extends StatelessWidget {
       const SizedBox(height: 6),
       _InspectorRow(
           label: 'last touched', value: stratum.lastTouchedAt),
+      if (stratum.aliveRatio < 0.95)
+        _InspectorRow(
+            label: 'alive',
+            value: '${(stratum.aliveRatio * 100).round()}%'),
     ]);
   }
 }
@@ -2930,13 +3004,17 @@ class _CouplingOverlayPainter extends CustomPainter {
   final List<Rect> targets;
   final Color color;
 
+  Offset _edgeAnchor(Rect r, int index, int total) {
+    final spread = total <= 1
+        ? 0.0
+        : (index - (total - 1) / 2.0) * (r.height * 0.6 / total);
+    return Offset(r.center.dx, r.center.dy + spread);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (targets.isEmpty) return;
-    final src = source.center;
-    // Two-tone stroke: a wider faint glow underneath + a crisp thin
-    // line on top. Gives the lines presence without resorting to pure
-    // saturation (would clash with the petrichor accent palette).
+    final n = targets.length;
     final glow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.0
@@ -2946,17 +3024,13 @@ class _CouplingOverlayPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2
       ..strokeCap = StrokeCap.round
-      ..color = color.withValues(alpha: 0.60);
+      ..color = color.withValues(alpha: 0.55);
+    final dotPaint = Paint()..color = color.withValues(alpha: 0.75);
 
-    // Source anchor dot — small filled circle on the selected tile to
-    // tell the user where the lines emanate from.
-    canvas.drawCircle(src, 3.0, Paint()..color = color.withValues(alpha: 0.85));
-
-    for (final t in targets) {
-      final dst = t.center;
-      // Cubic with vertical pull-in: control points sit halfway between
-      // the endpoints horizontally, but their y is biased toward each
-      // endpoint's y. Produces a soft S-curve that hugs neither tile.
+    for (var i = 0; i < n; i++) {
+      final src = _edgeAnchor(source, i, n);
+      final dst = targets[i].center;
+      canvas.drawCircle(src, 2.5, dotPaint);
       final dx = (dst.dx - src.dx);
       final pull = dx.abs() * 0.45;
       final c1 = Offset(src.dx + dx.sign * pull, src.dy);
@@ -2966,10 +3040,7 @@ class _CouplingOverlayPainter extends CustomPainter {
         ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, dst.dx, dst.dy);
       canvas.drawPath(path, glow);
       canvas.drawPath(path, line);
-      // Target dot — slightly smaller than the source to imply
-      // direction (this co-changes WITH the source).
-      canvas.drawCircle(
-          dst, 2.2, Paint()..color = color.withValues(alpha: 0.70));
+      canvas.drawCircle(dst, 2.0, dotPaint);
     }
   }
 
@@ -5006,7 +5077,7 @@ class _SummaryViewState extends State<_SummaryView> {
     if (md == null) {
       return Center(
         child: Text(
-          'Run Logos analysis to map this repository\'s structure and regions.',
+          'Run Logos analysis to map this repository\'s structure and regions.\n(tw: slop rn)',
           style: TextStyle(color: t.textMuted, fontSize: 12),
           textAlign: TextAlign.center,
         ),

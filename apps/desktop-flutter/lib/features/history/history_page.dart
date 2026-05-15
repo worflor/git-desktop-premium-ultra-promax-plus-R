@@ -315,6 +315,9 @@ class _TimelinePainter extends CustomPainter {
   /// staggered cascade across the overlay without per-node
   /// AnimationControllers.
   final Animation<double> previewIntro;
+  final Map<String, double> fileSpread;
+  final Animation<double> resonance;
+  final ValueListenable<String?> resonanceAuthorListenable;
 
   _TimelinePainter({
     required this.layout,
@@ -329,16 +332,20 @@ class _TimelinePainter extends CustomPainter {
     required this.laneStep,
     required this.churnNorm,
     required this.netRatio,
+    required this.fileSpread,
     required this.targetColors,
     required this.churnIntro,
     required this.previewCommits,
     required this.previewIntro,
+    required this.resonance,
+    required this.resonanceAuthorListenable,
   }) : super(
           repaint: Listenable.merge([
             hoveredHashListenable,
             hoverXListenable,
             churnIntro,
             previewIntro,
+            resonance,
           ]),
         );
 
@@ -372,6 +379,7 @@ class _TimelinePainter extends CustomPainter {
     // Total real (non-preview) node count for temporal gradient.
     final realNodeCount = layout.nodes.where((n) => !n.isPreview).length;
 
+    final previewFade = previewIntro.value;
     final railPaint = Paint()
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -390,10 +398,12 @@ class _TimelinePainter extends CustomPainter {
       final rx = baseXs.length > laneNodes.last
           ? min(baseXs[laneNodes.last] + _kNodeRadius, width) : width;
       final ry = vertInset + lane * laneStep + laneStep / 2;
+      final railAlpha = isMain ? 0.14 : 0.08 + 0.06 * previewFade;
+      if (railAlpha <= 0.005) continue;
       railPaint
         ..color = isMain
-            ? tokens.chromeAccent.withValues(alpha: 0.14)
-            : tokens.textMuted.withValues(alpha: 0.08)
+            ? tokens.chromeAccent.withValues(alpha: railAlpha)
+            : tokens.textMuted.withValues(alpha: railAlpha)
         ..strokeWidth = isMain ? 1.0 : 0.8;
       canvas.drawLine(Offset(lx, ry), Offset(rx, ry), railPaint);
     }
@@ -419,6 +429,23 @@ class _TimelinePainter extends CustomPainter {
 
       final isCrossLane = edge.fromLane != edge.toLane;
       final isMainline = !isCrossLane && edge.fromLane == 0;
+
+      // Preview fork point: draw a short vertical drop from the
+      // oldest preview node straight down to the mainline Y instead
+      // of a long bezier to the distant parent commit.
+      if (isCrossLane && fromNode.isPreview) {
+        if (previewFade <= 0.01) continue;
+        final fromR = _kNodeRadius * from.scale;
+        final mainY = vertInset + 0 * laneStep + laneStep / 2;
+        edgePath.reset();
+        edgePath.moveTo(from.x, from.y + fromR);
+        edgePath.lineTo(from.x, mainY);
+        edgePaint
+          ..color = tokens.textMuted.withValues(alpha: 0.18 * previewFade)
+          ..strokeWidth = 1.0;
+        canvas.drawPath(edgePath, edgePaint);
+        continue;
+      }
 
       final dx = to.x - from.x;
       final dy = to.y - from.y;
@@ -534,6 +561,9 @@ class _TimelinePainter extends CustomPainter {
         ? 1.0 / previewStaggerCount
         : 1.0;
 
+    final resonanceT = resonance.value;
+    final activeResonanceAuthor = resonanceAuthorListenable.value;
+
     for (final node in drawOrder) {
       final hash = node.entry.commitHash;
       final idx = hashToIndex[hash];
@@ -541,12 +571,6 @@ class _TimelinePainter extends CustomPainter {
       final m = metrics[idx];
       final isSelected = hash == selectedHash;
 
-      // Preview branch — same node-loop entry, distinct visual
-      // language. The node EMERGES from the parent commit it'll
-      // eventually attach to, sliding outward to its final lane along
-      // an ease-out cubic. No regular churn-color logic (preview
-      // commits aren't in the churn map yet — their detail isn't
-      // fetched at hover time).
       if (node.isPreview) {
         final previewIdx = node.row;
         final clampedIdx = previewIdx < previewStaggerCount
@@ -568,14 +592,18 @@ class _TimelinePainter extends CustomPainter {
       }
 
       final churn = churnNorm[hash] ?? 0.0;
-      final r = _kNodeRadius * m.scale * (1.0 + churn * 0.8);
+      final spread = fileSpread[hash] ?? 0.0;
+      final r = _kNodeRadius * m.scale * (1.0 + churn * 0.5 + spread * 0.4);
 
-      // Temporal luminance: real nodes near HEAD (low realIndex) are
-      // vivid, nodes further back fade. Preview nodes skip this.
       final realIndex = idx - previewCommits.length;
       final temporal = realNodeCount <= 1 || realIndex < 0
           ? 1.0
           : 1.0 - (realIndex / (realNodeCount - 1)) * 0.4;
+
+      final isResonant = activeResonanceAuthor != null &&
+          node.entry.authorEmail == activeResonanceAuthor &&
+          hash != hoveredHash;
+      final resonanceBoost = isResonant ? 1.0 + 0.35 * resonanceT : 1.0;
 
       final Color nodeColor;
       if (isSelected) {
@@ -592,7 +620,8 @@ class _TimelinePainter extends CustomPainter {
         } else {
           base = Color.lerp(fallbackNodeColor, target, introValue)!;
         }
-        nodeColor = base.withValues(alpha: base.a * temporal);
+        final alpha = (base.a * temporal * resonanceBoost).clamp(0.0, 1.0);
+        nodeColor = base.withValues(alpha: alpha);
       }
 
       // Merge convergence: merges are structurally dense — slightly
@@ -647,6 +676,7 @@ class _TimelinePainter extends CustomPainter {
       old.baseXs != baseXs ||
       old.churnNorm != churnNorm ||
       old.netRatio != netRatio ||
+      old.fileSpread != fileSpread ||
       old.previewCommits.length != previewCommits.length;
 }
 
@@ -716,14 +746,12 @@ class _TimelineStripState extends State<_TimelineStrip>
   String _layoutSignature = '';
   Map<String, double> _churnNorm = {};
   Map<String, double> _netRatio = {};
-  /// Pre-resolved per-hash target color (the lerp result of churnLerpA→B
-  /// at netRatio[hash]). Computed once per `_rebuildChurnMaps` so the
-  /// painter does ONE `Color.lerp` per node per frame (gray→target)
-  /// instead of two (gray→target AND churnA→churnB at netRatio).
+  Map<String, double> _fileSpread = {};
   Map<String, Color> _churnTargetColors = const {};
 
   static const Duration _churnAuthored = Duration(milliseconds: 320);
   static const Duration _previewAuthored = Duration(milliseconds: 1800);
+  static const Duration _resonanceAuthored = Duration(milliseconds: 70);
 
   late final AnimationController _churnIntroCtrl = AnimationController(
     vsync: this,
@@ -734,6 +762,12 @@ class _TimelineStripState extends State<_TimelineStrip>
     vsync: this,
     duration: _previewAuthored,
   );
+
+  late final AnimationController _resonanceCtrl = AnimationController(
+    vsync: this,
+    duration: _resonanceAuthored,
+  );
+  final ValueNotifier<String?> _resonanceAuthorNotifier = ValueNotifier(null);
 
   static String _signatureOf(List<CommitHistoryEntry> commits) {
     if (commits.isEmpty) return '';
@@ -749,14 +783,43 @@ class _TimelineStripState extends State<_TimelineStrip>
     final previewScaled = context.motionRead(_previewAuthored);
     _previewIntroCtrl.duration =
         previewScaled == Duration.zero ? Duration.zero : previewScaled;
+    final resonanceScaled = context.motionRead(_resonanceAuthored);
+    _resonanceCtrl.duration =
+        resonanceScaled == Duration.zero ? Duration.zero : resonanceScaled;
+  }
+
+  int _resonanceGen = 0;
+
+  void _updateResonance(String? hash) {
+    if (_layout == null || hash == null) {
+      if (_resonanceAuthorNotifier.value != null) {
+        final gen = ++_resonanceGen;
+        _resonanceCtrl.reverse().whenComplete(() {
+          if (mounted && gen == _resonanceGen) {
+            _resonanceAuthorNotifier.value = null;
+          }
+        });
+      }
+      return;
+    }
+    final idx = _layout!.hashToIndex[hash];
+    if (idx == null || idx >= _layout!.nodes.length) return;
+    final author = _layout!.nodes[idx].entry.authorEmail;
+    if (author == _resonanceAuthorNotifier.value &&
+        _resonanceCtrl.value > 0) return;
+    ++_resonanceGen;
+    _resonanceAuthorNotifier.value = author;
+    _resonanceCtrl.forward(from: 0);
   }
 
   @override
   void dispose() {
     _hoverXNotifier.dispose();
     _hoveredHashNotifier.dispose();
+    _resonanceAuthorNotifier.dispose();
     _churnIntroCtrl.dispose();
     _previewIntroCtrl.dispose();
+    _resonanceCtrl.dispose();
     super.dispose();
   }
 
@@ -810,10 +873,11 @@ class _TimelineStripState extends State<_TimelineStrip>
   }
 
   void _rebuildChurnMaps() {
-    final (norm, ratio) =
-        _computeChurnAndRatio(widget.commits, widget.detailCache);
+    final (norm, ratio, spread) =
+        _computeChurnRatioSpread(widget.commits, widget.detailCache);
     _churnNorm = norm;
     _netRatio = ratio;
+    _fileSpread = spread;
     // Pre-resolve target colors so the per-frame paint loop only does
     // one Color.lerp per node (gray→target) instead of two.
     final t = widget.tokens;
@@ -934,8 +998,9 @@ class _TimelineStripState extends State<_TimelineStrip>
           child: Listener(
             onPointerHover: (e) {
               _hoverXNotifier.value = e.localPosition.dx;
-              _hoveredHashNotifier.value =
-                  _nearestHash(e.localPosition.dx, baseXs);
+              final hash = _nearestHash(e.localPosition.dx, baseXs);
+              _hoveredHashNotifier.value = hash;
+              _updateResonance(hash);
             },
             onPointerDown: (e) {
               _hoverXNotifier.value = e.localPosition.dx;
@@ -954,6 +1019,7 @@ class _TimelineStripState extends State<_TimelineStrip>
               onExit: (_) {
                 _hoverXNotifier.value = null;
                 _hoveredHashNotifier.value = null;
+                _updateResonance(null);
               },
               // RepaintBoundary isolates the timeline's repaint region
               // so the header/siblings don't get invalidated on every
@@ -973,10 +1039,13 @@ class _TimelineStripState extends State<_TimelineStrip>
                     laneStep: laneStep,
                     churnNorm: _churnNorm,
                     netRatio: _netRatio,
+                    fileSpread: _fileSpread,
                     targetColors: _churnTargetColors,
                     churnIntro: _churnIntroCtrl,
                     previewCommits: widget.previewCommits,
                     previewIntro: _previewIntroCtrl,
+                    resonance: _resonanceCtrl,
+                    resonanceAuthorListenable: _resonanceAuthorNotifier,
                   ),
                   size: Size(width, totalHeight),
                 ),
@@ -1005,25 +1074,32 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// build and one iteration over `commits` instead of two — prior
   /// code called `_byHash` twice (once per output map), wastefully
   /// reparsing every cache key on every `_rebuildChurnMaps`.
-  static (Map<String, double>, Map<String, double>) _computeChurnAndRatio(
+  static (Map<String, double>, Map<String, double>, Map<String, double>)
+      _computeChurnRatioSpread(
       List<CommitHistoryEntry> commits,
       Map<String, CommitDetailData> cache) {
     final byHash = _byHash(cache);
     final raws = <String, double>{};
     final ratio = <String, double>{};
+    final spread = <String, double>{};
     for (final c in commits) {
       final d = byHash[c.commitHash];
       if (d == null) continue;
       final total = d.additions + d.deletions;
       ratio[c.commitHash] = total == 0 ? 0.5 : d.additions / total;
       if (total > 0) raws[c.commitHash] = log(total + 1);
+      spread[c.commitHash] = min(1.0, d.filesChanged / 20.0);
     }
-    if (raws.isEmpty) return (const <String, double>{}, ratio);
+    if (raws.isEmpty) {
+      return (const <String, double>{}, ratio, spread);
+    }
     final maxVal = raws.values.reduce(max);
-    if (maxVal == 0) return (const <String, double>{}, ratio);
+    if (maxVal == 0) {
+      return (const <String, double>{}, ratio, spread);
+    }
     final norm = <String, double>{};
     raws.forEach((k, v) => norm[k] = v / maxVal);
-    return (norm, ratio);
+    return (norm, ratio, spread);
   }
 
   String? _nearestHash(double x, List<double> baseXs) {
@@ -1078,18 +1154,18 @@ class _CommitImpact extends StatelessWidget {
           style: TextStyle(
               color: t.stateAdded.withValues(alpha: 0.9),
               fontSize: 9,
-              fontFamily: AppFonts.mono,
+              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
               fontWeight: FontWeight.w700)),
       Text('/',
           style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.3),
               fontSize: 9,
-              fontFamily: AppFonts.mono)),
+              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
       Text('$dels',
           style: TextStyle(
               color: t.stateDeleted.withValues(alpha: 0.9),
               fontSize: 9,
-              fontFamily: AppFonts.mono,
+              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
               fontWeight: FontWeight.w700)),
       const SizedBox(width: 4),
       // 5-block bar
@@ -1882,7 +1958,7 @@ class _HistoryPageState extends State<HistoryPage> {
               style: TextStyle(
                   color: t.textMuted,
                   fontSize: 11,
-                  fontFamily: AppFonts.mono),
+                  fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback),
             ),
             const SizedBox(height: 12),
             AppTextField(
@@ -2485,7 +2561,7 @@ class _CommitRowState extends State<_CommitRow> {
                   style: TextStyle(
                     color: widget.isSelected ? t.textStrong : t.textMuted,
                     fontSize: 10,
-                    fontFamily: AppFonts.mono,
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                     fontWeight:
                         widget.isSelected ? FontWeight.w700 : FontWeight.w600,
                   ),
@@ -2605,7 +2681,7 @@ class _FittingTagRow extends StatelessWidget {
   static const double _pillSpacing = 4;
   static const TextStyle _pillTextStyle = TextStyle(
     fontSize: 9,
-    fontFamily: AppFonts.mono,
+    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
     letterSpacing: 0.2,
   );
 
@@ -2677,7 +2753,7 @@ class _TagPill extends StatelessWidget {
                 color: t.accentBright,
                 fontSize: 9,
                 fontWeight: FontWeight.w600,
-                fontFamily: AppFonts.mono)),
+                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
       ]),
     );
   }
@@ -2737,7 +2813,7 @@ class _ReflogRowState extends State<_ReflogRow> {
                     style: TextStyle(
                         color: t.accentBright,
                         fontSize: 9,
-                        fontFamily: AppFonts.mono)),
+                        fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
               ),
               const SizedBox(width: 6),
               Expanded(
@@ -2748,7 +2824,7 @@ class _ReflogRowState extends State<_ReflogRow> {
                   style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: AppFonts.mono)),
+                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
             ]),
           ),
         ),
@@ -2885,7 +2961,7 @@ class _CommitDetail extends StatelessWidget {
                 style: TextStyle(
                     color: t.accentBright,
                     fontSize: 11,
-                    fontFamily: AppFonts.mono)),
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
           ),
           Text('·',
               style: TextStyle(
@@ -3206,7 +3282,7 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 12,
-                    fontFamily: AppFonts.mono,
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -3352,8 +3428,11 @@ class _RebaseEditor extends StatefulWidget {
 
 class _RebaseEditorState extends State<_RebaseEditor> {
   late List<Map<String, String>> _todo;
+  late List<Map<String, String>> _original;
   bool _running = false;
   String? _error;
+  int? _rewordIndex;
+  late TextEditingController _rewordCtrl;
   static const _actions = ['pick', 'reword', 'squash', 'fixup', 'drop'];
 
   @override
@@ -3363,75 +3442,271 @@ class _RebaseEditorState extends State<_RebaseEditor> {
         .map((c) =>
             {'action': 'pick', 'hash': c.commitHash, 'subject': c.subject})
         .toList();
+    _original = _todo.map((e) => Map<String, String>.of(e)).toList();
+    _rewordCtrl = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _rewordCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isDirty {
+    if (_todo.length != _original.length) return true;
+    for (var i = 0; i < _todo.length; i++) {
+      if (_todo[i]['hash'] != _original[i]['hash']) return true;
+      if (_todo[i]['action'] != _original[i]['action']) return true;
+      if (_todo[i]['subject'] != _original[i]['subject']) return true;
+    }
+    return false;
+  }
+
+  String? get _validationError {
+    if (_todo.isEmpty) return null;
+    final first = _todo[0]['action']!;
+    if (first == 'squash' || first == 'fixup') {
+      return 'First commit cannot be ${_todo[0]['action']}';
+    }
+    return null;
+  }
+
+  void _reset() {
+    setState(() {
+      _todo = _original.map((e) => Map<String, String>.of(e)).toList();
+      _rewordIndex = null;
+    });
+  }
+
+  void _setAction(int i, String action) {
+    setState(() {
+      final entry = _todo[i];
+      if (action == 'reword' && _rewordIndex != i) {
+        _rewordIndex = i;
+        _rewordCtrl.text = entry['subject']!;
+      } else if (action != 'reword' && _rewordIndex == i) {
+        _rewordIndex = null;
+      }
+      _todo[i] = {...entry, 'action': action};
+    });
+  }
+
+  void _commitReword(int i) {
+    final text = _rewordCtrl.text.trim();
+    if (text.isNotEmpty) {
+      setState(() {
+        _todo[i] = {..._todo[i], 'subject': text};
+        _rewordIndex = null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
+    final validation = _validationError;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Rebase ${_todo.length} commit${_todo.length == 1 ? "" : "s"}',
-              style: TextStyle(
-                  color: t.textStrong,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
+          Row(children: [
+            Expanded(
+              child: Text(
+                  'Rebase ${_todo.length} commit${_todo.length == 1 ? "" : "s"}',
+                  style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600)),
+            ),
+            if (_isDirty)
+              GestureDetector(
+                onTap: _reset,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Text('reset',
+                      style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 10,
+                          fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
+                ),
+              ),
+          ]),
           const SizedBox(height: 2),
-          Text('Select actions for each commit',
+          Text('drag to reorder, pick action per commit',
               style: TextStyle(color: t.textMuted, fontSize: 11)),
         ]),
       ),
       Expanded(
-        child: ListView.builder(
+        child: ReorderableListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           itemCount: _todo.length,
+          buildDefaultDragHandles: false,
+          proxyDecorator: (child, index, animation) {
+            return AnimatedBuilder(
+              animation: animation,
+              builder: (context, child) => Material(
+                color: Colors.transparent,
+                elevation: 4 * animation.value,
+                borderRadius: BorderRadius.circular(7),
+                child: child,
+              ),
+              child: child,
+            );
+          },
+          onReorder: (oldIndex, newIndex) {
+            setState(() {
+              if (newIndex > oldIndex) newIndex--;
+              final item = _todo.removeAt(oldIndex);
+              _todo.insert(newIndex, item);
+              _rewordIndex = null;
+            });
+          },
           itemBuilder: (ctx, i) {
             final entry = _todo[i];
+            final action = entry['action']!;
+            final isDropped = action == 'drop';
+            final isSquash = action == 'squash' || action == 'fixup';
+            final isReword = action == 'reword';
+            final isEditing = _rewordIndex == i;
+
+            // Visual grouping: squash/fixup merges into the commit above
+            final mergesUp = isSquash && i > 0;
+            final borderColor = mergesUp
+                ? t.stateModified.withValues(alpha: 0.3)
+                : isDropped
+                    ? t.chromeBorder.withValues(alpha: 0.1)
+                    : t.chromeBorder.withValues(alpha: 0.2);
+
             return Container(
-              margin: const EdgeInsets.symmetric(vertical: 3),
+              key: ValueKey(entry['hash']),
+              margin: EdgeInsets.only(
+                top: mergesUp ? 0 : 3,
+                bottom: 3,
+                left: mergesUp ? 16 : 0,
+              ),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: t.surface1,
+                color: isDropped
+                    ? t.surface1.withValues(alpha: 0.4)
+                    : mergesUp
+                        ? t.stateModified.withValues(alpha: 0.04)
+                        : t.surface1,
                 borderRadius: BorderRadius.circular(7),
-                border:
-                    Border.all(color: t.chromeBorder.withValues(alpha: 0.2)),
+                border: Border.all(color: borderColor),
               ),
-              child: Row(children: [
-                SizedBox(
-                  width: 120,
-                  child: AppDropdownField<String>(
-                    value: entry['action']!,
-                    height: 24,
-                    fontSize: 11,
-                    menuColor: t.bg2,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    items: _actions
-                        .map((a) => DropdownMenuItem(value: a, child: Text(a)))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) {
-                        setState(() => _todo[i] = {...entry, 'action': v});
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(entry['hash']!.substring(0, min(7, entry['hash']!.length)),
-                    style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 10,
-                        fontFamily: AppFonts.mono)),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text(entry['subject']!,
-                        style: TextStyle(color: t.textNormal, fontSize: 11),
-                        overflow: TextOverflow.ellipsis)),
-              ]),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(children: [
+                    ReorderableDragStartListener(
+                      index: i,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.grab,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Icon(Icons.drag_indicator,
+                              size: 14,
+                              color: t.textFaint.withValues(alpha: 0.5)),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 90,
+                      child: AppDropdownField<String>(
+                        value: action,
+                        height: 24,
+                        fontSize: 11,
+                        menuColor: t.bg2,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        items: _actions
+                            .map((a) =>
+                                DropdownMenuItem(value: a, child: Text(a)))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) _setAction(i, v);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                        entry['hash']!
+                            .substring(0, min(7, entry['hash']!.length)),
+                        style: TextStyle(
+                            color: isDropped ? t.textFaint : t.textMuted,
+                            fontSize: 10,
+                            fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: Text(entry['subject']!,
+                            style: TextStyle(
+                                color:
+                                    isDropped ? t.textFaint : t.textNormal,
+                                fontSize: 11,
+                                fontStyle: isReword
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
+                                decoration: isDropped
+                                    ? TextDecoration.lineThrough
+                                    : null),
+                            overflow: TextOverflow.ellipsis)),
+                  ]),
+                  if (isEditing) ...[
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: TextField(
+                          controller: _rewordCtrl,
+                          autofocus: true,
+                          style: TextStyle(
+                            color: t.textStrong,
+                            fontSize: 11,
+                            fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 6),
+                            hintText: 'new message',
+                            hintStyle: TextStyle(
+                                color: t.textFaint, fontSize: 11),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(5),
+                              borderSide: BorderSide(
+                                  color: t.inputBorder, width: 0.8),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(5),
+                              borderSide: BorderSide(
+                                  color: t.accentBright, width: 0.8),
+                            ),
+                          ),
+                          onSubmitted: (_) => _commitReword(i),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: () => _commitReword(i),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Icon(Icons.check,
+                              size: 14, color: t.stateAdded),
+                        ),
+                      ),
+                    ]),
+                  ],
+                ],
+              ),
             );
           },
         ),
       ),
+      if (validation != null)
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            child: Text(validation,
+                style: TextStyle(color: t.stateConflicted, fontSize: 11))),
       if (_error != null)
         Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
@@ -3445,7 +3720,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                   label: _running ? '…' : 'Start Rebase',
                   t: t,
                   primary: true,
-                  enabled: !_running,
+                  enabled: !_running && validation == null,
                   onTap: _execute)),
           const SizedBox(width: 8),
           Expanded(
@@ -3738,7 +4013,7 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 style: TextStyle(
                   color: _hovered ? t.textStrong : t.textNormal,
                   fontSize: 10.5,
-                  fontFamily: AppFonts.mono,
+                  fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -3748,7 +4023,7 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 style: TextStyle(
                   color: t.stateAdded,
                   fontSize: 10,
-                  fontFamily: AppFonts.mono,
+                  fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
                   fontWeight: FontWeight.w800,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
@@ -3865,13 +4140,13 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
                       color: t.stateAdded,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      fontFamily: AppFonts.mono)),
+                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
               const SizedBox(width: 6),
               Text(shortHash,
                   style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: AppFonts.mono)),
+                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

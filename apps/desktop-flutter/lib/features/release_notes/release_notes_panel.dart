@@ -385,18 +385,18 @@ const _aboutDevelopment = <_AboutEntry>[
     question: 'WHY FLUTTER?',
     body: 'The first version of this was a Tauri app (Rust + TypeScript). '
         'I already knew it felt slow. Caught a streamer saying the same '
-        'thing on a live stream I don\'t usually watch, and that was '
-        'finally enough to swap. He didn\'t suggest Flutter. I found Dart '
+        'thing on a live stream I don\'t usually watch to '
+        'finally to swap. He didn\'t suggest Flutter; far from it. I found Dart '
         'on my own, threw together a prototype, and app startup went from about '
-        '15 seconds to under a second. Night and day. That was the end '
-        'of the Tauri era.\n\n'
+        '15 seconds to under a second. Night and day. '
+        'farewell Tauri era.\n\n'
         'Flutter\'s rendering pipeline is closer to a game engine than a '
         'DOM, and for a desktop app where the UI is the product that\'s '
         'everything. Dart turned out to be a genuinely good language too. '
         'The math behind the spectral engine was prototyped in Rust first, '
-        'so that work carried over.\n\n'
+        'so that work carried over fine.\n\n'
         'Flutter is cross-platform by default, which is great, but it\'s '
-        'Googley in nature so there are quirks. I\'ll make do.',
+        'Googley in nature so there are quirks. I think I\'ll make do tho.',
   ),
   _AboutEntry(
     question: 'WHAT IS THE SPECTRAL ENGINE?',
@@ -435,6 +435,8 @@ const _changelog = <_ReleaseNote>[
     bullets: [
       'Welcome to the first non-internal release. We have:',
       'Beep beep, Wick.exe alpha integration is here for those who have the binary. It is unreleased, extremely alpha, and already causing a suspiciously low amount of trouble.',
+      'Inline interactive re-order for commits. (allegedly)',
+      'I spent an afternoon designing how Manifold should present a 3-way merge and settled on a unified fullscreen per-file experience. Built in Logos magic to assist, but designed for The Manual Way™.',
       'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
       'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
       'Ask has been reworked into more of a debug engine. Very alpha.',
@@ -458,10 +460,8 @@ const _changelog = <_ReleaseNote>[
       'Command palette handles navigation, git commands, branch operations, stash actions, settings toggles, and search across repos, branches, commits, tags, and changed files.',
       'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea; Git and GitHub are the deepest integrations right now.',
       'PR conflict hints go past plain file overlap. Each PR gets an orbital shape from Logos diffusion; WILL FIGHT combines shared files with cross-orbit similarity, so related branches can surface as merge-order risk even when they are not editing the exact same paths.',
-      'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply with 3-way merge fallback or reverse. For when you\'re not down to big git.',
-      'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map.',
-      'The useful part is the receipts: when Logos surfaces a related file, it can point at the signal that pulled it in: co-change, path structure, transport lanes like source->test, integrity gates, residual surprise, or shadow history.',
-      'Practically, that means better review context, better commit grouping, better Muse suggestions, and UI that reacts to the actual shape of the change instead of just the file list.',
+      'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply, or reverse. For when you\'re not down to big git.',
+      'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map. The useful part is the receipts: when Logos surfaces a related file, it can point at the signal that pulled it in: co-change, path structure, transport lanes like source->test, integrity gates, residual surprise, or shadow history. Practically, that means better review context, better commit grouping, better Muse suggestions, and UI that reacts to the actual shape of the change instead of just the file list.',
       'Logos has counterfactual memory too. Reverts, reset-away commits, and abandoned branches are mined into a discounted shadow-coupling graph, so discarded timelines can corroborate real co-change signals or flag a current diff as deja-vu.',
       'The interactive starfield during commit review and Muse is a live readout of that process: files, evidence, and diffusion energy moving around while the engine decides what matters.',
       'History renders each commit as a drillable seismograph. The painted bar under each subject encodes importance, add/del ratio, coherence, and working-tree overlap without labels.',

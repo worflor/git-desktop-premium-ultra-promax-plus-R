@@ -60,7 +60,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       '$commitWindow',
       '--no-merges',
       '--numstat',
-      '--format=%H%x1f%an%x1f%s',
+      '--format=%H%x1f%an%x1f%ae%x1f%s',
     ],
     workingDirectory: repoPath,
     runInShell: false,
@@ -97,6 +97,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   final ritualMassByPath = <String, double>{};
   final hyperedgesByPath = <String, List<LogosCommitHyperedge>>{};
   final reviewersByPath = <String, Set<String>>{};
+  final authorTouches = <String, Map<String, int>>{};
   var totalCommits = 0;
   var semanticCommitMass = 0.0;
 
@@ -166,6 +167,10 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       rawTouches[path] = (rawTouches[path] ?? 0) + 1;
       touchMass[path] = (touchMass[path] ?? 0.0) + step;
       ritualMassByPath[path] = (ritualMassByPath[path] ?? 0.0) + (1.0 - step);
+      if (b.authorEmail.isNotEmpty) {
+        final am = authorTouches[b.authorEmail] ??= <String, int>{};
+        am[path] = (am[path] ?? 0) + 1;
+      }
       (perFileCommitIndices[path] ??= <int>[]).add(commitIndex);
       if (step > 0) {
         (perFileCommitClock[path] ??= <double>[]).add(semanticClock);
@@ -242,6 +247,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     volMean: volMean,
     volStddev: volStddev,
     coupling: cc,
+    authorTouches: authorTouches,
     perFileCommitIndices: compactedIndices,
     perFileCommitClock: compactedClock,
     ritualnessByPath: integrityProfile.ritualnessByPath,
@@ -431,9 +437,10 @@ class _CouplingResult {
 class _CommitBlock {
   final String hash;
   final String author;
+  final String authorEmail;
   final String subject;
   final List<String> numstatLines;
-  const _CommitBlock(this.hash, this.author, this.subject, this.numstatLines);
+  const _CommitBlock(this.hash, this.author, this.authorEmail, this.subject, this.numstatLines);
 }
 
 List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
@@ -449,6 +456,7 @@ List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
   final blocks = <_CommitBlock>[];
   String? currentHash;
   String currentAuthor = '';
+  String currentEmail = '';
   String currentSubject = '';
   var current = <String>[];
   for (final raw in lines) {
@@ -457,10 +465,11 @@ List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
     final header = _parseCommitHeader(line);
     if (header != null) {
       if (currentHash != null) {
-        blocks.add(_CommitBlock(currentHash, currentAuthor, currentSubject, current));
+        blocks.add(_CommitBlock(currentHash, currentAuthor, currentEmail, currentSubject, current));
       }
       currentHash = header.hash;
       currentAuthor = header.author;
+      currentEmail = header.authorEmail;
       currentSubject = header.subject;
       current = <String>[];
     } else {
@@ -468,26 +477,28 @@ List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
     }
   }
   if (currentHash != null) {
-    blocks.add(_CommitBlock(currentHash, currentAuthor, currentSubject, current));
+    blocks.add(_CommitBlock(currentHash, currentAuthor, currentEmail, currentSubject, current));
   }
   return blocks;
 }
 
 _CommitHeader? _parseCommitHeader(String line) {
   final parts = line.split(_commitMetaSep);
-  if (parts.length < 3 || !_isCommitHash(parts[0])) return null;
+  if (parts.length < 4 || !_isCommitHash(parts[0])) return null;
   return _CommitHeader(
     parts[0],
     parts[1].trim(),
-    parts.sublist(2).join(_commitMetaSep).trim(),
+    parts[2].trim(),
+    parts.sublist(3).join(_commitMetaSep).trim(),
   );
 }
 
 class _CommitHeader {
   final String hash;
   final String author;
+  final String authorEmail;
   final String subject;
-  const _CommitHeader(this.hash, this.author, this.subject);
+  const _CommitHeader(this.hash, this.author, this.authorEmail, this.subject);
 }
 
 bool _isCommitHash(String s) {
