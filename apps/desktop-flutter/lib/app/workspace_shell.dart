@@ -2945,9 +2945,27 @@ class _BranchPillState extends State<_BranchPill> {
   bool _open = false;
   bool _loading = false;
   bool _switching = false;
+  bool _pulling = false;
   List<BranchInfo> _branches = const [];
   OverlayEntry? _overlay;
   final _pillKey = GlobalKey();
+
+  Future<void> _pull() async {
+    if (_pulling || widget.repoPath == null) return;
+    setState(() => _pulling = true);
+    try {
+      final result = await pullRemote(widget.repoPath!);
+      if (!mounted) return;
+      if (!result.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.error ?? 'Pull failed')),
+        );
+      }
+      await context.read<RepositoryState>().refreshStatus();
+    } finally {
+      if (mounted) setState(() => _pulling = false);
+    }
+  }
 
   Future<void> _toggle() async {
     if (_open) {
@@ -3159,6 +3177,42 @@ class _BranchPillState extends State<_BranchPill> {
                   ),
                   const SizedBox(width: 4),
                   AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
+                  Builder(builder: (context) {
+                    final behind = context.select<RepositoryState, int>(
+                        (s) => s.status?.behind ?? 0);
+                    if (behind <= 0) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(left: 5),
+                      child: GestureDetector(
+                        onTap: _pulling ? null : _pull,
+                        child: MouseRegion(
+                          cursor: _pulling
+                              ? SystemMouseCursors.basic
+                              : SystemMouseCursors.click,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: t.stateModified.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                  color:
+                                      t.stateModified.withValues(alpha: 0.3)),
+                            ),
+                            child: Text(
+                              _pulling ? '…' : '↓$behind',
+                              style: TextStyle(
+                                color: t.stateModified,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                fontFamily: AppFonts.mono,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
                 ],
               ),
             ),

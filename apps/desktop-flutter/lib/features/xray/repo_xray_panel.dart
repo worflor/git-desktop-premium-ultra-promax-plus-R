@@ -4307,16 +4307,22 @@ class _ApertureScrubberReadout extends StatelessWidget {
       fontFamilyFallback: const ['monospace'],
     );
     String pair(String label, String body) => '$label $body';
+    final windowLabel = s.oldestDate != null
+        ? '${s.window} commits · since ${s.oldestDate}'
+        : '${s.window} commits';
     return Wrap(
       spacing: 14,
       runSpacing: 4,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(pair('W', '${s.window}'),
+        Text(pair('W', windowLabel),
             style: value.copyWith(color: t.accentBright)),
         Text(pair('ARCHETYPE', s.nearestArchetype), style: muted),
         Text(pair('FIEDLER', s.fiedler.toStringAsFixed(3)), style: muted),
         Text(pair('β₀/β₁', '${s.componentCount}/${s.cycleCount}'), style: muted),
+        if (s.spectralDim.isFinite)
+          Text(pair('DIM', s.spectralDim.toStringAsFixed(2)), style: muted),
+        Text(pair('ENTROPY', s.spectralEntropy.toStringAsFixed(2)), style: muted),
         Text(pair('CENTRE', s.topHousekeepingPath), style: muted),
       ],
     );
@@ -4421,7 +4427,7 @@ class _RingsClassificationRow extends StatelessWidget {
               ),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(entry.key,
+              Text(_observableLabels[entry.key] ?? entry.key,
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 10,
@@ -4533,6 +4539,16 @@ class _TrajectoryRow extends StatelessWidget {
   }
 }
 
+const _observableLabels = <String, String>{
+  'n': 'files',
+  'fiedler': 'connectivity',
+  'beta0': 'components',
+  'beta1': 'cycles',
+  'spectralDim': 'dimension',
+  'spectralEntropy': 'entropy',
+  'nearestDistance': 'archetype fit',
+};
+
 class _EventCard extends StatelessWidget {
   final ApertureEvent event;
   const _EventCard({required this.event});
@@ -4593,7 +4609,7 @@ class _EventCard extends StatelessWidget {
                       ),
                     ),
                     child: Text(
-                      obs,
+                      _observableLabels[obs] ?? obs,
                       style: TextStyle(
                         color: t.textNormal,
                         fontSize: 10,

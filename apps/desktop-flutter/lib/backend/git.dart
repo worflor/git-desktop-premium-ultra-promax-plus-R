@@ -2055,9 +2055,19 @@ Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
       if (p.isNotEmpty) ignored.add(p);
     }
   }
-  final toAdd = ignored.isEmpty
+  final afterIgnore = ignored.isEmpty
       ? paths
       : paths.where((p) => !ignored.contains(p)).toList();
+  // Filter out paths that don't exist on disk — they're already staged
+  // as deletions in the index. Running `git add` on a deleted file
+  // produces "pathspec did not match" because there's nothing to add.
+  final toAdd = <String>[];
+  for (final p in afterIgnore) {
+    final f = File('$repo/$p'.replaceAll('/', Platform.pathSeparator));
+    if (await f.exists()) {
+      toAdd.add(p);
+    }
+  }
   if (toAdd.isEmpty) return const GitResult.ok(null);
 
   final r = await _git(repo, ['add', '--', ...toAdd]);

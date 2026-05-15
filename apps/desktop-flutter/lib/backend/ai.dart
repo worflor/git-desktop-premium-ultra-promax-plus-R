@@ -9490,8 +9490,12 @@ Future<_CommandResult?> _runCommandWithTimeout(
       runInShell: false,
     );
     WinJobObject.assignProcess(process.pid);
-    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
-    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    final stdoutFuture = process.stdout
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
+    final stderrFuture = process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
 
     int exitCode;
     try {
@@ -9594,8 +9598,12 @@ Future<_CommandResult?> _runObservedProcess({
       } catch (_) {}
     }
 
-    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
-    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    final stdoutFuture = process.stdout
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
+    final stderrFuture = process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .join();
 
     int exitCode;
     try {

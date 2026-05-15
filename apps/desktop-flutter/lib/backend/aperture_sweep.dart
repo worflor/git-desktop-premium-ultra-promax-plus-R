@@ -22,6 +22,7 @@
 // grounding; see tests in test/backend/aperture_sweep_test.dart for
 // the event-detection contract.
 
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -89,6 +90,10 @@ class ApertureSample {
   /// files that dominated the older coupling pattern.
   final String topHousekeepingPath;
 
+  /// ISO-8601 date of the oldest commit in this aperture window.
+  /// Gives the user a concrete calendar anchor for the window depth.
+  final String? oldestDate;
+
   const ApertureSample({
     required this.window,
     required this.nodeCount,
@@ -102,6 +107,7 @@ class ApertureSample {
     required this.nearestDistance,
     required this.decisiveness,
     required this.topHousekeepingPath,
+    this.oldestDate,
   });
 }
 
@@ -199,6 +205,7 @@ class ApertureSweep {
       decisiveness: lerp(a.decisiveness, b.decisiveness),
       topHousekeepingPath:
           t < 0.5 ? a.topHousekeepingPath : b.topHousekeepingPath,
+      oldestDate: t < 0.5 ? a.oldestDate : b.oldestDate,
     );
   }
 }
@@ -543,12 +550,41 @@ Future<_IsolateSampleResult?> _sampleInIsolate(
   if (basis == null) return null;
   final sg = engine.spectrogeometry();
   if (sg == null) return null;
+
+  // Fetch the date of the oldest commit in this window for the
+  // calendar bridge. Single cheap git call, O(1) output.
+  String? oldestDate;
+  try {
+    var dateResult = await Process.run(
+      'git',
+      ['log', '--skip=${window - 1}', '-1', '--format=%aI', '--no-merges'],
+      workingDirectory: repoPath,
+    );
+    var raw = dateResult.exitCode == 0
+        ? (dateResult.stdout as String).trim()
+        : '';
+    // Fallback: if skip overshot (fewer non-merge commits than window),
+    // get the very oldest non-merge commit instead.
+    if (raw.isEmpty) {
+      dateResult = await Process.run(
+        'git',
+        ['log', '--reverse', '-1', '--format=%aI', '--no-merges'],
+        workingDirectory: repoPath,
+      );
+      raw = dateResult.exitCode == 0
+          ? (dateResult.stdout as String).trim()
+          : '';
+    }
+    if (raw.length >= 10) oldestDate = raw.substring(0, 10);
+  } catch (_) {}
+
   return _IsolateSampleResult(
     sample: _sampleFrom(
       window: window,
       engine: engine,
       basis: basis,
       geom: sg,
+      oldestDate: oldestDate,
     ),
     headHash: stats.coupling.headHash,
   );
@@ -805,6 +841,7 @@ ApertureSample _sampleFrom({
   required LogosGit engine,
   required SpectralBasis basis,
   required SpectroGeometry geom,
+  String? oldestDate,
 }) {
   final evs = basis.eigenvalues;
   final fiedler = evs.length > 1 ? evs[1] : 0.0;
@@ -864,5 +901,6 @@ ApertureSample _sampleFrom({
     nearestDistance: geom.universality.nearest.distance,
     decisiveness: geom.universality.decisiveness,
     topHousekeepingPath: topPath,
+    oldestDate: oldestDate,
   );
 }

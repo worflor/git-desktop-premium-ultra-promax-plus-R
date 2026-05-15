@@ -49,3 +49,14 @@ apps/desktop-flutter/build_log.txt
 # apps/desktop-flutter/test/research/ or docs/architecture/ and is
 # added back explicitly.
 /research_lab/
+
+# Historical docs — already pushed to remote. Kept locally for
+# reference but don't need to track changes going forward.
+/docs/planning/
+/docs/research/
+/docs/ui/
+/fixtures/
+
+# Build / debug artifacts
+globals_dump.css
+typecheck.txt
