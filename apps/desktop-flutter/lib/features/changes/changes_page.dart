@@ -5474,7 +5474,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
                           color: t.surface1,
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(
+                              context.surfaceShader.geometry.pillRadius),
                           border: Border.all(color: t.accentBright, width: 1),
                         ),
                         child: Text(
@@ -6954,7 +6955,8 @@ class _ChangesPageState extends State<ChangesPage> {
                           horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
                         color: t.surface1,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(
+                            context.surfaceShader.geometry.pillRadius),
                         border: Border.all(color: t.accentBright, width: 1),
                       ),
                       child: Text(
@@ -8054,7 +8056,8 @@ class _DebugPane extends StatelessWidget {
               if (result != null || error != null)
                 InkWell(
                   onTap: onDismiss,
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -8065,7 +8068,8 @@ class _DebugPane extends StatelessWidget {
               const SizedBox(width: 4),
               InkWell(
                 onTap: onBack,
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -8232,7 +8236,8 @@ class _HypothesisCard extends StatelessWidget {
                     const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
                   color: confColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(3),
+                  borderRadius: BorderRadius.circular(
+                      context.surfaceShader.geometry.badgeRadius),
                 ),
                 child: Text(
                   '$confPct%',
@@ -8286,7 +8291,8 @@ class _HypothesisCard extends StatelessWidget {
               decoration: BoxDecoration(
                 border: Border.all(
                     color: t.accentBright.withValues(alpha: 0.12)),
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -8408,14 +8414,16 @@ class _PressureQuestionSection extends StatelessWidget {
             for (final q in questions)
               InkWell(
                 onTap: () => onQuestionTap(q),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     border: Border.all(
                         color: t.chromeAccent.withValues(alpha: 0.15)),
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                   ),
                   child: Text(q,
                       style: TextStyle(fontSize: 9.5, color: t.textMuted)),
@@ -10383,7 +10391,8 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
                 color: t.chromeBorder
                     .withValues(alpha: _hovered ? 0.35 : 0.15),
               ),
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
               boxShadow: _hovered
                   ? [
                       BoxShadow(
@@ -10785,7 +10794,8 @@ class _ShelfControlState extends State<_ShelfControl> {
           decoration: BoxDecoration(
             color: backgroundColor,
             border: Border.all(color: borderColor),
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
             boxShadow: [
               BoxShadow(
                 color: Colors.black
@@ -10808,7 +10818,8 @@ class _ShelfControlState extends State<_ShelfControl> {
           onTap: widget.canShelve ? widget.onShelve : null,
           id: 2,
           baseColor: t.textMuted,
-          radius: BorderRadius.circular(4),
+          radius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
         ),
       );
     }
@@ -10946,7 +10957,8 @@ class _StashDragFeedback extends StatelessWidget {
           color: t.surface1,
           border:
               Border.all(color: borderColor.withValues(alpha: 0.75), width: 1),
-          borderRadius: BorderRadius.circular(5),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.cardRadius),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.22),
@@ -11082,7 +11094,8 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
         margin: const EdgeInsets.only(bottom: 3),
         decoration: BoxDecoration(
           color: surfaceColor,
-          borderRadius: BorderRadius.circular(5),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.cardRadius),
           border: widget.isPeeking
               ? Border.all(color: t.chromeAccent.withValues(alpha: 0.45))
               : (widget.isOpen || _hovered
@@ -11090,7 +11103,8 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                   : null),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(5),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.cardRadius),
           child: Stack(
             children: [
               // Left accent strip — 3px, colored by orientation.
@@ -12502,7 +12516,8 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             padding: const EdgeInsets.all(3),
                             decoration: BoxDecoration(
                               color: tokens.bg1.withValues(alpha: 0.85),
-                              borderRadius: BorderRadius.circular(4),
+                              borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                             ),
                             child: Icon(
                               Icons.open_in_full,
@@ -13393,11 +13408,13 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
         child: Container(
           height: 24,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.pillRadius),
             border: Border.all(color: borderColor),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(5),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.cardRadius),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -13450,7 +13467,8 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                 color: _hoveredSingle && widget.enabled
                     ? t.secondaryBtnHoverBg
                     : t.secondaryBtnHoverBg.withValues(alpha: 0),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.pillRadius),
                 border: Border.all(color: borderColor),
               ),
               child: Row(
@@ -13586,7 +13604,8 @@ class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
                   : (_hovered && widget.enabled
                       ? t.secondaryBtnHoverBg
                       : t.secondaryBtnHoverBg.withValues(alpha: 0)),
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.pillRadius),
               border: Border.all(color: borderColor),
             ),
             child: Center(
@@ -13702,7 +13721,8 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: tint.withValues(alpha: fillAlpha),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
               border: Border.all(
                 color: tint.withValues(alpha: borderAlpha),
               ),

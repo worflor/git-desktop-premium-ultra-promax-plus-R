@@ -440,7 +440,8 @@ class _SidebarRailState extends State<SidebarRail> {
                               ? BoxDecoration(
                                   color: t.accentBright
                                       .withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(4),
+                                  borderRadius: BorderRadius.circular(
+                                      context.surfaceShader.geometry.badgeRadius),
                                   border: Border.all(
                                     color: t.accentBright
                                         .withValues(alpha: 0.4),
@@ -642,7 +643,8 @@ class _SidebarDragFeedback extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: t.accentBright.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius),
           border: Border.all(color: t.accentBright),
           boxShadow: [
             BoxShadow(
@@ -841,7 +843,8 @@ class _GroupHeaderState extends State<_GroupHeader> {
                       ),
                       decoration: BoxDecoration(
                         color: t.textFaint.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(
+                            context.surfaceShader.geometry.badgeRadius),
                       ),
                       child: Text(
                         '${g.descendantCount}',

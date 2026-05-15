@@ -48,7 +48,14 @@ class RepositoryState extends ChangeNotifier {
   /// an explicit refresh) have a clean signal to key on.
   int _userRefreshEpoch = 0;
 
+  /// Bumped on every `setActivePath` completion — including same-path
+  /// re-activations. Consumers that need to reset drill state when
+  /// the user intentionally re-selects a repo (e.g. clicking the
+  /// sidebar on the already-active project) watch this counter.
+  int _activationEpoch = 0;
+
   String? get activePath => _activePath;
+  int get activationEpoch => _activationEpoch;
   RepositoryStatus? get status => _status;
   bool get statusLoading => _statusLoading;
   String? get statusError => _statusError;
@@ -174,6 +181,7 @@ class RepositoryState extends ChangeNotifier {
       _status = null;
       _statusLoading = false;
       _statusError = null;
+      _activationEpoch++;
       if (nextRecentPaths != null) {
         _recentPaths = nextRecentPaths;
       }

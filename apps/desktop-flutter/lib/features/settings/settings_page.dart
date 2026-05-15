@@ -1809,7 +1809,8 @@ class _SettingsNotice extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
@@ -1844,7 +1845,8 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: t.rowBg.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
           border: Border.all(color: t.chromeBorderFaint),
         ),
         child: Row(
@@ -2414,7 +2416,8 @@ class _HybridRetentionActions extends StatelessWidget {
             height: 26,
             decoration: BoxDecoration(
               color: t.rowBg,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
               border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
             ),
             child: Row(
@@ -2856,7 +2859,8 @@ class _BuildInfoRowState extends State<_BuildInfoRow> {
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
             color: t.chromeAccent.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
             border: Border.all(color: t.chromeAccent.withValues(alpha: 0.30)),
           ),
           child: Text(
@@ -3161,7 +3165,8 @@ class _KeybindChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
         color: t.chromeBorder.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -3182,7 +3187,8 @@ class _KeybindChip extends StatelessWidget {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: t.chromeBorder.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
               border: Border.all(
                 color: t.chromeBorder.withValues(alpha: 0.06),
               ),
@@ -3238,7 +3244,8 @@ class _ProviderNode extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(
           color: expanded
               ? t.chromeAccent.withValues(alpha: 0.35)
@@ -3671,7 +3678,8 @@ class _ProviderGridState extends State<_ProviderGrid>
           child: Container(
             decoration: BoxDecoration(
               color: t.rowBg,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
               border: Border.all(color: borderColor),
             ),
             child: Column(
@@ -3924,19 +3932,22 @@ class _ApiTextFieldState extends State<_ApiTextField> {
                 fontFamily: AppFonts.mono,
               ),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide: BorderSide(
                   color: t.textFaint.withValues(alpha: 0.2),
                 ),
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide: BorderSide(
                   color: t.textFaint.withValues(alpha: 0.2),
                 ),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide: BorderSide(color: t.chromeAccent),
               ),
             ),
@@ -3987,7 +3998,8 @@ class _MicroButton extends StatelessWidget {
                   ? tokens.chromeAccent.withValues(alpha: 0.25)
                   : tokens.textFaint.withValues(alpha: 0.15),
             ),
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
           ),
           child: Text(
             label,
@@ -4254,7 +4266,8 @@ class _ReasoningEffortRowState extends State<_ReasoningEffortRow> {
                             ? t.accentBright.withValues(alpha: 0.35)
                             : t.chromeBorder.withValues(alpha: 0.18),
                       ),
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                     ),
                     child: Text(
                       'fast',
@@ -4480,7 +4493,8 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(color: glowColor, width: 1.0 + _borderGlow),
         boxShadow: _borderGlow > 0.3
             ? [
@@ -4603,17 +4617,20 @@ class _CustomModelRow extends StatelessWidget {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide:
                     BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide:
                     BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                 borderSide:
                     BorderSide(color: t.accentBright.withValues(alpha: 0.50)),
               ),
@@ -4773,7 +4790,7 @@ class _ProviderPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: t.accentBright.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(999),
         border: Border.all(color: t.accentBright.withValues(alpha: 0.22)),
       ),
       child: Text(
@@ -5199,7 +5216,8 @@ class _FilterChip extends StatelessWidget {
             color: active
                 ? tokens.accentBright.withValues(alpha: 0.15)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
             border: Border.all(
               color: active
                   ? tokens.accentBright.withValues(alpha: 0.4)
@@ -7021,7 +7039,8 @@ class _LogosLensReadout extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         border: Border.all(
           color: t.chromeBorder.withValues(alpha: 0.22),
         ),
@@ -7301,7 +7320,8 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: chrome.background,
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
@@ -7816,7 +7836,8 @@ class _DeckButtonState extends State<_DeckButton> {
               color: _hovered && widget.enabled
                   ? color.withValues(alpha: 0.12)
                   : t.rowBg.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
               border: Border.all(
                 color: _hovered && widget.enabled
                     ? color.withValues(alpha: 0.4)
@@ -8328,7 +8349,8 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: t.inputBg,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(color: t.inputBorder),
       ),
       child: Column(
@@ -8458,7 +8480,8 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
                               color: isPreview
                                   ? t.accentBright.withValues(alpha: 0.05)
                                   : t.accentBright.withValues(alpha: 0.10),
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
                               border: Border.all(
                                 color: isPreview
                                     ? t.accentBright.withValues(alpha: 0.45)
@@ -8563,7 +8586,7 @@ class _SortGuideBadge extends StatelessWidget {
         color: previewing
             ? tokens.textMuted.withValues(alpha: 0.10)
             : tokens.accentBright.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: AnimatedDefaultTextStyle(
         duration: context.motion(const Duration(milliseconds: 140)),
@@ -8765,7 +8788,8 @@ class _SortDemoTileBody extends StatelessWidget {
                 color: color.withValues(alpha: 0.75),
                 width: tile.conflict ? 1.4 : 1,
               ),
-              borderRadius: BorderRadius.circular(3),
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
             ),
           ),
         ],
@@ -9111,7 +9135,8 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: fillColor,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
               border: Border.all(
                 color: borderColor,
                 width: _focused ? 1.5 : 1,
@@ -9242,7 +9267,7 @@ class _HzBadge extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(999),
           ),
           // Monospace with tabular figures so the digits don't shimmy as
           // they change — the badge reads as a steady readout, not a
@@ -10049,7 +10074,8 @@ class _ScopeChip extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
             decoration: BoxDecoration(
               border: Border.all(color: muted, width: 0.8),
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
             ),
             child: Text(
               scope.chipLabel,
@@ -10150,7 +10176,8 @@ class _CabinetMiniIndicator extends StatelessWidget {
                   color: expanded ? active : muted,
                   width: 1,
                 ),
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -10925,7 +10952,8 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
               decoration: BoxDecoration(
                 color: chrome.background,
                 gradient: chrome.gradient,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
                 border: Border.all(
                   color: chrome.borderColor,
                 ),
@@ -11347,7 +11375,8 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(
         color: t.inputBg,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(color: t.inputBorder),
       ),
       child: Column(
@@ -11395,7 +11424,8 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
                       color: peeking
                           ? t.textMuted.withValues(alpha: 0.10)
                           : t.accentBright.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
                     ),
                     child: AnimatedDefaultTextStyle(
                       duration:
@@ -11449,7 +11479,8 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
                         horizontal: horizontalPad, vertical: verticalPad),
                     decoration: BoxDecoration(
                       color: t.surface1.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
                       border: Border.all(
                           color: t.chromeBorder.withValues(alpha: 0.2)),
                     ),
@@ -11625,7 +11656,8 @@ class _CommitFormatChipRow<T> extends StatelessWidget {
                             color: isPreview
                                 ? t.accentBright.withValues(alpha: 0.05)
                                 : t.accentBright.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
                             border: Border.all(
                               color: isPreview
                                   ? t.accentBright.withValues(alpha: 0.45)
@@ -11775,7 +11807,8 @@ class _SectionFlashFrame extends StatelessWidget {
         final alpha = (0.55 * env).clamp(0.0, 1.0);
         return Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
             border: Border.all(
               color: t.accentBright.withValues(alpha: alpha),
               width: 1.5,
@@ -12155,7 +12188,8 @@ class _ToolModeToggle extends StatelessWidget {
             color: active
                 ? t.accentBright.withValues(alpha: 0.12)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
           ),
           child: Text(
             label,
@@ -12172,7 +12206,8 @@ class _ToolModeToggle extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.25)),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -12352,7 +12387,8 @@ class _AiFeatureBarState extends State<_AiFeatureBar>
                     : _hovered
                         ? t.chromeBorder.withValues(alpha: 0.06)
                         : t.chromeBorder.withValues(alpha: 0.025),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
                 border: Border.all(
                   color: active
                       ? t.accentBright.withValues(alpha: 0.22)
@@ -12455,7 +12491,8 @@ class _ScrollSectionBubble extends StatelessWidget {
                     ),
                     decoration: BoxDecoration(
                       color: t.bg1.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
                       border: Border.all(
                         color: t.accentBright.withValues(alpha: 0.25),
                         width: 1,
@@ -12559,7 +12596,8 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                       ? t.stateAdded.withValues(alpha: 0.25)
                       : t.chromeAccent.withValues(alpha: 0.15),
                 ),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               child: Row(
                 children: [
@@ -12607,7 +12645,8 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
               border: Border.all(
                 color: t.chromeAccent.withValues(alpha: 0.08),
               ),
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius),
             ),
             child: Row(
               children: [

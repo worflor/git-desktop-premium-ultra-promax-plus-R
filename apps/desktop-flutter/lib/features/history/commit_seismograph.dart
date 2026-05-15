@@ -31,6 +31,11 @@ class CommitSeismograph extends StatefulWidget {
   /// to the file-count / +/- chips above the seismograph.
   final VoidCallback onOpenAllFiles;
 
+  /// Open the combined diff for a directory prefix. The path is
+  /// joined with `/` (e.g. `lib/ui`). Git filters by path prefix
+  /// natively, so this produces a multi-file diff scoped to that dir.
+  final ValueChanged<String>? onOpenDirectory;
+
   /// Per-file lifecycle classification (promotion × decay) derived
   /// from the engine's whole-repo touch history. When provided, the
   /// seismograph paints subtle accents on leaf segments — a top
@@ -48,6 +53,7 @@ class CommitSeismograph extends StatefulWidget {
     required this.repoPath,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.onOpenDirectory,
     this.lifecycles,
   });
 
@@ -380,6 +386,9 @@ class _CommitSeismographState extends State<CommitSeismograph>
                           onDrillTo: (p) {
                             _focusNode.requestFocus();
                             _setFocus(p);
+                            if (p.isNotEmpty) {
+                              widget.onOpenDirectory?.call(p.join('/'));
+                            }
                           },
                           onOpenLeaf: _openLeaf,
                           onHover: _setHover,

@@ -1331,6 +1331,7 @@ class _HistoryPageState extends State<HistoryPage> {
   /// DiffShell engine handles the rendering. The sentinel
   /// [_kAllFilesPath] means "the entire commit's diff".
   String? _commitDiffFile;
+  String? _commitDiffHash;
   String? _commitDiffContent;
   bool _commitDiffLoading = false;
   String? _commitDiffError;
@@ -1410,6 +1411,7 @@ class _HistoryPageState extends State<HistoryPage> {
   bool get _isRebaseMode => _rebaseRangeEndIndex != null;
 
   String? _lastRepo;
+  int _lastActivationEpoch = -1;
 
   /// Hashes reachable from the repo's default branch tip (main /
   /// master / whatever origin/HEAD points at). Passed into the top
@@ -1623,12 +1625,13 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Future<void> _openCommitFileDiff(String repo, String hash, String filePath) async {
-    // Clicking the same rail bar twice should be a no-op — no flicker,
-    // no refetch, no state churn. The diff is already showing.
-    if (filePath == _commitDiffFile && !_commitDiffLoading) return;
+    if (filePath == _commitDiffFile &&
+        hash == _commitDiffHash &&
+        !_commitDiffLoading) return;
     final reqId = ++_commitDiffReqId;
     setState(() {
       _commitDiffFile = filePath;
+      _commitDiffHash = hash;
       _commitDiffContent = null;
       _commitDiffError = null;
       _commitDiffLoading = true;
@@ -1651,13 +1654,16 @@ class _HistoryPageState extends State<HistoryPage> {
   void _openCommitAllDiff(String repo, String hash) =>
       _openCommitFileDiff(repo, hash, _kAllFilesPath);
 
+  void _clearCommitDiffState() {
+    _commitDiffFile = null;
+    _commitDiffHash = null;
+    _commitDiffContent = null;
+    _commitDiffError = null;
+    _commitDiffLoading = false;
+  }
+
   void _closeCommitFileDiff() {
-    setState(() {
-      _commitDiffFile = null;
-      _commitDiffContent = null;
-      _commitDiffError = null;
-      _commitDiffLoading = false;
-    });
+    setState(_clearCommitDiffState);
   }
 
   /// Lazy structural fingerprint per commit. Computed once per
@@ -2009,6 +2015,7 @@ class _HistoryPageState extends State<HistoryPage> {
         _tagInputVisible = false;
         _tagInputValue = '';
         _tagError = null;
+        _clearCommitDiffState();
       });
       final repo = context.read<RepositoryState>().activePath;
       if (repo != null) _loadDetail(repo, hash);
@@ -2050,9 +2057,11 @@ class _HistoryPageState extends State<HistoryPage> {
     final t = context.tokens;
     // History page only rebuilds when the active repo changes —
     // `git status` ticks no longer invalidate the whole history tree.
-    final repoPath = context.select<RepositoryState, String?>(
-      (s) => s.activePath,
+    final repoSelect = context.select<RepositoryState, (String?, int)>(
+      (s) => (s.activePath, s.activationEpoch),
     );
+    final repoPath = repoSelect.$1;
+    final activationEpoch = repoSelect.$2;
 
     if (repoPath == null) {
       return const AppStatusView.noRepository();
@@ -2069,11 +2078,13 @@ class _HistoryPageState extends State<HistoryPage> {
 
     if (_lastRepo != repoPath) {
       _lastRepo = repoPath;
+      _lastActivationEpoch = activationEpoch;
       _commits = [];
       _reflog = [];
       _reflogLoaded = false;
       _detail = null;
       _selectedHash = null;
+      _clearCommitDiffState();
       // Commit detail is keyed by (repo?, hash) internally — but the
       // cache isn't qualified by repo, so without an explicit clear a
       // hash that existed in the outgoing repo could briefly paint
@@ -2090,6 +2101,11 @@ class _HistoryPageState extends State<HistoryPage> {
       _previewLoadingDesks.clear();
       _previewDeskPath = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _load(repoPath));
+    } else if (_lastActivationEpoch != activationEpoch) {
+      _lastActivationEpoch = activationEpoch;
+      if (_commitDiffFile != null) {
+        _clearCommitDiffState();
+      }
     }
 
     if (_loading && _commits.isEmpty) {
@@ -2163,6 +2179,7 @@ class _HistoryPageState extends State<HistoryPage> {
               _selectedHash = hash;
               _rebaseRangeEndIndex = null;
               _tagInputVisible = false;
+              _clearCommitDiffState();
             });
             _loadDetail(repoPath, hash);
           },
@@ -2289,12 +2306,7 @@ class _HistoryPageState extends State<HistoryPage> {
                           setState(() {
                             _selectedHash = entry.commitHash;
                             _rebaseRangeEndIndex = null;
-                            // A new commit selection clears any
-                            // open per-file diff from the previous one.
-                            _commitDiffFile = null;
-                            _commitDiffContent = null;
-                            _commitDiffError = null;
-                            _commitDiffLoading = false;
+                            _clearCommitDiffState();
                           });
                           _loadDetail(repoPath, entry.commitHash);
                         },
@@ -2388,6 +2400,9 @@ class _HistoryPageState extends State<HistoryPage> {
                                   repoPath, _detail!.commitHash, path),
                               onOpenAllFiles: () => _openCommitAllDiff(
                                   repoPath, _detail!.commitHash),
+                              onOpenDirectory: (dirPath) =>
+                                  _openCommitFileDiff(repoPath,
+                                      _detail!.commitHash, dirPath),
                               tagEscapeFocus: _tagEscapeFocus,
                               signature: _signatureFor(_detail!),
                               lifecycles: _lifecyclesFor(repoPath),
@@ -2743,7 +2758,8 @@ class _TagPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         color: t.accentBright.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         AppIcon(name: 'tag', size: 9, color: t.accentBright),
@@ -2808,7 +2824,8 @@ class _ReflogRowState extends State<_ReflogRow> {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(
                     color: t.chromeAccent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(3)),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.badgeRadius)),
                 child: Text(e.refSelector,
                     style: TextStyle(
                         color: t.accentBright,
@@ -2847,6 +2864,7 @@ class _CommitDetail extends StatelessWidget {
   final VoidCallback onCreateTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
+  final ValueChanged<String>? onOpenDirectory;
   final CommitSignature? signature;
   final Map<String, FileLifecycle>? lifecycles;
   final FocusNode tagEscapeFocus;
@@ -2865,6 +2883,7 @@ class _CommitDetail extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.onOpenDirectory,
     required this.tagEscapeFocus,
     this.signature,
     this.lifecycles,
@@ -2956,7 +2975,8 @@ class _CommitDetail extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
                 color: t.chromeAccent.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(4)),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius)),
             child: Text(d.shortHash,
                 style: TextStyle(
                     color: t.accentBright,
@@ -2977,7 +2997,8 @@ class _CommitDetail extends StatelessWidget {
                 color: tagInputVisible
                     ? t.itemActiveBg
                     : t.chromeAccent.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.pillRadius),
                 border: Border.all(
                   color: tagInputVisible
                       ? t.itemActiveBorder
@@ -3093,6 +3114,7 @@ class _CommitDetail extends StatelessWidget {
         repoPath: repoPath,
         onOpenFile: onOpenFile,
         onOpenAllFiles: onOpenAllFiles,
+        onOpenDirectory: onOpenDirectory,
         lifecycles: lifecycles,
       ),
     ]);
@@ -3113,6 +3135,7 @@ class _CommitDetailTransition extends StatelessWidget {
   final VoidCallback onCreateTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
+  final ValueChanged<String>? onOpenDirectory;
   final CommitSignature? signature;
   final Map<String, FileLifecycle>? lifecycles;
   final FocusNode tagEscapeFocus;
@@ -3131,6 +3154,7 @@ class _CommitDetailTransition extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.onOpenDirectory,
     required this.tagEscapeFocus,
     this.signature,
     this.lifecycles,
@@ -3162,6 +3186,7 @@ class _CommitDetailTransition extends StatelessWidget {
             onCreateTag: onCreateTag,
             onOpenFile: onOpenFile,
             onOpenAllFiles: onOpenAllFiles,
+            onOpenDirectory: onOpenDirectory,
             tagEscapeFocus: tagEscapeFocus,
             signature: signature,
             lifecycles: lifecycles,
@@ -3365,7 +3390,8 @@ class _HistoryMiniButtonState extends State<_HistoryMiniButton> {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: chrome.background,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius),
             border: Border.all(color: chrome.borderColor),
             boxShadow: chrome.shadows,
           ),
@@ -3397,7 +3423,8 @@ class _StatChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
       ),
       child: Text(label,
           style: TextStyle(
@@ -3547,7 +3574,8 @@ class _RebaseEditorState extends State<_RebaseEditor> {
               builder: (context, child) => Material(
                 color: Colors.transparent,
                 elevation: 4 * animation.value,
-                borderRadius: BorderRadius.circular(7),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.cardRadius),
                 child: child,
               ),
               child: child,
@@ -3591,7 +3619,8 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                     : mergesUp
                         ? t.stateModified.withValues(alpha: 0.04)
                         : t.surface1,
-                borderRadius: BorderRadius.circular(7),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.cardRadius),
                 border: Border.all(color: borderColor),
               ),
               child: Column(
@@ -3672,12 +3701,14 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                             hintStyle: TextStyle(
                                 color: t.textFaint, fontSize: 11),
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(5),
+                              borderRadius: BorderRadius.circular(
+                                  context.surfaceShader.geometry.badgeRadius),
                               borderSide: BorderSide(
                                   color: t.inputBorder, width: 0.8),
                             ),
                             focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(5),
+                              borderRadius: BorderRadius.circular(
+                                  context.surfaceShader.geometry.badgeRadius),
                               borderSide: BorderSide(
                                   color: t.accentBright, width: 0.8),
                             ),
@@ -3814,7 +3845,8 @@ class _RebaseBtnState extends State<_RebaseBtn> {
             decoration: BoxDecoration(
               color: chrome.background,
               gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.radius),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
@@ -3998,7 +4030,8 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
             color: _hovered
                 ? t.accentBright.withValues(alpha: 0.10)
                 : t.surface1,
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.pillRadius),
             border: Border.all(
               color: _hovered
                   ? t.accentBright.withValues(alpha: 0.5)
@@ -4127,7 +4160,8 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
           padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
           decoration: BoxDecoration(
             color: t.accentBright.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.cardRadius),
             border: Border.all(
               color: t.accentBright.withValues(alpha: 0.25),
               width: 0.8,

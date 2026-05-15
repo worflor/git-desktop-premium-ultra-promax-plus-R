@@ -208,7 +208,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.cardRadius),
                     child: _KeepAlivePages(
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
@@ -927,9 +928,10 @@ class _ModeBtnState extends State<_ModeBtn> {
         ? t.accentBright
         : (_hovered ? t.textNormal : t.textMuted);
 
+    final geo = context.surfaceShader.geometry;
     return InteractionFeedback(
       onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(geo.radius),
       onHoverChanged: (h) => setState(() => _hovered = h),
       child: Listener(
         onPointerDown: (_) => setState(() => _pressed = true),
@@ -937,17 +939,13 @@ class _ModeBtnState extends State<_ModeBtn> {
         onPointerCancel: (_) => setState(() => _pressed = false),
         child: HyperReactive(
           selected: widget.active,
-          borderRadius: 6,
+          borderRadius: geo.radius,
           child: AnimatedScale(
             scale: chrome.scale,
             duration: context.motion(context.surfaceShader.duration),
             curve: context.surfaceShader.curve,
             child: AnimatedContainer(
               duration: context.motion(context.surfaceShader.duration),
-              // safeCurve (no overshoot) because this AnimatedContainer
-              // lerps boxShadow — easeOutBack's overshoot past 1.0 drives
-              // BoxShadow.lerp to extrapolate blurRadius negative,
-              // tripping a Shadow assertion on elastic themes.
               curve: context.surfaceShader.safeCurve,
               width: widget.width,
               height: 28,
@@ -955,7 +953,7 @@ class _ModeBtnState extends State<_ModeBtn> {
               decoration: BoxDecoration(
                 color: chrome.background,
                 gradient: chrome.gradient,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(geo.radius),
                 border: Border.all(color: chrome.borderColor, width: 1),
                 boxShadow: chrome.shadows,
               ),
@@ -1153,7 +1151,8 @@ class _DeskRow extends StatelessWidget {
             color: hasCandidate
                 ? t.accentBright.withValues(alpha: 0.10)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius),
             border: Border.all(
               color: hasCandidate
                   ? t.accentBright.withValues(alpha: 0.55)
@@ -1194,7 +1193,8 @@ class _DeskRow extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: t.accentBright.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.pillRadius),
                     border: Border.all(
                       color: t.accentBright.withValues(alpha: 0.5),
                     ),
@@ -1892,7 +1892,8 @@ class _DeskRow extends StatelessWidget {
         return StatefulBuilder(builder: (ctx, setSt) {
           return Dialog(
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.cardRadius),
             ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
@@ -2179,7 +2180,8 @@ class _DeskTabState extends State<_DeskTab>
               padding: const EdgeInsets.symmetric(horizontal: 10),
               decoration: BoxDecoration(
                 color: backgroundColor,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.pillRadius),
                 border: Border.all(
                   color: borderColor,
                 ),
@@ -2403,7 +2405,8 @@ class _DeskTabDragFeedback extends StatelessWidget {
         decoration: BoxDecoration(
           color: t.accentBright.withValues(alpha: 0.18),
           border: Border.all(color: t.accentBright, width: 1),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius),
           boxShadow: [
             BoxShadow(
               color: t.shadowElev.withValues(alpha: 0.35),
@@ -3277,127 +3280,138 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
             onTap: widget.onDismiss,
           ),
         ),
-        // Panel
-        Positioned.fill(
-          child: CustomSingleChildLayout(
-            delegate: ViewportClampDelegate(
-              desired: Offset(widget.left, widget.top),
-            ),
-            child: FadeTransition(
-              opacity: _fade,
-              child: ClipRect(
-                child: AnimatedBuilder(
-                  animation: _reveal,
-                  builder: (_, child) => Align(
-                    alignment: Alignment.topCenter,
-                    heightFactor: _reveal.value,
-                    child: child,
+        // Branch panel — anchored exactly at the pill's position.
+        Positioned(
+          left: widget.left,
+          top: widget.top,
+          child: FadeTransition(
+            opacity: _fade,
+            child: ClipRect(
+              child: AnimatedBuilder(
+                animation: _reveal,
+                builder: (_, child) => Align(
+                  alignment: Alignment.topLeft,
+                  heightFactor: _reveal.value,
+                  child: child,
+                ),
+                child: DefaultTextStyle(
+                  style: TextStyle(
+                    decoration: TextDecoration.none,
+                    color: t.textNormal,
+                    fontSize: 12,
                   ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: widget.minWidth,
-                          decoration: BoxDecoration(
-                            color: Color.alphaBlend(t.inputBg, t.bg0),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: borderColor),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black
-                                    .withValues(alpha: t.isDark ? 0.45 : 0.18),
-                                blurRadius: 10,
-                                offset: const Offset(0, 12),
-                              ),
-                            ],
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              GestureDetector(
-                                onTap: widget.onDismiss,
-                                child: MouseRegion(
-                                  cursor: SystemMouseCursors.click,
-                                  child: SizedBox(
-                                    height: widget.pillHeight,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          AppIcon(
-                                              name: 'git-branch',
-                                              size: 11,
-                                              color: t.accentBright),
-                                          const SizedBox(width: 5),
-                                          Flexible(
-                                            child: ThemeMorphText(
-                                              widget.currentBranch,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              softWrap: false,
-                                              style: TextStyle(
-                                                color: t.textNormal,
-                                                fontSize: 10.5,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Transform.rotate(
-                                            angle: math.pi / 2,
-                                            child: AppIcon(
-                                                name: 'chevron-right',
-                                                size: 10,
-                                                color: t.textMuted),
-                                          ),
-                                        ],
+                  child: Container(
+                  width: widget.minWidth,
+                  decoration: BoxDecoration(
+                    color: Color.alphaBlend(t.inputBg, t.bg0),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.cardRadius),
+                    border: Border.all(color: borderColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black
+                            .withValues(alpha: t.isDark ? 0.45 : 0.18),
+                        blurRadius: 10,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      GestureDetector(
+                        onTap: widget.onDismiss,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: SizedBox(
+                            height: widget.pillHeight,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AppIcon(
+                                      name: 'git-branch',
+                                      size: 11,
+                                      color: t.accentBright),
+                                  const SizedBox(width: 5),
+                                  Flexible(
+                                    child: ThemeMorphText(
+                                      widget.currentBranch,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      softWrap: false,
+                                      style: TextStyle(
+                                        color: t.textNormal,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(width: 4),
+                                  Transform.rotate(
+                                    angle: math.pi / 2,
+                                    child: AppIcon(
+                                        name: 'chevron-right',
+                                        size: 10,
+                                        color: t.textMuted),
+                                  ),
+                                ],
                               ),
-                              Container(
-                                height: 1,
-                                color: borderColor.withValues(alpha: 0.5),
-                              ),
-                              _PanelBody(
-                                branches: widget.branches,
-                                loading: widget.loading,
-                                switching: widget.switching,
-                                currentBranch: widget.currentBranch,
-                                onCheckout: widget.onCheckout,
-                                onOpenAsDesk: widget.onOpenAsDesk,
-                                onCreateDeskFromHead: widget.onCreateDeskFromHead,
-                                branchesOpenAsDesks: widget.branchesOpenAsDesks,
-                                onNavigate: widget.onNavigate,
-                                onBranchHover: (b) =>
-                                    setState(() => _hoveredBranch = b),
-                                t: t,
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        _IssuesSidePanel(
-                          localIssues: widget.issues,
-                          remoteIssues: widget.remoteIssues,
-                          branchRemoteIssues: widget.branchRemoteIssues,
-                          hoveredBranch: _hoveredBranch,
-                          borderColor: borderColor,
-                          onCreateIssue: widget.onCreateIssue,
-                          t: t,
-                        ),
-                      ],
-                    ),
+                      ),
+                      Container(
+                        height: 1,
+                        color: borderColor.withValues(alpha: 0.5),
+                      ),
+                      _PanelBody(
+                        branches: widget.branches,
+                        loading: widget.loading,
+                        switching: widget.switching,
+                        currentBranch: widget.currentBranch,
+                        onCheckout: widget.onCheckout,
+                        onOpenAsDesk: widget.onOpenAsDesk,
+                        onCreateDeskFromHead: widget.onCreateDeskFromHead,
+                        branchesOpenAsDesks: widget.branchesOpenAsDesks,
+                        onNavigate: widget.onNavigate,
+                        onBranchHover: (b) =>
+                            setState(() => _hoveredBranch = b),
+                        t: t,
+                      ),
+                    ],
                   ),
                 ),
+                ),
               ),
+            ),
+          ),
+        ),
+        // Issues side panel — positioned independently so it doesn't
+        // push the branch panel away from its anchor.
+        Positioned(
+          left: widget.left + widget.minWidth + 6,
+          top: widget.top,
+          child: FadeTransition(
+            opacity: _fade,
+            child: DefaultTextStyle(
+              style: TextStyle(
+                decoration: TextDecoration.none,
+                color: t.textNormal,
+                fontSize: 12,
+              ),
+              child: _IssuesSidePanel(
+              localIssues: widget.issues,
+              remoteIssues: widget.remoteIssues,
+              branchRemoteIssues: widget.branchRemoteIssues,
+              hoveredBranch: _hoveredBranch,
+              borderColor: borderColor,
+              onCreateIssue: widget.onCreateIssue,
+              t: t,
+            ),
             ),
           ),
         ),
@@ -4089,7 +4103,8 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
       width: _kIssuesPanelWidth,
       decoration: BoxDecoration(
         color: Color.alphaBlend(t.inputBg, t.bg0),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.cardRadius),
         border: Border.all(color: widget.borderColor),
         boxShadow: [
           BoxShadow(
@@ -4213,7 +4228,8 @@ class _CompactIconButtonState extends State<_CompactIconButton> {
               color: _hovered
                   ? t.accentBright.withValues(alpha: 0.15)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(3),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
             ),
             alignment: Alignment.center,
             child: AppIcon(
@@ -4281,17 +4297,20 @@ class _IssueComposeForm extends StatelessWidget {
                 borderSide: BorderSide(
                   color: t.inputBorder.withValues(alpha: 0.6),
                 ),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               enabledBorder: OutlineInputBorder(
                 borderSide: BorderSide(
                   color: t.inputBorder.withValues(alpha: 0.6),
                 ),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               focusedBorder: OutlineInputBorder(
                 borderSide: BorderSide(color: t.inputFocusBorder),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
             ),
           ),
@@ -4317,17 +4336,20 @@ class _IssueComposeForm extends StatelessWidget {
                 borderSide: BorderSide(
                   color: t.inputBorder.withValues(alpha: 0.6),
                 ),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               enabledBorder: OutlineInputBorder(
                 borderSide: BorderSide(
                   color: t.inputBorder.withValues(alpha: 0.6),
                 ),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               focusedBorder: OutlineInputBorder(
                 borderSide: BorderSide(color: t.inputFocusBorder),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
             ),
           ),
@@ -4396,7 +4418,8 @@ class _RemoteToggle extends StatelessWidget {
                       ? t.accentBright
                       : t.inputBorder.withValues(alpha: 0.7),
                 ),
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.badgeRadius),
               ),
               alignment: Alignment.center,
               child:
@@ -4455,7 +4478,8 @@ class _SubmitButtonState extends State<_SubmitButton> {
                 : _hovered
                     ? t.accentBright
                     : t.accentBright.withValues(alpha: 0.82),
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
           ),
           child: Text(
             widget.busy ? '…' : widget.label,
@@ -4764,7 +4788,8 @@ class _PanelBackButtonState extends State<_PanelBackButton> {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: chrome.background,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius),
             border: Border.all(color: chrome.borderColor),
           ),
           child: Row(
@@ -4814,7 +4839,7 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: HyperReactive(
-          borderRadius: 6,
+          borderRadius: context.surfaceShader.geometry.radius,
           child: AnimatedScale(
             duration: context.motion(const Duration(milliseconds: 80)),
             scale: chrome.scale,
@@ -4823,7 +4848,8 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: chrome.background,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius),
                 border: Border.all(
                   color: chrome.borderColor,
                 ),

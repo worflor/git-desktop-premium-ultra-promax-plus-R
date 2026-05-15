@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../app/repository_state.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
+import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
@@ -499,7 +500,8 @@ class _CategoryChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
       ),
       child: Text(
         label,
@@ -689,7 +691,8 @@ class _WickSummarySectionState extends State<_WickSummarySection> {
       child: Container(
         decoration: BoxDecoration(
           border: Border.all(color: borderColor, width: 1),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius),
           color: t.surface0.withValues(alpha: 0.4),
         ),
         clipBehavior: Clip.antiAlias,
@@ -822,7 +825,8 @@ class _WickSummarySectionState extends State<_WickSummarySection> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(3),
+                  borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
                   border: isGhost
                       ? Border.all(
                           color: t.accentBright.withValues(alpha: 0.15))

@@ -4476,7 +4476,8 @@ class _StageSigil extends StatelessWidget {
           decoration: BoxDecoration(
             color: staged ? color.withValues(alpha: 0.10) : Colors.transparent,
             border: hoverBorder,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
           ),
           child: staged
               // Filled dot: unmistakable "this is in."
@@ -5298,7 +5299,8 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
             color: widget.active
                 ? t.itemActiveBg
                 : (_hov ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0)),
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
             border:
                 widget.active ? Border.all(color: t.itemActiveBorder) : null,
           ),
@@ -5907,7 +5909,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.28),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
       ),
       child: Row(
@@ -5930,7 +5933,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         onTap: () => _setPage(page),
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -5938,7 +5942,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
             color: active
                 ? t.accentBright.withValues(alpha: 0.24)
                 : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
             border: Border.all(
               color: active
                   ? t.accentBright.withValues(alpha: 0.4)
@@ -6297,13 +6302,15 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.badgeRadius),
       onTap: () => widget.onRhymeTap(preview.displayIndex),
       child: Container(
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
           color: t.surface0.withValues(alpha: prominent ? 0.22 : 0.12),
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
           border: Border.all(
             color: accent.withValues(alpha: prominent ? 0.14 : 0.08),
           ),
@@ -6495,7 +6502,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         color: badgeColor.withValues(
           alpha: onTap != null ? 0.14 : (accent == null ? 0.06 : 0.09),
         ),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
         border: Border.all(
           color: badgeColor.withValues(alpha: onTap != null ? 0.2 : 0.12),
         ),
@@ -6516,7 +6524,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final wrapped = Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
         onTap: onTap,
         child: child,
       ),
@@ -6537,7 +6546,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       padding: EdgeInsets.fromLTRB(8, compact ? 5 : 6, 8, compact ? 5 : 6),
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
         border: Border.all(color: accent.withValues(alpha: 0.12)),
       ),
       child: Column(
@@ -6578,7 +6588,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.badgeRadius),
           onTap: () => widget.onOpenRelatedPath?.call(path),
           child: child,
         ),
@@ -6657,7 +6668,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.28),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
       ),
       child: Row(
@@ -6679,7 +6691,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         onTap: onTap,
         child: child,
       ),
@@ -6692,7 +6705,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       padding: const EdgeInsets.fromLTRB(7, 4, 7, 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
         border: Border.all(color: color.withValues(alpha: 0.14)),
       ),
       child: Row(
