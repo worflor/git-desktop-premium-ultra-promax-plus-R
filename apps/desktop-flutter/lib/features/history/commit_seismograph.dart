@@ -386,11 +386,9 @@ class _CommitSeismographState extends State<CommitSeismograph>
                           onDrillTo: (p) {
                             _focusNode.requestFocus();
                             _setFocus(p);
-                            if (p.isNotEmpty) {
-                              widget.onOpenDirectory?.call(p.join('/'));
-                            }
                           },
                           onOpenLeaf: _openLeaf,
+                          onOpenDirectory: widget.onOpenDirectory,
                           onHover: _setHover,
                         ),
                       ),
@@ -552,6 +550,7 @@ class _SeismographBody extends StatelessWidget {
   final Map<String, FileLifecycle>? lifecycles;
   final ValueChanged<List<String>> onDrillTo;
   final ValueChanged<List<String>> onOpenLeaf;
+  final ValueChanged<String>? onOpenDirectory;
   final ValueChanged<_HoverInfo?> onHover;
   final Animation<double> wake;
   final String filterText;
@@ -570,6 +569,7 @@ class _SeismographBody extends StatelessWidget {
     required this.lifecycles,
     required this.onDrillTo,
     required this.onOpenLeaf,
+    this.onOpenDirectory,
     required this.onHover,
     required this.wake,
     required this.filterText,
@@ -597,6 +597,9 @@ class _SeismographBody extends StatelessWidget {
           child: _TrackHeader(
             track: track, tokens: t, style: trackLabelStyle,
             onTap: () => onDrillTo(track.path),
+            onStatTap: track.path.isNotEmpty && onOpenDirectory != null
+                ? () => onOpenDirectory!(track.path.join('/'))
+                : null,
           ),
         ),
       for (var i = 0; i < tracks.length; i++)
@@ -669,12 +672,14 @@ class _TrackHeader extends StatefulWidget {
   final AppTokens tokens;
   final TextStyle style;
   final VoidCallback onTap;
+  final VoidCallback? onStatTap;
 
   const _TrackHeader({
     required this.track,
     required this.tokens,
     required this.style,
     required this.onTap,
+    this.onStatTap,
   });
 
   @override
@@ -771,13 +776,23 @@ class _TrackHeaderState extends State<_TrackHeader> {
                 ],
               ),
               const SizedBox(height: 2),
-              Text(
-                '$fileCount file${fileCount == 1 ? "" : "s"}  '
-                '+$adds  -$dels',
-                style: TextStyle(
-                  color: t.textFaint,
-                  fontSize: 9,
-                  fontFamily: AppFonts.mono,
+              GestureDetector(
+                onTap: widget.onStatTap,
+                child: MouseRegion(
+                  cursor: widget.onStatTap != null
+                      ? SystemMouseCursors.click
+                      : SystemMouseCursors.basic,
+                  child: Text(
+                    '$fileCount file${fileCount == 1 ? "" : "s"}  '
+                    '+$adds  -$dels',
+                    style: TextStyle(
+                      color: widget.onStatTap != null
+                          ? t.textMuted
+                          : t.textFaint,
+                      fontSize: 9,
+                      fontFamily: AppFonts.mono,
+                    ),
+                  ),
                 ),
               ),
             ],
