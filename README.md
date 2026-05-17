@@ -5,8 +5,8 @@ A Git client. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
 ## It's a Git client :]
 
 Stage, commit, push, pull, diff, branch, merge, rebase, stash, cherry-pick,
-reflog. The usual. If you've used GitHub Desktop or Sourcetree or Fork or
-Tower, you already know the shape, and Manifold does that shape. The
+reflog. The usual. If you've used GitHub Desktop, Sourcetree, Fork,
+Tower or GitKraken; you already know the shape, and Manifold does that shape. The
 day-to-day stuff works how you'd expect it to.
 
 ## Why you might care anyway
