@@ -30,7 +30,7 @@ What that looks like in practice:
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
 - View changes by *geometric Atlas* rather than by file.
 - PRs, worktrees, and branches have **Orbits**.
-- Summarise a repo. Trace a feature across the tree. Find a file's
+- See through a repo with X-Ray. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
 
 Oh yeah, and it's *free* ♥
