@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/repository_state.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
-import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
-import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
 import '../../backend/wick.dart' show WickPosture, WickUnit;
 import 'palette_entry.dart';
@@ -155,7 +154,6 @@ class _CommandPaletteState extends State<CommandPalette> {
     final key = event.logicalKey;
     final isRepeat = event is KeyRepeatEvent;
 
-    // Arrows repeat (scrubbing), activation keys don't.
     if (key == LogicalKeyboardKey.arrowDown) {
       _palette.moveSelection(1);
       _ensureVisible(_palette.selectedIndex);
@@ -186,7 +184,6 @@ class _CommandPaletteState extends State<CommandPalette> {
     final confirmId =
         palette.hasPendingConfirm ? palette.selected?.id : null;
     final warmingId = palette.warmingEntryId;
-
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
@@ -202,6 +199,7 @@ class _CommandPaletteState extends State<CommandPalette> {
           isConfirming: entry.id == confirmId,
           isWarming: entry.id == warmingId,
           onTap: () => _activate(entry),
+          onHover: () => palette.hoverSelect(index),
         );
       },
     );
@@ -213,7 +211,7 @@ class _CommandPaletteState extends State<CommandPalette> {
       Scrollable.ensureVisible(
         key!.currentContext!,
         alignment: 0.3,
-        duration: const Duration(milliseconds: 40),
+        duration: context.motionRead(AppMotion.snap),
       );
     }
   }
@@ -237,62 +235,99 @@ class _CommandPaletteState extends State<CommandPalette> {
             controller: _controller,
             focusNode: _focusNode,
             onChanged: _onChanged,
+            loading: palette.isLoading,
             hintText: widget.elevated
                 ? 'elevated — all actions'
                 : 'search everything...',
           ),
-          AnimatedOpacity(
-            opacity: palette.isLoading ? 1 : 0,
-            duration: context.motion(AppMotion.snap),
-            child: TopProgressLine(color: t.accentBright),
-          ),
-          if (palette.hasWickResults)
-            _WickSummarySection(
-              entries: palette.wickEntries,
-              posture: palette.wickPosture,
-              onFileSelected: widget.onFileSelected,
-              onClose: widget.onClose,
-            ),
           Expanded(
-            child: palette.results.isEmpty && !palette.hasWickResults
+            child: palette.results.isEmpty && !palette.wickActive
                 ? _EmptyState(query: palette.query)
                 : _buildResultList(palette),
           ),
+          if (palette.wickActive)
+            _WickShelf(
+              entries: palette.wickEntries,
+              posture: palette.wickPosture,
+              searching: palette.wickSearching,
+              onFileSelected: widget.onFileSelected,
+              onClose: widget.onClose,
+            ),
         ],
       ),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
 class _PaletteInput extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final ValueChanged<String> onChanged;
   final String hintText;
+  final bool loading;
 
   const _PaletteInput({
     required this.controller,
     required this.focusNode,
     required this.onChanged,
     this.hintText = 'search everything...',
+    this.loading = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      child: AppTextField(
-        controller: controller,
-        focusNode: focusNode,
-        hintText: hintText,
-        height: 36,
-        fontSize: 13,
-        autofocus: true,
-        onChanged: onChanged,
-      ),
+    final t = context.tokens;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+          child: TextField(
+            controller: controller,
+            focusNode: focusNode,
+            autofocus: true,
+            onChanged: onChanged,
+            cursorColor: t.accentBright,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
+            ),
+            decoration: InputDecoration(
+              isCollapsed: true,
+              filled: false,
+              hintText: hintText,
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.4),
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+              ),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+        AnimatedContainer(
+          duration: context.motion(AppMotion.fade),
+          height: 0.5,
+          color: loading
+              ? t.accentBright.withValues(alpha: 0.5)
+              : t.chromeBorder.withValues(alpha: 0.15),
+        ),
+      ],
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Result row — heat-stripe design
+// ---------------------------------------------------------------------------
 
 class _PaletteResultRow extends StatefulWidget {
   final PaletteEntry entry;
@@ -301,12 +336,14 @@ class _PaletteResultRow extends StatefulWidget {
   final bool isConfirming;
   final bool isWarming;
   final VoidCallback onTap;
+  final VoidCallback onHover;
 
   const _PaletteResultRow({
     super.key,
     required this.entry,
     required this.isSelected,
     required this.onTap,
+    required this.onHover,
     this.scoreRatio = 1.0,
     this.isConfirming = false,
     this.isWarming = false,
@@ -317,115 +354,141 @@ class _PaletteResultRow extends StatefulWidget {
 }
 
 class _PaletteResultRowState extends State<_PaletteResultRow> {
-  bool _hovered = false;
-
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final entry = widget.entry;
-    final isHighlighted = widget.isSelected || _hovered;
-    final vPad = 3.0 + 3.0 * widget.scoreRatio;
+    final ratio = widget.scoreRatio;
+
+    final stripeColor = _categoryColor(entry, t);
+    final stripeAlpha = (0.15 + 0.85 * ratio).clamp(0.0, 1.0);
+    final stripeWidth = ratio > 0.5 ? 2.5 : ratio > 0.2 ? 1.5 : 0.75;
+
+    final hasUsageSheen = entry.provenance.any(
+        (p) => p == 'freq' || p == 'recent' || p == 'prefix' || p == 'flow');
+    final sheenAlpha = hasUsageSheen ? 0.035 : 0.0;
+
     final bgColor = widget.isWarming
-        ? t.stateModified.withValues(alpha: 0.12)
+        ? t.stateModified.withValues(alpha: 0.1)
         : widget.isConfirming
-            ? t.danger.withValues(alpha: 0.15)
-            : isHighlighted
+            ? t.danger.withValues(alpha: 0.12)
+            : widget.isSelected
                 ? t.surface1
-                : Colors.transparent;
+                : sheenAlpha > 0
+                    ? t.accentBright.withValues(alpha: sheenAlpha)
+                    : Colors.transparent;
+
+    final rightContext = entry.shortcutLabel;
+    final sub = _subtitle(entry);
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => widget.onHover(),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: context.motion(AppMotion.snap),
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: vPad),
-          decoration: BoxDecoration(color: bgColor),
-          child: Row(
-            children: [
-              if (entry.chipStack.isNotEmpty)
-                _ChipStack(
-                  chips: entry.chipStack,
-                  category: entry.category,
-                  tone: entry.chipTone,
-                )
-              else
-                _CategoryChip(
-                  category: entry.category,
-                  chipLabel: _resolveChipLabel(entry),
-                  chipTone: entry.chipTone,
+        child: Container(
+          color: bgColor,
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: stripeWidth,
+                  margin: const EdgeInsets.symmetric(vertical: 3),
+                  decoration: BoxDecoration(
+                    color: stripeColor.withValues(alpha: stripeAlpha),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.tinyRadius),
+                  ),
                 ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _HighlightedLabel(
-                      text: entry.label,
-                      ranges: entry.matchRanges,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: t.textNormal,
-                        height: 1.3,
-                      ),
-                      highlightColor: t.accentBright,
-                    ),
-                    if (entry.subtitle != null || entry.provenance.isNotEmpty)
-                      Text.rich(
-                        TextSpan(children: [
-                          if (entry.subtitle != null)
-                            TextSpan(text: entry.subtitle),
-                          if (entry.subtitle != null &&
-                              entry.provenance.isNotEmpty)
-                            const TextSpan(text: ' · '),
-                          if (entry.provenance.isNotEmpty)
-                            TextSpan(
-                              text: entry.provenance.join(' · '),
-                              style: TextStyle(color: t.textFaint),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: _HighlightedLabel(
+                                text: entry.label,
+                                ranges: entry.matchRanges,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: t.textNormal,
+                                  height: 1.25,
+                                ),
+                                highlightColor: t.accentBright,
+                              ),
                             ),
-                        ]),
+                            if (entry.provenance.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: Text(
+                                  entry.provenance.join(' · '),
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    color: t.textFaint.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        if (sub != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Text(
+                              sub,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: t.textMuted,
+                                height: 1.2,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (entry.actionType == PaletteActionType.toggle &&
+                    entry.readBool != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 12),
+                    child: Center(
+                      child: AppCheckbox(
+                        value: entry.readBool!(),
+                        onChanged: (v) {
+                          entry.writeBool?.call(v);
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                  )
+                else if (rightContext != null &&
+                    entry.actionType != PaletteActionType.toggle)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6, right: 12),
+                    child: Center(
+                      child: Text(
+                        rightContext,
                         style: TextStyle(
                           fontSize: 10,
-                          color: t.textMuted,
-                          height: 1.3,
+                          color: t.textFaint,
+                          fontFamily: 'JetBrains Mono',
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                  ],
-                ),
-              ),
-              if (entry.actionType == PaletteActionType.toggle &&
-                  entry.readBool != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: AppCheckbox(
-                    value: entry.readBool!(),
-                    onChanged: (v) {
-                      entry.writeBool?.call(v);
-                      setState(() {});
-                    },
-                  ),
-                ),
-              if (entry.shortcutLabel != null &&
-                  entry.actionType != PaletteActionType.toggle)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Text(
-                    entry.shortcutLabel!,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: t.textFaint,
-                      fontFamily: 'monospace',
                     ),
-                  ),
-                ),
-            ],
+                  )
+                else
+                  const SizedBox(width: 12),
+              ],
+            ),
           ),
         ),
       ),
@@ -433,91 +496,13 @@ class _PaletteResultRowState extends State<_PaletteResultRow> {
   }
 }
 
-class _ChipStack extends StatelessWidget {
-  final List<String> chips;
-  final PaletteCategory category;
-  final ChipTone? tone;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-  const _ChipStack({
-    required this.chips,
-    required this.category,
-    this.tone,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < chips.length; i++) ...[
-          if (i > 0) const SizedBox(width: 2),
-          _CategoryChip(
-            category: category,
-            chipLabel: chips[i],
-            chipTone: i == 0 ? tone : null,
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _CategoryChip extends StatelessWidget {
-  final PaletteCategory category;
-  final String? chipLabel;
-  final ChipTone? chipTone;
-
-  const _CategoryChip({
-    required this.category,
-    this.chipLabel,
-    this.chipTone,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-
-    final (defaultLabel, defaultColor) = switch (category) {
-      PaletteCategory.repo => ('REPO', t.hyperChromatic1),
-      PaletteCategory.action => ('ACT', t.hyperChromatic2),
-      PaletteCategory.command => ('CMD', t.hyperCore),
-      PaletteCategory.navigation => ('NAV', t.textMuted),
-      PaletteCategory.setting => ('SET', t.chromeAccent),
-      PaletteCategory.branch => ('REF', t.hypercubePositive),
-      PaletteCategory.commit => ('LOG', t.hyperChromatic1),
-      PaletteCategory.file => ('FILE', t.stateModified),
-      PaletteCategory.stash => ('STH', t.hyperChromatic2),
-      PaletteCategory.tag => ('TAG', t.eventStartTone),
-    };
-
-    final label = chipLabel ?? defaultLabel;
-
-    final color = chipTone != null
-        ? _toneToColor(chipTone!, t)
-        : _inferColorFromLabel(label, t) ?? defaultColor;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 9,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.6,
-          color: color.withValues(alpha: 0.7),
-          height: 1.4,
-        ),
-      ),
-    );
-  }
-}
-
-Color _toneToColor(ChipTone tone, AppTokens t) => switch (tone) {
+Color _categoryColor(PaletteEntry entry, AppTokens t) {
+  if (entry.chipTone != null) {
+    return switch (entry.chipTone!) {
       ChipTone.accent => t.accentBright,
       ChipTone.positive => t.hypercubePositive,
       ChipTone.negative => t.hypercubeNegative,
@@ -531,50 +516,36 @@ Color _toneToColor(ChipTone tone, AppTokens t) => switch (tone) {
       ChipTone.deleted => t.stateDeleted,
       ChipTone.conflicted => t.stateConflicted,
     };
-
-Color? _inferColorFromLabel(String label, AppTokens t) => switch (label) {
-      'ON' => t.hypercubePositive,
-      'OFF' => t.textFaint,
-      'HEAD' => t.accentBright,
-      'GONE' => t.stateDeleted,
-      'LOCAL' => t.textMuted,
-      'REMOTE' => t.hyperChromatic1,
-      'MAIN' => t.accentBright,
-      'DET' => t.stateConflicted,
-      'UNDO' => t.hypercubeNegative,
-      'FORCE' => t.stateDeleted,
-      'SYNC' => t.hyperCore,
-      'PR' => t.hyperChromatic2,
-      'DRAFT' => t.stateModified,
-      'AI' => t.hyperChromatic1,
-      'CLIP' => t.chromeAccent,
-      'SYS' => t.chromeAccent,
-      'TERM' => t.hyperCore,
-      'GUI' => t.hyperChromatic2,
-      'VER' => t.textMuted,
-      'THM' => t.eventStartTone,
-      'AN' => t.hyperChromatic1,
-      'LW' => t.textMuted,
-      'U' => t.stateConflicted,
-      '?' => t.textFaint,
-      'M' => t.stateModified,
-      'A' => t.stateAdded,
-      'D' => t.stateDeleted,
-      'R' => t.stateModified,
-      'TODAY' => t.accentBright,
-      _ when label.endsWith('↑') => t.hypercubePositive,
-      _ when label.endsWith('↓') => t.hypercubeNegative,
-      _ when label.startsWith('#') => t.hyperChromatic2,
-      _ when _isTimeChip(label) => t.textMuted,
-      _ => null,
-    };
-
-bool _isTimeChip(String s) {
-  if (s.length < 2) return false;
-  final unit = s[s.length - 1];
-  return (unit == 'd' || unit == 'w' || unit == 'm' || unit == 'y') &&
-      int.tryParse(s.substring(0, s.length - 1)) != null;
+  }
+  return switch (entry.category) {
+    PaletteCategory.command => t.hyperCore,
+    PaletteCategory.action => t.hyperChromatic2,
+    PaletteCategory.branch => t.accentBright,
+    PaletteCategory.repo => t.hyperChromatic1,
+    PaletteCategory.commit => t.hyperChromatic1,
+    PaletteCategory.navigation => t.textMuted,
+    PaletteCategory.setting => t.chromeAccent,
+    PaletteCategory.file => t.stateModified,
+    PaletteCategory.stash => t.hyperChromatic2,
+    PaletteCategory.tag => t.eventStartTone,
+  };
 }
+
+String? _subtitle(PaletteEntry entry) {
+  final sub = entry.subtitle;
+  if (sub == null || sub.isEmpty) return null;
+  if (sub.contains(r'\') || sub.contains('/')) {
+    final segments = sub.replaceAll(r'\', '/').split('/');
+    if (segments.length > 3) {
+      return '.../${segments.sublist(segments.length - 2).join('/')}';
+    }
+  }
+  return sub;
+}
+
+// ---------------------------------------------------------------------------
+// Highlighted label (match ranges)
+// ---------------------------------------------------------------------------
 
 class _HighlightedLabel extends StatelessWidget {
   final String text;
@@ -623,13 +594,9 @@ class _HighlightedLabel extends StatelessWidget {
   }
 }
 
-String? _resolveChipLabel(PaletteEntry entry) {
-  if (entry.chipLabel != null) return entry.chipLabel;
-  if (entry.actionType == PaletteActionType.toggle && entry.readBool != null) {
-    return entry.readBool!() ? 'ON' : 'OFF';
-  }
-  return null;
-}
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
 
 class _EmptyState extends StatelessWidget {
   final String query;
@@ -650,26 +617,36 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-class _WickSummarySection extends StatefulWidget {
+// ---------------------------------------------------------------------------
+// Wick shelf (docked bottom)
+// ---------------------------------------------------------------------------
+
+class _WickShelf extends StatefulWidget {
   final List<WickUnit> entries;
   final WickPosture? posture;
+  final bool searching;
   final void Function(String filePath) onFileSelected;
   final VoidCallback onClose;
 
-  const _WickSummarySection({
+  const _WickShelf({
     required this.entries,
     required this.posture,
+    required this.searching,
     required this.onFileSelected,
     required this.onClose,
   });
 
   @override
-  State<_WickSummarySection> createState() => _WickSummarySectionState();
+  State<_WickShelf> createState() => _WickShelfState();
 }
 
-class _WickSummarySectionState extends State<_WickSummarySection> {
-  bool _expanded = false;
-  int _selectedIndex = -1;
+class _WickShelfState extends State<_WickShelf> {
+  static const _prefKey = 'wick_shelf_expanded';
+  static bool _cachedExpanded = false;
+  static bool _prefLoaded = false;
+
+  bool _expanded = _cachedExpanded;
+  int _hoveredIndex = -1;
 
   double get _postureOpacity => switch (widget.posture) {
         WickPosture.decisive => 1.0,
@@ -679,69 +656,161 @@ class _WickSummarySectionState extends State<_WickSummarySection> {
       };
 
   @override
+  void initState() {
+    super.initState();
+    if (!_prefLoaded) {
+      _prefLoaded = true;
+      SharedPreferences.getInstance().then((prefs) {
+        final val = prefs.getBool(_prefKey) ?? false;
+        _cachedExpanded = val;
+        if (mounted && val != _expanded) setState(() => _expanded = val);
+      });
+    }
+  }
+
+  void _toggleExpanded() {
+    if (widget.entries.isEmpty) return;
+    setState(() => _expanded = !_expanded);
+    _cachedExpanded = _expanded;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool(_prefKey, _expanded);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final geo = context.surfaceShader.geometry;
     final units = widget.entries;
-    if (units.isEmpty) return const SizedBox.shrink();
+    final hasResults = units.isNotEmpty;
+    final searching = widget.searching && !hasResults;
+    final idle = !hasResults && !searching;
 
-    final borderColor = t.accentBright.withValues(alpha: _postureOpacity * 0.4);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: borderColor, width: 1),
-          borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.pillRadius),
-          color: t.surface0.withValues(alpha: 0.4),
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: idle
+                ? t.chromeBorder.withValues(alpha: 0.3)
+                : t.accentBright.withValues(alpha: _postureOpacity * 0.15),
+            width: 0.5,
+          ),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(t, units),
-            if (_expanded) ..._buildExpandedResults(t, units),
-          ],
-        ),
+        color: t.surface0.withValues(alpha: idle ? 0.5 : 0.85),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildShelfHeader(t, units, idle: idle, searching: searching),
+          AnimatedSize(
+            duration: context.motion(AppMotion.fade),
+            curve: AppMotion.fadeCurve,
+            alignment: Alignment.topCenter,
+            child: _expanded && hasResults
+                ? _buildExpandedBody(t, units, geo)
+                : const SizedBox.shrink(),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildHeader(AppTokens t, List<WickUnit> units) {
+  Widget _buildShelfHeader(
+    AppTokens t,
+    List<WickUnit> units, {
+    required bool idle,
+    required bool searching,
+  }) {
+    if (idle) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        child: Text(
+          'wick',
+          style: TextStyle(
+            fontSize: 10,
+            color: t.textFaint.withValues(alpha: 0.4),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+
+    if (searching) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 9,
+              height: 9,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.2,
+                color: t.accentBright.withValues(alpha: 0.35),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'wick',
+              style: TextStyle(
+                fontSize: 10,
+                color: t.textFaint,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final fileNames = units
         .take(4)
         .map((u) => u.fileName)
         .toSet()
         .join(' · ');
-    final suffix = units.length > 4 ? ' · …' : '';
+    final suffix = units.length > 4 ? ' …' : '';
+
     return InkWell(
-      onTap: () => setState(() => _expanded = !_expanded),
+      onTap: _toggleExpanded,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         child: Row(
           children: [
             Text(
-              '${units.length} match${units.length == 1 ? '' : 'es'} in files',
+              'wick',
               style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: t.accentBright.withValues(alpha: _postureOpacity * 0.7),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '${units.length}',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
                 color: t.accentBright.withValues(alpha: _postureOpacity),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Expanded(
               child: Text(
                 '$fileNames$suffix',
-                style: TextStyle(fontSize: 11, color: t.textFaint),
+                style: TextStyle(fontSize: 10, color: t.textFaint),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
               ),
             ),
-            Icon(
-              _expanded ? Icons.expand_less : Icons.expand_more,
-              size: 14,
-              color: t.textFaint,
+            AnimatedRotation(
+              turns: _expanded ? 0.5 : 0,
+              duration: context.motion(AppMotion.snap),
+              curve: AppMotion.snapCurve,
+              child: Icon(
+                Icons.expand_more,
+                size: 13,
+                color: t.textFaint,
+              ),
             ),
           ],
         ),
@@ -749,106 +818,104 @@ class _WickSummarySectionState extends State<_WickSummarySection> {
     );
   }
 
-  List<Widget> _buildExpandedResults(AppTokens t, List<WickUnit> units) {
-    final isDecisive = widget.posture == WickPosture.decisive;
-    final staggerMs = switch (widget.posture) {
-      WickPosture.decisive => 0,
-      WickPosture.exploring => 40,
-      WickPosture.reaching => 80,
-      _ => 60,
-    };
-    return [
-      for (var i = 0; i < units.length && i < 8; i++)
-        isDecisive
-            ? _buildResultRow(t, units[i], i)
-            : TweenAnimationBuilder<double>(
-                key: ValueKey('wick-$i-${units[i].id}'),
-                tween: Tween(begin: 0.0, end: 1.0),
-                duration: Duration(milliseconds: 200 + staggerMs * i),
-                curve: Curves.easeOut,
-                builder: (_, opacity, child) =>
-                    Opacity(opacity: opacity, child: child),
-                child: _buildResultRow(t, units[i], i),
-              ),
-    ];
+  Widget _buildExpandedBody(
+      AppTokens t, List<WickUnit> units, SurfaceMaterialGeometry geo) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < units.length && i < 8; i++)
+          _buildResultRow(t, units[i], i, geo),
+      ],
+    );
   }
 
-  Widget _buildResultRow(AppTokens t, WickUnit unit, int index) {
-    final isSelected = index == _selectedIndex;
+  Widget _buildResultRow(
+      AppTokens t, WickUnit unit, int index, SurfaceMaterialGeometry geo) {
+    final isHovered = index == _hoveredIndex;
     var snippet = unit.text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    // Strip Wick's [path: ...] prefix — the filename is already shown.
     snippet = snippet.replaceFirst(RegExp(r'^\[path:[^\]]*\]\s*'), '');
     if (snippet.length > 80) snippet = '${snippet.substring(0, 80)}…';
     final isGhost = unit.reason.kind == 'neighborhood' ||
         unit.reason.kind == 'transport';
     final ghostAlpha = isGhost ? 0.45 : 1.0;
     final reasonLabel = isGhost ? 'coupled' : unit.reason.kind;
-    return InkWell(
-      onTap: () {
-        widget.onFileSelected(unit.filePath);
-        widget.onClose();
-      },
-      onHover: (hovering) {
-        if (hovering) setState(() => _selectedIndex = index);
-      },
-      child: Container(
-        color: isSelected ? t.surface1 : null,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        child: Opacity(
-          opacity: ghostAlpha,
-          child: Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Text(
-                      unit.fileName,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: isGhost ? FontWeight.w400 : FontWeight.w600,
-                        color: t.textNormal,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hoveredIndex = index),
+      onExit: (_) => setState(() => _hoveredIndex = -1),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          widget.onFileSelected(unit.filePath);
+          widget.onClose();
+        },
+        child: Container(
+          color: isHovered
+              ? t.accentBright.withValues(alpha: 0.06)
+              : null,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          child: Opacity(
+            opacity: ghostAlpha,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        unit.fileName,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight:
+                              isGhost ? FontWeight.w400 : FontWeight.w600,
+                          color: t.textNormal,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        snippet,
-                        style: TextStyle(fontSize: 10, color: t.textFaint),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          snippet,
+                          style:
+                              TextStyle(fontSize: 10, color: t.textFaint),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
-                  border: isGhost
-                      ? Border.all(
-                          color: t.accentBright.withValues(alpha: 0.15))
-                      : null,
-                  color: isGhost
-                      ? Colors.transparent
-                      : t.accentBright.withValues(
-                          alpha:
-                              unit.reason.kind == 'direct' ? 0.15 : 0.07),
-                ),
-                child: Text(
-                  reasonLabel,
-                  style: TextStyle(
-                    fontSize: 8,
-                  color: t.accentBright.withValues(
-                    alpha: unit.reason.kind == 'direct' ? 0.9 : 0.5,
+                    ],
                   ),
                 ),
-              ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    borderRadius:
+                        BorderRadius.circular(geo.badgeRadius),
+                    border: isGhost
+                        ? Border.all(
+                            color:
+                                t.accentBright.withValues(alpha: 0.15))
+                        : null,
+                    color: isGhost
+                        ? Colors.transparent
+                        : t.accentBright.withValues(
+                            alpha: unit.reason.kind == 'direct'
+                                ? 0.15
+                                : 0.07),
+                  ),
+                  child: Text(
+                    reasonLabel,
+                    style: TextStyle(
+                      fontSize: 8,
+                      color: t.accentBright.withValues(
+                        alpha:
+                            unit.reason.kind == 'direct' ? 0.9 : 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
         ),
       ),
     );

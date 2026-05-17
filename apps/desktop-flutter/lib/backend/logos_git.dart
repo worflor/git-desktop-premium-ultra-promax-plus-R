@@ -3173,6 +3173,40 @@ class LogosGit {
     return out.length <= limit ? out : out.sublist(0, limit);
   }
 
+  double spectralSpread(Set<String> files) {
+    final basis = spectralBasis();
+    if (basis == null || basis.pathToId == null || files.isEmpty) return -1;
+    final weights = <String, double>{for (final f in files) f: 1.0};
+    final proj = basis.labelProject(weights);
+    var sum = 0.0;
+    for (var i = 0; i < proj.length; i++) {
+      sum += proj[i] * proj[i];
+    }
+    return math.sqrt(sum);
+  }
+
+  /// L2 distance between two file-set projections in spectral space.
+  /// Reserved for branch-to-mainline divergence measurement.
+  double semanticDistance(Set<String> filesA, Set<String> filesB) {
+    final basis = spectralBasis();
+    if (basis == null || basis.pathToId == null) return -1;
+    final weightsA = <String, double>{
+      for (final f in filesA) f: 1.0,
+    };
+    final weightsB = <String, double>{
+      for (final f in filesB) f: 1.0,
+    };
+    final projA = basis.labelProject(weightsA);
+    final projB = basis.labelProject(weightsB);
+    if (projA.length != projB.length) return -1;
+    var sum = 0.0;
+    for (var i = 0; i < projA.length; i++) {
+      final d = projA[i] - projB[i];
+      sum += d * d;
+    }
+    return math.sqrt(sum);
+  }
+
   List<RelevanceScore> diffuse(
     Set<String> sourceFiles, {
     double t = 1.0,

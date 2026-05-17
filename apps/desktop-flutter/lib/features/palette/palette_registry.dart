@@ -19,10 +19,12 @@ import '../../backend/dtos.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
 import '../changes/merge_conflict_editor.dart';
+import '../history_surgery/history_surgery_page.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/repo_web_url.dart';
 import '../../backend/system_paths.dart';
 import '../../backend/undo_controller.dart';
+import '../../components/icons/app_icons.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/tokens.dart';
 import 'palette_entry.dart';
@@ -93,6 +95,60 @@ List<PaletteEntry> buildStaticEntries(
             builder: (ctx) => _TestMergeEditorLoader(
               repoPath: rp,
             ),
+          ));
+        },
+      ),
+    PaletteEntry(
+      id: 'debug.theme-specimen',
+      label: 'Theme Specimen',
+      subtitle: 'All colors, icons, text tiers, and geometry',
+      keywords: const ['debug', 'theme', 'specimen', 'colors', 'icons', 'tokens', 'palette'],
+      chipLabel: 'DEBUG',
+      chipTone: ChipTone.muted,
+      category: PaletteCategory.command,
+      actionType: PaletteActionType.execute,
+      onExecute: () {
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const _ThemeSpecimenPage(),
+        ));
+      },
+    ),
+    if (repoPath != null)
+      PaletteEntry(
+        id: 'dev.test-history-surgery',
+        label: 'Test History Surgery',
+        keywords: const ['test', 'surgery', 'rewrite', 'history', 'dry', 'dev'],
+        chipLabel: 'DEV',
+        chipTone: ChipTone.chromatic2,
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () {
+          final rp = repoPath!;
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => HistorySurgeryLoader(
+              repoPath: rp,
+              dryRun: true,
+            ),
+          ));
+        },
+      ),
+    if (repoPath != null)
+      PaletteEntry(
+        id: 'cmd.history-surgery',
+        label: 'History Surgery',
+        subtitle: 'Rewrite history to permanently remove files',
+        keywords: const [
+          'rewrite', 'history', 'purge', 'remove', 'filter',
+          'clean', 'sensitive', 'surgery',
+        ],
+        chipLabel: 'ALPHA',
+        chipTone: ChipTone.muted,
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () {
+          final rp = repoPath!;
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => HistorySurgeryLoader(repoPath: rp),
           ));
         },
       ),
@@ -364,8 +420,19 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
       return Scaffold(
         backgroundColor: t.bg1,
         body: Center(
-          child: Text(_error!,
-              style: TextStyle(color: t.stateConflicted, fontSize: 12)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(_error!,
+                  style: TextStyle(color: t.stateConflicted, fontSize: 12)),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('back',
+                    style: TextStyle(color: t.textMuted, fontSize: 11)),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -373,12 +440,23 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
       return Scaffold(
         backgroundColor: t.bg1,
         body: Center(
-          child: Text('building test conflicts from history…',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 11,
-                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
-              )),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('building test conflicts from history…',
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 11,
+                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                  )),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('cancel',
+                    style: TextStyle(color: t.textFaint, fontSize: 11)),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -388,44 +466,44 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
 
 Future<List<ConflictFile>> _buildConflictsFromHistory(
     String repoPath, LogosGit? engine) async {
-  final nameResult = await Process.run(
-    'git', ['diff', '--name-only', 'HEAD~5', 'HEAD'],
-    workingDirectory: repoPath,
-  );
-  if (nameResult.exitCode != 0) {
-    throw Exception('git diff --name-only failed');
-  }
-  final changedPaths = (nameResult.stdout as String)
-      .split('\n')
-      .map((l) => l.trim())
-      .where((l) => l.isNotEmpty && !l.contains(' '))
-      .toList();
-
-  final picked = <String>[];
-  for (final p in changedPaths) {
-    if (picked.length >= 3) break;
-    if (p.endsWith('.dart') || p.endsWith('.ts') || p.endsWith('.js') ||
-        p.endsWith('.py') || p.endsWith('.rs') || p.endsWith('.go') ||
-        p.endsWith('.yaml') || p.endsWith('.json') || p.endsWith('.md')) {
-      picked.add(p);
+  // Try decreasing depth until we find a valid base ref.
+  List<String> changedPaths = [];
+  String baseRef = 'HEAD~5';
+  for (final depth in [5, 3, 2, 1]) {
+    final ref = 'HEAD~$depth';
+    final nameResult = await Process.run(
+      'git', ['diff', '--name-only', ref, 'HEAD'],
+      workingDirectory: repoPath,
+    );
+    if (nameResult.exitCode != 0) continue;
+    final paths = (nameResult.stdout as String)
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.contains(' '))
+        .toList();
+    if (paths.isNotEmpty) {
+      changedPaths = paths;
+      baseRef = ref;
+      break;
     }
   }
-  if (picked.isEmpty && changedPaths.isNotEmpty) {
-    picked.addAll(changedPaths.take(2));
-  }
-  if (picked.isEmpty) throw Exception('no changed files in last 5 commits');
+
+  if (changedPaths.isEmpty) throw Exception('no changed files in recent commits');
 
   final files = <ConflictFile>[];
-  for (final path in picked) {
+  final changedSet = changedPaths.toSet();
+  for (final path in changedPaths) {
+    if (files.length >= 3) break;
     final headResult = await Process.run(
       'git', ['show', 'HEAD:$path'],
       workingDirectory: repoPath,
     );
+    if (headResult.exitCode != 0) continue;
     final oldResult = await Process.run(
-      'git', ['show', 'HEAD~5:$path'],
+      'git', ['show', '$baseRef:$path'],
       workingDirectory: repoPath,
     );
-    if (headResult.exitCode != 0 || oldResult.exitCode != 0) continue;
+    if (oldResult.exitCode != 0) continue;
 
     final headContent = headResult.stdout as String;
     final oldContent = oldResult.stdout as String;
@@ -434,28 +512,32 @@ Future<List<ConflictFile>> _buildConflictsFromHistory(
     if (headLines.length < 3 || oldLines.length < 3) continue;
 
     final conflictText =
-        _buildSyntheticConflict(path, headLines, oldLines);
+        _buildSyntheticConflict(path, headLines, oldLines,
+            baseRef: baseRef);
     if (conflictText == null) continue;
 
     final cf = parseConflictFile(path, conflictText,
-        oursBranch: 'HEAD', theirsBranch: 'HEAD~5');
+        oursBranch: 'HEAD', theirsBranch: baseRef);
 
     if (engine != null) {
-      enrichConflictFileWithLogos(cf, engine, changedPaths.toSet());
+      enrichConflictFileWithLogos(cf, engine, changedSet);
     }
     files.add(cf);
   }
 
-  if (files.isEmpty) throw Exception('could not build conflicts from history');
+  if (files.isEmpty) {
+    throw Exception(
+        'could not build conflicts — ${changedPaths.length} files '
+        'changed but none produced a valid synthetic conflict '
+        '(baseRef=$baseRef)');
+  }
   return files;
 }
 
 String? _buildSyntheticConflict(
-    String path, List<String> headLines, List<String> oldLines) {
-  // Find regions where the files differ and wrap them in conflict markers
+    String path, List<String> headLines, List<String> oldLines,
+    {String baseRef = 'HEAD~5'}) {
   final buf = StringBuffer();
-  final headSet = headLines.toSet();
-  final oldSet = oldLines.toSet();
   var hi = 0;
   var oi = 0;
   var conflictCount = 0;
@@ -467,44 +549,45 @@ String? _buildSyntheticConflict(
       oi++;
       continue;
     }
-    // Found a difference — collect the diverging block
     final headBlock = <String>[];
     final oldBlock = <String>[];
-    // Scan ahead in head to find next matching line
-    var scanH = hi;
-    var scanO = oi;
-    while (scanH < headLines.length && !oldSet.contains(headLines[scanH])) {
-      headBlock.add(headLines[scanH]);
-      scanH++;
+    // Consume differing lines from both sides in lockstep, capped.
+    while (hi < headLines.length && oi < oldLines.length &&
+        headLines[hi] != oldLines[oi] && headBlock.length < 15) {
+      headBlock.add(headLines[hi++]);
+      oldBlock.add(oldLines[oi++]);
     }
-    while (scanO < oldLines.length && !headSet.contains(oldLines[scanO])) {
-      oldBlock.add(oldLines[scanO]);
-      scanO++;
-    }
-    if (headBlock.isEmpty && oldBlock.isEmpty) {
-      // Stuck — skip one line from each
-      headBlock.add(headLines[hi]);
-      oldBlock.add(oldLines[oi]);
-      scanH = hi + 1;
-      scanO = oi + 1;
+    // If still mismatched, try to resync: look ahead in each side
+    // for the other's current line.
+    if (hi < headLines.length && oi < oldLines.length &&
+        headLines[hi] != oldLines[oi]) {
+      for (var j = hi; j < (hi + 10).clamp(0, headLines.length); j++) {
+        if (headLines[j] == oldLines[oi]) {
+          while (hi < j) headBlock.add(headLines[hi++]);
+          break;
+        }
+      }
+      for (var j = oi; j < (oi + 10).clamp(0, oldLines.length); j++) {
+        if (oldLines[j] == headLines[hi]) {
+          while (oi < j) oldBlock.add(oldLines[oi++]);
+          break;
+        }
+      }
     }
     if (headBlock.isNotEmpty || oldBlock.isNotEmpty) {
       buf.writeln('<<<<<<< HEAD');
-      for (final l in headBlock) {
-        buf.writeln(l);
-      }
+      for (final l in headBlock) buf.writeln(l);
       buf.writeln('=======');
-      for (final l in oldBlock) {
-        buf.writeln(l);
-      }
-      buf.writeln('>>>>>>> HEAD~5');
+      for (final l in oldBlock) buf.writeln(l);
+      buf.writeln('>>>>>>> $baseRef');
       conflictCount++;
+    } else {
+      // Can't resync — skip one line from each to avoid infinite loop.
+      buf.writeln(headLines[hi++]);
+      oi++;
     }
-    hi = scanH;
-    oi = scanO;
     if (conflictCount >= 4) break;
   }
-  // Remaining lines from head
   while (hi < headLines.length) {
     buf.writeln(headLines[hi++]);
   }
@@ -1526,3 +1609,284 @@ String _themeLabel(AppThemeId id) => switch (id) {
     };
 
 String _normPath(String p) => p.replaceAll('\\', '/').toLowerCase();
+
+// ── Theme Specimen Page ──────────────────────────────────────────
+// Self-documenting reference sheet. Every element prints its own name
+// so a screenshot communicates the full design system to an LLM
+// without hover tooltips.
+
+class _ThemeSpecimenPage extends StatelessWidget {
+  const _ThemeSpecimenPage();
+
+  static const _iconNames = [
+    'app-logo', 'changes', 'history', 'branches', 'xray', 'settings',
+    'plus', 'x', 'search', 'tag', 'sync', 'commit',
+    'chevron-right', 'chevron-left', 'chevron-down',
+    'trash', 'fetch', 'push', 'pull', 'git-branch',
+    'status-conflict', 'sort', 'clear', 'check', 'repo-summary',
+    'drift-focused', 'drift-spread', 'drift-divergent',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final geo = context.surfaceShader.geometry;
+    final shader = context.surfaceShader;
+    final s = TextStyle(color: t.textFaint, fontSize: 7.5,
+        fontFamily: AppFonts.mono, height: 1.0);
+
+    return Scaffold(
+      backgroundColor: t.bg0,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Header ──
+            Row(children: [
+              Text('${t.id.name}', style: TextStyle(color: t.textStrong,
+                  fontSize: 14, fontWeight: FontWeight.w700,
+                  fontFamily: AppFonts.mono)),
+              const SizedBox(width: 6),
+              Text(t.isDark ? 'dark' : 'light', style: TextStyle(
+                  color: t.textFaint, fontSize: 10, fontFamily: AppFonts.mono)),
+              const SizedBox(width: 6),
+              Text('r:${geo.radius} blur:${t.backdropBlur} '
+                  'sat:${t.backdropSaturate} ${shader.duration.inMilliseconds}ms',
+                  style: TextStyle(color: t.textFaint, fontSize: 8,
+                      fontFamily: AppFonts.mono)),
+              const Spacer(),
+              Text('${AppFonts.mono} + ${AppFonts.monoFallback.first}',
+                  style: TextStyle(color: t.textFaint, fontSize: 8,
+                      fontFamily: AppFonts.mono)),
+              const SizedBox(width: 12),
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: MouseRegion(cursor: SystemMouseCursors.click,
+                    child: Icon(Icons.close, size: 14, color: t.textMuted)),
+              ),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Backgrounds + Surfaces ──
+            _Section('backgrounds · surfaces', t),
+            Row(children: [
+              for (final c in [
+                ('bg0', t.bg0), ('bg1', t.bg1), ('bg2', t.bg2), ('bg3', t.bg3),
+                ('srf0', t.surface0), ('srf1', t.surface1), ('srf2', t.surface2),
+              ]) _Swatch(c.$1, c.$2, t, geo),
+            ]),
+            const SizedBox(height: 8),
+
+            // ── Text colors ──
+            _Section('text', t),
+            Row(children: [
+              for (final c in [
+                ('textStrong', t.textStrong), ('textNormal', t.textNormal),
+                ('textMuted', t.textMuted), ('textFaint', t.textFaint),
+              ]) _Swatch(c.$1, c.$2, t, geo),
+            ]),
+            const SizedBox(height: 2),
+            Text('Strong 13px w700', style: TextStyle(color: t.textStrong,
+                fontSize: 13, fontWeight: FontWeight.w700,
+                fontFamily: AppFonts.mono)),
+            Text('Normal 12px', style: TextStyle(color: t.textNormal,
+                fontSize: 12, fontFamily: AppFonts.mono)),
+            Text('Muted 11px', style: TextStyle(color: t.textMuted,
+                fontSize: 11, fontFamily: AppFonts.mono)),
+            Text('Faint 10px', style: TextStyle(color: t.textFaint,
+                fontSize: 10, fontFamily: AppFonts.mono)),
+            const SizedBox(height: 8),
+
+            // ── State + Accent ──
+            _Section('state · accent', t),
+            Row(children: [
+              for (final c in [
+                ('stateAdded', t.stateAdded),
+                ('stateModified', t.stateModified),
+                ('stateDeleted', t.stateDeleted),
+                ('stateConflicted', t.stateConflicted),
+                ('stateStaged', t.stateStaged),
+                ('accentBright', t.accentBright),
+                ('eventStartTone', t.eventStartTone),
+              ]) _Swatch(c.$1, c.$2, t, geo),
+            ]),
+            const SizedBox(height: 8),
+
+            // ── Chrome + Interactive ──
+            _Section('chrome · interactive', t),
+            Row(children: [
+              for (final c in [
+                ('chromeBorder', t.chromeBorder),
+                ('chromeAccent', t.chromeAccent),
+                ('btnBg', t.btnBg), ('btnText', t.btnText),
+                ('inputBg', t.inputBg), ('inputBorder', t.inputBorder),
+                ('itemHoverBg', t.itemHoverBg),
+                ('itemActiveBg', t.itemActiveBg),
+                ('rowBg', t.rowBg),
+              ]) _Swatch(c.$1, c.$2, t, geo),
+            ]),
+            const SizedBox(height: 8),
+
+            // ── Hypercube + Overlays ──
+            _Section('hypercube · overlays', t),
+            Row(children: [
+              for (final c in [
+                ('hyperCore', t.hyperCore),
+                ('hyperC1', t.hyperChromatic1),
+                ('hyperC2', t.hyperChromatic2),
+                ('hyperPos', t.hypercubePositive),
+                ('hyperNeg', t.hypercubeNegative),
+                ('panelOvl', t.panelOverlay),
+                ('dangerOvl', t.dangerOverlay),
+                ('diffOvl', t.diffOverlay),
+              ]) _Swatch(c.$1, c.$2, t, geo),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Icons — each labeled ──
+            _Section('icons (${_iconNames.length})', t),
+            Wrap(spacing: 2, runSpacing: 1, children: [
+              for (final name in _iconNames)
+                SizedBox(
+                  width: 100, height: 22,
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    AppIcon(name: name, size: 12, color: t.textNormal),
+                    const SizedBox(width: 3),
+                    Flexible(child: Text(name, style: s,
+                        maxLines: 1, overflow: TextOverflow.clip)),
+                  ]),
+                ),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Geometry radii ──
+            _Section('geometry', t),
+            Row(children: [
+              for (final tier in [
+                ('card', geo.cardRadius),
+                ('pill', geo.pillRadius),
+                ('badge', geo.badgeRadius),
+                ('tiny', geo.tinyRadius),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Container(
+                    width: 56, height: 24,
+                    decoration: BoxDecoration(
+                      color: t.accentBright.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(tier.$2),
+                      border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.35),
+                        width: 0.8),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text('${tier.$1} ${tier.$2.toStringAsFixed(1)}',
+                        style: TextStyle(color: t.accentBright, fontSize: 7.5,
+                            fontFamily: AppFonts.mono,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Motion tiers ──
+            _Section('motion', t),
+            Row(children: [
+              for (final m in [
+                ('snap', AppMotion.snap),
+                ('fade', AppMotion.fade),
+                ('fluid', AppMotion.fluid),
+              ])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text('${m.$1} ${m.$2.inMilliseconds}ms',
+                      style: TextStyle(color: t.textMuted, fontSize: 9,
+                          fontFamily: AppFonts.mono)),
+                ),
+            ]),
+            const SizedBox(height: 10),
+
+            // ── Gradient ──
+            if (t.appGradientColors.isNotEmpty) ...[
+              _Section('gradient (${t.appGradientColors.length} stops)', t),
+              Container(
+                height: 16, width: double.infinity,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: t.appGradientColors),
+                  borderRadius: BorderRadius.circular(geo.badgeRadius),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // ── State pills (as rendered) ──
+            _Section('state pills (as rendered)', t),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              for (final st in [
+                ('added', t.stateAdded), ('modified', t.stateModified),
+                ('deleted', t.stateDeleted), ('conflicted', t.stateConflicted),
+                ('staged', t.stateStaged), ('accent', t.accentBright),
+              ])
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: st.$2.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(geo.pillRadius),
+                    border: Border.all(
+                        color: st.$2.withValues(alpha: 0.35), width: 0.8),
+                  ),
+                  child: Text(st.$1, style: TextStyle(color: st.$2,
+                      fontSize: 9, fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w600)),
+                ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  final String label;
+  final AppTokens t;
+  const _Section(this.label, this.t);
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(label, style: TextStyle(color: t.textMuted, fontSize: 9,
+        fontWeight: FontWeight.w700, fontFamily: AppFonts.mono)),
+  );
+}
+
+class _Swatch extends StatelessWidget {
+  final String name;
+  final Color color;
+  final AppTokens t;
+  final SurfaceMaterialGeometry geo;
+  const _Swatch(this.name, this.color, this.t, this.geo);
+  @override
+  Widget build(BuildContext context) {
+    final textColor = color.computeLuminance() > 0.45
+        ? Colors.black54 : Colors.white60;
+    return Padding(
+      padding: const EdgeInsets.only(right: 2, bottom: 2),
+      child: Container(
+        height: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        constraints: const BoxConstraints(minWidth: 44),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(geo.badgeRadius),
+          border: Border.all(
+              color: t.chromeBorder.withValues(alpha: 0.25), width: 0.5),
+        ),
+        alignment: Alignment.centerLeft,
+        child: Text(name, style: TextStyle(color: textColor, fontSize: 7,
+            fontFamily: AppFonts.mono, fontWeight: FontWeight.w600)),
+      ),
+    );
+  }
+}

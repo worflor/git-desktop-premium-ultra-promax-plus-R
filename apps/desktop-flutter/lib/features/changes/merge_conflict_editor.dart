@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../../backend/logos_git.dart';
@@ -384,6 +386,15 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   final _itemKeys = <int, GlobalKey>{};
   int? _editingIndex;
   int _trustLevel = 1;
+  bool _unresolvedBelow = false;
+  Timer? _scrollDebounce;
+
+  void _onScroll() {
+    _scrollDebounce?.cancel();
+    _scrollDebounce = Timer(const Duration(milliseconds: 16), () {
+      if (mounted) _checkUnresolvedBelow();
+    });
+  }
 
   ConflictFile get _file => widget.file;
   List<ConflictBlock> get _blocks => _file.blocks;
@@ -402,6 +413,10 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
       _itemKeys[i] = GlobalKey();
     }
     _applyTrust();
+    _scrollCtrl.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkUnresolvedBelow();
+    });
   }
 
   void _applyTrust() {
@@ -496,9 +511,110 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
     for (final c in _customControllers) {
       c.dispose();
     }
+    _scrollDebounce?.cancel();
+    _scrollCtrl.removeListener(_onScroll);
     _scrollCtrl.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _checkUnresolvedBelow() {
+    if (!_scrollCtrl.hasClients || !mounted) return;
+    final position = _scrollCtrl.position;
+    final vpTop = position.pixels;
+    final vpBottom = vpTop + position.viewportDimension;
+
+    // First pass: find the highest block index that's visible or above
+    // the viewport. Blocks with null context whose index is above this
+    // watermark are recycled-above, not recycled-below.
+    var highestKnownIndex = -1;
+    for (var i = 0; i < _blocks.length; i++) {
+      final ctx = _itemKeys[i]?.currentContext;
+      if (ctx == null) continue;
+      final ro = ctx.findRenderObject();
+      if (ro == null || !ro.attached) continue;
+      final viewport = RenderAbstractViewport.maybeOf(ro);
+      if (viewport == null) continue;
+      final revealTop = viewport.getOffsetToReveal(ro, 0.0).offset;
+      if (revealTop < vpBottom) highestKnownIndex = i;
+    }
+
+    var anyUnresolvedVisible = false;
+    var anyUnresolvedBelow = false;
+    for (var i = 0; i < _blocks.length; i++) {
+      if (_blocks[i].isResolved) continue;
+      final ctx = _itemKeys[i]?.currentContext;
+      if (ctx == null) {
+        if (i > highestKnownIndex) anyUnresolvedBelow = true;
+        continue;
+      }
+      final ro = ctx.findRenderObject();
+      if (ro == null || !ro.attached) {
+        if (i > highestKnownIndex) anyUnresolvedBelow = true;
+        continue;
+      }
+      final viewport = RenderAbstractViewport.maybeOf(ro);
+      if (viewport == null) continue;
+      final revealTop = viewport.getOffsetToReveal(ro, 0.0).offset;
+      final revealBottom = revealTop + (ro as RenderBox).size.height;
+      if (revealBottom > vpTop && revealTop < vpBottom) {
+        anyUnresolvedVisible = true;
+        break;
+      }
+      if (revealTop >= vpBottom) {
+        anyUnresolvedBelow = true;
+      }
+    }
+    final should = !anyUnresolvedVisible && anyUnresolvedBelow;
+    if (should != _unresolvedBelow) {
+      setState(() => _unresolvedBelow = should);
+    }
+  }
+
+  void _scrollToNextUnresolved({bool forward = true}) {
+    if (!_scrollCtrl.hasClients) return;
+    final position = _scrollCtrl.position;
+    final vpBottom = position.pixels + position.viewportDimension;
+    final vpTop = position.pixels;
+
+    // Same watermark as _checkUnresolvedBelow — distinguish recycled-
+    // above from recycled-below when context is null.
+    var highestKnownIndex = -1;
+    for (var i = 0; i < _blocks.length; i++) {
+      final ro = _itemKeys[i]?.currentContext?.findRenderObject();
+      if (ro == null || !ro.attached) continue;
+      final vp = RenderAbstractViewport.maybeOf(ro);
+      if (vp == null) continue;
+      if (vp.getOffsetToReveal(ro, 0.0).offset < vpBottom) {
+        highestKnownIndex = i;
+      }
+    }
+
+    int? target;
+    int? fallback;
+    for (var i = 0; i < _blocks.length; i++) {
+      if (_blocks[i].isResolved) continue;
+      fallback ??= i;
+      final ro = _itemKeys[i]?.currentContext?.findRenderObject();
+      if (ro == null || !ro.attached) {
+        if (forward && i > highestKnownIndex) target ??= i;
+        if (!forward && i <= highestKnownIndex) target = i;
+        continue;
+      }
+      final viewport = RenderAbstractViewport.maybeOf(ro);
+      if (viewport == null) continue;
+      final revealTop = viewport.getOffsetToReveal(ro, 0.0).offset;
+      if (forward && revealTop >= vpBottom - 20) {
+        target = i;
+        break;
+      }
+      if (!forward && revealTop < vpTop) {
+        target = i;
+      }
+    }
+    final i = target ?? fallback;
+    if (i == null) return;
+    _navigateTo(i);
   }
 
   void _scrollToFocused() {
@@ -506,8 +622,8 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
     final ctx = key?.currentContext;
     if (ctx != null) {
       Scrollable.ensureVisible(ctx,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+          duration: context.motionRead(AppMotion.fade),
+          curve: AppMotion.fadeCurve,
           alignment: 0.15);
     }
   }
@@ -520,11 +636,17 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
       }
     });
     widget.onResolutionChanged?.call();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkUnresolvedBelow();
+    });
   }
 
   void _unresolve(int i) {
     setState(() => _blocks[i].resolution = ConflictSide.unresolved);
     widget.onResolutionChanged?.call();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _checkUnresolvedBelow();
+    });
   }
 
   void _navigateTo(int i, {bool scroll = true}) {
@@ -608,6 +730,15 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
     final ctrl = HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
 
+    // Ctrl+./Ctrl+, = viewport-aware jump to next/prev unresolved
+    if (ctrl && key == LogicalKeyboardKey.period) {
+      _scrollToNextUnresolved(forward: true);
+      return KeyEventResult.handled;
+    }
+    if (ctrl && key == LogicalKeyboardKey.comma) {
+      _scrollToNextUnresolved(forward: false);
+      return KeyEventResult.handled;
+    }
     // Navigation: arrow down/right or N = next, arrow up/left or P = prev
     if (key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.arrowRight ||
@@ -927,6 +1058,34 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                 ]),
               ),
             ),
+            if (_unresolvedBelow)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 12,
+                child: Center(
+                  child: ChromeButton(
+                    onTap: _scrollToNextUnresolved,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 5),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.pillRadius),
+                    chromeBuilder:
+                        ({required hovered, required pressed}) =>
+                            ghostButtonChrome(t,
+                                hovered: hovered,
+                                pressed: pressed,
+                                enabled: true,
+                                baseBorderColor: t.stateConflicted
+                                    .withValues(alpha: 0.25)),
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 16,
+                      color: t.stateConflicted.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ),
+              ),
           ]),
         ),
         // Keyboard hints
@@ -941,6 +1100,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                 color: t.chromeBorder.withValues(alpha: 0.15)),
             const SizedBox(width: 6),
             _KeyHint('↑↓', 'navigate', t.textMuted),
+            _KeyHint('⌃.', 'jump next', t.textMuted),
             _KeyHint('⌘Z', 'undo', t.textMuted),
           ]),
         ),

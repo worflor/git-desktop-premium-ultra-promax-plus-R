@@ -53,6 +53,14 @@ const _icons = <String, String>{
       '<svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   'repo-summary':
       '<svg viewBox="0 0 16 16" fill="none"><path d="M3.2 2.4h7.6l2.0 2.0v9.2h-9.6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10.8 2.4v2.0h2.0" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5 7h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 9.5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 12h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  // Spectral posture icons — encode branch structural character
+  // at a glance without numbers or legends.
+  'drift-focused':
+      '<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="0.8" fill="currentColor"/><path d="M4.5 8h1.3M10.2 8h1.3M8 4.5v1.3M8 10.2v1.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.4"/></svg>',
+  'drift-spread':
+      '<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="0.9" fill="currentColor"/><path d="M8 4.2v1.5M8 10.3v1.5M4.2 8h1.5M10.3 8h1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5.2 5.2l1.1 1.1M9.7 9.7l1.1 1.1M5.2 10.8l1.1-1.1M9.7 6.3l1.1-1.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/></svg>',
+  'drift-divergent':
+      '<svg viewBox="0 0 16 16" fill="none"><path d="M8 12V7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 7L4.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 7L11.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="4.5" cy="3.5" r="1.2" stroke="currentColor" stroke-width="1.3"/><circle cx="11.5" cy="3.5" r="1.2" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="12" r="1.2" stroke="currentColor" stroke-width="1.3"/></svg>',
 };
 
 class AppIcon extends StatelessWidget {

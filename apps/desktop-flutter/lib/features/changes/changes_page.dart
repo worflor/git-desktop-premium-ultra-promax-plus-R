@@ -8672,13 +8672,26 @@ class _CommitReviewPane extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Code review',
-                            style: TextStyle(
-                              color: tokens.textStrong,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          Row(
+                            children: [
+                              Text(
+                                'Code review',
+                                style: TextStyle(
+                                  color: tokens.textStrong,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
+                                style: TextStyle(
+                                  fontFamily: AppFonts.mono,
+                                  fontSize: 9,
+                                  color: tokens.textFaint.withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 3),
                           Text.rich(
@@ -8714,15 +8727,6 @@ class _CommitReviewPane extends StatelessWidget {
                                 color: tokens.textMuted,
                                 fontSize: 10.5,
                               ),
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
-                            style: TextStyle(
-                              fontFamily: AppFonts.mono,
-                              fontSize: 9,
-                              color: tokens.textFaint.withValues(alpha: 0.6),
                             ),
                           ),
                         ],

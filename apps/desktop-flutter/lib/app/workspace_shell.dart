@@ -1121,7 +1121,15 @@ class _DeskRow extends StatelessWidget {
     // Other desks = every known worktree except the one currently active.
     final otherDesks = worktreeState.desks.where((d) {
       return _normalizeDeskPath(d.path) != activeNormalized;
-    }).toList();
+    }).toList()
+      ..sort((a, b) {
+        final aAct = worktreeState.activityFor(a.path)?.lastActivity;
+        final bAct = worktreeState.activityFor(b.path)?.lastActivity;
+        if (aAct == null && bAct == null) return 0;
+        if (aAct == null) return 1;
+        if (bAct == null) return -1;
+        return bAct.compareTo(aAct);
+      });
     final suggestedSyncTargetPath = _suggestedSyncTargetPath(
       activeDesk: activeDesk,
       activeActivity: activeActivity,
@@ -2061,6 +2069,9 @@ class _DeskTabState extends State<_DeskTab>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_driftPending || _driftBranch == null) {
+      _kickDrift();
+    }
     final prefs = context.read<PreferencesState>();
     if (!identical(_prefs, prefs)) {
       _prefs?.removeListener(_onPrefsChanged);
@@ -2077,11 +2088,81 @@ class _DeskTabState extends State<_DeskTab>
     if (mounted) _syncDotPulse();
   }
 
+  double? _semanticDrift;
+  Set<String>? _driftFiles;
+  bool _driftIsActive = false;
+  String? _driftBranch;
+  bool _driftPending = false;
+  int _driftGen = 0;
+  int _lastEpoch = -1;
+  bool _epochKickScheduled = false;
+
+  void _kickDrift({bool force = false}) {
+    final branch = widget.desk.branch;
+    if (branch == null || (!force && branch == _driftBranch)) return;
+    final repo = context.read<RepositoryState>().activePath;
+    if (repo == null) return;
+    final engine = context.read<LogosGitState>().engineFor(repo);
+    if (engine == null) {
+      _driftPending = true;
+      return;
+    }
+    _driftBranch = branch;
+    _driftPending = false;
+    final isActive = repo.replaceAll(r'\', '/').toLowerCase() ==
+        widget.desk.path.replaceAll(r'\', '/').toLowerCase();
+    _computeDriftAsync(repo, branch, engine, isActive);
+  }
+
+  Future<void> _computeDriftAsync(
+      String repo, String branch, LogosGit engine, bool isActive) async {
+    final gen = ++_driftGen;
+    _driftIsActive = isActive;
+    try {
+      final r = await runGitProbe(
+        repo,
+        isActive
+            ? ['diff', '--name-only', 'HEAD']
+            : ['diff', '--name-only', 'HEAD...$branch'],
+      ).timeout(const Duration(seconds: 8), onTimeout: () =>
+          ProcessResult(0, 1, '', 'drift timeout'));
+      if (!mounted || gen != _driftGen || r.exitCode != 0) return;
+      final files = r.stdout.toString().trim().split('\n')
+          .where((s) => s.isNotEmpty)
+          .toSet();
+      if (files.isEmpty) {
+        _semanticDrift = 0;
+        _driftFiles = {};
+        if (mounted) { setState(() {}); _syncDotPulse(); }
+        return;
+      }
+      final drift = engine.spectralSpread(files);
+      if (!mounted || gen != _driftGen) return;
+      _semanticDrift = drift >= 0 ? drift : null;
+      _driftFiles = files;
+      if (mounted) { setState(() {}); _syncDotPulse(); }
+    } catch (e, stack) {
+      assert(() {
+        debugPrint('Drift computation failed: $e\n$stack');
+        return true;
+      }());
+      if (mounted && gen == _driftGen) {
+        _semanticDrift = null;
+        setState(() {});
+      }
+    }
+  }
+
   @override
   void didUpdateWidget(covariant _DeskTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.highlightSyncTarget != widget.highlightSyncTarget) {
       _syncDotPulse();
+    }
+    if (oldWidget.desk.branch != widget.desk.branch) {
+      _driftBranch = null;
+      _semanticDrift = null;
+      _kickDrift();
     }
   }
 
@@ -2089,9 +2170,13 @@ class _DeskTabState extends State<_DeskTab>
     final rate = _prefs?.motionRate ?? 1.0;
     final awake = WindowActivity.instance.awake;
     final reduce = rate <= kMotionRateOff || !awake;
-    if (widget.highlightSyncTarget && !reduce) {
+    final hasDrift = _semanticDrift != null && _semanticDrift! > 0.05;
+    if ((widget.highlightSyncTarget || hasDrift) && !reduce) {
+      final baseDuration = widget.highlightSyncTarget
+          ? _authoredPulse
+          : const Duration(seconds: 2);
       _dotPulseCtrl.duration = Duration(
-        microseconds: (_authoredPulse.inMicroseconds / rate).round().clamp(
+        microseconds: (baseDuration.inMicroseconds / rate).round().clamp(
               const Duration(milliseconds: 200).inMicroseconds,
               const Duration(seconds: 60).inMicroseconds,
             ),
@@ -2107,21 +2192,54 @@ class _DeskTabState extends State<_DeskTab>
 
   @override
   void dispose() {
+    ++_driftGen;
     _prefs?.removeListener(_onPrefsChanged);
+    (_dotPulse as CurvedAnimation).dispose();
     _dotPulseCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final repoPath = context.read<RepositoryState>().activePath;
+    final engineReady = repoPath != null
+        ? context.select<LogosGitState, bool>(
+            (s) => s.engineFor(repoPath) != null)
+        : false;
+    final epoch = context.select<RepositoryState, int>(
+        (s) => s.activationEpoch);
+    if (!_epochKickScheduled &&
+        (epoch != _lastEpoch || (_driftPending && engineReady))) {
+      _epochKickScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _epochKickScheduled = false;
+        if (!mounted) return;
+        final epochChanged = epoch != _lastEpoch;
+        if (epochChanged) _lastEpoch = epoch;
+        if (epochChanged) {
+          _kickDrift(force: true);
+        } else if (_driftPending) {
+          _kickDrift();
+        }
+      });
+    }
     final t = context.tokens;
     final d = widget.desk;
     final label = d.branch ?? (d.isDetached ? d.head.substring(0, 7) : 'desk');
     final canClose = widget.onClose != null;
     final showCloseOverDot = canClose && _hovered;
-    final dotColor = d.dirtyFileCount > 0
-        ? t.accentBright.withValues(alpha: 0.85)
-        : t.chromeBorder.withValues(alpha: 0.5);
+    final Color dotColor;
+    if (d.dirtyFileCount > 0) {
+      dotColor = t.accentBright.withValues(alpha: 0.85);
+    } else if (_semanticDrift != null && _semanticDrift! > 0.01) {
+      dotColor = _semanticDrift! < 0.3
+          ? t.stateAdded.withValues(alpha: 0.6)
+          : _semanticDrift! < 0.7
+              ? t.stateModified.withValues(alpha: 0.6)
+              : t.stateConflicted.withValues(alpha: 0.6);
+    } else {
+      dotColor = t.chromeBorder.withValues(alpha: 0.5);
+    }
 
     // Watch the desk-PR state so the tab can carry a "has local PR"
     // glyph without polling — the context-menu options change shape
@@ -2159,6 +2277,9 @@ class _DeskTabState extends State<_DeskTab>
         behind: behindN,
         lastActivity: activity?.lastActivity,
         hasLocalPr: hasLocalPr,
+        drift: _semanticDrift,
+        driftFiles: _driftFiles,
+        driftIsActive: _driftIsActive,
       ),
       waitDuration: const Duration(milliseconds: 400),
       child: LongPressDraggable<DeskDropPayload>(
@@ -2231,13 +2352,10 @@ class _DeskTabState extends State<_DeskTab>
                                     ),
                                   Transform.scale(
                                     scale: dotScale,
-                                    child: Container(
-                                      width: 6,
-                                      height: 6,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: liveDotColor,
-                                      ),
+                                    child: _DriftDot(
+                                      size: 6,
+                                      color: liveDotColor,
+                                      drift: _semanticDrift,
                                     ),
                                   ),
                                 ],
@@ -2253,13 +2371,26 @@ class _DeskTabState extends State<_DeskTab>
                             child: GestureDetector(
                               onTap: widget.onClose,
                               behavior: HitTestBehavior.opaque,
-                              child: Text(
-                                '×',
-                                style: TextStyle(
-                                  color: t.textMuted,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1,
+                              child: AnimatedBuilder(
+                                animation: _dotPulseCtrl,
+                                builder: (_, child) {
+                                  final drift = _semanticDrift ?? 0;
+                                  final angle = drift > 0.05
+                                      ? math.sin(_dotPulseCtrl.value *
+                                              math.pi * 2 * (1 + drift * 3)) *
+                                          0.003 * drift.clamp(0.0, 1.0)
+                                      : 0.0;
+                                  return Transform.rotate(
+                                      angle: angle, child: child);
+                                },
+                                child: Text(
+                                  '×',
+                                  style: TextStyle(
+                                    color: t.textMuted,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1,
+                                  ),
                                 ),
                               ),
                             ),
@@ -2321,10 +2452,6 @@ class _DeskTabState extends State<_DeskTab>
                   ],
                   if (behindN > 0) ...[
                     const SizedBox(width: 4),
-                    // Behind-of-base — warm down-chevron. Always shown when
-                    // non-zero because "you're behind" is the kind of state
-                    // where surprise is bad — better quiet awareness than
-                    // discovery on a failed merge.
                     _DeskTrendGlyph(
                       glyph: '↓',
                       count: behindN,
@@ -2350,29 +2477,62 @@ class _DeskTabState extends State<_DeskTab>
     required int behind,
     required DateTime? lastActivity,
     required bool hasLocalPr,
+    double? drift,
+    Set<String>? driftFiles,
+    bool driftIsActive = false,
   }) {
     final parts = <String>[branch];
     if (widget.highlightSyncTarget) parts.add('suggested source');
     if (dirty > 0) parts.add('$dirty modified');
     if (ahead > 0) parts.add('$ahead ahead');
     if (behind > 0) parts.add('$behind behind');
+    if (drift != null && drift > 0.01) {
+      if (driftIsActive) {
+        parts.add(drift < 0.3 ? 'focused edits'
+            : drift < 0.7 ? 'edits spread across subsystems'
+            : 'edits touching many subsystems');
+      } else {
+        parts.add(drift < 0.3 ? 'focused branch'
+            : drift < 0.7 ? 'branch spans multiple subsystems'
+            : 'structurally divergent from mainline');
+      }
+    }
     if (hasLocalPr) parts.add('local PR');
     final head = parts.join(' · ');
-    if (lastActivity == null) return head;
-    final age = DateTime.now().difference(lastActivity);
-    String rel;
-    if (age.inMinutes < 1) {
-      rel = 'just now';
-    } else if (age.inMinutes < 60) {
-      rel = '${age.inMinutes}m ago';
-    } else if (age.inHours < 24) {
-      rel = '${age.inHours}h ago';
-    } else if (age.inDays < 30) {
-      rel = '${age.inDays}d ago';
-    } else {
-      rel = '${(age.inDays / 30).floor()}mo ago';
+    final lines = <String>[head];
+    if (lastActivity != null) {
+      final age = DateTime.now().difference(lastActivity);
+      final rel = age.inMinutes < 1
+          ? 'just now'
+          : age.inMinutes < 60
+              ? '${age.inMinutes}m ago'
+              : age.inHours < 24
+                  ? '${age.inHours}h ago'
+                  : age.inDays < 30
+                      ? '${age.inDays}d ago'
+                      : '${(age.inDays / 30).floor()}mo ago';
+      lines.add('last touched $rel');
     }
-    return '$head\nlast touched $rel';
+    if (driftFiles != null && driftFiles.isNotEmpty) {
+      final groups = <String, int>{};
+      for (final f in driftFiles) {
+        final segs = f.replaceAll(r'\', '/').split('/');
+        final dir = segs.length > 1
+            ? segs.sublist(0, math.min(2, segs.length - 1)).join('/')
+            : '.';
+        groups[dir] = (groups[dir] ?? 0) + 1;
+      }
+      final sorted = groups.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final shown = sorted.take(4).toList();
+      final summary = shown
+          .map((e) => '${e.value} in ${e.key}')
+          .join(', ');
+      final shownCount = shown.fold<int>(0, (s, e) => s + e.value);
+      final remainder = driftFiles.length - shownCount;
+      lines.add(remainder > 0 ? '$summary +$remainder' : summary);
+    }
+    return lines.join('\n');
   }
 }
 
@@ -2448,9 +2608,70 @@ class _DeskTabDragFeedback extends StatelessWidget {
   }
 }
 
-/// Compact trend glyph + count. Used for ahead/behind in the desk
-/// tab so the row-level status reads as a single visual family
-/// instead of three loose pieces.
+class _DriftDot extends StatelessWidget {
+  final double size;
+  final Color color;
+  final double? drift;
+  const _DriftDot({required this.size, required this.color, this.drift});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = drift;
+    // No drift or negligible → circle (neutral)
+    if (d == null || d <= 0.01) {
+      return Container(
+        width: size, height: size,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+      );
+    }
+    // Focused → square (compact change)
+    if (d < 0.3) {
+      return Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(1),
+          color: color,
+        ),
+      );
+    }
+    // Spread → diamond (rotated square, sized so diagonal = size)
+    if (d < 0.7) {
+      final inner = size / 1.414;
+      return Transform.rotate(
+        angle: 0.785398, // 45°
+        child: Container(
+          width: inner, height: inner,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(1),
+            color: color,
+          ),
+        ),
+      );
+    }
+    // Divergent → triangle
+    return CustomPaint(
+      size: Size(size, size),
+      painter: _TrianglePainter(color: color),
+    );
+  }
+}
+
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  _TrianglePainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = color);
+  }
+  @override
+  bool shouldRepaint(_TrianglePainter old) => old.color != color;
+}
+
 class _DeskTrendGlyph extends StatelessWidget {
   final String glyph;
   final int count;

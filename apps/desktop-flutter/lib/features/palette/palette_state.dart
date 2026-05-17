@@ -36,6 +36,7 @@ class PaletteState extends ChangeNotifier {
   int _selectedIndex = 0;
   bool _isLoading = false;
   Timer? _debounce;
+  Timer? _hoverDebounce;
   PaletteContext _context = const PaletteContext();
   LogosGit? _engine;
   bool elevated = false;
@@ -79,6 +80,10 @@ class PaletteState extends ChangeNotifier {
   List<WickUnit> get wickEntries => _wickEntries;
   WickPosture? get wickPosture => _wickPosture;
   bool get hasWickResults => _wickEntries.isNotEmpty;
+  bool _wickSearching = false;
+  bool get wickSearching => _wickSearching;
+  bool get wickAvailable => _wickState != null && _wickState!.available;
+  bool get wickActive => wickAvailable || _wickSearching || _wickEntries.isNotEmpty;
 
   bool get hasPendingConfirm =>
       _pendingConfirmId != null &&
@@ -88,6 +93,7 @@ class PaletteState extends ChangeNotifier {
   @override
   void dispose() {
     _debounce?.cancel();
+    _hoverDebounce?.cancel();
     super.dispose();
   }
 
@@ -150,6 +156,7 @@ class PaletteState extends ChangeNotifier {
     _asyncEntries = [];
     _wickEntries = [];
     _wickPosture = null;
+    _wickSearching = false;
     _query = '';
     _selectedIndex = 0;
     _isLoading = false;
@@ -209,11 +216,14 @@ class PaletteState extends ChangeNotifier {
     _generation++;
     _debounce?.cancel();
     _debounce = null;
+    _hoverDebounce?.cancel();
+    _hoverDebounce = null;
     _wickState?.cancelActiveQuery();
     _staticEntries = [];
     _asyncEntries = [];
     _wickEntries = [];
     _wickPosture = null;
+    _wickSearching = false;
     _results = [];
     _query = '';
     _selectedIndex = 0;
@@ -293,6 +303,11 @@ class PaletteState extends ChangeNotifier {
     notifyListeners();
 
     final gitFuture = searchWithCache(repoPath, query, _gitCache);
+    final willWick = query.length >= 3 && _wickState != null && _wickState!.available;
+    if (willWick) {
+      _wickSearching = true;
+      notifyListeners();
+    }
     final wickFuture = _searchWick(repoPath, query);
 
     final results = await gitFuture;
@@ -301,6 +316,7 @@ class PaletteState extends ChangeNotifier {
 
     final wickResult = await wickFuture;
     if (gen != _generation) return;
+    _wickSearching = false;
     if (wickResult != null && wickResult.packet.isNotEmpty) {
       _wickEntries = wickResult.packet..sort((a, b) => a.rank.compareTo(b.rank));
       _wickPosture = wickResult.posture;
@@ -429,8 +445,20 @@ class PaletteState extends ChangeNotifier {
 
   void moveSelection(int delta) {
     if (_results.isEmpty) return;
+    _hoverDebounce?.cancel();
     _selectedIndex = (_selectedIndex + delta).clamp(0, _results.length - 1);
     notifyListeners();
+  }
+
+  void hoverSelect(int index) {
+    if (index == _selectedIndex) return;
+    if (index < 0 || index >= _results.length) return;
+    _hoverDebounce?.cancel();
+    _hoverDebounce = Timer(const Duration(milliseconds: 35), () {
+      if (index >= _results.length) return;
+      _selectedIndex = index;
+      notifyListeners();
+    });
   }
 
   void recordUsage(String id) {

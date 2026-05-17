@@ -529,7 +529,8 @@ class _CandidateCardState extends State<_CandidateCard>
                   : t.chromeBorder.withValues(alpha: 0.22),
               width: 1,
             ),
-            borderRadius: BorderRadius.circular(2),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.tinyRadius),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -573,29 +574,22 @@ class _CandidateCardState extends State<_CandidateCard>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  c.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: t.textNormal,
-                                    fontSize: 12.5,
-                                    letterSpacing: 2.0,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.05,
-                                  ),
-                                ),
-                              ),
-                              if (c.axis != null) ...[
-                                const SizedBox(width: 8),
-                                _AxisPill(axis: c.axis!, tokens: t, accent: accent),
-                              ],
-                            ],
+                          Text(
+                            c.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: t.textNormal,
+                              fontSize: 12.5,
+                              letterSpacing: 1.5,
+                              fontWeight: FontWeight.w600,
+                              height: 1.05,
+                            ),
                           ),
+                          if (c.axis != null) ...[
+                            const SizedBox(height: 3),
+                            _AxisPill(axis: c.axis!, tokens: t, accent: accent),
+                          ],
                         ],
                       ),
                     ),
@@ -965,15 +959,16 @@ class _AxisPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final geo = context.surfaceShader.geometry;
     final pill = _axisPill(axis);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
         border: Border.all(
-          color: accent.withValues(alpha: 0.35),
-          width: 0.6,
+          color: accent.withValues(alpha: 0.25),
+          width: 0.5,
         ),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(geo.badgeRadius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -981,19 +976,19 @@ class _AxisPill extends StatelessWidget {
           Text(
             pill.glyph,
             style: TextStyle(
-              color: accent.withValues(alpha: 0.85),
-              fontSize: 10,
+              color: accent.withValues(alpha: 0.6),
+              fontSize: 9,
               height: 1.0,
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 3),
           Text(
             pill.label,
             style: TextStyle(
-              color: tokens.textMuted,
-              fontSize: 8.5,
-              letterSpacing: 1.5,
-              fontWeight: FontWeight.w600,
+              color: tokens.textMuted.withValues(alpha: 0.7),
+              fontSize: 8,
+              letterSpacing: 0.8,
+              fontWeight: FontWeight.w500,
               height: 1.0,
             ),
           ),
