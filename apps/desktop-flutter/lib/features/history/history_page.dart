@@ -1320,6 +1320,7 @@ class _HistoryPageState extends State<HistoryPage> {
   bool _loading = false;
   String? _error;
   String? _selectedHash;
+  List<String> _selectedRefNames = const [];
   CommitDetailData? _detail;
   bool _detailLoading = false;
   String? _detailLoadingHash;
@@ -1399,6 +1400,8 @@ class _HistoryPageState extends State<HistoryPage> {
   String _tagInputValue = '';
   String? _tagError;
   final _tagCtrl = TextEditingController();
+  Map<String, List<String>> _createdTags = {};
+  Set<String> _deletedTags = {};
   // Stable FocusNode for the tag-input KeyboardListener. Previously a
   // fresh `FocusNode()` was constructed inline every rebuild while the
   // input was visible; each such node registered with Flutter's focus
@@ -1460,7 +1463,7 @@ class _HistoryPageState extends State<HistoryPage> {
     if (newHash != null && newHash != old.initialCommitHash) {
       final repo = context.read<RepositoryState>().activePath;
       if (repo != null && _commits.any((c) => c.commitHash == newHash)) {
-        setState(() => _selectedHash = newHash);
+        setState(() => _selectCommit(newHash));
         _loadDetail(repo, newHash);
       }
     }
@@ -1594,6 +1597,8 @@ class _HistoryPageState extends State<HistoryPage> {
       _trunkHashes = trunk;
       if (r.ok) {
         _commits = r.data!;
+        _createdTags = {};
+        _deletedTags = {};
       } else {
         _error = r.error;
       }
@@ -1611,7 +1616,7 @@ class _HistoryPageState extends State<HistoryPage> {
     final initialHash = widget.initialCommitHash;
     if (initialHash != null &&
         _commits.any((c) => c.commitHash == initialHash)) {
-      setState(() => _selectedHash = initialHash);
+      setState(() => _selectCommit(initialHash));
       await _loadDetail(repo, initialHash);
     }
     stopwatch.stop();
@@ -2004,13 +2009,26 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
+  void _selectCommit(String? hash) {
+    _selectedHash = hash;
+    if (hash != null) {
+      for (final c in _commits) {
+        if (c.commitHash == hash) {
+          _selectedRefNames = c.refNames;
+          return;
+        }
+      }
+    }
+    _selectedRefNames = const [];
+  }
+
   void _onCommitTap(int index, bool shiftKey) {
     final hash = _commits[index].commitHash;
     if (shiftKey && _selectedHash != null && _selectedHash != hash) {
       setState(() => _rebaseRangeEndIndex = index);
     } else {
       setState(() {
-        _selectedHash = hash;
+        _selectCommit(hash);
         _rebaseRangeEndIndex = null;
         _tagInputVisible = false;
         _tagInputValue = '';
@@ -2020,6 +2038,24 @@ class _HistoryPageState extends State<HistoryPage> {
       final repo = context.read<RepositoryState>().activePath;
       if (repo != null) _loadDetail(repo, hash);
     }
+  }
+
+  List<String> _gitTagsForHash(String hash, List<String> refNames) {
+    final fromRefs = refNames
+        .where((r) => r.startsWith('tag:'))
+        .map((r) => r.replaceFirst('tag: ', ''))
+        .toList();
+    final created = _createdTags[hash];
+    if (created != null) {
+      final existing = fromRefs.toSet();
+      for (final t in created) {
+        if (!existing.contains(t)) fromRefs.add(t);
+      }
+    }
+    if (_deletedTags.isNotEmpty) {
+      fromRefs.removeWhere(_deletedTags.contains);
+    }
+    return fromRefs;
   }
 
   Future<void> _createTag(String repo, String hash) async {
@@ -2033,9 +2069,28 @@ class _HistoryPageState extends State<HistoryPage> {
         _tagInputValue = '';
         _tagCtrl.clear();
         _tagError = null;
+        _deletedTags.remove(name);
+        (_createdTags[hash] ??= []).add(name);
       });
     } else {
       setState(() => _tagError = r.error);
+    }
+  }
+
+  Future<void> _deleteTag(String repo, String name) async {
+    final r = await deleteTag(repo, name);
+    if (!mounted) return;
+    if (r.ok) {
+      setState(() {
+        _deletedTags.add(name);
+        for (final list in _createdTags.values) {
+          list.remove(name);
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete tag: ${r.error}')),
+      );
     }
   }
 
@@ -2083,7 +2138,7 @@ class _HistoryPageState extends State<HistoryPage> {
       _reflog = [];
       _reflogLoaded = false;
       _detail = null;
-      _selectedHash = null;
+      _selectCommit(null);
       _clearCommitDiffState();
       // Commit detail is keyed by (repo?, hash) internally — but the
       // cache isn't qualified by repo, so without an explicit clear a
@@ -2176,7 +2231,7 @@ class _HistoryPageState extends State<HistoryPage> {
           selectedHash: _selectedHash,
           onSelected: (hash) {
             setState(() {
-              _selectedHash = hash;
+              _selectCommit(hash);
               _rebaseRangeEndIndex = null;
               _tagInputVisible = false;
               _clearCommitDiffState();
@@ -2285,6 +2340,8 @@ class _HistoryPageState extends State<HistoryPage> {
                           .read<LogosGitState>()
                           .engineFor(repoPath),
                       engineCoherences: _cachedEngineCoherences,
+                      resolvedGitTags: _gitTagsForHash(
+                          commit.commitHash, commit.refNames),
                       onTap: (shift) => _onCommitTap(i, shift),
                       onSecondaryTap: (pos) => _showCommitContextMenu(
                           context, pos, _commits[i], repoPath),
@@ -2304,7 +2361,7 @@ class _HistoryPageState extends State<HistoryPage> {
                         tokens: t,
                         onTap: () {
                           setState(() {
-                            _selectedHash = entry.commitHash;
+                            _selectCommit(entry.commitHash);
                             _rebaseRangeEndIndex = null;
                             _clearCommitDiffState();
                           });
@@ -2388,6 +2445,10 @@ class _HistoryPageState extends State<HistoryPage> {
                               tagInputValue: _tagInputValue,
                               tagController: _tagCtrl,
                               tagError: _tagError,
+                              gitTags: _gitTagsForHash(
+                                _detail!.commitHash,
+                                _selectedRefNames,
+                              ),
                               onToggleTag: () => setState(() {
                                 _tagInputVisible = !_tagInputVisible;
                                 _tagError = null;
@@ -2396,6 +2457,8 @@ class _HistoryPageState extends State<HistoryPage> {
                                   setState(() => _tagInputValue = v),
                               onCreateTag: () =>
                                   _createTag(repoPath, _detail!.commitHash),
+                              onDeleteTag: (name) =>
+                                  _deleteTag(repoPath, name),
                               onOpenFile: (path) => _openCommitFileDiff(
                                   repoPath, _detail!.commitHash, path),
                               onOpenAllFiles: () => _openCommitAllDiff(
@@ -2452,6 +2515,7 @@ class _CommitRow extends StatefulWidget {
   /// call on a wide diff). Shared reference across every row — no
   /// per-row allocation.
   final Map<String, double>? engineCoherences;
+  final List<String> resolvedGitTags;
   final void Function(bool shift) onTap;
   final ValueChanged<Offset>? onSecondaryTap;
   const _CommitRow({
@@ -2464,6 +2528,7 @@ class _CommitRow extends StatefulWidget {
     required this.couplingMatrix,
     required this.logosEngine,
     required this.engineCoherences,
+    required this.resolvedGitTags,
     required this.onTap,
     this.onSecondaryTap,
   });
@@ -2612,11 +2677,7 @@ class _CommitRowState extends State<_CommitRow> {
                 Expanded(
                   child: _FittingTagRow(
                     autoTags: _autoTagsFor(c),
-                    // Greedy fit is the only gate; show what fits.
-                    gitTagNames: c.refNames
-                        .where((r) => r.startsWith('tag:'))
-                        .map((r) => r.replaceFirst('tag: ', ''))
-                        .toList(),
+                    gitTagNames: widget.resolvedGitTags,
                     tokens: t,
                   ),
                 ),
@@ -2776,6 +2837,66 @@ class _TagPill extends StatelessWidget {
 }
 
 
+class _DetailTagPill extends StatefulWidget {
+  final String name;
+  final AppTokens tokens;
+  final VoidCallback onDelete;
+  const _DetailTagPill({
+    required this.name,
+    required this.tokens,
+    required this.onDelete,
+  });
+  @override
+  State<_DetailTagPill> createState() => _DetailTagPillState();
+}
+
+class _DetailTagPillState extends State<_DetailTagPill> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final shader = context.surfaceShader;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedContainer(
+        duration: context.motion(shader.duration),
+        curve: shader.safeCurve,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: _hovered
+              ? t.stateDeleted.withValues(alpha: 0.10)
+              : t.accentBright.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          AppIcon(
+              name: 'tag', size: 10, color: t.accentBright),
+          const SizedBox(width: 4),
+          Text(widget.name,
+              style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: AppFonts.mono,
+                  fontFamilyFallback: AppFonts.monoFallback)),
+          if (_hovered) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: widget.onDelete,
+              child: Text('✕',
+                  style: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.6),
+                      fontSize: 10)),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+}
+
 class _ReflogRow extends StatefulWidget {
   final ReflogEntryData entry;
   final AppTokens tokens;
@@ -2859,9 +2980,11 @@ class _CommitDetail extends StatelessWidget {
   final String tagInputValue;
   final TextEditingController tagController;
   final String? tagError;
+  final List<String> gitTags;
   final VoidCallback onToggleTag;
   final ValueChanged<String> onTagChanged;
   final VoidCallback onCreateTag;
+  final ValueChanged<String> onDeleteTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
   final ValueChanged<String>? onOpenDirectory;
@@ -2878,9 +3001,11 @@ class _CommitDetail extends StatelessWidget {
     required this.tagInputValue,
     required this.tagController,
     this.tagError,
+    required this.gitTags,
     required this.onToggleTag,
     required this.onTagChanged,
     required this.onCreateTag,
+    required this.onDeleteTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
     this.onOpenDirectory,
@@ -3028,6 +3153,16 @@ class _CommitDetail extends StatelessWidget {
               ),
             ),
           ),
+          for (final name in gitTags) ...[
+            Text('·',
+                style: TextStyle(
+                    color: t.textFaint, fontSize: 12)),
+            _DetailTagPill(
+              name: name,
+              tokens: t,
+              onDelete: () => onDeleteTag(name),
+            ),
+          ],
         ],
       ),
 
@@ -3130,9 +3265,11 @@ class _CommitDetailTransition extends StatelessWidget {
   final String tagInputValue;
   final TextEditingController tagController;
   final String? tagError;
+  final List<String> gitTags;
   final VoidCallback onToggleTag;
   final ValueChanged<String> onTagChanged;
   final VoidCallback onCreateTag;
+  final ValueChanged<String> onDeleteTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
   final ValueChanged<String>? onOpenDirectory;
@@ -3149,9 +3286,11 @@ class _CommitDetailTransition extends StatelessWidget {
     required this.tagInputValue,
     required this.tagController,
     this.tagError,
+    required this.gitTags,
     required this.onToggleTag,
     required this.onTagChanged,
     required this.onCreateTag,
+    required this.onDeleteTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
     this.onOpenDirectory,
@@ -3181,9 +3320,11 @@ class _CommitDetailTransition extends StatelessWidget {
             tagInputValue: tagInputValue,
             tagController: tagController,
             tagError: tagError,
+            gitTags: gitTags,
             onToggleTag: onToggleTag,
             onTagChanged: onTagChanged,
             onCreateTag: onCreateTag,
+            onDeleteTag: onDeleteTag,
             onOpenFile: onOpenFile,
             onOpenAllFiles: onOpenAllFiles,
             onOpenDirectory: onOpenDirectory,

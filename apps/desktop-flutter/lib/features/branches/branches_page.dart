@@ -3688,6 +3688,9 @@ class _BranchesPageState extends State<BranchesPage> {
           ? () => _checkoutLocalPr(pr.headRef)
           : () => _checkoutPr(repoPath, pr.number),
       onOpenAsDesk: isLocalPr ? null : () => _openPrAsDesk(repoPath, pr),
+      onAiReview: context.read<PreferencesState>().hideAiFeatures
+          ? null
+          : () => _runPrAiReview(repoPath, pr),
       onMerge: isLocalPr
           ? (method, deleteBranch) {
               final mainPath = _mainWorktreePath();
@@ -5230,6 +5233,7 @@ class _PullRequestRow extends StatefulWidget {
   /// toolbar (and the row's right-click menu). Null for local PRs
   /// (which are already a desk).
   final VoidCallback? onOpenAsDesk;
+  final VoidCallback? onAiReview;
   final void Function(String method, bool deleteBranch) onMerge;
 
   const _PullRequestRow({
@@ -5276,6 +5280,7 @@ class _PullRequestRow extends StatefulWidget {
     required this.onCheckout,
     required this.onMerge,
     this.onOpenAsDesk,
+    this.onAiReview,
   });
 
   @override
@@ -5565,6 +5570,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             onSubmitReview: widget.onSubmitReview,
                             onCheckout: widget.onCheckout,
                             onOpenAsDesk: widget.onOpenAsDesk,
+                            onAiReview: widget.onAiReview,
                             onMerge: widget.onMerge,
                           )
                         : const SizedBox.shrink(),
@@ -6740,6 +6746,7 @@ class _PrExpanded extends StatelessWidget {
   /// button before `checkout`. Null for local PRs (which already have
   /// their own desk by definition).
   final VoidCallback? onOpenAsDesk;
+  final VoidCallback? onAiReview;
   final void Function(String method, bool deleteBranch) onMerge;
 
   const _PrExpanded({
@@ -6770,6 +6777,7 @@ class _PrExpanded extends StatelessWidget {
     required this.onCheckout,
     required this.onMerge,
     this.onOpenAsDesk,
+    this.onAiReview,
   });
 
   /// True when at least one geometric orbital partner exists for this
@@ -6995,6 +7003,7 @@ class _PrExpanded extends StatelessWidget {
             mergeable: pr.mergeable == 'MERGEABLE',
             onCheckout: onCheckout,
             onOpenAsDesk: onOpenAsDesk,
+            onAiReview: onAiReview,
             onMerge: onMerge,
             stateOpen: pr.state == 'OPEN',
             canExportPatch: detail != null && detail!.diff.isNotEmpty,
@@ -8698,6 +8707,7 @@ class _PrActionToolbar extends StatefulWidget {
   /// (which already have their own desk by definition).
   final VoidCallback? onOpenAsDesk;
   final VoidCallback? onExportPatch;
+  final VoidCallback? onAiReview;
   final void Function(String method, bool deleteBranch) onMerge;
   const _PrActionToolbar({
     required this.mergeable,
@@ -8707,6 +8717,7 @@ class _PrActionToolbar extends StatefulWidget {
     this.canExportPatch = false,
     this.onExportPatch,
     this.onOpenAsDesk,
+    this.onAiReview,
   });
   @override
   State<_PrActionToolbar> createState() => _PrActionToolbarState();
@@ -8733,10 +8744,12 @@ class _PrActionToolbarState extends State<_PrActionToolbar> {
               label: '↓ patch',
               onTap: widget.onExportPatch!,
             ),
+          if (widget.onAiReview != null)
+            _ActionButton(
+              label: '✦ pr review',
+              onTap: widget.onAiReview!,
+            ),
           if (widget.onOpenAsDesk != null)
-            // Promoted from the right-click menu so the killer
-            // parallelism move (review a PR in its own worktree, with
-            // full filesystem + IDE) reads as primary.
             _ActionButton(
               label: '⊞ open as desk',
               onTap: widget.onOpenAsDesk!,
