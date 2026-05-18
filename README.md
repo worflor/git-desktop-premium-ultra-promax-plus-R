@@ -53,6 +53,7 @@ Cellshaded comic book page, cosmic glass in three unique perspectives... you get
 | <img src="pics/changes-kirby.webp" alt="Changes page — Kirby" width="400"> | <img src="pics/history-petrichor.webp" alt="History — Petrichor" width="400"> |
 | <img src="pics/xray-lady-entropy.webp" alt="X-Ray — Lady Entropy" width="400"> | <img src="pics/orbits-phosphor.webp" alt="Orbital PRs — Phosphor" width="400"> |
 | <img src="pics/merge-bibble.webp" alt="3-way merge resolver — Bibble" width="400"> | <img src="pics/line-staging-aether.webp" alt="Line-level diff staging — Aether" width="400"> |
+| <img src="pics/palette-redshift.webp" alt="Command palette — Redshift" width="400"> | <img src="pics/manifold-view-nacre.webp" alt="Geometric co-change viewer — Nacre" width="400"> |
 
 ## Status
 
