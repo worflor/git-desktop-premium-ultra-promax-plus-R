@@ -13,6 +13,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/logos_vis_events.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/motion.dart';
@@ -116,6 +117,9 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   final List<({double birthMs, double noveltyMass})> _recurrentRipples = [];
   double _recurrentNoveltyBaseline = 0.0;
 
+  Map<String, double> _flowGaps = const {};
+  double _flowMeanFragility = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -207,6 +211,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _hunkRankings = const [];
       _recurrentRipples.clear();
       _recurrentNoveltyBaseline = 0.0;
+      _flowGaps = const {};
+      _flowMeanFragility = 0.0;
       // Starfield keeps its existing birth — no reason to re-fade it.
       for (final e in _Element.values) {
         if (e != _Element.starfield) _birth[e] = -1.0;
@@ -273,6 +279,25 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _birth[_Element.footer] = now;
       _birth[_Element.budgetMeter] = now + 350;
       _phase = _Phase.ranked;
+      wantSetState = true;
+    } else if (event is LogosVisFlowAnalysis) {
+      _flowGaps = event.spectralGaps;
+      if (event.spectralGaps.isNotEmpty) {
+        var weightedSum = 0.0;
+        var totalWeight = 0.0;
+        for (final entry in event.spectralGaps.entries) {
+          final w = _sourceWeights[entry.key] ?? 0.0;
+          final phi = w > 0 ? w : 1.0;
+          weightedSum += filamentSat(entry.value) * phi;
+          totalWeight += phi;
+        }
+        _flowMeanFragility = totalWeight > 0
+            ? (weightedSum / totalWeight).clamp(0.0, 1.0)
+            : 0.0;
+      } else {
+        _flowMeanFragility = 0.0;
+      }
+      _birth[_Element.flowAnalysis] = now;
       wantSetState = true;
     } else if (event is LogosVisTransmit) {
       _birth[_Element.transmitBeam] = now;
@@ -755,6 +780,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
                   phase: _phase,
                   recurrentRipples: _recurrentRipples,
                   recurrentNoveltyBaseline: _recurrentNoveltyBaseline,
+                  flowGaps: _flowGaps,
+                  flowMeanFragility: _flowMeanFragility,
                 ),
               ),
                 ),
@@ -861,6 +888,8 @@ enum _Element {
   /// map lands. Plays on top of the first wavefront so the two phases
   /// flow together rather than cutting.
   reseedWavefront,
+
+  flowAnalysis,
 }
 
 /// Observatory-chart painter.
@@ -900,6 +929,8 @@ class _LogosDiffusionPainter extends CustomPainter {
   final Map<String, Offset> spokeDrag;
   final List<({double birthMs, double noveltyMass})> recurrentRipples;
   final double recurrentNoveltyBaseline;
+  final Map<String, double> flowGaps;
+  final double flowMeanFragility;
 
   _LogosDiffusionPainter({
     required this.tokens,
@@ -925,6 +956,8 @@ class _LogosDiffusionPainter extends CustomPainter {
     required this.phase,
     required this.recurrentRipples,
     required this.recurrentNoveltyBaseline,
+    required this.flowGaps,
+    required this.flowMeanFragility,
   });
 
   /// Smoothstep envelope since birth, clamped to [0, 1]. Holds at 1.
@@ -989,6 +1022,8 @@ class _LogosDiffusionPainter extends CustomPainter {
       phase: phase,
       recurrentRipples: recurrentRipples,
       recurrentNoveltyBaseline: recurrentNoveltyBaseline,
+      flowGaps: flowGaps,
+      flowMeanFragility: flowMeanFragility,
     );
     p.paint();
   }
@@ -1018,7 +1053,8 @@ class _LogosDiffusionPainter extends CustomPainter {
         !identical(old.phi, phi) ||
         !identical(old.wellByPath, wellByPath) ||
         !identical(old.hunkRankings, hunkRankings) ||
-        old.budgetFraction != budgetFraction;
+        old.budgetFraction != budgetFraction ||
+        !identical(old.flowGaps, flowGaps);
   }
 }
 
@@ -1059,6 +1095,8 @@ class _TopoPainter {
   final _Phase phase;
   final List<({double birthMs, double noveltyMass})> recurrentRipples;
   final double recurrentNoveltyBaseline;
+  final Map<String, double> flowGaps;
+  final double flowMeanFragility;
 
   _TopoPainter({
     required this.canvas,
@@ -1085,9 +1123,16 @@ class _TopoPainter {
     required this.phase,
     required this.recurrentRipples,
     required this.recurrentNoveltyBaseline,
+    required this.flowGaps,
+    required this.flowMeanFragility,
   });
 
+  late double _flowEnv;
+  late bool _hasFlowData;
+
   void paint() {
+    _flowEnv = envFor(_Element.flowAnalysis, fadeMs: 1400);
+    _hasFlowData = _flowEnv > 0 && flowGaps.isNotEmpty;
     // Back-to-front so brighter elements sit on top.
     _paintStarfield();
     _paintDreamingPulse();
@@ -1132,9 +1177,8 @@ class _TopoPainter {
     final maxPhi = phiSortedDesc.first.value;
     if (maxPhi <= 0) return;
 
-    // 16 is the visual budget — past that it becomes a hairball.
     final k = math.min(16, phiSortedDesc.length);
-    final inner = maxRadius * 0.075; // clear the aura
+    final inner = maxRadius * 0.075;
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.8
@@ -1145,11 +1189,9 @@ class _TopoPainter {
       final phiNorm = (e.value / maxPhi).clamp(0.0, 1.0);
       if (phiNorm < 0.05) continue;
 
-      // Rank-staggered fade-in: strongest arcs appear first.
       final rankT = ((env - (i / k) * 0.5) / 0.5).clamp(0.0, 1.0);
       if (rankT <= 0) continue;
 
-      // Must match _paintNeighbourNodes so the arc ends at the node.
       final settleR = maxRadius * (0.34 + (1.0 - phiNorm) * 0.55);
       final well = wellByPath[e.key];
       final sector = well != null ? wellLayout[well] : null;
@@ -1165,9 +1207,23 @@ class _TopoPainter {
       final tx = center.dx + settleR * math.cos(theta);
       final ty = center.dy + settleR * math.sin(theta);
 
-      final baseColour = well != null ? _wellColour(well) : tokens.accentBright;
+      var baseColour = well != null ? _wellColour(well) : tokens.accentBright;
+      var blur = 0.0;
+      if (_hasFlowData) {
+        final gap = flowGaps[e.key];
+        if (gap != null) {
+          final frag = filamentSat(gap) * _flowEnv;
+          if (frag > 0.01) {
+            baseColour = Color.lerp(baseColour, tokens.stateFragile, frag * 0.5)!;
+            blur = 2.5 * frag;
+          }
+        }
+      }
       final alpha = (0.10 + 0.28 * phiNorm) * _smoothstep(rankT);
       paint.color = baseColour.withValues(alpha: alpha);
+      paint.maskFilter = blur > 0.1
+          ? MaskFilter.blur(BlurStyle.normal, blur)
+          : null;
       canvas.drawLine(Offset(sx, sy), Offset(tx, ty), paint);
     }
   }
@@ -1398,7 +1454,16 @@ class _TopoPainter {
       final dx = center.dx + settleR * math.cos(theta);
       final dy = center.dy + settleR * math.sin(theta);
 
-      final baseColour = well != null ? _wellColour(well) : tokens.accentBright;
+      var baseColour = well != null ? _wellColour(well) : tokens.accentBright;
+      if (_hasFlowData) {
+        final gap = flowGaps[e.key];
+        if (gap != null) {
+          final frag = filamentSat(gap) * _flowEnv;
+          if (frag > 0.01) {
+            baseColour = Color.lerp(baseColour, tokens.stateFragile, frag)!;
+          }
+        }
+      }
       final alpha = (0.30 + 0.60 * phiNorm) * localIntensity;
       corePaint.color = baseColour.withValues(alpha: alpha.clamp(0.0, 1.0));
       final radius = (1.4 + 2.4 * phiNorm) * (0.7 + 0.3 * localIntensity);
@@ -1449,6 +1514,8 @@ class _TopoPainter {
       ];
     }
 
+    final frag = _hasFlowData ? flowMeanFragility * _flowEnv : 0.0;
+
     for (var k = 0; k < ringRadii.length; k++) {
       final localT = ((env - k * 0.18) / 0.6).clamp(0.0, 1.0);
       if (localT <= 0) continue;
@@ -1456,10 +1523,14 @@ class _TopoPainter {
       final r = ringRadii[k] * eased;
       if (r <= 0) continue;
       final ringAlpha = 0.22 + 0.10 * (1.0 - localT);
+      final baseWidth = 1.0 + 0.4 * (1.0 - k / ringRadii.length);
       final paint = Paint()
         ..color = tokens.accentBright.withValues(alpha: ringAlpha.clamp(0, 1))
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0 + 0.4 * (1.0 - k / ringRadii.length);
+        ..strokeWidth = baseWidth + 1.2 * frag;
+      if (frag > 0.05) {
+        paint.maskFilter = MaskFilter.blur(BlurStyle.normal, 1.0 + 2.5 * frag);
+      }
       canvas.drawCircle(center, r, paint);
     }
   }
@@ -1479,18 +1550,22 @@ class _TopoPainter {
         0, (a, e) => e.value > a ? e.value : a);
     if (maxWeight <= 0) return;
 
+    final flowBirth = birth[_Element.flowAnalysis]!;
+    final aggFrag = _hasFlowData ? flowMeanFragility * _flowEnv : 0.0;
+    final coreColor = aggFrag > 0.01
+        ? Color.lerp(tokens.accentBright, tokens.stateFragile, aggFrag)!
+        : tokens.accentBright;
+
     final auraAlpha = 0.30 * env;
     final auraR = maxRadius * 0.065;
     final aura = Paint()
-      ..color = tokens.accentBright.withValues(alpha: auraAlpha)
+      ..color = coreColor.withValues(alpha: auraAlpha)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, auraR * 0.8);
     canvas.drawCircle(center, auraR, aura);
 
-    // Diamond half-extent encodes churn via log1p/log(1000): ~2.2px
-    // at a tiny change, saturating near 5.6px beyond 1000 lines.
     final anchorAlpha = 0.92 * env;
     final anchor = Paint()
-      ..color = tokens.accentBright.withValues(alpha: anchorAlpha);
+      ..color = coreColor.withValues(alpha: anchorAlpha);
     final churnT =
         (math.log(1 + churn.clamp(0, 100000)) / math.log(1000)).clamp(0.0, 1.0);
     final d0 = 2.2 + 3.4 * churnT;
@@ -1510,16 +1585,10 @@ class _TopoPainter {
       ..strokeWidth = 1.2;
 
     final tipPaint = Paint();
+    final hasFlow = flowBirth >= 0 && flowGaps.isNotEmpty;
 
     for (var i = 0; i < entries.length; i++) {
       final e = entries[i];
-      // Deterministic per-path angle. Index-based distribution would
-      // re-shuffle every spoke when the source map grows (e.g. muse
-      // reseeding the diff anchors with brainstorm-surfaced paths);
-      // hashing the path locks each spoke to a fixed position so the
-      // existing ones stay put and new ones slot in between them.
-      // Single-file case still points straight up so a small change
-      // reads clean.
       final theta = entries.length == 1
           ? -math.pi / 2
           : _unitHash(e.key) * 2 * math.pi - math.pi / 2;
@@ -1529,18 +1598,35 @@ class _TopoPainter {
       final sy = center.dy + spokeInner * math.sin(theta);
       final restTx = center.dx + len * math.cos(theta);
       final restTy = center.dy + len * math.sin(theta);
-      // Per-spoke drag offset — user grabbed this tip and pulled it.
       final drag = spokeDrag[e.key] ?? Offset.zero;
       final tx = restTx + drag.dx;
       final ty = restTy + drag.dy;
 
-      spokeStroke.color = tokens.accentBright
+      var spokeColor = tokens.accentBright;
+      if (hasFlow) {
+        final gap = flowGaps[e.key];
+        if (gap != null) {
+          // Per-spoke cascade: highest-weight spokes reveal first.
+          final spokeDelay = (1.0 - norm) * 450.0;
+          final spokeT = ((nowMs - flowBirth - spokeDelay) / 1400.0)
+              .clamp(0.0, 1.0);
+          final spokeEnv = spokeT * spokeT * (3 - 2 * spokeT);
+          // Physical curve: 1 - exp(-gap) maps spectral gap to [0, 1).
+          final frag = filamentSat(gap) * spokeEnv;
+          if (frag > 0.01) {
+            spokeColor = Color.lerp(
+                tokens.accentBright, tokens.stateFragile, frag)!;
+          }
+        }
+      }
+
+      spokeStroke.color = spokeColor
           .withValues(alpha: (0.35 + 0.45 * norm) * env);
       canvas.drawLine(Offset(sx, sy), Offset(tx, ty), spokeStroke);
 
       final tipR = 1.4 + 1.8 * norm;
       tipPaint.color =
-          tokens.accentBright.withValues(alpha: (0.70 + 0.25 * norm) * env);
+          spokeColor.withValues(alpha: (0.70 + 0.25 * norm) * env);
       canvas.drawCircle(Offset(tx, ty), tipR, tipPaint);
     }
   }

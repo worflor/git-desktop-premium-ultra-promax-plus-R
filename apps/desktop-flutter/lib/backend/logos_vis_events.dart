@@ -206,6 +206,15 @@ class LogosVisRecurrentStep extends LogosVisEvent {
   final double tpWeight;
 }
 
+/// Filament flow analysis landed. Higher gap = more fragile.
+class LogosVisFlowAnalysis extends LogosVisEvent {
+  const LogosVisFlowAnalysis(
+    super.sessionId, {
+    required this.spectralGaps,
+  });
+  final Map<String, double> spectralGaps;
+}
+
 /// Context sealed and sent to the model. Canvas renders the beam.
 class LogosVisTransmit extends LogosVisEvent {
   const LogosVisTransmit(super.sessionId);

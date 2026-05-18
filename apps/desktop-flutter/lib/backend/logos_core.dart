@@ -60,6 +60,7 @@ import 'dart:typed_data';
 import 'logos_signature.dart';
 import 'lru_cache.dart';
 
+part 'logos_flow_math.dart';
 part 'logos_generative.dart';
 part 'logos_groundspace.dart';
 part 'logos_heat.dart';

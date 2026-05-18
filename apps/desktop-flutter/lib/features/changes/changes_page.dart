@@ -36,6 +36,9 @@ import '../../backend/logos_hunks.dart' as hunks;
 import '../../backend/file_layout.dart';
 import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
+import '../../backend/logos_core.dart' show filamentSat;
+import '../../backend/logos_flow.dart'
+    show analyzeFlowCached;
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/logos_dream.dart';
@@ -578,6 +581,10 @@ class _ChangesPageState extends State<ChangesPage> {
   // structural coupling score even before their first commit.
   Map<String, Map<String, double>> _symbolCoupling = const {};
   String? _symbolCouplingFetchedForKey;
+
+  // per-file spectral gap from Filament
+  Map<String, double> _flowFragility = const {};
+  String? _flowFragilityKey;
 
   // Filing cabinet (stashes)
   List<StashEntryData> _stashes = const [];
@@ -2051,6 +2058,34 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   double _fileDimFor(String path) => _fileDimOpacity[path] ?? 1.0;
+
+  void _sortByFragilityWithinClusters(
+      List<RepositoryStatusFile> files, FileClusters clusters) {
+    final n = files.length;
+    if (n < 2) return;
+    var i = 0;
+    while (i < n) {
+      final cid = clusters.byPath[files[i].path] ??
+          FileClusters.clusterIdIsolated;
+      var j = i + 1;
+      while (j < n &&
+          (clusters.byPath[files[j].path] ??
+                  FileClusters.clusterIdIsolated) ==
+              cid) {
+        j++;
+      }
+      if (j - i > 1) {
+        final sub = files.sublist(i, j);
+        sub.sort((a, b) {
+          final ga = _flowFragility[a.path] ?? 0.0;
+          final gb = _flowFragility[b.path] ?? 0.0;
+          return gb.compareTo(ga);
+        });
+        files.setRange(i, j, sub);
+      }
+      i = j;
+    }
+  }
 
   /// Reconcile [_includedPaths] against [status].
   ///
@@ -5383,6 +5418,35 @@ class _ChangesPageState extends State<ChangesPage> {
         setState(() => _symbolCoupling = sym);
       });
     }
+    // flow fragility
+    if (_flowFragilityKey != couplingStateKey) {
+      _flowFragilityKey = couplingStateKey;
+      final filePaths = status?.files.map((f) => f.path).toList() ?? [];
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted || _flowFragilityKey != couplingStateKey) return;
+        final gaps = <String, double>{};
+        final staleKey = couplingStateKey;
+        const concurrency = 8;
+        for (var i = 0; i < filePaths.length; i += concurrency) {
+          if (!mounted || _flowFragilityKey != staleKey) return;
+          final batch = filePaths.skip(i).take(concurrency).map((fp) async {
+            try {
+              final result = await analyzeFlowCached(p.join(repoPath, fp));
+              if (result != null && result.spectralGap > 0) {
+                return (fp, result.spectralGap);
+              }
+            } catch (_) {}
+            return null;
+          });
+          final results = await Future.wait(batch);
+          for (final r in results) {
+            if (r != null) gaps[r.$1] = r.$2;
+          }
+        }
+        if (!mounted || _flowFragilityKey != staleKey) return;
+        setState(() => _flowFragility = gaps);
+      });
+    }
     // Detect repo or branch switch — cancel any pending saves,
     // then load the correct draft.
     final currentBranch = status?.branch;
@@ -5867,6 +5931,10 @@ class _ChangesPageState extends State<ChangesPage> {
                                         ordered.add(f);
                                       }
                                     }
+                                    if (_flowFragility.isNotEmpty) {
+                                      _sortByFragilityWithinClusters(
+                                          ordered, clusters);
+                                    }
                                     if (_constellationOpen &&
                                         status.files.length >= 2) {
                                       final obsEngine = context.read<LogosGitState>().engineFor(repoPath);
@@ -5884,6 +5952,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                         includedPaths: _includedPaths,
                                         tokens: t,
                                         observerCounts: obsCounts,
+                                        flowFragility: _flowFragility,
                                         onToggleIncluded: (path, value) =>
                                             _toggleIncluded(path, value),
                                         onCarve: (paths) {
@@ -5993,6 +6062,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                           peerScore: peerScore,
                                           isRailSubject: isRailSubject,
                                           dimOpacity: _fileDimFor(file.path),
+                                          flowFragility:
+                                              _flowFragility[file.path] ?? 0.0,
                                           onRailEnter: inRealCluster
                                               ? () {
                                                   if (_railHoverPath !=
@@ -11536,6 +11607,8 @@ class _FileRow extends StatefulWidget {
   /// legibility.
   final double dimOpacity;
 
+  final double flowFragility;
+
   const _FileRow({
     required this.file,
     required this.tokens,
@@ -11554,6 +11627,7 @@ class _FileRow extends StatefulWidget {
     this.onSecondaryTap,
     this.onClusterToggle,
     this.dimOpacity = 1.0,
+    this.flowFragility = 0.0,
   });
 
   @override
@@ -11643,13 +11717,23 @@ class _FileRowState extends State<_FileRow> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                   decoration: BoxDecoration(
-                    color: widget.isDiffSelected
-                        ? t.chromeBorder.withValues(alpha: 0.1)
-                        : (widget.included
-                            ? t.stateAdded.withValues(alpha: 0.05)
-                            : (_hovered
-                                ? t.itemHoverBg
-                                : t.itemHoverBg.withValues(alpha: 0))),
+                    color: () {
+                      var bg = widget.isDiffSelected
+                          ? t.chromeBorder.withValues(alpha: 0.1)
+                          : (widget.included
+                              ? t.stateAdded.withValues(alpha: 0.05)
+                              : (_hovered
+                                  ? t.itemHoverBg
+                                  : t.itemHoverBg.withValues(alpha: 0)));
+                      if (widget.flowFragility > 0) {
+                        final f = filamentSat(widget.flowFragility);
+                        bg = Color.lerp(
+                            bg,
+                            t.stateFragile.withValues(alpha: 0.09),
+                            f)!;
+                      }
+                      return bg;
+                    }(),
                     borderRadius: BorderRadius.circular(
                         context.surfaceShader.geometry.radius),
                     border: Border.all(

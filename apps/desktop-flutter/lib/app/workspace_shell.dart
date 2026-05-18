@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../main.dart' show manifoldRouteObserver;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
@@ -65,7 +66,8 @@ class WorkspaceShell extends StatefulWidget {
   State<WorkspaceShell> createState() => _WorkspaceShellState();
 }
 
-class _WorkspaceShellState extends State<WorkspaceShell> {
+class _WorkspaceShellState extends State<WorkspaceShell>
+    with RouteAware {
   final Stopwatch _mountedAt = Stopwatch()..start();
   final FocusNode _shellFocusNode = FocusNode(debugLabel: 'workspace-shell');
   _WorkspaceMode _mode = _WorkspaceMode.changes;
@@ -80,6 +82,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   // panel toggles don't re-focus.
   SettingsSection? _pendingSettingsFocus;
   SettingsNavigationState? _settingsNavState;
+  ModalRoute<dynamic>? _subscribedRoute;
 
   @override
   void initState() {
@@ -99,11 +102,26 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && route != _subscribedRoute) {
+      if (_subscribedRoute != null) {
+        manifoldRouteObserver.unsubscribe(this);
+      }
+      manifoldRouteObserver.subscribe(this, route);
+      _subscribedRoute = route;
+    }
     final navState = context.read<SettingsNavigationState>();
     if (!identical(_settingsNavState, navState)) {
       _settingsNavState?.removeListener(_onSettingsNavChanged);
       _settingsNavState = navState;
       navState.addListener(_onSettingsNavChanged);
+    }
+  }
+
+  @override
+  void didPopNext() {
+    if (_panel == _Panel.none) {
+      _shellFocusNode.requestFocus();
     }
   }
 
@@ -145,6 +163,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
 
   @override
   void dispose() {
+    manifoldRouteObserver.unsubscribe(this);
+    _subscribedRoute = null;
     _settingsNavState?.removeListener(_onSettingsNavChanged);
     _shellFocusNode.dispose();
     super.dispose();

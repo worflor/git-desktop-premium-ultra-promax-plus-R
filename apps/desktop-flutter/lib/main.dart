@@ -71,6 +71,9 @@ class _SmoothScrollBehavior extends MaterialScrollBehavior {
       );
 }
 
+final RouteObserver<ModalRoute<void>> manifoldRouteObserver =
+    RouteObserver<ModalRoute<void>>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -339,6 +342,7 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(tokens),
       scrollBehavior: const _SmoothScrollBehavior(),
+      navigatorObservers: [manifoldRouteObserver],
       home: const _RootTickerMute(
         child: LiquidGlassProviderWithSwitcher(),
       ),

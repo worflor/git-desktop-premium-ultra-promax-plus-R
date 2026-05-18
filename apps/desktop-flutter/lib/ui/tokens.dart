@@ -388,6 +388,7 @@ class AppTokens {
   final Color stateModified;
   final Color stateDeleted;
   final Color stateConflicted;
+  final Color stateFragile;
   final Color stateStaged;
   final Color accentBright;
   final Color eventStartTone;
@@ -470,6 +471,7 @@ class AppTokens {
         stateModified = Color(colors[11]),
         stateDeleted = Color(colors[12]),
         stateConflicted = Color(colors[13]),
+        stateFragile = _deriveAmber(Color(colors[13])),
         stateStaged = Color(colors[14]),
         accentBright = Color(colors[15]),
         chromeBorder = Color(colors[16]),
@@ -513,6 +515,16 @@ class AppTokens {
 
   static AppTokens fromId(AppThemeId id) =>
       _tokens[id] ?? _tokens[defaultThemeId]!;
+
+  static Color _deriveAmber(Color conflicted) {
+    final hsl = HSLColor.fromColor(conflicted);
+    return HSLColor.fromAHSL(
+      hsl.alpha,
+      45.0, // amber hue
+      hsl.saturation * 0.8,
+      hsl.lightness,
+    ).toColor();
+  }
 }
 
 final _tokens = <AppThemeId, AppTokens>{

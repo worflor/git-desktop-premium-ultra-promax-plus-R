@@ -97,6 +97,7 @@ class HunkRanking {
     this.witnessResidual = 0.0,
     this.fileEvidenceWitnesses = const [],
     this.fileWitnesses = const [],
+    this.spectralGap = 0.0,
   });
   final DiffHunk hunk;
   final double phi;
@@ -125,6 +126,8 @@ class HunkRanking {
   /// Parent-file witness labels inherited from LogosGit evidence. This
   /// carries file-level admission rationale down into hunk emission.
   final List<String> fileWitnesses;
+
+  final double spectralGap;
 }
 
 // Parser â€” unified diff â†’ List<DiffHunk>
@@ -1027,11 +1030,8 @@ HunkDiffusionResult rankHunksByPhi({
   LogosGit? logosEngine,
   EngramAssets? engramAssets,
   HunkFileEvidence? fileEvidence,
+  Map<String, double> flowGaps = const {},
 }) {
-  // Resolve the engine-side coupling prior on the calling thread (it
-  // touches the engine, which we don't want to ship across an isolate).
-  // Then dispatch the heavy graph build + Chebyshev to the pure-data
-  // core path.
   final resolvedFileEvidence =
       fileEvidence ?? _resolveFileCoupling(hunks, logosEngine);
   return _rankHunksByPhiCore(
@@ -1041,6 +1041,7 @@ HunkDiffusionResult rankHunksByPhi({
     fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
     fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
     engramAssets: engramAssets,
+    flowGaps: flowGaps,
   );
 }
 
@@ -1058,10 +1059,10 @@ Future<HunkDiffusionResult> rankHunksByPhiAsync({
   LogosGit? logosEngine,
   EngramAssets? engramAssets,
   HunkFileEvidence? fileEvidence,
+  Map<String, double> flowGaps = const {},
 }) async {
   final resolvedFileEvidence =
       fileEvidence ?? _resolveFileCoupling(hunks, logosEngine);
-  // Trivial cases â€” skip the isolate hop's serialisation cost.
   if (hunks.length <= 1) {
     return _rankHunksByPhiCore(
       hunks: hunks,
@@ -1070,6 +1071,7 @@ Future<HunkDiffusionResult> rankHunksByPhiAsync({
       fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
       fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
       engramAssets: engramAssets,
+      flowGaps: flowGaps,
     );
   }
   return Isolate.run<HunkDiffusionResult>(
@@ -1080,6 +1082,7 @@ Future<HunkDiffusionResult> rankHunksByPhiAsync({
       fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
       fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
       engramAssets: engramAssets,
+      flowGaps: flowGaps,
     ),
     debugName: 'rankHunksByPhi',
   );
@@ -1155,6 +1158,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
   required Map<String, List<String>> fileWitnessesByPath,
   required Map<String, List<LogosEvidenceWitness>> fileEvidenceWitnessesByPath,
   EngramAssets? engramAssets,
+  Map<String, double> flowGaps = const {},
 }) {
   final n = hunks.length;
   if (n == 0) {
@@ -1222,7 +1226,13 @@ HunkDiffusionResult _rankHunksByPhiCore({
   final rho = Float64List(n);
   var totalMass = 0.0;
   for (var i = 0; i < n; i++) {
-    final m = math.log(1.0 + hunks[i].bytes);
+    var m = math.log(1.0 + hunks[i].bytes);
+    if (m > 0 && flowGaps.isNotEmpty) {
+      final gap = flowGaps[hunks[i].filePath];
+      if (gap != null && gap > 0) {
+        m *= 1.0 + filamentSat(gap);
+      }
+    }
     rho[i] = m > 0 ? m : 0.0;
     totalMass += rho[i];
   }
@@ -1305,6 +1315,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
       fileEvidenceWitnesses:
           fileEvidenceWitnessesByPath[hunks[id].filePath] ?? const [],
       fileWitnesses: fileWitnessesByPath[hunks[id].filePath] ?? const [],
+      spectralGap: flowGaps[hunks[id].filePath] ?? 0.0,
     ));
   }
   return HunkDiffusionResult(
@@ -1441,8 +1452,11 @@ HunkPackResult packHunksUnderBudget({
       // lines between hunks, so the output stays applicable when
       // emitted for that purpose.
       if (ranking != null && ranking.wellName != null) {
+        final gapStr = ranking.spectralGap > 0
+            ? ' gap=${ranking.spectralGap.toStringAsFixed(2)}'
+            : '';
         buf.writeln(
-            '<!-- engram well=${ranking.wellName} phi=${ranking.phi.toStringAsFixed(3)} -->');
+            '<!-- engram well=${ranking.wellName} phi=${ranking.phi.toStringAsFixed(3)}$gapStr -->');
       }
       buf.write(h.body);
     }

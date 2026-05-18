@@ -25,7 +25,7 @@ lands and tells you what it finds. Git-Logos is built on top of the
 
 What that looks like in practice:
 
-- Manifold can map your diff to external file context automatically using repo history and the graph itself.
+- Manifold can map your diff to external file context automatically using repo history, the spectral graph, and the source's logistical operations and flow itself.
   - Use non-agentic LLM-powered Review Commit with logos-backed context gathering. Cheap, efficient, thorough.
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
 - View changes by *geometric Atlas* rather than by file.
@@ -46,7 +46,13 @@ Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude i
 Cellshaded comic book page, cosmic glass in three unique perspectives... you get the point.
 
 ## Pics or it didn't happen
-<it didnt happen>
+
+| | |
+|:---:|:---:|
+| <img src="pics/code-review.webp" alt="Code review — Nightwalker" width="400"> | <img src="pics/review-result-blackboard.webp" alt="Code review result — Blackboard" width="400"> |
+| <img src="pics/changes-kirby.webp" alt="Changes page — Kirby" width="400"> | <img src="pics/history-petrichor.webp" alt="History — Petrichor" width="400"> |
+| <img src="pics/xray-lady-entropy.webp" alt="X-Ray — Lady Entropy" width="400"> | <img src="pics/orbits-phosphor.webp" alt="Orbital PRs — Phosphor" width="400"> |
+| <img src="pics/merge-bibble.webp" alt="3-way merge resolver — Bibble" width="400"> | <img src="pics/line-staging-aether.webp" alt="Line-level diff staging — Aether" width="400"> |
 
 ## Status
 

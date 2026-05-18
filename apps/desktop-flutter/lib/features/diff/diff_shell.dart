@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import 'package:flutter/foundation.dart' show listEquals, mapEquals, setEquals;
 import 'package:flutter/gestures.dart' show kPrimaryButton, kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -22,6 +24,7 @@ import '../../backend/diff_logos_facade.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart' show FileCouplingMatrix;
+import '../../backend/logos_flow.dart' show analyzeFlowCached, FlowFinding;
 import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -327,11 +330,20 @@ class _DiffShellState extends State<DiffShell> {
   // Wear map (blame heatmap)
   bool _wearMapVisible = false;
 
+  Map<int, FlowFinding> _flowFindingsByLine = const {};
+  String? _flowAnalysisPath;
+
   // Paper Trail (file history)
   bool _trailVisible = false;
   List<FileHistoryEntry> _trailHistory = const [];
   bool _trailLoading = false;
-  String? _trailSelectedHash;
+  String? _trailSelectedHashValue;
+  String? get _trailSelectedHash => _trailSelectedHashValue;
+  set _trailSelectedHash(String? v) {
+    if (_trailSelectedHashValue == v) return;
+    _trailSelectedHashValue = v;
+    _loadFlowFindings();
+  }
   String? _originalDiffContent;
   _TrailViewState? _trailNowView;
   // Resolved file path AT the currently-selected trail commit. Tracks the
@@ -523,6 +535,7 @@ class _DiffShellState extends State<DiffShell> {
     _scrollCtrl.addListener(_markScrollActive);
     _rebuild();
     _scheduleTemporalRestore();
+    _loadFlowFindings();
   }
 
   @override
@@ -551,7 +564,7 @@ class _DiffShellState extends State<DiffShell> {
       _trailVisible = false;
       _trailHistory = const [];
       _trailLoading = false;
-      _trailSelectedHash = null;
+      _trailSelectedHashValue = null; // bypass setter, _loadFlowFindings below
       _trailSelectedPath = null;
       _originalDiffContent = null;
       _trailNowView = null;
@@ -567,6 +580,7 @@ class _DiffShellState extends State<DiffShell> {
         _temporalRestoreDone = false;
         _scheduleTemporalRestore();
       }
+      _loadFlowFindings();
     }
     if (old.jumpToLineRequestId != widget.jumpToLineRequestId &&
         widget.jumpToLineIndex != null) {
@@ -1539,6 +1553,33 @@ class _DiffShellState extends State<DiffShell> {
     } catch (_) {
       return null;
     }
+  }
+
+  void _loadFlowFindings() {
+    final repoPath = widget.repositoryPath;
+    if (repoPath == null) return;
+    if (_activeRevisionRef != null) {
+      _flowFindingsByLine = const {};
+      _flowAnalysisPath = null;
+      return;
+    }
+    final absPath = p.join(repoPath, widget.filePath);
+    if (absPath == _flowAnalysisPath) return;
+    _flowAnalysisPath = absPath;
+    _flowFindingsByLine = const {};
+    analyzeFlowCached(absPath).then((result) {
+      if (!mounted || _flowAnalysisPath != absPath) return;
+      if (result == null || result.findings.isEmpty) return;
+      final map = <int, FlowFinding>{};
+      for (final f in result.findings) {
+        final lineNum = f.sourceLine + 1;
+        final existing = map[lineNum];
+        if (existing == null || f.certainty < existing.certainty) {
+          map[lineNum] = f;
+        }
+      }
+      if (map.isNotEmpty) setState(() => _flowFindingsByLine = map);
+    }).catchError((_) {});
   }
 
   _PinnedPastContext? _buildPinnedPastContext(DiffPinnedContextModel? context) {
@@ -3479,6 +3520,9 @@ class _DiffShellState extends State<DiffShell> {
                                         lineResidual?.witnessResidual ?? 0.0,
                                       ),
                                       relatedRhyme: isPinnedRhyme,
+                                      flowCertainty:
+                                          _flowFindingsByLine[line.lineNumNew]
+                                              ?.certainty,
                                       wearIntensity: _wearMapVisible &&
                                               line.lineNumNew != null
                                           ? _wearIntensityFor(
@@ -3767,6 +3811,8 @@ class DiffLineView extends StatefulWidget {
   final double hunkWitnessResidual;
   final bool relatedRhyme;
 
+  final double? flowCertainty;
+
   // Staging
   final double stageCellWidth;
   final bool stagingEnabled;
@@ -3807,6 +3853,7 @@ class DiffLineView extends StatefulWidget {
     this.hunkInnovationResidual = 0.0,
     this.hunkWitnessResidual = 0.0,
     this.relatedRhyme = false,
+    this.flowCertainty,
     this.stageCellWidth = 16.0,
     this.stagingEnabled = false,
     this.keyboardFocused = false,
@@ -4041,11 +4088,25 @@ class _DiffLineState extends State<DiffLineView> {
                 (lineBg?.withValues(alpha: 0.6) ??
                     t.surface1.withValues(alpha: 0.5)));
 
+    final flowC = widget.flowCertainty;
+    final flowAlpha = flowC != null && !isMeta
+        ? ((1.0 - flowC) * 0.85).clamp(0.0, 0.85)
+        : 0.0;
     final gutterCell = Container(
       width: isMeta && !isFoldMarker ? 40 : 56,
       padding: const EdgeInsets.only(right: 8),
       alignment: Alignment.centerRight,
-      color: gutterBg,
+      decoration: BoxDecoration(
+        color: gutterBg,
+        border: flowAlpha > 0.02
+            ? Border(
+                left: BorderSide(
+                  width: 2.5,
+                  color: t.stateFragile.withValues(alpha: flowAlpha),
+                ),
+              )
+            : null,
+      ),
       child: Text(
         gutterText,
         style: TextStyle(

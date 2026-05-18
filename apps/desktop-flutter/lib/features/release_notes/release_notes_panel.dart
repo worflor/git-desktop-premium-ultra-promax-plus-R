@@ -412,8 +412,7 @@ const _aboutDevelopment = <_AboutEntry>[
         'Those signals feed into everything. The seismograph in history, '
         'the painted bars under commit subjects, the review system, Muse, '
         'the file constellation. The whole app reasons from this layer '
-        'down, not the other way around.',
-  ),
+        'down, not the other way around.',  ),
   _AboutEntry(
     question: 'WHERE IS THIS GOING?',
     body: 'The first milestone is full parity with GitHub Desktop, '
@@ -434,21 +433,20 @@ const _changelog = <_ReleaseNote>[
     date: '2026-05-14',
     bullets: [
       'Welcome to the first non-internal release. We have:',
-      'Beep beep, Wick.exe alpha integration is here for those who have the binary. It is unreleased, extremely alpha, and already causing a suspiciously low amount of trouble.',
+      'Introducing Filament, an experimental execution-flow engine makes its first appearnce! :o',
+      'Beep beep, Wick.exe alpha integration is here in the cmd palette for those who have the binary. Much unreleased. (real-time semantic search)',
       'Inline interactive re-order for commits. (allegedly)',
       'I spent an afternoon designing how Manifold should present a 3-way merge and settled on a unified fullscreen per-file experience. Built in Logos magic to assist, but designed for The Manual Way™.',
       'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
-      'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
-      'Ask has been reworked into more of a debug engine. Very alpha.',
-      'Settings got shorter to scroll through. The three AI feature blocks are collapsed into one stage, Diagnostics now defaults to the UI section because it is usually the least dramatic one, and the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
+      'OpenRouter API support.',
+      'Ask has been reworked into more of a debug thing. Very alpha - may change.',
+      'Settings got shorter to scroll through. And the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
       'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
-      'Claude model-list extraction got some outside-the-app binary surgery. Not a visible app feature, but it keeps the provider/model wiring honest.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
       'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
       'Adjusted Petrichor to keep the same rainy feel, but with shaders and more vibesss.',
       'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
-      'Theme knobs now get tiny per-theme animations overall, giving each skin a little more motion language. The exact shapes may keep shifting, but the direction is there: Petrichor droplets lean, Aether/Nacre/Loverboy move their glass caustics, Helix turns like a valve, Quanta snaps orientation, Redshift tightens its sight, Halo/Bibble radiate, Nightwalker opens into a blurrier void, Crafty depresses, Blackboard tilts, Kirby pops, Phosphor blinks, and Lady Entropy\'s thumb looks where you drag: iris and pupil track the value, the highlight stays loyal to the light, the pupil dilates on press, and the iris boots open on theme switch.',
-      'More of the motion system is being taught where things came from: etch, gloss, and vibration feedback can originate from the clicked pixel; text morphs ripple in reading direction so insertions push rightward and deletions close leftward; DataScrawl leans by spatial side instead of arbitrary character parity; and tiled particles scale density with the window across stardust, quantum, embers, glitter, voxels, void rain, chalk, and inkblots.',
+      'Theme and motion system pass.',
       'Reduced motion and accessability passes too.',
     ],
   ),

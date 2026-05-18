@@ -38,6 +38,14 @@ import 'logos_sensitivity.dart';
 import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
 import 'logos_chunks.dart' as chunks;
 import 'logos_diff_attention.dart' as diff_attention;
+import 'logos_flow.dart'
+    show
+        analyzeFlowCached,
+        anchorFingerprint,
+        logosFingerCoupling,
+        FlowAnalysisResult,
+        FlowFinding,
+        FlowBugKind;
 import 'logos_hunks.dart' as hunks;
 import 'semantic_manifest.dart' show buildSemanticManifest;
 
@@ -4799,6 +4807,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final engine = AiContextEngine([
     const _FileContextProducer(),
     const _FileMetadataProducer(),
+    const _ExecutionFlowProducer(),
     const _LogosTopologyProducer(),
     const _RelevanceNeighborhoodProducer(),
     _ChangeTypesProducer(
@@ -5721,6 +5730,145 @@ class _FileMetadataProducer extends AiContextProducer {
     );
     return AiContextSection(id: id, body: body);
   }
+}
+
+/// Filament execution-flow analysis.
+class _ExecutionFlowProducer extends AiContextProducer {
+  const _ExecutionFlowProducer();
+  @override
+  String get id => 'execution_flow';
+  @override
+  int get order => 42;
+  @override
+  double? urgency(AiContextRequest req) {
+    // scales with diff size, capped at 0.6.
+    final diffLen = req.diffText.length;
+    if (diffLen < 100) return null;
+    return (diffLen / 10000).clamp(0.1, 0.6);
+  }
+
+  @override
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
+    if (budgetChars <= 80) {
+      return AiContextSection(id: id, body: '');
+    }
+    final body = await _collectExecutionFlowEvidence(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+      budgetChars: budgetChars,
+      logosEngine: req.logos?.engine,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+/// Collect execution-flow findings from all changed files.
+Future<String> _collectExecutionFlowEvidence({
+  required String repositoryPath,
+  required String diffText,
+  required int budgetChars,
+  LogosGit? logosEngine,
+}) async {
+  final paths = extractDiffTouchedPaths(diffText);
+  if (paths.isEmpty) return '';
+
+  final allFindings = <(String, FlowFinding)>[];
+  final fileGaps = <String, double>{};
+
+  // structural anchor from diff-touched files' Logos fingerprints
+  int? anchor;
+  final basis = logosEngine?.spectralBasis();
+  if (logosEngine != null && basis != null) {
+    final fps = <int>[
+      for (final fp in paths)
+        if (logosEngine.pathToId[fp] case final idx?)
+          basis.spectralByteFingerprint(idx),
+    ];
+    if (fps.isNotEmpty) anchor = anchorFingerprint(fps);
+  }
+
+  final futures = <Future<(String, FlowAnalysisResult?)>>[];
+  for (final filePath in paths) {
+    futures.add(Future(() async {
+      try {
+        double? coupling;
+        if (anchor != null && basis != null) {
+          final idx = logosEngine!.pathToId[filePath];
+          if (idx != null) {
+            coupling = logosFingerCoupling(
+                basis.spectralByteFingerprint(idx), anchor);
+          }
+        }
+        return (filePath, await analyzeFlowCached(
+            p.join(repositoryPath, filePath),
+            logosCoupling: coupling));
+      } catch (_) {
+        return (filePath, null);
+      }
+    }));
+  }
+
+  final results = await Future.wait(futures);
+  for (final (filePath, result) in results) {
+    if (result == null) continue;
+    for (final f in result.findings) {
+      if (f.certainty < 0.3) allFindings.add((filePath, f));
+    }
+    if (result.spectralGap > 0) fileGaps[filePath] = result.spectralGap;
+  }
+
+  if (fileGaps.isNotEmpty) {
+    LogosVisBus.instance.emitInSession((sid) =>
+        LogosVisFlowAnalysis(sid, spectralGaps: Map.unmodifiable(fileGaps)));
+  }
+
+  if (allFindings.isEmpty && fileGaps.isEmpty) return '';
+
+  // sort by severity (lowest certainty first)
+  allFindings.sort((a, b) => a.$2.certainty.compareTo(b.$2.certainty));
+
+  final buf = StringBuffer();
+  if (allFindings.isNotEmpty) {
+    buf.writeln('status: ${allFindings.length} execution-flow finding'
+        '${allFindings.length == 1 ? '' : 's'}');
+  } else {
+    buf.writeln('status: clean (no execution-flow issues detected)');
+  }
+  buf.writeln('engine: filament');
+
+  // spectral gaps
+  if (fileGaps.isNotEmpty) {
+    final gapEntries = fileGaps.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    buf.writeln();
+    buf.writeln('spectral_gap (per-file fragility, higher = more fragile):');
+    for (final entry in gapEntries.take(5)) {
+      buf.writeln('  ${entry.key}: ${entry.value.toStringAsFixed(3)}');
+    }
+  }
+
+  buf.writeln();
+
+  var charsUsed = buf.length;
+  for (final (path, finding) in allFindings) {
+    final line = 'L${finding.sourceLine + 1}';
+    final kind = switch (finding.kind) {
+      FlowBugKind.staleValue => 'stale value',
+      FlowBugKind.temporalShift => 'temporal shift',
+      FlowBugKind.contextInversion => 'context inversion',
+    };
+    final entry = '[$path:$line] [${finding.severity}] '
+        '${finding.sourceText} — $kind '
+        '(certainty=${finding.certainty.toStringAsFixed(3)} '
+        'paths=${finding.pathCount})\n';
+
+    if (charsUsed + entry.length > budgetChars) break;
+    buf.write(entry);
+    charsUsed += entry.length;
+  }
+
+  return buf.toString();
 }
 
 class _LogosTopologyProducer extends AiContextProducer {

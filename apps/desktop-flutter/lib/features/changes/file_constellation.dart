@@ -26,6 +26,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../ui/tokens.dart';
@@ -90,6 +91,8 @@ class FileConstellation extends StatefulWidget {
   /// engine but has never been reviewed. >0 = number of distinct
   /// reviewers who have observed this path through forge reviews.
   final Map<String, int> observerCounts;
+  /// Per-path spectral gap from Filament.
+  final Map<String, double> flowFragility;
 
   /// Toggle a single file in or out of the current selection.
   final void Function(String path, bool value) onToggleIncluded;
@@ -114,6 +117,7 @@ class FileConstellation extends StatefulWidget {
     required this.includedPaths,
     required this.tokens,
     this.observerCounts = const {},
+    this.flowFragility = const {},
     required this.onToggleIncluded,
     required this.onCarve,
     required this.onSelectDiff,
@@ -240,6 +244,7 @@ class _FileConstellationState extends State<FileConstellation> {
               changeWeights: widget.changeWeights,
               includedPaths: widget.includedPaths,
               observerCounts: widget.observerCounts,
+              flowFragility: widget.flowFragility,
               dimmed: hasHover && _hoveredCandidateId != c.id,
               onHoverChanged: (hovered) {
                 if (!mounted) return;
@@ -388,6 +393,7 @@ class _CandidateCard extends StatefulWidget {
   final Map<String, FileChangeWeight> changeWeights;
   final Set<String> includedPaths;
   final Map<String, int> observerCounts;
+  final Map<String, double> flowFragility;
   final bool dimmed;
   final void Function(bool hovered) onHoverChanged;
   final VoidCallback onCarve;
@@ -404,6 +410,7 @@ class _CandidateCard extends StatefulWidget {
     required this.changeWeights,
     required this.includedPaths,
     this.observerCounts = const {},
+    this.flowFragility = const {},
     required this.dimmed,
     required this.onHoverChanged,
     required this.onCarve,
@@ -564,6 +571,7 @@ class _CandidateCardState extends State<_CandidateCard>
                               includedPaths: widget.includedPaths,
                               accent: accent,
                               observerCounts: widget.observerCounts,
+                              flowFragility: widget.flowFragility,
                             ),
                           ),
                         ),
@@ -1007,6 +1015,7 @@ class _CandidateGlyph extends StatelessWidget {
   final Set<String> includedPaths;
   final Color accent;
   final Map<String, int> observerCounts;
+  final Map<String, double> flowFragility;
 
   const _CandidateGlyph({
     required this.tokens,
@@ -1017,6 +1026,7 @@ class _CandidateGlyph extends StatelessWidget {
     required this.includedPaths,
     required this.accent,
     this.observerCounts = const {},
+    this.flowFragility = const {},
   });
 
   @override
@@ -1034,6 +1044,8 @@ class _CandidateGlyph extends StatelessWidget {
           accent: accent,
           faint: tokens.chromeBorder.withValues(alpha: 0.35),
           observerCounts: observerCounts,
+          flowFragility: flowFragility,
+          warmAccent: tokens.stateFragile,
         ),
       ),
     );
@@ -1050,6 +1062,8 @@ class _GlyphPainter extends CustomPainter {
   final Color faint;
 
   final Map<String, int> observerCounts;
+  final Map<String, double> flowFragility;
+  final Color warmAccent;
 
   _GlyphPainter({
     required this.paths,
@@ -1060,6 +1074,8 @@ class _GlyphPainter extends CustomPainter {
     required this.accent,
     required this.faint,
     this.observerCounts = const {},
+    this.flowFragility = const {},
+    required this.warmAccent,
   });
 
   // Mean coupling of [path] to the rest of the cluster. 1.0 = twin of
@@ -1144,6 +1160,7 @@ class _GlyphPainter extends CustomPainter {
     // tips are dimmer and halos are smaller, expressing "we know it
     // changed, but no human has reviewed it through the forge."
     final hasObsData = observerCounts.isNotEmpty;
+    final hasFragData = flowFragility.isNotEmpty;
     for (final (path, tip, _, impact) in tips) {
       final included = includedPaths.contains(path);
       final radius = 1.4 + impact * 1.8;
@@ -1154,6 +1171,14 @@ class _GlyphPainter extends CustomPainter {
       final alpha = baseAlpha * coverageFactor;
       final haloScale = coverageFactor;
 
+      // fragility tint
+      final fragility = hasFragData
+          ? filamentSat(flowFragility[path] ?? 0.0)
+          : 0.0;
+      final haloColor = fragility > 0.05
+          ? Color.lerp(accent, warmAccent, fragility)!
+          : accent;
+
       if (included && haloScale > 0.5) {
         final haloR = (radius + 3.5) * haloScale;
         final halo = Paint()
@@ -1161,8 +1186,8 @@ class _GlyphPainter extends CustomPainter {
             tip,
             haloR,
             [
-              accent.withValues(alpha: 0.35 * alpha),
-              accent.withValues(alpha: 0),
+              haloColor.withValues(alpha: 0.35 * alpha),
+              haloColor.withValues(alpha: 0),
             ],
           );
         canvas.drawCircle(tip, haloR, halo);
@@ -1193,7 +1218,9 @@ class _GlyphPainter extends CustomPainter {
       old.includedPaths != includedPaths ||
       old.clusterId != clusterId ||
       old.accent != accent ||
-      old.observerCounts != observerCounts;
+      old.warmAccent != warmAccent ||
+      old.observerCounts != observerCounts ||
+      old.flowFragility != flowFragility;
 }
 
 // Leftovers bench, isolated files, displayed quietly
