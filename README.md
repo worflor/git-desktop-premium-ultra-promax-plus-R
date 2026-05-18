@@ -25,10 +25,10 @@ lands and tells you what it finds. Git-Logos is built on top of the
 
 What that looks like in practice:
 
-- Manifold can map your diff to external file context automatically using repo history, the spectral graph, and the source's logistical operations and flow itself.
-  - Use non-agentic LLM-powered Review Commit with logos-backed context gathering. Cheap, efficient, thorough.
+- Manifold can map your diff to external file context automatically using repo history, the spectral graph, and an experimental execution flow engine; Filament.
+  - Use non-agentic (one-shot) LLM-powered Code Review, Muse Brainstorming, and Generate Message with *logos-backed* context gathering. Cheap, efficient, extrodinarily thorough.
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
-- View changes by *geometric Atlas* rather than by file.
+- View changes by *geometric Atlas* rather than by file. 
 - PRs, worktrees, and branches have **Orbits**.
 - See through a repo with X-Ray. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
