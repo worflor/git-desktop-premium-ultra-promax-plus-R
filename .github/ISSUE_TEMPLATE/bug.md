@@ -1,6 +1,6 @@
 ---
 name: Bug
-about: A behaviour occured that I feel is unintentional
+about: A behaviour happened that I feel is unintentional
 title: "[BUG] :("
 labels: bug
 assignees: worflor
