@@ -92,7 +92,7 @@ The engine mixes:
   higher-dimensional hypercomplex algebra I use across my projects.
   Manifold leans on parts of it, alongside everything else above.
 
-PRs that touch the engine tend to violate invariants that look fine at
+PRs that touch the engine may violate invariants that look fine in
 code review but quietly wreck properties the rest of the system depends
 on. Unwinding that eats the time I'd rather spend *not*. So read it,
 fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just not vibe-understood PRs or I'll vibe-respond.
