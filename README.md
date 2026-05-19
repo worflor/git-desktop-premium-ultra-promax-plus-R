@@ -16,7 +16,7 @@ A weighted graph with spectral structure, continuously rebuilt as you work,
 sitting under the client like scaffolding. Files are coordinates in a space
 the engine knows how to navigate.
 
-The engine that drives this is **Logos for Git**, a relevance engine that diffuses
+Driving this is **Logos for Git**, a relevance engine that diffuses
 signal across the repo's spectral geometry. No grep. No
 stitching heuristics together and praying. It asks the geometry where the signal
 lands and tells you what it finds. Git-Logos is built on top of the
