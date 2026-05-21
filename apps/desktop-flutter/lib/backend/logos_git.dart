@@ -193,6 +193,151 @@ class AxisObs {
 /// The confidence gate |p - 0.5| makes axes at p ~= 0.5 (pure uncertainty)
 /// contribute zero - they can't drown out sharper axes. The `cap_i` per
 /// axis prevents an over-evidenced axis from monopolising the mix.
+// ── HYPERBOLIC GEOMETRY ─────────────────────────────────────────────
+
+const double _hyperbolicScale = 4.0;
+const double _hyperbolicWeight = 0.15;
+
+class _HyperbolicEmbedding {
+  final Float64List x;
+  final Float64List y;
+  _HyperbolicEmbedding(this.x, this.y);
+}
+
+_HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
+  final n = paths.length;
+  final x = Float64List(n);
+  final y = Float64List(n);
+  if (n == 0) return _HyperbolicEmbedding(x, y);
+
+  final children = <int, List<int>>{};
+  final parentOf = Int32List(n);
+  final nodeId = <String, int>{};
+
+  final rootId = 0;
+  nodeId[''] = rootId;
+  var nextId = 1;
+
+  final segments = <int, List<String>>{};
+  for (var i = 0; i < n; i++) {
+    final parts = paths[i].replaceAll('\\', '/').split('/');
+    segments[i] = parts;
+  }
+  // Materialise tree nodes for every directory prefix.
+  final dirNodeOf = <String, int>{'': rootId};
+  for (var i = 0; i < n; i++) {
+    final parts = segments[i]!;
+    var current = '';
+    for (var d = 0; d < parts.length - 1; d++) {
+      final next = current.isEmpty ? parts[d] : '$current/${parts[d]}';
+      if (!dirNodeOf.containsKey(next)) {
+        final id = nextId++;
+        dirNodeOf[next] = id;
+        final pid = dirNodeOf[current]!;
+        (children[pid] ??= []).add(id);
+        parentOf[id < parentOf.length ? id : 0] = pid;
+      }
+      current = next;
+    }
+  }
+  // Map file nodes to tree leaves.
+  final fileTreeId = <int, int>{};
+  for (var i = 0; i < n; i++) {
+    final parts = segments[i]!;
+    final parentDir = parts.length > 1
+        ? parts.sublist(0, parts.length - 1).join('/')
+        : '';
+    final pid = dirNodeOf[parentDir] ?? rootId;
+    final id = nextId++;
+    fileTreeId[i] = id;
+    (children[pid] ??= []).add(id);
+  }
+  final totalNodes = nextId;
+
+  // Sarkar embedding via BFS from root.
+  final maxBranch = children.values.fold(1, (m, c) => math.max(m, c.length));
+  final tau = maxBranch.toDouble();
+  final delta = math.log(_coth(1.0 / (2.0 * tau)));
+
+  final treeX = Float64List(totalNodes);
+  final treeY = Float64List(totalNodes);
+  // Root at origin.
+  final visited = List<bool>.filled(totalNodes, false);
+  final queue = <int>[rootId];
+  visited[rootId] = true;
+  while (queue.isNotEmpty) {
+    final u = queue.removeAt(0);
+    final ch = children[u];
+    if (ch == null || ch.isEmpty) continue;
+    final angleStep = 2.0 * math.pi / ch.length;
+    for (var c = 0; c < ch.length; c++) {
+      final v = ch[c];
+      if (visited[v]) continue;
+      visited[v] = true;
+      final angle = c * angleStep;
+      final _e = math.exp(delta);
+      final r = (_e - 1.0) / (_e + 1.0);
+      // Möbius translation from parent position.
+      final dx = r * math.cos(angle);
+      final dy = r * math.sin(angle);
+      final (mx, my) = _mobiusAdd(treeX[u], treeY[u], dx, dy);
+      treeX[v] = mx;
+      treeY[v] = my;
+      queue.add(v);
+    }
+  }
+  // Extract file-node positions.
+  for (var i = 0; i < n; i++) {
+    final tid = fileTreeId[i]!;
+    x[i] = treeX[tid];
+    y[i] = treeY[tid];
+  }
+  return _HyperbolicEmbedding(x, y);
+}
+
+double _coth(double x) {
+  if (x.abs() < 1e-15) return double.infinity;
+  return math.exp(x * 2) > 1e15
+      ? 1.0
+      : (math.exp(2 * x) + 1) / (math.exp(2 * x) - 1);
+}
+
+(double, double) _mobiusAdd(double ax, double ay, double bx, double by) {
+  final aDotB = ax * bx + ay * by;
+  final aSq = ax * ax + ay * ay;
+  final bSq = bx * bx + by * by;
+  final denom = 1.0 + 2.0 * aDotB + aSq * bSq;
+  if (denom.abs() < 1e-15) return (0.0, 0.0);
+  final rx = ((1 + 2 * aDotB + bSq) * ax + (1 - aSq) * bx) / denom;
+  final ry = ((1 + 2 * aDotB + bSq) * ay + (1 - aSq) * by) / denom;
+  final norm = math.sqrt(rx * rx + ry * ry);
+  if (norm >= 1.0) {
+    final scale = 0.999 / norm;
+    return (rx * scale, ry * scale);
+  }
+  return (rx, ry);
+}
+
+double _hyperbolicDistance(
+    double ax, double ay, double bx, double by) {
+  final dx = ax - bx;
+  final dy = ay - by;
+  final distSq = dx * dx + dy * dy;
+  final aSq = ax * ax + ay * ay;
+  final bSq = bx * bx + by * by;
+  final denom = (1 - aSq) * (1 - bSq);
+  if (denom <= 0) return 30.0;
+  final arg = 1.0 + 2.0 * distSq / denom;
+  return _acosh(arg);
+}
+
+double _acosh(double x) {
+  if (x <= 1.0) return 0.0;
+  return math.log(x + math.sqrt(x * x - 1));
+}
+
+// ── BORN-RULE EDGE CONSTRUCTION ────────────────────────────────────
+
 /// Correlated axes (CC and AU firing together because same team edits
 /// same files) don't double-count: amplitude interference absorbs the
 /// shared component quadratically. Orthogonal lifts add as Pythagorean
@@ -595,6 +740,15 @@ const double _utilityHfSurpriseWeight = 0.15;
 /// smaller magnitude reflects that transport pull is already
 /// indirectly in `surplus` via the transport graph.
 const double _utilityTransportPullWeight = 0.10;
+
+/// Base advection strength before spectral-radius scaling.
+const double _advectionEpsBase = 0.10;
+
+/// Blend weight for graph-derived coupling vs spectral fingerprint
+/// coupling in Filament feedback. 0 = pure fingerprint, 1 = pure
+/// graph degree. 0.30 = the graph signal is noisier but catches
+/// cross-module relationships the fingerprint misses.
+const double graphCouplingBlend = 0.30;
 
 // (besselCoeffs / adaptiveK / chebyshevDiffuse live in logos_core.dart.)
 
@@ -1623,6 +1777,99 @@ class LogosGit {
   /// guaranteed coherent.
   final Map<int, sg_lib.SpectroGeometry> _spectrogeometryCache = {};
 
+  late final double _advectionEps =
+      _advectionEpsBase / math.max(1e-6, graph.estimateSpectralRadius());
+
+  double phaseBoost = 0.0;
+
+  CsrGraph? _antisymCache;
+  bool _antisymBuilt = false;
+
+  CsrGraph? get _antisymmetricTransport {
+    if (_antisymBuilt) return _antisymCache;
+    _antisymBuilt = true;
+    _antisymCache = _buildAntisymmetricTransport();
+    return _antisymCache;
+  }
+
+  CsrGraph? _buildAntisymmetricTransport() {
+    final t = transportGraph;
+    if (t.n == 0 || t.n != graph.n) return null;
+    if (!graph.supportsRankOneUpdates) return null;
+    final n = t.n;
+    final rows = List<List<(int, double)>>.generate(n, (_) => []);
+    var nnz = 0;
+    for (var i = 0; i < n; i++) {
+      final start = t.indptr[i];
+      final end = t.indptr[i + 1];
+      for (var k = start; k < end; k++) {
+        final j = t.indices[k];
+        final tij = t.values[k];
+        final tji = _csrLookup(t, j, i);
+        final a = (tij - tji) / 2.0;
+        if (a.abs() < 1e-12) continue;
+        final dI = graph.degreeInvSqrt[i];
+        final dJ = graph.degreeInvSqrt[j];
+        rows[i].add((j, a * dI * dJ));
+        nnz++;
+      }
+    }
+    if (nnz == 0) return null;
+    final indptr = Int32List(n + 1);
+    final indices = Int32List(nnz);
+    final values = Float64List(nnz);
+    var w = 0;
+    for (var i = 0; i < n; i++) {
+      rows[i].sort((a, b) => a.$1.compareTo(b.$1));
+      for (final (j, v) in rows[i]) {
+        indices[w] = j;
+        values[w] = v;
+        w++;
+      }
+      indptr[i + 1] = w;
+    }
+    return CsrGraph(n: n, indptr: indptr, indices: indices, values: values);
+  }
+
+  static double _csrLookup(CsrGraph g, int row, int col) {
+    var lo = g.indptr[row];
+    var hi = g.indptr[row + 1];
+    while (lo < hi) {
+      final mid = (lo + hi) >>> 1;
+      final c = g.indices[mid];
+      if (c < col) {
+        lo = mid + 1;
+      } else if (c > col) {
+        hi = mid;
+      } else {
+        return g.values[mid];
+      }
+    }
+    return 0.0;
+  }
+
+  Map<String, double> couplingStrengths() {
+    if (graph.n == 0) return const {};
+    final result = <String, double>{};
+    var maxDeg = 0.0;
+    for (var i = 0; i < graph.n; i++) {
+      var deg = 0.0;
+      for (var k = graph.indptr[i]; k < graph.indptr[i + 1]; k++) {
+        deg += graph.rawWeights.isNotEmpty
+            ? graph.rawWeights[k]
+            : graph.values[k];
+      }
+      result[nodePaths[i]] = deg;
+      if (deg > maxDeg) maxDeg = deg;
+    }
+    if (maxDeg > 0) {
+      for (final key in result.keys.toList()) {
+        result[key] = result[key]! / maxDeg;
+      }
+    }
+    return result;
+  }
+
   LogosGit._({
     required this.graph,
     required this.transportGraph,
@@ -1704,7 +1951,11 @@ class LogosGit {
     final key = (rhoFingerprint: _fingerprintRho(rho), K: K);
     final cached = _basisCache.get(key);
     if (cached != null) return cached;
-    final built = chebyshevBasis(graph: graph, rho: rho, K: K);
+    final built = chebyshevBasis(
+      graph: graph, rho: rho, K: K,
+      antisym: _antisymmetricTransport,
+      advectionEpsilon: _advectionEps,
+    );
     _basisCache.put(key, built);
     return built;
   }
@@ -2275,6 +2526,10 @@ class LogosGit {
     }
     tick('indexes');
 
+    final hypEmbed = _hyperbolicWeight > 0
+        ? _poincareDiskEmbed(nodePaths)
+        : null;
+
     final shadow = stats.shadowCoupling;
     final couplingConstants = calibrateCouplingConstants(
       nodePaths,
@@ -2455,6 +2710,12 @@ class LogosGit {
               curvA * curvatures[j] * integrityA * integrityB,
             ) *
             logosPairPenaltyOfRoles(transportRoles[i], transportRoles[j]);
+        if (hypEmbed != null) {
+          final hDist = _hyperbolicDistance(
+              hypEmbed.x[i], hypEmbed.y[i], hypEmbed.x[j], hypEmbed.y[j]);
+          final hBoost = math.exp(-hDist / _hyperbolicScale);
+          p *= 1.0 - _hyperbolicWeight + _hyperbolicWeight * hBoost;
+        }
         if (probeActive) probeTransportCalls += 2;
         final rolesA = transportRoles[i];
         final rolesB = transportRoles[j];
@@ -2607,12 +2868,14 @@ class LogosGit {
     for (var i = 0; i < n; i++) {
       dInv[i] = degree[i] <= 0 ? 0 : 1.0 / math.sqrt(degree[i]);
     }
+    final rawW = Float64List(totalEdges);
     var write = 0;
     for (var i = 0; i < n; i++) {
       final row = rawRows[i]..sort((x, y) => x.node.compareTo(y.node));
       final di = dInv[i];
       for (final e in row) {
         indices[write] = e.node;
+        rawW[write] = e.pMix;
         values[write] = di * e.pMix * dInv[e.node];
         write++;
       }
@@ -2624,6 +2887,8 @@ class LogosGit {
       indptr: indptr,
       indices: indices,
       values: values,
+      degreeInvSqrt: dInv,
+      rawWeights: rawW,
     );
     tick('csr');
     var totalTransportEdges = 0;
@@ -3224,7 +3489,9 @@ class LogosGit {
     if (rho == null) return const [];
 
     final phi = Float64List(graph.n);
-    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K,
+        antisym: _antisymmetricTransport,
+        advectionEpsilon: _advectionEps);
 
     var results = _packTopPhi(
       phi: phi,
@@ -3277,7 +3544,9 @@ class LogosGit {
     if (rho == null) return const [];
 
     final phi = Float64List(graph.n);
-    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K,
+        antisym: _antisymmetricTransport,
+        advectionEpsilon: _advectionEps);
 
     var results = _packTopPhi(
       phi: phi,
@@ -3374,7 +3643,9 @@ class LogosGit {
     if (rho == null) return const {};
 
     final phi = Float64List(graph.n);
-    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K,
+        antisym: _antisymmetricTransport,
+        advectionEpsilon: _advectionEps);
 
     final expected = <String, double>{};
     for (var i = 0; i < graph.n; i++) {
@@ -3453,7 +3724,9 @@ class LogosGit {
     final rho = _buildRho(weights);
     if (rho == null) return null;
     final phi = Float64List(graph.n);
-    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K,
+        antisym: _antisymmetricTransport,
+        advectionEpsilon: _advectionEps);
     return phi;
   }
 
@@ -3473,7 +3746,9 @@ class LogosGit {
     double phiThreshold = 0.0,
     double utilityHfSurpriseWeight = _utilityHfSurpriseWeight,
     double utilityTransportPullWeight = _utilityTransportPullWeight,
+    double? phaseTransitionBoost,
   }) {
+    final ptBoost = phaseTransitionBoost ?? phaseBoost;
     if (graph.n == 0 || focusWeights.isEmpty) return null;
     final attribWanted =
         includeSupportAttribution && axisLabelByPath.isNotEmpty;
@@ -3504,7 +3779,11 @@ class LogosGit {
     // O(K·|E|) wins; the rest of the function then runs the existing
     // Chebyshev path with the basis-fusion / attribution batching that
     // [_buildFocusAndAxisRhos] sets up.
+    final antisym = _antisymmetricTransport;
     final spectral = _getOrBuildSpectralBasis(kDefaultSpectralBasisK);
+    // Lanczos assumes symmetry — disable the spectral path when
+    // advection introduces an antisymmetric drift term.
+    final useSpectral = spectral != null && antisym == null;
 
     // Pick near/far temperatures from the graph's own heat-capacity
     // peaks via `flankingScales`. When the amortised spectral basis
@@ -3528,7 +3807,7 @@ class LogosGit {
     final Float64List ambientPhi;
     Map<String, Float64List>? perAxisPhi;
 
-    if (spectral != null) {
+    if (useSpectral) {
       // Spectral path — projection coefficients are the universal
       // spectral coordinate of the source. Project once, recombine at
       // any number of temperatures for free.
@@ -3571,7 +3850,8 @@ class LogosGit {
           }
         }
         final batched = chebyshevBasisBatch(
-            graph: graph, rhoBatch: rhoBatch, B: b, K: K);
+            graph: graph, rhoBatch: rhoBatch, B: b, K: K,
+            antisym: antisym, advectionEpsilon: _advectionEps);
         focusBasis = extractBasisColumn(
           batchedBasis: batched,
           n: graph.n,
@@ -3605,6 +3885,8 @@ class LogosGit {
               phi: phi,
               t: t,
               K: K,
+              antisym: antisym,
+              advectionEpsilon: _advectionEps,
             );
             perAxisPhi[axisOrder[0]] = phi;
           } else {
@@ -3621,6 +3903,8 @@ class LogosGit {
               B: b,
               t: t,
               K: K,
+              antisym: antisym,
+              advectionEpsilon: _advectionEps,
             );
             for (var a = 0; a < b; a++) {
               final phi = Float64List(graph.n);
@@ -3769,7 +4053,9 @@ class LogosGit {
         utility: math.max(
           surplus * integrity +
               utilityHfSurpriseWeight * highFrequencySurprise +
-              utilityTransportPullWeight * transportPull,
+              utilityTransportPullWeight * transportPull +
+              ptBoost *
+                  math.max(0.0, support - lambda * ambient).clamp(0.0, 1.0),
           rescue,
         ),
         higherOrderLift: 0.0,
@@ -3847,7 +4133,9 @@ class LogosGit {
         utility: math.max(
           surplus * integrity +
               utilityHfSurpriseWeight * highFrequencySurprise +
-              utilityTransportPullWeight * transportPull,
+              utilityTransportPullWeight * transportPull +
+              ptBoost *
+                  math.max(0.0, support - lambda * ambient).clamp(0.0, 1.0),
           rescue,
         ),
         higherOrderLift: 0.0,
@@ -4089,6 +4377,7 @@ class LogosGit {
     int maxIterations = 6,
     double convergenceRatio = 0.1353352832366127, // math.exp(-2)
     void Function(RecurrentIterationReport)? onIteration,
+    double? phaseTransitionBoost,
   }) {
     final focus = Map<String, double>.from(focusWeights);
     final depth = <String, int>{for (final k in focus.keys) k: 0};
@@ -4137,6 +4426,7 @@ class LogosGit {
         phiThreshold: phiThreshold,
         utilityHfSurpriseWeight: hfW,
         utilityTransportPullWeight: tpW,
+        phaseTransitionBoost: phaseTransitionBoost,
       );
       if (evidence == null) {
         return LogosRecurrentEvidenceResult(

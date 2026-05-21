@@ -847,6 +847,52 @@ class CsrGraph {
     }
   }
 
+  /// Apply the advection-modified Laplacian: `y = (L_sym − ε·A)·v`.
+  /// [antisym] is the antisymmetric component of a directed transport
+  /// graph (`A = (T − Tᵀ)/2`), normalised into the same basis as
+  /// [values]. The combined operator shifts heat downstream through
+  /// directed transport lanes. When `epsilon` is 0 this is identical
+  /// to [applyLsym].
+  void applyLdrift(Float64List v, Float64List out,
+      {required CsrGraph antisym, required double epsilon}) {
+    applyLsym(v, out);
+    if (epsilon == 0) return;
+    for (var i = 0; i < n; i++) {
+      double s = 0;
+      final start = antisym.indptr[i];
+      final end = antisym.indptr[i + 1];
+      for (var k = start; k < end; k++) {
+        s += antisym.values[k] * v[antisym.indices[k]];
+      }
+      out[i] -= epsilon * s;
+    }
+  }
+
+  void applyLdriftBatch(Float64List v, Float64List out, int B,
+      {required CsrGraph antisym, required double epsilon}) {
+    applyLsymBatch(v, out, B);
+    if (epsilon == 0) return;
+    final s = Float64List(B);
+    for (var i = 0; i < n; i++) {
+      for (var b = 0; b < B; b++) {
+        s[b] = 0.0;
+      }
+      final start = antisym.indptr[i];
+      final end = antisym.indptr[i + 1];
+      for (var k = start; k < end; k++) {
+        final col = antisym.indices[k] * B;
+        final w = antisym.values[k];
+        for (var b = 0; b < B; b++) {
+          s[b] += w * v[col + b];
+        }
+      }
+      final iOff = i * B;
+      for (var b = 0; b < B; b++) {
+        out[iOff + b] -= epsilon * s[b];
+      }
+    }
+  }
+
   /// Estimate the spectral radius `|λ_max|` of `L_sym` via power
   /// iteration with Rayleigh-quotient readout. The normalised
   /// Laplacian has a proven spectrum in [0, 2]; this method is a
@@ -1022,6 +1068,8 @@ void chebyshevDiffuse({
   required Float64List phi,
   required double t,
   int K = kDefaultChebyshevK,
+  CsrGraph? antisym,
+  double advectionEpsilon = 0.0,
 }) {
   final n = graph.n;
   assert(rho.length == n);
@@ -1059,8 +1107,14 @@ void chebyshevDiffuse({
     t0[i] = rho[i];
   }
 
-  // T_1·ρ = L_sym·ρ − ρ
-  graph.applyLsym(t0, scratch);
+  // T_1·ρ = L·ρ − ρ (L = L_sym or L_sym − ε·A when advection active)
+  final _hasDrift = antisym != null && advectionEpsilon != 0;
+  if (_hasDrift) {
+    graph.applyLdrift(t0, scratch,
+        antisym: antisym!, epsilon: advectionEpsilon);
+  } else {
+    graph.applyLsym(t0, scratch);
+  }
   for (var i = 0; i < nPairs; i++) {
     t1x[i] = scratchX[i] - t0x[i];
   }
@@ -1074,7 +1128,12 @@ void chebyshevDiffuse({
 
   // Recurrence for k = 2..effectiveK.
   for (var k = 2; k <= effectiveK; k++) {
-    graph.applyLsym(t1, scratch);
+    if (_hasDrift) {
+      graph.applyLdrift(t1, scratch,
+          antisym: antisym!, epsilon: advectionEpsilon);
+    } else {
+      graph.applyLsym(t1, scratch);
+    }
     final ck = fullCoeffs[k];
     if (ck.abs() >= _coeffSkipEps) {
       for (var i = 0; i < nPairs; i++) {
@@ -1124,6 +1183,8 @@ Float64List chebyshevBasis({
   required CsrGraph graph,
   required Float64List rho,
   int K = kDefaultChebyshevK,
+  CsrGraph? antisym,
+  double advectionEpsilon = 0.0,
 }) {
   final n = graph.n;
   final basis = Float64List((K + 1) * n);
@@ -1139,14 +1200,21 @@ Float64List chebyshevBasis({
   var t2 = Float64List.view(t2x.buffer, 0, n);
   final scratch = Float64List.view(scratchX.buffer, 0, n);
 
+  final _hasDrift = antisym != null && advectionEpsilon != 0;
+
   // T_0·ρ = ρ — seed T_0 and emit basis row 0.
   for (var i = 0; i < n; i++) {
     t0[i] = rho[i];
   }
   basis.setRange(0, n, rho);
 
-  // T_1·ρ = L_sym·ρ − ρ
-  graph.applyLsym(t0, scratch);
+  // T_1·ρ = L·ρ − ρ
+  if (_hasDrift) {
+    graph.applyLdrift(t0, scratch,
+        antisym: antisym!, epsilon: advectionEpsilon);
+  } else {
+    graph.applyLsym(t0, scratch);
+  }
   for (var i = 0; i < nPairs; i++) {
     t1x[i] = scratchX[i] - t0x[i];
   }
@@ -1154,7 +1222,12 @@ Float64List chebyshevBasis({
 
   // Recurrence for k = 2..K.
   for (var k = 2; k <= K; k++) {
-    graph.applyLsym(t1, scratch);
+    if (_hasDrift) {
+      graph.applyLdrift(t1, scratch,
+          antisym: antisym!, epsilon: advectionEpsilon);
+    } else {
+      graph.applyLsym(t1, scratch);
+    }
     for (var i = 0; i < nPairs; i++) {
       t2x[i] = (scratchX[i] - t1x[i]).scale(2.0) - t0x[i];
     }
@@ -1190,6 +1263,8 @@ Float64List chebyshevBasisBatch({
   required Float64List rhoBatch,
   required int B,
   int K = kDefaultChebyshevK,
+  CsrGraph? antisym,
+  double advectionEpsilon = 0.0,
 }) {
   final n = graph.n;
   final stride = n * B;
@@ -1206,20 +1281,32 @@ Float64List chebyshevBasisBatch({
   var t2 = Float64List.view(t2x.buffer, 0, stride);
   final scratch = Float64List.view(scratchX.buffer, 0, stride);
 
+  final _hasDrift = antisym != null && advectionEpsilon != 0;
+
   // T_0·ρ = ρ — seed T_0 and emit basis row 0.
   t0.setRange(0, stride, rhoBatch);
   basis.setRange(0, stride, rhoBatch);
   if (K == 0) return basis;
 
-  // T_1 = L_sym·T_0 − T_0
-  graph.applyLsymBatch(t0, scratch, B);
+  // T_1 = L·T_0 − T_0
+  if (_hasDrift) {
+    graph.applyLdriftBatch(t0, scratch, B,
+        antisym: antisym!, epsilon: advectionEpsilon);
+  } else {
+    graph.applyLsymBatch(t0, scratch, B);
+  }
   for (var i = 0; i < stridePairs; i++) {
     t1x[i] = scratchX[i] - t0x[i];
   }
   basis.setRange(stride, 2 * stride, t1);
 
   for (var k = 2; k <= K; k++) {
-    graph.applyLsymBatch(t1, scratch, B);
+    if (_hasDrift) {
+      graph.applyLdriftBatch(t1, scratch, B,
+          antisym: antisym!, epsilon: advectionEpsilon);
+    } else {
+      graph.applyLsymBatch(t1, scratch, B);
+    }
     for (var i = 0; i < stridePairs; i++) {
       t2x[i] = (scratchX[i] - t1x[i]).scale(2.0) - t0x[i];
     }
@@ -1277,6 +1364,8 @@ Float64List chebyshevDiffuseBatch({
   required int B,
   required double t,
   int K = kDefaultChebyshevK,
+  CsrGraph? antisym,
+  double advectionEpsilon = 0.0,
 }) {
   final n = graph.n;
   final stride = n * B;
@@ -1316,8 +1405,14 @@ Float64List chebyshevDiffuseBatch({
     return _flushSubnormals(_detachToFresh(phiBatch));
   }
 
-  // T_1 = L_sym·T_0 − T_0
-  graph.applyLsymBatch(t0, scratch, B);
+  // T_1 = L·T_0 − T_0
+  final _hasDrift = antisym != null && advectionEpsilon != 0;
+  if (_hasDrift) {
+    graph.applyLdriftBatch(t0, scratch, B,
+        antisym: antisym!, epsilon: advectionEpsilon);
+  } else {
+    graph.applyLsymBatch(t0, scratch, B);
+  }
   for (var i = 0; i < stridePairs; i++) {
     t1x[i] = scratchX[i] - t0x[i];
   }
@@ -1328,9 +1423,14 @@ Float64List chebyshevDiffuseBatch({
     }
   }
 
-  // T_{k+1} = 2·(L_sym·T_k − T_k) − T_{k-1}
+  // T_{k+1} = 2·(L·T_k − T_k) − T_{k-1}
   for (var k = 2; k <= effectiveK; k++) {
-    graph.applyLsymBatch(t1, scratch, B);
+    if (_hasDrift) {
+      graph.applyLdriftBatch(t1, scratch, B,
+          antisym: antisym!, epsilon: advectionEpsilon);
+    } else {
+      graph.applyLsymBatch(t1, scratch, B);
+    }
     final ck = fullCoeffs[k];
     if (ck.abs() >= _coeffSkipEps) {
       for (var i = 0; i < stridePairs; i++) {

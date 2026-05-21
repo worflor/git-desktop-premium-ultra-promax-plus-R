@@ -13,11 +13,22 @@ import '../../backend/logos_flow.dart'
     show analyzeFlowCached, FlowAnalysisResult, FlowBugKind, FlowFinding;
 import '../../ui/tokens.dart';
 
-const _codeExtensions = {
-  '.dart', '.js', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs',
-  '.java', '.kt', '.swift', '.rb', '.cpp', '.c', '.h', '.hpp',
-  '.cs', '.lua', '.php', '.scala', '.zig', '.vue', '.svelte',
-};
+/// Stability region in the coherence × lyapunov plane.
+///   `·` coherent + low impact    — stable, uninteresting
+///   `›` coherent + high impact   — directed energy, worth watching
+///   `~` incoherent + low impact  — scattered but harmless
+///   `◆` incoherent + high impact — turbulent, most concerning
+///   `※` contradictory flow       — bimodal confident disagreement
+String _stabilityGlyph(
+    double coherence, double lyapunov, FlowBugKind kind) {
+  if (kind == FlowBugKind.contradictoryFlow) return '※';
+  final coherent = coherence >= 0.75;
+  final impactful = lyapunov >= 0.7;
+  if (coherent && !impactful) return '·';
+  if (coherent && impactful) return '›';
+  if (!coherent && !impactful) return '~';
+  return '◆';
+}
 
 class FilamentFindingsPanel extends StatefulWidget {
   const FilamentFindingsPanel({super.key});
@@ -56,7 +67,6 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     final allPaths = const LineSplitter()
         .convert(probe.stdout.toString())
         .where((l) => l.isNotEmpty)
-        .where((f) => _codeExtensions.contains(p.extension(f).toLowerCase()))
         .toList();
 
     setState(() => _totalFiles = allPaths.length);
@@ -113,10 +123,13 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     var crit = 0;
     var warn = 0;
     var info = 0;
+    var joints = 0;
     for (final entry in _results.values) {
       for (final f in entry.findings) {
         total++;
-        if (f.certainty < 0.1) {
+        if (f.kind == FlowBugKind.contradictoryFlow) {
+          joints++;
+        } else if (f.certainty < 0.1) {
           crit++;
         } else if (f.certainty < 0.3) {
           warn++;
@@ -128,7 +141,8 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
     final buf = StringBuffer();
     buf.writeln('filament $total findings across ${_results.length} files '
-        '[C=$crit W=$warn I=$info]');
+        '[C=$crit W=$warn I=$info J=$joints]');
+    buf.writeln('  ·stable ›directed ~scattered ◆turbulent ※joint');
     buf.writeln();
 
     for (final entry in sorted) {
@@ -136,26 +150,31 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       final result = entry.value;
       final gap = result.spectralGap;
       final findings = [...result.findings]
-        ..sort((a, b) => a.certainty.compareTo(b.certainty));
+        ..sort((a, b) => b.composite.compareTo(a.composite));
 
       buf.writeln('── $path (${gap.toStringAsFixed(2)})');
       for (final f in findings) {
-        final sev = f.certainty < 0.1
-            ? 'C'
-            : f.certainty < 0.3
-                ? 'W'
-                : 'I';
+        final sev = f.kind == FlowBugKind.contradictoryFlow
+            ? 'J'
+            : f.certainty < 0.1
+                ? 'C'
+                : f.certainty < 0.3
+                    ? 'W'
+                    : 'I';
         final kind = switch (f.kind) {
           FlowBugKind.staleValue => 'stale',
           FlowBugKind.temporalShift => 'temporal',
           FlowBugKind.contextInversion => 'context',
+          FlowBugKind.contradictoryFlow => 'joint',
         };
+        final glyph = _stabilityGlyph(f.coherence, f.lyapunov, f.kind);
         final src = f.sourceText.length > 64
             ? '${f.sourceText.substring(0, 61)}...'
             : f.sourceText;
         buf.writeln(
-            '  $sev L${f.sourceLine + 1} $kind '
-            '[${f.certainty.toStringAsFixed(3)} p=${f.pathCount}] $src');
+            '  $sev$glyph L${f.sourceLine + 1} $kind '
+            '[${f.composite.toStringAsFixed(2)} '
+            'p=${f.pathCount}] $src');
       }
     }
     return buf.toString().trimRight();
@@ -182,10 +201,13 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     var critCount = 0;
     var warnCount = 0;
     var infoCount = 0;
+    var jointCount = 0;
     for (final entry in _results.values) {
       for (final f in entry.findings) {
         totalFindings++;
-        if (f.certainty < 0.1) {
+        if (f.kind == FlowBugKind.contradictoryFlow) {
+          jointCount++;
+        } else if (f.certainty < 0.1) {
           critCount++;
         } else if (f.certainty < 0.3) {
           warnCount++;
@@ -255,7 +277,8 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                       ),
                   ],
                 ),
-                if (critCount > 0 || warnCount > 0 || infoCount > 0) ...[
+                if (critCount > 0 || warnCount > 0 || infoCount > 0 ||
+                    jointCount > 0) ...[
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -270,6 +293,12 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                         if (critCount > 0 || warnCount > 0)
                           const SizedBox(width: 8),
                         _SeverityPill(label: 'info', count: infoCount, t: t),
+                      ],
+                      if (jointCount > 0) ...[
+                        if (critCount > 0 || warnCount > 0 || infoCount > 0)
+                          const SizedBox(width: 8),
+                        _SeverityPill(
+                            label: 'joint', count: jointCount, t: t),
                       ],
                     ],
                   ),
@@ -307,7 +336,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                     final entry = sortedFiles[index];
                     final findings = [...entry.value.findings]
                       ..sort(
-                          (a, b) => a.certainty.compareTo(b.certainty));
+                          (a, b) => b.composite.compareTo(a.composite));
                     return _FileSection(
                       path: entry.key,
                       gap: entry.value.spectralGap,
@@ -460,20 +489,24 @@ class _FindingRow extends StatelessWidget {
     final sevColor = switch (sev) {
       'critical' => t.textStrong,
       'warn' => t.textNormal,
+      'joint' => t.accentBright,
       _ => t.textMuted.withValues(alpha: 0.6),
     };
     final kind = switch (finding.kind) {
       FlowBugKind.staleValue => 'stale value',
       FlowBugKind.temporalShift => 'temporal shift',
       FlowBugKind.contextInversion => 'context inversion',
+      FlowBugKind.contradictoryFlow => 'contradictory flow',
     };
+    final glyph =
+        _stabilityGlyph(finding.coherence, finding.lyapunov, finding.kind);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: 48,
           child: Text(
-            sev,
+            '$sev$glyph',
             style: TextStyle(
               color: sevColor,
               fontSize: 9,

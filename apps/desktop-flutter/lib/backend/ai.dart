@@ -518,6 +518,8 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
         scopeLabel: scopeLabel,
         promptCharacters: prompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        inputTokens: providerResult.inputTokens,
+        outputTokens: providerResult.outputTokens,
       ),
     );
   } catch (error) {
@@ -581,6 +583,8 @@ Future<GitResult<AiPatchData>> generatePatch({
         patch: patch,
         promptCharacters: prompt.length,
         patchCharacters: patch.length,
+        inputTokens: apiResult.inputTokens,
+        outputTokens: apiResult.outputTokens,
       ));
     }
 
@@ -914,6 +918,8 @@ Future<GitResult<AiDebugData>> runDebug({
       symptom: symptom,
       round: round,
       promptChars: prompt.length,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
       candidates: response.candidates,
       fileContents: fileContents,
       priorRounds: priorRounds,
@@ -936,6 +942,8 @@ Future<GitResult<AiDebugData>> runDebug({
         ),
       ],
       promptCharacters: prompt.length,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
       candidatesConsidered: response.candidates.length,
       filesRead: fileContents.length,
       parseWarnings: const ['Could not parse structured output.'],
@@ -1061,6 +1069,8 @@ AiDebugData? _parseDebugOutput(
   required String symptom,
   required int round,
   required int promptChars,
+  int inputTokens = 0,
+  int outputTokens = 0,
   required List<MindCandidate> candidates,
   required Map<String, String> fileContents,
   required List<DebugRound> priorRounds,
@@ -1176,6 +1186,8 @@ AiDebugData? _parseDebugOutput(
     round: round,
     hypotheses: hypotheses,
     promptCharacters: promptChars,
+    inputTokens: inputTokens,
+    outputTokens: outputTokens,
     candidatesConsidered: candidates.length,
     filesRead: fileContents.length,
     parseWarnings: warnings,
@@ -1575,6 +1587,8 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           scopeLabel: scopeLabel,
           promptCharacters: draftPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
+          inputTokens: providerOutput.inputTokens,
+          outputTokens: providerOutput.outputTokens,
           verdict: draftReview.verdict,
           score: draftReview.score,
           summary: draftReview.summary,
@@ -1624,6 +1638,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       errorCode: verifyOutput.ok ? null : verifyOutput.error,
     );
 
+    final totalIn = providerOutput.inputTokens + verifyOutput.inputTokens;
+    final totalOut = providerOutput.outputTokens + verifyOutput.outputTokens;
+
     if (!verifyOutput.ok || verifyOutput.output == null) {
       final fallback = AiCommitReviewData(
         providerId: provider.id,
@@ -1633,6 +1650,8 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         scopeLabel: scopeLabel,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        inputTokens: totalIn,
+        outputTokens: totalOut,
         verdict: draftReview.verdict,
         score: draftReview.score,
         summary: draftReview.summary,
@@ -1662,6 +1681,8 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           scopeLabel: scopeLabel,
           promptCharacters: draftPrompt.length + verifyPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
+          inputTokens: totalIn,
+          outputTokens: totalOut,
           verdict: draftReview.verdict,
           score: draftReview.score,
           summary: draftReview.summary,
@@ -1703,6 +1724,8 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         scopeLabel: scopeLabel,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        inputTokens: totalIn,
+        outputTokens: totalOut,
         verdict: merged.verdict,
         score: merged.score,
         summary: merged.summary,
@@ -2093,7 +2116,7 @@ class _BrainstormIdea {
 }
 
 /// Phase 1 — cheap divergent spew. Returns parsed brainstorm ideas.
-Future<List<_BrainstormIdea>> _runBrainstormPhase({
+Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runBrainstormPhase({
   required _ProviderSpec provider,
   required _ProviderResolution resolution,
   required String modelId,
@@ -2203,7 +2226,7 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
     supportsReasoning: supportsReasoning,
   );
   if (!result.ok || result.output == null) {
-    return const [];
+    return (ideas: const <_BrainstormIdea>[], inputTokens: 0, outputTokens: 0);
   }
 
   final ideas = <_BrainstormIdea>[];
@@ -2242,7 +2265,7 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
     idx++;
     if (idx >= profile.suggestedIdeaCount + 12) break;
   }
-  return ideas;
+  return (ideas: ideas, inputTokens: result.inputTokens, outputTokens: result.outputTokens);
 }
 
 _IdeaKind _parseIdeaKind(String raw) {
@@ -3310,7 +3333,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     );
 
     // Phase 1 — brainstorm via the cheap/divergent slot.
-    final ideas = await _runBrainstormPhase(
+    final brainstormResult = await _runBrainstormPhase(
       provider: brainProvider,
       resolution: brainAvail.resolution!,
       modelId: brainModelId,
@@ -3324,6 +3347,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       fastMode: brainstormFastMode,
       supportsReasoning: brainstormSupportsReasoning,
     );
+    final ideas = brainstormResult.ideas;
     if (ideas.isEmpty) {
       return GitResult.err(
         'Brainstorm produced no usable ideas. Try again or use a stronger model slot.',
@@ -3492,6 +3516,10 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       ],
       promptCharacters: synthPrompt.length,
       diffCharacters: bundle.diffBundle.originalDiffCharacters,
+      brainstormInputTokens: brainstormResult.inputTokens,
+      brainstormOutputTokens: brainstormResult.outputTokens,
+      synthesisInputTokens: providerOutput.inputTokens,
+      synthesisOutputTokens: providerOutput.outputTokens,
       parseWarnings: parsed.warnings,
       userBoostedPaths: userBoostedPaths,
     ));
@@ -5788,6 +5816,9 @@ Future<String> _collectExecutionFlowEvidence({
     if (fps.isNotEmpty) anchor = anchorFingerprint(fps);
   }
 
+  final graphStrengths =
+      logosEngine?.couplingStrengths() ?? const <String, double>{};
+
   final futures = <Future<(String, FlowAnalysisResult?)>>[];
   for (final filePath in paths) {
     futures.add(Future(() async {
@@ -5796,8 +5827,12 @@ Future<String> _collectExecutionFlowEvidence({
         if (anchor != null && basis != null) {
           final idx = logosEngine!.pathToId[filePath];
           if (idx != null) {
-            coupling = logosFingerCoupling(
+            final fingerCoupling = logosFingerCoupling(
                 basis.spectralByteFingerprint(idx), anchor);
+            final graphCoupling = graphStrengths[filePath] ?? 0.0;
+            coupling = math.max(fingerCoupling,
+                fingerCoupling * (1 - graphCouplingBlend) +
+                    graphCoupling * graphCouplingBlend);
           }
         }
         return (filePath, await analyzeFlowCached(
@@ -5857,6 +5892,7 @@ Future<String> _collectExecutionFlowEvidence({
       FlowBugKind.staleValue => 'stale value',
       FlowBugKind.temporalShift => 'temporal shift',
       FlowBugKind.contextInversion => 'context inversion',
+      FlowBugKind.contradictoryFlow => 'contradictory flow',
     };
     final entry = '[$path:$line] [${finding.severity}] '
         '${finding.sourceText} — $kind '
@@ -8522,6 +8558,8 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       outputPreview: apiResult.text!.length > 200
           ? '${apiResult.text!.substring(0, 200)}...'
           : apiResult.text!,
+      inputTokens: apiResult.inputTokens,
+      outputTokens: apiResult.outputTokens,
     );
   }
 
@@ -8544,6 +8582,8 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       outputPreview: apiResult.text!.length > 200
           ? '${apiResult.text!.substring(0, 200)}...'
           : apiResult.text!,
+      inputTokens: apiResult.inputTokens,
+      outputTokens: apiResult.outputTokens,
     );
   }
 
@@ -10865,12 +10905,16 @@ class _ProviderPromptResult {
   final String? output;
   final String? error;
   final String outputPreview;
+  final int inputTokens;
+  final int outputTokens;
 
   const _ProviderPromptResult({
     required this.ok,
     this.output,
     this.error,
     required this.outputPreview,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
   });
 }
 

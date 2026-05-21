@@ -433,7 +433,7 @@ const _changelog = <_ReleaseNote>[
     date: '2026-05-18',
     bullets: [
       'Welcome to the first non-internal release. We have:',
-      'Introducing Filament, an experimental execution-flow engine makes its first appearnce! :o',
+      'Filament, an experimental execution-flow engine makes its first appearnce! :o',
       'Beep beep, Wick.exe alpha integration is here in the cmd palette for those who have the binary. Much unreleased. (real-time semantic search)',
       'Inline interactive re-order for commits. (allegedly)',
       'I spent an afternoon designing how Manifold should present a 3-way merge and settled on a unified fullscreen per-file experience. Built in Logos magic to assist, but designed for The Manual Way™.',
@@ -441,7 +441,7 @@ const _changelog = <_ReleaseNote>[
       'OpenRouter API support.',
       'Ask has been reworked into more of a debug thing. Very alpha - may change.',
       'Settings got shorter to scroll through. And the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
-      'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
+      'Essays written in the commit field prompt an expanded composer menu. Yap unbothered.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
       'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
       'Adjusted Petrichor to keep the same rainy feel, but with shaders and more vibesss.',

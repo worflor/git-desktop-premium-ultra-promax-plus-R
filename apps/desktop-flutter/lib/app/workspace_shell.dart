@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import '../main.dart' show manifoldRouteObserver;
@@ -363,6 +364,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                         _Panel.filamentFindings => _SlidePanel(
                             key: const ValueKey('filamentFindings'),
                             title: 'Filament Findings',
+                            titleWidget:
+                                const _FilamentFindingsShaderTitle(),
                             onClose: () => _setPanel(_Panel.none),
                             onBack: () => _setPanel(_Panel.settings),
                             child: const FilamentFindingsPanel(),
@@ -4975,6 +4978,7 @@ class _KeepAlivePagesState extends State<_KeepAlivePages>
 
 class _SlidePanel extends StatelessWidget {
   final String? title;
+  final Widget? titleWidget;
   final VoidCallback onClose;
   final VoidCallback? onBack;
   final Widget child;
@@ -4982,6 +4986,7 @@ class _SlidePanel extends StatelessWidget {
   const _SlidePanel({
     super.key,
     this.title,
+    this.titleWidget,
     required this.onClose,
     this.onBack,
     required this.child,
@@ -5003,11 +5008,15 @@ class _SlidePanel extends StatelessWidget {
         tone: panelTone,
         borderAlpha: 0.30,
         elevated: true,
-        child: title == null
+        child: title == null && titleWidget == null
             ? child
             : Column(
                 children: [
-                  _SlideHeader(title: title!, onClose: onClose, onBack: onBack),
+                  _SlideHeader(
+                      title: title ?? '',
+                      titleWidget: titleWidget,
+                      onClose: onClose,
+                      onBack: onBack),
                   Expanded(child: child),
                 ],
               ),
@@ -5018,10 +5027,15 @@ class _SlidePanel extends StatelessWidget {
 
 class _SlideHeader extends StatelessWidget {
   final String title;
+  final Widget? titleWidget;
   final VoidCallback onClose;
   final VoidCallback? onBack;
 
-  const _SlideHeader({required this.title, required this.onClose, this.onBack});
+  const _SlideHeader(
+      {required this.title,
+      this.titleWidget,
+      required this.onClose,
+      this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -5039,15 +5053,16 @@ class _SlideHeader extends StatelessWidget {
             _PanelBackButton(onBack: onBack!),
             const SizedBox(width: 8),
           ],
-          Text(
-            title.toUpperCase(),
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.96,
-            ),
-          ),
+          titleWidget ??
+              Text(
+                title.toUpperCase(),
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.96,
+                ),
+              ),
           const Spacer(),
           _PanelCloseButton(onClose: onClose),
         ],
@@ -5170,6 +5185,75 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FilamentFindingsShaderTitle extends StatefulWidget {
+  const _FilamentFindingsShaderTitle();
+
+  @override
+  State<_FilamentFindingsShaderTitle> createState() =>
+      _FilamentFindingsShaderTitleState();
+}
+
+class _FilamentFindingsShaderTitleState
+    extends State<_FilamentFindingsShaderTitle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final dur = context.motion(const Duration(seconds: 1));
+    const style = TextStyle(
+      color: Colors.white,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      letterSpacing: 0.96,
+    );
+    if (dur == Duration.zero) {
+      return Text('FILAMENT FINDINGS',
+          style: style.copyWith(color: t.textMuted));
+    }
+    final warm = Color.lerp(t.textMuted, t.accentBright, 0.5)!;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        final phase = _ctrl.value;
+        return ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) {
+            final w = bounds.width;
+            final cx = -w * 0.3 + phase * w * 1.6;
+            final spread = w * 0.22;
+            return ui.Gradient.linear(
+              Offset(cx - spread, 0),
+              Offset(cx + spread, 0),
+              [t.textMuted, warm, t.textMuted],
+              [0.0, 0.5, 1.0],
+              TileMode.clamp,
+            );
+          },
+          child: child!,
+        );
+      },
+      child: const Text('FILAMENT FINDINGS', style: style),
     );
   }
 }

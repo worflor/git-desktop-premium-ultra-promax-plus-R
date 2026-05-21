@@ -53,6 +53,8 @@ import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
+import '../../backend/logos_git_calibration.dart'
+    show LogosRegime, LogosSseStore;
 import '../../app/preferences_state.dart';
 import '../../app/window_activity.dart';
 import '../../app/desk_drop_payload.dart';
@@ -145,6 +147,11 @@ int _stableHash(String s) {
 String _tokensLabel(int chars) {
   final t = chars ~/ 4;
   return t >= 1000 ? '${(t / 1000).toStringAsFixed(1)}k' : '$t';
+}
+
+String _realTokens(int tokens) {
+  if (tokens <= 0) return '?';
+  return tokens >= 1000 ? '${(tokens / 1000).toStringAsFixed(1)}k' : '$tokens';
 }
 
 class ChangesPage extends StatefulWidget {
@@ -3516,17 +3523,17 @@ class _ChangesPageState extends State<ChangesPage> {
 
   String _commitAiTooltip(AiSettingsState aiSettings, int includedCount) {
     if (_generateRunning) {
-      return 'Generating commit message...';
+      return 'generating commit message...';
     }
     if (_commitAiLoading) {
-      return 'Preparing commit-message AI...';
+      return 'preparing commit-message...';
     }
     if (includedCount == 0) {
-      return 'Select at least one file to generate a commit message.';
+      return 'select at least one file to generate a commit message.';
     }
     if (!_hasCommitAiSelection(aiSettings)) {
       return _commitAiError ??
-          'Configure commit-message AI in Settings > Behavioural Dynamics > Commit Messages.';
+          'configure commit-message in Settings > Behavioural Dynamics > Commit Messages.';
     }
     // The second category is "Fast" — the typical default for commit gen.
     final commitLabel = aiSettings
@@ -5827,6 +5834,8 @@ class _ChangesPageState extends State<ChangesPage> {
                       // hovering a chip there previews the desk's
                       // diverged commits in-place. One canonical home for
                       // the affordance instead of two parallel strips.)
+                      if (repoPath != null)
+                        _RegimeTimelineStrip(repoPath: repoPath),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
                         child: Row(
@@ -7542,7 +7551,9 @@ class _MusePaneState extends State<_MusePane> {
               if (widget.result != null) ...[
                 const SizedBox(width: 8),
                 Text(
-                  '${_tokensLabel(widget.result!.promptCharacters)} → ${_tokensLabel(widget.result!.diffCharacters)}',
+                  widget.result!.totalInputTokens > 0
+                      ? '${_realTokens(widget.result!.totalInputTokens)} in · ${_realTokens(widget.result!.totalOutputTokens)} out'
+                      : '${_tokensLabel(widget.result!.promptCharacters)} → ${_tokensLabel(widget.result!.diffCharacters)}',
                   style: TextStyle(
                     fontFamily: AppFonts.mono,
                     fontSize: 9,
@@ -8133,10 +8144,12 @@ class _DebugPane extends StatelessWidget {
                 const SizedBox(width: 6),
                 Text('· round ${result!.round}',
                     style: TextStyle(color: t.textFaint, fontSize: 11)),
-                if (result!.promptCharacters > 0) ...[
+                if (result!.inputTokens > 0 || result!.promptCharacters > 0) ...[
                   const Spacer(),
                   Text(
-                    '${_tokensLabel(result!.promptCharacters)} →',
+                    result!.inputTokens > 0
+                        ? '${_realTokens(result!.inputTokens)} in · ${_realTokens(result!.outputTokens)} out'
+                        : '${_tokensLabel(result!.promptCharacters)} →',
                     style: TextStyle(
                       fontFamily: AppFonts.mono,
                       fontSize: 9,
@@ -8778,7 +8791,9 @@ class _CommitReviewPane extends StatelessWidget {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
+                                review.inputTokens > 0
+                                    ? '${_realTokens(review.inputTokens)} in · ${_realTokens(review.outputTokens)} out'
+                                    : '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
                                 style: TextStyle(
                                   fontFamily: AppFonts.mono,
                                   fontSize: 9,
@@ -14625,4 +14640,135 @@ class _RhythmSparkPainter extends CustomPainter {
       old.totalCommits != totalCommits ||
       old.colour != colour ||
       old.faint != faint;
+}
+
+class _RegimeTimelineStrip extends StatefulWidget {
+  final String repoPath;
+  const _RegimeTimelineStrip({required this.repoPath});
+
+  static Color _regimeColor(LogosRegime r) => switch (r) {
+        LogosRegime.focused => AppSeverityPalette.safe,
+        LogosRegime.scoped => AppSeverityPalette.info,
+        LogosRegime.sweep => AppSeverityPalette.caution,
+        LogosRegime.uncategorised => AppSeverityPalette.neutral,
+      };
+
+  @override
+  State<_RegimeTimelineStrip> createState() => _RegimeTimelineStripState();
+}
+
+class _RegimeTimelineStripState extends State<_RegimeTimelineStrip> {
+  late Future<(List<(int, LogosRegime, double)>, double)> _future;
+  StreamSubscription<String>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(_RegimeTimelineStrip old) {
+    super.didUpdateWidget(old);
+    if (old.repoPath != widget.repoPath) {
+      _future = _load();
+      _sub?.cancel();
+      _subscribe();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  void _subscribe() {
+    final key = LogosSseStore.lockKeyFor(widget.repoPath);
+    _sub = LogosSseStore.regimeChanges
+        .where((k) => k == key)
+        .listen((_) {
+      if (mounted) setState(() => _future = _load());
+    });
+  }
+
+  Future<(List<(int, LogosRegime, double)>, double)> _load() async {
+    final store = LogosSseStore(widget.repoPath);
+    final history = await store.loadRegimeHistory();
+    final score = await store.loadPhaseTransitionScore();
+    return (history, score);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return FutureBuilder<(List<(int, LogosRegime, double)>, double)>(
+      future: _future,
+      builder: (context, snap) {
+        final data = snap.data;
+        if (data == null || data.$1.isEmpty) return const SizedBox.shrink();
+        final history = data.$1;
+        final score = data.$2;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          child: Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 3,
+                  child: CustomPaint(
+                    painter: _RegimeStripPainter(
+                      entries: history,
+                      muted: t.textMuted,
+                    ),
+                  ),
+                ),
+              ),
+              if (score > 0.05)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text(
+                    score.toStringAsFixed(2),
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: t.textMuted.withValues(alpha: 0.6),
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RegimeStripPainter extends CustomPainter {
+  final List<(int timestampMs, LogosRegime regime, double focusScore)> entries;
+  final Color muted;
+
+  _RegimeStripPainter({required this.entries, required this.muted});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (entries.isEmpty) return;
+    final n = entries.length;
+    final cellW = size.width / n;
+    final paint = Paint();
+    for (var i = 0; i < n; i++) {
+      final (_, regime, focus) = entries[i];
+      final base = _RegimeTimelineStrip._regimeColor(regime);
+      paint.color = base.withValues(alpha: 0.3 + 0.7 * focus);
+      canvas.drawRect(
+        Rect.fromLTWH(i * cellW, 0, cellW + 0.5, size.height),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RegimeStripPainter old) =>
+      !identical(old.entries, entries);
 }

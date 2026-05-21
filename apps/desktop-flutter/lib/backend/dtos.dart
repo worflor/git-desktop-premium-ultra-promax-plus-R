@@ -1119,6 +1119,10 @@ class AiMuseData {
   final List<AiMuseIdea> brainstormIdeas;
   final int promptCharacters;
   final int diffCharacters;
+  final int brainstormInputTokens;
+  final int brainstormOutputTokens;
+  final int synthesisInputTokens;
+  final int synthesisOutputTokens;
 
   /// Free-form warnings raised during parse — malformed `<idea>` tags,
   /// missing foothold citations, tiers the model invented. Rendered as
@@ -1141,9 +1145,16 @@ class AiMuseData {
     this.brainstormIdeas = const [],
     required this.promptCharacters,
     required this.diffCharacters,
+    this.brainstormInputTokens = 0,
+    this.brainstormOutputTokens = 0,
+    this.synthesisInputTokens = 0,
+    this.synthesisOutputTokens = 0,
     this.parseWarnings = const [],
     this.userBoostedPaths = const {},
   });
+
+  int get totalInputTokens => brainstormInputTokens + synthesisInputTokens;
+  int get totalOutputTokens => brainstormOutputTokens + synthesisOutputTokens;
 
   int get keptIdeaCount => brainstormIdeas.where((idea) => idea.kept).length;
   int get totalIdeaCount => brainstormIdeas.length;
@@ -1162,6 +1173,8 @@ class AiCommitMessageData {
   final String scopeLabel;
   final int promptCharacters;
   final int diffCharacters;
+  final int inputTokens;
+  final int outputTokens;
 
   const AiCommitMessageData({
     required this.providerId,
@@ -1170,6 +1183,8 @@ class AiCommitMessageData {
     required this.scopeLabel,
     required this.promptCharacters,
     required this.diffCharacters,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
   });
 }
 
@@ -1184,6 +1199,8 @@ class AiPatchData {
   final String patch;
   final int promptCharacters;
   final int patchCharacters;
+  final int inputTokens;
+  final int outputTokens;
 
   const AiPatchData({
     required this.providerId,
@@ -1191,6 +1208,8 @@ class AiPatchData {
     required this.patch,
     required this.promptCharacters,
     required this.patchCharacters,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
   });
 }
 
@@ -1260,6 +1279,8 @@ class AiCommitReviewData {
   final String scopeLabel;
   final int promptCharacters;
   final int diffCharacters;
+  final int inputTokens;
+  final int outputTokens;
   final String verdict;
   final int score;
   final String summary;
@@ -1283,6 +1304,8 @@ class AiCommitReviewData {
     required this.scopeLabel,
     required this.promptCharacters,
     required this.diffCharacters,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
     required this.verdict,
     required this.score,
     required this.summary,
@@ -1356,6 +1379,8 @@ class AiDebugData {
   final int round;
   final List<AiDebugHypothesis> hypotheses;
   final int promptCharacters;
+  final int inputTokens;
+  final int outputTokens;
   final int candidatesConsidered;
   final int filesRead;
   final List<String> parseWarnings;
@@ -1368,6 +1393,8 @@ class AiDebugData {
     required this.round,
     required this.hypotheses,
     this.promptCharacters = 0,
+    this.inputTokens = 0,
+    this.outputTokens = 0,
     this.candidatesConsidered = 0,
     this.filesRead = 0,
     this.parseWarnings = const [],

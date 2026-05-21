@@ -234,6 +234,94 @@ class FlowSseLattice {
   int get totalObservations => _cells.fold(0, (s, c) => s + c.n);
 }
 
+// ── Branch amplification ─────────────────────────────────────────────
+
+/// Certainty restoration gain at a branch point with the given fanout.
+/// Uses sin²(π/16) — the resource-axis spectral gap — scaled by the
+/// information content log₂(fanout). Saturated through a tanh envelope
+/// with asymptote 0.25 so the gain curve is C∞ — no discontinuous
+/// derivative at the cap, and deeply nested switches still produce
+/// distinguishable (if diminishing) gains.
+double flowBranchGain(int fanout) {
+  if (fanout <= 1) return 0.0;
+  final raw = _sinPi16Sq * math.log(fanout.toDouble()) / math.ln2;
+  final x = raw / 0.25;
+  final e2x = math.exp(2.0 * x);
+  return 0.25 * (e2x - 1.0) / (e2x + 1.0);
+}
+
+// ── Phase coherence ─────────────────────────────────────────────────
+
+/// Resultant length of unit phasors — measures how much the arriving
+/// paths agree on phase. 1.0 = perfect agreement, 0.0 = uniform scatter.
+double flowPhaseCoherence(List<(double, double)> arrivals) {
+  if (arrivals.length <= 1) return 1.0;
+  var cosSum = 0.0, sinSum = 0.0;
+  for (final (_, phase) in arrivals) {
+    cosSum += math.cos(phase);
+    sinSum += math.sin(phase);
+  }
+  final n = arrivals.length.toDouble();
+  return math.sqrt(cosSum * cosSum + sinSum * sinSum) / n;
+}
+
+/// Detect contradictory flow: arrivals that split into two confident,
+/// near-antipodal phase clusters. Returns true when k=2 means on the
+/// unit circle produces two groups with:
+///   - mean certainty > [certFloor] in each cluster
+///   - inter-cluster phase gap > [gapMin] radians
+///   - at least [minPerCluster] arrivals per cluster
+///
+/// This distinguishes genuine logical contradiction (bimodal, high
+/// certainty per path) from uniform noise (low certainty, scattered).
+bool flowIsContradictory(
+  List<(double, double)> arrivals, {
+  double certFloor = 0.15,
+  double gapMin = 1.8,
+  int minPerCluster = 2,
+}) {
+  if (arrivals.length < 2 * minPerCluster) return false;
+
+  // k-means with k=2 on the unit circle. Seed: the two arrivals with
+  // the largest phase difference.
+  var bestGap = 0.0;
+  var seedA = 0.0, seedB = 0.0;
+  for (var i = 0; i < arrivals.length; i++) {
+    for (var j = i + 1; j < arrivals.length; j++) {
+      var d = (arrivals[i].$2 - arrivals[j].$2).abs();
+      if (d > math.pi) d = 2 * math.pi - d;
+      if (d > bestGap) {
+        bestGap = d;
+        seedA = arrivals[i].$2;
+        seedB = arrivals[j].$2;
+      }
+    }
+  }
+  if (bestGap < gapMin) return false;
+
+  // Assign arrivals to nearest seed by circular distance.
+  var nA = 0, nB = 0;
+  var certSumA = 0.0, certSumB = 0.0;
+  for (final (cert, phase) in arrivals) {
+    var dA = (phase - seedA).abs();
+    if (dA > math.pi) dA = 2 * math.pi - dA;
+    var dB = (phase - seedB).abs();
+    if (dB > math.pi) dB = 2 * math.pi - dB;
+    if (dA <= dB) {
+      nA++;
+      certSumA += cert;
+    } else {
+      nB++;
+      certSumB += cert;
+    }
+  }
+
+  if (nA < minPerCluster || nB < minPerCluster) return false;
+  final meanCertA = certSumA / nA;
+  final meanCertB = certSumB / nB;
+  return meanCertA >= certFloor && meanCertB >= certFloor;
+}
+
 // ── Filament saturation ──────────────────────────────────────────────
 
 /// Gap → [0, 1) fragility. `1 - e^{-x/4}`.

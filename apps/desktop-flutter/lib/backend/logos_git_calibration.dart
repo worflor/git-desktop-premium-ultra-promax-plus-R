@@ -393,6 +393,13 @@ class LogosSseStore {
   DateTime? _cacheAt;
   static const _cacheTtl = Duration(seconds: 3);
 
+  /// Ring buffer of recent regime observations for phase-transition
+  /// detection. Persisted alongside SSE cells in `sse.json`.
+  List<(int timestampMs, LogosRegime regime, double focusScore)>
+      _regimeHistory = [];
+  static const int _maxRegimeHistory = 64;
+  static const int _phaseTransitionWindow = 16;
+
   /// Per-repoPath write-chain. Each new locked operation awaits the
   /// previous one's completion before running, then chains its own
   /// completer for the next caller. Static so it spans all
@@ -405,12 +412,22 @@ class LogosSseStore {
   /// so without this a sibling can return pre-write data for up to [_cacheTtl].
   static final Map<String, DateTime> _lastWriteAt = {};
 
+  /// Broadcast stream that fires the repo's lock key whenever a regime
+  /// observation is persisted. UI subscribers (e.g. the regime timeline
+  /// strip) listen here to refresh without polling.
+  static final StreamController<String> _regimeChangeBus =
+      StreamController<String>.broadcast(sync: false);
+
+  /// Stream of repo lock keys emitted after each regime observation write.
+  static Stream<String> get regimeChanges => _regimeChangeBus.stream;
+
   /// Normalise a repo path to a canonical lock key.  Converts backslashes
   /// to forward slashes and strips trailing slashes.  Lowercasing is
   /// applied only on Windows where the filesystem is case-insensitive —
   /// on macOS and Linux `/Repo` and `/repo` are distinct directories and
   /// must not share a lock entry.  [repoPath] itself is left unchanged
   /// — it is used for actual file I/O and must remain in its original form.
+  static String lockKeyFor(String path) => _lockKey(path);
   static String _lockKey(String path) {
     var key = path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
     if (Platform.isWindows) key = key.toLowerCase();
@@ -569,6 +586,60 @@ class LogosSseStore {
   }
 
 
+  Future<void> recordRegimeObservation(
+      LogosRegime regime, double focusScore) =>
+    _withRepoWriteLock(() async {
+      await _load();
+      _regimeHistory.add((
+        DateTime.now().millisecondsSinceEpoch,
+        regime,
+        focusScore.clamp(0.0, 1.0),
+      ));
+      if (_regimeHistory.length > _maxRegimeHistory) {
+        _regimeHistory = _regimeHistory.sublist(
+            _regimeHistory.length - _maxRegimeHistory);
+      }
+      await _save(_cache ?? {});
+      _regimeChangeBus.add(_lockKey(repoPath));
+    });
+
+  Future<double> loadPhaseTransitionScore() async {
+    await _load();
+    return phaseTransitionScore;
+  }
+
+  Future<List<(int timestampMs, LogosRegime regime, double focusScore)>>
+      loadRegimeHistory() async {
+    await _load();
+    return List.unmodifiable(_regimeHistory);
+  }
+
+  double get phaseTransitionScore {
+    final h = _regimeHistory;
+    if (h.length < 2) return 0.0;
+    final window = h.length > _phaseTransitionWindow
+        ? h.sublist(h.length - _phaseTransitionWindow)
+        : h;
+    if (window.length < 2) return 0.0;
+    var transitions = 0;
+    for (var i = 1; i < window.length; i++) {
+      if (window[i].$2 != window[i - 1].$2) transitions++;
+    }
+    final transitionRate = transitions / (window.length - 1);
+    var mean = 0.0;
+    for (final (_, __, fs) in window) {
+      mean += fs;
+    }
+    mean /= window.length;
+    var variance = 0.0;
+    for (final (_, __, fs) in window) {
+      final d = fs - mean;
+      variance += d * d;
+    }
+    variance /= window.length;
+    return math.min(1.0, transitionRate + math.sqrt(variance));
+  }
+
   Future<Map<LogosRegime, Map<LogosAxis, LogosSseCell>>> _load() async {
     // Invalidate own cache if a sibling store wrote more recently.
     // The static lock serialises writers but each instance holds its own
@@ -606,6 +677,7 @@ class LogosSseStore {
       } else {
         final out = <LogosRegime, Map<LogosAxis, LogosSseCell>>{};
         for (final regimeEntry in json.entries) {
+          if (regimeEntry.key == '_regimeHistory') continue;
           final regime = _regimeByName(regimeEntry.key as String);
           if (regime == null) continue;
           final inner = regimeEntry.value;
@@ -624,6 +696,22 @@ class LogosSseStore {
             }
           }
           out[regime] = row;
+        }
+        final rawHistory = json['_regimeHistory'];
+        if (rawHistory is List) {
+          _regimeHistory = [
+            for (final entry in rawHistory)
+              if (entry is List && entry.length >= 3)
+                (
+                  (entry[0] as num).toInt(),
+                  _regimeByName(entry[1] as String) ?? LogosRegime.uncategorised,
+                  (entry[2] as num).toDouble(),
+                ),
+          ];
+          if (_regimeHistory.length > _maxRegimeHistory) {
+            _regimeHistory = _regimeHistory.sublist(
+                _regimeHistory.length - _maxRegimeHistory);
+          }
         }
         _cache = out;
       }
@@ -644,12 +732,17 @@ class LogosSseStore {
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
-      final json = <String, Map<String, Map<String, dynamic>>>{
+      final json = <String, dynamic>{
         for (final regime in data.entries)
           regime.key.name: {
             for (final axis in regime.value.entries)
               axis.key.name: axis.value.toJson(),
           },
+        if (_regimeHistory.isNotEmpty)
+          '_regimeHistory': [
+            for (final (ts, r, fs) in _regimeHistory)
+              [ts, r.name, double.parse(fs.toStringAsFixed(4))],
+          ],
       };
       final payload = const JsonEncoder.withIndent('  ').convert(json);
 

@@ -7407,11 +7407,11 @@ class _FilamentReadout extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'runs oscillators through code '
-            'structure, tracking certainty '
-            'and phase to find fragile '
+            'simulate oscillators on code to '
+            'reveal structure, tracking certainty '
+            'and phase. surfacing fragile '
             'execution paths before '
-            'they surface as bugs.',
+            'they crystalize as bugs.',
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.6),
               fontSize: 10,

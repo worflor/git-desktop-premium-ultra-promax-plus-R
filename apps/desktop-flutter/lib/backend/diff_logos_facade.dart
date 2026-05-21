@@ -22,7 +22,7 @@ import 'logos_branch_orbit.dart'
 import 'logos_chunks.dart' as chunks;
 import 'logos_core.dart' show SpectralBasis, SpectralHeat, SpectralGroundSpace;
 import 'logos_git.dart';
-import 'logos_git_calibration.dart' show LogosAxis, LogosRegime;
+import 'logos_git_calibration.dart' show LogosAxis, LogosRegime, LogosSseStore;
 import 'logos_git_probe.dart'
     show
         DiffProbe,
@@ -1315,6 +1315,10 @@ class DiffLogosFacade {
         : (request.symbolCoupling.isEmpty
             ? engineBase
             : engineBase.withSymbolEdges(request.symbolCoupling));
+    final sseStore = LogosSseStore(request.repositoryPath);
+    if (engine != null) {
+      engine.phaseBoost = await sseStore.loadPhaseTransitionScore();
+    }
     final useLightweightSnapshot = engine != null &&
         _shouldUseLightweightDiffSnapshot(
           touchedPaths: touchedPaths,
@@ -1616,6 +1620,8 @@ class DiffLogosFacade {
       sourceSurprise: evidence?.sourceSurprise,
       fieldSurprise: evidence?.fieldSurprise,
     );
+    unawaited(sseStore
+        .recordRegimeObservation(shape.regime, shape.coherence));
 
     return _DiffLogosSnapshot(
       cacheKey: _requestCacheKey(request),

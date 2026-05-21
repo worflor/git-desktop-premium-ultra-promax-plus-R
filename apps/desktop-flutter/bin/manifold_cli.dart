@@ -228,6 +228,11 @@ String _dim(String s) => _isTty ? '\x1B[2m$s\x1B[0m' : s;
 String _bold(String s) => _isTty ? '\x1B[1m$s\x1B[0m' : s;
 String _yellow(String s) => _isTty ? '\x1B[33m$s\x1B[0m' : s;
 
+String _fmtTokens(int t) {
+  if (t >= 1000) return '${(t / 1000).toStringAsFixed(1)}k';
+  return '$t';
+}
+
 String _timeFmt(int ms) {
   final s = ms / 1000;
   if (s < 10) return '${s.toStringAsFixed(1)}s';
@@ -370,11 +375,17 @@ void _printReview(Map result, int elapsedMs) {
   final enrichment = result['enrichment'] as Map?;
   final coupling = enrichment?['coupling'] == true;
   final symbols = enrichment?['symbols'] == true;
+  final inTok = result['inputTokens'] as int? ?? 0;
+  final outTok = result['outputTokens'] as int? ?? 0;
 
   // Header
+  final tokenStr = inTok > 0
+      ? ' · ${_fmtTokens(inTok)} in → ${_fmtTokens(outTok)} out'
+      : '';
   stdout.writeln(
     ' ${_bold('$score')}  $verdict · $reviewed/$total files · $model · ${_timeFmt(elapsedMs)}'
-    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}',
+    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}'
+    '$tokenStr',
   );
   stdout.writeln('');
   stdout.writeln(' ${result['summary']}');
@@ -426,11 +437,18 @@ void _printMuse(Map result, int elapsedMs) {
   final enrichment = result['enrichment'] as Map?;
   final coupling = enrichment?['coupling'] == true;
   final symbols = enrichment?['symbols'] == true;
+  final tokens = result['tokens'] as Map?;
+  final totalIn = tokens?['totalIn'] as int? ?? 0;
+  final totalOut = tokens?['totalOut'] as int? ?? 0;
 
   // Header
+  final tokenStr = totalIn > 0
+      ? ' · ${_fmtTokens(totalIn)} in → ${_fmtTokens(totalOut)} out'
+      : '';
   stdout.writeln(
     ' muse · $reviewed/$total files · $model · ${_timeFmt(elapsedMs)}'
-    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}',
+    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}'
+    '$tokenStr',
   );
   stdout.writeln('');
 

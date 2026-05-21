@@ -83,7 +83,7 @@ class FlowGraph {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Line classification — spectral (from graph structure)
+// Line geometry — language-agnostic structural analysis
 // ═══════════════════════════════════════════════════════════════════
 
 int _indentation(String line) {
@@ -100,82 +100,74 @@ int _indentation(String line) {
   return n;
 }
 
-/// Lattice address + Lyapunov from indentation geometry alone.
-(int, double) _classifyLine(
-  String line,
-  int lineIndex,
-  int prevIndent,
-  int nextIndent,
-  int maxIndent,
-  int totalLines,
-  double fiedlerEstimate,
-  double betweennessEstimate,
-) {
-  final stripped = line.trimLeft();
-  if (stripped.isEmpty) return (kFlowPure, 0.0);
-
-  // skip pure comments
-  if (stripped.startsWith('//') ||
-      stripped.startsWith('#') ||
-      stripped.startsWith('*') ||
-      stripped.startsWith('/*')) {
-    return (kFlowPure, 0.0);
+/// Shannon entropy of printable characters in [s], normalised to [0, 1].
+/// Low entropy → repetitive/structured (code). High entropy → natural
+/// language or noise (comments, docs, binary residue).
+double _charEntropy(String s) {
+  if (s.length < 4) return 0.0;
+  final counts = <int, int>{};
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    counts[c] = (counts[c] ?? 0) + 1;
   }
-
-  final indent = _indentation(line);
-  var addr = 0;
-  var ly = 0.0;
-
-  // structural Lyapunov: combination of Fiedler estimate and
-  // betweenness estimate, scaled to [0, 3]
-  ly = fiedlerEstimate * betweennessEstimate * 3.0;
-
-  // scope entry (indentation increases significantly after this line)
-  if (nextIndent > indent + 2) {
-    addr |= kFlowLifecycle;
+  final n = s.length.toDouble();
+  var h = 0.0;
+  for (final c in counts.values) {
+    final p = c / n;
+    if (p > 0) h -= p * math.log(p);
   }
+  return h / math.log(math.max(counts.length, 2));
+}
 
-  // scope transition (indentation changes significantly)
-  if ((indent - prevIndent).abs() > 4 || (indent - nextIndent).abs() > 4) {
-    if (ly > 0.3) {
-      addr |= kFlowAsync;
+/// True when a stripped line is likely non-code: high character entropy
+/// AND low structural-character density (few brackets, operators, semicolons).
+bool _isLikelyNonCode(String stripped) {
+  if (stripped.length < 3) return true;
+  var structural = 0;
+  for (var i = 0; i < stripped.length; i++) {
+    final c = stripped.codeUnitAt(i);
+    if (c == 0x28 || c == 0x29 || // ( )
+        c == 0x7B || c == 0x7D || // { }
+        c == 0x5B || c == 0x5D || // [ ]
+        c == 0x3B || c == 0x3D || // ; =
+        c == 0x3C || c == 0x3E || // < >
+        c == 0x2E || c == 0x3A || // . :
+        c == 0x2C) {              // ,
+      structural++;
     }
   }
+  final density = structural / stripped.length;
+  if (density > 0.08) return false;
+  return _charEntropy(stripped) > 0.88;
+}
 
-  // deep scope (high indentation relative to max = structurally interior)
-  if (maxIndent > 0 && indent > maxIndent * 0.6) {
-    addr |= kFlowResource;
-  }
-
-  // scope exit returning to shallow depth after deep excursion
-  if (prevIndent > indent + 4 && indent <= 4) {
-    addr |= kFlowRestabilizes;
-  }
-
-  // first line
-  if (lineIndex == 0) {
-    addr |= kFlowLifecycle;
-  }
-
-  if (addr == 0) addr = kFlowPure;
-  return (addr, ly);
+/// Lyapunov exponent from indentation geometry.
+double _lyapunovFromGeometry(
+    double fiedlerEstimate, double betweennessEstimate) {
+  return fiedlerEstimate * betweennessEstimate * 3.0;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Graph extraction from source text
 // ═══════════════════════════════════════════════════════════════════
 
-/// Flow graph from indentation structure.
+/// Flow graph from indentation structure with spectral address assignment.
+///
+/// Phase 1: build topology from indentation geometry (language-agnostic).
+/// Phase 2: compute Lanczos eigenpairs on the topology → assign each
+///          node its spectral byte fingerprint as the lattice address.
+///          Terminal nodes are detected by graph degree, not keywords.
 FlowGraph extractFlowGraph(String source) {
   final lines = source.split('\n');
-  final graph = FlowGraph();
   final nodeIds = <String>[];
+  final nodeLines = <int>[];
+  final nodeTexts = <String>[];
+  final nodeLyapunovs = <double>[];
 
-  // pre-compute indentation array
-  final indents = List<int>.generate(lines.length, (i) => _indentation(lines[i]));
+  // ── Phase 1a: identify non-empty, non-noise lines ──────────────
+  final indents =
+      List<int>.generate(lines.length, (i) => _indentation(lines[i]));
   final maxIndent = indents.fold<int>(0, math.max);
-
-  // structural estimates from indentation transitions
   final indentCounts = <int, int>{};
   for (final ind in indents) {
     indentCounts[ind] = (indentCounts[ind] ?? 0) + 1;
@@ -185,70 +177,112 @@ FlowGraph extractFlowGraph(String source) {
   for (var i = 0; i < lines.length; i++) {
     final stripped = lines[i].trim();
     if (stripped.isEmpty) continue;
-    if (stripped.startsWith('//') || stripped.startsWith('#') ||
-        stripped.startsWith('*') || stripped.startsWith('/*')) continue;
+    if (_isLikelyNonCode(stripped)) continue;
 
     final prevInd = i > 0 ? indents[i - 1] : 0;
     final nextInd = i + 1 < lines.length ? indents[i + 1] : 0;
-
-    // Fiedler estimate from indentation change magnitude
     final indentDelta = ((indents[i] - prevInd).abs() +
-        (indents[i] - nextInd).abs()) / (maxIndent + 1);
-
-    // Betweenness estimate from how common this indentation level is
+            (indents[i] - nextInd).abs()) /
+        (maxIndent + 1);
     final levelCount = indentCounts[indents[i]] ?? 1;
     final betweenness = 1.0 - (levelCount / totalNonEmpty);
+    final ly = _lyapunovFromGeometry(
+        indentDelta.clamp(0.0, 1.0), betweenness.clamp(0.0, 1.0));
 
-    final (addr, ly) = _classifyLine(
-      lines[i], i, prevInd, nextInd,
-      maxIndent, lines.length,
-      indentDelta.clamp(0.0, 1.0),
-      betweenness.clamp(0.0, 1.0),
-    );
-
-    final nid = 'L$i';
-    graph.addNode(FlowNode(
-      id: nid,
-      address: addr,
-      lyapunov: ly,
-      sourceLine: i,
-      sourceText: stripped,
-    ));
-    nodeIds.add(nid);
+    nodeIds.add('L$i');
+    nodeLines.add(i);
+    nodeTexts.add(stripped);
+    nodeLyapunovs.add(ly);
   }
 
-  for (var i = 0; i < nodeIds.length - 1; i++) {
-    final node = graph.nodes[nodeIds[i]]!;
-    final text = node.sourceText.toLowerCase();
-    // early-return guard — skip edge, path exits here
-    if (node.hasAxis(kFlowRestabilizes) &&
-        (text.contains('return') || text.contains('break') ||
-         text.contains('continue'))) {
-      continue; // don't connect to next line
-    }
-    graph.addEdge(nodeIds[i], nodeIds[i + 1]);
+  final n = nodeIds.length;
+  if (n < 2) return FlowGraph();
+
+  // ── Phase 1b: build topology (edges from indentation geometry) ─
+  //
+  // Sequential edges between consecutive nodes, plus scope-exit
+  // cross-edges when indentation drops. Terminal detection is purely
+  // topological: a node whose out-degree is 0 after cross-edge wiring
+  // is a terminal (no keyword matching needed).
+  final edgesPerNode = List<List<(int, double)>>.generate(n, (_) => []);
+
+  // sequential edges
+  for (var i = 0; i < n - 1; i++) {
+    edgesPerNode[i].add((i + 1, 1.0));
   }
 
-  // scope-exit edges (indentation drops create cross-edges)
-  final indentStack = <(String, int)>[];
-  for (var i = 0; i < nodeIds.length; i++) {
-    final node = graph.nodes[nodeIds[i]]!;
-    final indent = indents[node.sourceLine];
-
+  // scope-exit cross-edges (indentation drops)
+  final indentStack = <(int, int)>[]; // (nodeIndex, indent)
+  for (var i = 0; i < n; i++) {
+    final indent = indents[nodeLines[i]];
     if (i > 0) {
-      final prevNode = graph.nodes[nodeIds[i - 1]]!;
-      final prevIndent = indents[prevNode.sourceLine];
+      final prevIndent = indents[nodeLines[i - 1]];
       if (indent > prevIndent) {
-        indentStack.add((nodeIds[i - 1], prevIndent));
+        indentStack.add((i - 1, prevIndent));
       } else if (indent < prevIndent) {
         while (indentStack.isNotEmpty && indentStack.last.$2 >= indent) {
           final (scopeEntry, _) = indentStack.removeLast();
-          graph.addEdge(nodeIds[i], scopeEntry);
+          edgesPerNode[i].add((scopeEntry, 1.0));
         }
       }
     }
   }
 
+  // Detect terminal nodes by topology: nodes with out-degree 0 or whose
+  // ONLY successor is a node at shallower indentation (scope exit) are
+  // terminals — the flow ends there. Remove their forward sequential
+  // edge if they look like a scope exit to shallow depth.
+  for (var i = 0; i < n - 1; i++) {
+    final indent = indents[nodeLines[i]];
+    final prevInd = i > 0 ? indents[nodeLines[i - 1]] : 0;
+    if (prevInd > indent + 4 && indent <= 4) {
+      // scope exit to shallow — check if out-degree is just the
+      // sequential edge (would make this a pass-through). If so,
+      // remove it — this node is a terminal.
+      if (edgesPerNode[i].length == 1) {
+        edgesPerNode[i].clear();
+      }
+    }
+  }
+
+  // ── Phase 2: spectral decomposition → fingerprint addresses ────
+  //
+  // Build a CsrGraph from the topology, compute the Lanczos eigenpairs,
+  // and derive each node's 8-bit spectral fingerprint from the sign
+  // pattern of the first 8 non-trivial eigenvectors. This IS the Logos
+  // spectral byte fingerprint — universal, language-agnostic, computed
+  // from the graph's own Laplacian.
+
+  // Symmetrise edges for the Laplacian (undirected graph).
+  final symEdges = List<List<(int, double)>>.generate(n, (_) => []);
+  for (var i = 0; i < n; i++) {
+    for (final (j, w) in edgesPerNode[i]) {
+      symEdges[i].add((j, w));
+      symEdges[j].add((i, w));
+    }
+  }
+
+  final csr = CsrGraph.fromRawEdges(n: n, edgesPerNode: symEdges);
+  final kEig = n < 9 ? n : 9; // need k+1 eigenvectors for k-bit fingerprint
+  final basis = SpectralBasis.fromGraph(csr, kEig);
+  final fingerprints = basis.spectralFingerprintTable();
+
+  // ── Phase 3: assemble FlowGraph with spectral addresses ────────
+  final graph = FlowGraph();
+  for (var i = 0; i < n; i++) {
+    graph.addNode(FlowNode(
+      id: nodeIds[i],
+      address: fingerprints[i],
+      lyapunov: nodeLyapunovs[i],
+      sourceLine: nodeLines[i],
+      sourceText: nodeTexts[i],
+    ));
+  }
+  for (var i = 0; i < n; i++) {
+    for (final (j, _) in edgesPerNode[i]) {
+      graph.addEdge(nodeIds[i], nodeIds[j]);
+    }
+  }
   return graph;
 }
 
@@ -374,7 +408,12 @@ FlowGraph optimizeGraph(FlowGraph g) => renormalize(fuseCooperPairs(g));
 // Simulation
 // ═══════════════════════════════════════════════════════════════════
 
-enum FlowBugKind { staleValue, temporalShift, contextInversion }
+enum FlowBugKind {
+  staleValue,
+  temporalShift,
+  contextInversion,
+  contradictoryFlow,
+}
 
 class FlowFinding {
   final String nodeId;
@@ -385,6 +424,8 @@ class FlowFinding {
   final FlowBugKind kind;
   final int pathCount;
   final int address;
+  final double coherence;
+  final double lyapunov;
 
   const FlowFinding({
     required this.nodeId,
@@ -395,9 +436,17 @@ class FlowFinding {
     required this.kind,
     this.pathCount = 1,
     this.address = 0,
+    this.coherence = 1.0,
+    this.lyapunov = 0.0,
   });
 
+  /// Composite concern score: higher = worse.
+  /// Uncertainty × impact × incoherence.
+  double get composite =>
+      (1.0 - certainty) * (1.0 + lyapunov) * (1.0 - coherence * coherence);
+
   String get severity {
+    if (kind == FlowBugKind.contradictoryFlow) return 'joint';
     if (certainty < 0.1) return 'critical';
     if (certainty < 0.3) return 'warn';
     return 'info';
@@ -444,12 +493,10 @@ List<FlowFinding> simulateFlow(
   double? logosCoupling,
   FlowSseLattice? sseLattice,
 }) {
-  entryNodes ??= {
-    for (final n in graph.nodes.values)
-      if (n.hasAxis(kFlowLifecycle)) n.id,
-  };
-  if (entryNodes.isEmpty && graph.nodes.isNotEmpty) {
-    entryNodes = {graph.nodes.values.first.id};
+  if (entryNodes == null || entryNodes.isEmpty) {
+    entryNodes = graph.nodes.isNotEmpty
+        ? {graph.nodes.values.first.id}
+        : <String>{};
   }
 
   final arrivals = <String, List<(double, double)>>{};
@@ -474,18 +521,24 @@ List<FlowFinding> simulateFlow(
         ? [...arrs, (logosCoupling, 0.0)]
         : arrs;
     final (mc, mp) = flowBornMix(mixInput);
+    final coh = flowPhaseCoherence(mixInput);
+    final contradictory = flowIsContradictory(arrs);
     final node = graph.nodes[entry.key]!;
     sseLattice?.observe(node.address, mc);
-    if (mc < threshold) {
+    if (mc < threshold || contradictory) {
       findings.add(FlowFinding(
         nodeId: entry.key,
         sourceLine: node.sourceLine,
         sourceText: node.sourceText,
         certainty: mc,
         phase: mp,
-        kind: _classifyPhase(mp),
+        kind: contradictory
+            ? FlowBugKind.contradictoryFlow
+            : _classifyPhase(mp),
         pathCount: arrs.length,
         address: node.address,
+        coherence: coh,
+        lyapunov: node.lyapunov,
       ));
     }
   }
@@ -530,7 +583,16 @@ void _dfsPropagate(
     list.add((osc.certainty, osc.phase));
   }
 
-  for (final edge in graph.adj[nid] ?? <FlowEdge>[]) {
+  final edges = graph.adj[nid] ?? <FlowEdge>[];
+  var fanout = 0;
+  for (final e in edges) {
+    if (!visited.contains(e.target) && graph.nodes.containsKey(e.target)) {
+      fanout++;
+    }
+  }
+  final branchGain = flowBranchGain(fanout);
+
+  for (final edge in edges) {
     if (visited.contains(edge.target)) continue;
     final target = graph.nodes[edge.target];
     if (target == null) continue;
@@ -552,6 +614,7 @@ void _dfsPropagate(
     }
 
     final childOsc = osc.clone();
+    if (branchGain > 0) childOsc.restabilize(branchGain);
     childOsc.step(tKr, tKi, tGr, edge.hamming);
     visited.add(edge.target);
     _dfsPropagate(
@@ -658,10 +721,14 @@ class FlowAnalysisResult {
     }
   }
 
-  /// Return a copy with only the findings the lattice considers anomalous.
-  FlowAnalysisResult filterBy(FlowSseLattice lattice, {double sigma = 1.5}) {
+  /// Return a copy keeping only findings that are both statistically
+  /// anomalous (SSE lattice) AND structurally interesting (composite > floor).
+  FlowAnalysisResult filterBy(FlowSseLattice lattice,
+      {double sigma = 1.5, double minComposite = 0.1}) {
     final kept = findings
-        .where((f) => lattice.isAnomalous(f.address, f.certainty, sigma: sigma))
+        .where((f) =>
+            lattice.isAnomalous(f.address, f.certainty, sigma: sigma) &&
+            f.composite >= minComposite)
         .toList();
     return FlowAnalysisResult(kept, spectralGap);
   }

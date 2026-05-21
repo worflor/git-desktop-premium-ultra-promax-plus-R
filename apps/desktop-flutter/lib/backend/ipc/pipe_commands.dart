@@ -1078,6 +1078,8 @@ Future<Map<String, dynamic>> _review(
     },
     'promptChars': d.promptCharacters,
     'diffChars': d.diffCharacters,
+    'inputTokens': d.inputTokens,
+    'outputTokens': d.outputTokens,
     'reasoningReport': d.reasoningReport.isNotEmpty ? d.reasoningReport : null,
     'findings': [
       for (final f in d.findings)
@@ -1201,6 +1203,14 @@ Future<Map<String, dynamic>> _muse(
                 ?.hasUnstagedChange ?? true,
           },
       ],
+    },
+    'tokens': {
+      'brainstormIn': d.brainstormInputTokens,
+      'brainstormOut': d.brainstormOutputTokens,
+      'synthesisIn': d.synthesisInputTokens,
+      'synthesisOut': d.synthesisOutputTokens,
+      'totalIn': d.totalInputTokens,
+      'totalOut': d.totalOutputTokens,
     },
     'timing': {
       'totalMs': totalSw.elapsedMilliseconds,
