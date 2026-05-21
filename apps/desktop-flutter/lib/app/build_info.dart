@@ -55,7 +55,7 @@ abstract final class BuildInfo {
   static const String _updateBaseDefine =
       String.fromEnvironment('MANIFOLD_UPDATE_BASE_URL', defaultValue: '');
   static const String _cohortDefine =
-      String.fromEnvironment('BUILD_COHORT', defaultValue: 'the-best-offense');
+      String.fromEnvironment('BUILD_COHORT', defaultValue: 'moji-AND-MISTER-SNUGGLESWORTH-TOO');
 
   /// Resolved channel for this binary. Falls back to dev in debug
   /// builds and stable in release builds when the define is absent —

@@ -15,9 +15,12 @@ class ManifoldPipeServer {
   final ManifoldBridgeContext ctx;
   ServerSocket? _server;
   File? _lockFile;
+  late final String _startedAt;
   final List<Socket> _connections = [];
 
-  ManifoldPipeServer(this.ctx);
+  ManifoldPipeServer(this.ctx) {
+    ctx.repoState.addListener(_onWorkspaceChanged);
+  }
 
   Future<void> start() async {
     final ipcDir = await _ipcDir();
@@ -28,12 +31,13 @@ class ManifoldPipeServer {
     final port = _server!.port;
     final myPid = pid;
 
+    _startedAt = DateTime.now().toIso8601String();
     _lockFile = File(p.join(ipcDir.path, 'manifold-$myPid.lock'));
     await _lockFile!.writeAsString(jsonEncode({
       'pid': myPid,
       'port': port,
       'workspace': ctx.repoState.activePath ?? '',
-      'startedAt': DateTime.now().toIso8601String(),
+      'startedAt': _startedAt,
     }));
 
     debugPrint('[IPC] listening on 127.0.0.1:$port (lock: ${_lockFile!.path})');
@@ -41,6 +45,7 @@ class ManifoldPipeServer {
   }
 
   Future<void> dispose() async {
+    ctx.repoState.removeListener(_onWorkspaceChanged);
     for (final c in _connections) {
       c.destroy();
     }
@@ -50,6 +55,18 @@ class ManifoldPipeServer {
     try {
       await _lockFile?.delete();
     } catch (_) {}
+  }
+
+  void _onWorkspaceChanged() {
+    final lock = _lockFile;
+    if (lock == null || _server == null) return;
+    final workspace = ctx.repoState.activePath ?? '';
+    unawaited(lock.writeAsString(jsonEncode({
+      'pid': pid,
+      'port': _server!.port,
+      'workspace': workspace,
+      'startedAt': _startedAt,
+    })).catchError((_) => lock));
   }
 
   void _handleConnection(Socket socket) {
@@ -103,7 +120,17 @@ class ManifoldPipeServer {
 
     final sw = Stopwatch()..start();
     try {
-      final result = await handler(request.params, ctx);
+      void sendProgress(String phase, String detail) {
+        _send(socket, jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'progress',
+          'params': {'phase': phase, 'detail': detail},
+        }));
+      }
+      final result = await runZoned(
+        () => handler(request.params, ctx),
+        zoneValues: {progressKey: sendProgress},
+      );
       sw.stop();
       debugPrint('[IPC] ${request.method} → ${sw.elapsedMilliseconds}ms');
       _send(socket, encodeResult(request.id, result));

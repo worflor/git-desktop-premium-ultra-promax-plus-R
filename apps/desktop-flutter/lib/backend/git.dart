@@ -2417,35 +2417,93 @@ String _gitStepError(String action, ProcessResult result) {
   return 'Failed to $action: $detail';
 }
 
-Future<GitResult<String>> cloneRepository(String url, String targetPath) async {
+Future<GitResult<String>> cloneRepository(
+  String url,
+  String targetPath, {
+  void Function(String line)? onProgress,
+}) async {
+  if (_activeCloneProcess != null) {
+    return GitResult.err('Clone already in progress');
+  }
   try {
-    final parent = Directory(p.dirname(targetPath));
+    final absTarget = p.canonicalize(targetPath);
+    final parent = Directory(p.dirname(absTarget));
     if (!await parent.exists()) await parent.create(recursive: true);
-    final r = await Process.run(
-      'git',
-      ['clone', url, targetPath],
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    if (r.exitCode != 0) {
-      return GitResult.err(
-          (r.stderr as String).trim().isNotEmpty
-              ? (r.stderr as String).trim()
-              : 'git clone exited with code ${r.exitCode}');
+
+    await _gitSubprocessSemaphore.acquire();
+    Process? proc;
+    try {
+      proc = await Process.start(
+        'git',
+        ['clone', '--progress', url, absTarget],
+        mode: ProcessStartMode.normal,
+      );
+      _activeCloneProcess = proc;
+      _activeCloneTarget = absTarget;
+      final recentStderr = <String>[];
+      final stderrLines = proc.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      final stdoutDrain = proc.stdout.drain<void>();
+      await for (final line in stderrLines) {
+        onProgress?.call(line);
+        if (line.trim().isNotEmpty) {
+          recentStderr.add(line.trim());
+          if (recentStderr.length > 5) recentStderr.removeAt(0);
+        }
+      }
+      await stdoutDrain;
+      final exitCode = await proc.exitCode;
+      if (exitCode != 0) {
+        final detail = recentStderr.isNotEmpty
+            ? recentStderr.last
+            : 'git clone exited with code $exitCode';
+        return GitResult.err(detail);
+      }
+    } finally {
+      if (_activeCloneProcess == proc) {
+        _activeCloneProcess = null;
+        _activeCloneTarget = null;
+      }
+      _gitSubprocessSemaphore.release();
     }
-    return GitResult.ok(targetPath);
+    return GitResult.ok(absTarget);
   } catch (error) {
     return GitResult.err(error.toString());
   }
 }
 
+Process? _activeCloneProcess;
+String? _activeCloneTarget;
+
+Future<void> cancelActiveClone() async {
+  final proc = _activeCloneProcess;
+  _activeCloneProcess = null;
+  final target = _activeCloneTarget;
+  _activeCloneTarget = null;
+  if (proc != null) {
+    proc.kill();
+    await proc.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => -1,
+    );
+  }
+  if (target != null) {
+    try {
+      final dir = Directory(target);
+      if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
+  }
+}
+
 Future<GitResult<String>> initRepository(String path) async {
   try {
-    final dir = Directory(path);
+    final absPath = p.canonicalize(path);
+    final dir = Directory(absPath);
     if (!await dir.exists()) await dir.create(recursive: true);
-    final r = await _git(path, ['init']);
+    final r = await _git(absPath, ['init']);
     if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-    return GitResult.ok(path);
+    return GitResult.ok(absPath);
   } catch (error) {
     return GitResult.err(error.toString());
   }

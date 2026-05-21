@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:git_desktop/backend/storage_paths.dart';
 
+final bool _isTty = stderr.hasTerminal;
+
 void main(List<String> args) async {
   if (args.isEmpty || args.first == '--help' || args.first == '-h') {
     _printUsage();
@@ -15,13 +17,24 @@ void main(List<String> args) async {
   final jsonOutput = params.remove('json') == 'true';
 
   try {
-    // Pass a copy so _connect's repo removal doesn't eat the
-    // command's own --repo param (needed by 'switch').
     final connection = await _connect(Map.of(params));
     if (connection == null) {
-      stderr.writeln('Manifold is not running.');
+      stderr.writeln('manifold is not running.');
       exit(1);
     }
+
+    if (!params.containsKey('repo')) {
+      final gitRoot = await _resolveGitRoot();
+      if (gitRoot != null) params['repo'] = gitRoot;
+    }
+
+    final slow = const {'review', 'muse', 'impact', 'dream'}.contains(method);
+    if (slow) {
+      final repo = params['repo'] as String? ?? '.';
+      final short = repo.split('/').last.split('\\').last;
+      _status('$method · $short');
+    }
+    final sw = Stopwatch()..start();
 
     final request = jsonEncode({
       'jsonrpc': '2.0',
@@ -36,30 +49,75 @@ void main(List<String> args) async {
     final buffer = <int>[];
     await for (final chunk in connection) {
       buffer.addAll(chunk);
-      if (buffer.length >= 4) {
+      while (buffer.length >= 4) {
         final len = ByteData.sublistView(
           Uint8List.fromList(buffer.sublist(0, 4)),
         ).getUint32(0, Endian.big);
-        if (buffer.length >= 4 + len) {
-          final body = utf8.decode(buffer.sublist(4, 4 + len));
-          final decoded = jsonDecode(body);
-          if (jsonOutput) {
-            stdout.writeln(
-              const JsonEncoder.withIndent('  ').convert(decoded),
-            );
-          } else {
-            _prettyPrint(method, decoded);
-          }
-          break;
+        if (buffer.length < 4 + len) break;
+        final body = utf8.decode(buffer.sublist(4, 4 + len));
+        buffer.removeRange(0, 4 + len);
+        final decoded = jsonDecode(body);
+        if (decoded is Map && !decoded.containsKey('id')) {
+          _handleProgress(decoded);
+          continue;
         }
+        sw.stop();
+        _clearStatus();
+        if (jsonOutput) {
+          stdout.writeln(
+            const JsonEncoder.withIndent('  ').convert(decoded),
+          );
+        } else {
+          _prettyPrint(method, decoded, sw.elapsedMilliseconds);
+        }
+        await stdout.flush();
+        await connection.close();
+        return;
       }
     }
     await connection.close();
   } catch (e) {
-    stderr.writeln('Error: $e');
+    _clearStatus();
+    stderr.writeln('error: $e');
     exit(1);
   }
 }
+
+// ── Progress display ──────────────────────────────────────────────
+
+String _statusLine = '';
+
+void _status(String text) {
+  _statusLine = text;
+  if (_isTty) {
+    stderr.write('\x1B[2m  $text\x1B[0m');
+  }
+}
+
+void _updateStatus(String text) {
+  _statusLine = text;
+  if (_isTty) {
+    stderr.write('\r\x1B[K\x1B[2m  $text\x1B[0m');
+  }
+}
+
+void _clearStatus() {
+  if (_isTty && _statusLine.isNotEmpty) {
+    stderr.write('\r\x1B[K');
+  }
+  _statusLine = '';
+}
+
+void _handleProgress(Map decoded) {
+  final params = decoded['params'] as Map?;
+  if (params == null) return;
+  final phase = params['phase'] as String? ?? '';
+  final detail = params['detail'] as String? ?? '';
+  final text = detail.isEmpty ? phase : '$phase  $detail';
+  _updateStatus(text);
+}
+
+// ── Connection ────────────────────────────────────────────────────
 
 Future<Socket?> _connect(Map<String, dynamic> params) async {
   final ipcDir = _ipcDir();
@@ -85,7 +143,6 @@ Future<Socket?> _connect(Map<String, dynamic> params) async {
   }
   if (locks.isEmpty) return null;
 
-  // Pick the lock whose workspace best matches the cwd.
   final normalized = cwd.replaceAll('\\', '/').toLowerCase();
   locks.sort((a, b) {
     final aN = a.workspace.replaceAll('\\', '/').toLowerCase();
@@ -102,15 +159,11 @@ Future<Socket?> _connect(Map<String, dynamic> params) async {
         lock.port,
         timeout: const Duration(seconds: 2),
       );
-      // If --repo wasn't explicit, thread the workspace so the server
-      // knows which repo to target.
       if (!params.containsKey('repo') && lock.workspace.isNotEmpty) {
         params['repo'] = lock.workspace;
       }
       return socket;
-    } catch (_) {
-      // Stale lock — try next or give up.
-    }
+    } catch (_) {}
   }
   return null;
 }
@@ -149,8 +202,15 @@ Map<String, dynamic> _parseParams(List<String> args) {
 }
 
 String _positionalKey(List<String> args, int index) {
-  // Map positional args to the param name the command expects.
   return 'query';
+}
+
+Future<String?> _resolveGitRoot() async {
+  try {
+    final result = await Process.run('git', ['rev-parse', '--show-toplevel']);
+    if (result.exitCode == 0) return (result.stdout as String).trim();
+  } catch (_) {}
+  return null;
 }
 
 Uint8List _frame(String json) {
@@ -162,7 +222,21 @@ Uint8List _frame(String json) {
   return out;
 }
 
-void _prettyPrint(String method, dynamic decoded) {
+// ── Formatting helpers ────────────────────────────────────────────
+
+String _dim(String s) => _isTty ? '\x1B[2m$s\x1B[0m' : s;
+String _bold(String s) => _isTty ? '\x1B[1m$s\x1B[0m' : s;
+String _yellow(String s) => _isTty ? '\x1B[33m$s\x1B[0m' : s;
+
+String _timeFmt(int ms) {
+  final s = ms / 1000;
+  if (s < 10) return '${s.toStringAsFixed(1)}s';
+  return '${s.round()}s';
+}
+
+// ── Pretty printers ──────────────────────────────────────────────
+
+void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
   if (decoded is! Map) {
     stdout.writeln(decoded);
     return;
@@ -178,63 +252,66 @@ void _prettyPrint(String method, dynamic decoded) {
     return;
   }
   switch (method) {
+    case 'review':
+      _printReview(result, elapsedMs);
+      break;
+    case 'muse':
+      _printMuse(result, elapsedMs);
+      break;
     case 'status':
       stdout.writeln('${result['branch']} '
           '↑${result['ahead']} ↓${result['behind']}');
-      final files = result['files'] as List? ?? [];
-      for (final f in files) {
+      for (final f in (result['files'] as List? ?? [])) {
         stdout.writeln('  ${f['staged']}${f['unstaged']} ${f['path']}');
       }
       break;
     case 'repos':
       for (final r in (result['repos'] as List? ?? [])) {
         final active = r['active'] == true ? '* ' : '  ';
-        final engine = r['engineReady'] == true ? ' [engine]' : '';
+        final engine = r['engineReady'] == true ? ' ${_dim('[engine]')}' : '';
         stdout.writeln('$active${r['path']}$engine');
       }
       break;
     case 'blast-radius':
       stdout.writeln('Blast radius for ${(result['seeds'] as List).join(', ')}:');
       for (final r in (result['results'] as List? ?? [])) {
-        final anchor = r['anchor'] != null ? ' (via ${r['anchor']})' : '';
-        stdout.writeln(
-          '  ${_pad(r['coupling'])} ${r['path']}$anchor',
-        );
+        final anchor = r['anchor'] != null ? ' ${_dim('via ${r['anchor']}')}' : '';
+        stdout.writeln('  ${_pad(r['coupling'])} ${r['path']}$anchor');
       }
       break;
     case 'coherence':
       stdout.writeln(
-        'Coherence: ${result['coherence']} (${result['assessment']})',
+        'Coherence: ${_bold('${result['coherence']}')} ${_dim('(${result['assessment']})')}',
       );
       break;
     case 'suggest':
       final suggestions = result['suggestions'] as List? ?? [];
       if (suggestions.isEmpty) {
-        stdout.writeln('No suggestions.');
+        stdout.writeln(_dim('No suggestions.'));
       } else {
         for (final s in suggestions) {
-          stdout.writeln('  ${s['score']}  ${s['path']}  (via ${s['anchor']})');
+          stdout.writeln('  ${s['score']}  ${s['path']}  ${_dim('via ${s['anchor']}')}');
         }
       }
       break;
     case 'profile':
-      stdout.writeln('${result['file']}');
-      stdout.writeln('  volatility: ${result['volatility']} (z=${result['volZ']})');
-      stdout.writeln('  integrity:  ${result['integrity']}');
-      stdout.writeln('  centrality: ${result['centrality']}');
-      stdout.writeln('  touches:    ${result['touchCount']}');
+      stdout.writeln(result['file']);
+      stdout.writeln('  volatility  ${result['volatility']} ${_dim('z=${result['volZ']}')}');
+      stdout.writeln('  integrity   ${result['integrity']}');
+      stdout.writeln('  centrality  ${result['centrality']}');
+      stdout.writeln('  touches     ${result['touchCount']}');
       break;
     case 'architecture':
       for (final c in (result['subsystems'] as List? ?? [])) {
         final density = c['density'] ?? 0;
         stdout.writeln(
-          '${c['label']} (${c['fileCount']} files, density ${density})',
+          '${_bold(c['label'])} ${_dim('${c['fileCount']} files · density $density')}',
         );
         for (final f in (c['sample'] as List? ?? [])) {
           stdout.writeln('  $f');
         }
         if ((c['sample'] as List? ?? []).length < (c['fileCount'] as int? ?? 0)) {
-          stdout.writeln('  ...');
+          stdout.writeln(_dim('  ...'));
         }
       }
       break;
@@ -243,13 +320,11 @@ void _prettyPrint(String method, dynamic decoded) {
       break;
     case 'recent':
       for (final c in (result['commits'] as List? ?? [])) {
-        stdout.writeln(
-          '  ${c['hash']} ${c['subject']}',
-        );
+        stdout.writeln('  ${_dim(c['hash'])} ${c['subject']}');
       }
       break;
     case 'dream':
-      stdout.writeln(result['phrase'] ?? '(no dream)');
+      stdout.writeln(result['phrase'] ?? _dim('(no dream)'));
       break;
     case 'search':
       for (final r in (result['results'] as List? ?? [])) {
@@ -264,7 +339,7 @@ void _prettyPrint(String method, dynamic decoded) {
     case 'who-knows':
       for (final e in (result['experts'] as List? ?? [])) {
         stdout.writeln(
-          '  ${(e['share'] * 100).round()}%  ${e['email']} (${e['commits']})',
+          '  ${(e['share'] * 100).round()}%  ${e['email']} ${_dim('(${e['commits']})')}',
         );
       }
       break;
@@ -285,6 +360,104 @@ void _prettyPrint(String method, dynamic decoded) {
   }
 }
 
+void _printReview(Map result, int elapsedMs) {
+  final files = result['files'] as Map?;
+  final reviewed = files?['reviewed'] ?? '?';
+  final total = files?['total'] ?? '?';
+  final model = (result['model'] as String? ?? '?').split('/').last;
+  final score = result['score'];
+  final verdict = result['verdict'] ?? '';
+  final enrichment = result['enrichment'] as Map?;
+  final coupling = enrichment?['coupling'] == true;
+  final symbols = enrichment?['symbols'] == true;
+
+  // Header
+  stdout.writeln(
+    ' ${_bold('$score')}  $verdict · $reviewed/$total files · $model · ${_timeFmt(elapsedMs)}'
+    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}',
+  );
+  stdout.writeln('');
+  stdout.writeln(' ${result['summary']}');
+  stdout.writeln('');
+
+  // Findings
+  final findings = result['findings'] as List? ?? [];
+  if (findings.isNotEmpty) {
+    for (final f in findings) {
+      final sev = (f['severity'] as String?) ?? '';
+      final marker = sev == 'warn' || sev == 'critical'
+          ? _yellow('▲') : '△';
+      final sevLabel = sev.isNotEmpty ? _dim(sev) : '';
+      stdout.writeln(' $marker ${_bold(f['title'])}  $sevLabel');
+      final loc = f['file'] as String?;
+      if (loc != null) {
+        final hunk = f['hunk'] as String?;
+        stdout.writeln('   ${_dim(hunk != null ? '$loc $hunk' : loc)}');
+      }
+      stdout.writeln('   ${f['evidence']}');
+      final why = f['why'] as String?;
+      if (why != null && why.isNotEmpty) {
+        stdout.writeln('   ${_dim('→ $why')}');
+      }
+      stdout.writeln('');
+    }
+  }
+
+  // Observations — compact
+  final obs = result['observations'] as List? ?? [];
+  if (obs.isNotEmpty) {
+    stdout.writeln(_dim(' ${obs.length} observation${obs.length == 1 ? '' : 's'}'));
+    for (final o in obs) {
+      stdout.writeln(' ${_dim('·')} ${o['title']}');
+    }
+  }
+
+  if (findings.isEmpty && obs.isEmpty) {
+    stdout.writeln(_dim(' No findings.'));
+  }
+}
+
+void _printMuse(Map result, int elapsedMs) {
+  final files = result['files'] as Map?;
+  final reviewed = files?['reviewed'] ?? '?';
+  final total = files?['total'] ?? '?';
+  final model = (result['brainstormModel'] ?? result['model'] ?? '?')
+      .toString().split('/').last;
+  final enrichment = result['enrichment'] as Map?;
+  final coupling = enrichment?['coupling'] == true;
+  final symbols = enrichment?['symbols'] == true;
+
+  // Header
+  stdout.writeln(
+    ' muse · $reviewed/$total files · $model · ${_timeFmt(elapsedMs)}'
+    '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}',
+  );
+  stdout.writeln('');
+
+  // Proposals grouped by tier
+  final proposals = result['proposals'] as List? ?? [];
+  String? lastTier;
+  for (final p in proposals) {
+    if (p['tier'] != lastTier) {
+      lastTier = p['tier'] as String?;
+      stdout.writeln(_dim(' ${(lastTier ?? 'unknown').toUpperCase()}'));
+    }
+    stdout.writeln(' ${_bold('·')} ${_bold(p['title'])}');
+    stdout.writeln('   ${p['vision']}');
+    final foothold = p['foothold'] as String?;
+    if (foothold != null && foothold.isNotEmpty) {
+      stdout.writeln('   ${_dim('foothold:')} $foothold');
+    }
+    final cites = (p['citations'] as List?)?.join(', ') ?? '';
+    if (cites.isNotEmpty) stdout.writeln('   ${_dim(cites)}');
+    stdout.writeln('');
+  }
+
+  if (proposals.isEmpty) {
+    stdout.writeln(_dim(' No proposals.'));
+  }
+}
+
 String _pad(dynamic v) {
   final s = v is double ? v.toStringAsFixed(4) : '$v';
   return s.padLeft(7);
@@ -292,35 +465,36 @@ String _pad(dynamic v) {
 
 void _printUsage() {
   stdout.writeln('''
-manifold — read-only CLI bridge to the running Manifold git client.
+manifold — CLI bridge to the running Manifold git client.
 
 Usage: manifold <command> [options]
 
 Commands:
-  help                          Machine-readable API schema
-  ping                          Health check (engine readiness)
   status                        Branch, ahead/behind, dirty files
-  repos                         List known repos
-  diff [--file <path>]          Get diff text
-  blast-radius --files <paths>  Co-change neighbors (what breaks)
-  context --files <paths>       Optimal reading list by coupling
-  coherence --files <paths>     How cohesive is a file set (0-1)
+  review [--files <paths>]      AI code review (default: dirty files)
+  muse [--files <paths>]        AI brainstorm (default: dirty files)
+  blast-radius --files <paths>  Co-change neighbors
   suggest --files <paths>       Coupled files you might have missed
+  coherence --files <paths>     How cohesive is a file set (0-1)
   profile --file <path>         Volatility, integrity, centrality
   test-map --files <paths>      Tests coupled to source files
-  architecture                  Spectral subsystem map
   who-knows --file <path>       Expert authors for a file
   search --query <text>         Semantic code search
-  dream                         Logos commit phrase for current diff
+  architecture                  Spectral subsystem map
+  dream                         Logos phrase for current diff
   impact --diff <text>          Predicted ripple of a diff
+  diff [--file <path>]          Raw diff text
+  repos                         List known repos
+  ping                          Health check
+  help                          API schema
 
 Options:
-  --json           Raw JSON-RPC output
-  --repo <path>    Target repo (default: CWD match)
+  --json           Structured JSON-RPC output
+  --repo <path>    Target repo (default: cwd)
   --limit <n>      Cap results
-  --budget <chars>  Token budget for context command
+  --model <id>     Override model selection
+  --budget <chars>  Token budget for context
 
-All commands are read-only. Engine commands wait up to 15s for warmup.
 File params accept: --files, --file, --path, --seeds, --changed.
 ''');
 }

@@ -15,6 +15,8 @@
 
 import 'package:flutter/foundation.dart';
 
+import '../backend/async_utils.dart';
+
 import '../backend/remote_issue_provider.dart';
 import 'repository_state.dart';
 
@@ -31,7 +33,7 @@ class RemoteIssueCacheState extends ChangeNotifier {
   RemoteIssueCacheState(this._repo) {
     _repo.addListener(_onRepoChanged);
     if (_repo.activePath != null) {
-      refreshFor(_repo.activePath!);
+      fireAndLog(refreshFor(_repo.activePath!), 'RemoteIssueCacheState');
     }
   }
 
@@ -61,7 +63,7 @@ class RemoteIssueCacheState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    refreshFor(active);
+    fireAndLog(refreshFor(active), 'RemoteIssueCacheState');
   }
 
   Future<void> refreshFor(String repoPath) async {
@@ -69,11 +71,7 @@ class RemoteIssueCacheState extends ChangeNotifier {
     _loading = true;
     _error = null;
     notifyListeners();
-
     try {
-      // Detect which forge hosts this repo. detectIssueProvider() is a single
-      // `git remote get-url origin` spawn — cheap and re-runs on each
-      // refresh so remote-URL changes are picked up automatically.
       final provider = await detectIssueProvider(repoPath);
       if (id != _requestId) return;
 
@@ -81,10 +79,9 @@ class RemoteIssueCacheState extends ChangeNotifier {
       if (id != _requestId) return;
 
       if (!providerStatus.available) {
-        _loading = false;
         _available = false;
         _issues = const [];
-        _error = null;
+        _loading = false;
         notifyListeners();
         return;
       }
@@ -93,21 +90,19 @@ class RemoteIssueCacheState extends ChangeNotifier {
       final r = await provider.listIssues(repoPath, state: 'open', limit: 100);
       if (id != _requestId) return;
 
-      _loading = false;
       if (r.ok) {
         _issues = r.data!;
         _loadedForRepo = repoPath;
-        _error = null;
       } else {
         _issues = const [];
         _error = r.error;
       }
     } catch (e) {
       if (id != _requestId) return;
-      _loading = false;
       _issues = const [];
       _error = e.toString();
     }
+    _loading = false;
     notifyListeners();
   }
 

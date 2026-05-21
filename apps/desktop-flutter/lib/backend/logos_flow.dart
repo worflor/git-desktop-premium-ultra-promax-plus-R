@@ -384,6 +384,7 @@ class FlowFinding {
   final double phase;
   final FlowBugKind kind;
   final int pathCount;
+  final int address;
 
   const FlowFinding({
     required this.nodeId,
@@ -393,6 +394,7 @@ class FlowFinding {
     required this.phase,
     required this.kind,
     this.pathCount = 1,
+    this.address = 0,
   });
 
   String get severity {
@@ -433,12 +435,14 @@ int anchorFingerprint(List<int> fingerprints) {
 
 /// DFS with AR(2) oscillator + Born mixing at resource nodes.
 /// [logosCoupling] adds a structural arrival from the Logos graph.
+/// [sseLattice] accumulates certainty observations for self-calibration.
 List<FlowFinding> simulateFlow(
   FlowGraph graph, {
   Set<String>? entryNodes,
   double threshold = 0.3,
   int maxDepth = 30,
   double? logosCoupling,
+  FlowSseLattice? sseLattice,
 }) {
   entryNodes ??= {
     for (final n in graph.nodes.values)
@@ -470,8 +474,9 @@ List<FlowFinding> simulateFlow(
         ? [...arrs, (logosCoupling, 0.0)]
         : arrs;
     final (mc, mp) = flowBornMix(mixInput);
+    final node = graph.nodes[entry.key]!;
+    sseLattice?.observe(node.address, mc);
     if (mc < threshold) {
-      final node = graph.nodes[entry.key]!;
       findings.add(FlowFinding(
         nodeId: entry.key,
         sourceLine: node.sourceLine,
@@ -480,6 +485,7 @@ List<FlowFinding> simulateFlow(
         phase: mp,
         kind: _classifyPhase(mp),
         pathCount: arrs.length,
+        address: node.address,
       ));
     }
   }
@@ -644,6 +650,21 @@ class FlowAnalysisResult {
   final List<FlowFinding> findings;
   final double spectralGap;
   const FlowAnalysisResult(this.findings, this.spectralGap);
+
+  /// Feed all findings from this result into an SSE lattice.
+  void accumulateInto(FlowSseLattice lattice) {
+    for (final f in findings) {
+      lattice.observe(f.address, f.certainty);
+    }
+  }
+
+  /// Return a copy with only the findings the lattice considers anomalous.
+  FlowAnalysisResult filterBy(FlowSseLattice lattice, {double sigma = 1.5}) {
+    final kept = findings
+        .where((f) => lattice.isAnomalous(f.address, f.certainty, sigma: sigma))
+        .toList();
+    return FlowAnalysisResult(kept, spectralGap);
+  }
 }
 
 final LruCache<(String, int), FlowAnalysisResult> _flowCache =

@@ -5,11 +5,12 @@
 // ManifoldRefs so PRs and issues share author identity, common-dir
 // resolution, and the id-counter ref.
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+
+import '../backend/async_utils.dart';
 
 import '../backend/desk_issue.dart';
 import '../backend/desk_issue_store.dart';
@@ -46,7 +47,7 @@ class DeskIssueState extends ChangeNotifier {
   DeskIssueState(this._repo, this._identity) {
     _repo.addListener(_onRepoChanged);
     if (_repo.activePath != null) {
-      refreshFor(_repo.activePath!);
+      fireAndLog(refreshFor(_repo.activePath!), 'DeskIssueState');
     }
   }
 
@@ -78,7 +79,7 @@ class DeskIssueState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    refreshFor(active);
+    fireAndLog(refreshFor(active), 'DeskIssueState');
   }
 
   Future<String?> _mainRepoOf(String anyPath) async {
@@ -117,23 +118,21 @@ class DeskIssueState extends ChangeNotifier {
       final store = DeskIssueStore(_refsFor(main));
       final r = await store.listAll();
       if (id != _requestId) return;
-      _loading = false;
       if (r.ok) {
         _byId = {
           for (final issue in r.data!) issue.issueId: issue,
         };
         _loadedForRepo = main;
-        _error = null;
       } else {
         _byId = const {};
         _error = r.error;
       }
     } catch (e) {
       if (id != _requestId) return;
-      _loading = false;
       _byId = const {};
       _error = e.toString();
     }
+    _loading = false;
     notifyListeners();
   }
 

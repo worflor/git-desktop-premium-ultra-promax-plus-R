@@ -116,6 +116,10 @@ class FlowOscillator {
   /// The edge's Hamming distance provides impedance.
   /// Returns the new certainty.
   double step(double kr, double ki, double gr, int edgeHamming) {
+    // Same lattice address → same point on the Boolean hypercube.
+    // No structural boundary crossed, so suppress the damping term.
+    if (edgeHamming == 0) gr = 0.0;
+
     _kr = kr;
     _ki = ki;
     _gr = gr;
@@ -124,7 +128,8 @@ class FlowOscillator {
     var zi = kr * _z1i + ki * _z1r - gr * _z0i;
 
     if (edgeHamming > 0) {
-      final r = (1.0 - math.cos(math.pi * edgeHamming / 8)) / 2;
+      final hNorm = edgeHamming / 8.0;
+      final r = hNorm * hNorm;
       final t = 1.0 - r;
       zr *= t;
       zi *= t;
@@ -167,10 +172,73 @@ class FlowOscillator {
   }
 }
 
+// ── AR(2) SSE lattice ────────────────────────────────────────────────
+//
+// Self-calibrating layer for the oscillator. The 8-bit lattice address
+// indexes 256 cells, each accumulating Welford online statistics on the
+// certainty values the oscillator actually produces. After a warmup
+// period, findings are gated by z-score against the learned baseline —
+// only statistically anomalous certainty drops survive.
+//
+// Analogous to LogosSseCell on the Logos side: observe → learn → gate.
+
+/// Single Welford accumulator for one lattice address.
+class FlowSseCell {
+  int n = 0;
+  double _mean = 0.0;
+  double _m2 = 0.0;
+
+  void observe(double certainty) {
+    n++;
+    final delta = certainty - _mean;
+    _mean += delta / n;
+    final delta2 = certainty - _mean;
+    _m2 += delta * delta2;
+  }
+
+  double get mean => _mean;
+  double get variance => n > 1 ? _m2 / (n - 1) : 1.0;
+  double get stddev => math.sqrt(variance);
+
+  /// How many σ below the cell mean this observation sits.
+  /// Positive = worse than average. Returns 0 during warmup.
+  double zBelow(double certainty) {
+    if (n < _kWarmup) return 0.0;
+    final s = stddev;
+    if (s < 1e-15) return 0.0;
+    return (_mean - certainty) / s;
+  }
+
+  static const int _kWarmup = 8;
+}
+
+/// 256-cell lattice on the 8-bit address. Accumulates across a repo scan,
+/// then gates findings via [isAnomalous].
+class FlowSseLattice {
+  final _cells = List<FlowSseCell>.generate(256, (_) => FlowSseCell());
+
+  /// Feed an observation from the oscillator.
+  void observe(int address, double certainty) {
+    _cells[address & 0xFF].observe(certainty);
+  }
+
+  /// After warmup, returns true when the certainty at this address is
+  /// statistically anomalous (> [sigma] standard deviations below mean).
+  bool isAnomalous(int address, double certainty, {double sigma = 1.5}) {
+    final cell = _cells[address & 0xFF];
+    if (cell.n < FlowSseCell._kWarmup) return true;
+    return cell.zBelow(certainty) > sigma;
+  }
+
+  /// Total observations across all cells.
+  int get totalObservations => _cells.fold(0, (s, c) => s + c.n);
+}
+
 // ── Filament saturation ──────────────────────────────────────────────
 
-/// Gap → [0, 1) fragility. `1 - e^{-x}`.
-double filamentSat(double gap) => 1.0 - math.exp(-gap);
+/// Gap → [0, 1) fragility. `1 - e^{-x/4}`.
+/// Scaled so gaps in the real range (0–16) spread across the full [0, 1).
+double filamentSat(double gap) => 1.0 - math.exp(-gap / 4.0);
 
 // ── Born rule mixing ─────────────────────────────────────────────────
 

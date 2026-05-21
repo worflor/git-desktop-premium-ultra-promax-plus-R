@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+
+import '../backend/async_utils.dart';
 import '../backend/git.dart';
 import '../backend/dtos.dart';
 import 'repository_state.dart';
@@ -46,9 +48,8 @@ class WorktreeState extends ChangeNotifier {
 
   WorktreeState(this._repo) {
     _repo.addListener(_onRepoChanged);
-    // Initial load if a repo is already active.
     if (_repo.activePath != null) {
-      refreshFor(_repo.activePath!);
+      fireAndLog(refreshFor(_repo.activePath!), 'WorktreeState');
     }
   }
 
@@ -92,10 +93,8 @@ class WorktreeState extends ChangeNotifier {
     final stillInKnownDesks = _desks
         .any((d) => _normalize(d.path) == activeNorm);
     if (!stillInKnownDesks) {
-      // New repo — the prior repo's worktree list no longer applies.
       _desks = const [];
-
-      refreshFor(active);
+      fireAndLog(refreshFor(active), 'WorktreeState');
       return;
     }
     // Still within a known repo: the user's worktree set could have
@@ -108,7 +107,7 @@ class WorktreeState extends ChangeNotifier {
       // Anchor to the main repo path so the result is consistent no
       // matter which desk we're currently on.
       final anchor = _mainRepoPathFromCache() ?? active;
-      refreshFor(anchor);
+      fireAndLog(refreshFor(anchor), 'WorktreeState');
     }
   }
 
@@ -119,21 +118,19 @@ class WorktreeState extends ChangeNotifier {
     notifyListeners();
     try {
       final result = await listWorktrees(repoPath);
-      if (id != _requestId) return; // superseded
-      _loading = false;
+      if (id != _requestId) return;
       if (result.ok) {
         _desks = result.data!;
-        _error = null;
       } else {
         _desks = const [];
         _error = result.error;
       }
     } catch (e) {
       if (id != _requestId) return;
-      _loading = false;
       _desks = const [];
       _error = e.toString();
     }
+    _loading = false;
     notifyListeners();
     // Probe per-desk activity in the background — the worktree list
     // itself doesn't carry ahead/behind or HEAD timestamps, so each

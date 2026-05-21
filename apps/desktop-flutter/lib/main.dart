@@ -257,39 +257,48 @@ void main() async {
     });
   }
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: themeState),
-        ChangeNotifierProvider.value(value: repoState),
-        ChangeNotifierProvider.value(value: repoXrayState),
-        ChangeNotifierProvider.value(value: fileCouplingState),
-        ChangeNotifierProvider.value(value: symbolFrequencyState),
-        ChangeNotifierProvider.value(value: logosGitState),
-        ChangeNotifierProvider.value(value: worktreeState),
-        ChangeNotifierProvider.value(value: deskPrState),
-        ChangeNotifierProvider.value(value: deskIssueState),
-        ChangeNotifierProvider.value(value: remoteIssueCacheState),
-        ChangeNotifierProvider.value(value: preferencesState),
-        ChangeNotifierProvider.value(value: aiSettingsState),
-        // Per-repo, in-memory AI activity records (running runs +
-        // unseen results). Lifted out of ChangesPage so they survive
-        // repo switches and tab switches; cleared on session restart.
-        ChangeNotifierProvider(create: (_) => AiActivityState()),
-        ChangeNotifierProvider.value(value: externalToolsState),
-        ChangeNotifierProvider.value(value: sidebarOrgState),
-        ChangeNotifierProvider.value(value: toolDetectionState),
-        ChangeNotifierProvider.value(value: wickState),
-        ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
-        ChangeNotifierProvider.value(value: diagnosticsState),
-        ChangeNotifierProvider.value(value: appIdentityState),
-        ChangeNotifierProvider.value(value: onboardingState),
-        ChangeNotifierProvider(create: (_) => HyperReactivity()),
-        ChangeNotifierProvider(create: (_) => PaletteState()),
-        ChangeNotifierProvider.value(value: undoCoordinator),
-      ],
-      child: const GitDesktopApp(),
-    ),
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exception}\n${details.stack}');
+  };
+
+  runZonedGuarded(
+    () {
+      runApp(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: themeState),
+            ChangeNotifierProvider.value(value: repoState),
+            ChangeNotifierProvider.value(value: repoXrayState),
+            ChangeNotifierProvider.value(value: fileCouplingState),
+            ChangeNotifierProvider.value(value: symbolFrequencyState),
+            ChangeNotifierProvider.value(value: logosGitState),
+            ChangeNotifierProvider.value(value: worktreeState),
+            ChangeNotifierProvider.value(value: deskPrState),
+            ChangeNotifierProvider.value(value: deskIssueState),
+            ChangeNotifierProvider.value(value: remoteIssueCacheState),
+            ChangeNotifierProvider.value(value: preferencesState),
+            ChangeNotifierProvider.value(value: aiSettingsState),
+            ChangeNotifierProvider(create: (_) => AiActivityState()),
+            ChangeNotifierProvider.value(value: externalToolsState),
+            ChangeNotifierProvider.value(value: sidebarOrgState),
+            ChangeNotifierProvider.value(value: toolDetectionState),
+            ChangeNotifierProvider.value(value: wickState),
+            ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
+            ChangeNotifierProvider.value(value: diagnosticsState),
+            ChangeNotifierProvider.value(value: appIdentityState),
+            ChangeNotifierProvider.value(value: onboardingState),
+            ChangeNotifierProvider(create: (_) => HyperReactivity()),
+            ChangeNotifierProvider(create: (_) => PaletteState()),
+            ChangeNotifierProvider.value(value: undoCoordinator),
+          ],
+          child: const GitDesktopApp(),
+        ),
+      );
+    },
+    (error, stack) {
+      debugPrint('Unhandled async error: $error\n$stack');
+    },
   );
 }
 

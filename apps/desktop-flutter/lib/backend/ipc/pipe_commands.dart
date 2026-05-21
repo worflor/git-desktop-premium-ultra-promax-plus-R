@@ -1,6 +1,11 @@
 import 'dart:async';
-import 'dart:io' show pid;
+import 'dart:io' show Process, pid;
 
+import 'package:flutter/foundation.dart' show ChangeNotifier;
+import 'package:path/path.dart' as p;
+
+import '../ai.dart';
+import '../dtos.dart';
 import '../file_coupling.dart';
 import '../git.dart';
 import '../logos_dream.dart';
@@ -32,6 +37,8 @@ final Map<String, CommandHandler> commands = {
   'search': _search,
   'dream': _dream,
   'impact': _impact,
+  'review': _review,
+  'muse': _muse,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -46,26 +53,114 @@ String _requireRepo(Map<String, dynamic> params, ManifoldBridgeContext ctx) {
   return active;
 }
 
+final Map<String, String> _commonRootCache = {};
+
+Future<String> _resolveCommonRoot(String repo) async {
+  final cached = _commonRootCache[repo];
+  if (cached != null) return cached;
+  try {
+    final result = await Process.run(
+      'git',
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+      workingDirectory: repo,
+    );
+    if (result.exitCode == 0) {
+      final gitCommonDir = (result.stdout as String).trim();
+      if (gitCommonDir.isNotEmpty) {
+        final root = p.dirname(gitCommonDir);
+        if (root.isNotEmpty) {
+          _commonRootCache[repo] = root;
+          return root;
+        }
+      }
+    }
+  } catch (_) {}
+  _commonRootCache[repo] = repo;
+  return repo;
+}
+
 Future<LogosGit> _awaitEngine(String repo, ManifoldBridgeContext ctx) async {
-  var engine = ctx.logosGitState.engineFor(repo);
+  final root = await _resolveCommonRoot(repo);
+  var engine = ctx.logosGitState.engineFor(root);
   if (engine != null) return engine;
-  unawaited(ctx.logosGitState.loadForRepo(repo));
+  unawaited(ctx.logosGitState.loadForRepo(root));
   for (var i = 0; i < 30; i++) {
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    engine = ctx.logosGitState.engineFor(repo);
+    engine = ctx.logosGitState.engineFor(root);
     if (engine != null) return engine;
   }
   throw StateError('Logos engine did not load within 15s for $repo.');
 }
 
-FileCouplingMatrix _coupling(String repo, ManifoldBridgeContext ctx,
-    [LogosGit? engine]) {
-  final m = ctx.fileCouplingState.matrixFor(repo) ??
+class _WarmResult<T> {
+  final T? data;
+  final int ms;
+  final bool timedOut;
+  const _WarmResult(this.data, this.ms, {this.timedOut = false});
+}
+
+const Symbol progressKey = #manifoldProgress;
+
+void _progress(String phase, [String detail = '']) {
+  final fn = Zone.current[progressKey]
+      as void Function(String, String)?;
+  fn?.call(phase, detail);
+}
+
+Future<_WarmResult<T>> _awaitWarm<T>({
+  required T? Function() probe,
+  required void Function() kick,
+  required ChangeNotifier notifier,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final sw = Stopwatch()..start();
+  final existing = probe();
+  if (existing != null) return _WarmResult(existing, sw.elapsedMilliseconds);
+  final completer = Completer<T?>();
+  void listener() {
+    final v = probe();
+    if (v != null && !completer.isCompleted) completer.complete(v);
+  }
+  notifier.addListener(listener);
+  kick();
+  final result = await completer.future
+      .timeout(timeout, onTimeout: () => null);
+  notifier.removeListener(listener);
+  return _WarmResult(
+    result,
+    sw.elapsedMilliseconds,
+    timedOut: result == null,
+  );
+}
+
+Future<_WarmResult<FileCouplingMatrix>> _awaitCoupling(
+  String repo,
+  ManifoldBridgeContext ctx,
+) =>
+    _awaitWarm(
+      probe: () => ctx.fileCouplingState.matrixFor(repo),
+      kick: () => unawaited(ctx.fileCouplingState.loadForRepo(repo)),
+      notifier: ctx.fileCouplingState,
+    );
+
+Future<_WarmResult<SymbolFrequencyIndex>> _awaitSymbols(
+  String repo,
+  ManifoldBridgeContext ctx,
+) =>
+    _awaitWarm(
+      probe: () => ctx.symbolFrequencyState.indexFor(repo),
+      kick: () => unawaited(ctx.symbolFrequencyState.loadForRepo(repo)),
+      notifier: ctx.symbolFrequencyState,
+    );
+
+Future<FileCouplingMatrix> _coupling(String repo, ManifoldBridgeContext ctx,
+    [LogosGit? engine]) async {
+  final root = await _resolveCommonRoot(repo);
+  final m = ctx.fileCouplingState.matrixFor(root) ??
       engine?.stats.coupling ??
-      ctx.logosGitState.engineFor(repo)?.stats.coupling;
+      ctx.logosGitState.engineFor(root)?.stats.coupling;
   if (m != null) return m;
-  // Kick off a load for next time.
-  unawaited(ctx.fileCouplingState.loadForRepo(repo));
+  unawaited(ctx.fileCouplingState.loadForRepo(root));
   throw StateError('No coupling data for $repo. Loading now, retry shortly.');
 }
 
@@ -156,6 +251,8 @@ Future<Map<String, dynamic>> _help(
           'Find files by path-token matching. Params: query.',
       'dream': 'Logos commit phrase for current diff.',
       'impact': 'Predicted ripple of a diff. Params: diff.',
+      'review': 'AI code review of current changes. Params: files (optional), model (optional).',
+      'muse': 'AI brainstorm on current changes. Params: files (optional), model (optional).',
     },
     'notes':
         'All file params accept: --files, --file, --path, --paths, '
@@ -254,7 +351,7 @@ Future<Map<String, dynamic>> _blastRadius(
   final engine = await _awaitEngine(repo, ctx);
   final files = _resolveFiles(params);
   final limit = _int(params['limit']) ?? 20;
-  final coupling = _coupling(repo, ctx, engine);
+  final coupling = await _coupling(repo, ctx, engine);
 
   final neighbors = _couplingNeighbors(files, coupling, limit: limit);
   return {
@@ -279,7 +376,7 @@ Future<Map<String, dynamic>> _contextCmd(
   final engine = await _awaitEngine(repo, ctx);
   final seeds = _resolveFiles(params);
   final budget = _int(params['budget']) ?? 50000;
-  final coupling = _coupling(repo, ctx, engine);
+  final coupling = await _coupling(repo, ctx, engine);
 
   final neighbors = _couplingNeighbors(seeds, coupling, limit: 50);
   var totalChars = 0;
@@ -326,7 +423,7 @@ Future<Map<String, dynamic>> _suggest(
   final changed = _resolveFiles(params);
   FileCouplingMatrix matrix;
   try {
-    matrix = _coupling(repo, ctx);
+    matrix = await _coupling(repo, ctx);
   } catch (_) {
     final engine = await _awaitEngine(repo, ctx);
     matrix = engine.stats.coupling;
@@ -355,7 +452,7 @@ Future<Map<String, dynamic>> _profile(
     throw ArgumentError('file required. Usage: profile --file <path>');
   }
   final stats = engine.stats;
-  final coupling = _coupling(repo, ctx, engine);
+  final coupling = await _coupling(repo, ctx, engine);
 
   double centrality = 0;
   for (final entry in coupling.jaccardEntriesOf(file)) {
@@ -386,7 +483,7 @@ Future<Map<String, dynamic>> _explain(
     throw ArgumentError('file required. Usage: explain --file <path>');
   }
   final stats = engine.stats;
-  final coupling = _coupling(repo, ctx, engine);
+  final coupling = await _coupling(repo, ctx, engine);
   final vol = stats.volatility[file] ?? 0.0;
   final volZ = stats.volStddev > 0
       ? ((vol - stats.volMean) / stats.volStddev)
@@ -438,7 +535,7 @@ Future<Map<String, dynamic>> _recent(
   final repo = _requireRepo(params, ctx);
   final files = _resolveFiles(params);
   final limit = _int(params['limit']) ?? 10;
-  final coupling = _coupling(repo, ctx);
+  final coupling = await _coupling(repo, ctx);
 
   // Gather the coupling neighborhood.
   final neighborhood = <String>{...files};
@@ -479,7 +576,7 @@ Future<Map<String, dynamic>> _testMap(
   final files = _resolveFiles(params);
   FileCouplingMatrix coupling;
   try {
-    coupling = _coupling(repo, ctx);
+    coupling = await _coupling(repo, ctx);
   } catch (_) {
     try {
       final engine = await _awaitEngine(repo, ctx);
@@ -716,7 +813,7 @@ Future<Map<String, dynamic>> _impact(
   if (probe.sourceWeights.isEmpty) {
     return {'sources': [], 'ripple': []};
   }
-  final coupling = _coupling(repo, ctx, engine);
+  final coupling = await _coupling(repo, ctx, engine);
   final scores = engine.diffuseWeighted(
     probe.sourceWeights,
     t: 1.0,
@@ -756,4 +853,407 @@ double _meanCouplingTo(
     sum += combinedCouplingScore(path, t, matrix);
   }
   return sum / targets.length;
+}
+
+// ── AI commands ─────────────────────────────────────────────────
+
+typedef _ResolvedModel = ({
+  String modelValue,
+  String categoryLabel,
+  String categoryId,
+  String? effort,
+  bool fast,
+  bool supportsReasoning,
+});
+
+Future<List<AiModelCategoryData>> _ensureCategories(
+    ManifoldBridgeContext ctx) async {
+  final ai = ctx.aiSettingsState;
+  if (ai.runtimeModelCategories.isEmpty) {
+    final ok = await ai.refreshModelCategories(forceRefresh: true);
+    if (!ok) {
+      throw StateError(
+          ai.runtimeModelCategoriesError ??
+          'No AI models available. Configure an API key in settings.');
+    }
+  }
+  final categories = ai.runtimeModelCategories;
+  if (categories.isEmpty) {
+    throw StateError('No AI models available. Configure an API key in settings.');
+  }
+  return categories;
+}
+
+_ResolvedModel _pickModel(
+  List<AiModelCategoryData> categories,
+  ManifoldBridgeContext ctx, {
+  required String preferredCategoryId,
+  String? modelOverride,
+}) {
+  final ai = ctx.aiSettingsState;
+  final category = categories
+          .where((c) => c.id == preferredCategoryId && c.models.isNotEmpty)
+          .firstOrNull ??
+      categories.where((c) => c.models.isNotEmpty).firstOrNull;
+  if (category == null || category.models.isEmpty) {
+    throw StateError('No models in any category.');
+  }
+
+  final model = modelOverride != null
+      ? (category.models.where((m) => m.value == modelOverride).firstOrNull ??
+          category.models.first)
+      : (category.models
+              .where((m) =>
+                  m.value == ai.modelSelections[category.id])
+              .firstOrNull ??
+          category.models.first);
+
+  final eff = ai.resolveEffort(category.id, model.value);
+  return (
+    modelValue: model.value,
+    categoryLabel: ai.labelForCategory(category.id, category.label),
+    categoryId: category.id,
+    effort: eff.effort,
+    fast: eff.fast,
+    supportsReasoning: model.supportsReasoning,
+  );
+}
+
+typedef _ScopeResult = (
+  List<String> paths,
+  String label,
+  bool hasStaged,
+  bool hasUnstaged,
+  List<RepositoryStatusFile> statusFiles,
+);
+
+Future<_ScopeResult> _resolveScope(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final repo = _requireRepo(params, ctx);
+  final statusResult = await getRepositoryStatus(repo);
+  final statusFiles = statusResult.data?.files ?? [];
+
+  final explicit = _resolveFilesOptional(params);
+  if (explicit != null) {
+    final explicitStatus = statusFiles.where(
+      (f) => explicit.contains(f.path),
+    );
+    return (
+      explicit,
+      '${explicit.length} file${explicit.length == 1 ? '' : 's'}',
+      explicitStatus.isEmpty || explicitStatus.any((f) => f.hasStagedChange),
+      explicitStatus.isEmpty || explicitStatus.any((f) => f.hasUnstagedChange),
+      statusFiles,
+    );
+  }
+  if (!statusResult.ok || statusResult.data == null) {
+    throw StateError(
+      'Failed to read repository status for $repo: '
+      '${statusResult.error ?? "unknown error"}',
+    );
+  }
+  final paths = statusFiles.map((f) => f.path).toList();
+  if (paths.isEmpty) {
+    throw StateError('No dirty files to review in $repo');
+  }
+  final hasStaged = statusFiles.any((f) => f.hasStagedChange);
+  final hasUnstaged = statusFiles.any((f) => f.hasUnstagedChange);
+  return (
+    paths,
+    paths.length == statusFiles.length
+        ? 'all included files'
+        : '${paths.length} file${paths.length == 1 ? '' : 's'}',
+    hasStaged,
+    hasUnstaged,
+    statusFiles,
+  );
+}
+
+Future<Map<String, dynamic>> _review(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final totalSw = Stopwatch()..start();
+  final repo = _requireRepo(params, ctx);
+  final cacheRoot = await _resolveCommonRoot(repo);
+  final categories = await _ensureCategories(ctx);
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+  final model = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.reviewCommitModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+
+  _progress('scope');
+  final scopeSw = Stopwatch()..start();
+  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
+      await _resolveScope(params, ctx);
+  final scopeMs = scopeSw.elapsedMilliseconds;
+  _progress('scope', '${scopeFiles.length} files');
+
+  _progress('warmup');
+  final warmResults = await Future.wait([
+    _awaitCoupling(cacheRoot, ctx),
+    _awaitSymbols(cacheRoot, ctx),
+  ]);
+  final couplingWarm = warmResults[0] as _WarmResult<FileCouplingMatrix>;
+  final symbolsWarm = warmResults[1] as _WarmResult<SymbolFrequencyIndex>;
+  final cSym = couplingWarm.data != null ? '✓' : '–';
+  final sSym = symbolsWarm.data != null ? '✓' : '–';
+  _progress('warmup', 'coupling $cSym · symbols $sSym');
+
+  final shortModel = model.modelValue.split('/').last;
+  _progress('ai', shortModel);
+  final aiSw = Stopwatch()..start();
+  final result = await reviewCommit(
+    repositoryPath: repo,
+    modelValue: model.modelValue,
+    modelCategoryLabel: model.categoryLabel,
+    scopeLabel: scopeLabel,
+    reasoningEffort: model.effort,
+    fastMode: model.fast,
+    supportsReasoning: model.supportsReasoning,
+    includeStaged: hasStaged,
+    includeUnstaged: hasUnstaged,
+    scopedPaths: scopeFiles,
+    customPrompt: ai.reviewCommitPrompt,
+    guardrailStage: prefs.guardrailStage,
+    doubleCheckEnabled: ai.reviewCommitDoubleCheckEnabled,
+    readOnly: true,
+    couplingMatrix: couplingWarm.data,
+    symbolIndex: symbolsWarm.data,
+  );
+  final aiMs = aiSw.elapsedMilliseconds;
+  totalSw.stop();
+
+  if (!result.ok || result.data == null) {
+    return {'error': result.error ?? 'Review failed.'};
+  }
+  final d = result.data!;
+  return {
+    'repo': repo,
+    'verdict': d.verdict,
+    'score': d.score,
+    'summary': d.summary,
+    'model': '${d.providerId}/${d.modelId}',
+    'scope': d.scopeLabel,
+    'guardrailStage': d.guardrailStage,
+    'doubleCheck': d.twoStepEnabled,
+    'enrichment': {
+      'coupling': couplingWarm.data != null,
+      'couplingMs': couplingWarm.ms,
+      'couplingTimedOut': couplingWarm.timedOut,
+      'symbols': symbolsWarm.data != null,
+      'symbolsMs': symbolsWarm.ms,
+      'symbolsTimedOut': symbolsWarm.timedOut,
+    },
+    'files': {
+      'reviewed': scopeFiles.length,
+      'total': statusFiles.length,
+      'paths': [
+        for (final p in scopeFiles)
+          {
+            'path': p,
+            'staged': statusFiles
+                .where((f) => f.path == p)
+                .firstOrNull
+                ?.hasStagedChange ?? false,
+            'unstaged': statusFiles
+                .where((f) => f.path == p)
+                .firstOrNull
+                ?.hasUnstagedChange ?? true,
+          },
+      ],
+    },
+    'timing': {
+      'totalMs': totalSw.elapsedMilliseconds,
+      'scopeMs': scopeMs,
+      'warmupMs': couplingWarm.ms > symbolsWarm.ms
+          ? couplingWarm.ms
+          : symbolsWarm.ms,
+      'aiMs': aiMs,
+    },
+    'promptChars': d.promptCharacters,
+    'diffChars': d.diffCharacters,
+    'reasoningReport': d.reasoningReport.isNotEmpty ? d.reasoningReport : null,
+    'findings': [
+      for (final f in d.findings)
+        {
+          'title': f.title,
+          'severity': f.severity,
+          'file': f.filePath,
+          'hunk': f.hunkLabel,
+          'evidence': f.evidence,
+          'why': f.whyItMatters,
+        },
+    ],
+    'observations': [
+      for (final o in d.observations)
+        {
+          'title': o.title,
+          'detail': o.detail,
+          'file': o.filePath,
+        },
+    ],
+  };
+}
+
+Future<Map<String, dynamic>> _muse(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final totalSw = Stopwatch()..start();
+  final repo = _requireRepo(params, ctx);
+  final cacheRoot = await _resolveCommonRoot(repo);
+  final categories = await _ensureCategories(ctx);
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+
+  final brainstormModel = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.museBrainstormModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+  final synthesisModel = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.museSynthesisModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+
+  _progress('scope');
+  final scopeSw = Stopwatch()..start();
+  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
+      await _resolveScope(params, ctx);
+  final scopeMs = scopeSw.elapsedMilliseconds;
+  _progress('scope', '${scopeFiles.length} files');
+
+  _progress('warmup');
+  final warmResults = await Future.wait([
+    _awaitCoupling(cacheRoot, ctx),
+    _awaitSymbols(cacheRoot, ctx),
+  ]);
+  final couplingWarm = warmResults[0] as _WarmResult<FileCouplingMatrix>;
+  final symbolsWarm = warmResults[1] as _WarmResult<SymbolFrequencyIndex>;
+  final cSym = couplingWarm.data != null ? '✓' : '–';
+  final sSym = symbolsWarm.data != null ? '✓' : '–';
+  _progress('warmup', 'coupling $cSym · symbols $sSym');
+
+  final shortModel = brainstormModel.modelValue.split('/').last;
+  _progress('brainstorm', shortModel);
+  final aiSw = Stopwatch()..start();
+  final result = await runMuse(
+    repositoryPath: repo,
+    brainstormModelValue: brainstormModel.modelValue,
+    synthesisModelValue: synthesisModel.modelValue,
+    scopeLabel: scopeLabel,
+    brainstormReasoningEffort: brainstormModel.effort,
+    brainstormFastMode: brainstormModel.fast,
+    brainstormSupportsReasoning: brainstormModel.supportsReasoning,
+    synthesisReasoningEffort: synthesisModel.effort,
+    synthesisFastMode: synthesisModel.fast,
+    synthesisSupportsReasoning: synthesisModel.supportsReasoning,
+    includeStaged: hasStaged,
+    includeUnstaged: hasUnstaged,
+    scopedPaths: scopeFiles,
+    customPrompt: ai.musePrompt,
+    guardrailStage: prefs.guardrailStage,
+    readOnly: true,
+    couplingMatrix: couplingWarm.data,
+    symbolIndex: symbolsWarm.data,
+  );
+  final aiMs = aiSw.elapsedMilliseconds;
+  totalSw.stop();
+
+  if (!result.ok || result.data == null) {
+    return {'error': result.error ?? 'Muse failed.'};
+  }
+  final d = result.data!;
+  return {
+    'repo': repo,
+    'brainstormModel': '${d.providerId}/${d.modelId}',
+    'synthesisModel': '${synthesisModel.categoryLabel}/${synthesisModel.modelValue}',
+    'scope': d.scopeLabel,
+    'enrichment': {
+      'coupling': couplingWarm.data != null,
+      'couplingMs': couplingWarm.ms,
+      'couplingTimedOut': couplingWarm.timedOut,
+      'symbols': symbolsWarm.data != null,
+      'symbolsMs': symbolsWarm.ms,
+      'symbolsTimedOut': symbolsWarm.timedOut,
+    },
+    'files': {
+      'reviewed': scopeFiles.length,
+      'total': statusFiles.length,
+      'paths': [
+        for (final p in scopeFiles)
+          {
+            'path': p,
+            'staged': statusFiles
+                .where((f) => f.path == p)
+                .firstOrNull
+                ?.hasStagedChange ?? false,
+            'unstaged': statusFiles
+                .where((f) => f.path == p)
+                .firstOrNull
+                ?.hasUnstagedChange ?? true,
+          },
+      ],
+    },
+    'timing': {
+      'totalMs': totalSw.elapsedMilliseconds,
+      'scopeMs': scopeMs,
+      'warmupMs': couplingWarm.ms > symbolsWarm.ms
+          ? couplingWarm.ms
+          : symbolsWarm.ms,
+      'aiMs': aiMs,
+    },
+    'proposals': [
+      for (final p in d.proposals)
+        {
+          'tier': p.tier.name,
+          'title': p.title,
+          'vision': p.vision,
+          'foothold': p.foothold,
+          'citations': p.citations,
+        },
+    ],
+    if (d.brainstormIdeas.isNotEmpty)
+      'brainstormIdeas': [
+        for (final idea in d.brainstormIdeas)
+          {
+            'index': idea.index,
+            'text': idea.text,
+            'kept': idea.kept,
+          },
+      ],
+    if (d.parseWarnings.isNotEmpty)
+      'warnings': d.parseWarnings,
+  };
+}
+
+List<String>? _resolveFilesOptional(Map<String, dynamic> params) {
+  for (final key in const [
+    'files', 'file', 'paths', 'path', 'seeds', 'changed',
+  ]) {
+    final raw = params[key];
+    if (raw == null) continue;
+    if (raw is List) {
+      final result = [for (final item in raw) '$item'.trim()]
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (result.isNotEmpty) return result;
+    }
+    if (raw is String && raw.isNotEmpty) {
+      final result = raw
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (result.isNotEmpty) return result;
+    }
+  }
+  return null;
 }

@@ -7484,30 +7484,30 @@ class _MusePaneState extends State<_MusePane> {
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (widget.staleScope)
-            _StaleScopeBanner(tokens: t, onRerun: widget.onRerun),
-          _museHeader(t),
-          const SizedBox(height: 14),
-          // While loading, the logos canvas owns the pane. No
-          // SingleChildScrollView here — loading screens shouldn't
-          // scroll; the visual needs to sit on exactly one panel,
-          // sized to fit whatever height the parent hands us.
-          if (widget.loading)
-            Expanded(child: _museBody(t))
-          else
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(bottom: 24),
-                child: _museBody(t),
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.staleScope)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: _StaleScopeBanner(tokens: t, onRerun: widget.onRerun),
+          ),
+        _museHeader(t),
+        if (widget.loading)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 16),
+              child: _museBody(t),
             ),
-        ],
-      ),
+          )
+        else
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+              child: _museBody(t),
+            ),
+          ),
+      ],
     );
   }
 
@@ -7516,97 +7516,120 @@ class _MusePaneState extends State<_MusePane> {
     final keptLine = result != null && result.totalIdeaCount > 0
         ? 'considered ${result.totalIdeaCount}, kept ${result.keptIdeaCount} with grounding'
         : '';
-    return Row(
-      children: [
-        // Left cluster — wrapped in Expanded so the Flexible kept-line
-        // gets all remaining space inside, not a flex-share that it
-        // splits with a sibling Spacer. Prior layout used Flexible(1)
-        // + Spacer(1), so both got half the remaining width and the
-        // text truncated at ~half-row even when the full row had
-        // hundreds of pixels of empty space past the kept line.
-        Expanded(
-          child: Row(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: t.chromeBorder.withValues(alpha: 0.15),
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(Icons.bubble_chart_outlined, size: 16, color: t.textFaint),
-              const SizedBox(width: 8),
+              Icon(Icons.bubble_chart_outlined, size: 14, color: t.textFaint),
+              const SizedBox(width: 6),
               Text('Muse',
                   style: TextStyle(
                     color: t.textStrong,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
                   )),
-              const SizedBox(width: 8),
-              Text('· ${widget.guardrailLabel.toLowerCase()}',
-                  style: TextStyle(color: t.textFaint, fontSize: 11)),
-              if (widget.reasoningEffort != null || widget.fastMode)
-                Padding(
-                  padding: const EdgeInsets.only(left: 5),
-                  child: _ModelGlyphStrip(
-                    color: t.chromeAccent,
-                    accent: t.accentBright,
-                    effort: widget.reasoningEffort,
-                    fast: widget.fastMode,
-                  ),
-                ),
-              if (keptLine.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text('· $keptLine',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: t.textFaint, fontSize: 11)),
-                ),
-              ],
               if (widget.result != null) ...[
-                const Spacer(),
+                const SizedBox(width: 8),
                 Text(
                   '${_tokensLabel(widget.result!.promptCharacters)} → ${_tokensLabel(widget.result!.diffCharacters)}',
                   style: TextStyle(
                     fontFamily: AppFonts.mono,
                     fontSize: 9,
-                    color: t.textFaint.withValues(alpha: 0.6),
+                    color: t.textFaint.withValues(alpha: 0.5),
                   ),
                 ),
               ],
             ],
           ),
-        ),
-        // Chips take their intrinsic widths on the right. Mirror the
-        // review-pane order: back · copy · rerun.
-        const SizedBox(width: 12),
-        _GhostActionChip(
-            tokens: t, label: 'back to diff', onTap: widget.onBack),
-        if (widget.onCopy != null) ...[
-          const SizedBox(width: 6),
-          _GhostActionChip(
-            tokens: t,
-            label: _selected.isEmpty
-                ? 'copy'
-                : 'copy ${_selected.length} selected',
-            onTap: () {
-              if (_selected.isEmpty) {
-                widget.onCopy!(null);
-                return;
-              }
-              final r = widget.result;
-              if (r == null) return;
-              final subset = _orderedSelection(r);
-              if (subset.isEmpty) return;
-              widget.onCopy!(subset);
-              setState(() => _selected.clear());
-            },
-          ),
-          if (_selected.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            _GhostActionChip(
-              tokens: t,
-              label: 'clear',
-              onTap: () => setState(() => _selected.clear()),
+          if (keptLine.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              keptLine,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: t.textMuted, fontSize: 10.5),
             ),
           ],
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.guardrailLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ),
+                    if (widget.reasoningEffort != null || widget.fastMode)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: _ModelGlyphStrip(
+                          color: t.chromeAccent,
+                          accent: t.accentBright,
+                          effort: widget.reasoningEffort,
+                          fast: widget.fastMode,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              _GhostActionChip(
+                  tokens: t, label: 'Back to diff', onTap: widget.onBack),
+              if (widget.onCopy != null) ...[
+                const SizedBox(width: 8),
+                _GhostActionChip(
+                  tokens: t,
+                  label: _selected.isEmpty
+                      ? 'Copy'
+                      : 'Copy ${_selected.length}',
+                  onTap: () {
+                    if (_selected.isEmpty) {
+                      widget.onCopy!(null);
+                      return;
+                    }
+                    final r = widget.result;
+                    if (r == null) return;
+                    final subset = _orderedSelection(r);
+                    if (subset.isEmpty) return;
+                    widget.onCopy!(subset);
+                    setState(() => _selected.clear());
+                  },
+                ),
+                if (_selected.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  _GhostActionChip(
+                    tokens: t,
+                    label: 'Clear',
+                    onTap: () => setState(() => _selected.clear()),
+                  ),
+                ],
+              ],
+              const SizedBox(width: 8),
+              _GhostActionChip(
+                  tokens: t, label: 'Run again', onTap: widget.onRerun),
+            ],
+          ),
         ],
-        const SizedBox(width: 6),
-        _GhostActionChip(tokens: t, label: 'rerun', onTap: widget.onRerun),
-      ],
+      ),
     );
   }
 

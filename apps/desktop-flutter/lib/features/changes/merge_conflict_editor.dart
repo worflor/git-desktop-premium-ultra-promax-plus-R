@@ -618,14 +618,24 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   }
 
   void _scrollToFocused() {
-    final key = _itemKeys[_focusIndex];
-    final ctx = key?.currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(ctx,
-          duration: context.motionRead(AppMotion.fade),
-          curve: AppMotion.fadeCurve,
-          alignment: 0.15);
-    }
+    final ctx = _itemKeys[_focusIndex]?.currentContext;
+    if (ctx == null || !_scrollCtrl.hasClients) return;
+    final ro = ctx.findRenderObject();
+    if (ro is! RenderBox) return;
+    final scrollable = Scrollable.maybeOf(ctx);
+    if (scrollable == null) return;
+    final scrollRo = scrollable.context.findRenderObject();
+    if (scrollRo is! RenderBox) return;
+    final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent <= 0) return;
+    final itemY = ro.localToGlobal(Offset.zero, ancestor: scrollRo).dy;
+    final target = _scrollCtrl.offset + itemY -
+        pos.viewportDimension * 0.15;
+    _scrollCtrl.animateTo(
+      target.clamp(0.0, pos.maxScrollExtent),
+      duration: context.motionRead(AppMotion.fade),
+      curve: AppMotion.fadeCurve,
+    );
   }
 
   void _resolve(int i, ConflictSide side) {

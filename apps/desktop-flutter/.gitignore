@@ -5,6 +5,7 @@
 *.swp
 
 # Build artifacts
+*.exe
 *.AppImage
 *.AppDir/
 .DS_Store

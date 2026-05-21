@@ -10,6 +10,9 @@ import 'ai_activity_state.dart';
 import 'logos_git_state.dart';
 import 'sidebar_org_state.dart';
 import '../backend/external_tools.dart';
+import 'package:path/path.dart' as p;
+
+import '../backend/default_paths.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../backend/repo_web_url.dart';
@@ -81,6 +84,8 @@ class _SidebarRailState extends State<SidebarRail> {
   _RepositoryEntryMode _entryMode = _RepositoryEntryMode.open;
   String? _error;
   String? _cloningEntry;
+  String? _cloneProgress;
+  int _cloneGeneration = 0;
 
   @override
   void dispose() {
@@ -93,7 +98,16 @@ class _SidebarRailState extends State<SidebarRail> {
     if (_entryMode == _RepositoryEntryMode.clone &&
         _isGitUrl(value) &&
         _cloneTargetController.text.isEmpty) {
-      _cloneTargetController.text = _extractRepoName(value);
+      final repoName = _extractRepoName(value);
+      lastCloneParentDir().then((parent) {
+        if (!mounted) return;
+        if (_cloneTargetController.text.isNotEmpty) return;
+        if (parent != null) {
+          _cloneTargetController.text = p.join(parent, repoName);
+        } else {
+          _cloneTargetController.text = repoName;
+        }
+      }).catchError((_) {});
     }
     setState(() {
       _error = null;
@@ -152,37 +166,60 @@ class _SidebarRailState extends State<SidebarRail> {
   }
 
   Future<void> _onClone() async {
+    final gen = ++_cloneGeneration;
     try {
       final url = _pathController.text.trim();
-      final target = _cloneTargetController.text.trim();
-      if (url.isEmpty || target.isEmpty) {
-        setState(() => _error = 'URL and target path required.');
+      var target = _cloneTargetController.text.trim();
+      if (url.isEmpty) {
+        setState(() => _error = 'Repository URL required.');
         return;
+      }
+      if (target.isEmpty || !p.isAbsolute(target)) {
+        final picked = await pickDirectory('Clone to');
+        if (picked == null) return;
+        final repoName = target.isNotEmpty
+            ? target
+            : _extractRepoName(url);
+        target = p.join(picked, repoName);
+        if (!mounted) return;
+        _cloneTargetController.text = target;
       }
 
       setState(() {
         _running = true;
         _error = null;
-        _cloningEntry = target;
+        _cloningEntry = _toProjectName(target);
+        _cloneProgress = null;
       });
-      final result = await cloneRepository(url, target);
-      if (!mounted) return;
+      final result = await cloneRepository(
+        url,
+        target,
+        onProgress: (line) {
+          if (!mounted || gen != _cloneGeneration) return;
+          setState(() => _cloneProgress = line);
+        },
+      );
+      if (!mounted || gen != _cloneGeneration) return;
       if (!result.ok || result.data == null) {
         setState(() {
           _running = false;
           _cloningEntry = null;
+          _cloneProgress = null;
           _error = result.error ?? 'Failed to clone repository.';
         });
         return;
       }
 
+      unawaited(saveCloneParentDir(result.data!)
+          .catchError((e) => debugPrint('Failed to save clone dir: $e')));
       final repo = context.read<RepositoryState>();
       final err = await repo.setActivePath(result.data!);
-      if (!mounted) return;
+      if (!mounted || gen != _cloneGeneration) return;
       if (err != null) {
         setState(() {
           _running = false;
           _cloningEntry = null;
+          _cloneProgress = null;
           _error = err;
         });
         return;
@@ -190,16 +227,18 @@ class _SidebarRailState extends State<SidebarRail> {
       setState(() {
         _running = false;
         _cloningEntry = null;
+        _cloneProgress = null;
         _showPathEntry = false;
         _pathController.clear();
         _cloneTargetController.clear();
         _entryMode = _RepositoryEntryMode.open;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || gen != _cloneGeneration) return;
       setState(() {
         _running = false;
         _cloningEntry = null;
+        _cloneProgress = null;
         _error = error.toString();
       });
     }
@@ -208,13 +247,17 @@ class _SidebarRailState extends State<SidebarRail> {
   Future<void> _onInit() async {
     try {
       var path = _pathController.text.trim();
-      if (path.isEmpty) {
+      if (path.isEmpty || !p.isAbsolute(path)) {
         final picked = await pickDirectory('Create Repository');
         if (picked == null) return;
-        path = picked;
+        if (path.isNotEmpty && !p.isAbsolute(path)) {
+          path = p.join(picked, path);
+        } else {
+          path = picked;
+        }
+        if (!mounted) return;
         _pathController.text = path;
       }
-      if (path.isEmpty) return;
 
       setState(() {
         _running = true;
@@ -308,6 +351,11 @@ class _SidebarRailState extends State<SidebarRail> {
                 }
               }),
               onOpen: _onOpen,
+              onBrowseTarget: () async {
+                final picked = await pickDirectory('Clone Target');
+                if (picked == null || !mounted) return;
+                setState(() => _cloneTargetController.text = picked);
+              },
             ),
           if (_error != null && !_showPathEntry)
             Padding(
@@ -320,12 +368,48 @@ class _SidebarRailState extends State<SidebarRail> {
           if (_cloningEntry != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 4, 4, 6),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _PulsingDot(color: t.accentBright),
-                  const SizedBox(width: 6),
-                  Text('Cloning...',
-                      style: TextStyle(color: t.textMuted, fontSize: 11)),
+                  Row(
+                    children: [
+                      _PulsingDot(color: t.accentBright),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Cloning $_cloningEntry...',
+                          style: TextStyle(color: t.textMuted, fontSize: 11),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () {
+                          unawaited(cancelActiveClone());
+                          _cloneGeneration++;
+                          setState(() {
+                            _running = false;
+                            _cloningEntry = null;
+                            _cloneProgress = null;
+                            _error = 'Clone cancelled.';
+                          });
+                        },
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Icon(Icons.close, size: 12, color: t.textFaint),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_cloneProgress != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12, top: 2),
+                      child: Text(
+                        _cloneProgress!,
+                        style: TextStyle(color: t.textFaint, fontSize: 9.5),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -943,6 +1027,7 @@ class _PathEntry extends StatelessWidget {
   final ValueChanged<String> onInputChanged;
   final ValueChanged<_RepositoryEntryMode> onModeChanged;
   final VoidCallback onOpen;
+  final VoidCallback? onBrowseTarget;
 
   const _PathEntry({
     required this.pathController,
@@ -953,6 +1038,7 @@ class _PathEntry extends StatelessWidget {
     required this.onInputChanged,
     required this.onModeChanged,
     required this.onOpen,
+    this.onBrowseTarget,
   });
 
   @override
@@ -964,7 +1050,7 @@ class _PathEntry extends StatelessWidget {
         isCloneMode ? 'Clone' : (isCreateMode ? 'Create' : 'Open');
     final pathPlaceholder = isCloneMode
         ? 'Repository URL'
-        : (isCreateMode ? '/path/to/folder' : '/path/to/project');
+        : (isCreateMode ? 'project-name or full path' : '/path/to/project');
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1023,11 +1109,39 @@ class _PathEntry extends StatelessWidget {
           ),
           if (isCloneMode) ...[
             const SizedBox(height: 4),
-            _StyledInput(
-              controller: cloneTargetController,
-              placeholder: 'Clone to folder path',
-              fontSize: 11,
-              onSubmitted: (_) => onOpen(),
+            Row(
+              children: [
+                Expanded(
+                  child: _StyledInput(
+                    controller: cloneTargetController,
+                    placeholder: 'Clone to folder path',
+                    fontSize: 11,
+                    onSubmitted: (_) => onOpen(),
+                  ),
+                ),
+                if (onBrowseTarget != null) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: running ? null : onBrowseTarget,
+                    child: MouseRegion(
+                      cursor: running
+                          ? SystemMouseCursors.basic
+                          : SystemMouseCursors.click,
+                      child: SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: Center(
+                          child: Icon(
+                            Icons.folder_open,
+                            size: 14,
+                            color: running ? t.textFaint : t.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
           if (error != null) ...[

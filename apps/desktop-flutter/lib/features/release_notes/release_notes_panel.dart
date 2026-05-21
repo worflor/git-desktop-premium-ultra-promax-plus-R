@@ -430,7 +430,7 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.1',
-    date: '2026-05-14',
+    date: '2026-05-18',
     bullets: [
       'Welcome to the first non-internal release. We have:',
       'Introducing Filament, an experimental execution-flow engine makes its first appearnce! :o',

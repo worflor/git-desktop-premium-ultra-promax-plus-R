@@ -5,11 +5,12 @@
 // DeskPrStore (refs/manifold/desks/<branch>) so the PR list is
 // always derived from git, never from a sidecar cache.
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+
+import '../backend/async_utils.dart';
 
 import '../backend/desk_pr.dart';
 import '../backend/desk_pr_diff.dart';
@@ -32,7 +33,7 @@ class DeskPrState extends ChangeNotifier {
   DeskPrState(this._repo, this._identity) {
     _repo.addListener(_onRepoChanged);
     if (_repo.activePath != null) {
-      refreshFor(_repo.activePath!);
+      fireAndLog(refreshFor(_repo.activePath!), 'DeskPrState');
     }
   }
 
@@ -58,7 +59,7 @@ class DeskPrState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    refreshFor(active);
+    fireAndLog(refreshFor(active), 'DeskPrState');
   }
 
   /// Resolve the main repo path so a desk and its sibling worktrees
@@ -111,23 +112,21 @@ class DeskPrState extends ChangeNotifier {
       final store = DeskPrStore(_refsFor(main));
       final r = await store.listAll();
       if (id != _requestId) return;
-      _loading = false;
       if (r.ok) {
         _byBranch = {
           for (final pr in r.data!) pr.headRef: pr,
         };
         _loadedForRepo = main;
-        _error = null;
       } else {
         _byBranch = const {};
         _error = r.error;
       }
     } catch (e) {
       if (id != _requestId) return;
-      _loading = false;
       _byBranch = const {};
       _error = e.toString();
     }
+    _loading = false;
     notifyListeners();
   }
 

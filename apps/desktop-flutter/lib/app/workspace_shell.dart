@@ -19,6 +19,7 @@ import '../features/changes/changes_page.dart';
 import '../features/history/commit_seismograph.dart';
 import '../features/history/history_page.dart';
 import '../features/palette/command_palette.dart';
+import '../features/filament/filament_findings_panel.dart';
 import '../features/release_notes/release_notes_panel.dart';
 import '../features/settings/settings_page.dart';
 import 'settings_navigation_state.dart';
@@ -57,7 +58,7 @@ import '../backend/undo_controller.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
-enum _Panel { none, xray, settings, palette, releaseNotes }
+enum _Panel { none, xray, settings, palette, releaseNotes, filamentFindings }
 
 class WorkspaceShell extends StatefulWidget {
   const WorkspaceShell({super.key});
@@ -289,7 +290,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           // frame.
           Positioned.fill(
             child: IgnorePointer(
-              ignoring: _panel != _Panel.settings && _panel != _Panel.palette && _panel != _Panel.releaseNotes,
+              ignoring: _panel != _Panel.settings && _panel != _Panel.palette && _panel != _Panel.releaseNotes && _panel != _Panel.filamentFindings,
               child: Stack(
                 children: [
                   Positioned.fill(
@@ -297,7 +298,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                       duration: context.motion(context.surfaceShader.duration),
                       curve: context.surfaceShader.safeCurve,
                       opacity:
-                          (_panel == _Panel.settings || _panel == _Panel.palette || _panel == _Panel.releaseNotes)
+                          (_panel == _Panel.settings || _panel == _Panel.palette || _panel == _Panel.releaseNotes || _panel == _Panel.filamentFindings)
                               ? 1.0
                               : 0.0,
                       child: GestureDetector(
@@ -349,6 +350,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                             child: SettingsPage(
                               focusSection: _pendingSettingsFocus,
                               onOpenReleaseNotes: () => _setPanel(_Panel.releaseNotes),
+                              onOpenFilamentFindings: () => _setPanel(_Panel.filamentFindings),
                             ),
                           ),
                         _Panel.releaseNotes => _SlidePanel(
@@ -357,6 +359,13 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                             onClose: () => _setPanel(_Panel.none),
                             onBack: () => _setPanel(_Panel.settings),
                             child: const ReleaseNotesPanel(),
+                          ),
+                        _Panel.filamentFindings => _SlidePanel(
+                            key: const ValueKey('filamentFindings'),
+                            title: 'Filament Findings',
+                            onClose: () => _setPanel(_Panel.none),
+                            onBack: () => _setPanel(_Panel.settings),
+                            child: const FilamentFindingsPanel(),
                           ),
                         _Panel.palette => _SlidePanel(
                             key: const ValueKey('palette'),

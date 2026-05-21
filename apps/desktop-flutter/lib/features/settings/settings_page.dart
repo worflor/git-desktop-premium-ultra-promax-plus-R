@@ -2,12 +2,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../backend/ai.dart' show cliProviderIds;
@@ -17,6 +19,8 @@ import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
 import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_core.dart' show filamentSat;
+import '../../backend/logos_flow.dart' show analyzeFlowCached;
 import '../../backend/logos_git.dart';
 import '../../backend/release_check.dart';
 import '../../backend/settings_store.dart';
@@ -55,8 +59,14 @@ enum _PromptSaveState { idle, typing, saving, saved, error }
 class SettingsPage extends StatefulWidget {
   final SettingsSection? focusSection;
   final VoidCallback? onOpenReleaseNotes;
+  final VoidCallback? onOpenFilamentFindings;
 
-  const SettingsPage({super.key, this.focusSection, this.onOpenReleaseNotes});
+  const SettingsPage({
+    super.key,
+    this.focusSection,
+    this.onOpenReleaseNotes,
+    this.onOpenFilamentFindings,
+  });
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -1299,6 +1309,7 @@ class _SettingsPageState extends State<SettingsPage>
                       .read<PreferencesState>()
                       .setLogosPad(x, y));
                 },
+                onOpenFilamentFindings: widget.onOpenFilamentFindings,
               ),
               const _SettingsGap(),
               _CheckboxRow(
@@ -6010,6 +6021,37 @@ class _LensSnapshot {
   );
 }
 
+class _FilamentSnapshot {
+  final double fragility;
+  final double spectralGap;
+  final int criticalCount;
+  final int warnCount;
+  final int infoCount;
+  final int filesAnalyzed;
+  final bool ready;
+  const _FilamentSnapshot({
+    required this.fragility,
+    required this.spectralGap,
+    required this.criticalCount,
+    required this.warnCount,
+    required this.infoCount,
+    required this.filesAnalyzed,
+    required this.ready,
+  });
+
+  int get totalFindings => criticalCount + warnCount + infoCount;
+
+  static const _FilamentSnapshot empty = _FilamentSnapshot(
+    fragility: 0.0,
+    spectralGap: 0.0,
+    criticalCount: 0,
+    warnCount: 0,
+    infoCount: 0,
+    filesAnalyzed: 0,
+    ready: false,
+  );
+}
+
 /// Resolve puck → (t, coherenceGate) using the same mapping the
 /// changes page's rerank already uses (`changes_page.dart:4806-4808`).
 /// Matters for integrity: the preview has to be the same function of
@@ -6108,11 +6150,13 @@ class _LogosDynamicsStage extends StatefulWidget {
   final double padX;
   final double padY;
   final void Function(double x, double y) onChanged;
+  final VoidCallback? onOpenFilamentFindings;
 
   const _LogosDynamicsStage({
     required this.padX,
     required this.padY,
     required this.onChanged,
+    this.onOpenFilamentFindings,
   });
 
   @override
@@ -6134,6 +6178,9 @@ class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
   // first call at this halfLife; no reason to redo it per puck tick.
   LogosGit? _engineCache;
   Map<String, double>? _focusCache;
+
+  _FilamentSnapshot _filamentSnap = _FilamentSnapshot.empty;
+  int _filamentGen = 0;
 
   @override
   void didChangeDependencies() {
@@ -6180,7 +6227,10 @@ class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
       if (_engineCache != null || _snapshot.ready) {
         _engineCache = null;
         _focusCache = null;
-        setState(() => _snapshot = _LensSnapshot.empty);
+        setState(() {
+          _snapshot = _LensSnapshot.empty;
+          _filamentSnap = _FilamentSnapshot.empty;
+        });
       }
       return;
     }
@@ -6196,7 +6246,10 @@ class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
       if (_engineCache != null || _snapshot.ready) {
         _engineCache = null;
         _focusCache = null;
-        setState(() => _snapshot = _LensSnapshot.empty);
+        setState(() {
+          _snapshot = _LensSnapshot.empty;
+          _filamentSnap = _FilamentSnapshot.empty;
+        });
       }
       return;
     }
@@ -6227,28 +6280,65 @@ class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
     );
     if (!mounted) return;
     setState(() => _snapshot = snapshot);
+    _analyzeFilament(snapshot.neighbours);
+  }
+
+  void _analyzeFilament(List<_LensNeighbor> neighbours) async {
+    final gen = ++_filamentGen;
+    final repoPath = _repoState?.activePath;
+    if (repoPath == null || neighbours.isEmpty) {
+      if (_filamentSnap.ready) {
+        setState(() => _filamentSnap = _FilamentSnapshot.empty);
+      }
+      return;
+    }
+    final top = [...neighbours]..sort((a, b) => b.phi.compareTo(a.phi));
+    final paths =
+        top.take(5).map((n) => p.join(repoPath, n.path)).toList();
+    var worstGap = 0.0;
+    var critCount = 0, warnCount = 0, infoCount = 0;
+    for (final absPath in paths) {
+      if (_filamentGen != gen || !mounted) return;
+      try {
+        final result = await analyzeFlowCached(absPath);
+        if (result == null) continue;
+        if (result.spectralGap > worstGap) worstGap = result.spectralGap;
+        for (final f in result.findings) {
+          if (f.certainty < 0.1) {
+            critCount++;
+          } else if (f.certainty < 0.3) {
+            warnCount++;
+          } else {
+            infoCount++;
+          }
+        }
+      } catch (_) {}
+    }
+    if (_filamentGen != gen || !mounted) return;
+    setState(() => _filamentSnap = _FilamentSnapshot(
+          fragility: filamentSat(worstGap),
+          spectralGap: worstGap,
+          criticalCount: critCount,
+          warnCount: warnCount,
+          infoCount: infoCount,
+          filesAnalyzed: paths.length,
+          ready: true,
+        ));
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (ctx, c) {
-      // Pad uses the remaining width; grip stays fixed at 128px.
       const gripW = 128.0;
+      const filamentW = 128.0;
+      const airGap = 14.0;
+      const readoutW = gripW + airGap + filamentW;
       const gap = 12.0;
-      final totalW = c.maxWidth.clamp(420.0, 720.0).toDouble();
-      final padW = (totalW - gripW - gap).clamp(280.0, 600.0).toDouble();
+      final totalW = c.maxWidth.clamp(540.0, 860.0).toDouble();
+      final padW = (totalW - readoutW - gap).clamp(200.0, 560.0).toDouble();
       final padH = (padW / 1.7).clamp(220.0, 360.0).toDouble();
-      // Motion-aware resize easing. When the window is live-resized,
-      // the LayoutBuilder rebuilds per frame with a slightly new
-      // maxWidth — snapping the stage dimensions each rebuild felt
-      // jittery. AnimatedContainer smooths the transition so the
-      // stage reads as a single object settling into its new size
-      // rather than redrawing itself per frame. Duration routed
-      // through `context.motion` so reduce-motion users get Duration
-      // .zero and the old snap behavior.
       final resizeDur = ctx.motion(const Duration(milliseconds: 320));
       const resizeCurve = Curves.easeOutCubic;
-      // Use IntrinsicHeight so whichever child is taller sets the row height.
       return AnimatedContainer(
         duration: resizeDur,
         curve: resizeCurve,
@@ -6273,6 +6363,15 @@ class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
               SizedBox(
                 width: gripW,
                 child: _LogosLensReadout(snapshot: _snapshot),
+              ),
+              const SizedBox(width: airGap),
+              SizedBox(
+                width: filamentW,
+                child: _FilamentReadout(
+                  snapshot: _filamentSnap,
+                  engineReady: _snapshot.ready,
+                  onTap: widget.onOpenFilamentFindings,
+                ),
               ),
             ],
           ),
@@ -7072,7 +7171,7 @@ class _LogosLensReadout extends StatelessWidget {
           Text(
             'reads how files move together '
             'across structure, history, and '
-            'rhythm, so reviews see what '
+            'rhythm, so Manifold knows what '
             'matters, not just what changed.',
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.6),
@@ -7264,6 +7363,295 @@ class _GripStat extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FilamentReadout extends StatelessWidget {
+  final _FilamentSnapshot snapshot;
+  final bool engineReady;
+  final VoidCallback? onTap;
+  const _FilamentReadout({
+    required this.snapshot,
+    required this.engineReady,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    Widget body = Container(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.pillRadius),
+        border: Border.all(
+          color: t.chromeBorder.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FilamentShaderTitle(t: t),
+          const SizedBox(height: 2),
+          Text(
+            'execution-flow',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.7),
+              fontSize: 9,
+              letterSpacing: 1.6,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'runs oscillators through code '
+            'structure, tracking certainty '
+            'and phase to find fragile '
+            'execution paths before '
+            'they surface as bugs.',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.6),
+              fontSize: 10,
+              letterSpacing: 0.15,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _GripDivider(t: t),
+          const SizedBox(height: 12),
+          if (!engineReady) ...[
+            Text(
+              'idle',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 8.5,
+                letterSpacing: 1.4,
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'open a repo to\nsee flow analysis',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 9.5,
+                letterSpacing: 0.3,
+                height: 1.55,
+              ),
+            ),
+          ] else if (!snapshot.ready) ...[
+            Text(
+              'scanning',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 8.5,
+                letterSpacing: 1.4,
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'analysing files\nin the lens…',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 9.5,
+                letterSpacing: 0.3,
+                height: 1.55,
+              ),
+            ),
+          ] else ...[
+            _GripStat(
+              label: 'fragility',
+              value: snapshot.fragility.toStringAsFixed(2),
+              t: t,
+              mono: true,
+            ),
+            _GripStat(
+              label: 'findings',
+              value: '${snapshot.totalFindings}',
+              t: t,
+              mono: true,
+            ),
+            _GripStat(
+              label: 'gap',
+              value: snapshot.spectralGap.toStringAsFixed(2),
+              t: t,
+              mono: true,
+            ),
+            const SizedBox(height: 10),
+            _GripDivider(t: t),
+            const SizedBox(height: 10),
+            if (snapshot.totalFindings == 0)
+              Text(
+                'clean',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.55),
+                  fontSize: 8.5,
+                  letterSpacing: 1.4,
+                  height: 1.0,
+                ),
+              )
+            else ...[
+              Text(
+                'severity',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.55),
+                  fontSize: 8.5,
+                  letterSpacing: 1.4,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(height: 6),
+              if (snapshot.criticalCount > 0) ...[
+                _SeverityRow(
+                    label: 'critical', count: snapshot.criticalCount, t: t),
+                const SizedBox(height: 4),
+              ],
+              if (snapshot.warnCount > 0) ...[
+                _SeverityRow(
+                    label: 'warn', count: snapshot.warnCount, t: t),
+                const SizedBox(height: 4),
+              ],
+              if (snapshot.infoCount > 0) ...[
+                _SeverityRow(
+                    label: 'info', count: snapshot.infoCount, t: t),
+                const SizedBox(height: 4),
+              ],
+            ],
+          ],
+        ],
+      ),
+    );
+    if (onTap != null) {
+      body = MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(onTap: onTap, child: body),
+      );
+    }
+    return body;
+  }
+}
+
+class _SeverityRow extends StatelessWidget {
+  final String label;
+  final int count;
+  final AppTokens t;
+  const _SeverityRow({
+    required this.label,
+    required this.count,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textNormal,
+              fontSize: 10,
+              letterSpacing: 0.1,
+              height: 1.2,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '$count',
+          style: TextStyle(
+            color: t.accentBright.withValues(alpha: 0.85),
+            fontSize: 9.5,
+            fontFamily: 'monospace',
+            letterSpacing: 0.2,
+            height: 1.2,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilamentShaderTitle extends StatefulWidget {
+  final AppTokens t;
+  const _FilamentShaderTitle({required this.t});
+
+  @override
+  State<_FilamentShaderTitle> createState() => _FilamentShaderTitleState();
+}
+
+class _FilamentShaderTitleState extends State<_FilamentShaderTitle>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final dur = context.motion(const Duration(seconds: 1));
+    if (dur == Duration.zero) {
+      return Text(
+        'FILAMENT',
+        style: TextStyle(
+          color: t.textStrong,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 4.0,
+          height: 1,
+        ),
+      );
+    }
+    final warm = Color.lerp(t.textStrong, t.accentBright, 0.5)!;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) {
+        final phase = _ctrl.value;
+        return ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) {
+            final w = bounds.width;
+            final cx = -w * 0.3 + phase * w * 1.6;
+            final spread = w * 0.22;
+            return ui.Gradient.linear(
+              Offset(cx - spread, 0),
+              Offset(cx + spread, 0),
+              [t.textStrong, warm, t.textStrong],
+              [0.0, 0.5, 1.0],
+              TileMode.clamp,
+            );
+          },
+          child: child!,
+        );
+      },
+      child: const Text(
+        'FILAMENT',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 4.0,
+          height: 1,
+        ),
       ),
     );
   }
