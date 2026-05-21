@@ -1005,19 +1005,14 @@ class AiModelOptionListData {
       );
 }
 
-/// One brainstorm idea from the muse's phase-1 spew. `kept` indicates
-/// the idea found grounding in the diffused logos context and was woven
-/// into a phase-3 move. UI surfaces all ideas; the kept ones are
-/// highlighted and tappable.
+/// One brainstorm idea from the muse's phase-1 spew.
 class AiMuseIdea {
   final int index;
   final String text;
-  final bool kept;
 
   const AiMuseIdea({
     required this.index,
     required this.text,
-    required this.kept,
   });
 }
 
@@ -1156,7 +1151,6 @@ class AiMuseData {
   int get totalInputTokens => brainstormInputTokens + synthesisInputTokens;
   int get totalOutputTokens => brainstormOutputTokens + synthesisOutputTokens;
 
-  int get keptIdeaCount => brainstormIdeas.where((idea) => idea.kept).length;
   int get totalIdeaCount => brainstormIdeas.length;
 
   /// Proposals filtered to a single tier, preserving emission order.

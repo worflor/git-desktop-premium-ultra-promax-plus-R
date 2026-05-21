@@ -9,6 +9,7 @@
 
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -120,6 +121,10 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   Map<String, double> _flowGaps = const {};
   double _flowMeanFragility = 0.0;
 
+  List<({String from, String to, double strength})> _transportArcs = const [];
+  Map<String, double> _transportPull = const {};
+  Map<String, ({double x, double y})> _hyperbolicCoords = const {};
+
   @override
   void initState() {
     super.initState();
@@ -213,6 +218,9 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _recurrentNoveltyBaseline = 0.0;
       _flowGaps = const {};
       _flowMeanFragility = 0.0;
+      _transportArcs = const [];
+      _transportPull = const {};
+      _hyperbolicCoords = const {};
       // Starfield keeps its existing birth — no reason to re-fade it.
       for (final e in _Element.values) {
         if (e != _Element.starfield) _birth[e] = -1.0;
@@ -298,6 +306,14 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
         _flowMeanFragility = 0.0;
       }
       _birth[_Element.flowAnalysis] = now;
+      wantSetState = true;
+    } else if (event is LogosVisTransportField) {
+      _transportArcs = event.arcs;
+      _transportPull = event.pullByPath;
+      _birth[_Element.transportDrift] = now;
+      wantSetState = true;
+    } else if (event is LogosVisHyperbolicLayout) {
+      _hyperbolicCoords = event.coordinates;
       wantSetState = true;
     } else if (event is LogosVisTransmit) {
       _birth[_Element.transmitBeam] = now;
@@ -638,6 +654,19 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   /// same cache.
   double _unitHashLocal(String s) => _unitHashShared(s);
 
+  double _angleForPathLocal(String path) {
+    final hyp = _hyperbolicCoords[path];
+    if (hyp != null && (hyp.x != 0 || hyp.y != 0)) {
+      final hypAngle = math.atan2(hyp.y, hyp.x);
+      final hashAngle = _unitHashLocal(path) * 2 * math.pi;
+      var diff = hypAngle - hashAngle;
+      while (diff > math.pi) diff -= 2 * math.pi;
+      while (diff < -math.pi) diff += 2 * math.pi;
+      return hashAngle + diff * 0.7;
+    }
+    return _unitHashLocal(path) * 2 * math.pi;
+  }
+
   /// Compute the rest-position tip of a source spoke for [path].
   /// Mirrors the painter's math exactly so hit-testing lines up with
   /// what's drawn. Returns null when we don't have a canvas size yet
@@ -667,7 +696,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     final len = spokeInner + (spokeMax - spokeInner) * (0.35 + 0.65 * norm);
     final theta = _sourceWeights.length == 1
         ? -math.pi / 2
-        : _unitHashLocal(path) * 2 * math.pi - math.pi / 2;
+        : _angleForPathLocal(path);
     return Offset(cx + len * math.cos(theta), cy + len * math.sin(theta));
   }
 
@@ -782,6 +811,9 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
                   recurrentNoveltyBaseline: _recurrentNoveltyBaseline,
                   flowGaps: _flowGaps,
                   flowMeanFragility: _flowMeanFragility,
+                  transportArcs: _transportArcs,
+                  transportPull: _transportPull,
+                  hyperbolicCoords: _hyperbolicCoords,
                 ),
               ),
                 ),
@@ -890,6 +922,7 @@ enum _Element {
   reseedWavefront,
 
   flowAnalysis,
+  transportDrift,
 }
 
 /// Observatory-chart painter.
@@ -931,6 +964,9 @@ class _LogosDiffusionPainter extends CustomPainter {
   final double recurrentNoveltyBaseline;
   final Map<String, double> flowGaps;
   final double flowMeanFragility;
+  final List<({String from, String to, double strength})> transportArcs;
+  final Map<String, double> transportPull;
+  final Map<String, ({double x, double y})> hyperbolicCoords;
 
   _LogosDiffusionPainter({
     required this.tokens,
@@ -958,6 +994,9 @@ class _LogosDiffusionPainter extends CustomPainter {
     required this.recurrentNoveltyBaseline,
     required this.flowGaps,
     required this.flowMeanFragility,
+    required this.transportArcs,
+    required this.transportPull,
+    required this.hyperbolicCoords,
   });
 
   /// Smoothstep envelope since birth, clamped to [0, 1]. Holds at 1.
@@ -1024,6 +1063,9 @@ class _LogosDiffusionPainter extends CustomPainter {
       recurrentNoveltyBaseline: recurrentNoveltyBaseline,
       flowGaps: flowGaps,
       flowMeanFragility: flowMeanFragility,
+      transportArcs: transportArcs,
+      transportPull: transportPull,
+      hyperbolicCoords: hyperbolicCoords,
     );
     p.paint();
   }
@@ -1054,7 +1096,10 @@ class _LogosDiffusionPainter extends CustomPainter {
         !identical(old.wellByPath, wellByPath) ||
         !identical(old.hunkRankings, hunkRankings) ||
         old.budgetFraction != budgetFraction ||
-        !identical(old.flowGaps, flowGaps);
+        !identical(old.flowGaps, flowGaps) ||
+        !identical(old.transportArcs, transportArcs) ||
+        !identical(old.transportPull, transportPull) ||
+        !identical(old.hyperbolicCoords, hyperbolicCoords);
   }
 }
 
@@ -1097,6 +1142,9 @@ class _TopoPainter {
   final double recurrentNoveltyBaseline;
   final Map<String, double> flowGaps;
   final double flowMeanFragility;
+  final List<({String from, String to, double strength})> transportArcs;
+  final Map<String, double> transportPull;
+  final Map<String, ({double x, double y})> hyperbolicCoords;
 
   _TopoPainter({
     required this.canvas,
@@ -1125,6 +1173,9 @@ class _TopoPainter {
     required this.recurrentNoveltyBaseline,
     required this.flowGaps,
     required this.flowMeanFragility,
+    required this.transportArcs,
+    required this.transportPull,
+    required this.hyperbolicCoords,
   });
 
   late double _flowEnv;
@@ -1137,6 +1188,7 @@ class _TopoPainter {
     _paintStarfield();
     _paintDreamingPulse();
     _paintWellSectors();
+    _paintTransportDrift();
     _paintAttentionArcs();
     _paintNeighbourNodes();
     _paintHeatRings();
@@ -1189,7 +1241,7 @@ class _TopoPainter {
       final phiNorm = (e.value / maxPhi).clamp(0.0, 1.0);
       if (phiNorm < 0.05) continue;
 
-      final rankT = ((env - (i / k) * 0.5) / 0.5).clamp(0.0, 1.0);
+      final rankT = ((env - (i / k) * 0.7) / 0.3).clamp(0.0, 1.0);
       if (rankT <= 0) continue;
 
       final settleR = maxRadius * (0.34 + (1.0 - phiNorm) * 0.55);
@@ -1591,7 +1643,7 @@ class _TopoPainter {
       final e = entries[i];
       final theta = entries.length == 1
           ? -math.pi / 2
-          : _unitHash(e.key) * 2 * math.pi - math.pi / 2;
+          : _angleForPath(e.key);
       final norm = (e.value / maxWeight).clamp(0.0, 1.0);
       final len = spokeInner + (spokeMax - spokeInner) * (0.35 + 0.65 * norm);
       final sx = center.dx + spokeInner * math.cos(theta);
@@ -1697,7 +1749,151 @@ class _TopoPainter {
   }
 
   double _angleForPath(String path) {
+    final hyp = hyperbolicCoords[path];
+    if (hyp != null && (hyp.x != 0 || hyp.y != 0)) {
+      final hypAngle = math.atan2(hyp.y, hyp.x);
+      final hashAngle = _unitHash(path) * 2 * math.pi;
+      return _lerpAngle(hashAngle, hypAngle, 0.7);
+    }
     return _unitHash(path) * 2 * math.pi;
+  }
+
+  static double _lerpAngle(double a, double b, double t) {
+    var diff = b - a;
+    while (diff > math.pi) diff -= 2 * math.pi;
+    while (diff < -math.pi) diff += 2 * math.pi;
+    return a + diff * t;
+  }
+
+  void _paintTransportDrift() {
+    final env = envFor(_Element.transportDrift, fadeMs: 1400);
+    if (env <= 0 || transportArcs.isEmpty) return;
+
+    final maxStr = transportArcs.first.strength;
+    if (maxStr <= 0) return;
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final tipPaint = Paint();
+
+    for (var i = 0; i < transportArcs.length; i++) {
+      final arc = transportArcs[i];
+      final norm = (arc.strength / maxStr).clamp(0.0, 1.0);
+      if (norm < 0.05) continue;
+
+      final cascade = ((env - (i / transportArcs.length) * 0.4) / 0.6)
+          .clamp(0.0, 1.0);
+      if (cascade <= 0) continue;
+
+      final fromPhi = phi[arc.from] ?? 0.0;
+      final toPhi = phi[arc.to] ?? 0.0;
+      final maxPhi = phiSortedDesc.isNotEmpty ? phiSortedDesc.first.value : 1.0;
+      final fromNorm = maxPhi > 0 ? (fromPhi / maxPhi).clamp(0.0, 1.0) : 0.5;
+      final toNorm = maxPhi > 0 ? (toPhi / maxPhi).clamp(0.0, 1.0) : 0.5;
+
+      final fromWell = wellByPath[arc.from];
+      final fromSector = fromWell != null ? wellLayout[fromWell] : null;
+      final double fromTheta;
+      if (fromSector != null) {
+        fromTheta = fromSector.start + fromSector.span * (0.08 + 0.84 * _unitHash(arc.from));
+      } else {
+        fromTheta = _angleForPath(arc.from);
+      }
+      final toWell = wellByPath[arc.to];
+      final toSector = toWell != null ? wellLayout[toWell] : null;
+      final double toTheta;
+      if (toSector != null) {
+        toTheta = toSector.start + toSector.span * (0.08 + 0.84 * _unitHash(arc.to));
+      } else {
+        toTheta = _angleForPath(arc.to);
+      }
+
+      final fromR = maxRadius * (0.34 + (1.0 - fromNorm) * 0.55);
+      final toR = maxRadius * (0.34 + (1.0 - toNorm) * 0.55);
+
+      final sx = center.dx + fromR * math.cos(fromTheta);
+      final sy = center.dy + fromR * math.sin(fromTheta);
+      final tx = center.dx + toR * math.cos(toTheta);
+      final ty = center.dy + toR * math.sin(toTheta);
+
+      final midAngle = _lerpAngle(fromTheta, toTheta, 0.5);
+      final dist = math.sqrt((tx - sx) * (tx - sx) + (ty - sy) * (ty - sy));
+      final bulge = dist * 0.25;
+      final cx1 = (sx + tx) / 2 + bulge * math.cos(midAngle + math.pi / 2);
+      final cy1 = (sy + ty) / 2 + bulge * math.sin(midAngle + math.pi / 2);
+
+      final alpha = (0.08 + 0.22 * norm) * _smoothstep(cascade);
+      final baseColor = Color.lerp(
+        tokens.hyperChromatic1,
+        tokens.hyperChromatic2,
+        norm,
+      )!;
+      paint.color = baseColor.withValues(alpha: alpha);
+      paint.strokeWidth = 0.6 + 1.0 * norm;
+      paint.maskFilter = MaskFilter.blur(BlurStyle.normal, 1.5 + 1.5 * norm);
+
+      final speed = 0.0008 + 0.0004 * norm;
+      final dashFrac = (6.0 + 8.0 * norm);
+      final gapFrac = (10.0 + 6.0 * (1.0 - norm));
+      final cycleLen = dashFrac + gapFrac;
+      final phaseOff = (nowMs * speed) % 1.0;
+
+      const steps = 48;
+      final pts = List<Offset>.generate(steps + 1, (s) {
+        final t = s / steps;
+        final u = 1.0 - t;
+        return Offset(
+          u * u * sx + 2 * u * t * cx1 + t * t * tx,
+          u * u * sy + 2 * u * t * cy1 + t * t * ty,
+        );
+      });
+
+      final cumLen = Float64List(steps + 1);
+      for (var s = 1; s <= steps; s++) {
+        cumLen[s] = cumLen[s - 1] + (pts[s] - pts[s - 1]).distance;
+      }
+      final arcLen = cumLen[steps];
+      if (arcLen < 1) continue;
+
+      Offset atLen(double d) {
+        final clamped = d.clamp(0.0, arcLen);
+        for (var s = 0; s < steps; s++) {
+          if (cumLen[s + 1] >= clamped) {
+            final seg = cumLen[s + 1] - cumLen[s];
+            final f = seg > 0 ? (clamped - cumLen[s]) / seg : 0.0;
+            return Offset.lerp(pts[s], pts[s + 1], f)!;
+          }
+        }
+        return pts[steps];
+      }
+
+      final dPath = Path();
+      var cursor = -phaseOff * cycleLen;
+      while (cursor < arcLen) {
+        final dStart = cursor.clamp(0.0, arcLen);
+        final dEnd = (cursor + dashFrac).clamp(0.0, arcLen);
+        cursor += cycleLen;
+        if (dEnd - dStart < 0.5) continue;
+        dPath.moveTo(atLen(dStart).dx, atLen(dStart).dy);
+        final segCount = ((dEnd - dStart) / 3.0).ceil().clamp(1, 12);
+        for (var k = 1; k <= segCount; k++) {
+          final p = atLen(dStart + (dEnd - dStart) * k / segCount);
+          dPath.lineTo(p.dx, p.dy);
+        }
+      }
+      canvas.drawPath(dPath, paint);
+
+      final tipT = 0.97;
+      final u2 = 1.0 - tipT;
+      final tipX = u2 * u2 * sx + 2 * u2 * tipT * cx1 + tipT * tipT * tx;
+      final tipY = u2 * u2 * sy + 2 * u2 * tipT * cy1 + tipT * tipT * ty;
+      final tipAlpha = alpha * 1.4;
+      tipPaint
+        ..color = baseColor.withValues(alpha: tipAlpha.clamp(0.0, 1.0))
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 2.0 + 1.5 * norm);
+      canvas.drawCircle(Offset(tipX, tipY), 1.5 + 1.0 * norm, tipPaint);
+    }
   }
 
   /// FNV-1a of [s] mapped to [0, 1). Same path → same value run to
@@ -1835,7 +2031,7 @@ class _FooterPainter {
           meterH,
         );
         final fillPaint = Paint()
-          ..color = tokens.accentBright.withValues(alpha: 0.85);
+          ..color = tokens.accentBright.withValues(alpha: 0.85 * meterEnv);
         canvas.drawRRect(
           RRect.fromRectAndRadius(fill, Radius.circular(meterH / 2)),
           fillPaint,

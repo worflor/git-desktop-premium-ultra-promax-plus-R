@@ -1236,7 +1236,6 @@ Future<Map<String, dynamic>> _muse(
           {
             'index': idea.index,
             'text': idea.text,
-            'kept': idea.kept,
           },
       ],
     if (d.parseWarnings.isNotEmpty)

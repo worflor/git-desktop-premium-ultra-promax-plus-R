@@ -335,7 +335,7 @@ List<DiffHunkHeader> extractDiffHunks(List<ParsedLine> lines) {
         lineIndex: start,
         filePath: filePath,
         fileHunkIndex: fileHunkIndex,
-        label: label.length > 60 ? '${label.substring(0, 57)}...' : label,
+        label: label,
         additions: additions,
         deletions: deletions,
         scope: scope,

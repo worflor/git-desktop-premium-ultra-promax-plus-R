@@ -3965,7 +3965,7 @@ class _DiffLineState extends State<DiffLineView> {
         final semanticMix =
             math.max(importance, 0.35 * semanticSignal).clamp(0.0, 1.0);
         lineBg = Color.lerp(
-          t.chromeAccent.withValues(alpha: 0.02),
+          t.chromeAccent.withValues(alpha: 0.06),
           semanticColor.withValues(alpha: 0.04 + 0.04 * semanticSignal),
           semanticMix,
         );
@@ -6108,9 +6108,11 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(
-                    width: dense ? 74 : 80,
+                    width: dense ? 90 : 100,
                     child: Text(
                       s.$1.toUpperCase(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: accent.withValues(alpha: 0.7),
                         fontSize: 8.5,
@@ -7234,11 +7236,12 @@ class _HunkInlineHint extends StatelessWidget {
     // Base state: faint muted text at the row's right edge. On
     // approach, the text colour shifts toward accentBright and the
     // weight increases; the "landing here" marker appears.
-    final baseAlpha = approaching ? 0.65 + 0.3 * strength : 0.42;
+    final baseAlpha = approaching ? 0.65 + 0.3 * strength : 0.52;
     final baseColor = approaching
         ? Color.lerp(t.textFaint, t.accentBright, 0.4 + 0.4 * strength)!
             .withValues(alpha: baseAlpha)
-        : t.textFaint.withValues(alpha: baseAlpha);
+        : Color.lerp(t.textFaint, t.textMuted, 0.2)!
+            .withValues(alpha: baseAlpha);
     // Lerp toward the active theme's add/delete state colors instead of
     // the stock Material Colors.greenAccent/redAccent so the highlight
     // belongs to the theme. Petrichor/blackboard get muted hues that
@@ -7369,11 +7372,13 @@ class _StickyHunkHeader extends StatelessWidget {
     // label-bearing right region actually varies with scroll position;
     // the decoration tokens, text style, and left sigil strip do not.
     const double sigilReserveWidth = _kLeftReserveWidth;
+    final shader = context.surfaceShader;
+    final runtime = MaterialRuntimeCache.of(tokens, shader);
     final bg = BoxDecoration(
-      color: tokens.chromeAccent.withValues(alpha: 0.14),
+      color: tokens.surface2,
       border: Border(
         bottom: BorderSide(
-          color: tokens.chromeBorder.withValues(alpha: 0.25),
+          color: tokens.chromeBorderSubtle,
         ),
       ),
     );
@@ -7441,46 +7446,43 @@ class _StickyHunkHeader extends StatelessWidget {
         }
 
         final label = hunks[activeHunk].label;
-        return Opacity(
-          opacity: opacity,
-          child: SizedBox(
-            height: lineExtent,
-            child: Row(
-              children: [
-                // Left strip (hoisted via AnimatedBuilder child:). Pointer
-                // pass-through so paint-drag + sigil taps reach the row
-                // beneath the sticky overlay. Reserved width tracks
-                // [_kLeftReserveWidth] through the hoisted widget.
-                leftChild!,
-                // Right region: click to jump. IgnorePointer during the
-                // 1-line handoff fade so the sticky doesn't eat a tap that
-                // belongs to the next hunk's natural header.
-                Expanded(
-                  child: IgnorePointer(
-                    ignoring: opacity < 0.5,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: () => onJump(activeHunk),
-                        child: Container(
-                          height: lineExtent,
-                          decoration: bg,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: labelStyle,
-                          ),
+        final body = SizedBox(
+          height: lineExtent,
+          child: Row(
+            children: [
+              leftChild!,
+              Expanded(
+                child: IgnorePointer(
+                  ignoring: opacity < 0.5,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => onJump(activeHunk),
+                      child: Container(
+                        height: lineExtent,
+                        decoration: bg,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: labelStyle,
                         ),
                       ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+        );
+        return Opacity(
+          opacity: opacity,
+          child: runtime.filter != null
+              ? ClipRect(
+                  child: BackdropFilter(filter: runtime.filter!, child: body))
+              : body,
         );
       },
     );

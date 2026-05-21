@@ -1823,6 +1823,33 @@ class _ChangesPageState extends State<ChangesPage> {
     } catch (_) {}
   }
 
+  String _resolveGitDirSync(String repoPath) {
+    final cached = _gitDirCache[repoPath];
+    if (cached != null) return cached;
+    final dotGit = p.join(repoPath, '.git');
+    final entity = File(dotGit);
+    if (entity.existsSync()) {
+      final content = entity.readAsStringSync().trim();
+      if (content.startsWith('gitdir:')) {
+        final target = content.substring(7).trim();
+        return p.isAbsolute(target) ? target : p.join(repoPath, target);
+      }
+    }
+    return dotGit;
+  }
+
+  void _flushDraftSync(String repoPath, String? branch, String value) {
+    try {
+      final gitDir = _resolveGitDirSync(repoPath);
+      final file = _draftFile(gitDir, branch);
+      if (!_lastRememberWip || value.trim().isEmpty) {
+        if (file.existsSync()) file.deleteSync();
+      } else {
+        file.writeAsStringSync(value);
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _commitDraftSaveDebounce?.cancel();
@@ -1841,7 +1868,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final branch = _lastDraftBranch;
     final text = _commitMsgCtrl.text;
     if (repo != null && text.trim().isNotEmpty) {
-      _flushDraft(repo, branch, text);
+      _flushDraftSync(repo, branch, text);
     }
     _commitMsgCtrl.removeListener(_onComposerChangedForDream);
     _commitDream.removeListener(_onCommitDreamChanged);
@@ -2124,6 +2151,14 @@ class _ChangesPageState extends State<ChangesPage> {
     if (_openDrawer == AiActivityKind.review) {
       setState(() => _openDrawer = null);
     }
+  }
+
+  void _cancelMuseRequest() {
+    final site = _activitySite();
+    if (site != null) {
+      site.state.clear(repoPath: site.repoPath, kind: AiActivityKind.muse);
+    }
+    _closeDrawer();
   }
 
   /// User-driven cancel of the active review run on this repo. Drops
@@ -5834,8 +5869,6 @@ class _ChangesPageState extends State<ChangesPage> {
                       // hovering a chip there previews the desk's
                       // diverged commits in-place. One canonical home for
                       // the affordance instead of two parallel strips.)
-                      if (repoPath != null)
-                        _RegimeTimelineStrip(repoPath: repoPath),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
                         child: Row(
@@ -6709,6 +6742,7 @@ class _ChangesPageState extends State<ChangesPage> {
                             guardrailLabel: _guardrailLabelForStage(
                                 _snapshotMuseGuardrailStage[repoPath] ??
                                     preferences.guardrailStage),
+                            onCancel: _cancelMuseRequest,
                             onBack: _closeDrawer,
                             onRerun: () {
                               // Drop the existing record so _runMuse
@@ -7433,6 +7467,7 @@ class _MusePane extends StatefulWidget {
   final String guardrailLabel;
   final String? reasoningEffort;
   final bool fastMode;
+  final VoidCallback onCancel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
 
@@ -7448,6 +7483,7 @@ class _MusePane extends StatefulWidget {
     required this.guardrailLabel,
     this.reasoningEffort,
     this.fastMode = false,
+    required this.onCancel,
     required this.onBack,
     required this.onRerun,
     this.staleScope = false,
@@ -7523,7 +7559,7 @@ class _MusePaneState extends State<_MusePane> {
   Widget _museHeader(AppTokens t) {
     final result = widget.result;
     final keptLine = result != null && result.totalIdeaCount > 0
-        ? 'considered ${result.totalIdeaCount}, kept ${result.keptIdeaCount} with grounding'
+        ? '${result.totalIdeaCount} brainstorm seeds'
         : '';
     return Container(
       width: double.infinity,
@@ -7670,7 +7706,10 @@ class _MusePaneState extends State<_MusePane> {
           // changed.
           Expanded(
             child: RepaintBoundary(
-              child: LogosDiffusionCanvas(tokens: t),
+              child: LogosDiffusionCanvas(
+                tokens: t,
+                onCancel: widget.onCancel,
+              ),
             ),
           ),
         ],
@@ -8075,11 +8114,9 @@ class _MusePaneState extends State<_MusePane> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '${idea.kept ? '◉' : '·'} ${idea.text}',
+                  '· ${idea.text}',
                   style: TextStyle(
-                    color: idea.kept
-                        ? t.textStrong
-                        : t.textFaint.withValues(alpha: 0.6),
+                    color: t.textMuted,
                     fontSize: 11.5,
                     height: 1.45,
                     fontWeight: idea.index == _highlightedIdeaIndex
@@ -9516,12 +9553,7 @@ class _ReviewDisclosureCard extends StatelessWidget {
   }
 
   String _oneLinePreview(String value) {
-    final normalized =
-        value.replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.length <= 120) {
-      return normalized;
-    }
-    return '${normalized.substring(0, 117)}...';
+    return value.replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 }
 
@@ -14642,133 +14674,3 @@ class _RhythmSparkPainter extends CustomPainter {
       old.faint != faint;
 }
 
-class _RegimeTimelineStrip extends StatefulWidget {
-  final String repoPath;
-  const _RegimeTimelineStrip({required this.repoPath});
-
-  static Color _regimeColor(LogosRegime r) => switch (r) {
-        LogosRegime.focused => AppSeverityPalette.safe,
-        LogosRegime.scoped => AppSeverityPalette.info,
-        LogosRegime.sweep => AppSeverityPalette.caution,
-        LogosRegime.uncategorised => AppSeverityPalette.neutral,
-      };
-
-  @override
-  State<_RegimeTimelineStrip> createState() => _RegimeTimelineStripState();
-}
-
-class _RegimeTimelineStripState extends State<_RegimeTimelineStrip> {
-  late Future<(List<(int, LogosRegime, double)>, double)> _future;
-  StreamSubscription<String>? _sub;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-    _subscribe();
-  }
-
-  @override
-  void didUpdateWidget(_RegimeTimelineStrip old) {
-    super.didUpdateWidget(old);
-    if (old.repoPath != widget.repoPath) {
-      _future = _load();
-      _sub?.cancel();
-      _subscribe();
-    }
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
-  }
-
-  void _subscribe() {
-    final key = LogosSseStore.lockKeyFor(widget.repoPath);
-    _sub = LogosSseStore.regimeChanges
-        .where((k) => k == key)
-        .listen((_) {
-      if (mounted) setState(() => _future = _load());
-    });
-  }
-
-  Future<(List<(int, LogosRegime, double)>, double)> _load() async {
-    final store = LogosSseStore(widget.repoPath);
-    final history = await store.loadRegimeHistory();
-    final score = await store.loadPhaseTransitionScore();
-    return (history, score);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return FutureBuilder<(List<(int, LogosRegime, double)>, double)>(
-      future: _future,
-      builder: (context, snap) {
-        final data = snap.data;
-        if (data == null || data.$1.isEmpty) return const SizedBox.shrink();
-        final history = data.$1;
-        final score = data.$2;
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-          child: Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 3,
-                  child: CustomPaint(
-                    painter: _RegimeStripPainter(
-                      entries: history,
-                      muted: t.textMuted,
-                    ),
-                  ),
-                ),
-              ),
-              if (score > 0.05)
-                Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: Text(
-                    score.toStringAsFixed(2),
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: t.textMuted.withValues(alpha: 0.6),
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RegimeStripPainter extends CustomPainter {
-  final List<(int timestampMs, LogosRegime regime, double focusScore)> entries;
-  final Color muted;
-
-  _RegimeStripPainter({required this.entries, required this.muted});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (entries.isEmpty) return;
-    final n = entries.length;
-    final cellW = size.width / n;
-    final paint = Paint();
-    for (var i = 0; i < n; i++) {
-      final (_, regime, focus) = entries[i];
-      final base = _RegimeTimelineStrip._regimeColor(regime);
-      paint.color = base.withValues(alpha: 0.3 + 0.7 * focus);
-      canvas.drawRect(
-        Rect.fromLTWH(i * cellW, 0, cellW + 0.5, size.height),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RegimeStripPainter old) =>
-      !identical(old.entries, entries);
-}

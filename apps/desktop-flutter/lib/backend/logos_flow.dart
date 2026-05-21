@@ -482,7 +482,7 @@ int anchorFingerprint(List<int> fingerprints) {
   return anchor;
 }
 
-/// DFS with AR(2) oscillator + Born mixing at resource nodes.
+/// YAA* (double-helix attention search) with AR(2) oscillator + Born mixing.
 /// [logosCoupling] adds a structural arrival from the Logos graph.
 /// [sseLattice] accumulates certainty observations for self-calibration.
 List<FlowFinding> simulateFlow(
@@ -506,10 +506,7 @@ List<FlowFinding> simulateFlow(
   for (final start in entryNodes) {
     if (!graph.nodes.containsKey(start)) continue;
     if (stepBudget[0] <= 0) break;
-    final visited = {start};
-    _dfsPropagate(
-        graph, start, FlowOscillator(), 0, maxDepth, visited, arrivals,
-        stepBudget);
+    _yaaStarPropagate(graph, start, maxDepth, arrivals, stepBudget, sseLattice);
   }
 
   // Born-mix at each resource node.
@@ -549,79 +546,333 @@ List<FlowFinding> simulateFlow(
 
 const int _kMaxArrivalsPerNode = 8;
 
-void _dfsPropagate(
+class _PathChain {
+  final String node;
+  final _PathChain? parent;
+  const _PathChain(this.node, this.parent);
+
+  bool contains(String id) {
+    _PathChain? c = this;
+    while (c != null) {
+      if (c.node == id) return true;
+      c = c.parent;
+    }
+    return false;
+  }
+}
+
+void _yaaStarPropagate(
   FlowGraph graph,
-  String nid,
-  FlowOscillator osc,
-  int depth,
+  String startId,
   int maxDepth,
-  Set<String> visited,
   Map<String, List<(double, double)>> arrivals,
   List<int> stepBudget,
+  FlowSseLattice? externalLattice,
 ) {
-  if (depth > maxDepth || stepBudget[0] <= 0) return;
-  stepBudget[0]--;
+  if (maxDepth <= 0) return;
 
-  final node = graph.nodes[nid];
-  if (node == null) return;
+  final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, bool)>(
+      (a, b) => b.$3.compareTo(a.$3));
 
-  if (node.hasAxis(kFlowRestabilizes)) {
-    var downstreamAddr = kFlowResource | kFlowLifecycle | kFlowMutates;
-    for (final e in graph.adj[nid] ?? <FlowEdge>[]) {
-      final dn = graph.nodes[e.target];
-      if (dn != null && dn.hasAxis(kFlowResource)) {
-        downstreamAddr = dn.address;
-        break;
-      }
-    }
-    osc.restabilize(flowCoverage(node.address, downstreamAddr));
-  }
+  final bestAlpha = <String, double>{};
+  final bestBeta = <String, double>{};
+  final localLattice = FlowSseLattice();
 
-  if (node.hasAxis(kFlowResource)) {
-    final list = arrivals.putIfAbsent(nid, () => []);
-    if (list.length >= _kMaxArrivalsPerNode) return;
-    list.add((osc.certainty, osc.phase));
-  }
+  final root = _PathChain(startId, null);
+  heap.push((startId, FlowOscillator(), double.infinity, root, 0, true));
+  heap.push((startId, FlowOscillator(), double.infinity, root, 0, false));
 
-  final edges = graph.adj[nid] ?? <FlowEdge>[];
-  var fanout = 0;
-  for (final e in edges) {
-    if (!visited.contains(e.target) && graph.nodes.containsKey(e.target)) {
-      fanout++;
-    }
-  }
-  final branchGain = flowBranchGain(fanout);
+  while (heap.isNotEmpty && stepBudget[0] > 0) {
+    final (nid, osc, _, path, depth, isAlpha) = heap.pop();
+    stepBudget[0]--;
 
-  for (final edge in edges) {
-    if (visited.contains(edge.target)) continue;
-    final target = graph.nodes[edge.target];
-    if (target == null) continue;
+    final node = graph.nodes[nid];
+    if (node == null) continue;
 
-    var tKr = target.kr, tKi = target.ki, tGr = target.gr;
-    if (target.hasAxis(kFlowRestabilizes)) {
-      for (final e2 in graph.adj[edge.target] ?? <FlowEdge>[]) {
-        final dn = graph.nodes[e2.target];
+    if (node.hasAxis(kFlowRestabilizes)) {
+      var downstreamAddr = kFlowResource | kFlowLifecycle | kFlowMutates;
+      for (final e in graph.adj[nid] ?? <FlowEdge>[]) {
+        final dn = graph.nodes[e.target];
         if (dn != null && dn.hasAxis(kFlowResource)) {
-          final cov = flowCoverage(target.address, dn.address);
-          final (kr, ki, gr) = flowKG(
-              target.address,
-              lyapunov: target.lyapunov,
-              restabCoverage: cov);
-          tKr = kr; tKi = ki; tGr = gr;
+          downstreamAddr = dn.address;
           break;
         }
       }
+      osc.restabilize(flowCoverage(node.address, downstreamAddr));
     }
 
-    final childOsc = osc.clone();
-    if (branchGain > 0) childOsc.restabilize(branchGain);
-    childOsc.step(tKr, tKi, tGr, edge.hamming);
-    visited.add(edge.target);
-    _dfsPropagate(
-        graph, edge.target, childOsc, depth + 1, maxDepth, visited, arrivals,
-        stepBudget);
-    visited.remove(edge.target);
+    // Live observation — the YAA* ratchet. Both strands feed the
+    // local lattice; the other strand's heuristic benefits immediately.
+    localLattice.observe(node.address, osc.certainty);
+
+    if (node.hasAxis(kFlowResource)) {
+      final list = arrivals.putIfAbsent(nid, () => []);
+      if (list.length >= _kMaxArrivalsPerNode) continue;
+      list.add((osc.certainty, osc.phase));
+    }
+
+    if (depth >= maxDepth) continue;
+
+    final edges = graph.adj[nid] ?? <FlowEdge>[];
+    var fanout = 0;
+    for (final e in edges) {
+      if (!path.contains(e.target) && graph.nodes.containsKey(e.target)) {
+        fanout++;
+      }
+    }
+    final branchGain = flowBranchGain(fanout);
+
+    for (final edge in edges) {
+      if (path.contains(edge.target)) continue;
+      final target = graph.nodes[edge.target];
+      if (target == null) continue;
+
+      var tKr = target.kr, tKi = target.ki, tGr = target.gr;
+      if (target.hasAxis(kFlowRestabilizes)) {
+        for (final e2 in graph.adj[edge.target] ?? <FlowEdge>[]) {
+          final dn = graph.nodes[e2.target];
+          if (dn != null && dn.hasAxis(kFlowResource)) {
+            final cov = flowCoverage(target.address, dn.address);
+            final (kr, ki, gr) = flowKG(
+                target.address,
+                lyapunov: target.lyapunov,
+                restabCoverage: cov);
+            tKr = kr; tKi = ki; tGr = gr;
+            break;
+          }
+        }
+      }
+
+      final childOsc = osc.clone();
+      if (branchGain > 0) childOsc.restabilize(branchGain);
+      final parentPhase = childOsc.phase;
+      childOsc.step(tKr, tKi, tGr, edge.hamming);
+
+      final localZ = localLattice.zBelowForAddress(
+          target.address, childOsc.certainty);
+      final externalZ = externalLattice?.zBelowForAddress(
+          target.address, childOsc.certainty) ?? 0.0;
+      final ssePrior = math.max(localZ, externalZ);
+
+      final phaseVelocity = (childOsc.phase - parentPhase).abs();
+      final pri = flowSearchPriority(
+        certainty: childOsc.certainty,
+        phaseVelocity: phaseVelocity,
+        spectralDistance: edge.hamming,
+        fanout: fanout,
+        ssePrior: ssePrior,
+        depth: depth + 1,
+        maxDepth: maxDepth,
+        exploit: isAlpha,
+      );
+
+      final bestMap = isAlpha ? bestAlpha : bestBeta;
+      if (!target.hasAxis(kFlowResource)) {
+        final existing = bestMap[edge.target];
+        if (existing != null && existing >= pri) continue;
+        bestMap[edge.target] = pri;
+      }
+
+      heap.push((
+          edge.target, childOsc, pri, _PathChain(edge.target, path), depth + 1,
+          isAlpha));
+    }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Dream — lattice self-analysis on the Boolean hypercube
+// ═══════════════════════════════════════════════════════════════════
+
+List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
+  final warmSet = <int>{};
+  final dKr = List<double>.filled(256, 0.0);
+  final dKi = List<double>.filled(256, 0.0);
+  final dGr = List<double>.filled(256, 0.0);
+
+  for (var a = 0; a < 256; a++) {
+    if (lattice.cellCount(a) < 8) continue;
+    warmSet.add(a);
+    dKr[a] = lattice.cellMean(a);
+    dKi[a] = lattice.cellStddev(a);
+    var gSum = 0.0, gN = 0;
+    for (var b = 0; b < 8; b++) {
+      final n = a ^ (1 << b);
+      if (lattice.cellCount(n) >= 8) {
+        gSum += (lattice.cellMean(n) - dKr[a]).abs();
+        gN++;
+      }
+    }
+    dGr[a] = gN > 0 ? gSum / gN : 0.0;
+  }
+
+  if (warmSet.length < 2) return const [];
+
+  var alphaStart = warmSet.first, betaStart = warmSet.first;
+  var maxSd = -1.0, minSd = double.infinity;
+  for (final a in warmSet) {
+    final sd = dKi[a];
+    if (sd > maxSd) { maxSd = sd; alphaStart = a; }
+    if (sd < minSd) { minSd = sd; betaStart = a; }
+  }
+
+  final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, bool)>(
+      (a, b) => b.$3.compareTo(a.$3));
+
+  final arrivals = <int, List<(double, double)>>{};
+  heap.push((alphaStart, FlowOscillator(), double.infinity,
+      {alphaStart}, 0, true));
+  heap.push((betaStart, FlowOscillator(), double.infinity,
+      {betaStart}, 0, false));
+
+  var budget = warmSet.length * 8;
+  const maxDepth = 8;
+
+  while (heap.isNotEmpty && budget > 0) {
+    final (addr, osc, _, path, depth, isAlpha) = heap.pop();
+    budget--;
+
+    if (!warmSet.contains(addr)) continue;
+
+    lattice.observe(addr, osc.certainty);
+
+    final list = arrivals.putIfAbsent(addr, () => []);
+    if (list.length >= _kMaxArrivalsPerNode) continue;
+    list.add((osc.certainty, osc.phase));
+
+    if (depth >= maxDepth) continue;
+
+    var fanout = 0;
+    for (var b = 0; b < 8; b++) {
+      final n = addr ^ (1 << b);
+      if (warmSet.contains(n) && !path.contains(n)) fanout++;
+    }
+    final branchGain = flowBranchGain(fanout);
+
+    for (var b = 0; b < 8; b++) {
+      final n = addr ^ (1 << b);
+      if (!warmSet.contains(n) || path.contains(n)) continue;
+
+      final childOsc = osc.clone();
+      if (branchGain > 0) childOsc.restabilize(branchGain);
+      final parentPhase = childOsc.phase;
+      childOsc.step(dKr[n], dKi[n], dGr[n], 1);
+
+      final phaseVelocity = (childOsc.phase - parentPhase).abs();
+      final ssePrior = lattice.zBelowForAddress(n, childOsc.certainty);
+      final pri = flowSearchPriority(
+        certainty: childOsc.certainty,
+        phaseVelocity: phaseVelocity,
+        spectralDistance: 1,
+        fanout: fanout,
+        ssePrior: ssePrior,
+        depth: depth + 1,
+        maxDepth: maxDepth,
+        exploit: isAlpha,
+      );
+
+      heap.push((n, childOsc, pri, {...path, n}, depth + 1, isAlpha));
+    }
+  }
+
+  final findings = <FlowFinding>[];
+  for (final addr in warmSet) {
+    final arrs = arrivals[addr];
+    if (arrs == null || arrs.length < 2) continue;
+
+    final (mc, mp) = flowBornMix(arrs);
+    final coh = flowPhaseCoherence(arrs);
+    final contradictory = flowIsContradictory(arrs);
+    lattice.observe(addr, mc);
+
+    if (lattice.isAnomalous(addr, mc) || contradictory) {
+      final hex = addr.toRadixString(16).padLeft(2, '0');
+      findings.add(FlowFinding(
+        nodeId: 'dream:$hex',
+        sourceLine: addr,
+        sourceText: 'dream:$hex',
+        certainty: mc,
+        phase: mp,
+        kind: contradictory
+            ? FlowBugKind.contradictoryFlow
+            : _classifyPhase(mp),
+        pathCount: arrs.length,
+        address: addr,
+        coherence: coh,
+        lyapunov: dKi[addr],
+      ));
+    }
+  }
+
+  findings.sort((a, b) => a.certainty.compareTo(b.certainty));
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Cross-file Born mixing
+// ═══════════════════════════════════════════════════════════════════
+
+class CrossFileInterference {
+  final int address;
+  final double certainty;
+  final double phase;
+  final double coherence;
+  final bool contradictory;
+  final int fileCount;
+  final List<String> files;
+
+  const CrossFileInterference({
+    required this.address,
+    required this.certainty,
+    required this.phase,
+    required this.coherence,
+    required this.contradictory,
+    required this.fileCount,
+    required this.files,
+  });
+}
+
+/// Findings at the same spectral address from different files are
+/// independent measurements of the same structural role. Born-mix
+/// them, compute coherence and contradiction, observe the interference
+/// back into the lattice, and return the structured interference map.
+List<CrossFileInterference> crossFileMix(
+  Map<String, FlowAnalysisResult> rawResults,
+  FlowSseLattice lattice,
+) {
+  final byAddress = <int, List<(String, double, double)>>{};
+  for (final entry in rawResults.entries) {
+    for (final f in entry.value.findings) {
+      byAddress.putIfAbsent(f.address, () => [])
+          .add((entry.key, f.certainty, f.phase));
+    }
+  }
+
+  final results = <CrossFileInterference>[];
+  for (final entry in byAddress.entries) {
+    if (entry.value.length < 2) continue;
+    final arrivals = entry.value.map((e) => (e.$2, e.$3)).toList();
+    final (mc, mp) = flowBornMix(arrivals);
+    final coh = flowPhaseCoherence(arrivals);
+    final contra = flowIsContradictory(arrivals);
+    lattice.observe(entry.key, mc);
+
+    final files = entry.value.map((e) => e.$1).toSet().toList();
+    if (files.length < 2) continue;
+
+    results.add(CrossFileInterference(
+      address: entry.key,
+      certainty: mc,
+      phase: mp,
+      coherence: coh,
+      contradictory: contra,
+      fileCount: files.length,
+      files: files,
+    ));
+  }
+
+  results.sort((a, b) => a.certainty.compareTo(b.certainty));
+  return results;
 }
 
 // ═══════════════════════════════════════════════════════════════════

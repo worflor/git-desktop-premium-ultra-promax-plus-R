@@ -10,7 +10,7 @@ import '../../app/repository_state.dart';
 import '../../backend/git.dart' show runGitProbe;
 import '../../backend/logos_core.dart' show FlowSseLattice;
 import '../../backend/logos_flow.dart'
-    show analyzeFlowCached, FlowAnalysisResult, FlowBugKind, FlowFinding;
+    show analyzeFlowCached, CrossFileInterference, crossFileMix, dreamAnalysis, FlowAnalysisResult, FlowBugKind, FlowFinding;
 import '../../ui/tokens.dart';
 
 /// Stability region in the coherence × lyapunov plane.
@@ -41,6 +41,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
   final Map<String, FlowAnalysisResult> _results = {};
   final Map<String, FlowAnalysisResult> _rawResults = {};
   final FlowSseLattice _lattice = FlowSseLattice();
+  List<CrossFileInterference> _crossFileInterference = const [];
   int _totalFiles = 0;
   int _scannedFiles = 0;
   bool _done = false;
@@ -96,9 +97,17 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       });
     }
 
+    // Calibration pipeline — order is load-bearing:
+    //   1. dream enriches lattice with hypercube self-analysis
+    //   2. cross-file mix adds inter-file Born interference
+    //   3. filter reads the fully calibrated lattice
+    if (_lattice.totalObservations > 0) {
+      final _ = dreamAnalysis(_lattice);
+      _crossFileInterference = crossFileMix(_rawResults, _lattice);
+    }
+
     if (!mounted || _gen != gen) return;
 
-    // Second pass: filter through the calibrated lattice.
     final calibrated = <String, FlowAnalysisResult>{};
     for (final entry in _rawResults.entries) {
       final filtered = entry.value.filterBy(_lattice);
@@ -168,15 +177,29 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
           FlowBugKind.contradictoryFlow => 'joint',
         };
         final glyph = _stabilityGlyph(f.coherence, f.lyapunov, f.kind);
-        final src = f.sourceText.length > 64
-            ? '${f.sourceText.substring(0, 61)}...'
-            : f.sourceText;
+        final raw = f.sourceText;
+        final src = raw.length > 80 ? '${raw.substring(0, 80)}…' : raw;
         buf.writeln(
             '  $sev$glyph L${f.sourceLine + 1} $kind '
             '[${f.composite.toStringAsFixed(2)} '
             'p=${f.pathCount}] $src');
       }
     }
+
+    if (_crossFileInterference.isNotEmpty) {
+      buf.writeln();
+      buf.writeln('── cross-file interference '
+          '(${_crossFileInterference.length} addresses)');
+      for (final x in _crossFileInterference) {
+        final hex = x.address.toRadixString(16).padLeft(2, '0');
+        final tag = x.contradictory ? ' — ※joint' : '';
+        buf.writeln('  0x$hex · ${x.fileCount} files · '
+            'coh=${x.coherence.toStringAsFixed(2)} · '
+            'cert=${x.certainty.toStringAsFixed(2)}$tag');
+        buf.writeln('    ${x.files.join('  ')}');
+      }
+    }
+
     return buf.toString().trimRight();
   }
 

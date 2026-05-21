@@ -75,6 +75,17 @@ const Duration _kEngineDecayTtl = Duration(minutes: 15);
 /// even on large repos; 8 s is far past the tail of normal behaviour.
 const Duration _kHeadProbeTimeout = Duration(seconds: 8);
 
+void _emitHyperbolicIfPresent(LogosGit engine) {
+  if (engine.hyperbolicEmbedding != null) {
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisHyperbolicLayout(
+        sid,
+        coordinates: engine.hyperbolicCoordinates,
+      ),
+    );
+  }
+}
+
 /// Drop `_headSnapshots` entries for repos that are no longer in the
 /// `_engines` LRU. Called after each insert so the head-snapshot map
 /// can never outgrow the engine cache. Cheap — the LRU holds ≤ 3
@@ -400,6 +411,7 @@ Future<LogosGit?> _resolveImpl(
           cached: true,
         ),
       );
+      _emitHyperbolicIfPresent(cached.engine);
       return cached.engine;
     }
 
@@ -446,6 +458,7 @@ Future<LogosGit?> _resolveImpl(
           cached: true,
         ),
       );
+      _emitHyperbolicIfPresent(cached.engine);
       return cached.engine;
     }
 
@@ -568,6 +581,7 @@ Future<LogosGit?> _resolveImpl(
         cached: false,
       ),
     );
+    _emitHyperbolicIfPresent(engine);
     return engine;
   } catch (e, st) {
     log.recordFailure(repoPath, 'build threw: $e', sw.elapsed, st);

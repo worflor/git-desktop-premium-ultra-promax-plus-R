@@ -232,6 +232,74 @@ class FlowSseLattice {
 
   /// Total observations across all cells.
   int get totalObservations => _cells.fold(0, (s, c) => s + c.n);
+
+  double zBelowForAddress(int address, double certainty) {
+    return _cells[address & 0xFF].zBelow(certainty);
+  }
+
+  double cellMean(int address) => _cells[address & 0xFF].mean;
+  double cellStddev(int address) => _cells[address & 0xFF].stddev;
+  int cellCount(int address) => _cells[address & 0xFF].n;
+}
+
+// ── Binary heap ─────────────────────────────────────────────────────
+
+class BinaryHeap<T> {
+  final List<T> _data = [];
+  final int Function(T, T) _compare;
+
+  BinaryHeap(this._compare);
+
+  bool get isEmpty => _data.isEmpty;
+  bool get isNotEmpty => _data.isNotEmpty;
+  T get first => _data.first;
+  int get length => _data.length;
+
+  void push(T value) {
+    _data.add(value);
+    _siftUp(_data.length - 1);
+  }
+
+  T pop() {
+    final top = _data.first;
+    if (_data.length == 1) {
+      _data.removeLast();
+    } else {
+      _data[0] = _data.removeLast();
+      _siftDown(0);
+    }
+    return top;
+  }
+
+  void replaceFirst(T value) {
+    _data[0] = value;
+    _siftDown(0);
+  }
+
+  void _siftUp(int i) {
+    while (i > 0) {
+      final p = (i - 1) >> 1;
+      if (_compare(_data[i], _data[p]) >= 0) break;
+      final tmp = _data[i]; _data[i] = _data[p]; _data[p] = tmp;
+      i = p;
+    }
+  }
+
+  void _siftDown(int i) {
+    while (true) {
+      var target = i;
+      final l = 2 * i + 1, r = 2 * i + 2;
+      if (l < _data.length && _compare(_data[l], _data[target]) < 0) {
+        target = l;
+      }
+      if (r < _data.length && _compare(_data[r], _data[target]) < 0) {
+        target = r;
+      }
+      if (target == i) break;
+      final tmp = _data[i]; _data[i] = _data[target]; _data[target] = tmp;
+      i = target;
+    }
+  }
 }
 
 // ── Branch amplification ─────────────────────────────────────────────
@@ -248,6 +316,29 @@ double flowBranchGain(int fanout) {
   final x = raw / 0.25;
   final e2x = math.exp(2.0 * x);
   return 0.25 * (e2x - 1.0) / (e2x + 1.0);
+}
+
+// ── AA* search priority ─────────────────────────────────────────────
+
+double flowSearchPriority({
+  required double certainty,
+  required double phaseVelocity,
+  required int spectralDistance,
+  required int fanout,
+  required double ssePrior,
+  required int depth,
+  required int maxDepth,
+  required bool exploit,
+}) {
+  if (maxDepth <= 0) return 0.0;
+  final anomaly = phaseVelocity * (1.0 - certainty);
+  final structure = (1.0 + spectralDistance / 8.0)
+      * math.log(math.max(2, fanout)) / math.ln2;
+  final attention = (1.0 + ssePrior)
+      * (maxDepth - depth) / maxDepth.toDouble();
+  return exploit
+      ? anomaly * anomaly * structure * attention
+      : anomaly * structure * structure * attention;
 }
 
 // ── Phase coherence ─────────────────────────────────────────────────

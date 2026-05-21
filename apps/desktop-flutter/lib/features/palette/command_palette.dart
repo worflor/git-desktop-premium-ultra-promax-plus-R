@@ -834,7 +834,6 @@ class _WickShelfState extends State<_WickShelf> {
     final isHovered = index == _hoveredIndex;
     var snippet = unit.text.replaceAll(RegExp(r'\s+'), ' ').trim();
     snippet = snippet.replaceFirst(RegExp(r'^\[path:[^\]]*\]\s*'), '');
-    if (snippet.length > 80) snippet = '${snippet.substring(0, 80)}…';
     final isGhost = unit.reason.kind == 'neighborhood' ||
         unit.reason.kind == 'transport';
     final ghostAlpha = isGhost ? 0.45 : 1.0;

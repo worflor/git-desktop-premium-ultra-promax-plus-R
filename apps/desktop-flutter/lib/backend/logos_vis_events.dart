@@ -215,6 +215,38 @@ class LogosVisFlowAnalysis extends LogosVisEvent {
   final Map<String, double> spectralGaps;
 }
 
+/// Advection-drift transport field. Carries per-file pull scores and
+/// the top directed edges so the canvas can render flowing drift arcs
+/// between files where heat moves preferentially in one direction.
+class LogosVisTransportField extends LogosVisEvent {
+  const LogosVisTransportField(
+    super.sessionId, {
+    required this.pullByPath,
+    required this.arcs,
+  });
+
+  /// path → transport pull strength (how strongly this file draws
+  /// relevance from its neighbours via the antisymmetric transport).
+  final Map<String, double> pullByPath;
+
+  /// Top directed edges: (source, target, strength). Positive strength
+  /// means heat flows preferentially from source → target.
+  final List<({String from, String to, double strength})> arcs;
+}
+
+/// Poincaré disk embedding of the file hierarchy. Gives each file a
+/// structurally meaningful 2D position so the canvas can place nodes
+/// by directory proximity rather than arbitrary hash angles.
+class LogosVisHyperbolicLayout extends LogosVisEvent {
+  const LogosVisHyperbolicLayout(
+    super.sessionId, {
+    required this.coordinates,
+  });
+
+  /// path → (x, y) in the Poincaré disk (||(x,y)|| < 1).
+  final Map<String, ({double x, double y})> coordinates;
+}
+
 /// Context sealed and sent to the model. Canvas renders the beam.
 class LogosVisTransmit extends LogosVisEvent {
   const LogosVisTransmit(super.sessionId);

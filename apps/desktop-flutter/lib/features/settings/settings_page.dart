@@ -7160,10 +7160,11 @@ class _LogosLensReadout extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             'relevance engine',
+            maxLines: 1,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.7),
               fontSize: 9,
-              letterSpacing: 1.6,
+              letterSpacing: 1.0,
               height: 1.2,
             ),
           ),
@@ -7398,18 +7399,18 @@ class _FilamentReadout extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             'execution-flow',
+            maxLines: 1,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.7),
               fontSize: 9,
-              letterSpacing: 1.6,
+              letterSpacing: 1.0,
               height: 1.2,
             ),
           ),
           const SizedBox(height: 10),
           Text(
-            'simulate oscillators on code to '
-            'reveal structure, tracking certainty '
-            'and phase. surfacing fragile '
+            'simulate oscillators on code. '
+            'surfacing fragile '
             'execution paths before '
             'they crystalize as bugs.',
             style: TextStyle(

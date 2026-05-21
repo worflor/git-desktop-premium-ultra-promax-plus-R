@@ -1760,10 +1760,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
 //   handles weight 0.3 each). Run engine.diffuseWeighted to produce a
 //   brainstorm-biased φ. Plan emissions against the same budget as
 //   review's neighborhood — the only difference is the seed source.
-//   Mark each brainstorm idea as `kept` if at least one of its handles
-//   matched a path that ended up in the plan. Field-rooted ideas
-//   typically have no parseable handles and thus stay `kept = false`,
-//   but they still feed into the synthesis prompt.
+//   All brainstorm ideas feed into the synthesis prompt — ideas with
+//   parseable file handles seed weighted diffusion paths; field-rooted
+//   ideas contribute thematic context without file gravity.
 //
 // Phase 3 (Synthesize): quality model gets diff + brainstorm + the
 //   reshaped relevance pack. Output a structured XML schema (intent /
@@ -2112,7 +2111,6 @@ class _BrainstormIdea {
   /// Paths the idea pulled in (K-space KNN + well expansion + any
   /// fallback fuzzy match). Surface for attribution-based trimming.
   final Set<String> handlePaths = <String>{};
-  bool kept = false;
 }
 
 /// Phase 1 — cheap divergent spew. Returns parsed brainstorm ideas.
@@ -2129,6 +2127,7 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
   String? reasoningEffort,
   bool fastMode = false,
   bool supportsReasoning = true,
+  String divergentNeighborhood = '',
 }) async {
   final buf = StringBuffer();
   buf.writeln('You take the first seat of the muse pipeline: the '
@@ -2210,6 +2209,12 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
   buf.writeln('Scope: $scopeLabel');
   buf.writeln('</scope>');
   buf.writeln();
+  if (divergentNeighborhood.isNotEmpty) {
+    buf.writeln('<neighborhood>');
+    buf.writeln(divergentNeighborhood);
+    buf.writeln('</neighborhood>');
+    buf.writeln();
+  }
   buf.writeln('<diff>');
   buf.writeln(diffPromptBody);
   buf.writeln('</diff>');
@@ -2521,7 +2526,7 @@ Future<({String text, LogosEmissionRecord? record})>
       }
     }
 
-    // Per-idea signal counters — used for the kept/dropped stat line.
+    // Per-idea signal counters — tracks which ideas seeded file paths.
     final ideaMatchCount = <int, int>{};
     // Signal breakdown: how many ideas used each lane. Surfaced in the
     // rendered context so the synthesis call sees the provenance.
@@ -2760,15 +2765,9 @@ Future<({String text, LogosEmissionRecord? record})>
     final plan = engine.plan(scores, budget: budgetChars);
     if (plan.isEmpty) return (text: '', record: null);
 
-    final planPaths = <String>{for (final p in plan) p.path};
-    for (final idea in ideas) {
-      if (idea.handlePaths.any(planPaths.contains)) idea.kept = true;
-    }
-
     final buffer = StringBuffer();
     buffer.writeln(
       '(brainstorm-seeded: ${ideas.length} ideas, '
-      '${ideas.where((i) => i.kept).length} kept, '
       '${plan.length} files surfaced; '
       'lanes: embedded=$ideasEmbedded fuzzy=$ideasViaFuzzy '
       'semantic_hits=$semanticHits well_expansion=$wellExpansionFiles)',
@@ -3306,24 +3305,13 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     final bundle = diffContext.data!;
     final profile = _museGuardrailProfileForStage(guardrailStage);
 
-    // Extract diff source weights up-front so we can emit the first
-    // ignition event before phase 1 even starts. Canvas sees the diff
-    // files lit immediately while the brainstorm LLM call is in flight.
     final diffSourceWeights = {
       for (final path in extractDiffTouchedPaths(bundle.diffBundle.promptBody))
         path: 1.0,
     };
 
-    // Kick the engine resolve off in parallel with phase 1. The resolver
-    // emits its own `engineResolving` / `engineReady` events so the
-    // canvas shows topology crystallising during brainstorm. The
-    // in-flight guard in resolveLogosGit means phase 2's call will
-    // dedupe onto the same Future — no duplicate work.
-    unawaited(resolveLogosGit(repositoryPath, coupling: couplingMatrix));
-
-    // First ignition — lights up the diff files on the canvas while
-    // the brainstorm is thinking. Churn is the sum of source weights
-    // pre-normalisation (all 1.0 here, so = file count).
+    // Immediate ignition — flat-weight spokes for instant visual
+    // feedback while the engine resolves and divergent diffusion runs.
     LogosVisBus.instance.emitInSession(
       (sid) => LogosVisDiffSources(
         sid,
@@ -3332,7 +3320,57 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       ),
     );
 
-    // Phase 1 — brainstorm via the cheap/divergent slot.
+    // Divergent Logos diffusion: run the manifold at high temperature
+    // with surprise-boosted utility so the brainstorm sees the
+    // exploration landscape, not just the raw diff. Also fills the
+    // canvas gap — DiffusionComplete gives wells + neighbours while
+    // the brainstorm LLM is thinking.
+    final engine =
+        await resolveLogosGit(repositoryPath, coupling: couplingMatrix);
+    var divergentNeighborhood = '';
+    if (engine != null) {
+      final probe = await buildDiffProbe(
+        repoPath: repositoryPath,
+        diffText: bundle.diffBundle.promptBody,
+        engine: engine,
+      );
+      if (probe.sourceWeights.isNotEmpty) {
+        await Future<void>.delayed(Duration.zero);
+        final evidence = engine.gatherEvidence(
+          focusWeights: probe.sourceWeights,
+          t: 4.0,
+          K: 8,
+          lambda: 0.2,
+          detailBudget: 16,
+          utilityHfSurpriseWeight: 0.40,
+          utilityTransportPullWeight: 0.25,
+        );
+        if (evidence != null && evidence.ranked.isNotEmpty) {
+          final phiMap = <String, double>{};
+          final wellByPath = <String, String>{};
+          for (final e in evidence.ranked) {
+            phiMap[e.path] = e.utility > 0 ? e.utility : e.support * 0.05;
+            final w = engine.wellOf(e.path);
+            if (w != null) wellByPath[e.path] = w;
+          }
+          LogosVisBus.instance.emitInSession(
+            (sid) => LogosVisDiffusionComplete(
+              sid,
+              phi: phiMap,
+              wellByPath: wellByPath,
+            ),
+          );
+          divergentNeighborhood = await _formatDivergentNeighborhood(
+            engine: engine,
+            evidence: evidence,
+            repositoryPath: repositoryPath,
+          );
+        }
+      }
+    }
+
+    // Phase 1 — brainstorm via the cheap/divergent slot, now seeded
+    // with the divergent manifold neighbourhood.
     final brainstormResult = await _runBrainstormPhase(
       provider: brainProvider,
       resolution: brainAvail.resolution!,
@@ -3346,6 +3384,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       reasoningEffort: brainstormReasoningEffort,
       fastMode: brainstormFastMode,
       supportsReasoning: brainstormSupportsReasoning,
+      divergentNeighborhood: divergentNeighborhood,
     );
     final ideas = brainstormResult.ideas;
     if (ideas.isEmpty) {
@@ -3512,7 +3551,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       proposals: parsed.proposals,
       brainstormIdeas: [
         for (final i in ideas)
-          AiMuseIdea(index: i.index, text: i.text, kept: i.kept),
+          AiMuseIdea(index: i.index, text: i.text),
       ],
       promptCharacters: synthPrompt.length,
       diffCharacters: bundle.diffBundle.originalDiffCharacters,
@@ -6226,6 +6265,23 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
         wellByPath: wellByPath,
       ),
     );
+    final transportArcs = engine.topTransportArcs(12);
+    if (transportArcs.isNotEmpty) {
+      final pullByPath = <String, double>{};
+      if (evidence != null) {
+        for (final e in evidence.ranked) {
+          final tp = evidence.transportPullByPath[e.path];
+          if (tp != null && tp > 0) pullByPath[e.path] = tp;
+        }
+      }
+      LogosVisBus.instance.emitInSession(
+        (sid) => LogosVisTransportField(
+          sid,
+          pullByPath: pullByPath,
+          arcs: transportArcs,
+        ),
+      );
+    }
     return result;
   } catch (e, st) {
     LogosGitDiagnostics.instance.recordFailure(
@@ -6590,6 +6646,68 @@ String _neighborRelevanceBand(double phi, double planPhiMax) {
   if (r < 0.60) return 'moderate';
   if (r < 0.80) return 'strong';
   return 'dominant';
+}
+
+Future<String> _formatDivergentNeighborhood({
+  required LogosGit engine,
+  required LogosEvidenceQueryResult evidence,
+  required String repositoryPath,
+}) async {
+  const budgetChars = 6000;
+  const outlineCap = 5;
+
+  final ranked = evidence.ranked.toList()
+    ..sort((a, b) => b.utility.compareTo(a.utility));
+  if (ranked.isEmpty) return '';
+
+  var maxUtility = 0.0;
+  for (final e in ranked) {
+    if (e.utility > maxUtility) maxUtility = e.utility;
+  }
+
+  final buf = StringBuffer();
+  buf.writeln(
+    'Divergent-mode Logos diffusion (t=4.0, K=8, surprise×2.7). '
+    'These files are structurally connected to the diff through the '
+    'file-coupling manifold but sit beyond the focused neighbourhood. '
+    'Use them to ground code-rooted ideas; let field-rooted ideas '
+    'reach past them freely.',
+  );
+  buf.writeln('files=${ranked.length}');
+
+  var remaining = budgetChars - buf.length;
+  var outlineCount = 0;
+
+  for (final entry in ranked) {
+    if (remaining <= 100) break;
+    final well = engine.wellOf(entry.path);
+    final wellPill = well != null ? '  well=$well' : '';
+    final relevance = _neighborRelevanceBand(entry.utility, maxUtility);
+    final header =
+        '--- ${entry.path}  relevance=$relevance$wellPill ---';
+
+    if (outlineCount < outlineCap) {
+      try {
+        final file = File(p.join(repositoryPath, entry.path));
+        if (await file.exists()) {
+          final content = await file.readAsString();
+          final lineCount = _countLinesPlusOne(content);
+          final outline = _buildFileOutline(content, entry.path, lineCount);
+          if (outline.length <= remaining) {
+            buf.write(outline);
+            remaining -= outline.length;
+            outlineCount++;
+            continue;
+          }
+        }
+      } catch (_) {}
+    }
+    final line = '$header\n';
+    if (line.length > remaining) continue;
+    buf.write(line);
+    remaining -= line.length;
+  }
+  return buf.toString().trimRight();
 }
 
 /// Which observable put `path` on the emission list.

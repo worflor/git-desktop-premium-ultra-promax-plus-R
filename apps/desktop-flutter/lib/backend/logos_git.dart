@@ -211,7 +211,6 @@ _HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
   if (n == 0) return _HyperbolicEmbedding(x, y);
 
   final children = <int, List<int>>{};
-  final parentOf = Int32List(n);
   final nodeId = <String, int>{};
 
   final rootId = 0;
@@ -235,7 +234,6 @@ _HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
         dirNodeOf[next] = id;
         final pid = dirNodeOf[current]!;
         (children[pid] ??= []).add(id);
-        parentOf[id < parentOf.length ? id : 0] = pid;
       }
       current = next;
     }
@@ -1777,6 +1775,8 @@ class LogosGit {
   /// guaranteed coherent.
   final Map<int, sg_lib.SpectroGeometry> _spectrogeometryCache = {};
 
+  final _HyperbolicEmbedding? hyperbolicEmbedding;
+
   late final double _advectionEps =
       _advectionEpsBase / math.max(1e-6, graph.estimateSpectralRadius());
 
@@ -1883,6 +1883,7 @@ class LogosGit {
     this.symbolEdges = const {},
     EngramFileKTable? perFileKVectors,
     int? manifoldRevision,
+    this.hyperbolicEmbedding,
     LruCache<_BasisCacheKey, Float64List>? basisCache,
     Map<int, SpectralBasis>? spectralCache,
   })  : perFileKVectors = perFileKVectors ?? _emptyTable,
@@ -1901,6 +1902,48 @@ class LogosGit {
   /// built with engram K-vectors / the file failed to encode. The
   /// returned name is the well's label (e.g. "computing", "well_43").
   String? wellOf(String path) => perFileKVectors.wellOf(path);
+
+  Map<String, ({double x, double y})> get hyperbolicCoordinates {
+    final h = hyperbolicEmbedding;
+    if (h == null) return const {};
+    final out = <String, ({double x, double y})>{};
+    for (var i = 0; i < nodePaths.length; i++) {
+      out[nodePaths[i]] = (x: h.x[i], y: h.y[i]);
+    }
+    return out;
+  }
+
+  List<({String from, String to, double strength})> topTransportArcs(
+      int maxK) {
+    if (maxK <= 0) return const [];
+    final a = _antisymmetricTransport;
+    if (a == null) return const [];
+    final heap = BinaryHeap<({String from, String to, double strength})>(
+        (a, b) => a.strength.compareTo(b.strength));
+
+    for (var i = 0; i < a.n; i++) {
+      final start = a.indptr[i];
+      final end = a.indptr[i + 1];
+      for (var k = start; k < end; k++) {
+        final j = a.indices[k];
+        final v = a.values[k];
+        if (v <= 0) continue;
+        final entry = (
+          from: nodePaths[i],
+          to: nodePaths[j],
+          strength: v,
+        );
+        if (heap.length < maxK) {
+          heap.push(entry);
+        } else if (v > heap.first.strength) {
+          heap.replaceFirst(entry);
+        }
+      }
+    }
+    final result = <({String from, String to, double strength})>[];
+    while (heap.isNotEmpty) result.add(heap.pop());
+    return result.reversed.toList();
+  }
 
   /// Return a copy of this engine aware of symbol-overlap edges for the
   /// current change set. Cheap - shares the immutable graph; only the
@@ -1932,6 +1975,7 @@ class LogosGit {
       couplingConstants: couplingConstants,
       symbolEdges: expanded,
       perFileKVectors: perFileKVectors,
+      hyperbolicEmbedding: hyperbolicEmbedding,
       manifoldRevision: manifoldRevision,
       basisCache: _basisCache,
       spectralCache: _spectralCache,
@@ -2933,6 +2977,7 @@ class LogosGit {
       integrityByPath: stats.integrityByPath,
       couplingConstants: couplingConstants,
       perFileKVectors: useEngram ? perFileKVectors : null,
+      hyperbolicEmbedding: hypEmbed,
     );
   }
 
