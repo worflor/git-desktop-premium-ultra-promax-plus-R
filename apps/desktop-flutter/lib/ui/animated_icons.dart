@@ -598,7 +598,7 @@ class _BubblePainter extends CustomPainter {
       double scale = 1.0;
       double dy = 0.0;
       double dx = 0.0;
-      double alpha = 1.0;
+      double alpha = color.a;
 
       if (state == IconAnimState.hovered) {
         // Each bubble swells a little; phase-staggered so the cluster

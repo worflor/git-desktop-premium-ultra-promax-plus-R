@@ -98,11 +98,21 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     }
 
     // Calibration pipeline — order is load-bearing:
-    //   1. dream enriches lattice with hypercube self-analysis
+    //   1. dream iterates to fixed point (hypercube diameter = 8 max)
     //   2. cross-file mix adds inter-file Born interference
-    //   3. filter reads the fully calibrated lattice
+    //   3. filter reads the fully converged lattice
     if (_lattice.totalObservations > 0) {
-      final _ = dreamAnalysis(_lattice);
+      for (var iter = 0; iter < 8; iter++) {
+        final before = List<double>.generate(
+            256, (a) => _lattice.cellMean(a));
+        dreamAnalysis(_lattice);
+        var maxShift = 0.0;
+        for (var a = 0; a < 256; a++) {
+          final d = (_lattice.cellMean(a) - before[a]).abs();
+          if (d > maxShift) maxShift = d;
+        }
+        if (maxShift < 1.0 / 64.0) break;
+      }
       _crossFileInterference = crossFileMix(_rawResults, _lattice);
     }
 

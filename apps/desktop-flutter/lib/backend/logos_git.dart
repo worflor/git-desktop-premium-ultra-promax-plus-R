@@ -352,7 +352,7 @@ class BornMixer {
 
   const BornMixer(this.caps);
 
-  double mix(List<AxisObs> obs) {
+  double mix(List<AxisObs> obs, {List<FlowSseCell>? axisCells}) {
     if (obs.length != caps.length) {
       throw ArgumentError('axis count mismatch');
     }
@@ -361,9 +361,22 @@ class BornMixer {
 
     for (var i = 0; i < obs.length; i++) {
       final o = obs[i];
-      if (o.n == 0) continue; // silent axis
+      if (o.n == 0) continue;
       final evidence = math.min(_Log1pLut.call(o.n), caps[i]);
-      final confidence = (o.p - 0.5).abs();
+      final double confidence;
+      final cell = axisCells != null && i < axisCells.length
+          ? axisCells[i] : null;
+      if (cell != null && cell.n >= 8) {
+        final s = cell.stddev;
+        if (s > 1e-15) {
+          final z = (o.p - cell.mean).abs() / s;
+          confidence = math.min(z, sc.phi) / (2 * sc.phi);
+        } else {
+          confidence = (o.p - 0.5).abs();
+        }
+      } else {
+        confidence = (o.p - 0.5).abs();
+      }
       final w = confidence * evidence;
       if (w == 0) continue;
       totalWeight += w;
@@ -2292,10 +2305,7 @@ class LogosGit {
     LogosGitStats stats, {
     int edgeDensity = _defaultEdgeDensity,
     EngramFileKTable? perFileKVectors,
-    // Probe hook. When non-null, sub-phase wallclock is written here so
-    // cold-start probes can drill into which piece of the build is
-    // actually expensive. Null in production — zero overhead (a single
-    // null-check per phase).
+    String? repoRoot,
     Map<String, int>? probeTimingsUs,
   }) {
     Stopwatch? probeSw;
@@ -2371,6 +2381,7 @@ class LogosGit {
     }
 
     final mixer = BornMixer(caps);
+    final axisCells = List<FlowSseCell>.generate(caps.length, (_) => FlowSseCell());
     final f0 = _F0Axis(
       touchMass: stats.touchMass.isNotEmpty
           ? stats.touchMass
@@ -2568,6 +2579,38 @@ class LogosGit {
         curvatures[i] = (!r.isFinite || r <= 0) ? 1.0 : r.clamp(0.5, 1.0);
       }
     }
+    final symbolNeighbors = <int, List<int>>{};
+    if (repoRoot != null && n > 1) {
+      final symSets = <int, Set<String>>{};
+      for (var i = 0; i < n; i++) {
+        final syms = symbolsForFile(repoRoot, nodePaths[i]);
+        if (syms.isNotEmpty) symSets[i] = syms;
+      }
+      final postings = <String, List<int>>{};
+      for (final entry in symSets.entries) {
+        for (final sym in entry.value) {
+          (postings[sym] ??= []).add(entry.key);
+        }
+      }
+      final totalDocs = symSets.length.toDouble();
+      for (final entry in symSets.entries) {
+        final weights = <int, double>{};
+        for (final sym in entry.value) {
+          final files = postings[sym];
+          if (files == null) continue;
+          final idf = math.log(1 + totalDocs / (1 + files.length));
+          if (idf < 1.0) continue;
+          for (final j in files) {
+            if (j != entry.key) weights[j] = (weights[j] ?? 0.0) + idf;
+          }
+        }
+        if (weights.isNotEmpty) {
+          final ranked = weights.keys.toList()
+            ..sort((a, b) => weights[b]!.compareTo(weights[a]!));
+          symbolNeighbors[entry.key] = ranked;
+        }
+      }
+    }
     tick('indexes');
 
     final hypEmbed = _hyperbolicWeight > 0
@@ -2673,6 +2716,14 @@ class LogosGit {
         }
       }
 
+      final symNbs = symbolNeighbors[i];
+      if (symNbs != null) {
+        final cap = edgeDensity < symNbs.length ? edgeDensity : symNbs.length;
+        for (var k = 0; k < cap; k++) {
+          candidates.add(symNbs[k]);
+        }
+      }
+
       final transportKey = transportRoles[i].seedKey;
       if (transportKey != null) {
         final seeded = transportSeedIndex[transportKey];
@@ -2742,8 +2793,11 @@ class LogosGit {
               ? en.observeIdsWithMag(i, j, aMagSqI)
               : AxisObs.silent;
         }
+        for (var k = 0; k < obsBuf.length; k++) {
+          if (obsBuf[k].n > 0) axisCells[k].observe(obsBuf[k].p);
+        }
         if (probeActive) probeMixerCalls++;
-        var p = mixer.mix(obsBuf);
+        var p = mixer.mix(obsBuf, axisCells: axisCells);
         // Merge the two `sqrt` calls into one: the algebra is
         // `sqrt(curvA·curvB) · sqrt(integrityA·integrityB) =
         // sqrt(curvA·curvB·integrityA·integrityB)`. Saves one sqrt

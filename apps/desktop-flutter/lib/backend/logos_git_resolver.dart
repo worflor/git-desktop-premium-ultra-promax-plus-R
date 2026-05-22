@@ -551,6 +551,7 @@ Future<LogosGit?> _resolveImpl(
           final built = LogosGit.buildFromStats(
             stats,
             perFileKVectors: perFileKVectors,
+            repoRoot: repoPath,
           );
           // Warm the spectral basis inside the worker so the first
           // [gatherEvidence] call on the UI isolate never pays the

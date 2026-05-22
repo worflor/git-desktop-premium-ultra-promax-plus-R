@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
@@ -928,6 +929,7 @@ Future<GitResult<String>> getFileDiffAtRevision(
 ) async {
   final r = await _git(repo, [
     'diff',
+    '--full-index',
     '$commitHash~1..$commitHash',
     '--',
     filePath,
@@ -945,7 +947,7 @@ Future<GitResult<String>> getFileDiffAtRevision(
   if (!looksLikeRootCommit) {
     return GitResult.err(primaryErr.trim());
   }
-  final r2 = await _git(repo, ['show', commitHash, '--', filePath]);
+  final r2 = await _git(repo, ['show', '--full-index', commitHash, '--', filePath]);
   if (r2.exitCode != 0) {
     // Preserve the original diff error context alongside the fallback's.
     return GitResult.err(
@@ -1077,7 +1079,7 @@ Future<GitResult<void>> applyBranchToBase({
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
 /// there's no parent → fall back to `git show`).
 Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
-  final r = await _git(repo, ['diff', '$commitHash~1..$commitHash']);
+  final r = await _git(repo, ['diff', '--full-index', '$commitHash~1..$commitHash']);
   if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
   final primaryErr = r.stderr.toString();
   final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
@@ -1086,7 +1088,7 @@ Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
   if (!looksLikeRootCommit) {
     return GitResult.err(primaryErr.trim());
   }
-  final r2 = await _git(repo, ['show', commitHash]);
+  final r2 = await _git(repo, ['show', '--full-index', commitHash]);
   if (r2.exitCode != 0) {
     return GitResult.err(
       '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
@@ -1183,8 +1185,8 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
 Future<GitResult<String>> getFileDiff(String repo, String path,
     {bool staged = false, int contextLines = 3}) async {
   final args = staged
-      ? ['diff', '--cached', '-U$contextLines', '--', path]
-      : ['diff', '-U$contextLines', '--', path];
+      ? ['diff', '--full-index', '--cached', '-U$contextLines', '--', path]
+      : ['diff', '--full-index', '-U$contextLines', '--', path];
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
@@ -1289,7 +1291,7 @@ Future<GitResult<String>> getDeskDumpDiff(
   // Tracked changes since divergence (committed + WIP modifications).
   final tracked = await _git(
     deskPath,
-    ['diff', '-U$contextLines', mergeBase],
+    ['diff', '--full-index', '-U$contextLines', mergeBase],
   );
   if (tracked.exitCode != 0) {
     return GitResult.err(tracked.stderr.toString().trim());
@@ -1345,7 +1347,7 @@ Future<GitResult<String>> getSelectionDiff(
   if (trackedPaths.isNotEmpty && hasTrackedStaged) {
     final stagedResult = await _git(
       repo,
-      ['diff', '--cached', '-U$contextLines', '--', ...trackedPaths],
+      ['diff', '--full-index', '--cached', '-U$contextLines', '--', ...trackedPaths],
     );
     if (stagedResult.exitCode != 0) {
       return GitResult.err(stagedResult.stderr.toString().trim());
@@ -1359,7 +1361,7 @@ Future<GitResult<String>> getSelectionDiff(
   if (trackedPaths.isNotEmpty && hasTrackedUnstaged) {
     final unstagedResult = await _git(
       repo,
-      ['diff', '-U$contextLines', '--', ...trackedPaths],
+      ['diff', '--full-index', '-U$contextLines', '--', ...trackedPaths],
     );
     if (unstagedResult.exitCode != 0) {
       return GitResult.err(unstagedResult.stderr.toString().trim());
@@ -1415,6 +1417,54 @@ Future<String> _buildSyntheticUntrackedDiff(
   }
 
   return buffer.toString().trimRight();
+}
+
+Future<Uint8List?> gitBlobBytes(String repo, String objectHash) async {
+  await _gitSubprocessSemaphore.acquire();
+  try {
+    final raw = await Process.run(
+      'git',
+      ['cat-file', 'blob', objectHash],
+      workingDirectory: repo,
+      stdoutEncoding: null,
+      stderrEncoding: null,
+    );
+    if (raw.exitCode != 0) return null;
+    return Uint8List.fromList(raw.stdout as List<int>);
+  } finally {
+    _gitSubprocessSemaphore.release();
+  }
+}
+
+Future<Uint8List?> gitBlobHeader(String repo, String objectHash,
+    [int bytes = 32]) async {
+  await _gitSubprocessSemaphore.acquire();
+  Process? proc;
+  try {
+    proc = await Process.start(
+      'git',
+      ['cat-file', 'blob', objectHash],
+      workingDirectory: repo,
+    );
+    final stderrDrained = proc.stderr.drain<void>();
+    final chunk = <int>[];
+    await for (final data in proc.stdout) {
+      chunk.addAll(data);
+      if (chunk.length >= bytes) break;
+    }
+    proc.kill();
+    await Future.wait([proc.exitCode, stderrDrained]);
+    return chunk.isEmpty ? null : Uint8List.fromList(chunk.sublist(0, chunk.length.clamp(0, bytes)));
+  } finally {
+    proc?.kill();
+    _gitSubprocessSemaphore.release();
+  }
+}
+
+Future<int?> gitBlobSize(String repo, String objectHash) async {
+  final r = await _git(repo, ['cat-file', '-s', objectHash]);
+  if (r.exitCode != 0) return null;
+  return int.tryParse(r.stdout.toString().trim());
 }
 
 Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {

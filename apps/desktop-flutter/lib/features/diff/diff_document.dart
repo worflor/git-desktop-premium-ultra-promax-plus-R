@@ -67,6 +67,9 @@ class DiffFileDocument {
   final int payloadBytes;
   final int maxLineLength;
   final String cacheKey;
+  final bool isBinary;
+  final String? oldBlobHash;
+  final String? newBlobHash;
 
   const DiffFileDocument._({
     required this.path,
@@ -80,6 +83,9 @@ class DiffFileDocument {
     required this.payloadBytes,
     required this.maxLineLength,
     required this.cacheKey,
+    required this.isBinary,
+    this.oldBlobHash,
+    this.newBlobHash,
   });
 
   factory DiffFileDocument.fromRawContent({
@@ -120,6 +126,26 @@ class DiffFileDocument {
     );
 
     final normalizedPath = resolvedPath ?? pathHint ?? '';
+
+    final binary = parsedLines.any((l) =>
+        l.kind == LineKind.meta &&
+        (l.text.startsWith('Binary files ') ||
+            l.text.startsWith('GIT binary patch') ||
+            l.text.contains('[binary content omitted]')));
+
+    String? oldHash, newHash;
+    final indexRe = RegExp(r'index ([0-9a-f]+)\.\.([0-9a-f]+)');
+    for (final rawLine in rawContent.split('\n')) {
+      if (rawLine.startsWith('index ')) {
+        final m = indexRe.firstMatch(rawLine);
+        if (m != null) {
+          oldHash = m.group(1);
+          newHash = m.group(2);
+        }
+        break;
+      }
+    }
+
     return DiffFileDocument._(
       path: normalizedPath,
       displayName: _displayNameForPath(normalizedPath, fallback: pathHint),
@@ -135,7 +161,10 @@ class DiffFileDocument {
         (maxChars, line) =>
             line.text.length > maxChars ? line.text.length : maxChars,
       ),
-      cacheKey: cacheKey ?? '${normalizedPath}|${rawContent.hashCode}',
+      cacheKey: cacheKey ?? '$normalizedPath|${rawContent.hashCode}',
+      isBinary: binary,
+      oldBlobHash: oldHash,
+      newBlobHash: newHash,
     );
   }
 }

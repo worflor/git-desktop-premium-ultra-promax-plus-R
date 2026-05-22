@@ -40,6 +40,7 @@ LogosCommitMeaningfulness inferCommitMeaningfulness({
   required String author,
   required String subject,
   required Iterable<String> paths,
+  int? totalLinesChanged,
 }) {
   final reasons = <String>[];
   var weight = 1.0;
@@ -103,8 +104,15 @@ LogosCommitMeaningfulness inferCommitMeaningfulness({
   }
 
   if (sourceLikePaths > 0 && ritualShare < 1.0) {
-    // Source content guarantees at least neutral-minus-epsilon signal.
     weight = math.max(weight, kNeutralIntegrity - 0.30);
+  }
+
+  if (totalLinesChanged != null && pathList.length >= 8) {
+    final density = totalLinesChanged / pathList.length;
+    if (density < sc.phi * sc.phi) {
+      weight *= _kRitualDecayKnee;
+      reasons.add('low-edit-density');
+    }
   }
 
   if (!weight.isFinite) weight = 1.0;

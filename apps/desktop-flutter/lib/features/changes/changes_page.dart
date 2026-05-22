@@ -7593,7 +7593,7 @@ class _MusePaneState extends State<_MusePane> {
                   style: TextStyle(
                     fontFamily: AppFonts.mono,
                     fontSize: 9,
-                    color: t.textFaint.withValues(alpha: 0.5),
+                    color: AppTokens.contrastGlyph(t.surface0).withValues(alpha: 0.5),
                   ),
                 ),
               ],
@@ -8190,7 +8190,7 @@ class _DebugPane extends StatelessWidget {
                     style: TextStyle(
                       fontFamily: AppFonts.mono,
                       fontSize: 9,
-                      color: t.textFaint.withValues(alpha: 0.6),
+                      color: AppTokens.contrastGlyph(t.surface0).withValues(alpha: 0.6),
                     ),
                   ),
                 ],
@@ -8834,7 +8834,7 @@ class _CommitReviewPane extends StatelessWidget {
                                 style: TextStyle(
                                   fontFamily: AppFonts.mono,
                                   fontSize: 9,
-                                  color: tokens.textFaint.withValues(alpha: 0.5),
+                                  color: AppTokens.contrastGlyph(tokens.surface0).withValues(alpha: 0.5),
                                 ),
                               ),
                             ],

@@ -931,36 +931,55 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     'log',
     '-n', '$commitLimit',
     '--no-merges',
-    '--name-only',
+    '--raw', '--numstat', '-M',
     '--format=$logCommitSeparator%H%x1f%an%x1f%s',
   ]);
   if (logProbe.exitCode != 0) {
     return GitResult.err(logProbe.stderr.toString().trim());
   }
 
-  // Parse in one pass — avoid building intermediate String list per line.
-  // Commit separator lines look like "${logCommitSeparator}<sha>"; we
-  // extract HEAD from the first one and commit hashes are otherwise ignored.
   final stdout = logProbe.stdout.toString();
   String headHash = '';
   final commits = <_CouplingCommit>[];
-  List<String>? currentFiles;
+  var currentRaw = <({String path, String oldBlob, String newBlob})>[];
+  var currentNumstat = <(String, int)>[];
   String currentAuthor = '';
   String currentSubject = '';
   final sepLen = logCommitSeparator.length;
 
+  void flushCommit() {
+    if (currentRaw.isEmpty && currentNumstat.isEmpty) return;
+    final numstatByPath = <String, int>{};
+    for (final (p, lines) in currentNumstat) {
+      numstatByPath[p] = lines;
+    }
+    final files = <({String path, int lines, String oldBlob, String newBlob})>[];
+    for (final raw in currentRaw) {
+      final lines = numstatByPath[raw.path] ?? 0;
+      final mass = (raw.oldBlob == raw.newBlob) ? 0 : math.max(1, lines);
+      files.add((
+        path: raw.path,
+        lines: mass,
+        oldBlob: raw.oldBlob,
+        newBlob: raw.newBlob,
+      ));
+    }
+    if (files.isNotEmpty && files.length <= largeCommitCutoff) {
+      commits.add(_CouplingCommit(
+        author: currentAuthor,
+        subject: currentSubject,
+        files: files,
+      ));
+    }
+    currentRaw = [];
+    currentNumstat = [];
+  }
+
+  var inNumstat = false;
   for (final rawLine in const LineSplitter().convert(stdout)) {
     if (rawLine.startsWith(logCommitSeparator)) {
-      if (currentFiles != null &&
-          currentFiles.isNotEmpty &&
-          currentFiles.length <= largeCommitCutoff) {
-        commits.add(_CouplingCommit(
-          author: currentAuthor,
-          subject: currentSubject,
-          files: currentFiles,
-        ));
-      }
-      currentFiles = <String>[];
+      flushCommit();
+      inNumstat = false;
       if (headHash.isEmpty) {
         final firstSep = rawLine.indexOf(_logMetaSep, sepLen);
         headHash = firstSep == -1
@@ -974,25 +993,50 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
           : '';
       continue;
     }
-    if (currentFiles == null) continue;
     final trimmed = rawLine.trim();
-    if (trimmed.isEmpty) continue;
-    currentFiles.add(trimmed.replaceAll('\\', '/'));
+    if (trimmed.isEmpty) {
+      if (currentRaw.isNotEmpty) inNumstat = true;
+      continue;
+    }
+
+    if (trimmed.startsWith(':')) {
+      final parts = trimmed.split('\t');
+      if (parts.length < 2) continue;
+      final header = parts[0].split(' ');
+      if (header.length < 5) continue;
+      final oldBlob = header[2];
+      final newBlob = header[3];
+      final status = header[4];
+      final String path;
+      if (status.startsWith('R') || status.startsWith('C')) {
+        path = (parts.length >= 3 ? parts[2] : parts[1]).replaceAll('\\', '/');
+      } else {
+        path = parts[1].replaceAll('\\', '/');
+      }
+      currentRaw.add((path: path, oldBlob: oldBlob, newBlob: newBlob));
+    } else if (inNumstat) {
+      final parts = trimmed.split('\t');
+      if (parts.length >= 3) {
+        final added = int.tryParse(parts[0]) ?? 0;
+        final deleted = int.tryParse(parts[1]) ?? 0;
+        final rawPath = parts.sublist(2).join('\t');
+        final path = _extractNewPath(rawPath).replaceAll('\\', '/');
+        currentNumstat.add((path, added + deleted));
+      }
+    }
   }
-  if (currentFiles != null &&
-      currentFiles.isNotEmpty &&
-      currentFiles.length <= largeCommitCutoff) {
-    commits.add(_CouplingCommit(
-      author: currentAuthor,
-      subject: currentSubject,
-      files: currentFiles,
+  flushCommit();
+
+  if (commits.isEmpty) {
+    return GitResult.ok(FileCouplingMatrix(
+      jaccard: {},
+      headHash: headHash,
+      commitsAnalyzed: 0,
     ));
   }
 
-  // Resolve the effective half-life. Null caller → derive it from the
-  // signal via [deriveEngramHalfLife]; a number → use it verbatim.
   final double effectiveHalfLife = halfLifeCommits == null
-      ? _deriveAdaptiveHalfLife([for (final c in commits) c.files])
+      ? _deriveAdaptiveHalfLife([for (final c in commits) [for (final f in c.files) f.path]])
       : halfLifeCommits;
   // Commits are in reverse-chrono order — index 0 is the most recent.
   // Weight is evaluated on the semantic clock, not raw ordinal rank:
@@ -1021,17 +1065,20 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   for (var rank = 0; rank < commits.length; rank++) {
     final commit = commits[rank];
     final files = commit.files;
+    final pathSet = {for (final f in files) f.path};
+    final commitMass = files.fold<int>(0, (s, f) => s + f.lines);
     final m = inferCommitMeaningfulness(
       author: commit.author,
       subject: commit.subject,
-      paths: files.toSet(),
+      paths: pathSet,
+      totalLinesChanged: commitMass,
     );
     final step = m.weight.clamp(0.0, 1.0);
     final w = commitWeight(semanticAge) * step;
     semanticAge += step;
     if (w <= 0) continue;
     for (final f in files) {
-      fileCommits[f] = (fileCommits[f] ?? 0) + w;
+      fileCommits[f.path] = (fileCommits[f.path] ?? 0) + w * f.lines;
     }
     final n = files.length;
     if (n < 2) continue;
@@ -1039,14 +1086,12 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       final a = files[i];
       for (var j = i + 1; j < n; j++) {
         final b = files[j];
-        // Order the pair canonically so (a,b) and (b,a) hash to the
-        // same map slot. One `compareTo` — the previous two calls were
-        // literally the same comparison evaluated twice per pair.
-        final cmp = a.compareTo(b);
-        final lo = cmp < 0 ? a : b;
-        final hi = cmp < 0 ? b : a;
+        final cmp = a.path.compareTo(b.path);
+        final lo = cmp < 0 ? a.path : b.path;
+        final hi = cmp < 0 ? b.path : a.path;
+        final mass = math.sqrt(a.lines.toDouble() * b.lines.toDouble());
         final row = pairCount.putIfAbsent(lo, () => {});
-        row[hi] = (row[hi] ?? 0) + w;
+        row[hi] = (row[hi] ?? 0) + w * mass;
       }
     }
   }
@@ -1079,12 +1124,25 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
 class _CouplingCommit {
   final String author;
   final String subject;
-  final List<String> files;
+  final List<({String path, int lines, String oldBlob, String newBlob})> files;
   const _CouplingCommit({
     required this.author,
     required this.subject,
     required this.files,
   });
+}
+
+String _extractNewPath(String raw) {
+  final arrow = raw.indexOf(' => ');
+  if (arrow < 0) return raw;
+  final brace = raw.indexOf('{');
+  if (brace >= 0 && brace < arrow) {
+    final close = raw.indexOf('}', arrow);
+    if (close >= 0) {
+      return '${raw.substring(0, brace)}${raw.substring(arrow + 4, close)}${raw.substring(close + 1)}';
+    }
+  }
+  return raw.substring(arrow + 4);
 }
 
 /// Half-life clamp band. Half-life is measured in commits.
@@ -2317,7 +2375,7 @@ Set<String> _extractSymbols(String content) {
 
 /// Read [path] (relative to [repoRoot]) and extract its symbol set.
 /// Returns empty on I/O error, missing file, or oversize file.
-Set<String> _symbolsForFile(String repoRoot, String path) {
+Set<String> symbolsForFile(String repoRoot, String path) {
   try {
     final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
     if (!file.existsSync()) return const {};
@@ -2417,7 +2475,7 @@ Future<GitResult<SymbolFrequencyIndex>> computeSymbolFrequencyIndex(
   final df = <String, int>{};
   var totalDocs = 0;
   for (final path in scan) {
-    final syms = _symbolsForFile(repoRoot, path);
+    final syms = symbolsForFile(repoRoot, path);
     if (syms.isEmpty) continue;
     totalDocs++;
     for (final sym in syms) {
@@ -2453,7 +2511,7 @@ Map<String, Map<String, double>> computeSymbolCoupling(
   // Read identifier sets for every file in the change set.
   final symSets = <String, Set<String>>{};
   for (final path in paths) {
-    final syms = _symbolsForFile(repoRoot, path);
+    final syms = symbolsForFile(repoRoot, path);
     if (syms.isNotEmpty) symSets[path] = syms;
   }
   if (symSets.length < 2) return const {};

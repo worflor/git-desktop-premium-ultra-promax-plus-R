@@ -28,6 +28,7 @@ import '../../backend/logos_flow.dart' show analyzeFlowCached, FlowFinding;
 import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import 'binary_diff_view.dart';
 import 'diff_document.dart';
 import 'diff_models.dart';
 import 'edit_units.dart';
@@ -50,6 +51,23 @@ const double _kRibbonWidth = 2.0;
 const double _kStageCellWidth = 16.0;
 const double _kLeftReserveWidth = _kRibbonWidth + _kStageCellWidth;
 const double _kLineItemExtent = 18.0;
+
+class _DiffSegment {
+  final int startDisplayIndex;
+  final int lineCount;
+  final bool isBinary;
+  final DiffFileDocument? binaryFile;
+  double? renderedHeight;
+  _DiffSegment({
+    required this.startDisplayIndex,
+    required this.lineCount,
+    required this.isBinary,
+    this.binaryFile,
+  });
+  double get height => isBinary
+      ? (renderedHeight ?? 400.0)
+      : lineCount * _kLineItemExtent;
+}
 
 class _AgeRange {
   final DateTime min;
@@ -315,6 +333,10 @@ class _DiffShellState extends State<DiffShell> {
   /// a unit-map-with-kind-check at the call sites, and the delete side's
   /// add partner is already reachable via `_unitByFastKey[deleteKey]`.
   Set<int> _pairedAddFastKeys = const {};
+
+  Set<int> _binaryMediaIndices = const {};
+  Map<int, DiffFileDocument> _binaryMediaFiles = const {};
+  List<_DiffSegment> _segments = const [];
 
   /// Fast lookup: [ParsedLine.fastKey] → the EditUnit that contains it.
   /// The EditUnit layer is the canonical semantic view (replace, move,
@@ -1239,14 +1261,11 @@ class _DiffShellState extends State<DiffShell> {
     final desired = <String>{};
     final viewport =
         _scrollCtrl.hasClients ? _scrollCtrl.position.viewportDimension : 0.0;
-    final start =
-        ((_scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0) / _kLineItemExtent)
-            .floor()
-            .clamp(0, _displayLines.length - 1);
-    final end = (((_scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0) +
-                math.max(viewport, _kLineItemExtent * 24)) /
-            _kLineItemExtent)
-        .ceil()
+    final scrollOff = _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
+    final start = _displayIndexForOffset(scrollOff)
+        .clamp(0, _displayLines.length - 1);
+    final end = _displayIndexForOffset(
+            scrollOff + math.max(viewport, _kLineItemExtent * 24))
         .clamp(0, _displayLines.length);
     for (var i = start; i < end; i++) {
       final path = _displayLines[i].filePath ?? widget.filePath;
@@ -1465,11 +1484,9 @@ class _DiffShellState extends State<DiffShell> {
     final visible = <String>{};
     if (_scrollCtrl.hasClients && _displayLines.isNotEmpty) {
       final viewport = _scrollCtrl.position.viewportDimension;
-      final top = (_scrollCtrl.offset / _lineItemExtent)
-          .floor()
+      final top = _displayIndexForOffset(_scrollCtrl.offset)
           .clamp(0, _displayLines.length - 1);
-      final bottom = ((_scrollCtrl.offset + viewport) / _lineItemExtent)
-          .ceil()
+      final bottom = _displayIndexForOffset(_scrollCtrl.offset + viewport)
           .clamp(0, _displayLines.length - 1);
       for (var i = top; i <= bottom; i++) {
         final p = _displayLines[i].filePath ?? widget.filePath;
@@ -1771,6 +1788,40 @@ class _DiffShellState extends State<DiffShell> {
   /// Height of every diff row. Used for paint-drag hit-testing.
   static const double _lineItemExtent = _kLineItemExtent;
 
+  double _offsetForDisplayIndex(int idx) {
+    if (idx <= 0) return 0.0;
+    if (_segments.isEmpty) return idx * _lineItemExtent;
+    double offset = 0;
+    for (final seg in _segments) {
+      final segEnd = seg.startDisplayIndex + seg.lineCount;
+      if (idx < segEnd) {
+        if (seg.isBinary) return offset;
+        return offset + (idx - seg.startDisplayIndex) * _lineItemExtent;
+      }
+      offset += seg.isBinary
+          ? seg.height
+          : seg.lineCount * _lineItemExtent;
+    }
+    return offset;
+  }
+
+  int _displayIndexForOffset(double offset) {
+    if (offset <= 0 || _segments.isEmpty) return 0;
+    double cum = 0;
+    for (final seg in _segments) {
+      final segH = seg.isBinary
+          ? seg.height
+          : seg.lineCount * _lineItemExtent;
+      if (offset < cum + segH) {
+        if (seg.isBinary) return seg.startDisplayIndex;
+        return seg.startDisplayIndex +
+            ((offset - cum) / _lineItemExtent).floor();
+      }
+      cum += segH;
+    }
+    return _displayLines.isEmpty ? 0 : _displayLines.length - 1;
+  }
+
   /// Toggle staging on a single line (by its index in [_lines]). Optionally
   /// pair-aware: if [autoPair] is true and the line is part of a -/+
   /// replacement, the partner is toggled coherently to the same target
@@ -1883,8 +1934,9 @@ class _DiffShellState extends State<DiffShell> {
     final local = box.globalToLocal(globalPosition);
     if (local.dy < 0 || local.dy > box.size.height) return;
     final scroll = _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
-    final displayIndex = ((local.dy + scroll) / _lineItemExtent).floor();
+    final displayIndex = _displayIndexForOffset(local.dy + scroll);
     if (displayIndex < 0 || displayIndex >= _displayLines.length) return;
+    if (_binaryMediaIndices.contains(displayIndex)) return;
     final line = _displayLines[displayIndex];
     if (_paintedFastKeys.contains(line.fastKey)) return;
     if (line.kind != LineKind.added && line.kind != LineKind.deleted) return;
@@ -2085,7 +2137,7 @@ class _DiffShellState extends State<DiffShell> {
     // wherever we are; treat "you've arrived" as the landing so the
     // halo can light on the hunk you actually stopped near.
     if (v.abs() < 4.0) {
-      return (pos / _lineItemExtent).round().clamp(0, _displayLines.length - 1);
+      return _displayIndexForOffset(pos).clamp(0, _displayLines.length - 1);
     }
     if (v * a > 0) return null; // accelerating — not approaching rest
     if (a.abs() < 0.3) {
@@ -2093,7 +2145,7 @@ class _DiffShellState extends State<DiffShell> {
       // ahead on velocity alone so a steady-wheel approach still
       // lights the upcoming hunk before you arrive.
       final ahead = pos + v * 6.0;
-      final lineIdx = (ahead / _lineItemExtent).round();
+      final lineIdx = _displayIndexForOffset(ahead);
       if (lineIdx < 0 || lineIdx >= _displayLines.length) return null;
       return lineIdx;
     }
@@ -2104,7 +2156,7 @@ class _DiffShellState extends State<DiffShell> {
     const maxLook = 30.0 * _lineItemExtent;
     final bounded = dx.clamp(-maxLook, maxLook);
     final predictedOffset = pos + bounded;
-    final lineIdx = (predictedOffset / _lineItemExtent).round();
+    final lineIdx = _displayIndexForOffset(predictedOffset);
     if (lineIdx < 0 || lineIdx >= _displayLines.length) return null;
     return lineIdx;
   }
@@ -2324,8 +2376,7 @@ class _DiffShellState extends State<DiffShell> {
     }
 
     if (_scrollCtrl.hasClients) {
-      final topIndex = (_scrollCtrl.offset / _lineItemExtent)
-          .floor()
+      final topIndex = _displayIndexForOffset(_scrollCtrl.offset)
           .clamp(0, _displayLines.length - 1);
       addCandidate(_displayLines[topIndex].filePath ?? widget.filePath);
     }
@@ -2366,8 +2417,7 @@ class _DiffShellState extends State<DiffShell> {
     final filePath = widget.filePath;
     if (filePath.isEmpty) return;
     final scopeKey = _temporalMarkScopeKey(filePath);
-    final topIdx = (_scrollCtrl.offset / _lineItemExtent)
-        .floor()
+    final topIdx = _displayIndexForOffset(_scrollCtrl.offset)
         .clamp(0, _displayLines.length - 1);
     final line = _displayLines[topIdx];
     final unit = _unitByFastKey[line.fastKey];
@@ -2412,10 +2462,16 @@ class _DiffShellState extends State<DiffShell> {
       _scrollCtrl.jumpTo(0);
       return;
     }
+    if (_hasUnmeasuredBinaryBefore(targetIdx)) {
+      _jumpToDisplayIndex(targetIdx);
+      return;
+    }
     // Place the target ~1/4 down the viewport for orientation context above.
     final viewH = _scrollCtrl.position.viewportDimension;
-    final raw = (targetIdx * _lineItemExtent) - viewH * 0.25;
-    final target = raw.clamp(0.0, _scrollCtrl.position.maxScrollExtent);
+    final raw = _offsetForDisplayIndex(targetIdx) - viewH * 0.25;
+    final maxExt = math.max(
+      _scrollCtrl.position.maxScrollExtent, _totalEstimatedExtent);
+    final target = raw.clamp(0.0, maxExt);
     _scrollCtrl.jumpTo(target);
 
     // Pulse the restored unit so the reader sees "you're back here." Clears
@@ -2462,7 +2518,7 @@ class _DiffShellState extends State<DiffShell> {
       if (h.lineIndex < 0 || h.lineIndex >= _lines.length) continue;
       final idx = _displayLineIndex[_lines[h.lineIndex].fastKey];
       if (idx == null) continue;
-      final hOffset = idx * _lineItemExtent;
+      final hOffset = _offsetForDisplayIndex(idx);
       final d = (hOffset - offset).abs();
       if (d < bestDist) {
         bestDist = d;
@@ -2499,7 +2555,7 @@ class _DiffShellState extends State<DiffShell> {
       (l) => l.fastKey == targetKey,
     );
     if (displayIdx < 0) return;
-    final targetY = displayIdx * _lineItemExtent;
+    final targetY = _offsetForDisplayIndex(displayIdx);
     final viewH = _scrollCtrl.position.viewportDimension;
     final offset = _scrollCtrl.offset;
     if (targetY < offset) {
@@ -2769,7 +2825,96 @@ class _DiffShellState extends State<DiffShell> {
     } else {
       _displayLines = _applyAdaptiveContext(_filterCollapsedHunkBodies(lines));
     }
-    if (lines.isEmpty) {
+
+    // Collapse binary file sections into single marker rows.
+    _binaryMediaIndices = const {};
+    _binaryMediaFiles = const {};
+    if (_currentDocument != null &&
+        _currentDocument!.files.any((f) => f.isBinary) &&
+        _displayLines.isNotEmpty) {
+      final binaryByPath = <String, DiffFileDocument>{
+        for (final e in _currentDocument!.filesByPath.entries)
+          if (e.value.isBinary) e.key: e.value,
+      };
+      final collapsed = <ParsedLine>[];
+      final binIndices = <int>{};
+      final binFiles = <int, DiffFileDocument>{};
+      String? lastBinaryPath;
+      for (final line in _displayLines) {
+        final lp = line.filePath ?? '';
+        final binFile = binaryByPath[lp];
+        if (binFile != null) {
+          if (lp != lastBinaryPath) {
+            binIndices.add(collapsed.length);
+            binFiles[collapsed.length] = binFile;
+            collapsed.add(line);
+            lastBinaryPath = lp;
+          }
+        } else {
+          collapsed.add(line);
+          lastBinaryPath = null;
+        }
+      }
+      if (binIndices.isNotEmpty) {
+        _displayLines = collapsed;
+        _binaryMediaIndices = binIndices;
+        _binaryMediaFiles = binFiles;
+      }
+    }
+
+    final prevHeights = <String, double>{
+      for (final seg in _segments)
+        if (seg.isBinary && seg.binaryFile != null && seg.renderedHeight != null)
+          seg.binaryFile!.path: seg.renderedHeight!,
+    };
+
+    if (_displayLines.isEmpty) {
+      _segments = const [];
+    } else if (_binaryMediaIndices.isEmpty) {
+      _segments = [
+        _DiffSegment(
+          startDisplayIndex: 0,
+          lineCount: _displayLines.length,
+          isBinary: false,
+        ),
+      ];
+    } else {
+      final segs = <_DiffSegment>[];
+      var textStart = 0;
+      for (var i = 0; i < _displayLines.length; i++) {
+        if (_binaryMediaIndices.contains(i)) {
+          if (i > textStart) {
+            segs.add(_DiffSegment(
+              startDisplayIndex: textStart,
+              lineCount: i - textStart,
+              isBinary: false,
+            ));
+          }
+          final file = _binaryMediaFiles[i];
+          final seg = _DiffSegment(
+            startDisplayIndex: i,
+            lineCount: 1,
+            isBinary: true,
+            binaryFile: file,
+          );
+          if (file != null) {
+            seg.renderedHeight = prevHeights[file.path];
+          }
+          segs.add(seg);
+          textStart = i + 1;
+        }
+      }
+      if (textStart < _displayLines.length) {
+        segs.add(_DiffSegment(
+          startDisplayIndex: textStart,
+          lineCount: _displayLines.length - textStart,
+          isBinary: false,
+        ));
+      }
+      _segments = segs;
+    }
+
+    if (_displayLines.isEmpty) {
       _displayLineIndex = const {};
       _hunkDisplayRows = const [];
       _reconcilePinnedLine();
@@ -2794,6 +2939,55 @@ class _DiffShellState extends State<DiffShell> {
     _hunkDisplayRows = rows;
     _reconcilePinnedLine();
     _syncLogosSubscriptions();
+  }
+
+  Widget _buildSliverDiff({
+    required List<ParsedLine> displayLines,
+    required double viewportWidth,
+    required AppTokens t,
+    required Widget Function(BuildContext, int) textRowBuilder,
+  }) {
+    return CustomScrollView(
+      key: _listViewKey,
+      controller: _searchVisible ? null : _scrollCtrl,
+      slivers: [
+        for (final seg in _segments)
+          if (seg.isBinary)
+            SliverToBoxAdapter(
+              child: _SizeReporter(
+                onSize: (h) {
+                  if (seg.renderedHeight == null ||
+                      (seg.renderedHeight! - h).abs() > 1.0) {
+                    setState(() {
+                      seg.renderedHeight = h;
+                    });
+                  }
+                },
+                child: BinaryDiffView(
+                  repoPath: widget.repositoryPath ?? '',
+                  filePath: seg.binaryFile!.path,
+                  oldBlobHash: seg.binaryFile!.oldBlobHash,
+                  newBlobHash: seg.binaryFile!.newBlobHash,
+                  viewportWidth: viewportWidth,
+                  tokens: t,
+                ),
+              ),
+            )
+          else
+            SliverFixedExtentList(
+              itemExtent: _lineItemExtent,
+              delegate: SliverChildBuilderDelegate(
+                (ctx, localIdx) {
+                  final i = seg.startDisplayIndex + localIdx;
+                  if (i >= displayLines.length) return null;
+                  return textRowBuilder(ctx, i);
+                },
+                childCount: seg.lineCount,
+              ),
+            ),
+        const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+      ],
+    );
   }
 
   double _measureMaxLineWidth(int maxChars) {
@@ -2826,6 +3020,34 @@ class _DiffShellState extends State<DiffShell> {
 
   void _jumpToLineIndex(int lineIdx) {
     if (lineIdx < 0 || lineIdx >= _lines.length) return;
+    final targetPath = _lines[lineIdx].filePath;
+
+    // For binary files, jump directly via the segment model — fastKey
+    // collisions in _displayLineIndex make it unreliable for navigation
+    // to a specific file section.
+    if (targetPath != null) {
+      for (final idx in _binaryMediaIndices) {
+        if (idx < _displayLines.length &&
+            _displayLines[idx].filePath == targetPath) {
+          _jumpToDisplayIndex(idx);
+          return;
+        }
+      }
+    }
+
+    // For text files, find the closest display line by filePath first,
+    // then refine by scanning nearby lines for the exact fastKey.
+    if (targetPath != null) {
+      for (var i = 0; i < _displayLines.length; i++) {
+        if (_displayLines[i].filePath == targetPath) {
+          _jumpToDisplayIndex(i);
+          return;
+        }
+      }
+    }
+
+    // Last resort: fastKey walk (works for single-file diffs where
+    // there's no filePath ambiguity).
     for (var delta = 0; delta < _lines.length; delta++) {
       final forward = lineIdx + delta;
       if (forward < _lines.length) {
@@ -2847,15 +3069,43 @@ class _DiffShellState extends State<DiffShell> {
     }
   }
 
-  void _jumpToDisplayIndex(int displayIdx) {
+  double get _totalEstimatedExtent {
+    double total = 0;
+    for (final seg in _segments) {
+      total += seg.isBinary
+          ? seg.height
+          : seg.lineCount * _lineItemExtent;
+    }
+    return total;
+  }
+
+  bool _hasUnmeasuredBinaryBefore(int displayIdx) {
+    for (final seg in _segments) {
+      if (seg.startDisplayIndex >= displayIdx) break;
+      if (seg.isBinary && seg.renderedHeight == null) return true;
+    }
+    return false;
+  }
+
+  void _jumpToDisplayIndex(int displayIdx,
+      [int retries = 2, int measureWaits = 30]) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollCtrl.hasClients) {
+      if (!mounted) return;
+      if (!_scrollCtrl.hasClients) {
+        if (retries > 0) _jumpToDisplayIndex(displayIdx, retries - 1, measureWaits);
         return;
       }
-      const lineH = 18.0;
-      final targetOffset = (displayIdx * lineH).clamp(
-        0.0,
+      if (_hasUnmeasuredBinaryBefore(displayIdx) && measureWaits > 0) {
+        _jumpToDisplayIndex(displayIdx, retries, measureWaits - 1);
+        return;
+      }
+      final maxExtent = math.max(
         _scrollCtrl.position.maxScrollExtent,
+        _totalEstimatedExtent,
+      );
+      final targetOffset = _offsetForDisplayIndex(displayIdx).clamp(
+        0.0,
+        maxExtent,
       );
       _programmaticScrollInFlight = true;
       _scrollCtrl.motionAnimateTo(
@@ -3375,14 +3625,11 @@ class _DiffShellState extends State<DiffShell> {
                               child:
                                   NotificationListener<ScrollEndNotification>(
                                 onNotification: _onScrollEnd,
-                                child: ListView.builder(
-                                  key: _listViewKey,
-                                  controller:
-                                      _searchVisible ? null : _scrollCtrl,
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  itemCount: displayLines.length,
-                                  itemExtent: _lineItemExtent,
-                                  itemBuilder: (ctx, i) {
+                                child: _buildSliverDiff(
+                                  displayLines: displayLines,
+                                  viewportWidth: constraints.maxWidth,
+                                  t: t,
+                                  textRowBuilder: (ctx, i) {
                                     final line = displayLines[i];
                                     final lineFile =
                                         line.filePath ?? widget.filePath;
@@ -3639,7 +3886,7 @@ class _DiffShellState extends State<DiffShell> {
                                         ? (hunkHeader.additions +
                                             hunkHeader.deletions)
                                         : 0;
-                                    return Stack(
+                                    final hunkRow = Stack(
                                       children: [
                                         wrapped,
                                         Positioned(
@@ -3668,6 +3915,7 @@ class _DiffShellState extends State<DiffShell> {
                                         ),
                                       ],
                                     );
+                                    return hunkRow;
                                   },
                                 ),
                               ),
@@ -3697,6 +3945,8 @@ class _DiffShellState extends State<DiffShell> {
                     hunkDisplayRows: _hunkDisplayRows,
                     scrollCtrl: _scrollCtrl,
                     lineExtent: _lineItemExtent,
+                    displayIndexForOffset: _displayIndexForOffset,
+                    offsetForDisplayIndex: _offsetForDisplayIndex,
                     onJump: _jumpToHunkIndex,
                   ),
                 ),
@@ -3739,9 +3989,15 @@ class _DiffShellState extends State<DiffShell> {
             },
             onRhymeTap: (targetIdx) {
               if (!_scrollCtrl.hasClients) return;
-              final offset = targetIdx * _lineItemExtent;
+              if (_hasUnmeasuredBinaryBefore(targetIdx)) {
+                _jumpToDisplayIndex(targetIdx);
+                return;
+              }
+              final offset = _offsetForDisplayIndex(targetIdx);
               _scrollCtrl.motionAnimateTo(
-                offset.clamp(0.0, _scrollCtrl.position.maxScrollExtent),
+                offset.clamp(0.0, math.max(
+                    _scrollCtrl.position.maxScrollExtent,
+                    _totalEstimatedExtent)),
                 context: context,
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutCubic,
@@ -4051,9 +4307,7 @@ class _DiffLineState extends State<DiffLineView> {
     if (isHunk) {
       gutterText = '···';
     } else if (isPair) {
-      final a = l.lineNumOld != null ? '${l.lineNumOld}' : '';
-      final b = addPart!.lineNumNew != null ? '${addPart.lineNumNew}' : '';
-      gutterText = '$a→$b';
+      gutterText = addPart!.lineNumNew != null ? '${addPart.lineNumNew}' : '';
     } else if (isMoveFrom) {
       final n = l.lineNumOld != null ? '${l.lineNumOld}' : '';
       gutterText = '⤴$n';
@@ -4114,7 +4368,7 @@ class _DiffLineState extends State<DiffLineView> {
               ? (widget.blameEntry != null
                   ? t.hyperChromatic1.withValues(alpha: 0.9)
                   : t.textMuted)
-              : t.textMuted.withValues(alpha: 0.5),
+              : AppTokens.contrastGlyph(gutterBg).withValues(alpha: 0.5),
           fontSize: 10,
           fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
         ),
@@ -7198,6 +7452,54 @@ enum _PinnedPanelTone { stable, hot, novel, contested, spreading }
 /// predicted a landing on this hunk, the text steps up in weight and
 /// colour (driven by [approachStrength] ∈ [0,1]) so the reader sees
 /// the upcoming hunk light up before the scroll settles.
+class _SizeReporter extends StatefulWidget {
+  final ValueChanged<double> onSize;
+  final Widget child;
+  const _SizeReporter({required this.onSize, required this.child});
+  @override
+  State<_SizeReporter> createState() => _SizeReporterState();
+}
+
+class _SizeReporterState extends State<_SizeReporter> {
+  final _key = GlobalKey();
+  double _lastHeight = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    SchedulerBinding.instance.addPostFrameCallback((_) => _measure());
+  }
+
+  void _measure() {
+    final box = _key.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final h = box.size.height;
+    if ((_lastHeight - h).abs() > 1.0) {
+      _lastHeight = h;
+      widget.onSize(h);
+    }
+  }
+
+  @override
+  void didUpdateWidget(_SizeReporter old) {
+    super.didUpdateWidget(old);
+    SchedulerBinding.instance.addPostFrameCallback((_) => _measure());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        SchedulerBinding.instance.addPostFrameCallback((_) => _measure());
+        return true;
+      },
+      child: SizeChangedLayoutNotifier(
+        child: KeyedSubtree(key: _key, child: widget.child),
+      ),
+    );
+  }
+}
+
 class _HunkInlineHint extends StatelessWidget {
   final int additions;
   final int deletions;
@@ -7352,6 +7654,8 @@ class _StickyHunkHeader extends StatelessWidget {
   final List<int> hunkDisplayRows;
   final ScrollController scrollCtrl;
   final double lineExtent;
+  final int Function(double offset) displayIndexForOffset;
+  final double Function(int idx) offsetForDisplayIndex;
   final ValueChanged<int> onJump;
 
   const _StickyHunkHeader({
@@ -7360,6 +7664,8 @@ class _StickyHunkHeader extends StatelessWidget {
     required this.hunkDisplayRows,
     required this.scrollCtrl,
     required this.lineExtent,
+    required this.displayIndexForOffset,
+    required this.offsetForDisplayIndex,
     required this.onJump,
   });
 
@@ -7407,7 +7713,7 @@ class _StickyHunkHeader extends StatelessWidget {
           return const SizedBox.shrink();
         }
         final offset = scrollCtrl.offset;
-        final topIdx = (offset / lineExtent).floor();
+        final topIdx = displayIndexForOffset(offset);
 
         // Find the hunk whose natural header has scrolled out of view:
         // the largest hunk display-row strictly less than topIdx. Skip
@@ -7439,7 +7745,7 @@ class _StickyHunkHeader extends StatelessWidget {
         }
         double opacity = 1.0;
         if (nextRow != null) {
-          final pxToNext = (nextRow * lineExtent) - offset;
+          final pxToNext = offsetForDisplayIndex(nextRow) - offset;
           if (pxToNext < lineExtent) {
             opacity = (pxToNext / lineExtent).clamp(0.0, 1.0);
           }

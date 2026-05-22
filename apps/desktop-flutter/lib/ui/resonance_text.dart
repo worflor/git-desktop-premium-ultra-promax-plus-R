@@ -89,8 +89,8 @@ enum _Cat { bold, italic, code, quoted, tech, camel, constant, filePath, entity,
 
 final _patterns = <(_Cat, RegExp)>[
   // Markdown (highest priority — explicit author intent)
-  (_Cat.bold, RegExp(r'\*\*(.+?)\*\*')),
-  (_Cat.italic, RegExp(r'(?<!\*)\*([^*]+?)\*(?!\*)')),
+  (_Cat.bold, RegExp(r'(?<![*\w])\*\*(?=\S)(.+?)(?<=\S)\*\*(?![*\w])')),
+  (_Cat.italic, RegExp(r'(?<![*\w])\*(?=\S)([^*]+?)(?<=\S)\*(?![*\w])')),
   (_Cat.code, RegExp(r'`([^`]+)`')),
 
   // Single-quoted identifiers in prose: 'baseStyle', 'tokens', etc.
