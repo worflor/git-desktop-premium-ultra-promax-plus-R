@@ -40,6 +40,130 @@ import 'dart:typed_data';
 
 import 'logos_core.dart';
 
+// ── Radix-2 Cooley-Tukey FFT ────────────────────────────────────────
+//
+// In-place, iterative, bit-reversal permutation.  Power-of-2 only.
+// Used as the inner kernel for the Bluestein chirp-z wrapper below.
+
+int _nextPow2(int n) {
+  var p = 1;
+  while (p < n) p <<= 1;
+  return p;
+}
+
+void _fftRadix2(Float64List re, Float64List im, int n, bool inverse) {
+  // Bit-reversal permutation.
+  for (var i = 1, j = 0; i < n; i++) {
+    var bit = n >> 1;
+    while (j & bit != 0) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+    if (i < j) {
+      var tmp = re[i]; re[i] = re[j]; re[j] = tmp;
+      tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+    }
+  }
+
+  // Butterfly passes.
+  final sign = inverse ? 1.0 : -1.0;
+  for (var len = 2; len <= n; len <<= 1) {
+    final halfLen = len >> 1;
+    final angle = sign * 2.0 * math.pi / len;
+    final wRe = math.cos(angle);
+    final wIm = math.sin(angle);
+    for (var i = 0; i < n; i += len) {
+      var curRe = 1.0;
+      var curIm = 0.0;
+      for (var j = 0; j < halfLen; j++) {
+        final a = i + j;
+        final b = a + halfLen;
+        final tRe = curRe * re[b] - curIm * im[b];
+        final tIm = curRe * im[b] + curIm * re[b];
+        re[b] = re[a] - tRe;
+        im[b] = im[a] - tIm;
+        re[a] += tRe;
+        im[a] += tIm;
+        final nextRe = curRe * wRe - curIm * wIm;
+        curIm = curRe * wIm + curIm * wRe;
+        curRe = nextRe;
+      }
+    }
+  }
+
+  if (inverse) {
+    final invN = 1.0 / n;
+    for (var i = 0; i < n; i++) {
+      re[i] *= invN;
+      im[i] *= invN;
+    }
+  }
+}
+
+// ── Bluestein chirp-z DFT for arbitrary N ──────────────────────────
+//
+// Reduces an arbitrary-length DFT to a circular convolution of length
+// M = nextPow2(2N − 1), computed via three radix-2 FFTs.  Total cost
+// O(N log N) for any N.
+
+({Float64List real, Float64List imaginary}) _bluesteinForward(
+    Float64List xRe, Float64List xIm, int n) {
+  final m = _nextPow2(2 * n - 1);
+
+  // Chirp sequence: c[k] = exp(-iπk²/N).
+  final chirpRe = Float64List(n);
+  final chirpIm = Float64List(n);
+  for (var k = 0; k < n; k++) {
+    final phase = -math.pi * (k * k % (2 * n)) / n;
+    chirpRe[k] = math.cos(phase);
+    chirpIm[k] = math.sin(phase);
+  }
+
+  // a[k] = x[k] · conj(chirp[k]), zero-padded to M.
+  final aRe = Float64List(m);
+  final aIm = Float64List(m);
+  for (var k = 0; k < n; k++) {
+    aRe[k] = xRe[k] * chirpRe[k] + xIm[k] * chirpIm[k];
+    aIm[k] = xIm[k] * chirpRe[k] - xRe[k] * chirpIm[k];
+  }
+
+  // b[k] = chirp[k], wrapped: b[0..N-1] = chirp, b[M-N+1..M-1] = chirp[N-1..1].
+  final bRe = Float64List(m);
+  final bIm = Float64List(m);
+  bRe[0] = chirpRe[0];
+  bIm[0] = chirpIm[0];
+  for (var k = 1; k < n; k++) {
+    bRe[k] = chirpRe[k];
+    bIm[k] = chirpIm[k];
+    bRe[m - k] = chirpRe[k];
+    bIm[m - k] = chirpIm[k];
+  }
+
+  // Convolve via FFT: A = FFT(a), B = FFT(b), C = IFFT(A·B).
+  _fftRadix2(aRe, aIm, m, false);
+  _fftRadix2(bRe, bIm, m, false);
+  final cRe = Float64List(m);
+  final cIm = Float64List(m);
+  for (var k = 0; k < m; k++) {
+    cRe[k] = aRe[k] * bRe[k] - aIm[k] * bIm[k];
+    cIm[k] = aRe[k] * bIm[k] + aIm[k] * bRe[k];
+  }
+  _fftRadix2(cRe, cIm, m, true);
+
+  // X[k] = chirp[k] · C[k].
+  final outRe = Float64List(n);
+  final outIm = Float64List(n);
+  for (var k = 0; k < n; k++) {
+    outRe[k] = chirpRe[k] * cRe[k] + chirpIm[k] * cIm[k];
+    outIm[k] = chirpRe[k] * cIm[k] - chirpIm[k] * cRe[k];
+  }
+  return (real: outRe, imaginary: outIm);
+}
+
+// ── Threshold for O(N²) → O(N log N) crossover ────────────────────
+const int _kFftCrossover = 256;
+
 /// Real-to-complex unitary forward DFT `X[k] = (1/√N) · Σⱼ x[j] · e^{-2πi·k·j/N}`.
 /// Returned as parallel `(real, imaginary)` Float64Lists of length
 /// `curve.length`.
@@ -48,9 +172,9 @@ import 'logos_core.dart';
 /// curves with sparse NaN entries (common when a trajectory has some
 /// points with missing file spectra). Satisfies Parseval: `‖x‖² = ‖X‖²`.
 ///
-/// Cost: O(N²). Fine for N up to a few thousand. Callers wanting
-/// FFT speeds on long histories can plug in an external FFT; the
-/// interface is stable.
+/// For N ≤ [_kFftCrossover] uses the naive O(N²) path (lower constant
+/// factor). For larger N uses Bluestein's chirp-z algorithm via radix-2
+/// FFT — O(N log N) for any N, no power-of-2 restriction.
 ///
 /// This is THE unifying DFT in the engine — used both by
 /// [SpectralTrajectory.dftOfCurve] (single-axis use) and by
@@ -59,14 +183,27 @@ import 'logos_core.dart';
   List<double> curve,
 ) {
   final n = curve.length;
-  final re = Float64List(n);
-  final im = Float64List(n);
-  if (n == 0) return (real: re, imaginary: im);
+  if (n == 0) return (real: Float64List(0), imaginary: Float64List(0));
   final invSqrtN = 1.0 / math.sqrt(n);
   final clean = Float64List(n);
   for (var j = 0; j < n; j++) {
     clean[j] = curve[j].isFinite ? curve[j] : 0.0;
   }
+
+  if (n > _kFftCrossover) {
+    // Bluestein computes the unnormalized DFT; scale by 1/√N for unitary.
+    final xIm = Float64List(n);
+    final result = _bluesteinForward(clean, xIm, n);
+    for (var k = 0; k < n; k++) {
+      result.real[k] *= invSqrtN;
+      result.imaginary[k] *= invSqrtN;
+    }
+    return result;
+  }
+
+  // Naive O(N²) for small N.
+  final re = Float64List(n);
+  final im = Float64List(n);
   for (var k = 0; k < n; k++) {
     var sumRe = 0.0;
     var sumIm = 0.0;
@@ -86,8 +223,6 @@ import 'logos_core.dart';
 /// [realDftForward] on a real signal, recovers the original signal
 /// to `1e-12` precision.
 ///
-///     x[j] = (1/√N) · Σ_k (X_re[k]·cos + X_im[k]·(-sin))·e^{+2πi·k·j/N}
-///
 /// Returns a real Float64List (the imaginary part is discarded; for
 /// signals that came from a real forward transform it's numerical
 /// noise at the ~1e-15 level anyway).
@@ -96,9 +231,42 @@ Float64List realDftInverse({
   required Float64List imaginary,
 }) {
   final n = real.length;
-  final out = Float64List(n);
-  if (n == 0) return out;
+  if (n == 0) return Float64List(0);
   final invSqrtN = 1.0 / math.sqrt(n);
+
+  if (n > _kFftCrossover) {
+    // Inverse DFT = conj(forward(conj(X))) / N, but since our forward
+    // already includes 1/√N, we use: IDFT = (1/√N) · forward(conj(X)),
+    // then take conjugate.  For real output we just read the real part.
+    //
+    // More directly: swap real↔conj (negate imag), run forward, negate
+    // imag, scale by √N * 1/√N = 1... but we need to be careful with
+    // the normalization.  Cleanest: use Bluestein on the conjugated input
+    // and scale correctly.
+    final conjIm = Float64List(n);
+    for (var k = 0; k < n; k++) {
+      conjIm[k] = -imaginary[k];
+    }
+    final fwd = _bluesteinForward(Float64List.fromList(real), conjIm, n);
+    // fwd is the unnormalized DFT of conj(X).
+    // Standard: IDFT(X) = (1/N) * conj(DFT(conj(X)))
+    // Unitary:  IDFT(X) = (1/√N) * conj(DFT(conj(X))) / √N
+    //                    = (1/√N) * fwd / √N ... no — Bluestein is raw,
+    // and our forward already applies 1/√N. The inverse of a unitary
+    // forward that is (1/√N)·DFT is (1/√N)·conj(DFT(conj(X))):
+    //   forward(x)[k] = (1/√N) Σ x[j] e^{-2πijk/N}
+    //   inverse(X)[j] = (1/√N) Σ X[k] e^{+2πijk/N}
+    //                 = (1/√N) conj(DFT(conj(X)))[j]
+    //                 = (1/√N) fwd.real[j]  (real output)
+    final out = Float64List(n);
+    for (var j = 0; j < n; j++) {
+      out[j] = fwd.real[j] * invSqrtN;
+    }
+    return out;
+  }
+
+  // Naive O(N²) for small N.
+  final out = Float64List(n);
   for (var j = 0; j < n; j++) {
     var sum = 0.0;
     final phaseBase = 2.0 * math.pi * j / n;

@@ -8108,10 +8108,18 @@ class _MusePaneState extends State<_MusePane> {
               Text(
                 isFever ? '☽' : '✦',
                 style: TextStyle(
-                  color: isFever
-                      ? t.accentBright.withValues(alpha: 0.75)
-                      : t.accentBright.withValues(alpha: 0.55),
-                  fontSize: 11,
+                  color: t.accentBright.withValues(alpha: switch (tier) {
+                    AiMuseIdeaTier.spark => 0.30,
+                    AiMuseIdeaTier.current => 0.55,
+                    AiMuseIdeaTier.horizon => 0.80,
+                    AiMuseIdeaTier.fever => 0.75,
+                  }),
+                  fontSize: switch (tier) {
+                    AiMuseIdeaTier.spark => 9.0,
+                    AiMuseIdeaTier.current => 11.0,
+                    AiMuseIdeaTier.horizon => 13.0,
+                    AiMuseIdeaTier.fever => 11.0,
+                  },
                 ),
               ),
               const SizedBox(width: 6),
@@ -14542,17 +14550,27 @@ class _CouplingNudgeBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        for (final n in nudges)
-          _CouplingNudgeChip(
-            tokens: tokens,
-            nudge: n,
-            onAdd: () => onAdd(n.path),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < nudges.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                _CouplingNudgeChip(
+                  tokens: tokens,
+                  nudge: nudges[i],
+                  onAdd: () => onAdd(nudges[i].path),
+                ),
+              ],
+            ],
           ),
-      ],
+        ),
+      ),
     );
   }
 }

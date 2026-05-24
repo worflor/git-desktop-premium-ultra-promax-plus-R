@@ -58,18 +58,16 @@ extension SpectralThermo on SpectralBasis {
     return z;
   }
 
-  /// Helmholtz free energy of `ρ` at temperature `t`:
-  /// `F(ρ, t) = −log Z(ρ, t)`.
+  /// Negative log-partition of `ρ` at temperature `t`:
+  /// `−log Z(ρ, t)`.
   ///
-  /// **Reading**: the natural information-theoretic cost of the
-  /// source. Low free energy = `ρ` aligns with the operator's
-  /// low-frequency modes (focused, well-coupled). High free energy =
-  /// `ρ` lives in the high-frequency tail (scattered, poorly coupled).
-  /// The minimum-free-energy `ρ` over a constraint set is the
-  /// principled "minimum description length" emission set for that
-  /// constraint — replaces ad-hoc budget knobs with a thermodynamic
-  /// stationarity condition.
-  double freeEnergy(Float64List rho, double t) {
+  /// **Not** the Helmholtz free energy (which is `−(1/β)·log Z` — see
+  /// [thermodynamics]). This is the raw information-theoretic cost:
+  /// the surprisal of the source under heat diffusion. Low values =
+  /// `ρ` aligns with the operator's low-frequency modes (focused,
+  /// well-coupled). High values = `ρ` lives in the high-frequency
+  /// tail (scattered, poorly coupled).
+  double negLogPartition(Float64List rho, double t) {
     final z = partitionFunction(rho, t);
     if (z <= _subnormalFloor) return double.infinity;
     return -math.log(z);
@@ -110,9 +108,11 @@ extension SpectralThermo on SpectralBasis {
   /// Returns a record containing:
   /// * `partitionFunction` — `Z(β)`
   /// * `freeEnergy` — Helmholtz `F = −(1/β)·log Z`
+  ///   (β-scaled; cf. [negLogPartition] which returns raw `−log Z`)
   /// * `internalEnergy` — `⟨E⟩ = −∂log(Z)/∂β = Σⱼ λⱼ·e^{−βλⱼ} / Z`
   /// * `entropy` — thermodynamic entropy `S = β·(⟨E⟩ − F)` (k_B = 1)
-  /// * `heatCapacity` — `C = β² · (⟨E²⟩ − ⟨E⟩²) = β²·Var(E)`
+  /// * `heatCapacity` — `C = β² · Var(E)`
+  ///   (β²-scaled; cf. [energyVariance] which returns raw `Var(E)`)
   ///
   /// ## The Grand Identity (verified by test)
   ///
@@ -245,17 +245,14 @@ extension SpectralThermo on SpectralBasis {
     return (ctx: rCtx * invZ, meta: rMeta * invZ, nbhd: rNbhd * invZ);
   }
 
-  /// Heat capacity at temperature t: the second derivative of the
-  /// log-partition `log Z(t)` with respect to t. Equals the variance
-  /// of `λ` under the thermal probability `pⱼ(t) = e^{−tλⱼ} / Z(t)`.
+  /// Eigenvalue variance under the Boltzmann distribution at
+  /// inverse temperature `t`: `Var(λ) = ⟨λ²⟩_t − ⟨λ⟩_t²`.
   ///
-  /// **Reading**: spikes in heat capacity mark **phase transitions**
-  /// — temperatures at which the codebase's effective structure changes
-  /// character. Sweep t; peaks identify the codebase's natural scales
-  /// (e.g. t ≈ 1.3 method-level, t ≈ 4.7 module-level). This is the
-  /// diagnostic that tells you *which t to pick* for any query that
-  /// wants a specific structural scale.
-  double heatCapacity(double t) {
+  /// The true heat capacity `C_V = β²·Var(λ)` is returned by
+  /// [thermodynamics]. This returns the bare variance — peaks still
+  /// mark phase transitions (same locations, magnitude differs by
+  /// `t²`). Sweep `t`; peaks identify the codebase's natural scales.
+  double energyVariance(double t) {
     if (k == 0) return 0.0;
     var z = 0.0;
     var zLam = 0.0;
@@ -303,10 +300,10 @@ extension SpectralProjectionThermo on SpectralProjection {
     return s;
   }
 
-  /// Free energy at temperature [t]: `F = −log Z(ρ, t)` where
+  /// Negative log-partition at temperature [t]: `−log Z(ρ, t)` where
   /// `Z(ρ, t) = Σⱼ e^{−t·λⱼ}·cⱼ²`. Reuses the cached coefficients
-  /// — no re-projection.
-  double freeEnergy(double t) {
+  /// — no re-projection. See [SpectralThermo.negLogPartition].
+  double negLogPartition(double t) {
     final k = basis.k;
     var z = 0.0;
     for (var j = 0; j < k; j++) {

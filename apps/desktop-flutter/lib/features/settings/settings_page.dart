@@ -58,12 +58,14 @@ enum _PromptSaveState { idle, typing, saving, saved, error }
 
 class SettingsPage extends StatefulWidget {
   final SettingsSection? focusSection;
+  final ValueNotifier<String?>? expandedAiFeature;
   final VoidCallback? onOpenReleaseNotes;
   final VoidCallback? onOpenFilamentFindings;
 
   const SettingsPage({
     super.key,
     this.focusSection,
+    this.expandedAiFeature,
     this.onOpenReleaseNotes,
     this.onOpenFilamentFindings,
   });
@@ -95,7 +97,8 @@ class _SettingsPageState extends State<SettingsPage>
   final TextEditingController _reviewPromptController = TextEditingController();
   final TextEditingController _musePromptController = TextEditingController();
   String _diagnosticsFocus = 'ui';
-  String? _expandedAiFeature;
+  String? get _expandedAiFeature => widget.expandedAiFeature?.value;
+  set _expandedAiFeature(String? v) => widget.expandedAiFeature?.value = v;
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _sectionKeyPreferences = GlobalKey();
   final GlobalKey _sectionKeyShortcuts = GlobalKey();

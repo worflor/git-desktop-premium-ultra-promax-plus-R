@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/git.dart' show runGitProbe;
+import '../../backend/gyat.dart' show GyatLattice, gyatForRepo;
 import '../../backend/logos_core.dart' show FlowSseLattice, flowKGInteractionStrength;
 import '../../backend/logos_flow.dart'
     show analyzeFlowCached, analyzeInterFile, CrossFileInterference, crossFileMix, dreamAnalysis, FlowAnalysisResult, FlowBugKind, FlowFinding, InterFileResult;
@@ -41,13 +42,15 @@ class FilamentFindingsPanel extends StatefulWidget {
 class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
   final Map<String, FlowAnalysisResult> _results = {};
   final Map<String, FlowAnalysisResult> _rawResults = {};
-  final FlowSseLattice _lattice = FlowSseLattice();
+  FlowSseLattice _lattice = FlowSseLattice();
+  GyatLattice? _gyat;
   List<CrossFileInterference> _crossFileInterference = const [];
   InterFileResult? _interFileResult;
   double _kgInteraction = 0.0;
   int _totalFiles = 0;
   int _scannedFiles = 0;
   bool _done = false;
+  bool _scanLightweight = false;
   int _gen = 0;
 
   @override
@@ -61,6 +64,11 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
   Future<void> _scan(String repoPath) async {
     final gen = ++_gen;
+
+    // ── GYAT: restore the repo's lifelong lattice ───────────────────
+    final gyat = await gyatForRepo(repoPath);
+    if (!mounted || _gen != gen) return;
+    _gyat = gyat;
 
     // ── Scale 2: inter-file structural scan ─────────────────────────
     // If the Logos engine is available, run the oscillator on the
@@ -96,9 +104,27 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
     setState(() => _totalFiles = allPaths.length);
 
+    // Snapshot the GYAT prior once per scan. The lattice may change
+    // during the scan as observations land, but we want a stable
+    // prior across the batch so walker novelty doesn't drift mid-scan.
+    final globalCouplingW = gyat.globalCoupling?.rawWeights;
+    final priorMeans = gyat.cellMeansSnapshot;
+    final priorCounts = gyat.cellCountsSnapshot;
+
     const concurrency = 8;
+    // Once the lattice reaches its factored fixpoint mid-scan, further
+    // walker depth contributes no new spectral information. Switch
+    // remaining batches to a lightweight probe — same address coverage,
+    // shorter walks. Sticky: never flips back from light to deep within
+    // a single scan (avoids oscillation if a late batch perturbs the
+    // factoredness signal momentarily).
+    var lightweight = false;
     for (var i = 0; i < allPaths.length; i += concurrency) {
       if (!mounted || _gen != gen) return;
+      if (!lightweight && _lattice.isFactored) {
+        lightweight = true;
+      }
+      final batchLightweight = lightweight;
       final batch = allPaths.skip(i).take(concurrency).map((fp) async {
         try {
           // Scale 2 certainty → logosCoupling for this file.
@@ -107,6 +133,10 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
           final result = await analyzeFlowCached(
             p.join(repoPath, fp),
             logosCoupling: coupling,
+            globalCouplingWeights: globalCouplingW,
+            priorMeans: priorMeans,
+            priorCounts: priorCounts,
+            lightweight: batchLightweight,
           );
           if (result != null && result.findings.isNotEmpty) {
             return (fp, result);
@@ -127,21 +157,27 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       });
     }
 
+    _scanLightweight = lightweight;
+
     // ── Calibration pipeline ────────────────────────────────────────
-    //   1. dream iterates to fixed point (hypercube diameter = 8 max)
+    //   1. dream iterates to spectral fixed point (factoredness ≥ noise
+    //      floor) — bounded by hypercube diameter (8 max). Skipped
+    //      entirely when the lattice is already factored — additional
+    //      iterations don't change anything past fixpoint.
     //   2. cross-file mix adds inter-file Born interference
     //   3. filter reads the fully converged lattice
     if (_lattice.totalObservations > 0) {
-      for (var iter = 0; iter < 8; iter++) {
-        final before = List<double>.generate(
-            256, (a) => _lattice.cellMean(a));
-        dreamAnalysis(_lattice);
-        var maxShift = 0.0;
+      if (!_lattice.isFactored) {
+        final warmSet = <int>{};
         for (var a = 0; a < 256; a++) {
-          final d = (_lattice.cellMean(a) - before[a]).abs();
-          if (d > maxShift) maxShift = d;
+          if (_lattice.cellCount(a) >= 8) warmSet.add(a);
         }
-        if (maxShift < 1.0 / 64.0) break;
+        final h = _lattice.entropy(warmSet);
+        final maxIter = h.ceil().clamp(2, 8);
+        for (var iter = 0; iter < maxIter; iter++) {
+          dreamAnalysis(_lattice);
+          if (_lattice.isFactored) break;
+        }
       }
       _crossFileInterference = crossFileMix(_rawResults, _lattice);
     }
@@ -163,6 +199,13 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       }
     }
 
+    // ── GYAT: absorb this scan into the session lattice ───────────
+    // No disk write — the lattice lives in-memory only. Bootstrap
+    // re-derives it from git on next session start.
+    gyat.absorb(_lattice);
+
+
+    if (!mounted || _gen != gen) return;
     setState(() {
       _results.clear();
       _results.addAll(calibrated);
@@ -197,9 +240,16 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
     final buf = StringBuffer();
     final sigmaStr = (1.5 / (1.0 + _kgInteraction)).toStringAsFixed(2);
+    final gyatObs = _gyat?.lattice.totalObservations ?? 0;
+    final gyatFe = _gyat?.negLogPartition().toStringAsFixed(3) ?? '—';
     buf.writeln('filament $total findings across ${_results.length} files '
         '[C=$crit W=$warn I=$info J=$joints] '
         'σ=$sigmaStr kg=${_kgInteraction.toStringAsFixed(2)}');
+    final fact = _lattice.factoredness.toStringAsFixed(2);
+    final factTag = _lattice.isFactored ? '✓' : '';
+    final lightTag = _scanLightweight ? ' ⚡' : '';
+    buf.writeln(
+        '  gyat: ${gyatObs}obs F=$gyatFe  scan: fact=$fact$factTag$lightTag');
     buf.writeln('  ·stable ›directed ~scattered ◆turbulent ※joint');
     buf.writeln();
 

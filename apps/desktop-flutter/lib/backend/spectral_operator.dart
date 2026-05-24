@@ -246,14 +246,15 @@ class SpectralOperator {
   }
 
   /// `log(A)` — logarithm on the spectrum, mode-by-mode. Returns 0
-  /// on modes where `|f(λ_j)| ≤ eps` so the result stays finite on
-  /// the zero mode of the Laplacian. The inverse of [exp]:
+  /// on modes where `f(λ_j) ≤ eps` (including negatives) so the
+  /// result stays finite on the zero mode and on signed profiles.
+  /// The inverse of [exp]:
   ///
   ///     log(exp(A)) = A   (on modes where exp(f(λ)) > eps)
   SpectralOperator log({double eps = 1e-15}) {
     final p = Float64List(basis.k);
     for (var j = 0; j < basis.k; j++) {
-      p[j] = profile[j].abs() > eps ? math.log(profile[j]) : 0.0;
+      p[j] = profile[j] > eps ? math.log(profile[j]) : 0.0;
     }
     return SpectralOperator(basis: basis, profile: p);
   }

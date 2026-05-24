@@ -2190,4 +2190,115 @@ void main() {
       }
     });
   });
+
+  group('quantum walk', () {
+    test('certainty-seeker visits interior addresses on sparse path', () {
+      final lattice = FlowSseLattice();
+      final rng = math.Random(42);
+
+      final path = <int>[0];
+      var addr = 0;
+      for (var bit = 0; bit < 8; bit++) {
+        addr ^= (1 << bit);
+        path.add(addr);
+      }
+
+      for (var i = 0; i < path.length; i++) {
+        final a = path[i];
+        final isEndpoint = i == 0 || i == path.length - 1;
+        for (var obs = 0; obs < 20; obs++) {
+          final base = isEndpoint ? 0.3 : 0.85;
+          lattice.observe(a, base + rng.nextDouble() * 0.1);
+        }
+      }
+
+      final preWarmCounts = {
+        for (final a in path) a: lattice.cellCount(a),
+      };
+
+      dreamAnalysis(lattice);
+
+      var interiorVisited = 0;
+      for (var i = 2; i < path.length - 2; i++) {
+        if (lattice.cellCount(path[i]) > preWarmCounts[path[i]]!) {
+          interiorVisited++;
+        }
+      }
+      expect(interiorVisited, greaterThan(0),
+          reason: 'certainty-seeking walker should reach interior addresses');
+    });
+
+    test('WalkerWeight simplex(3) produces vertex weights', () {
+      final ws = WalkerWeight.simplex(3);
+      expect(ws.length, 3);
+      expect(ws[0].wAnomaly, closeTo(1.0, 1e-12));
+      expect(ws[0].wStructure, closeTo(0.0, 1e-12));
+      expect(ws[0].wCertainty, closeTo(0.0, 1e-12));
+      expect(ws[1].wStructure, closeTo(1.0, 1e-12));
+      expect(ws[2].wCertainty, closeTo(1.0, 1e-12));
+    });
+
+    test('WalkerWeight simplex(1) produces center', () {
+      final ws = WalkerWeight.simplex(1);
+      expect(ws.length, 1);
+      expect(ws[0].wAnomaly, closeTo(1 / 3, 1e-12));
+      expect(ws[0].wStructure, closeTo(1 / 3, 1e-12));
+      expect(ws[0].wCertainty, closeTo(1 / 3, 1e-12));
+    });
+
+    test('WalkerWeight.absorb stays on simplex', () {
+      final w = WalkerWeight(0.5, 0.3, 0.2);
+      for (var i = 0; i < 20; i++) {
+        w.absorb(0.8, 0.5, 0.2, 8);
+        final sum = w.wAnomaly + w.wStructure + w.wCertainty;
+        expect(sum, closeTo(1.0, 1e-10));
+        expect(w.wAnomaly, greaterThan(0));
+        expect(w.wStructure, greaterThan(0));
+        expect(w.wCertainty, greaterThan(0));
+      }
+    });
+
+    test('WalkerWeight.absorb rotates away from dominant signal', () {
+      final w = WalkerWeight(1 / 3, 1 / 3, 1 / 3);
+      final initial = w.wAnomaly;
+      w.absorb(1.0, 0.0, 0.0, 8);
+      expect(w.wAnomaly, lessThan(initial),
+          reason: 'anomaly weight should decrease after observing anomaly');
+      expect(w.wStructure, greaterThan(initial));
+      expect(w.wCertainty, greaterThan(initial));
+    });
+
+    test('WalkerWeight.absorb uniform observation preserves ratios', () {
+      final w = WalkerWeight(0.5, 0.3, 0.2);
+      final r01 = w.wAnomaly / w.wStructure;
+      final r02 = w.wAnomaly / w.wCertainty;
+      w.absorb(0.5, 1.0, 0.5, 8);
+      expect(w.wAnomaly / w.wStructure, closeTo(r01, 0.05),
+          reason: 'nearly-uniform absorption should roughly preserve ratios');
+    });
+
+    test('WalkerWeight.withPrior(0) recovers simplex vertices', () {
+      final ws = WalkerWeight.withPrior(0.0);
+      expect(ws.length, 3);
+      expect(ws[0].wAnomaly, closeTo(1.0, 1e-12));
+      expect(ws[0].wStructure, closeTo(0.0, 1e-12));
+      expect(ws[0].wCertainty, closeTo(0.0, 1e-12));
+      expect(ws[1].wStructure, closeTo(1.0, 1e-12));
+      expect(ws[2].wCertainty, closeTo(1.0, 1e-12));
+    });
+
+    test('WalkerWeight.withPrior(1) tilts anomaly toward certainty', () {
+      final ws = WalkerWeight.withPrior(1.0);
+      expect(ws[0].wAnomaly, closeTo(0.5, 1e-12));
+      expect(ws[2].wCertainty, closeTo(0.5, 1e-12));
+      expect(ws[2].wAnomaly, closeTo(0.25, 1e-12));
+    });
+
+    test('eigenAddress returns -1 for degenerate lines', () {
+      final coupling = CharCoupling.fromSource('void main() { print("hello"); }');
+      expect(eigenAddress('ab', coupling), -1);
+      expect(eigenAddress('x', coupling), -1);
+      expect(eigenAddress('', coupling), -1);
+    });
+  });
 }

@@ -128,7 +128,7 @@ const int kDefaultPowerIterations = 24;
 
 /// Default number of Laplacian eigenmodes to retain in a cached
 /// [SpectralBasis]. Heat-kernel energy concentrates in the bottom 15–30
-/// modes on typical code graphs (see `heatCapacity` natural-scale
+/// modes on typical code graphs (see `energyVariance` natural-scale
 /// detection); 20 comfortably covers that range. Tune via the per-engine
 /// or per-result `k` parameter.
 const int kDefaultSpectralBasisK = 20;
@@ -2168,7 +2168,7 @@ class SpectralBasis {
   /// Convenience: return a [SpectralProjection] noun instead of the
   /// raw `Float64List` coefficients. Same math as [project], but the
   /// result carries its basis reference and exposes `.diffuseAt(t)`,
-  /// `.phiForPath(...)`, `.entropy(t)`, `.freeEnergy(t)`, and
+  /// `.phiForPath(...)`, `.entropy(t)`, `.negLogPartition(t)`, and
   /// CRDT-friendly `+` / `.scale(...)` operators on the coefficient
   /// vector.
   SpectralProjection projectSource(Float64List rho) =>
@@ -2629,7 +2629,7 @@ class SpectralBasis {
   /// modes, expander-like. High chaos (≳5) = long spectrum, path-like
   /// or highly hierarchical. Completes the thermodynamic pantheon
   /// alongside [spectralGap], [mixingTime], [cheegerUpperBound], and
-  /// [heatCapacity].
+  /// [energyVariance].
   ///
   /// Returns `0.0` when the basis has fewer than 2 modes and
   /// `double.infinity` when the graph is disconnected (`λ₁ → 0`).
@@ -2905,10 +2905,10 @@ class SpectralBasis {
     return s;
   }
 
-  // `heatCapacity(t)` now lives in `logos_thermo.dart`.
+  // `energyVariance(t)` now lives in `logos_thermo.dart`.
 
   /// Detect the codebase's natural thermal scales — the `t` values at
-  /// which `heatCapacity(t)` peaks. Each peak is a **phase transition**:
+  /// which `energyVariance(t)` peaks. Each peak is a **phase transition**:
   /// a scale at which the effective structure of the diffusion
   /// changes character. On a typical repo the first peak sits at the
   /// method/symbol scale, the second at the module scale, the third
@@ -2947,7 +2947,7 @@ class SpectralBasis {
     for (var s = 0; s < samples; s++) {
       final t = math.exp(logMin + s * step);
       ts[s] = t;
-      final c = heatCapacity(t);
+      final c = energyVariance(t);
       cs[s] = c;
       if (c > globalMax) globalMax = c;
     }
@@ -3727,7 +3727,7 @@ typedef SpectralIdentity = SpectralBasis;
 ///   source.diffuseAt(t);           // temperature sweep, basis implicit
 ///   source.phiForPath('lib/x.dart', t);
 ///   source.entropy(t);
-///   source.freeEnergy(t);
+///   source.negLogPartition(t);
 ///
 /// The type carries its basis reference so projections can't be
 /// accidentally applied against the wrong spectrum. Identity checks
@@ -3768,8 +3768,8 @@ class SpectralProjection {
   /// Equivalent to `diffuseAt(0.0)` modulo Lanczos-truncation residue.
   Float64List reconstructSource() => diffuseAt(0.0);
 
-  // `entropy(t)` and `freeEnergy(t)` on SpectralProjection now live
-  // in `logos_thermo.dart` (extension SpectralProjectionThermo).
+  // `entropy(t)` and `negLogPartition(t)` on SpectralProjection now
+  // live in `logos_thermo.dart` (extension SpectralProjectionThermo).
 
   /// Symmetric KL (Jeffreys) divergence between two thermal
   /// mode-probability distributions at temperature [t]:
@@ -3898,13 +3898,20 @@ class SpectralProjection {
   /// The answer is `focus.diffuseAt(1.0).deconvolveTo(1.0)`.
   SpectralProjection deconvolveTo(
     double t, {
-    double cutoffLambda = 2.0,
+    double? cutoffLambda,
   }) {
     final k = basis.k;
     final out = Float64List(k);
+    // Adaptive cutoff: cap exp(t*λ) so the amplification factor stays
+    // below 1/ε.  Solves t*λ_cut = -ln(ε) → λ_cut = -ln(ε)/t.
+    // At t→0 this goes to ∞ (no regularisation needed); at large t it
+    // tightens automatically.  Callers can still override explicitly.
+    const eps = 1e-12;
+    final effectiveCutoff = cutoffLambda ??
+        (t.abs() > 1e-15 ? -math.log(eps) / t : double.infinity);
     for (var j = 0; j < k; j++) {
       final lam = basis.eigenvalues[j];
-      if (lam > cutoffLambda) continue; // regularise high modes to 0
+      if (lam > effectiveCutoff) continue;
       out[j] = coefficients[j] * math.exp(t * lam);
     }
     return SpectralProjection(basis: basis, coefficients: out);

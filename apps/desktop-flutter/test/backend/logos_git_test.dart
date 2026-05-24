@@ -2544,7 +2544,7 @@ void _spectralTests() {
     final rho = Float64List(g.n)..[10] = 1.0;
     for (final t in const [0.5, 1.0, 2.0]) {
       final z = basis.partitionFunction(rho, t);
-      final f = basis.freeEnergy(rho, t);
+      final f = basis.negLogPartition(rho, t);
       expect(z, greaterThan(0.0));
       expect(f, closeTo(-math.log(z), 1e-12));
     }
@@ -2705,17 +2705,17 @@ void _spectralTests() {
     final g = buildPath(20);
     final basis = SpectralBasis.fromGraph(g, 20);
     for (final t in const [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]) {
-      final c = basis.heatCapacity(t);
+      final c = basis.energyVariance(t);
       expect(c, greaterThanOrEqualTo(-1e-12));
     }
     // C(0) = variance of all eigenvalues (uniform weighting) — non-zero
     // because the spectrum is non-degenerate.
-    final cZero = basis.heatCapacity(0.0);
+    final cZero = basis.energyVariance(0.0);
     expect(cZero, greaterThan(0.0));
     // At very large t the distribution collapses onto λ_0 = 0 — variance
     // vanishes asymptotically. Floating-point noise in Lanczos's tiny
     // λ_0 (not exactly zero) leaves a ~1e-4 tail, so tolerance accordingly.
-    final cHot = basis.heatCapacity(50.0);
+    final cHot = basis.energyVariance(50.0);
     expect(cHot, lessThan(cZero));
     expect(cHot, lessThan(1e-3));
   });
@@ -3038,7 +3038,7 @@ void _spectralTests() {
   });
 
   test('naturalScales returns mixing-time fallback when no peaks', () {
-    // A fresh basis from a very small graph: heatCapacity curve is
+    // A fresh basis from a very small graph: energyVariance curve is
     // usually too flat to have peaks under default thresholds, so we
     // should get the mixing-time fallback (or 1.0 if that's infinite).
     final g = buildPath(4);
@@ -3068,7 +3068,7 @@ void _spectralTests() {
     }
   });
 
-  test('SpectralProjection entropy + freeEnergy reuse cached projection',
+  test('SpectralProjection entropy + negLogPartition reuse cached projection',
       () {
     final g = buildPath(15);
     final basis = SpectralBasis.fromGraph(g, 8);
@@ -3077,8 +3077,8 @@ void _spectralTests() {
     for (final t in const [0.3, 1.0, 2.5]) {
       expect(source.entropy(t),
           closeTo(basis.spectralEntropy(rho, t), 1e-9));
-      expect(source.freeEnergy(t),
-          closeTo(basis.freeEnergy(rho, t), 1e-9));
+      expect(source.negLogPartition(t),
+          closeTo(basis.negLogPartition(rho, t), 1e-9));
     }
   });
 

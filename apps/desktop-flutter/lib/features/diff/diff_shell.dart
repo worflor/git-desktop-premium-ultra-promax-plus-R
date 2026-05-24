@@ -24,6 +24,7 @@ import '../../backend/diff_logos_facade.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart' show FileCouplingMatrix;
+import '../../backend/gyat.dart' show GyatLattice, gyatForRepo;
 import '../../backend/logos_flow.dart' show analyzeFlowCached, FlowFinding;
 import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
@@ -354,6 +355,7 @@ class _DiffShellState extends State<DiffShell> {
 
   Map<int, FlowFinding> _flowFindingsByLine = const {};
   String? _flowAnalysisPath;
+  GyatLattice? _gyat;
 
   // Paper Trail (file history)
   bool _trailVisible = false;
@@ -1584,6 +1586,14 @@ class _DiffShellState extends State<DiffShell> {
     if (absPath == _flowAnalysisPath) return;
     _flowAnalysisPath = absPath;
     _flowFindingsByLine = const {};
+
+    // Shared GYAT lattice — one instance per repo across all consumers.
+    if (_gyat == null || _gyat!.repoPath != repoPath) {
+      gyatForRepo(repoPath).then((g) {
+        if (mounted) setState(() => _gyat = g);
+      });
+    }
+
     analyzeFlowCached(absPath).then((result) {
       if (!mounted || _flowAnalysisPath != absPath) return;
       if (result == null || result.findings.isEmpty) return;
@@ -3770,6 +3780,12 @@ class _DiffShellState extends State<DiffShell> {
                                       flowCertainty:
                                           _flowFindingsByLine[line.lineNumNew]
                                               ?.certainty,
+                                      gyatSurprise: () {
+                                        final f = _flowFindingsByLine[line.lineNumNew];
+                                        if (f == null || _gyat == null) return null;
+                                        return _gyat!.surprise(f.address, f.certainty);
+                                      }(),
+                                      gyatBaseline: _gyat?.negLogPartition(),
                                       wearIntensity: _wearMapVisible &&
                                               line.lineNumNew != null
                                           ? _wearIntensityFor(
@@ -4068,6 +4084,8 @@ class DiffLineView extends StatefulWidget {
   final bool relatedRhyme;
 
   final double? flowCertainty;
+  final double? gyatSurprise;
+  final double? gyatBaseline;
 
   // Staging
   final double stageCellWidth;
@@ -4110,6 +4128,8 @@ class DiffLineView extends StatefulWidget {
     this.hunkWitnessResidual = 0.0,
     this.relatedRhyme = false,
     this.flowCertainty,
+    this.gyatSurprise,
+    this.gyatBaseline,
     this.stageCellWidth = 16.0,
     this.stagingEnabled = false,
     this.keyboardFocused = false,
@@ -4346,6 +4366,18 @@ class _DiffLineState extends State<DiffLineView> {
     final flowAlpha = flowC != null && !isMeta
         ? ((1.0 - flowC) * 0.85).clamp(0.0, 0.85)
         : 0.0;
+
+    // GYAT surprise: lines the lifelong lattice finds structurally
+    // novel get a faint warm background. Normalized against the
+    // lattice's own free energy so the highlighting self-calibrates
+    // to the repo's personality — no fixed threshold.
+    final gyatS = widget.gyatSurprise;
+    final gyatBase = widget.gyatBaseline;
+    final gyatAlpha = gyatS != null && gyatBase != null &&
+            gyatBase > 0.01 && !isMeta
+        ? ((gyatS / gyatBase) * 0.08).clamp(0.0, 0.15)
+        : 0.0;
+
     final gutterCell = Container(
       width: isMeta && !isFoldMarker ? 40 : 56,
       padding: const EdgeInsets.only(right: 8),
@@ -4519,6 +4551,12 @@ class _DiffLineState extends State<DiffLineView> {
     if (widget.relatedRhyme && !showSemanticBorder) {
       lineBg = Color.alphaBlend(
         t.accentBright.withValues(alpha: 0.05),
+        lineBg ?? Colors.transparent,
+      );
+    }
+    if (gyatAlpha > 0.01) {
+      lineBg = Color.alphaBlend(
+        t.accentBright.withValues(alpha: gyatAlpha),
         lineBg ?? Colors.transparent,
       );
     }

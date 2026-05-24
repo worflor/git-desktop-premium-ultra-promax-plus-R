@@ -87,6 +87,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   // panel toggles don't re-focus.
   SettingsSection? _pendingSettingsFocus;
   SettingsNavigationState? _settingsNavState;
+  final ValueNotifier<String?> _settingsAiFeature = ValueNotifier(null);
   ModalRoute<dynamic>? _subscribedRoute;
 
   @override
@@ -171,6 +172,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
     manifoldRouteObserver.unsubscribe(this);
     _subscribedRoute = null;
     _settingsNavState?.removeListener(_onSettingsNavChanged);
+    _settingsAiFeature.dispose();
     _shellFocusNode.dispose();
     super.dispose();
   }
@@ -355,6 +357,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                             onClose: () => _setPanel(_Panel.none),
                             child: SettingsPage(
                               focusSection: _pendingSettingsFocus,
+                              expandedAiFeature: _settingsAiFeature,
                               onOpenReleaseNotes: () => _setPanel(_Panel.releaseNotes),
                               onOpenFilamentFindings: () => _setPanel(_Panel.filamentFindings),
                             ),

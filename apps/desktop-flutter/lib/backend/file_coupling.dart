@@ -912,12 +912,13 @@ _CsrTriple _buildSymmetricCsr(
 /// Compute co-change matrix for a repo from the last [commitLimit] commits.
 /// Single git-log pass — the format embeds HEAD hash in the first commit
 /// separator, so we don't need a separate `rev-parse HEAD` round-trip.
-/// Skips commits with > [largeCommitCutoff] files (merges/imports/vendor
-/// bumps); they're noise for co-change signal and would dominate pair counts.
+/// Attenuates commits with many files via a soft knee at
+/// [largeCommitSoftKnee]: weight *= min(1, knee/nFiles).  Large refactors
+/// still contribute macro-level coupling signal instead of being hard-dropped.
 Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   String repo, {
   int commitLimit = 1000,
-  int largeCommitCutoff = 60,
+  int largeCommitSoftKnee = 60,
   // Exponential decay half-life measured in commits. A commit at rank
   // [halfLifeCommits] contributes half as much as the tip. Set to 0 or
   // a negative number to disable (pure count-based Jaccard, legacy
@@ -965,7 +966,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
         newBlob: raw.newBlob,
       ));
     }
-    if (files.isNotEmpty && files.length <= largeCommitCutoff) {
+    if (files.isNotEmpty) {
       commits.add(_CouplingCommit(
         author: currentAuthor,
         subject: currentSubject,
@@ -1060,6 +1061,10 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
 
   // One pass: per-file weighted commit "count" + per-pair weighted co-
   // count. Only upper-triangle (a < b lexicographic) — halves inserts.
+  double softKnee(int nFiles) => nFiles <= largeCommitSoftKnee
+      ? 1.0
+      : largeCommitSoftKnee / nFiles.toDouble();
+
   final fileCommits = <String, double>{};
   final pairCount = <String, Map<String, double>>{};
   var semanticAge = 0.0;
@@ -1075,7 +1080,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       totalLinesChanged: commitMass,
     );
     final step = m.weight.clamp(0.0, 1.0);
-    final w = commitWeight(semanticAge) * step;
+    final w = commitWeight(semanticAge) * step * softKnee(files.length);
     semanticAge += step;
     if (w <= 0) continue;
     for (final f in files) {
@@ -1109,11 +1114,10 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     for (var rank = 0; rank < commits.length - lag; rank++) {
       final here = commits[rank];
       final there = commits[rank + lag];
-      if (here.files.length > largeCommitCutoff ||
-          there.files.length > largeCommitCutoff) continue;
       final wHere = commitWeight(rank.toDouble());
       final wThere = commitWeight((rank + lag).toDouble());
-      final w = math.sqrt(wHere * wThere) * lagDiscount;
+      final w = math.sqrt(wHere * wThere) * lagDiscount
+          * softKnee(here.files.length) * softKnee(there.files.length);
       if (w <= 1e-9) continue;
       for (final fHere in here.files) {
         for (final fThere in there.files) {

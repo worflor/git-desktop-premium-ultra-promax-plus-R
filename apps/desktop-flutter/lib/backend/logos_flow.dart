@@ -4,6 +4,7 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'logos_core.dart';
 import 'lru_cache.dart';
@@ -151,13 +152,22 @@ double _lyapunovFromGeometry(
 // Graph extraction from source text
 // ═══════════════════════════════════════════════════════════════════
 
-/// Flow graph from indentation structure with spectral address assignment.
+/// Flow graph from indentation structure with eigenfrequency address.
 ///
 /// Phase 1: build topology from indentation geometry (language-agnostic).
-/// Phase 2: compute Lanczos eigenpairs on the topology → assign each
-///          node its spectral byte fingerprint as the lattice address.
-///          Terminal nodes are detected by graph degree, not keywords.
-FlowGraph extractFlowGraph(String source) {
+/// Phase 2: compute Lanczos eigenpairs on the topology → spectral
+///          fingerprint. Compute eigenfrequency on each line's character
+///          coupling chain → content fingerprint. OR the two → the line's
+///          lattice address encodes both WHERE it sits (topology) and
+///          WHAT it looks like (character harmonics).
+///
+/// When [globalCoupling] is supplied, the eigenfrequency basis comes
+/// from the repo-wide bigram distribution rather than this file's own
+/// statistics. That makes address `0x47` mean the same thing across
+/// every file in the repo, which is required for the lifelong lattice's
+/// per-cell Welford accumulators to be coherent. When null, falls back
+/// to per-file coupling (legacy behaviour — addresses are file-local).
+FlowGraph extractFlowGraph(String source, {CharCoupling? globalCoupling}) {
   final lines = source.split('\n');
   final nodeIds = <String>[];
   final nodeLines = <int>[];
@@ -263,16 +273,32 @@ FlowGraph extractFlowGraph(String source) {
   }
 
   final csr = CsrGraph.fromRawEdges(n: n, edgesPerNode: symEdges);
-  final kEig = n < 9 ? n : 9; // need k+1 eigenvectors for k-bit fingerprint
+  final kEig = n < 9 ? n : 9;
   final basis = SpectralBasis.fromGraph(csr, kEig);
-  final fingerprints = basis.spectralFingerprintTable();
+  final topoFingerprints = basis.spectralFingerprintTable();
 
-  // ── Phase 3: assemble FlowGraph with spectral addresses ────────
+  // ── Phase 2b: eigenfrequency on character coupling chains ─────
+  //
+  // Each line is a vibrating string. The coupling between adjacent
+  // characters is the tension. With a [globalCoupling] supplied by
+  // the caller, the basis is the repo's collective bigram distribution
+  // — same basis for every file → addresses with stable repo-wide
+  // meaning. With no global supplied, we fall back to file-local
+  // statistics (legacy path; addresses are file-local only).
+  final charCoupling = globalCoupling ?? CharCoupling.fromSource(source);
+
+  // ── Phase 3: assemble FlowGraph with hybrid addresses ─────────
   final graph = FlowGraph();
   for (var i = 0; i < n; i++) {
+    final topoAddr = topoFingerprints[i];
+    final eigenAddr = eigenAddress(nodeTexts[i], charCoupling);
+    final highNibble = eigenAddr >= 0
+        ? (eigenAddr << 4) & 0xF0
+        : (nodeTexts[i].hashCode & 0x0F) << 4;
+    final hybridAddr = (topoAddr & 0x0F) | highNibble;
     graph.addNode(FlowNode(
       id: nodeIds[i],
-      address: fingerprints[i],
+      address: hybridAddr,
       lyapunov: nodeLyapunovs[i],
       sourceLine: nodeLines[i],
       sourceText: nodeTexts[i],
@@ -495,9 +521,12 @@ int anchorFingerprint(List<int> fingerprints) {
   return anchor;
 }
 
-/// YAA* (double-helix attention search) with AR(2) oscillator + Born mixing.
+/// YAA* (quantum walk) with AR(2) oscillator + Born mixing.
 /// [logosCoupling] adds a structural arrival from the Logos graph.
 /// [sseLattice] accumulates certainty observations for self-calibration.
+/// [priorNovelty] maps a lattice address to a novelty score in [0, 1]
+/// derived from the GYAT lifelong prior — biases walker initialization
+/// toward anomaly-seeking (familiar) or certainty-seeking (novel).
 List<FlowFinding> simulateFlow(
   FlowGraph graph, {
   Set<String>? entryNodes,
@@ -505,6 +534,7 @@ List<FlowFinding> simulateFlow(
   int maxDepth = 30,
   double? logosCoupling,
   FlowSseLattice? sseLattice,
+  double Function(int address)? priorNovelty,
 }) {
   if (entryNodes == null || entryNodes.isEmpty) {
     entryNodes = graph.nodes.isNotEmpty
@@ -519,10 +549,14 @@ List<FlowFinding> simulateFlow(
   for (final start in entryNodes) {
     if (!graph.nodes.containsKey(start)) continue;
     if (stepBudget[0] <= 0) break;
-    _yaaStarPropagate(graph, start, maxDepth, arrivals, stepBudget, sseLattice);
+    final novelty = priorNovelty != null
+        ? priorNovelty(graph.nodes[start]!.address)
+        : null;
+    _yaaStarPropagate(graph, start, maxDepth, arrivals, stepBudget,
+        sseLattice, novelty: novelty);
   }
 
-  // Born-mix at each resource node.
+  // Born-mix at each visited node.
   final findings = <FlowFinding>[];
   for (final entry in arrivals.entries) {
     final arrs = entry.value;
@@ -557,7 +591,15 @@ List<FlowFinding> simulateFlow(
   return findings;
 }
 
-const int _kMaxArrivalsPerNode = 8;
+/// Adaptive arrival cap: scales with graph density so small graphs
+/// aren't over-capped and large graphs don't blow up.
+int _adaptiveArrivalCap(FlowGraph graph) {
+  final n = graph.nodes.length;
+  if (n < 8) return n;
+  final edgeCount = graph.adj.values.fold<int>(0, (s, e) => s + e.length);
+  final avgDegree = n > 0 ? edgeCount / n : 1.0;
+  return math.max(8, (3 * math.sqrt(avgDegree * n)).ceil());
+}
 
 class _PathChain {
   final String node;
@@ -580,23 +622,28 @@ void _yaaStarPropagate(
   int maxDepth,
   Map<String, List<(double, double)>> arrivals,
   List<int> stepBudget,
-  FlowSseLattice? externalLattice,
-) {
+  FlowSseLattice? externalLattice, {
+  double? novelty,
+}) {
   if (maxDepth <= 0) return;
 
-  final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, bool)>(
+  final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, WalkerWeight, int)>(
       (a, b) => b.$3.compareTo(a.$3));
 
-  final bestAlpha = <String, double>{};
-  final bestBeta = <String, double>{};
+  final bestByLineage = <(String, int), double>{};
   final localLattice = FlowSseLattice();
+  final arrivalCap = _adaptiveArrivalCap(graph);
 
   final root = _PathChain(startId, null);
-  heap.push((startId, FlowOscillator(), double.infinity, root, 0, true));
-  heap.push((startId, FlowOscillator(), double.infinity, root, 0, false));
+  final walkers = novelty != null
+      ? WalkerWeight.withPrior(novelty)
+      : WalkerWeight.simplex(3);
+  for (var i = 0; i < walkers.length; i++) {
+    heap.push((startId, FlowOscillator(), double.infinity, root, 0, walkers[i], i));
+  }
 
   while (heap.isNotEmpty && stepBudget[0] > 0) {
-    final (nid, osc, _, path, depth, isAlpha) = heap.pop();
+    final (nid, osc, _, path, depth, weight, lineage) = heap.pop();
     stepBudget[0]--;
 
     final node = graph.nodes[nid];
@@ -614,15 +661,11 @@ void _yaaStarPropagate(
       osc.restabilize(flowCoverage(node.address, downstreamAddr));
     }
 
-    // Live observation — the YAA* ratchet. Both strands feed the
-    // local lattice; the other strand's heuristic benefits immediately.
     localLattice.observe(node.address, osc.certainty);
 
-    if (node.hasAxis(kFlowResource)) {
-      final list = arrivals.putIfAbsent(nid, () => []);
-      if (list.length >= _kMaxArrivalsPerNode) continue;
-      list.add((osc.certainty, osc.phase));
-    }
+    final list = arrivals.putIfAbsent(nid, () => []);
+    if (list.length >= arrivalCap) continue;
+    list.add((osc.certainty, osc.phase));
 
     if (depth >= maxDepth) continue;
 
@@ -668,6 +711,13 @@ void _yaaStarPropagate(
       final ssePrior = math.max(localZ, externalZ);
 
       final phaseVelocity = (childOsc.phase - parentPhase).abs();
+      final anomaly = phaseVelocity * (1.0 - childOsc.certainty);
+      final structure = (1.0 + edge.hamming / 8.0)
+          * math.log(math.max(2, fanout)) / math.ln2;
+
+      final childWeight = weight.clone();
+      childWeight.absorb(anomaly, structure, childOsc.certainty, maxDepth);
+
       final pri = flowSearchPriority(
         certainty: childOsc.certainty,
         phaseVelocity: phaseVelocity,
@@ -676,19 +726,17 @@ void _yaaStarPropagate(
         ssePrior: ssePrior,
         depth: depth + 1,
         maxDepth: maxDepth,
-        exploit: isAlpha,
+        weight: childWeight,
       );
 
-      final bestMap = isAlpha ? bestAlpha : bestBeta;
-      if (!target.hasAxis(kFlowResource)) {
-        final existing = bestMap[edge.target];
-        if (existing != null && existing >= pri) continue;
-        bestMap[edge.target] = pri;
-      }
+      final key = (edge.target, lineage);
+      final existing = bestByLineage[key];
+      if (existing != null && existing >= pri) continue;
+      bestByLineage[key] = pri;
 
       heap.push((
           edge.target, childOsc, pri, _PathChain(edge.target, path), depth + 1,
-          isAlpha));
+          childWeight, lineage));
     }
   }
 }
@@ -797,20 +845,36 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
 
   // ── Phase 3: YAA* walk for path reconstruction ────────────────────
 
-  final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, bool)>(
+  final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, WalkerWeight)>(
       (a, b) => b.$3.compareTo(a.$3));
 
   final arrivals = <int, List<(double, double)>>{};
-  heap.push((alphaStart, FlowOscillator(), double.infinity,
-      {alphaStart}, 0, true));
-  heap.push((betaStart, FlowOscillator(), double.infinity,
-      {betaStart}, 0, false));
+  // Certainty seed: highest thermal equilibrium — the structural spine.
+  var certaintyStart = warmSet.first;
+  var bestEq = -1.0;
+  for (final a in warmSet) {
+    if (equilibrium[a] > bestEq) { bestEq = equilibrium[a]; certaintyStart = a; }
+  }
 
-  var budget = warmSet.length * 8;
+  final walkers = WalkerWeight.simplex(3);
+  final seeds = [alphaStart, betaStart, certaintyStart];
+  for (var i = 0; i < walkers.length; i++) {
+    heap.push((seeds[i], FlowOscillator(), double.infinity,
+        {seeds[i]}, 0, walkers[i]));
+  }
+
+  final dreamArrivalCap = math.max(8, warmSet.length ~/ 2);
+  final h = lattice.entropy(warmSet);
+  // Budget scales with the lattice's information content: high-entropy
+  // lattices (many independent clusters) need more steps to cover;
+  // low-entropy lattices (one dominant mode) converge fast.
+  // exp(H) is the effective number of occupied cells; multiplied by
+  // the warm set size gives total coverage pressure.
+  var budget = math.max(warmSet.length * 4, (warmSet.length * math.exp(h)).ceil());
   const maxDepth = 8;
 
   while (heap.isNotEmpty && budget > 0) {
-    final (addr, osc, _, path, depth, isAlpha) = heap.pop();
+    final (addr, osc, _, path, depth, weight) = heap.pop();
     budget--;
 
     if (!warmSet.contains(addr)) continue;
@@ -818,7 +882,7 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
     lattice.observe(addr, osc.certainty);
 
     final list = arrivals.putIfAbsent(addr, () => []);
-    if (list.length >= _kMaxArrivalsPerNode) continue;
+    if (list.length >= dreamArrivalCap) continue;
     list.add((osc.certainty, osc.phase));
 
     if (depth >= maxDepth) continue;
@@ -840,6 +904,13 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
       childOsc.step(dKr[n], dKi[n], dGr[n], 1);
 
       final phaseVelocity = (childOsc.phase - parentPhase).abs();
+      final anomaly = phaseVelocity * (1.0 - childOsc.certainty);
+      final structure = (1.0 + 1 / 8.0)
+          * math.log(math.max(2, fanout)) / math.ln2;
+
+      final childWeight = weight.clone();
+      childWeight.absorb(anomaly, structure, childOsc.certainty, maxDepth);
+
       final ssePrior = lattice.zBelowForAddress(n, childOsc.certainty);
       final pri = flowSearchPriority(
         certainty: childOsc.certainty,
@@ -849,10 +920,10 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
         ssePrior: ssePrior,
         depth: depth + 1,
         maxDepth: maxDepth,
-        exploit: isAlpha,
+        weight: childWeight,
       );
 
-      heap.push((n, childOsc, pri, {...path, n}, depth + 1, isAlpha));
+      heap.push((n, childOsc, pri, {...path, n}, depth + 1, childWeight));
     }
   }
 
@@ -1257,18 +1328,44 @@ final LruCache<(String, int), FlowAnalysisResult> _flowCache =
     LruCache(maxSize: 256);
 final Map<(String, int), Future<FlowAnalysisResult?>> _inFlight = {};
 
+/// Default walker depth — covers a full hypercube traversal (8 axes)
+/// with headroom. Reduced once the lattice has reached its factored
+/// fixpoint and additional depth contributes no new spectral information.
+const int _kDefaultMaxDepth = 30;
+const int _kLightMaxDepth = 4;
+
 /// Memoized flow analysis. Computation runs in a worker isolate.
 /// [logosCoupling] bypasses cache and adds structural context.
+/// [globalCouplingWeights] is the repo-global CharCoupling matrix
+/// (128*128 doubles) — when supplied, all eigenAddress computations
+/// use the same basis, making lattice addresses coherent across files.
+/// [priorMeans] / [priorCounts] are an optional GYAT-derived prior:
+/// a 256-cell snapshot of the lifelong lattice's cell means and counts
+/// used to bias walker initialisation (familiar addresses get
+/// anomaly-seekers, novel addresses get certainty-seekers).
+/// [lightweight] = true switches to a shallow walk (depth 4 instead of
+/// 30). Use when `lattice.isFactored == true` has been observed —
+/// additional depth contributes no new spectral information. Bypasses
+/// the cache because shallow results would shadow deeper future calls.
 Future<FlowAnalysisResult?> analyzeFlowCached(
   String absolutePath, {
   double? logosCoupling,
+  Float64List? globalCouplingWeights,
+  Float64List? priorMeans,
+  Int32List? priorCounts,
+  bool lightweight = false,
 }) async {
+  final maxDepth = lightweight ? _kLightMaxDepth : _kDefaultMaxDepth;
   final file = File(absolutePath);
   if (!await file.exists()) return null;
   final stat = await file.stat();
   final key = (absolutePath, stat.modified.millisecondsSinceEpoch);
 
-  if (logosCoupling == null) {
+  final usingExtraContext = logosCoupling != null ||
+      globalCouplingWeights != null ||
+      priorMeans != null ||
+      maxDepth != _kDefaultMaxDepth;
+  if (!usingExtraContext) {
     final cached = _flowCache.get(key);
     if (cached != null) return cached;
     final existing = _inFlight[key];
@@ -1279,23 +1376,64 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
     try {
       final source = await file.readAsString();
       final coupling = logosCoupling;
-      final result = await Isolate.run(() => _analyzeSource(source, coupling));
-      if (result != null && logosCoupling == null) _flowCache.put(key, result);
+      final globalW = globalCouplingWeights;
+      final means = priorMeans;
+      final counts = priorCounts;
+      final depth = maxDepth;
+      final result = await Isolate.run(() =>
+          _analyzeSource(source, coupling, globalW, means, counts, depth));
+      if (result != null && !usingExtraContext) _flowCache.put(key, result);
       return result;
     } finally {
       _inFlight.remove(key);
     }
   }();
 
-  if (logosCoupling == null) _inFlight[key] = future;
+  if (!usingExtraContext) _inFlight[key] = future;
   return future;
 }
 
-FlowAnalysisResult? _analyzeSource(String source, double? logosCoupling) {
-  final graph = optimizeGraph(extractFlowGraph(source));
+FlowAnalysisResult? _analyzeSource(
+  String source,
+  double? logosCoupling,
+  Float64List? globalCouplingWeights,
+  Float64List? priorMeans,
+  Int32List? priorCounts,
+  int maxDepth,
+) {
+  final globalCoupling = globalCouplingWeights != null
+      ? CharCoupling.fromWeights(globalCouplingWeights)
+      : null;
+  final graph = optimizeGraph(
+      extractFlowGraph(source, globalCoupling: globalCoupling));
   if (graph.nodes.length < 2) return null;
+
+  // Build a priorNovelty function from the GYAT snapshot when supplied.
+  // Novelty = 1 - (cellCount / maxCount) for warmed cells; cold cells
+  // are maximally novel (1.0). Familiar cells (high count) get walkers
+  // biased toward anomaly-hunting; cold cells get certainty-seekers.
+  double Function(int)? novelty;
+  if (priorMeans != null && priorCounts != null) {
+    var maxCount = 1;
+    for (var i = 0; i < priorCounts.length; i++) {
+      if (priorCounts[i] > maxCount) maxCount = priorCounts[i];
+    }
+    final inv = 1.0 / maxCount;
+    novelty = (addr) {
+      final a = addr & 0xFF;
+      final c = priorCounts[a];
+      if (c < 8) return 1.0;
+      return (1.0 - c * inv).clamp(0.0, 1.0);
+    };
+  }
+
   final allFindings = simulateFlow(
-      graph, threshold: 1.0, logosCoupling: logosCoupling);
+    graph,
+    threshold: 1.0,
+    maxDepth: maxDepth,
+    logosCoupling: logosCoupling,
+    priorNovelty: novelty,
+  );
   final gap = graph.nodes.length >= 3
       ? flowSpectralGap(graph, findings: allFindings)
       : 0.0;

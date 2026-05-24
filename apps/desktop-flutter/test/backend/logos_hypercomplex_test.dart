@@ -323,4 +323,26 @@ void main() {
       );
     });
   });
+
+  group('realDft round-trip — forward → inverse recovers signal', () {
+    for (final n in [3, 7, 16, 17, 100, 255, 300, 512]) {
+      test('N=$n', () {
+        final rng = math.Random(0xDF70 + n);
+        final signal = List<double>.generate(n, (_) => rng.nextDouble() * 2 - 1);
+        final fwd = realDftForward(signal);
+        final recovered = realDftInverse(
+          real: fwd.real,
+          imaginary: fwd.imaginary,
+        );
+        expect(recovered.length, equals(n));
+        for (var j = 0; j < n; j++) {
+          expect(
+            recovered[j],
+            closeTo(signal[j], 1e-9),
+            reason: 'mismatch at index $j for N=$n',
+          );
+        }
+      });
+    }
+  });
 }

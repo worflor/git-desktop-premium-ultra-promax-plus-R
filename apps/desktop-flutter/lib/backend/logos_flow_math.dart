@@ -263,6 +263,23 @@ class FlowSseCell {
     _m2 += delta * delta2;
   }
 
+  /// Merge another Welford accumulator into this one, preserving
+  /// both means AND variances. Chan et al. parallel algorithm.
+  void merge(FlowSseCell other) {
+    if (other.n == 0) return;
+    if (n == 0) {
+      n = other.n;
+      _mean = other._mean;
+      _m2 = other._m2;
+      return;
+    }
+    final combined = n + other.n;
+    final delta = other._mean - _mean;
+    _m2 += other._m2 + delta * delta * (n * other.n) / combined;
+    _mean = (_mean * n + other._mean * other.n) / combined;
+    n = combined;
+  }
+
   double get mean => _mean;
   double get variance => n > 1 ? _m2 / (n - 1) : 1.0;
   double get stddev => math.sqrt(variance);
@@ -324,6 +341,13 @@ class FlowSseLattice {
   double cellMean(int address) => _cells[address & 0xFF].mean;
   double cellStddev(int address) => _cells[address & 0xFF].stddev;
   int cellCount(int address) => _cells[address & 0xFF].n;
+
+  /// Merge another lattice's cell into this one at [address],
+  /// preserving both mean and variance (Chan et al.).
+  void mergeCell(int address, FlowSseLattice other) {
+    _cells[address & 0xFF].merge(other._cells[address & 0xFF]);
+    _invalidate();
+  }
 
   // ── Incidence algebra views ─────────────────────────────────────
 
@@ -398,6 +422,32 @@ class FlowSseLattice {
     return raw;
   }
 
+  /// Fraction of the lattice's spectral energy living at orders 0 and 1
+  /// (DC + marginals). A "factored" lattice has all its structure in
+  /// per-axis effects — no genuine multi-axis interactions. As the
+  /// engine accumulates consistent observations, higher-order Walsh
+  /// modes average toward zero (uncorrelated random contributions
+  /// cancel) and the spectrum collapses onto the factored subspace.
+  /// `factoredness → 1` means the lattice has converged to a state
+  /// describable by 8 independent axes; further observations won't
+  /// change its shape, only sharpen it. Free — reads the cached
+  /// [orderSpectrum].
+  double get factoredness {
+    final s = orderSpectrum;
+    return s[0] + s[1];
+  }
+
+  /// True when the lattice has converged: factoredness exceeds the
+  /// noise floor expected from finite-sample Welford statistics.
+  /// The threshold is `1 - 1/sqrt(N)` where N is total observations —
+  /// physics-derived from the standard error of Welford means, not a
+  /// tuning knob. Pre-warmup (N < 64) returns false unconditionally.
+  bool get isFactored {
+    final n = totalObservations;
+    if (n < 64) return false;
+    return factoredness > 1.0 - 1.0 / math.sqrt(n);
+  }
+
   /// Intrinsic contribution at a single address — non-destructive
   /// read from the cached Möbius view.
   double intrinsicAt(int address) => mobiusView[address & 0xFF];
@@ -410,6 +460,24 @@ class FlowSseLattice {
   }) =>
       walshDominant(walshSpectrum, 8,
           maxOrder: maxOrder, maxCount: maxCount);
+
+  /// Shannon entropy of the warm-cell occupancy distribution.
+  /// High entropy = observations spread across many addresses
+  /// (complex lattice, needs more exploration). Low entropy =
+  /// concentrated in a few cells (converges fast).
+  double entropy(Set<int> warmSet) {
+    if (warmSet.isEmpty) return 0.0;
+    var total = 0;
+    for (final a in warmSet) total += _cells[a].n;
+    if (total == 0) return 0.0;
+    var h = 0.0;
+    final invTotal = 1.0 / total;
+    for (final a in warmSet) {
+      final p = _cells[a].n * invTotal;
+      if (p > 0) h -= p * math.log(p);
+    }
+    return h;
+  }
 
   /// Apply the exact heat kernel on Q₈ to the cell means at
   /// temperature [t]. Returns a 256-element diffused certainty
@@ -540,7 +608,96 @@ double flowBranchGain(int fanout) {
   return 0.25 * (e2x - 1.0) / (e2x + 1.0);
 }
 
-// ── AA* search priority ─────────────────────────────────────────────
+// ── Quantum walk weight vector ──────────────────────────────────────
+//
+// Each walker carries a priority weight on the 3-simplex
+// (anomaly, structure, certainty). The priority scalar is the dot
+// product w · (anomaly²·structure, anomaly·structure², certainty²·structure),
+// continuously interpolating what discrete strands (alpha/beta/delta)
+// sampled at the vertices. After each step, the walker absorbs: the
+// weight component aligned with the local observation decreases,
+// rotating the walker toward under-explored dimensions. The walk is
+// a spectroscopic scan — the walker's remaining spectrum encodes what
+// it still doesn't understand about the graph.
+
+class WalkerWeight {
+  double wAnomaly, wStructure, wCertainty;
+
+  WalkerWeight(this.wAnomaly, this.wStructure, this.wCertainty);
+
+  /// Evenly-spaced points on the 2-simplex. N=3 recovers the
+  /// alpha/beta/delta vertices exactly.
+  static List<WalkerWeight> simplex(int n) {
+    if (n <= 0) return [];
+    if (n == 1) {
+      return [WalkerWeight(1.0 / 3, 1.0 / 3, 1.0 / 3)];
+    }
+    if (n <= 3) {
+      return [
+        WalkerWeight(1.0, 0.0, 0.0),
+        WalkerWeight(0.0, 1.0, 0.0),
+        WalkerWeight(0.0, 0.0, 1.0),
+      ].sublist(0, n);
+    }
+    var k = 1;
+    while ((k + 1) * (k + 2) ~/ 2 < n) k++;
+    final points = <WalkerWeight>[];
+    final invK = 1.0 / k;
+    for (var i = 0; i <= k && points.length < n; i++) {
+      for (var j = 0; j <= k - i && points.length < n; j++) {
+        points.add(WalkerWeight(i * invK, j * invK, 1.0 - i * invK - j * invK));
+      }
+    }
+    return points;
+  }
+
+  /// Beer-Lambert absorption: reduce weights aligned with what the
+  /// walker observed, proportional to 1/maxDepth per step. After a
+  /// full-depth walk the absorbed axis drops to ~1/e of its original
+  /// weight. No free parameters — the rate is the walk geometry.
+  void absorb(double anomaly, double structure, double certainty,
+      int maxDepth) {
+    if (maxDepth <= 0) return;
+    final a = anomaly.clamp(0.0, 1.0);
+    final s = structure / (1.0 + structure);
+    final c = certainty.clamp(0.0, 1.0);
+    final rate = 1.0 / maxDepth;
+    wAnomaly *= 1.0 - rate * a * a;
+    wStructure *= 1.0 - rate * s * s;
+    wCertainty *= 1.0 - rate * c * c;
+    _renormalize();
+  }
+
+  void _renormalize() {
+    const floor = 1e-6;
+    if (wAnomaly < floor) wAnomaly = floor;
+    if (wStructure < floor) wStructure = floor;
+    if (wCertainty < floor) wCertainty = floor;
+    final sum = wAnomaly + wStructure + wCertainty;
+    final inv = 1.0 / sum;
+    wAnomaly *= inv;
+    wStructure *= inv;
+    wCertainty *= inv;
+  }
+
+  WalkerWeight clone() => WalkerWeight(wAnomaly, wStructure, wCertainty);
+
+  /// Walkers biased by a prior novelty score in [0, 1].
+  /// Familiar addresses (novelty→0) get anomaly-heavy walkers (hunt
+  /// for what changed). Novel addresses (novelty→1) get certainty-heavy
+  /// walkers (map the territory first). At novelty=0 this recovers
+  /// the three simplex vertices exactly.
+  static List<WalkerWeight> withPrior(double novelty) {
+    final n = novelty.clamp(0.0, 1.0);
+    return [
+      WalkerWeight(1.0 - 0.5 * n, 0.25 * n, 0.25 * n),
+      WalkerWeight(0.0, 1.0, 0.0),
+      WalkerWeight(0.25 * n, 0.25 * n, 1.0 - 0.5 * n),
+    ];
+  }
+}
+
+// ── Search priority (dot product on the simplex) ────────────────────
 
 double flowSearchPriority({
   required double certainty,
@@ -550,7 +707,7 @@ double flowSearchPriority({
   required double ssePrior,
   required int depth,
   required int maxDepth,
-  required bool exploit,
+  required WalkerWeight weight,
 }) {
   if (maxDepth <= 0) return 0.0;
   final anomaly = phaseVelocity * (1.0 - certainty);
@@ -558,9 +715,10 @@ double flowSearchPriority({
       * math.log(math.max(2, fanout)) / math.ln2;
   final attention = (1.0 + ssePrior)
       * (maxDepth - depth) / maxDepth.toDouble();
-  return exploit
-      ? anomaly * anomaly * structure * attention
-      : anomaly * structure * structure * attention;
+  return (weight.wAnomaly * anomaly * anomaly * structure
+        + weight.wStructure * anomaly * structure * structure
+        + weight.wCertainty * certainty * certainty * structure)
+      * attention;
 }
 
 // ── Phase coherence ─────────────────────────────────────────────────
@@ -695,6 +853,134 @@ int latticeFingerprint(FlowSseLattice lattice) {
     }
   }
   return fp;
+}
+
+// ── Eigenfrequency tokenizer ────────────────────────────────────────
+//
+// Self-emergent tokenizer: treat each code line as a vibrating string
+// with variable tension. The tension at each point is the coupling
+// strength between adjacent characters, learned from the source text's
+// own co-occurrence statistics. The eigenfrequencies of this string
+// encode the line's structural rhythm. The eigenvalue spectrum
+// quantized to 8 bits IS the lattice address.
+//
+// No keywords. No grammar. No language knowledge. The character
+// statistics teach the engine where tokens are (weak couplings =
+// boundaries) and what they look like (eigenfrequency profile).
+
+/// Character-pair coupling weights learned from source text.
+/// The (i, j) entry counts how often character i appears immediately
+/// before character j. Normalized to [0, 1]. Built once per file.
+class CharCoupling {
+  final Float64List _weights; // 128 × 128, row-major
+
+  CharCoupling._(this._weights);
+
+  factory CharCoupling.fromSource(String source) =>
+      CharCoupling.fromSources([source]);
+
+  /// Build a CharCoupling from many sources by summing raw bigram counts
+  /// across all of them, then log-normalising once. This is the canonical
+  /// repo-global coupling: lines from any file share a single basis, so
+  /// `eigenAddress` produces addresses with stable repo-wide meaning
+  /// (cell `0x47` means the same thing in every file). With a single
+  /// source this is identical to the legacy per-file build.
+  factory CharCoupling.fromSources(Iterable<String> sources) {
+    final w = Float64List(128 * 128);
+    for (final source in sources) {
+      for (var i = 0; i < source.length - 1; i++) {
+        final a = source.codeUnitAt(i) & 0x7F;
+        final b = source.codeUnitAt(i + 1) & 0x7F;
+        w[a * 128 + b] += 1;
+      }
+    }
+    // Log-scale normalization: log(1 + count) preserves contrast
+    // between rare and common pairs instead of compressing everything
+    // below the dominant pair to near-zero.
+    for (var i = 0; i < w.length; i++) {
+      w[i] = math.log(1 + w[i]);
+    }
+    var maxW = 0.0;
+    for (var i = 0; i < w.length; i++) {
+      if (w[i] > maxW) maxW = w[i];
+    }
+    if (maxW > 0) {
+      final inv = 1.0 / maxW;
+      for (var i = 0; i < w.length; i++) {
+        w[i] *= inv;
+      }
+    }
+    return CharCoupling._(w);
+  }
+
+  /// Raw access to the 128×128 weight matrix — used by snapshot
+  /// serialisation so a repo-global coupling can travel with the
+  /// GYAT lattice rather than being rebuilt on every load.
+  Float64List get rawWeights => _weights;
+
+  /// Reconstruct from a previously-serialised weight matrix.
+  factory CharCoupling.fromWeights(Float64List weights) {
+    if (weights.length != 128 * 128) {
+      throw ArgumentError('CharCoupling weights must be 128*128');
+    }
+    return CharCoupling._(Float64List.fromList(weights));
+  }
+
+  double weight(int a, int b) => _weights[(a & 0x7F) * 128 + (b & 0x7F)];
+}
+
+/// Eigenfrequency address for a single code line. Builds a weighted
+/// path graph from character adjacency, eigendecomposes it, and
+/// quantizes the eigenvalue spectrum to 8 bits.
+///
+/// Lines with the same eigenfrequency profile have the same structural
+/// rhythm — same alternation of tightly-coupled characters (inside
+/// tokens) and loosely-coupled characters (at boundaries).
+/// Returns -1 for degenerate lines (too short, disconnected graph,
+/// no excited modes) so callers can distinguish from legitimate
+/// eigenAddr=0 (flat spectrum).
+int eigenAddress(String line, CharCoupling coupling) {
+  final n = line.length;
+  if (n < 4) return -1;
+
+  // Build weighted path graph: node i = character i, edge weight =
+  // coupling strength between adjacent characters.
+  final edgesPerNode = List<List<(int, double)>>.generate(n, (_) => []);
+  for (var i = 0; i < n - 1; i++) {
+    final a = line.codeUnitAt(i);
+    final b = line.codeUnitAt(i + 1);
+    final w = coupling.weight(a, b);
+    if (w > 1e-10) {
+      edgesPerNode[i].add((i + 1, w));
+      edgesPerNode[i + 1].add((i, w));
+    }
+  }
+
+  final csr = CsrGraph.fromRawEdges(n: n, edgesPerNode: edgesPerNode);
+  final k = math.min(9, n);
+  final basis = SpectralBasis.fromGraph(csr, k);
+
+  if (basis.k < 2) return -1;
+
+  // Quantize eigenvalue spectrum to 8 bits. Each bit encodes whether
+  // eigenvalue j is above the line's median eigenvalue. Lines with
+  // similar spectral structure get nearby addresses.
+  final eigs = basis.eigenvalues;
+  final start = basis.firstExcitedIndex;
+  final count = basis.k - start;
+  if (count < 1) return -1;
+
+  var sum = 0.0;
+  for (var j = start; j < basis.k; j++) {
+    sum += eigs[j];
+  }
+  final mean = sum / count;
+
+  var addr = 0;
+  for (var b = 0; b < math.min(8, count); b++) {
+    if (eigs[start + b] > mean) addr |= (1 << b);
+  }
+  return addr;
 }
 
 // ── Lattice snapshot ────────────────────────────────────────────────

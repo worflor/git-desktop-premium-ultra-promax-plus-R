@@ -33,6 +33,26 @@ import 'logos_git.dart';
 import 'logos_git_stats.dart';
 import 'logos_spectrogeometry.dart';
 
+class _GitCountCache {
+  (String, String)? _key;
+  int? _value;
+
+  Future<int> getOrCompute(
+    String repoPath,
+    String head,
+    Future<int> Function() compute,
+  ) async {
+    final k = (repoPath, head);
+    if (_key == k && _value != null) return _value!;
+    final v = await compute();
+    _key = k;
+    _value = v;
+    return v;
+  }
+}
+
+final _revListCache = _GitCountCache();
+
 /// One snapshot of the engine observed at a specific commit-window
 /// depth. Every field is a pure read of the spectral + persistence
 /// state the engine computes at that focal length. A [ApertureSweep]
@@ -236,7 +256,10 @@ const List<int> kDefaultApertureWindows = [
 ///                        are sampled (in parallel). Leave `null` for
 ///                        adaptive mode.
 ///   [minWindow]        — smallest window in adaptive seed.
-///   [maxWindow]        — largest window in adaptive seed.
+///   [maxWindow]        — largest window in adaptive seed. When null
+///                        (default), derived from the repo's total
+///                        commit count so the sweep covers the full
+///                        history.
 ///   [seedCount]        — number of geometric seed windows (default 4).
 ///   [maxSamples]       — hard cap on total samples (default 8). Adaptive
 ///                        refinement stops at this count or when gap
@@ -271,7 +294,7 @@ Future<GitResult<ApertureSweep>> collectApertureSweep(
   String repoPath, {
   List<int>? windows,
   int minWindow = 60,
-  int maxWindow = 1000,
+  int? maxWindow,
   int seedCount = 6,
   int maxSamples = 8,
   double refinementThreshold = 0.20,
@@ -283,10 +306,32 @@ Future<GitResult<ApertureSweep>> collectApertureSweep(
     return _collectExplicit(
         repoPath, windows, parallelism, onProgress, onSample);
   }
+  // Derive maxWindow from repo history when not specified — the sweep
+  // should be able to see the full history, not an arbitrary cap.
+  var effectiveMaxWindow = maxWindow;
+  if (effectiveMaxWindow == null) {
+    final headResult = await Process.run(
+        'git', ['rev-parse', 'HEAD'],
+        workingDirectory: repoPath);
+    if (headResult.exitCode != 0) {
+      effectiveMaxWindow = 1000;
+    } else {
+      final head = (headResult.stdout as String).trim();
+      final totalCommits = await _revListCache.getOrCompute(repoPath, head, () async {
+        final r = await Process.run(
+            'git', ['rev-list', '--count', 'HEAD'],
+            workingDirectory: repoPath);
+        return r.exitCode == 0
+            ? int.tryParse((r.stdout as String).trim()) ?? 1000
+            : 1000;
+      });
+      effectiveMaxWindow = math.max(minWindow * 2, totalCommits);
+    }
+  }
   return _collectAdaptive(
     repoPath,
     minWindow: minWindow,
-    maxWindow: maxWindow,
+    maxWindow: effectiveMaxWindow,
     seedCount: seedCount.clamp(2, maxSamples).toInt(),
     maxSamples: math.max(maxSamples, seedCount),
     refinementThreshold: refinementThreshold,
