@@ -27,6 +27,8 @@ class ThemeShaders {
   static Future<FragmentProgram>? _phosphorFuture;
   static FragmentProgram? _petrichorFog;
   static Future<FragmentProgram>? _petrichorFogFuture;
+  static FragmentProgram? _eigenmanifold;
+  static Future<FragmentProgram>? _eigenmanifoldFuture;
 
   /// Kicks off loading the kirby fragment program if it hasn't
   /// been loaded yet. Safe to call repeatedly — only the first call
@@ -477,8 +479,68 @@ class ThemeShaders {
     return s;
   }
 
+  static FragmentProgram? eigenmanifold() {
+    if (_eigenmanifold != null) return _eigenmanifold;
+    _eigenmanifoldFuture ??=
+        FragmentProgram.fromAsset('shaders/eigenmanifold.frag').then((p) {
+      _eigenmanifold = p;
+      return p;
+    });
+    return null;
+  }
+
+  /// Eigenmanifold thermal presence shader. Always-on ambient glow on
+  /// the repo name text, UNDER the hyperhealth sheen. Cold blue when
+  /// idle, warming to amber as spectral flux accumulates.
+  ///
+  /// Uniform order matches the `.frag` declaration:
+  ///   0..1   uSize          (vec2)
+  ///   2      uTime          (seconds, monotonic)
+  ///   3      uTemperature   ([0, 1]: 0=cold/idle, 1=hot/active)
+  ///   4      uGap           (spectral gap, ~0.01..0.8)
+  ///   5      uSpectralDim   (spectral dimension, ~0.5..4.0)
+  ///   6      uBerryPhase    (accumulated radians, grows monotonically)
+  ///   7      uIntensity     ([0, 1] master fade)
+  ///   8..11  uCoolColor     (vec4 rgba — cold/idle pole)
+  ///  12..15  uWarmColor     (vec4 rgba — hot/active pole)
+  static ui.FragmentShader? eigenmanifoldShader({
+    required double width,
+    required double height,
+    required double time,
+    required double temperature,
+    required double gap,
+    required double spectralDim,
+    required double berryPhase,
+    required double intensity,
+    required ui.Color coolColor,
+    required ui.Color warmColor,
+  }) {
+    final program = eigenmanifold();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, time)
+      ..setFloat(3, temperature)
+      ..setFloat(4, gap)
+      ..setFloat(5, spectralDim)
+      ..setFloat(6, berryPhase)
+      ..setFloat(7, intensity)
+      ..setFloat(8, coolColor.r)
+      ..setFloat(9, coolColor.g)
+      ..setFloat(10, coolColor.b)
+      ..setFloat(11, coolColor.a)
+      ..setFloat(12, warmColor.r)
+      ..setFloat(13, warmColor.g)
+      ..setFloat(14, warmColor.b)
+      ..setFloat(15, warmColor.a);
+    return s;
+  }
+
   static void warmFor(AppThemeId id) {
     glass();
+    eigenmanifold();
     switch (id) {
       case AppThemeId.kirby:
         cellshade();

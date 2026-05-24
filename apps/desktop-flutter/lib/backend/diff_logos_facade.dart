@@ -1148,8 +1148,11 @@ class DiffLogosFacade {
     final integrityReasons = <String>[];
     if (engine != null) {
       try {
-        final evidence = engine.gatherEvidence(
+        final evidence = await _gatherEvidenceOffThread(
+          engine: engine,
           focusWeights: {selfPath: 1.0},
+          axisLabelByPath: const {},
+          t: 1.0,
           excludePaths: const {},
           detailBudget: 12,
         );

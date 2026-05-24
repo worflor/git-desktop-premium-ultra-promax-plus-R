@@ -11,6 +11,7 @@ import '../backend/dtos.dart';
 import '../backend/git.dart';
 import '../backend/logos_dream.dart';
 import '../backend/logos_free_energy.dart';
+import '../backend/logos_core.dart';
 import '../backend/logos_git.dart' show LogosGit;
 import '../backend/logos_spectrogeometry.dart' show UniversalityVector;
 import '../backend/system_browser.dart';
@@ -30,6 +31,8 @@ import '../ui/control_chrome.dart';
 import '../ui/design_primitives.dart';
 import '../ui/dream_hint.dart';
 import '../ui/form_controls.dart';
+import '../ui/eigenmanifold_glow.dart';
+import 'thermal_accumulator.dart';
 import '../ui/hyperhealth_text.dart';
 import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
@@ -202,7 +205,9 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       });
     }
 
-    return Focus(
+    return ChangeNotifierProvider<ThermalAccumulator>(
+      create: (_) => ThermalAccumulator(),
+      child: Focus(
       focusNode: _shellFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) => _handleKey(event),
@@ -430,6 +435,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -778,7 +784,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   }
 }
 
-class _Topbar extends StatelessWidget {
+class _Topbar extends StatefulWidget {
   final _WorkspaceMode mode;
   final _Panel panel;
   final ValueChanged<_WorkspaceMode> onModeChanged;
@@ -792,28 +798,24 @@ class _Topbar extends StatelessWidget {
   });
 
   @override
+  State<_Topbar> createState() => _TopbarState();
+}
+
+class _TopbarState extends State<_Topbar> {
+  bool _thermalScheduled = false;
+  double? _latestEntropy;
+  String? _latestRepoPath;
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final topbarTone = t.chromeTone;
-    // Narrow subscription: only rebuild when activePath or status
-    // change, not on every unrelated RepositoryState mutation. The
-    // topbar reads activeRepoName (derived from path) + status, no
-    // other state. The prior `context.watch` rebuilt this tree on
-    // every status tick across 30-50 widgets for no useful reason.
     final repoPath = context
         .select<RepositoryState, String?>((s) => s.activePath);
     final status = context
         .select<RepositoryState, RepositoryStatus?>((s) => s.status);
     final repo = context.read<RepositoryState>();
     final repoName = repo.activeRepoName;
-    // Free-energy anomaly read — the repo name gets a sheen swoosh
-    // whose strength scales with this continuous 0..1 signal. Colour
-    // of the title stays whatever it was; only the sheen carries the
-    // health indication.
-    //
-    // Select only the engine for the active repo, not the whole
-    // LogosGitState. Other repos' engine updates shouldn't churn the
-    // topbar.
     final engine = repoPath == null
         ? null
         : context.select<LogosGitState, LogosGit?>(
@@ -821,10 +823,27 @@ class _Topbar extends StatelessWidget {
           );
     final anomaly =
         engine == null ? 0.0 : (repoAnomalyLevel(engine) ?? 0.0);
-    // Pull the repo's universality classification for the sheen. The
-    // engine caches the report by `manifoldRevision`, so this is a
-    // cheap map lookup on every build; no recomputation.
     final universality = engine?.spectrogeometry()?.universality;
+
+    final basis = engine?.spectralBasis();
+    final spectralGap = basis?.spectralGap ?? 0.3;
+    final spectralDim =
+        engine?.spectrogeometry()?.spectralDim?.dS ?? 2.0;
+
+    final entropy = basis?.vonNeumannEntropy;
+    if (entropy != null) {
+      _latestEntropy = entropy;
+      _latestRepoPath = repoPath;
+      if (!_thermalScheduled) {
+        _thermalScheduled = true;
+        final thermal = context.read<ThermalAccumulator>();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _thermalScheduled = false;
+          final e = _latestEntropy;
+          if (mounted && e != null) thermal.update(e, _latestRepoPath);
+        });
+      }
+    }
 
     return MaterialSurface(
       tone: topbarTone,
@@ -858,6 +877,8 @@ class _Topbar extends StatelessWidget {
                     onRefresh: () => repo.userRefresh(),
                     anomaly: anomaly,
                     universality: universality,
+                    spectralGap: spectralGap,
+                    spectralDimension: spectralDim,
                   ),
                   if (status != null) ...[
                     const SizedBox(height: 4),
@@ -866,7 +887,7 @@ class _Topbar extends StatelessWidget {
                       activeBranch: status.branch,
                       activeRepoPath: repo.activePath,
                       onNavigateBranches: () =>
-                          onModeChanged(_WorkspaceMode.branches),
+                          widget.onModeChanged(_WorkspaceMode.branches),
                     ),
                   ],
                 ],
@@ -878,29 +899,29 @@ class _Topbar extends StatelessWidget {
             children: [
               _ModeBtn(
                 icon: 'changes',
-                active: mode == _WorkspaceMode.changes,
-                onTap: () => onModeChanged(_WorkspaceMode.changes),
+                active: widget.mode == _WorkspaceMode.changes,
+                onTap: () => widget.onModeChanged(_WorkspaceMode.changes),
               ),
               _ModeBtn(
                 icon: 'history',
-                active: mode == _WorkspaceMode.history,
-                onTap: () => onModeChanged(_WorkspaceMode.history),
+                active: widget.mode == _WorkspaceMode.history,
+                onTap: () => widget.onModeChanged(_WorkspaceMode.history),
               ),
               _ModeBtn(
                 icon: 'branches',
-                active: mode == _WorkspaceMode.branches,
-                onTap: () => onModeChanged(_WorkspaceMode.branches),
+                active: widget.mode == _WorkspaceMode.branches,
+                onTap: () => widget.onModeChanged(_WorkspaceMode.branches),
               ),
               const SizedBox(width: 4),
               _XrayModeBtn(
-                active: panel == _Panel.xray,
-                onTap: () => onTogglePanel(_Panel.xray),
+                active: widget.panel == _Panel.xray,
+                onTap: () => widget.onTogglePanel(_Panel.xray),
               ),
               const SizedBox(width: 8),
               _ModeBtn(
                 icon: 'settings',
-                active: panel == _Panel.settings,
-                onTap: () => onTogglePanel(_Panel.settings),
+                active: widget.panel == _Panel.settings,
+                onTap: () => widget.onTogglePanel(_Panel.settings),
               ),
             ],
           ),
@@ -1003,6 +1024,7 @@ class _ModeBtnState extends State<_ModeBtn> {
   }
 }
 
+
 class _RepoNameLabel extends StatefulWidget {
   final String name;
   final bool hasRepo;
@@ -1021,6 +1043,13 @@ class _RepoNameLabel extends StatefulWidget {
   /// get multi-band turbulent ones. Null on no-basis repos.
   final UniversalityVector? universality;
 
+  /// Spectral gap of the co-change Laplacian.
+  final double spectralGap;
+
+  /// Spectral dimension (d_s) — effective dimensionality a random
+  /// walker experiences on the co-change graph.
+  final double spectralDimension;
+
   const _RepoNameLabel({
     required this.name,
     required this.hasRepo,
@@ -1028,6 +1057,8 @@ class _RepoNameLabel extends StatefulWidget {
     required this.onRefresh,
     this.anomaly = 0.0,
     this.universality,
+    this.spectralGap = 0.3,
+    this.spectralDimension = 2.0,
   });
 
   @override
@@ -1074,19 +1105,21 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
             fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
-          child: HyperhealthText(
-            text: widget.name,
-            intensity: widget.anomaly,
-            refreshing: _fetching,
+          child: EigenmanifoldGlow(
+            temperature: context.watch<ThermalAccumulator>().temperature,
+            spectralGap: widget.spectralGap,
+            spectralDimension: widget.spectralDimension,
             universality: widget.universality,
-            // No special "fetching colour" — the refresh sheen itself
-            // is the affordance now, so the base text stays readable
-            // in its hover/default colour while the swoosh does the
-            // job the old dim accent used to do.
-            baseColor: color,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+            child: HyperhealthText(
+              text: widget.name,
+              intensity: widget.anomaly,
+              refreshing: _fetching,
+              universality: widget.universality,
+              baseColor: color,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),

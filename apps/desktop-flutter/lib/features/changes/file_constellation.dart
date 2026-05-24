@@ -73,6 +73,10 @@ class _Candidate {
       return (glyph: '◇', label: 'SHARED SYMBOLS');
     case RelatednessAxis.pathAffinity:
       return (glyph: '⌂', label: 'PATH SIBLINGS');
+    case RelatednessAxis.hunk:
+      return (glyph: '⧖', label: 'DIFF STRUCTURE');
+    case RelatednessAxis.spectral:
+      return (glyph: '◉', label: 'SPECTRAL');
   }
 }
 

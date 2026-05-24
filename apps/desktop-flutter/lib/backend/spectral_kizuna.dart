@@ -78,6 +78,101 @@ Float64List whtFingerprint25D(Float64List block) {
   return out;
 }
 
+// ── Factored WHT path ───────────────────────────────────────────────
+//
+// The 16-bit address space factors as 2^[8] × 2^[8] (file × commit).
+// WHT_16 = WHT_8 ⊗ WHT_8. The full product spectrum has 65536
+// coefficients; the 25 Kizuna masks are a graded projection at
+// orders 1+1+2+16 (lower marginals, upper marginals, diagonal
+// cross-terms, global parity).
+//
+// The factored path via walshHadamardProduct costs the same O(16·2^16)
+// as the brute-force path, but it gives access to ALL coefficients —
+// not just the 25 sampled masks. The graded projection then extracts
+// the canonical 25, or any other subset the caller wants.
+//
+// This connects Kizuna to the 8-bit flow lattice: the lower and
+// upper marginals ARE the Walsh spectra of the two factor lattices.
+
+/// Full factored WHT on the 65536-bin histogram. Returns the complete
+/// product Walsh spectrum in-place (the input is modified).
+/// Use [gradedProjectProduct] to extract the canonical families or
+/// any other graded slice.
+///
+/// Cost: O(16·65536) ≈ 1M ops (same order as [whtFingerprint25D]
+/// but gives all 65536 coefficients).
+Float64List whtFullSpectrum(Float64List histogram) {
+  assert(histogram.length == kKizunaAddressSpace);
+  walshHadamardProduct(histogram, 8, 8);
+  return histogram;
+}
+
+/// Compute the 25 Kizuna coefficients via the factored WHT path.
+/// Algebraically identical to [whtFingerprint25D] but routes through
+/// the incidence algebra so the caller can also access the full
+/// product spectrum or graded slices beyond the canonical 25.
+///
+/// Note: mutates [histogram] in-place (the full WHT is stored there).
+/// The returned Float64List(25) is a fresh allocation.
+Float64List whtFingerprint25DFactored(Float64List histogram) {
+  assert(histogram.length == kKizunaAddressSpace);
+  walshHadamardProduct(histogram, 8, 8);
+  final graded = gradedProjectProduct(histogram, 8, 8);
+  final out = Float64List(25);
+  for (var i = 0; i < 8; i++) {
+    out[i] = graded.lower[i];
+    out[i + 8] = graded.upper[i];
+    out[i + 16] = graded.cross[i];
+  }
+  out[24] = graded.global;
+  return out;
+}
+
+/// Extract the 8-bit file-factor Walsh spectrum from a full product
+/// WHT. This is the file lattice's own interaction decomposition,
+/// marginalized over all commit fingerprints — connecting Kizuna's
+/// product space back to the Filament engine's 8-bit SSE lattice.
+///
+/// Requires [histogram] to already be in WHT space (call
+/// [whtFullSpectrum] first). Returns 256 Walsh coefficients for the
+/// file factor.
+Float64List fileFactorSpectrum(Float64List whtHistogram) {
+  assert(whtHistogram.length == kKizunaAddressSpace);
+  final out = Float64List(256);
+  // File factor marginal: sum over all commit-factor addresses
+  // (address bits 0..7) at each file-factor address (bits 8..15).
+  // In WHT space, the file marginal at file-mode S is the coefficient
+  // at product-mode (S << 8 | 0x00) — commit factor = DC.
+  for (var s = 0; s < 256; s++) {
+    out[s] = whtHistogram[s << 8];
+  }
+  return out;
+}
+
+/// Same as [fileFactorSpectrum] but for the commit factor.
+Float64List commitFactorSpectrum(Float64List whtHistogram) {
+  assert(whtHistogram.length == kKizunaAddressSpace);
+  final out = Float64List(256);
+  // Commit factor marginal: product-mode (0x00 << 8 | S) = just S.
+  for (var s = 0; s < 256; s++) {
+    out[s] = whtHistogram[s];
+  }
+  return out;
+}
+
+/// Cross-factor interaction spectrum: the 8 diagonal modes where
+/// file bit i and commit bit i are jointly active. These are exactly
+/// Kizuna's X0..X7 cross-terms, but returned as a spectrum you can
+/// compare against the file and commit marginals.
+Float64List crossFactorSpectrum(Float64List whtHistogram) {
+  assert(whtHistogram.length == kKizunaAddressSpace);
+  final out = Float64List(8);
+  for (var i = 0; i < 8; i++) {
+    out[i] = whtHistogram[((1 << i) << 8) | (1 << i)];
+  }
+  return out;
+}
+
 /// Immutable 25D Kizuna bond fingerprint of a joint (file, commit)
 /// touch distribution. Holds the 25 WHT coefficients partitioned into
 /// the four canonical families plus a cheap signature hash.

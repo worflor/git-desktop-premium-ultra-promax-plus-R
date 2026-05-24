@@ -27,6 +27,7 @@ import 'package:meta/meta.dart';
 import 'ai_context_engine.dart';
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
+import 'logos_core.dart' show SpectralThermo;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 import 'logos_mind.dart';
@@ -4830,33 +4831,11 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
 
   await Future<void>.delayed(Duration.zero);
 
-  // Five anti-hallucination layers gathered simultaneously. The budget
-  // split between sections is derived from two Logos signals on the
-  // diff probe:
-  //   coh = mean pairwise Born-mixed edge weight on primary paths
-  //         (high → primary set is tightly clustered on the file graph;
-  //         low → scattered)
-  //   y   = (M-axis matches + Ab-axis matches) / (primary + M + Ab)
-  //         (high → many neighbourhood edges leave the primary set;
-  //         low → diff is self-contained on the graph)
-  //
-  // Each producer's `urgency()` returns one of these compositions:
-  //
-  //   share_relevance   = (1 − coh) · y       [scattered + many edges]
-  //   share_metadata    = (1 − coh) · (1 − y) [scattered + few edges]
-  //   share_fileContext = coh                 [tightly clustered]
-  //
-  //   sum = (1 − coh) + coh = 1 — algebraic by construction, NOT
-  //   physics. The three urgencies were chosen so they partition unit
-  //   urgency exactly when these three producers are the registered
-  //   set; the engine's softmax handles any other producer mix
-  //   automatically. The intuition behind each share's shape is in
-  //   the per-producer `urgency()` doc.
-
-  // Two irreducible model-level constants. Neither is a UX knob — both
-  // hoisted to top-level (see `_kReviewOverheadChars`,
-  // `_kModelOutputReservation`) so every prompt-building flow can share
-  // the same numbers.
+  // Budget split is derived from the Bernstein spectral energy
+  // partition computed in _runLogosDiffusion. Each producer reads its
+  // basin weight from `logos.partition`; the four weights sum to 1 by
+  // the Bernstein identity, so Hamilton apportionment needs no
+  // softmax normalisation.
   final rawContextBudget =
       _maxPromptChars - diffBundle.promptBody.length - _kReviewOverheadChars;
   final contextBudget =
@@ -4889,13 +4868,23 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // one-line registration change — no per-section unpacking, no
   // hardcoded section ordering, no risk of forgetting to wire the
   // new section into the prompt body.
+  final partition = logos?.partition ?? _coldStartPartition(fullDiff);
   final assembled = await engine.assembleAndStitch(
     AiContextRequest(
       repositoryPath: repositoryPath,
       diffText: fullDiff,
       logos: logos,
+      partition: partition,
     ),
     contextBudget,
+  );
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'info',
+    command: 'ai.context.partition',
+    message: 'ctx=${partition.ctx.toStringAsFixed(3)} '
+        'meta=${partition.meta.toStringAsFixed(3)} '
+        'nbhd=${partition.nbhd.toStringAsFixed(3)} '
+        'flow=${partition.flow.toStringAsFixed(3)}',
   );
   final logosEmissionRecord = assembled.sections['relevance_neighborhood']
       ?.metadataOfType<LogosEmissionRecord>();
@@ -5728,23 +5717,17 @@ Future<String> _collectFileContext({
 // to ai.dart because they wrap private collectors; the engine they slot
 // into ([AiContextEngine]) is public.
 //
-// Each producer's urgency function is derived from Logos signals
-// only. The math is:
+// Each producer reads its urgency from the spectral context partition
+// on [AiContextRequest.partition]. The partition has two independent
+// factors:
 //
-//   file_context = coh
-//   relevance    = dispersion · yieldFraction
-//   metadata     = dispersion · (1 − yieldFraction)
+//   f = ω/(1+ω)  where ω = η·r  (diff-intrinsic flow fraction)
+//   B = Bernstein basins from spectral energy (when available)
 //
-// sum = coh + dispersion. The engine's softmax normalises by this
-// sum, so the pair (coh, dispersion) drives the split: a coherent
-// diff allocates to file_context, a dispersed one to the
-// metadata/relevance pair. The split WITHIN that pair is gated by
-// yieldFraction.
-//
-// When probe is null or primaryCount == 0, file_context returns 1.0
-// and the others return 0.0. [AiContextEngine] excludes zero-urgency
-// producers from allocation, so file_context absorbs the full
-// variable pool — the only useful producer when there's no signal.
+// Final allocation: flow=f, ctx=(1-f)·B.ctx, meta=(1-f)·B.meta,
+// nbhd=(1-f)·B.nbhd. Sums to 1 by the Bernstein identity. When the
+// spectral basis is unavailable (cold start), meta and nbhd are 0 and
+// ctx absorbs 1-f.
 
 class _FileContextProducer extends AiContextProducer {
   const _FileContextProducer();
@@ -5754,11 +5737,7 @@ class _FileContextProducer extends AiContextProducer {
   int get order => 40;
   @override
   double? urgency(AiContextRequest req) {
-    final probe = req.logos?.probe;
-    // No probe = engine cold. File context absorbs everything because
-    // we have no signal to allocate to relevance/metadata.
-    if (probe == null || probe.stats.primaryCount == 0) return 1.0;
-    return _logosYieldOf(probe).coh;
+    return req.partition?.ctx ?? 1.0;
   }
 
   @override
@@ -5781,10 +5760,7 @@ class _FileMetadataProducer extends AiContextProducer {
   int get order => 30;
   @override
   double? urgency(AiContextRequest req) {
-    final probe = req.logos?.probe;
-    if (probe == null || probe.stats.primaryCount == 0) return 0.0;
-    final y = _logosYieldOf(probe);
-    return y.dispersion * (1.0 - y.yieldFraction);
+    return req.partition?.meta ?? 0.0;
   }
 
   @override
@@ -5808,10 +5784,10 @@ class _ExecutionFlowProducer extends AiContextProducer {
   int get order => 42;
   @override
   double? urgency(AiContextRequest req) {
-    // scales with diff size, capped at 0.6.
-    final diffLen = req.diffText.length;
-    if (diffLen < 100) return null;
-    return (diffLen / 10000).clamp(0.1, 0.6);
+    final p = req.partition;
+    if (p == null) return null;
+    if (p.flow < 0.01) return null;
+    return p.flow;
   }
 
   @override
@@ -5987,10 +5963,7 @@ class _RelevanceNeighborhoodProducer extends AiContextProducer {
   int get order => 50;
   @override
   double? urgency(AiContextRequest req) {
-    final probe = req.logos?.probe;
-    if (probe == null || probe.stats.primaryCount == 0) return 0.0;
-    final y = _logosYieldOf(probe);
-    return y.dispersion * y.yieldFraction;
+    return req.partition?.nbhd ?? 0.0;
   }
 
   @override
@@ -6121,6 +6094,83 @@ class _StructuralVerificationProducer extends AiContextProducer {
   }
 }
 
+/// Gibbs flow fraction from raw complexity ω = η·r.
+/// Maps [0, ∞) → [0, 1) via f = ω/(1+ω), the Boltzmann partition for
+/// a two-state system (flow vs content). Content always retains at
+/// least 50% of the budget (f ≤ 0.5 when ω ≤ 1). No free parameters.
+double _gibbsFlow(double omega) => omega / (1.0 + omega);
+
+/// Cold-start partition from raw diff text. Used when the Logos engine
+/// isn't available (first review, tiny repo, engine error). Computes
+/// the flow fraction from file count and add/remove ratio by scanning
+/// diff headers and +/- lines. Without a spectral basis, the three
+/// content basins collapse: meta and nbhd need the co-change graph to
+/// be meaningful, so all non-flow budget goes to ctx.
+({double ctx, double meta, double nbhd, double flow}) _coldStartPartition(
+    String diffText) {
+  var fileCount = 0;
+  var added = 0;
+  var removed = 0;
+  for (final line in diffText.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      fileCount++;
+    } else if (line.startsWith('+') && !line.startsWith('+++')) {
+      added++;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      removed++;
+    }
+  }
+  if (fileCount <= 1) return (flow: 0.0, ctx: 1.0, meta: 0.0, nbhd: 0.0);
+
+  final total = added + removed;
+  if (total == 0) return (flow: 0.0, ctx: 1.0, meta: 0.0, nbhd: 0.0);
+  final a = added / total;
+  final r = 4.0 * a * (1.0 - a);
+
+  final f = _gibbsFlow(r);
+  final c = 1.0 - f;
+  return (flow: f, ctx: c, meta: 0.0, nbhd: 0.0);
+}
+
+/// Diff-intrinsic flow fraction: how much of the context budget should
+/// go to execution-flow analysis. Computed entirely from the diff's own
+/// observables — no spectral basis needed.
+///
+/// ω = η · r, then f = ω/(1+ω) (Gibbs partition), where:
+///   η = H(w)/ln(N) — normalised participation entropy of the diff's
+///       file-weight distribution. Measures cross-file dispersion.
+///       0 for single-file diffs, 1 for uniformly spread.
+///   r = 4·a·(1−a) — Bernstein B₁ on the add ratio a = A/(A+R).
+///       Measures edit balance. 0 for pure additions/removals,
+///       1 for balanced refactors.
+///
+/// Fixed points:
+///   single file → η = 0 → f = 0  (no cross-file flow to trace)
+///   pure addition → r = 0 → f = 0  (no existing flow to break)
+///   pure removal → r = 0 → f = 0  (no new flow introduced)
+///   multi-file balanced refactor → both high → f ≈ 0.5
+double _diffFlowFraction(DiffProbe probe) {
+  final n = probe.sourceWeights.length;
+  if (n <= 1) return 0.0;
+
+  final total = probe.sourceWeights.values.fold(0.0, (a, b) => a + b);
+  if (total <= 0) return 0.0;
+  var h = 0.0;
+  for (final w in probe.sourceWeights.values) {
+    if (w > 0) {
+      final p = w / total;
+      h -= p * math.log(p);
+    }
+  }
+  final hMax = math.log(n.toDouble());
+  final eta = hMax > 0 ? (h / hMax).clamp(0.0, 1.0) : 0.0;
+
+  final a = probe.stats.addRatio;
+  final r = 4.0 * a * (1.0 - a);
+
+  return _gibbsFlow(eta * r);
+}
+
 /// Run the Logos diffusion pipeline up to (but not including) tier
 /// emission. Returns null when the engine isn't available, the probe
 /// is empty, or diffusion produced no scores. Cheap to call early —
@@ -6220,6 +6270,34 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       temperature: resolvedT,
     );
     if (scores.isEmpty) return null;
+
+    // Spectral context partition. Two independent factors:
+    //   f = diff-intrinsic flow fraction (participation entropy × edit
+    //       balance — measures the diff's own complexity, not its
+    //       coupling to the repo graph)
+    //   B = Bernstein basins from spectral energy (when available)
+    //
+    // The partition sums to 1 in all cases:
+    //   flow = f,  ctx = (1-f)·B.ctx,  meta = (1-f)·B.meta,
+    //   nbhd = (1-f)·B.nbhd
+    // When B is null (degenerate / cold): flow = f, ctx = 1-f.
+    final f = _diffFlowFraction(probe);
+    ({double ctx, double meta, double nbhd})? basins;
+    final basis = engine.spectralBasis();
+    if (basis != null && basis.k >= 3 && basis.pathToId != null) {
+      final coeffs = basis.labelProject(probe.sourceWeights);
+      basins = basis.bernsteinBasins(coeffs, resolvedT);
+    }
+    final c = 1.0 - f;
+    final partition = basins != null
+        ? (
+            flow: f,
+            ctx: c * basins.ctx,
+            meta: c * basins.meta,
+            nbhd: c * basins.nbhd,
+          )
+        : (flow: f, ctx: c, meta: 0.0, nbhd: 0.0);
+
     final result = LogosDiffusionResult(
       engine: engine,
       probe: probe,
@@ -6230,6 +6308,7 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       recurrentIterations: recurrent.iterations,
       recurrentConverged: recurrent.converged,
       discoveryDepth: recurrent.discoveryDepth,
+      partition: partition,
     );
 
     // Visualisation events: the diff's source files (what ignited) +
@@ -6292,33 +6371,6 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     );
     return null;
   }
-}
-
-/// Shared Logos-yield helper. Used by every probe-based producer's
-/// urgency function so the algebraic partition `D·y + D·(1−y) + coh = 1`
-/// holds across producers (each one queries the same numbers from the
-/// same probe). Centralised so a future regime/SSE-aware refinement
-/// updates all three producers at once.
-/// Returns:
-///   coh         — coherence ∈ [0, 1]: mean pairwise edge weight under
-///                 the engine's Born-mixed metric for the primary path
-///                 set. High when the diff's touched files are tightly
-///                 clustered on the file graph; low when scattered.
-///                 (Not Shannon/Rényi entropy — a pairwise-weight
-///                 summary that happens to live in the same range.)
-///   dispersion  — 1 − coh: how scattered the primary set is.
-///   yieldFraction — (M-axis + Ab-axis matches) / (primary + M + Ab) ∈
-///                 [0, 1): fraction of "diff energy" that lives in the
-///                 neighbourhood the probe found via pickaxe + path
-///                 mirrors, vs. confined to the primary set itself.
-({double coh, double dispersion, double yieldFraction}) _logosYieldOf(
-    DiffProbe probe) {
-  final coh = probe.stats.coherence.clamp(0.0, 1.0);
-  final neigh = (probe.stats.mMatches + probe.stats.abMatches).toDouble();
-  final primary = probe.stats.primaryCount.toDouble();
-  final denom = primary + neigh;
-  final yieldFraction = denom > 0 ? neigh / denom : 0.0;
-  return (coh: coh, dispersion: 1.0 - coh, yieldFraction: yieldFraction);
 }
 
 /// Returns the prompt section *and* the emission record for this call,
@@ -7872,6 +7924,10 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   final pack = diff_attention.compactHunksUnderBudget(
     rankings: ranking.rankings,
     budgetChars: packBudget,
+    entanglementRatio: ranking.entanglementRatio > 0.01
+        ? ranking.entanglementRatio
+        : null,
+    interaction: ranking.interactionDecomposition(),
   );
 
   // Visualisation event: hunks ranked + packed. Canvas fills the
@@ -8076,43 +8132,38 @@ String _buildCommitMessagePrompt({
   LogosCommitShape? logosShape,
 }) {
   final buffer = StringBuffer();
-  buffer.writeln('You are generating a git commit message.');
-  buffer
-      .writeln('Return only the message — plain text, ASCII characters only.');
+  buffer.writeln(
+      'You are the author of this commit. The diff is what you did. '
+      'Write the commit message. Return only the message — plain text, '
+      'ASCII characters only.');
   buffer.writeln();
-  buffer.writeln('<commit_message_structure>');
+  buffer.writeln('<format>');
   buffer.writeln(_structureDirective(structure));
   buffer.writeln(_voiceDirective(voice));
   buffer.writeln(_coverageDirective(coverage));
-  buffer.writeln('</commit_message_structure>');
+  buffer.writeln('</format>');
   buffer.writeln();
-  // Logos shape block — regime + centroid + missing mass. Shape HINTS,
-  // not requirements; the user's explicit structure/voice/coverage
-  // prefs always override.
-  final shapeBlock = _formatCommitShapeBlock(logosShape);
-  if (shapeBlock.isNotEmpty) {
-    buffer.writeln(shapeBlock);
-    buffer.writeln();
-  }
-  buffer.writeln(
-      'If <user_instructions> are present, follow them — they override format, tone, and style.');
-  buffer.writeln();
-  buffer.writeln('<generation_context>');
+  buffer.writeln('<repo>');
   buffer.writeln('Branch: $branchName');
   if (authorName.isNotEmpty) buffer.writeln('Author: $authorName');
-  if (totalCommits > 0) buffer.writeln('Total commits: $totalCommits');
-  if (projectAge.isNotEmpty) buffer.writeln('Project started: $projectAge');
+  if (totalCommits > 0) buffer.writeln('Commits: $totalCommits');
+  if (projectAge.isNotEmpty) buffer.writeln('Started: $projectAge');
   if (lastCommitAge.isNotEmpty) buffer.writeln('Last commit: $lastCommitAge');
   if (uniqueContributors > 0)
-    buffer.writeln('Contributors (sampled): $uniqueContributors');
-  buffer.writeln('Model slot: $modelCategoryLabel');
-  buffer.writeln('Scope: $scopeLabel');
-  buffer.writeln('</generation_context>');
+    buffer.writeln('Contributors: $uniqueContributors');
+  buffer.writeln('</repo>');
   if (recentLog.isNotEmpty) {
     buffer.writeln();
-    buffer.writeln('<commit_history>');
+    buffer.writeln(
+        '<commit_history description="this is how you have been writing">'
+    );
     buffer.writeln(recentLog);
     buffer.writeln('</commit_history>');
+  }
+  final shapeBlock = _formatCommitShapeBlock(logosShape);
+  if (shapeBlock.isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln(shapeBlock);
   }
   if (existingMessage.trim().isNotEmpty) {
     buffer.writeln();
@@ -8122,9 +8173,9 @@ String _buildCommitMessagePrompt({
   }
   if (statusSummary.trim().isNotEmpty) {
     buffer.writeln();
-    buffer.writeln('<status_summary>');
+    buffer.writeln('<status>');
     buffer.writeln(statusSummary.trim());
-    buffer.writeln('</status_summary>');
+    buffer.writeln('</status>');
   }
   if (statSummary.trim().isNotEmpty) {
     buffer.writeln();
@@ -8139,9 +8190,9 @@ String _buildCommitMessagePrompt({
     buffer.writeln('</user_instructions>');
   }
   buffer.writeln();
-  buffer.writeln('<diff_context>');
+  buffer.writeln('<diff>');
   buffer.writeln(diffSummary.trim());
-  buffer.writeln('</diff_context>');
+  buffer.writeln('</diff>');
 
   return _capPromptBody(buffer.toString().trim(), 'commit_message_prompt');
 }

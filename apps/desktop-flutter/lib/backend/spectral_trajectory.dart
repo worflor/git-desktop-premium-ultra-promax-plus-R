@@ -1173,6 +1173,111 @@ class SpectralTrajectory {
     );
   }
 
+  // ── Berry phase (eigenvector rotation between steps) ───────────────
+
+  /// Berry phase at step `i` — how much the eigenvector subspace has
+  /// rotated between `points[i]` and `points[i + 1]`, even if the
+  /// eigenvalues haven't changed. Computed as `acos(|det(S)|)` where
+  /// S is the overlap matrix of the first m non-trivial eigenvectors.
+  ///
+  /// * 0 = eigenvectors unchanged (pure eigenvalue shift)
+  /// * π/2 = eigenvectors fully rotated (hidden structural shift)
+  ///
+  /// This catches refactors that "change nothing" by eigenvalue
+  /// distribution but silently reassign which files play which
+  /// spectral role.
+  double berryPhaseAt(int i) {
+    if (i < 0 || i >= points.length - 1) return double.nan;
+    final a = points[i].state.fileSpectrum;
+    final b = points[i + 1].state.fileSpectrum;
+    if (a == null || b == null) return double.nan;
+    final k = math.min(a.k, b.k);
+    if (k < 2) return double.nan;
+
+    final m = math.min(k - 1, 8);
+    final n = math.min(a.n, b.n);
+
+    final s = Float64List(m * m);
+    for (var j = 0; j < m; j++) {
+      final aBase = (j + 1) * a.n;
+      for (var l = 0; l < m; l++) {
+        final bBase = (l + 1) * b.n;
+        var dot = 0.0;
+        for (var idx = 0; idx < n; idx++) {
+          dot += a.eigenvectors[aBase + idx] * b.eigenvectors[bBase + idx];
+        }
+        s[j * m + l] = dot;
+      }
+    }
+
+    final det = _smallDet(s, m).abs();
+    return math.acos(det.clamp(0.0, 1.0));
+  }
+
+  /// Full Berry phase curve — one value per transition. Length is
+  /// `points.length − 1` (or empty for short trajectories).
+  List<double> berryPhaseCurve() {
+    if (points.length < 2) return const <double>[];
+    return [for (var i = 0; i < points.length - 1; i++) berryPhaseAt(i)];
+  }
+
+  // ── Anti-momentum (tangent autocorrelation) ──────────────────────
+
+  /// Cosine similarity between consecutive tangent vectors at step `i`.
+  /// Ranges `[-1, 1]`: +1 = same direction (momentum), -1 = full
+  /// reversal (anti-momentum). The eigenmanifold data shows a mean
+  /// of -0.15 across real repos — each step partially reverses the
+  /// previous one.
+  double antiMomentumAt(int i) {
+    if (i < 1 || i >= points.length - 1) return double.nan;
+    final tPrev = tangentAt(i - 1);
+    final tCurr = tangentAt(i);
+    if (tPrev.isEmpty || tCurr.isEmpty) return double.nan;
+    final k = math.min(tPrev.length, tCurr.length);
+    var dot = 0.0, nP = 0.0, nC = 0.0;
+    for (var j = 0; j < k; j++) {
+      dot += tPrev[j] * tCurr[j];
+      nP += tPrev[j] * tPrev[j];
+      nC += tCurr[j] * tCurr[j];
+    }
+    if (nP <= 1e-300 || nC <= 1e-300) return double.nan;
+    return dot / (math.sqrt(nP) * math.sqrt(nC));
+  }
+
+  /// Full anti-momentum curve. Length is `points.length − 2`.
+  List<double> antiMomentumCurve() {
+    if (points.length < 3) return const <double>[];
+    return [for (var i = 1; i < points.length - 1; i++) antiMomentumAt(i)];
+  }
+
+  // ── Spectral weather ─────────────────────────────────────────────
+
+  /// Spectral weather = speed × curvature over a recent window.
+  /// High weather = structural turbulence (storm). Low = stable (calm).
+  ///
+  /// Use this to modulate Filament's sigma threshold:
+  ///   sigma = baseSigma / (1 + weather)
+  /// Storm → lower sigma → more sensitive. Calm → higher sigma.
+  double weather({int window = 10}) {
+    final speed = pathSpeed(window: window);
+    if (!speed.isFinite || speed <= 0) return 0.0;
+    if (points.length < window + 2) return 0.0;
+
+    var curvSum = 0.0;
+    var curvCount = 0;
+    for (var i = math.max(1, points.length - 1 - window);
+        i < points.length - 1;
+        i++) {
+      final c = curvatureAt(i);
+      if (c.isFinite) {
+        curvSum += c;
+        curvCount++;
+      }
+    }
+    if (curvCount == 0) return 0.0;
+    return speed * (curvSum / curvCount);
+  }
+
   @override
   String toString() {
     if (points.isEmpty) return 'SpectralTrajectory(empty)';
@@ -1224,4 +1329,39 @@ bool _isMonotoneRevisions(List<TrajectoryPoint> points) {
     if (points[i].revision <= points[i - 1].revision) return false;
   }
   return true;
+}
+
+/// Determinant of a small (m ≤ 8) row-major matrix via LU with
+/// partial pivoting. Used for Berry phase overlap-matrix det.
+double _smallDet(Float64List a, int m) {
+  final lu = Float64List.fromList(a);
+  var det = 1.0;
+  for (var i = 0; i < m; i++) {
+    var maxVal = lu[i * m + i].abs();
+    var maxRow = i;
+    for (var r = i + 1; r < m; r++) {
+      final v = lu[r * m + i].abs();
+      if (v > maxVal) {
+        maxVal = v;
+        maxRow = r;
+      }
+    }
+    if (maxVal < 1e-15) return 0.0;
+    if (maxRow != i) {
+      for (var c = 0; c < m; c++) {
+        final tmp = lu[i * m + c];
+        lu[i * m + c] = lu[maxRow * m + c];
+        lu[maxRow * m + c] = tmp;
+      }
+      det = -det;
+    }
+    det *= lu[i * m + i];
+    for (var r = i + 1; r < m; r++) {
+      final factor = lu[r * m + i] / lu[i * m + i];
+      for (var c = i + 1; c < m; c++) {
+        lu[r * m + c] -= factor * lu[i * m + c];
+      }
+    }
+  }
+  return det;
 }

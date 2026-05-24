@@ -913,6 +913,7 @@ class HunkDiffusionResult {
     required this.rankings,
     required this.fellBackToChurn,
     this.graph,
+    this.nodeOrder,
   });
 
   /// Hunks in descending Ï† order. First = most central.
@@ -930,7 +931,12 @@ class HunkDiffusionResult {
   /// that [SpectralBasis] exposes on the file-level graph.
   final CsrGraph? graph;
 
+  /// Graph node indices in φ-descending order. Entry [r] is the graph
+  /// node index for the hunk at rank r.
+  final List<int>? nodeOrder;
+
   SpectralBasis? _cachedSpectralBasis;
+  HunkInteractionDecomposition? _cachedInteraction;
 
   /// Lazy spectral basis over [graph]. Cached for the lifetime of this
   /// result — safe because hunk graphs are immutable once built.
@@ -944,6 +950,48 @@ class HunkDiffusionResult {
     _cachedSpectralBasis = SpectralBasis.fromGraph(g, clamped);
     return _cachedSpectralBasis;
   }
+
+  /// Lazy interaction decomposition on the Boolean lattice 2^[H].
+  /// Decomposes hunk coupling into irreducible multi-body interactions
+  /// via Walsh-Hadamard on the subgraph heat trace. Cached.
+  HunkInteractionDecomposition? interactionDecomposition({double t = 1.0}) {
+    final g = graph;
+    if (g == null || g.n < 2) return null;
+    if (_cachedInteraction != null) return _cachedInteraction;
+    final order = nodeOrder;
+    if (order == null || order.isEmpty) return null;
+    // Derive the lattice depth from the hunk graph's spectral gap.
+    // Tight gap → strong multi-body coupling → deeper decomposition.
+    // Wide gap → weak coupling → higher orders are noise, stop early.
+    // Formula: H = clamp(ceil(4 / gap), 4, 16). The constant 4 in
+    // the numerator sets the scale: at gap=1 (maximally connected)
+    // H=4 (minimal depth — everything is already coupled, no hidden
+    // multi-body structure). At gap=0.25 (moderate coupling) H=16
+    // (full depth — there's real structure to find). The spectral gap
+    // IS the noise floor; dividing by it gives the number of resolvable
+    // modes, which is the right depth for the Walsh decomposition.
+    final basis = spectralBasis();
+    final gap = basis?.spectralGap ?? 1.0;
+    final derivedMaxH = gap > 0.01
+        ? (4.0 / gap).ceil().clamp(4, _kHunkLatticeMaxH)
+        : _kHunkLatticeMaxH;
+    final effectiveH = math.min(order.length, derivedMaxH);
+    final nodes = effectiveH < order.length
+        ? order.sublist(0, effectiveH)
+        : order;
+    _cachedInteraction = decomposeHunkInteractions(
+      graph: g,
+      nodeSubset: nodes,
+      t: t,
+    );
+    return _cachedInteraction;
+  }
+
+  /// Fraction of Walsh energy at interaction order ≥ 2 — how much of the
+  /// hunk coupling is genuinely multi-body (not explained by individual
+  /// hunk importance). High values mean hunks must be reviewed together.
+  double get entanglementRatio =>
+      interactionDecomposition()?.entanglementRatio ?? 0.0;
 }
 
 class HunkFileEvidence {
@@ -1322,6 +1370,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
     rankings: rankings,
     fellBackToChurn: false,
     graph: graph,
+    nodeOrder: indexed,
   );
 }
 
@@ -1476,4 +1525,337 @@ HunkPackResult packHunksUnderBudget({
     admitted: admitted,
     skipped: skipped,
   );
+}
+
+// ── Hunk interaction decomposition via 2^[H] Möbius ──────────────
+//
+// For a commit with H hunks, the Boolean lattice 2^[H] indexes every
+// subset of hunks. The subgraph heat trace f(S) = tr(exp(-t·L_S))
+// measures each subset's thermal cohesion. Its Walsh-Hadamard transform
+// decomposes hunk interactions into irreducible multi-body terms:
+//
+//   Order 0: baseline thermal capacity
+//   Order 1: per-hunk marginal contribution
+//   Order 2: pairwise entanglement
+//   Order 3+: genuine multi-body coupling (bridge hunks, triadic
+//             interference, architectural bottlenecks)
+//
+// The heat trace is genuinely nonlinear in the vertex set — removing a
+// bridge hunk disconnects the subgraph and collapses the trace, creating
+// higher-order Walsh coefficients that pairwise weights alone cannot.
+//
+// Two computational paths:
+//   H ≤ 12 (spectral): enumerate all 2^H subsets, Jacobi-eigensolve
+//     each subgraph Laplacian, compute heat traces, then WHT. O(2^H·H³).
+//   H > 12 (quadratic): closed-form Walsh coefficients from pairwise
+//     edge weights. Orders 0-2 only; order 3+ structurally zero.
+//   H > 16: caller truncates to top-16 by φ.
+
+const _kHunkLatticeFullH = 12;
+const _kHunkLatticeMaxH = 16;
+const _kInteractionDominantLimit = 32;
+
+class HunkInteractionDecomposition {
+  const HunkInteractionDecomposition({
+    required this.h,
+    required this.walshSpectrum,
+    required this.orderSpectrum,
+    required this.entanglementRatio,
+    required this.dominantModes,
+    required this.perHunkCoefficient,
+    required this.isSpectral,
+  });
+
+  /// Number of hunks in the decomposition.
+  final int h;
+
+  /// Walsh spectrum f̂(S) for all S ∈ 2^[H]. Length = 2^h.
+  final Float64List walshSpectrum;
+
+  /// Energy per Walsh order 0..h. Entry [k] = Σ_{|S|=k} f̂(S)².
+  final Float64List orderSpectrum;
+
+  /// Fraction of Walsh energy at order ≥ 2.
+  final double entanglementRatio;
+
+  /// Dominant modes sorted by |coefficient|. At most 32.
+  final List<({int mask, int order, double coefficient})> dominantModes;
+
+  /// Walsh coefficient of {i} for each hunk — marginal importance.
+  final Float64List perHunkCoefficient;
+
+  /// True when the full spectral (heat trace) decomposition was used.
+  final bool isSpectral;
+}
+
+/// Look up raw edge weight w(i,j) in a CSR graph. Returns 0 if no edge.
+double _csrRawWeight(CsrGraph g, int i, int j) {
+  final start = g.indptr[i];
+  final end = g.indptr[i + 1];
+  final w = g.rawWeights.isNotEmpty ? g.rawWeights : g.values;
+  for (var k = start; k < end; k++) {
+    if (g.indices[k] == j) return w[k];
+  }
+  return 0.0;
+}
+
+/// Eigenvalues of a small (n ≤ ~16) symmetric matrix via cyclic Jacobi.
+/// Input: n×n row-major in [a]. DESTRUCTIVE — modifies [a] in place.
+/// Returns eigenvalues in ascending order.
+Float64List _jacobiEigenvalues(Float64List a, int n) {
+  if (n == 0) return Float64List(0);
+  if (n == 1) return Float64List.fromList([a[0]]);
+  if (n == 2) {
+    final p = a[0], q = a[1], r = a[3];
+    final mid = (p + r) * 0.5;
+    final half = (p - r) * 0.5;
+    final disc = math.sqrt(half * half + q * q);
+    return Float64List.fromList([mid - disc, mid + disc]);
+  }
+
+  const maxSweeps = 50;
+  const eps = 1e-12;
+
+  for (var sweep = 0; sweep < maxSweeps; sweep++) {
+    var offMax = 0.0;
+    for (var i = 0; i < n; i++) {
+      for (var j = i + 1; j < n; j++) {
+        final v = a[i * n + j].abs();
+        if (v > offMax) offMax = v;
+      }
+    }
+    if (offMax < eps) break;
+
+    for (var p = 0; p < n; p++) {
+      for (var q = p + 1; q < n; q++) {
+        final apq = a[p * n + q];
+        if (apq.abs() < eps * 0.01) continue;
+
+        final app = a[p * n + p];
+        final aqq = a[q * n + q];
+        final diff = aqq - app;
+
+        double t;
+        if (diff.abs() < eps) {
+          t = apq >= 0 ? 1.0 : -1.0;
+        } else {
+          final theta = diff / (2.0 * apq);
+          t = (theta >= 0 ? 1.0 : -1.0) /
+              (theta.abs() + math.sqrt(1.0 + theta * theta));
+        }
+        final c = 1.0 / math.sqrt(1.0 + t * t);
+        final s = t * c;
+
+        a[p * n + p] = app - t * apq;
+        a[q * n + q] = aqq + t * apq;
+        a[p * n + q] = 0.0;
+        a[q * n + p] = 0.0;
+
+        for (var i = 0; i < n; i++) {
+          if (i == p || i == q) continue;
+          final ip = a[i * n + p];
+          final iq = a[i * n + q];
+          final nip = c * ip - s * iq;
+          final niq = s * ip + c * iq;
+          a[i * n + p] = nip;
+          a[p * n + i] = nip;
+          a[i * n + q] = niq;
+          a[q * n + i] = niq;
+        }
+      }
+    }
+  }
+
+  final eigenvalues = Float64List(n);
+  for (var i = 0; i < n; i++) {
+    eigenvalues[i] = a[i * n + i];
+  }
+  eigenvalues.sort();
+  return eigenvalues;
+}
+
+double _heatTraceFromEigs(Float64List eigenvalues, double t) {
+  var sum = 0.0;
+  for (var i = 0; i < eigenvalues.length; i++) {
+    final x = -t * eigenvalues[i];
+    if (x > -40.0) sum += math.exp(x);
+  }
+  return sum;
+}
+
+/// Full spectral path: enumerate all 2^H subsets, build each subgraph's
+/// combinatorial Laplacian, Jacobi-eigensolve, compute heat trace.
+HunkInteractionDecomposition _decomposeHunkSpectral(
+  CsrGraph graph,
+  List<int> nodes,
+  double t,
+) {
+  if (nodes.length > _kHunkLatticeFullH) {
+    nodes = nodes.sublist(0, _kHunkLatticeFullH);
+  }
+  final h = nodes.length;
+  final size = 1 << h;
+  final f = Float64List(size);
+
+  for (var s = 1; s < size; s++) {
+    final subset = <int>[];
+    for (var b = 0; b < h; b++) {
+      if (s & (1 << b) != 0) subset.add(nodes[b]);
+    }
+    final m = subset.length;
+
+    if (m == 1) {
+      f[s] = 1.0;
+      continue;
+    }
+
+    // Build m×m combinatorial Laplacian of the subgraph.
+    final lap = Float64List(m * m);
+    for (var a = 0; a < m; a++) {
+      for (var b = a + 1; b < m; b++) {
+        final w = _csrRawWeight(graph, subset[a], subset[b]);
+        if (w <= 0) continue;
+        lap[a * m + b] = -w;
+        lap[b * m + a] = -w;
+        lap[a * m + a] += w;
+        lap[b * m + b] += w;
+      }
+    }
+
+    final eigenvalues = _jacobiEigenvalues(lap, m);
+    f[s] = _heatTraceFromEigs(eigenvalues, t);
+  }
+
+  // Transform to Walsh space.
+  walshHadamard(f, h);
+  final inv = 1.0 / size;
+  for (var i = 0; i < size; i++) {
+    f[i] *= inv;
+  }
+
+  return _buildInteractionResult(f, h, isSpectral: true);
+}
+
+/// Quadratic shortcut: closed-form Walsh coefficients from pairwise
+/// edge weights. The set function f(S) = Σ_{i<j∈S} w_{ij} is degree-2
+/// in the indicator variables, so its WHT has non-zero coefficients only
+/// at orders 0, 1, and 2.
+///
+///   f̂(∅) = W_total / 4
+///   f̂({k}) = -d_k / 4
+///   f̂({k,l}) = w_{kl} / 4
+///
+/// (Normalized by 1/2^H; the factor 2^{H-2}/2^H = 1/4 is universal.)
+HunkInteractionDecomposition _decomposeHunkQuadratic(
+  CsrGraph graph,
+  List<int> nodes,
+) {
+  if (nodes.length > _kHunkLatticeMaxH) {
+    nodes = nodes.sublist(0, _kHunkLatticeMaxH);
+  }
+  final h = nodes.length;
+  final size = 1 << h;
+  final f = Float64List(size);
+
+  var totalWeight = 0.0;
+  final degree = Float64List(h);
+
+  for (var i = 0; i < h; i++) {
+    for (var j = i + 1; j < h; j++) {
+      final w = _csrRawWeight(graph, nodes[i], nodes[j]);
+      if (w <= 0) continue;
+      totalWeight += w;
+      degree[i] += w;
+      degree[j] += w;
+      f[(1 << i) | (1 << j)] = w * 0.25;
+    }
+  }
+
+  f[0] = totalWeight * 0.25;
+  for (var k = 0; k < h; k++) {
+    f[1 << k] = -degree[k] * 0.25;
+  }
+
+  return _buildInteractionResult(f, h, isSpectral: false);
+}
+
+HunkInteractionDecomposition _buildInteractionResult(
+  Float64List spectrum,
+  int h, {
+  required bool isSpectral,
+}) {
+  final orderSpec = walshOrderSpectrum(spectrum, h);
+
+  final dominant = <({int mask, int order, double coefficient})>[];
+  final size = 1 << h;
+  for (var s = 1; s < size; s++) {
+    final v = spectrum[s];
+    if (v.abs() < 1e-15) continue;
+    dominant.add((mask: s, order: walshOrder(s), coefficient: v));
+  }
+  dominant.sort((a, b) => b.coefficient.abs().compareTo(a.coefficient.abs()));
+  if (dominant.length > _kInteractionDominantLimit) {
+    dominant.removeRange(_kInteractionDominantLimit, dominant.length);
+  }
+
+  final perHunk = Float64List(h);
+  for (var i = 0; i < h; i++) {
+    perHunk[i] = spectrum[1 << i];
+  }
+
+  var totalEnergy = 0.0;
+  var entangledEnergy = 0.0;
+  for (var k = 0; k <= h; k++) {
+    totalEnergy += orderSpec[k];
+    if (k >= 2) entangledEnergy += orderSpec[k];
+  }
+  final entanglement = totalEnergy > 0 ? entangledEnergy / totalEnergy : 0.0;
+
+  return HunkInteractionDecomposition(
+    h: h,
+    walshSpectrum: spectrum,
+    orderSpectrum: orderSpec,
+    entanglementRatio: entanglement,
+    dominantModes: dominant,
+    perHunkCoefficient: perHunk,
+    isSpectral: isSpectral,
+  );
+}
+
+/// Decompose the interaction structure of hunks in a graph on the
+/// Boolean lattice 2^[H].
+///
+/// [nodeSubset] selects which graph nodes to decompose. If null, all
+/// graph nodes are used. The selected count must be ≤ [_kHunkLatticeMaxH].
+///
+/// For H ≤ 12: full spectral path (subgraph heat traces via Jacobi).
+/// For H > 12: quadratic shortcut (Walsh from edge weights, orders 0-2).
+HunkInteractionDecomposition decomposeHunkInteractions({
+  required CsrGraph graph,
+  List<int>? nodeSubset,
+  double t = 1.0,
+}) {
+  var nodes = nodeSubset ??
+      List<int>.generate(math.min(graph.n, _kHunkLatticeMaxH), (i) => i,
+          growable: false);
+  if (nodes.length > _kHunkLatticeMaxH) {
+    nodes = List<int>.from(nodes.sublist(0, _kHunkLatticeMaxH));
+  }
+  final h = nodes.length;
+  if (h < 2) {
+    return HunkInteractionDecomposition(
+      h: h,
+      walshSpectrum: Float64List(1 << math.max(h, 1)),
+      orderSpectrum: Float64List(h + 1),
+      entanglementRatio: 0.0,
+      dominantModes: const [],
+      perHunkCoefficient: Float64List(h),
+      isSpectral: false,
+    );
+  }
+
+  if (h <= _kHunkLatticeFullH) {
+    return _decomposeHunkSpectral(graph, nodes, t);
+  }
+  return _decomposeHunkQuadratic(graph, nodes);
 }

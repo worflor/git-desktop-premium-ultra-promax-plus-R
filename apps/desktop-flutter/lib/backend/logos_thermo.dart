@@ -207,6 +207,44 @@ extension SpectralThermo on SpectralBasis {
     return s;
   }
 
+  /// Bernstein projection of spectral energy onto three content basins.
+  /// Returns ratios summing to 1 by the Bernstein identity:
+  ///   ctx + meta + nbhd = 1.
+  ///
+  /// Each eigenmode's energy E_j = c_j² exp(−2tλ_j) is weighted by
+  /// degree-2 Bernstein polynomials at spectral address s_j = λ_j/λ_max:
+  ///   nbhd ← B₀(s) = (1−s)²      (low-freq, global reach)
+  ///   meta ← B₁(s) = 2s(1−s)     (mid-freq, structural seams)
+  ///   ctx  ← B₂(s) = s²          (high-freq, local detail)
+  ///
+  /// Returns null when the projection is degenerate (k < 3, λ_max ≈ 0,
+  /// or Z ≈ 0). Callers should fall back to ctx-only allocation.
+  ({double ctx, double meta, double nbhd})?
+      bernsteinBasins(Float64List coeffs, double t) {
+    if (k < 3) return null;
+    final lamMax = eigenvalues[k - 1];
+    if (lamMax <= _subnormalFloor) return null;
+    final invLamMax = 1.0 / lamMax;
+
+    var z = 0.0;
+    var rCtx = 0.0;
+    var rMeta = 0.0;
+    var rNbhd = 0.0;
+
+    for (var j = 0; j < k; j++) {
+      final e = coeffs[j] * coeffs[j] * math.exp(-2.0 * t * eigenvalues[j]);
+      final s = eigenvalues[j] * invLamMax;
+      rNbhd += e * (1.0 - s) * (1.0 - s);
+      rMeta += e * 2.0 * s * (1.0 - s);
+      rCtx += e * s * s;
+      z += e;
+    }
+    if (z <= _subnormalFloor) return null;
+
+    final invZ = 1.0 / z;
+    return (ctx: rCtx * invZ, meta: rMeta * invZ, nbhd: rNbhd * invZ);
+  }
+
   /// Heat capacity at temperature t: the second derivative of the
   /// log-partition `log Z(t)` with respect to t. Equals the variance
   /// of `λ` under the thermal probability `pⱼ(t) = e^{−tλⱼ} / Z(t)`.

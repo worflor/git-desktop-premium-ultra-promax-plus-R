@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'diff_models.dart';
 import 'edit_units.dart';
 
@@ -119,11 +117,17 @@ class DiffFileDocument {
       }
     }
 
-    final stats = DiffStats(
-      adds: parsedLines.where((line) => line.kind == LineKind.added).length,
-      dels: parsedLines.where((line) => line.kind == LineKind.deleted).length,
-      hunks: parsedLines.where((line) => line.kind == LineKind.hunk).length,
-    );
+    var adds = 0, dels = 0, hunkCount = 0;
+    for (final line in parsedLines) {
+      if (line.kind == LineKind.added) {
+        adds++;
+      } else if (line.kind == LineKind.deleted) {
+        dels++;
+      } else if (line.kind == LineKind.hunk) {
+        hunkCount++;
+      }
+    }
+    final stats = DiffStats(adds: adds, dels: dels, hunks: hunkCount);
 
     final normalizedPath = resolvedPath ?? pathHint ?? '';
 
@@ -155,7 +159,7 @@ class DiffFileDocument {
       pairedAddFastKeys: Set<int>.unmodifiable(pairedAdds),
       stats: stats,
       changedLines: stats.adds + stats.dels,
-      payloadBytes: utf8.encode(rawContent).length,
+      payloadBytes: _estimateUtf8Bytes(rawContent),
       maxLineLength: parsedLines.fold<int>(
         0,
         (maxChars, line) =>
@@ -219,9 +223,12 @@ class DiffDocument {
         if (file.path.isNotEmpty) file.path: file.rawContent,
     };
 
-    final fullLines = <ParsedLine>[
+    final condensedByFile = [
       for (final file in orderedFiles)
-        ..._condenseFilePathMetaLines(file.lines),
+        _condenseFilePathMetaLines(file.lines),
+    ];
+    final fullLines = <ParsedLine>[
+      for (final c in condensedByFile) ...c,
     ];
     final viewLines =
         trimLeadingMeta ? _trimLeadingMetaLines(fullLines) : fullLines;
@@ -250,15 +257,13 @@ class DiffDocument {
     final sections = <DiffDocumentSection>[];
     var lineOffset = 0;
     for (var i = 0; i < orderedFiles.length; i++) {
-      final file = orderedFiles[i];
-      final condensed = _condenseFilePathMetaLines(file.lines);
       final fileLines = trimLeadingMeta && i == 0
-          ? _trimLeadingMetaLines(condensed)
-          : condensed;
+          ? _trimLeadingMetaLines(condensedByFile[i])
+          : condensedByFile[i];
       sections.add(
         DiffDocumentSection(
-          path: file.path,
-          displayName: file.displayName,
+          path: orderedFiles[i].path,
+          displayName: orderedFiles[i].displayName,
           index: i,
           startLine: lineOffset,
         ),
@@ -437,6 +442,27 @@ List<ParsedLine> _condenseFilePathMetaLines(List<ParsedLine> lines) {
     i++;
   }
   return out;
+}
+
+int _estimateUtf8Bytes(String s) {
+  var bytes = 0;
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    if (c < 0x80) {
+      bytes++;
+    } else if (c < 0x800) {
+      bytes += 2;
+    } else if (c >= 0xD800 && c <= 0xDBFF &&
+               i + 1 < s.length &&
+               s.codeUnitAt(i + 1) >= 0xDC00 &&
+               s.codeUnitAt(i + 1) <= 0xDFFF) {
+      bytes += 4;
+      i++;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
 String _displayNameForPath(String path, {String? fallback}) {

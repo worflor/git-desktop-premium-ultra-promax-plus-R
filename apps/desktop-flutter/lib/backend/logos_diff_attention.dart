@@ -41,7 +41,8 @@
 
 import 'dart:math' as math;
 
-import 'logos_hunks.dart' show DiffHunk, HunkRanking;
+import 'logos_hunks.dart'
+    show DiffHunk, HunkInteractionDecomposition, HunkRanking;
 
 /// Hunk fidelity tier. Higher index = richer content, more bytes.
 enum HunkLod {
@@ -448,10 +449,126 @@ int _wrapOverheadBound(int budget, int hunkCount) {
   return skeleton.length;
 }
 
+/// Reorder files so that files whose hunks participate in the same
+/// dominant Walsh interaction modes appear adjacent. When the
+/// interaction decomposition is unavailable, falls back to alphabetical.
+///
+/// The dominant modes tell us which hunks are ENTANGLED — changing one
+/// without considering the others loses information. By placing their
+/// parent files next to each other in the packed diff, the reviewer
+/// reads interacting hunks in sequence instead of jumping across the
+/// diff. The repo's own spectral structure decides the reading order.
+List<String> _interactionOrder(
+  List<String> files,
+  List<HunkRanking> rankings,
+  HunkInteractionDecomposition? interaction,
+) {
+  if (interaction == null ||
+      interaction.dominantModes.isEmpty ||
+      files.length < 3) {
+    return files..sort();
+  }
+
+  // Map hunk index → file path. The interaction decomposition's masks
+  // reference the top-H hunks by their position in the φ-sorted order
+  // (nodeOrder), which matches the rankings list order.
+  final hunkToFile = <int, String>{};
+  for (var i = 0; i < math.min(rankings.length, interaction.h); i++) {
+    hunkToFile[i] = rankings[i].hunk.filePath;
+  }
+
+  // Build a per-file-pair interaction weight: sum of |coefficient| over
+  // dominant modes where both files have a participating hunk.
+  final pairWeight = <String, Map<String, double>>{};
+  for (final mode in interaction.dominantModes) {
+    // Collect which files participate in this mode.
+    final participatingFiles = <String>{};
+    for (var bit = 0; bit < interaction.h; bit++) {
+      if (mode.mask & (1 << bit) != 0) {
+        final fp = hunkToFile[bit];
+        if (fp != null) participatingFiles.add(fp);
+      }
+    }
+    // Every pair of participating files gets the mode's |coefficient|.
+    final fps = participatingFiles.toList();
+    for (var i = 0; i < fps.length; i++) {
+      for (var j = i + 1; j < fps.length; j++) {
+        final a = fps[i].compareTo(fps[j]) < 0 ? fps[i] : fps[j];
+        final b = fps[i].compareTo(fps[j]) < 0 ? fps[j] : fps[i];
+        pairWeight.putIfAbsent(a, () => {});
+        pairWeight[a]![b] =
+            (pairWeight[a]![b] ?? 0) + mode.coefficient.abs();
+      }
+    }
+  }
+
+  if (pairWeight.isEmpty) return files..sort();
+
+  // Greedy nearest-neighbor chain: start from the file with the
+  // highest total interaction weight (most entangled), then always
+  // visit the unvisited file with the strongest interaction to the
+  // current one. Files with no interaction edges sort alphabetically
+  // at the end.
+  final interactingFiles = <String>{};
+  for (final a in pairWeight.keys) {
+    interactingFiles.add(a);
+    for (final b in pairWeight[a]!.keys) {
+      interactingFiles.add(b);
+    }
+  }
+
+  double weight(String a, String b) {
+    final lo = a.compareTo(b) < 0 ? a : b;
+    final hi = a.compareTo(b) < 0 ? b : a;
+    return pairWeight[lo]?[hi] ?? 0.0;
+  }
+
+  // Total interaction weight per file.
+  final totalWeight = <String, double>{};
+  for (final f in interactingFiles) {
+    var w = 0.0;
+    for (final g in interactingFiles) {
+      if (f != g) w += weight(f, g);
+    }
+    totalWeight[f] = w;
+  }
+
+  // Greedy chain from the most-interacting file.
+  final ordered = <String>[];
+  final visited = <String>{};
+  var current = interactingFiles.reduce(
+      (a, b) => (totalWeight[a] ?? 0) > (totalWeight[b] ?? 0) ? a : b);
+  ordered.add(current);
+  visited.add(current);
+
+  while (visited.length < interactingFiles.length) {
+    String? best;
+    var bestW = -1.0;
+    for (final f in interactingFiles) {
+      if (visited.contains(f)) continue;
+      final w = weight(current, f);
+      if (w > bestW) {
+        bestW = w;
+        best = f;
+      }
+    }
+    if (best == null) break;
+    ordered.add(best);
+    visited.add(best);
+    current = best;
+  }
+
+  // Append non-interacting files alphabetically.
+  final remaining = files.where((f) => !visited.contains(f)).toList()..sort();
+  return [...ordered, ...remaining];
+}
+
 /// Adaptive LOD compactor — see file header for the algorithm.
 DiffAttentionResult compactHunksUnderBudget({
   required List<HunkRanking> rankings,
   required int budgetChars,
+  double? entanglementRatio,
+  HunkInteractionDecomposition? interaction,
 }) {
   if (budgetChars <= 0 || rankings.isEmpty) {
     return DiffAttentionResult(
@@ -551,7 +668,7 @@ DiffAttentionResult compactHunksUnderBudget({
   final perHunk = <CompactedHunk>[];
   final clustered = <DiffHunk>[];
 
-  final files = byFile.keys.toList()..sort();
+  final files = _interactionOrder(byFile.keys.toList(), rankings, interaction);
   for (final fp in files) {
     final group = byFile[fp]!
       ..sort((a, b) => a.hunk.hunkIndex.compareTo(b.hunk.hunkIndex));
@@ -594,7 +711,9 @@ DiffAttentionResult compactHunksUnderBudget({
   final wrapped = StringBuffer()
     ..writeln('<logos_diff_attention budget="$budgetChars"'
         ' rendered="${inner.length}"'
-        ' admitted="${perHunk.length}" clustered="${clustered.length}">')
+        ' admitted="${perHunk.length}" clustered="${clustered.length}"'
+        '${entanglementRatio != null ? ' entanglement="${entanglementRatio.toStringAsFixed(2)}"' : ''}'
+        '>')
     ..write(inner)
     ..writeln('</logos_diff_attention>');
   final body = wrapped.toString();

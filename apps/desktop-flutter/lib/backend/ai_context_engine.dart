@@ -62,11 +62,16 @@ class LogosDiffusionResult {
     this.recurrentIterations = 1,
     this.recurrentConverged = true,
     this.discoveryDepth = const {},
+    this.partition,
   });
   final LogosGit engine;
   final DiffProbe probe;
   final List<RelevanceScore> scores;
   final double resolvedT;
+
+  /// Bernstein spectral energy partition — four basin weights summing
+  /// to 1.0. Null when the spectral basis is unavailable.
+  final ({double ctx, double meta, double nbhd, double flow})? partition;
 
   /// Per-axis attribution of the diffusion. Optional because some
   /// callers don't need the per-axis breakdown and would rather skip
@@ -104,10 +109,16 @@ class AiContextRequest {
     required this.repositoryPath,
     required this.diffText,
     this.logos,
+    this.partition,
   });
   final String repositoryPath;
   final String diffText;
   final LogosDiffusionResult? logos;
+
+  /// Four-basin context budget partition, summing to 1.0. Always
+  /// present when the caller computes it — even without a spectral
+  /// basis, the flow fraction is diff-intrinsic.
+  final ({double ctx, double meta, double nbhd, double flow})? partition;
 }
 
 /// One producer's contribution to the assembled context.

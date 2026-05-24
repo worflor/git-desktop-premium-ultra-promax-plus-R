@@ -427,6 +427,17 @@ class FlowFinding {
   final double coherence;
   final double lyapunov;
 
+  /// The dominant Walsh interaction mode driving this finding, if
+  /// identified by the Möbius decomposition. The address bits name
+  /// which axes participate in the irreducible interaction; the
+  /// order (popcount) says how many axes are entangled.
+  /// null when the finding comes from a non-Walsh code path.
+  final int? walshInteraction;
+
+  /// Signed Walsh coefficient of [walshInteraction] — the magnitude
+  /// and direction of the irreducible interaction effect.
+  final double? walshCoefficient;
+
   const FlowFinding({
     required this.nodeId,
     required this.sourceLine,
@@ -438,6 +449,8 @@ class FlowFinding {
     this.address = 0,
     this.coherence = 1.0,
     this.lyapunov = 0.0,
+    this.walshInteraction,
+    this.walshCoefficient,
   });
 
   /// Composite concern score: higher = worse.
@@ -685,36 +698,104 @@ void _yaaStarPropagate(
 // ═══════════════════════════════════════════════════════════════════
 
 List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
+  // ── Phase 0: Walsh decomposition ──────────────────────────────────
+  //
+  // Before any walk, decompose the lattice into its interaction
+  // spectrum. This tells us WHICH axis-combinations have anomalous
+  // behavior (the walk then traces HOW).
+
   final warmSet = <int>{};
+  for (var a = 0; a < 256; a++) {
+    if (lattice.cellCount(a) >= 8) warmSet.add(a);
+  }
+  if (warmSet.length < 2) return const [];
+
+  // Walsh anomaly detection — find interaction modes whose energy
+  // is unexpectedly high for their order.
+  final walshAnomalies = lattice.anomalousInteractions(sigma: 1.5);
+
+  // Per-address dominant Walsh mode: for each warm address, which
+  // interaction mode contributes most to its deviation from the
+  // thermal equilibrium. Used to annotate findings.
+  final walshSpec = lattice.walshSpectrum;
+  final addressDominant = <int, (int, double)>{};
+  for (final a in warmSet) {
+    var bestMode = 0;
+    var bestMag = 0.0;
+    for (var s = 1; s < 256; s++) {
+      if (a & s != s) continue;
+      final mag = walshSpec[s].abs();
+      if (mag > bestMag) {
+        bestMag = mag;
+        bestMode = s;
+      }
+    }
+    if (bestMag > 1e-10) addressDominant[a] = (bestMode, walshSpec[bestMode]);
+  }
+
+  // ── Phase 1: K-G from cube heat kernel ────────────────────────────
+  //
+  // Use the exact cube heat kernel at t=1 to compute smoothed K-G
+  // coefficients. This replaces raw Hamming-neighbor averaging with
+  // the analytically correct diffusion on Q₈.
+
+  final equilibrium = lattice.thermalEquilibrium(1.0);
+  final intrinsic = lattice.mobiusView;
+
   final dKr = List<double>.filled(256, 0.0);
   final dKi = List<double>.filled(256, 0.0);
   final dGr = List<double>.filled(256, 0.0);
 
-  for (var a = 0; a < 256; a++) {
-    if (lattice.cellCount(a) < 8) continue;
-    warmSet.add(a);
-    dKr[a] = lattice.cellMean(a);
+  for (final a in warmSet) {
+    dKr[a] = equilibrium[a];
     dKi[a] = lattice.cellStddev(a);
-    var gSum = 0.0, gN = 0;
-    for (var b = 0; b < 8; b++) {
-      final n = a ^ (1 << b);
-      if (lattice.cellCount(n) >= 8) {
-        gSum += (lattice.cellMean(n) - dKr[a]).abs();
-        gN++;
-      }
-    }
-    dGr[a] = gN > 0 ? gSum / gN : 0.0;
+    // G damping from intrinsic Möbius contribution: addresses with
+    // large intrinsic deviation from sub-addresses have more damping
+    // (the interaction is genuinely irreducible, not inherited).
+    dGr[a] = (intrinsic[a] - 0.5).abs();
   }
 
-  if (warmSet.length < 2) return const [];
+  // ── Phase 2: Walsh-guided seed selection ──────────────────────────
+  //
+  // Alpha strand seeds at the address where the strongest Walsh
+  // anomaly manifests. Beta strand seeds at the address farthest
+  // from it in thermal-equilibrium space. This replaces the
+  // stddev-based seeding with interaction-aware targeting.
 
   var alphaStart = warmSet.first, betaStart = warmSet.first;
-  var maxSd = -1.0, minSd = double.infinity;
-  for (final a in warmSet) {
-    final sd = dKi[a];
-    if (sd > maxSd) { maxSd = sd; alphaStart = a; }
-    if (sd < minSd) { minSd = sd; betaStart = a; }
+  if (walshAnomalies.isNotEmpty) {
+    // Find the warm address most affected by the top anomalous mode.
+    final topMode = walshAnomalies.first.$1;
+    var bestResonance = -1.0;
+    for (final a in warmSet) {
+      if (a & topMode != topMode) continue;
+      final resonance = lattice.cellStddev(a) *
+          (lattice.cellMean(a) - equilibrium[a]).abs();
+      if (resonance > bestResonance) {
+        bestResonance = resonance;
+        alphaStart = a;
+      }
+    }
+    // Beta: farthest warm address from alpha in equilibrium space.
+    var maxDist = -1.0;
+    for (final a in warmSet) {
+      final d = (equilibrium[a] - equilibrium[alphaStart]).abs();
+      if (d > maxDist) {
+        maxDist = d;
+        betaStart = a;
+      }
+    }
+  } else {
+    // Fallback: original stddev-based seeding.
+    var maxSd = -1.0, minSd = double.infinity;
+    for (final a in warmSet) {
+      final sd = dKi[a];
+      if (sd > maxSd) { maxSd = sd; alphaStart = a; }
+      if (sd < minSd) { minSd = sd; betaStart = a; }
+    }
   }
+
+  // ── Phase 3: YAA* walk for path reconstruction ────────────────────
 
   final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, bool)>(
       (a, b) => b.$3.compareTo(a.$3));
@@ -775,6 +856,8 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
     }
   }
 
+  // ── Phase 4: findings with interaction annotation ─────────────────
+
   final findings = <FlowFinding>[];
   for (final addr in warmSet) {
     final arrs = arrivals[addr];
@@ -787,6 +870,7 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
 
     if (lattice.isAnomalous(addr, mc) || contradictory) {
       final hex = addr.toRadixString(16).padLeft(2, '0');
+      final dominant = addressDominant[addr];
       findings.add(FlowFinding(
         nodeId: 'dream:$hex',
         sourceLine: addr,
@@ -800,6 +884,8 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
         address: addr,
         coherence: coh,
         lyapunov: dKi[addr],
+        walshInteraction: dominant?.$1,
+        walshCoefficient: dominant?.$2,
       ));
     }
   }
@@ -953,6 +1039,188 @@ double flowSpectralGap(FlowGraph graph, {
   if (findings.isEmpty) return 0.0;
   final worst = findings.map((f) => f.certainty).reduce(math.min);
   return -math.log(worst.clamp(1e-15, 1.0));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Scale 2 — inter-file flow graph from co-change topology
+// ═══════════════════════════════════════════════════════════════════
+
+/// Build a [FlowGraph] at the inter-file scale from a co-change graph.
+/// Nodes are files, addressed by their spectral fingerprint in the
+/// co-change Laplacian. K-G derives from the fingerprint via [flowKG] —
+/// the dream learns the effective surface from lattice statistics.
+///
+/// Every node is OR'd with [kFlowResource] so arrivals are collected
+/// at every file (at this scale, every file is a structural resource).
+FlowGraph buildInterFileFlowGraph(
+  CsrGraph csr,
+  SpectralBasis basis, {
+  List<String>? nodePaths,
+}) {
+  final n = csr.n;
+  if (n < 2 || basis.k < 9) return FlowGraph();
+
+  final fingerprints = basis.spectralFingerprintTable();
+  final graph = FlowGraph();
+
+  for (var i = 0; i < n; i++) {
+    graph.addNode(FlowNode(
+      id: 'f$i',
+      address: fingerprints[i] | kFlowResource,
+      sourceLine: i,
+      sourceText: nodePaths != null && i < nodePaths.length
+          ? nodePaths[i]
+          : 'f$i',
+    ));
+  }
+
+  for (var i = 0; i < n; i++) {
+    final rowStart = csr.indptr[i];
+    final rowEnd = csr.indptr[i + 1];
+    for (var p = rowStart; p < rowEnd; p++) {
+      final j = csr.indices[p];
+      if (j > i) graph.addEdge('f$i', 'f$j');
+    }
+  }
+
+  return graph;
+}
+
+/// Run the full Scale 2 pipeline: simulate on the inter-file graph,
+/// dream, and return per-file certainties + structural findings.
+InterFileResult? analyzeInterFile(
+  CsrGraph csr,
+  SpectralBasis basis, {
+  List<String>? nodePaths,
+  FlowSseLattice? lattice,
+}) {
+  final graph = buildInterFileFlowGraph(csr, basis, nodePaths: nodePaths);
+  if (graph.nodes.length < 2) return null;
+
+  final lat = lattice ?? FlowSseLattice();
+
+  final n = csr.n;
+  final degrees = List<int>.filled(n, 0);
+  for (var i = 0; i < n; i++) {
+    degrees[i] = csr.indptr[i + 1] - csr.indptr[i];
+  }
+  final sorted = List<int>.generate(n, (i) => i)
+    ..sort((a, b) => degrees[b].compareTo(degrees[a]));
+  final entries = sorted.take(math.min(3, n)).map((i) => 'f$i').toSet();
+
+  final allFindings = simulateFlow(
+    graph,
+    entryNodes: entries,
+    threshold: 1.0,
+    maxDepth: 10,
+    sseLattice: lat,
+  );
+
+  for (var iter = 0; iter < 8; iter++) {
+    final before = List<double>.generate(256, (a) => lat.cellMean(a));
+    dreamAnalysis(lat);
+    var maxShift = 0.0;
+    for (var a = 0; a < 256; a++) {
+      final d = (lat.cellMean(a) - before[a]).abs();
+      if (d > maxShift) maxShift = d;
+    }
+    if (maxShift < 1.0 / 64.0) break;
+  }
+
+  final perFileCertainty = <int, double>{};
+  for (final f in allFindings) {
+    final idx = int.tryParse(f.nodeId.substring(1));
+    if (idx == null) continue;
+    final existing = perFileCertainty[idx];
+    if (existing == null || f.certainty < existing) {
+      perFileCertainty[idx] = f.certainty;
+    }
+  }
+
+  final structural = allFindings
+      .where((f) =>
+          lat.isAnomalous(f.address, f.certainty) && f.composite >= 0.1)
+      .toList();
+
+  final gap = allFindings.isEmpty
+      ? 0.0
+      : -math.log(allFindings
+          .map((f) => f.certainty)
+          .reduce(math.min)
+          .clamp(1e-15, 1.0));
+
+  return InterFileResult(
+    perFileCertainty: perFileCertainty,
+    findings: structural,
+    spectralGap: gap,
+    lattice: lat,
+    nodePaths: nodePaths,
+  );
+}
+
+class InterFileResult {
+  final Map<int, double> perFileCertainty;
+  final List<FlowFinding> findings;
+  final double spectralGap;
+  final FlowSseLattice lattice;
+  final List<String>? nodePaths;
+
+  const InterFileResult({
+    required this.perFileCertainty,
+    required this.findings,
+    required this.spectralGap,
+    required this.lattice,
+    this.nodePaths,
+  });
+
+  double? certaintyForPath(String path, Map<String, int> pathToId) {
+    final idx = pathToId[path];
+    return idx != null ? perFileCertainty[idx] : null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Scale 3 — temporal flow graph from lattice trajectory
+// ═══════════════════════════════════════════════════════════════════
+
+/// Build a [FlowGraph] where nodes are commits (lattice snapshots) and
+/// edges are temporal adjacency. Address = [latticeFingerprint] of each
+/// snapshot. Merge commits with multiple parents get multiple incoming
+/// edges — Born interference at the merge.
+FlowGraph buildTemporalFlowGraph(
+  List<({int revision, FlowSseLattice lattice, String? commitSha})> points, {
+  List<List<int>>? parentIndices,
+}) {
+  if (points.length < 2) return FlowGraph();
+
+  final graph = FlowGraph();
+
+  for (var i = 0; i < points.length; i++) {
+    final p = points[i];
+    final addr = latticeFingerprint(p.lattice) | kFlowResource;
+    graph.addNode(FlowNode(
+      id: 'c$i',
+      address: addr,
+      sourceLine: p.revision,
+      sourceText: p.commitSha ?? 'c$i',
+    ));
+  }
+
+  if (parentIndices != null) {
+    for (var i = 0; i < parentIndices.length; i++) {
+      for (final parent in parentIndices[i]) {
+        if (parent >= 0 && parent < points.length) {
+          graph.addEdge('c$parent', 'c$i');
+        }
+      }
+    }
+  } else {
+    for (var i = 0; i < points.length - 1; i++) {
+      graph.addEdge('c$i', 'c${i + 1}');
+    }
+  }
+
+  return graph;
 }
 
 // ═══════════════════════════════════════════════════════════════════

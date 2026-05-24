@@ -253,6 +253,97 @@ class SpectralTower {
 
   /// Number of nodes at each level, coarsest first.
   List<int> sizesByLevel() => [for (final b in bases) b.n];
+
+  // ── Walsh-mode cross-level coherence ────────────────────────────
+
+  /// Per-mode cross-level coherence between two tower levels.
+  ///
+  /// Instead of a single cosine similarity between Fiedler vectors,
+  /// this decomposes the agreement into one coherence value per
+  /// non-trivial eigenmode. Mode j's coherence is the cosine between
+  /// the coarse eigenvector u_j and the restricted fine eigenvector
+  /// u_j, weighted by the thermal damping exp(-t·λ_j).
+  ///
+  /// Returns a list of (modeIndex, eigenvalue, coherence) triples,
+  /// one per shared mode. The scalar [crossLevelCoherence] is the
+  /// j=1 entry of this list.
+  List<({int mode, double eigenvalue, double coherence})> crossLevelModes({
+    required int coarseIdx,
+    required int fineIdx,
+    double t = 1.0,
+  }) {
+    assert(coarseIdx < fineIdx);
+    final coarse = bases[coarseIdx];
+    final fine = bases[fineIdx];
+    final sharedModes = math.min(coarse.k, fine.k);
+    if (sharedModes < 2) return const [];
+
+    final results = <({int mode, double eigenvalue, double coherence})>[];
+    for (var j = 1; j < sharedModes; j++) {
+      // Coarse eigenvector j.
+      final coarseVec = Float64List.view(
+        coarse.eigenvectors.buffer,
+        coarse.eigenvectors.offsetInBytes + j * coarse.n * 8,
+        coarse.n,
+      );
+
+      // Fine eigenvector j, restricted to coarse space.
+      Float64List lifted = Float64List.view(
+        fine.eigenvectors.buffer,
+        fine.eigenvectors.offsetInBytes + j * fine.n * 8,
+        fine.n,
+      );
+      lifted = Float64List.fromList(lifted);
+      for (var i = fineIdx - 1; i >= coarseIdx; i--) {
+        lifted = restrictions[i].restrict(lifted);
+      }
+      if (lifted.length != coarseVec.length) continue;
+
+      var dot = 0.0, nc = 0.0, nf = 0.0;
+      for (var i = 0; i < coarseVec.length; i++) {
+        dot += coarseVec[i] * lifted[i];
+        nc += coarseVec[i] * coarseVec[i];
+        nf += lifted[i] * lifted[i];
+      }
+      final denom = _safeSqrt(nc) * _safeSqrt(nf);
+      final coh = denom > 0 ? dot / denom : 0.0;
+      final damping = j < coarse.k
+          ? _dampFactor(coarse.eigenvalues[j], t)
+          : 0.0;
+
+      results.add((
+        mode: j,
+        eigenvalue: j < coarse.k ? coarse.eigenvalues[j] : 0.0,
+        coherence: damping * coh,
+      ));
+    }
+    return results;
+  }
+
+  /// Intertwining quality: how well does the restriction operator
+  /// preserve the spectral structure between two levels?
+  ///
+  /// Returns the mean |coherence| across all shared non-trivial modes,
+  /// thermally weighted. 1.0 = perfect intertwining (the coarse
+  /// spectral structure is faithfully represented at the fine level).
+  /// 0.0 = the levels' spectra are unrelated through the restriction.
+  double intertwiningQuality({
+    required int coarseIdx,
+    required int fineIdx,
+    double t = 1.0,
+  }) {
+    final modes = crossLevelModes(
+      coarseIdx: coarseIdx,
+      fineIdx: fineIdx,
+      t: t,
+    );
+    if (modes.isEmpty) return 0.0;
+    var sum = 0.0;
+    for (final m in modes) {
+      sum += m.coherence.abs();
+    }
+    return sum / modes.length;
+  }
 }
 
 double _dampFactor(double lambda, double t) {

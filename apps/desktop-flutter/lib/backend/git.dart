@@ -1332,7 +1332,6 @@ Future<GitResult<String>> getSelectionDiff(
     return const GitResult.ok('');
   }
 
-  final parts = <String>[];
   final trackedPaths = files
       .where((file) => !_isUntrackedFile(file))
       .map((file) => file.path)
@@ -1344,39 +1343,42 @@ Future<GitResult<String>> getSelectionDiff(
     (file) => !file.isUntracked && file.hasUnstagedChange,
   );
 
+  final futures = <Future<GitResult<String>>>[];
+
   if (trackedPaths.isNotEmpty && hasTrackedStaged) {
-    final stagedResult = await _git(
+    futures.add(_git(
       repo,
       ['diff', '--full-index', '--cached', '-U$contextLines', '--', ...trackedPaths],
-    );
-    if (stagedResult.exitCode != 0) {
-      return GitResult.err(stagedResult.stderr.toString().trim());
-    }
-    final output = stagedResult.stdout.toString().trim();
-    if (output.isNotEmpty) {
-      parts.add(output);
-    }
+    ).then((r) => r.exitCode != 0
+        ? GitResult.err(r.stderr.toString().trim())
+        : GitResult.ok(r.stdout.toString().trim())));
   }
 
   if (trackedPaths.isNotEmpty && hasTrackedUnstaged) {
-    final unstagedResult = await _git(
+    futures.add(_git(
       repo,
       ['diff', '--full-index', '-U$contextLines', '--', ...trackedPaths],
-    );
-    if (unstagedResult.exitCode != 0) {
-      return GitResult.err(unstagedResult.stderr.toString().trim());
-    }
-    final output = unstagedResult.stdout.toString().trim();
-    if (output.isNotEmpty) {
-      parts.add(output);
-    }
+    ).then((r) => r.exitCode != 0
+        ? GitResult.err(r.stderr.toString().trim())
+        : GitResult.ok(r.stdout.toString().trim())));
   }
 
-  for (final file in files.where(_isUntrackedFile)) {
-    parts.add(await _buildSyntheticUntrackedDiff(repo, file.path));
+  final untrackedFutures = files
+      .where(_isUntrackedFile)
+      .map((f) => _buildSyntheticUntrackedDiff(repo, f.path)
+          .then((s) => GitResult.ok(s)))
+      .toList();
+
+  final results = await Future.wait([...futures, ...untrackedFutures]);
+
+  final parts = <String>[];
+  for (final r in results) {
+    if (!r.ok) return GitResult.err(r.error ?? 'git diff failed');
+    final output = r.data?.trim() ?? '';
+    if (output.isNotEmpty) parts.add(output);
   }
 
-  return GitResult.ok(parts.where((part) => part.trim().isNotEmpty).join('\n'));
+  return GitResult.ok(parts.join('\n'));
 }
 
 bool _isUntrackedFile(RepositoryStatusFile file) => file.isUntracked;

@@ -430,12 +430,12 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.2',
-    date: '2026-05-22',
+    date: '2026-05-24',
     bullets: [
-      'Filament gets real. The execution-flow engine now runs Lyapunov stability, Kernighan-Lin spectral gaps, Hamming-lattice oscillators, and Born-mixing certainty over the flow graph. Fragility signals propagate into file rows, constellation halos, diffusion spokes, and the diff gutter.',
-      'YAA* (Yassified Attention-Augmented A-Star) replaces the old DFS traversal. Search is physics-driven with a proper binary heap priority queue. Filament also gains a full calibration pipeline: dream lattice self-analysis, then cross-file Born mixing, then calibrated lattice filtering.',
-      'Advection-drift transport gives heat directional flow through the transport graph via an antisymmetric term. Hyperbolic Poincaré disk embedding lands for utility scoring. Files settle at structurally meaningful angles on the diffusion canvas and directed heat arcs render on top.',
-      'Binary files get a real diff experience. Turns out all it needed was a universal physics-based codec for every major media format. Whisper Harmonic, Whisper Lumen, and Whisper Logos plug in through Prism as the binary diff backend.',
+      'Filament got Yassified. As well as the math backing it getting a Logos-inspired face lift, it\'s core search algorithm got properly re-overengineered.',
+      'DFS got booted for YAA*. A double-helix attention-driven a-star hybrid that... also appears oddly Logos-inspired..? cRaaAzYyyY',
+      'Added tabs for diffs.',
+      'Binary files geare now diffable. Turns out all it needed was a universal physics-based codec for every major media format. Whisper Harmonic, Whisper Lumen, and Whisper Logos [now/soon] plug in through Prism as the binary-diff backend.',
       'Clone dialog, tag management, PR toolbar, and file coupling all got polish passes.',
     ],
   ),

@@ -67,6 +67,73 @@ final double _inv8Pi    = 1.0 / (8 * math.pi);
   return (kr, ki, gr);
 }
 
+// ── K-G Walsh residual ───────────────────────────────────────────────
+//
+// The theoretical K-G model (flowKG) computes per-axis multipliers
+// independently. Its Walsh decomposition is the predicted interaction
+// spectrum. The SSE lattice's Walsh decomposition is the empirical
+// one. The difference is the model correction signal — which axis
+// combinations the product formula gets wrong.
+
+/// Walsh decomposition of the theoretical K-G model: compute K_r at
+/// every lattice address and return the 256 Walsh coefficients.
+/// This is the "prediction" — what the factored per-axis model says
+/// about each interaction mode.
+Float64List flowKGWalshSpectrum() {
+  final f = Float64List(256);
+  for (var a = 0; a < 256; a++) {
+    final (kr, _, _) = flowKG(a);
+    f[a] = kr;
+  }
+  walshHadamard(f, 8);
+  return f;
+}
+
+/// Walsh-space residual between the theoretical K-G model and the
+/// empirical SSE lattice. Each coefficient residual[S] measures how
+/// much the |S|-way interaction between axes in S deviates from the
+/// per-axis product formula's prediction.
+///
+/// Large residual at high-order S = the axes in S genuinely interact
+/// in a way the factored model doesn't capture. This is the
+/// physics-derived correction signal: no knobs, no tuning — the
+/// data tells you what's missing.
+///
+/// Returns (walshAddress, theoreticalCoeff, empiricalCoeff, residual)
+/// sorted by descending |residual|.
+List<({int mode, double theoretical, double empirical, double residual})>
+    flowKGResidual(FlowSseLattice lattice, {int maxCount = 32}) {
+  final theoretical = flowKGWalshSpectrum();
+  final empirical = lattice.walshSpectrum;
+
+  final hits =
+      <({int mode, double theoretical, double empirical, double residual})>[];
+  for (var s = 1; s < 256; s++) {
+    final t = theoretical[s];
+    final e = empirical[s];
+    final r = e - t;
+    if (r.abs() < 1e-12) continue;
+    hits.add((mode: s, theoretical: t, empirical: e, residual: r));
+  }
+  hits.sort((a, b) => b.residual.abs().compareTo(a.residual.abs()));
+  if (hits.length > maxCount) return hits.sublist(0, maxCount);
+  return hits;
+}
+
+/// Summary: what fraction of the SSE lattice's Walsh energy lives at
+/// interaction orders ≥2? This is the "non-factoredness" of the
+/// empirical observations. Zero means the axes are truly independent
+/// (the K-G product formula is perfect). Closer to 1 means the
+/// higher-order interactions dominate.
+double flowKGInteractionStrength(FlowSseLattice lattice) {
+  final spectrum = lattice.orderSpectrum;
+  var higher = 0.0;
+  for (var k = 2; k <= 8; k++) {
+    higher += spectrum[k];
+  }
+  return higher;
+}
+
 // ── Hamming distance ─────────────────────────────────────────────────
 
 /// Hamming distance between two 8-bit lattice addresses.
@@ -212,14 +279,31 @@ class FlowSseCell {
   static const int _kWarmup = 8;
 }
 
-/// 256-cell lattice on the 8-bit address. Accumulates across a repo scan,
-/// then gates findings via [isAnomalous].
+/// 256-cell lattice on the 8-bit Boolean hypercube Q₈. Accumulates
+/// Welford statistics per lattice address, then exposes the full
+/// incidence algebra: Walsh decomposition (irreducible interactions),
+/// zeta cumulative (inherited behavior), Möbius inversion (intrinsic
+/// contribution), and closed-form heat kernel on the cube.
 class FlowSseLattice {
   final _cells = List<FlowSseCell>.generate(256, (_) => FlowSseCell());
+
+  // Cached decompositions — invalidated on every observe().
+  Float64List? _walshCache;
+  Float64List? _zetaCache;
+  Float64List? _mobiusCache;
+  Float64List? _orderSpectrumCache;
+
+  void _invalidate() {
+    _walshCache = null;
+    _zetaCache = null;
+    _mobiusCache = null;
+    _orderSpectrumCache = null;
+  }
 
   /// Feed an observation from the oscillator.
   void observe(int address, double certainty) {
     _cells[address & 0xFF].observe(certainty);
+    _invalidate();
   }
 
   /// After warmup, returns true when the certainty at this address is
@@ -240,6 +324,144 @@ class FlowSseLattice {
   double cellMean(int address) => _cells[address & 0xFF].mean;
   double cellStddev(int address) => _cells[address & 0xFF].stddev;
   int cellCount(int address) => _cells[address & 0xFF].n;
+
+  // ── Incidence algebra views ─────────────────────────────────────
+
+  /// Raw cell means as a function on 2^[8]. The input to all three
+  /// transforms. Warm cells carry their Welford mean; cold cells
+  /// carry 0.5 (uninformative prior).
+  Float64List _meanFunction() {
+    final f = Float64List(256);
+    for (var a = 0; a < 256; a++) {
+      f[a] = _cells[a].n >= FlowSseCell._kWarmup ? _cells[a].mean : 0.5;
+    }
+    return f;
+  }
+
+  /// Walsh spectrum of the cell means. Each coefficient f̂(S) is the
+  /// irreducible |S|-way interaction between the axes in S.
+  ///
+  /// Order 0 (S=∅): grand mean certainty across all addresses.
+  /// Order 1 (|S|=1): marginal effect of each axis in isolation.
+  /// Order 2 (|S|=2): pairwise interaction net of marginals.
+  /// Higher orders: genuine multi-axis interactions.
+  ///
+  /// On a perfectly factored model (independent axes), all energy
+  /// concentrates at orders 0 and 1. Energy at order ≥2 means the
+  /// axes interact in ways the per-axis K-G formula doesn't capture.
+  Float64List get walshSpectrum {
+    if (_walshCache != null) return _walshCache!;
+    final f = _meanFunction();
+    walshHadamard(f, 8);
+    _walshCache = f;
+    return f;
+  }
+
+  /// Cumulative view: Z(S) = Σ_{T⊆S} mean(T). The total certainty
+  /// behavior from all sub-roles of address S.
+  Float64List get zetaView {
+    if (_zetaCache != null) return _zetaCache!;
+    final f = _meanFunction();
+    mobiusZeta(f, 8);
+    _zetaCache = f;
+    return f;
+  }
+
+  /// Intrinsic view: μ(S) = the part of mean(S) NOT explained by any
+  /// strict sub-address. The genuine irreducible contribution of
+  /// exactly this combination of bits.
+  Float64List get mobiusView {
+    if (_mobiusCache != null) return _mobiusCache!;
+    final f = _meanFunction();
+    mobiusInvert(f, 8);
+    _mobiusCache = f;
+    return f;
+  }
+
+  /// Energy by interaction order: how much of the lattice's total
+  /// variance lives at each order (0=DC, 1=marginal, 2=pairwise, ...).
+  /// Normalized so the entries sum to 1.
+  Float64List get orderSpectrum {
+    if (_orderSpectrumCache != null) return _orderSpectrumCache!;
+    final raw = walshOrderSpectrum(walshSpectrum, 8);
+    var total = 0.0;
+    for (var k = 0; k <= 8; k++) {
+      total += raw[k];
+    }
+    if (total > 0) {
+      final inv = 1.0 / total;
+      for (var k = 0; k <= 8; k++) {
+        raw[k] *= inv;
+      }
+    }
+    _orderSpectrumCache = raw;
+    return raw;
+  }
+
+  /// Intrinsic contribution at a single address — non-destructive
+  /// read from the cached Möbius view.
+  double intrinsicAt(int address) => mobiusView[address & 0xFF];
+
+  /// Dominant Walsh interactions up to [maxOrder]-way, sorted by
+  /// descending magnitude.
+  List<(int address, double coefficient)> dominantInteractions({
+    int maxOrder = 4,
+    int maxCount = 32,
+  }) =>
+      walshDominant(walshSpectrum, 8,
+          maxOrder: maxOrder, maxCount: maxCount);
+
+  /// Apply the exact heat kernel on Q₈ to the cell means at
+  /// temperature [t]. Returns a 256-element diffused certainty
+  /// landscape — what the lattice "wants to look like" at thermal
+  /// equilibrium. High-order interactions decay exponentially with
+  /// temperature; at t→∞ only the DC mode survives.
+  Float64List thermalEquilibrium(double t) =>
+      cubeHeatKernel(_meanFunction(), 8, t);
+
+  /// Walsh-space anomaly detection: identify interaction modes whose
+  /// squared coefficient exceeds [sigma] standard deviations above
+  /// the mean squared coefficient at their interaction order.
+  /// Returns (address, coefficient, z-score) triples.
+  List<(int, double, double)> anomalousInteractions({double sigma = 2.0}) {
+    final spec = walshSpectrum;
+    final orderEnergy = Float64List(9);
+    final orderCount = List<int>.filled(9, 0);
+    for (var s = 0; s < 256; s++) {
+      final order = _popcount(s);
+      orderEnergy[order] += spec[s] * spec[s];
+      orderCount[order]++;
+    }
+    // Per-order mean and stddev of squared coefficients.
+    final orderMean = Float64List(9);
+    final orderStd = Float64List(9);
+    for (var k = 0; k <= 8; k++) {
+      if (orderCount[k] == 0) continue;
+      orderMean[k] = orderEnergy[k] / orderCount[k];
+    }
+    for (var s = 0; s < 256; s++) {
+      final order = _popcount(s);
+      final diff = spec[s] * spec[s] - orderMean[order];
+      orderStd[order] += diff * diff;
+    }
+    for (var k = 0; k <= 8; k++) {
+      if (orderCount[k] > 1) {
+        orderStd[k] = math.sqrt(orderStd[k] / (orderCount[k] - 1));
+      }
+    }
+
+    final hits = <(int, double, double)>[];
+    for (var s = 1; s < 256; s++) {
+      final order = _popcount(s);
+      final sq = spec[s] * spec[s];
+      final std = orderStd[order];
+      if (std < 1e-15) continue;
+      final z = (sq - orderMean[order]) / std;
+      if (z > sigma) hits.add((s, spec[s], z));
+    }
+    hits.sort((a, b) => b.$3.compareTo(a.$3));
+    return hits;
+  }
 }
 
 // ── Binary heap ─────────────────────────────────────────────────────
@@ -437,4 +659,70 @@ double filamentSat(double gap) => 1.0 - math.exp(-gap / 4.0);
     d > 1e-30 ? s0 / d : 0.5,
     cs > 1e-15 ? ps / cs : 0.0,
   );
+}
+
+// ── Lattice fingerprint ─────────────────────────────────────────────
+
+/// 8-bit fingerprint of a lattice state. Splits the 256 cells into 8
+/// octants (32 cells each); bit j = 1 iff octant j's mean exceeds the
+/// global mean. Two lattices with similar distributions get nearby
+/// fingerprints (low Hamming distance).
+int latticeFingerprint(FlowSseLattice lattice) {
+  var globalSum = 0.0;
+  var globalCount = 0;
+  for (var a = 0; a < 256; a++) {
+    if (lattice.cellCount(a) >= FlowSseCell._kWarmup) {
+      globalSum += lattice.cellMean(a);
+      globalCount++;
+    }
+  }
+  if (globalCount == 0) return 0;
+  final globalMean = globalSum / globalCount;
+
+  var fp = 0;
+  for (var bit = 0; bit < 8; bit++) {
+    var octantSum = 0.0;
+    var octantCount = 0;
+    final start = bit * 32;
+    for (var a = start; a < start + 32; a++) {
+      if (lattice.cellCount(a) >= FlowSseCell._kWarmup) {
+        octantSum += lattice.cellMean(a);
+        octantCount++;
+      }
+    }
+    if (octantCount > 0 && (octantSum / octantCount) > globalMean) {
+      fp |= (1 << bit);
+    }
+  }
+  return fp;
+}
+
+// ── Lattice snapshot ────────────────────────────────────────────────
+
+extension FlowSseLatticeSnapshot on FlowSseLattice {
+  /// Serialize to 768 doubles: 256 × (count, mean, m2).
+  Float64List toSnapshot() {
+    final out = Float64List(768);
+    for (var a = 0; a < 256; a++) {
+      final c = _cells[a];
+      out[a * 3] = c.n.toDouble();
+      out[a * 3 + 1] = c._mean;
+      out[a * 3 + 2] = c._m2;
+    }
+    return out;
+  }
+}
+
+extension FlowSseLatticeRestore on FlowSseLattice {
+  /// Restore Welford state from a snapshot produced by [toSnapshot].
+  void restoreFrom(Float64List data) {
+    if (data.length < 768) return;
+    for (var a = 0; a < 256; a++) {
+      final c = _cells[a];
+      c.n = data[a * 3].toInt();
+      c._mean = data[a * 3 + 1];
+      c._m2 = data[a * 3 + 2];
+    }
+    _invalidate();
+  }
 }

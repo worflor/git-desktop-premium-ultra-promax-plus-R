@@ -64,6 +64,7 @@ part 'logos_flow_math.dart';
 part 'logos_generative.dart';
 part 'logos_groundspace.dart';
 part 'logos_heat.dart';
+part 'logos_mobius.dart';
 part 'logos_thermo.dart';
 
 // ── OBSERVABLE TAXONOMY ──────────────────────────────────────────────

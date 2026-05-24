@@ -6,11 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
+import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/git.dart' show runGitProbe;
-import '../../backend/logos_core.dart' show FlowSseLattice;
+import '../../backend/logos_core.dart' show FlowSseLattice, flowKGInteractionStrength;
 import '../../backend/logos_flow.dart'
-    show analyzeFlowCached, CrossFileInterference, crossFileMix, dreamAnalysis, FlowAnalysisResult, FlowBugKind, FlowFinding;
+    show analyzeFlowCached, analyzeInterFile, CrossFileInterference, crossFileMix, dreamAnalysis, FlowAnalysisResult, FlowBugKind, FlowFinding, InterFileResult;
 import '../../ui/tokens.dart';
 
 /// Stability region in the coherence × lyapunov plane.
@@ -42,6 +43,8 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
   final Map<String, FlowAnalysisResult> _rawResults = {};
   final FlowSseLattice _lattice = FlowSseLattice();
   List<CrossFileInterference> _crossFileInterference = const [];
+  InterFileResult? _interFileResult;
+  double _kgInteraction = 0.0;
   int _totalFiles = 0;
   int _scannedFiles = 0;
   bool _done = false;
@@ -58,6 +61,27 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
   Future<void> _scan(String repoPath) async {
     final gen = ++_gen;
+
+    // ── Scale 2: inter-file structural scan ─────────────────────────
+    // If the Logos engine is available, run the oscillator on the
+    // co-change graph first. Per-file certainties feed into Scale 1
+    // as logosCoupling.
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    InterFileResult? interFile;
+    if (engine != null) {
+      final basis = engine.spectralBasis();
+      if (basis != null) {
+        interFile = analyzeInterFile(
+          engine.graph,
+          basis,
+          nodePaths: engine.nodePaths,
+        );
+      }
+    }
+    if (!mounted || _gen != gen) return;
+    _interFileResult = interFile;
+
+    // ── Scale 1: per-file flow scan ─────────────────────────────────
     final probe = await runGitProbe(repoPath, ['ls-files']);
     if (!mounted || _gen != gen) return;
     if (probe.exitCode != 0) {
@@ -77,7 +101,13 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       if (!mounted || _gen != gen) return;
       final batch = allPaths.skip(i).take(concurrency).map((fp) async {
         try {
-          final result = await analyzeFlowCached(p.join(repoPath, fp));
+          // Scale 2 certainty → logosCoupling for this file.
+          final coupling = interFile?.certaintyForPath(
+              fp, engine?.pathToId ?? const {});
+          final result = await analyzeFlowCached(
+            p.join(repoPath, fp),
+            logosCoupling: coupling,
+          );
           if (result != null && result.findings.isNotEmpty) {
             return (fp, result);
           }
@@ -97,7 +127,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
       });
     }
 
-    // Calibration pipeline — order is load-bearing:
+    // ── Calibration pipeline ────────────────────────────────────────
     //   1. dream iterates to fixed point (hypercube diameter = 8 max)
     //   2. cross-file mix adds inter-file Born interference
     //   3. filter reads the fully converged lattice
@@ -118,9 +148,16 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
 
     if (!mounted || _gen != gen) return;
 
+    // Walsh-adaptive sigma: K-G interaction strength measures how much
+    // genuine multi-body coupling the factored per-axis model can't
+    // explain. High → lower threshold (storm, catch more). Low → higher
+    // threshold (calm, reduce noise). Range: sigma ∈ [0.75, 1.5].
+    _kgInteraction = flowKGInteractionStrength(_lattice);
+    final adaptiveSigma = 1.5 / (1.0 + _kgInteraction);
+
     final calibrated = <String, FlowAnalysisResult>{};
     for (final entry in _rawResults.entries) {
-      final filtered = entry.value.filterBy(_lattice);
+      final filtered = entry.value.filterBy(_lattice, sigma: adaptiveSigma);
       if (filtered.findings.isNotEmpty) {
         calibrated[entry.key] = filtered;
       }
@@ -159,8 +196,10 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     }
 
     final buf = StringBuffer();
+    final sigmaStr = (1.5 / (1.0 + _kgInteraction)).toStringAsFixed(2);
     buf.writeln('filament $total findings across ${_results.length} files '
-        '[C=$crit W=$warn I=$info J=$joints]');
+        '[C=$crit W=$warn I=$info J=$joints] '
+        'σ=$sigmaStr kg=${_kgInteraction.toStringAsFixed(2)}');
     buf.writeln('  ·stable ›directed ~scattered ◆turbulent ※joint');
     buf.writeln();
 
@@ -193,6 +232,26 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
             '  $sev$glyph L${f.sourceLine + 1} $kind '
             '[${f.composite.toStringAsFixed(2)} '
             'p=${f.pathCount}] $src');
+      }
+    }
+
+    if (_interFileResult != null && _interFileResult!.findings.isNotEmpty) {
+      buf.writeln();
+      buf.writeln('── inter-file structural '
+          '(${_interFileResult!.findings.length} findings, '
+          'gap=${_interFileResult!.spectralGap.toStringAsFixed(2)})');
+      for (final f in _interFileResult!.findings) {
+        final hex = f.address.toRadixString(16).padLeft(2, '0');
+        final kind = switch (f.kind) {
+          FlowBugKind.staleValue => 'stale',
+          FlowBugKind.temporalShift => 'temporal',
+          FlowBugKind.contextInversion => 'context',
+          FlowBugKind.contradictoryFlow => 'joint',
+        };
+        final glyph = _stabilityGlyph(f.coherence, f.lyapunov, f.kind);
+        buf.writeln('  $glyph 0x$hex $kind '
+            '[cert=${f.certainty.toStringAsFixed(2)} '
+            'p=${f.pathCount}] ${f.sourceText}');
       }
     }
 
