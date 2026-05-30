@@ -1,6 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'dtos.dart'
+    show
+        MuseQuiverEntry,
+        MuseStrandKind,
+        defaultMuseQuiver,
+        kMuseStrandDisplayOrder,
+        museStrandLabel,
+        normalizeMuseStrandOrder,
+        parseMuseStrand;
 import 'storage_paths.dart';
 
 class AiSettingsSnapshot {
@@ -13,6 +22,17 @@ class AiSettingsSnapshot {
   final String museBrainstormModelCategoryId;
   final String museSynthesisModelCategoryId;
   final String presentModelCategoryId;
+  /// The user's active loadout — which strands the muse throws on its
+  /// next call, and how many walkers of each. Empty list falls back to
+  /// [defaultMuseQuiver] (the original 4-strand spark/current/horizon/
+  /// fever set, count 1 each).
+  final List<MuseQuiverEntry> museQuiver;
+  /// The order strands are rendered in — both the settings strand strip
+  /// and the muse output panel iterate this. User-reorderable; orthogonal
+  /// to [museQuiver] (which strands are active). Always a complete,
+  /// de-duplicated ordering of every [MuseStrandKind]; normalised on
+  /// read so a partial or stale persisted value can't drop a strand.
+  final List<MuseStrandKind> museStrandOrder;
 
   const AiSettingsSnapshot({
     required this.modelSelections,
@@ -24,11 +44,13 @@ class AiSettingsSnapshot {
     required this.museBrainstormModelCategoryId,
     required this.museSynthesisModelCategoryId,
     required this.presentModelCategoryId,
+    this.museQuiver = const [],
+    this.museStrandOrder = kMuseStrandDisplayOrder,
   });
 
-  factory AiSettingsSnapshot.defaults() => const AiSettingsSnapshot(
-        modelSelections: {},
-        modelCategoryLabels: {
+  factory AiSettingsSnapshot.defaults() => AiSettingsSnapshot(
+        modelSelections: const {},
+        modelCategoryLabels: const {
           'quality': 'Quality',
           'fast': 'Fast',
         },
@@ -38,6 +60,8 @@ class AiSettingsSnapshot {
         museBrainstormModelCategoryId: 'fast',
         museSynthesisModelCategoryId: 'quality',
         presentModelCategoryId: 'quality',
+        museQuiver: defaultMuseQuiver(),
+        museStrandOrder: kMuseStrandDisplayOrder,
       );
 
   Map<String, dynamic> toJson() => {
@@ -50,6 +74,8 @@ class AiSettingsSnapshot {
         'museBrainstormModelCategoryId': museBrainstormModelCategoryId,
         'museSynthesisModelCategoryId': museSynthesisModelCategoryId,
         'presentModelCategoryId': presentModelCategoryId,
+        'museQuiver': [for (final e in museQuiver) e.toJson()],
+        'museStrandOrder': [for (final k in museStrandOrder) museStrandLabel(k)],
       };
 
   factory AiSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -85,7 +111,35 @@ class AiSettingsSnapshot {
         json['presentModelCategoryId'],
         defaults.presentModelCategoryId,
       ),
+      museQuiver: _readQuiver(json['museQuiver'], defaults.museQuiver),
+      museStrandOrder: _readStrandOrder(json['museStrandOrder']),
     );
+  }
+
+  static List<MuseQuiverEntry> _readQuiver(
+    dynamic raw,
+    List<MuseQuiverEntry> fallback,
+  ) {
+    if (raw is! List) return fallback;
+    final entries = <MuseQuiverEntry>[
+      for (final item in raw)
+        if (MuseQuiverEntry.fromJson(item) case final e?) e,
+    ];
+    return entries.isEmpty ? fallback : entries;
+  }
+
+  /// Parse a persisted strand-order list (an array of strand labels)
+  /// and normalise it to a complete ordering. Unknown labels are
+  /// dropped; missing strands are appended in canonical order. A
+  /// missing or malformed value yields the canonical default order.
+  static List<MuseStrandKind> _readStrandOrder(dynamic raw) {
+    if (raw is! List) return kMuseStrandDisplayOrder;
+    final parsed = <MuseStrandKind>[
+      for (final item in raw)
+        if (item is String)
+          if (parseMuseStrand(item) case final k?) k,
+    ];
+    return normalizeMuseStrandOrder(parsed);
   }
 
   static Map<String, String> _readStringMap(dynamic raw) {

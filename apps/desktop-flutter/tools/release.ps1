@@ -23,6 +23,7 @@ $installDir = Join-Path $env:USERPROFILE 'Manifold'
 $exeName    = 'git_desktop.exe'
 $buildDir   = Join-Path $flutterDir 'build\windows\x64'
 $cores      = [Environment]::ProcessorCount
+$sw         = [System.Diagnostics.Stopwatch]::StartNew()
 
 function Get-PubspecVersion {
     $pubspec = Join-Path $flutterDir 'pubspec.yaml'
@@ -82,6 +83,9 @@ try {
     # loudly than silently hang for hours.
     robocopy $releaseDir $installDir /MIR /R:3 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed ($LASTEXITCODE)" }
+    # robocopy signals success with codes < 8 (1 = files copied). Clear it so
+    # the non-zero "success" code can't leak out as the script's exit code.
+    $global:LASTEXITCODE = 0
 
     $exePath = Join-Path $installDir $exeName
     $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Manifold.lnk'
@@ -94,7 +98,7 @@ try {
     $sc.Description      = "Manifold Git Client ($Channel $version)"
     $sc.Save()
 
-    Write-Host "==> done" -ForegroundColor Green
+    Write-Host "==> done in $([math]::Round($sw.Elapsed.TotalSeconds,1))s" -ForegroundColor Green
     Write-Host "    channel : $Channel"
     Write-Host "    version : $version"
     if ($sha)    { Write-Host "    sha     : $sha" }
@@ -102,6 +106,7 @@ try {
     Write-Host "    cores   : $cores"
     Write-Host "    exe     : $exePath"
     Write-Host "    lnk     : $lnkPath"
+    exit 0
 }
 finally {
     Pop-Location

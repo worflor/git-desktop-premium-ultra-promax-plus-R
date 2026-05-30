@@ -69,8 +69,8 @@ class _Candidate {
       return (glyph: '▣', label: 'STRUCTURE');
     case RelatednessAxis.coChange:
       return (glyph: '◈', label: 'CO-CHANGE');
-    case RelatednessAxis.symbol:
-      return (glyph: '◇', label: 'SHARED SYMBOLS');
+    case RelatednessAxis.spectralProfile:
+      return (glyph: '◇', label: 'SPECTRAL PROFILE');
     case RelatednessAxis.pathAffinity:
       return (glyph: '⌂', label: 'PATH SIBLINGS');
     case RelatednessAxis.hunk:

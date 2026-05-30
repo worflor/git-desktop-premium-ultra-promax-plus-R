@@ -47,7 +47,6 @@ import '../../app/desk_drop_payload.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../app/file_coupling_state.dart';
-import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
@@ -3807,8 +3806,6 @@ class _BranchesPageState extends State<BranchesPage> {
     // moves from logos φ and engram wells still emit).
     final prCouplingMatrix =
         context.read<FileCouplingState>().matrixFor(repoPath);
-    final prSymbolIndex =
-        context.read<SymbolFrequencyState>().indexFor(repoPath);
 
     showDialog<void>(
       context: context,
@@ -3835,7 +3832,6 @@ class _BranchesPageState extends State<BranchesPage> {
       readOnly: preferences.aiReadOnlyDefault,
       rawDiffOverride: detail.diff,
       diffBranchName: pr.headRef,
-      symbolIndex: prSymbolIndex,
       couplingMatrix: prCouplingMatrix,
     );
     if (!mounted) return;

@@ -26,9 +26,7 @@
 // Inputs:
 //   • Required: ranked hunks from `rankHunksByPhiAsync` — carry φ and
 //     well assignment per hunk.
-//   • Optional [SymbolFrequencyIndex]: corpus-wide IDF. When provided,
-//     add/remove token ranking uses true rarity ("self-learning
-//     stop-word filter") instead of a commit-local frequency proxy.
+//   • Token add/remove detection uses commit-local frequency ranking.
 //   • Optional [FileCouplingMatrix]: historical co-change data. When
 //     provided, surfaces file pairs touched in this commit that have
 //     moved together in the past — the commit's structural story.
@@ -37,7 +35,7 @@
 
 import 'package:meta/meta.dart';
 
-import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
+import 'file_coupling.dart' show FileCouplingMatrix;
 import 'logos_hunks.dart' show DiffHunk, HunkRanking;
 
 
@@ -378,13 +376,10 @@ const double _kCouplingFloor = 0.25;
 /// manifest. Never throws — a malformed hunk body just contributes no
 /// tokens. Returns an empty-ish manifest when [rankings] is empty;
 /// callers can check [SemanticManifest.isEmpty] before emitting.
-/// [symbolIndex] — corpus IDF. When non-null and non-empty, identifier
-/// ranking uses true rarity instead of commit-local repetition.
 /// [couplingMatrix] — historical co-change data. When non-null, file
 /// pairs above [_kCouplingFloor] are surfaced as narrative hints.
 SemanticManifest buildSemanticManifest(
   List<HunkRanking> rankings, {
-  SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
 }) {
   if (rankings.isEmpty) {
@@ -403,7 +398,6 @@ SemanticManifest buildSemanticManifest(
     );
   }
 
-  final idfReady = symbolIndex != null && symbolIndex.isNotEmpty;
 
   // Per-file token accumulators. LinkedHashMap insertion order keeps the
   // rendered output stable (= first file seen = first file listed).
@@ -430,10 +424,7 @@ SemanticManifest buildSemanticManifest(
     }
   }
 
-  // Scoring function: IDF when the corpus is indexed, commit-local
-  // frequency otherwise. Higher score → kept over cap.
   double score(String token) {
-    if (idfReady) return symbolIndex.idf(token);
     return (commitWideFreq[token] ?? 0).toDouble();
   }
 
@@ -619,7 +610,7 @@ SemanticManifest buildSemanticManifest(
     couplingPairs: couplingPairs,
     touchedCoherence: touchedCoherence,
     topHunks: topHunks,
-    idfAvailable: idfReady,
+    idfAvailable: false,
   );
 }
 

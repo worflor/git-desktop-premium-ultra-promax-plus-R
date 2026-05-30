@@ -1583,6 +1583,9 @@ class _SettingsPageState extends State<SettingsPage>
                                     .setMuseSynthesisModelCategoryId(id),
                               );
                             },
+                            quiver: aiSettings.museQuiver,
+                            onQuiverChanged: (next) => unawaited(
+                                aiSettings.setMuseQuiver(next)),
                           ),
                           const SizedBox(height: 14),
                         ],
@@ -5510,6 +5513,357 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
   }
 }
 
+/// The strand strip — sits inside the muse-stage connector between
+/// BRAINSTORM and SYNTHESIZE, rendering the literal contents of what
+/// flows from one station to the other. Every strand is visible at
+/// all times; click toggles whether that strand is active. The engine
+/// distributes attention across active strands automatically — no
+/// counts, no proportions, just binary on/off.
+///
+/// Visual: one horizontal Wrap of 8 chips. Active = accent border,
+/// bright glyph, normal label. Inactive = faint border, hollow glyph
+/// alpha, muted label. Same widget, two states.
+class _MuseStrandStrip extends StatelessWidget {
+  final List<MuseQuiverEntry> quiver;
+  final ValueChanged<List<MuseQuiverEntry>> onChanged;
+  /// Render order for the chips — long-press-drag a chip to reposition
+  /// it. The muse output panel iterates the same order, so the strip
+  /// doubles as the output's table of contents.
+  final List<MuseStrandKind> order;
+  final ValueChanged<List<MuseStrandKind>> onReorder;
+  /// "~20 ideas · guardrail: strict" — appears as a small subscript
+  /// under the strand row so the macro context lives in the diagram.
+  final String guardrailHint;
+
+  const _MuseStrandStrip({
+    required this.quiver,
+    required this.onChanged,
+    required this.order,
+    required this.onReorder,
+    required this.guardrailHint,
+  });
+
+  // Poetic one-liners shown as tooltips on each strand toggle.
+  static String _strandHint(MuseStrandKind k) {
+    switch (k) {
+      case MuseStrandKind.spark:
+        return 'spark of inspiration · the immediately next step';
+      case MuseStrandKind.current:
+        return 'current in the water · present-tense extensions';
+      case MuseStrandKind.horizon:
+        return 'look over the horizon · reaching directions';
+      case MuseStrandKind.fever:
+        return 'wake from a fever dream · provocations';
+      case MuseStrandKind.echo:
+        return 'an echo across the canyon · analogues elsewhere';
+      case MuseStrandKind.vertigo:
+        return 'vertigo at the cliff edge · adjacent risks';
+      case MuseStrandKind.ghost:
+        return 'the ghost of what was · historical context';
+      case MuseStrandKind.mirror:
+        return 'a mirror on still water · inversions';
+    }
+  }
+
+  void _toggle(MuseStrandKind kind) {
+    final loaded = {for (final e in quiver) e.kind};
+    if (loaded.contains(kind)) {
+      // Never leave the quiver empty — the muse needs at least one
+      // strand. Removing the last active strand snaps back to default.
+      final next = quiver.where((e) => e.kind != kind).toList();
+      onChanged(next.isEmpty ? defaultMuseQuiver() : next);
+    } else {
+      onChanged([...quiver, MuseQuiverEntry(kind: kind, count: 1)]);
+    }
+  }
+
+  /// Move [source] to [target]'s slot. Direction-aware: dropping onto a
+  /// chip to the right of the source lands it AFTER that chip; onto one
+  /// to the left lands it BEFORE — so every position, including both
+  /// ends, is reachable in a single drag. (Removing the source first,
+  /// then inserting at the target's original index, yields exactly this
+  /// before/after behavior for free.)
+  void _reorder(MuseStrandKind source, MuseStrandKind target) {
+    if (source == target) return;
+    final next = List<MuseStrandKind>.of(order);
+    final from = next.indexOf(source);
+    final to = next.indexOf(target);
+    if (from < 0 || to < 0) return;
+    next.removeAt(from);
+    next.insert(to, source);
+    onReorder(next);
+  }
+
+  Widget _draggableChip(
+    BuildContext context,
+    AppTokens t,
+    MuseStrandKind kind,
+    bool active,
+  ) {
+    final toggle = _StrandToggle(
+      glyph: museStrandGlyph(kind),
+      label: museStrandLabel(kind),
+      tooltip: _strandHint(kind),
+      active: active,
+      onTap: () => _toggle(kind),
+    );
+    // Same long-press-drag mechanics as the sidebar repo rail:
+    // pointer-anchored feedback pill, 0.3-opacity ghost left behind.
+    final draggable = LongPressDraggable<MuseStrandKind>(
+      data: kind,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _StrandDragFeedback(
+        glyph: museStrandGlyph(kind),
+        label: museStrandLabel(kind),
+        tokens: t,
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: toggle),
+      child: toggle,
+    );
+    return DragTarget<MuseStrandKind>(
+      onWillAcceptWithDetails: (d) => d.data != kind,
+      onAcceptWithDetails: (d) => _reorder(d.data, kind),
+      builder: (ctx, candidates, _) {
+        if (candidates.isEmpty) return draggable;
+        // Insertion hint on the edge where the source will actually
+        // land (see [_reorder]): right edge when dragging in from the
+        // left, left edge when dragging in from the right.
+        final src = candidates.first;
+        final landsAfter =
+            src != null && order.indexOf(src) < order.indexOf(kind);
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            draggable,
+            Positioned(
+              top: 2,
+              bottom: 2,
+              left: landsAfter ? null : -3,
+              right: landsAfter ? -3 : null,
+              child: Container(
+                width: 2,
+                decoration: BoxDecoration(
+                  color: t.accentBright.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final loaded = {for (final e in quiver) e.kind};
+    // The continuous vertical thread that runs from the bottom of the
+    // BRAINSTORM station to the top of the SYNTHESIZE station, threading
+    // behind the strand strip. Reads as one diagram: model → strands →
+    // model. Aligned at x=18 so it emerges from the [N] tag column.
+    return Stack(
+      children: [
+        Positioned(
+          left: 18,
+          top: 0,
+          bottom: 0,
+          child: Container(
+            width: 1,
+            color: t.textMuted.withValues(alpha: 0.35),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    // User-reorderable render order — the muse output
+                    // panel iterates the same sequence, so long-press-
+                    // dragging a chip here repositions its section there.
+                    for (final kind in order)
+                      _draggableChip(
+                          context, t, kind, loaded.contains(kind)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+              // The macro context — idea count and guardrail — sits under
+              // the strand strip in the connector's "annotation" column,
+              // keeping the original information without duplicating real
+              // estate above and below.
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Text(
+                  guardrailHint,
+                  style: TextStyle(
+                    color: t.textMuted.withValues(alpha: 0.7),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A single strand toggle in the muse-stage connector strip. Binary
+/// on/off — no counts, no cycling. Active = accent border + bright
+/// glyph + normal label. Inactive = faint border + low-alpha glyph +
+/// muted label. Hover bumps everything one step toward bright.
+class _StrandToggle extends StatefulWidget {
+  final String glyph;
+  final String label;
+  final String tooltip;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _StrandToggle({
+    required this.glyph,
+    required this.label,
+    required this.tooltip,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  State<_StrandToggle> createState() => _StrandToggleState();
+}
+
+class _StrandToggleState extends State<_StrandToggle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final accent = t.accentBright;
+    final isActive = widget.active;
+    final glyphAlpha = isActive ? (_hovered ? 0.95 : 0.80) : 0.35;
+    final textColor = isActive
+        ? (_hovered ? t.textNormal : t.textNormal.withValues(alpha: 0.85))
+        : t.textMuted.withValues(alpha: _hovered ? 0.75 : 0.50);
+    final borderColor = isActive
+        ? accent.withValues(alpha: _hovered ? 0.50 : 0.35)
+        : t.chromeBorder.withValues(alpha: _hovered ? 0.30 : 0.15);
+    final bgColor = isActive
+        ? t.bg1.withValues(alpha: _hovered ? 0.95 : 0.75)
+        : t.bg1.withValues(alpha: _hovered ? 0.40 : 0.20);
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 350),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: context.motion(const Duration(milliseconds: 130)),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.glyph,
+                  style: TextStyle(
+                    color: accent.withValues(alpha: glyphAlpha),
+                    fontSize: 11,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Drag feedback for a strand chip mid-reorder. Mirrors the sidebar's
+/// repo-drag pill (transparent Material, accent-tinted fill, accent
+/// border, soft drop shadow, mono label) so reordering strands feels
+/// identical to reordering repos. Carries the strand glyph + label.
+class _StrandDragFeedback extends StatelessWidget {
+  final String glyph;
+  final String label;
+  final AppTokens tokens;
+
+  const _StrandDragFeedback({
+    required this.glyph,
+    required this.label,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: t.accentBright.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius),
+          border: Border.all(color: t.accentBright),
+          boxShadow: [
+            BoxShadow(
+              color: t.shadowElev.withValues(alpha: 0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              glyph,
+              style: TextStyle(color: t.accentBright, fontSize: 11),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFamily: AppFonts.mono,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AiMuseIntegrationEditor extends StatelessWidget {
   final TextEditingController promptController;
   final String? promptStatusLabel;
@@ -5587,6 +5941,8 @@ class _MuseStage extends StatelessWidget {
   final int guardrailStage;
   final ValueChanged<String?> onBrainstormCategoryChanged;
   final ValueChanged<String?> onSynthesisCategoryChanged;
+  final List<MuseQuiverEntry> quiver;
+  final ValueChanged<List<MuseQuiverEntry>> onQuiverChanged;
 
   const _MuseStage({
     required this.categories,
@@ -5594,6 +5950,8 @@ class _MuseStage extends StatelessWidget {
     required this.guardrailStage,
     required this.onBrainstormCategoryChanged,
     required this.onSynthesisCategoryChanged,
+    required this.quiver,
+    required this.onQuiverChanged,
   });
 
   // Same axis as MuseGuardrailProfile.suggestedIdeaCount in ai.dart —
@@ -5662,36 +6020,19 @@ class _MuseStage extends StatelessWidget {
           selectedModel: brainModel,
           onCategoryChanged: onBrainstormCategoryChanged,
         ),
-        // Connector — a continuous vertical thread from the bottom of
-        // station 1 to the top of station 2, aligned with the [N] tag
-        // column so the flow reads as one diagram. Arrow + annotation
-        // float on the right of the thread at its midpoint.
-        SizedBox(
-          height: 28,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // x-offset matches the station padding (12) + half the
-              // [N] tag width (~7) so the line emerges out of the
-              // numbered tag column above and re-enters it below.
-              const SizedBox(width: 18),
-              Container(
-                width: 1,
-                color: t.textMuted.withValues(alpha: 0.35),
-              ),
-              const SizedBox(width: 12),
-              Icon(Icons.south, size: 12,
-                  color: t.textMuted.withValues(alpha: 0.6)),
-              const SizedBox(width: 8),
-              Text(
-                '${_guardrailIdeaCountHint(guardrailStage)}  ·  guardrail: ${_guardrailMacroLabel(guardrailStage)}',
-                style: TextStyle(
-                  color: t.textMuted.withValues(alpha: 0.7),
-                  fontSize: 10.5,
-                ),
-              ),
-            ],
-          ),
+        // The strand strip — the literal contents of what flows from
+        // brainstorm into synthesize. Sits inside the connector so
+        // the pipeline reads as one continuous diagram: model →
+        // strands → model. Click a strand to toggle it; the engine
+        // distributes attention across active strands automatically.
+        _MuseStrandStrip(
+          quiver: quiver,
+          onChanged: onQuiverChanged,
+          order: aiSettings.museStrandOrder,
+          onReorder: (next) =>
+              unawaited(aiSettings.setMuseStrandOrder(next)),
+          guardrailHint:
+              '${_guardrailIdeaCountHint(guardrailStage)}  ·  guardrail: ${_guardrailMacroLabel(guardrailStage)}',
         ),
         _MuseStation(
           tokens: t,
@@ -7184,6 +7525,7 @@ class _LogosLensReadout extends StatelessWidget {
               height: 1.35,
             ),
           ),
+          const Spacer(),
           const SizedBox(height: 12),
           _GripDivider(t: t),
           const SizedBox(height: 12),
@@ -7423,6 +7765,7 @@ class _FilamentReadout extends StatelessWidget {
               height: 1.35,
             ),
           ),
+          const Spacer(),
           const SizedBox(height: 12),
           _GripDivider(t: t),
           const SizedBox(height: 12),

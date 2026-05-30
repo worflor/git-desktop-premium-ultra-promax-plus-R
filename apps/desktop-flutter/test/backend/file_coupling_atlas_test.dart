@@ -6,22 +6,23 @@
 //   1. Transport-lane pairs (manifest↔lockfile, source↔test) cluster
 //      on their own and carry `axis = transport`.
 //   2. Historical co-change pairs cluster with `axis = coChange`.
-//   3. Symbol-overlap pairs cluster with `axis = symbol`.
+//   3. Spectral-profile pairs cluster with `axis = spectralProfile`.
 //   4. A cluster bonded by mixed evidence picks the axis with the
-//      highest summed score, with priority `transport > coChange >
-//      symbol > pathAffinity` breaking ties.
+//      highest summed score, with priority `spectral > transport >
+//      spectralProfile > hunk > coChange > pathAffinity` breaking
+//      ties between distinct axes.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 
 FileCouplingMatrix _matrix({
   Map<String, Map<String, double>> jaccard = const {},
-  Map<String, Map<String, double>> symbol = const {},
+  Map<String, Map<String, double>> spectral = const {},
   int commitsAnalyzed = 200,
 }) =>
     FileCouplingMatrix(
       jaccard: jaccard,
-      symbol: symbol,
+      spectral: spectral,
       headHash: 'test',
       commitsAnalyzed: commitsAnalyzed,
     );
@@ -73,8 +74,8 @@ void main() {
           equals(RelatednessAxis.coChange));
     });
 
-    test('symbol overlap (no history) yields symbol axis', () {
-      final matrix = _matrix(symbol: {
+    test('spectral overlap (no history) yields spectralProfile axis', () {
+      final matrix = _matrix(spectral: {
         'lib/x.dart': {'lib/y.dart': 0.8},
         'lib/y.dart': {'lib/x.dart': 0.8},
       });
@@ -84,18 +85,23 @@ void main() {
       );
       final id = clusters.byPath['lib/x.dart']!;
       expect(clusters.dominantAxisByCluster[id],
-          equals(RelatednessAxis.symbol));
+          equals(RelatednessAxis.spectralProfile));
     });
 
-    test('co-change beats symbol on summed-score tie via priority', () {
-      // Equal single-edge scores — priority order (coChange > symbol)
-      // breaks the tie.
+    test('equal-score jaccard+spectral pair keeps first-recorded axis', () {
+      // Same pair fires on both jaccard (coChange) and spectral
+      // (spectralProfile) at an identical 0.5. recordPair promotes only
+      // on a strictly-greater score, so the first-recorded axis survives
+      // as the pair's single _PairScore — and the jaccard CSR is walked
+      // before the spectral CSR, so coChange wins. The _axisPriority
+      // tiebreak never engages here: only one axis ever reaches the
+      // per-cluster vote tally.
       final matrix = _matrix(
         jaccard: {
           'lib/a.dart': {'lib/b.dart': 0.5},
           'lib/b.dart': {'lib/a.dart': 0.5},
         },
-        symbol: {
+        spectral: {
           'lib/a.dart': {'lib/b.dart': 0.5},
           'lib/b.dart': {'lib/a.dart': 0.5},
         },
@@ -105,11 +111,9 @@ void main() {
         matrix,
       );
       final id = clusters.byPath['lib/a.dart']!;
-      // Dedup rule preserves the first-recorded axis when scores tie
-      // (jaccard recorded first). Either outcome is acceptable but
-      // the axis should be deterministic.
+      // Deterministic: the first-recorded axis (coChange) wins the tie.
       expect(clusters.dominantAxisByCluster[id],
-          isIn(const [RelatednessAxis.coChange, RelatednessAxis.symbol]));
+          equals(RelatednessAxis.coChange));
     });
 
     test('singleton with no bonds stays isolated, no axis key', () {

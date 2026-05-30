@@ -83,7 +83,7 @@ class DiffLogosRequest {
   final String diffText;
   final List<ParsedLine>? parsedLines;
   final DiffLogosParsedMetadata? parsedMetadata;
-  final Map<String, Map<String, double>> symbolCoupling;
+  final Map<String, Map<String, double>> spectralCoupling;
   final String? revisionRef;
   final FileCouplingMatrix? couplingMatrix;
   final LogosGit? warmEngine;
@@ -93,7 +93,7 @@ class DiffLogosRequest {
     required this.diffText,
     this.parsedLines,
     this.parsedMetadata,
-    this.symbolCoupling = const {},
+    this.spectralCoupling = const {},
     this.revisionRef,
     this.couplingMatrix,
     this.warmEngine,
@@ -447,7 +447,7 @@ class DiffLogosSession extends ChangeNotifier {
           diffText: request.diffText,
           parsedLines: request.parsedLines,
           parsedMetadata: request.parsedMetadata,
-          symbolCoupling: request.symbolCoupling,
+          spectralCoupling: request.spectralCoupling,
           revisionRef: request.revisionRef,
           couplingMatrix: request.couplingMatrix,
           warmEngine: request.warmEngine ?? logos?.engine,
@@ -1315,9 +1315,9 @@ class DiffLogosFacade {
         );
     final engine = engineBase == null
         ? null
-        : (request.symbolCoupling.isEmpty
+        : (request.spectralCoupling.isEmpty
             ? engineBase
-            : engineBase.withSymbolEdges(request.symbolCoupling));
+            : engineBase.withSpectralEdges(request.spectralCoupling));
     final sseStore = LogosSseStore(request.repositoryPath);
     if (engine != null) {
       engine.phaseBoost = await sseStore.loadPhaseTransitionScore();
@@ -1372,7 +1372,7 @@ class DiffLogosFacade {
         }
       } else {
         final symbolPaths = <String>{
-          for (final path in engine.symbolEdges.keys)
+          for (final path in engine.spectralEdges.keys)
             if (!engine.pathToId.containsKey(path)) path,
         };
         final axisLabels = <String, String>{
@@ -1702,7 +1702,7 @@ class DiffLogosFacade {
   }
 
   String _requestCacheKey(DiffLogosRequest request) {
-    final symbolKey = _symbolCouplingKey(request.symbolCoupling);
+    final symbolKey = _spectralCouplingKey(request.spectralCoupling);
     final revision = request.revisionRef ?? '';
     final couplingHead = request.couplingMatrix?.headHash ?? '';
     final engineKey = request.warmEngine == null
@@ -1733,13 +1733,13 @@ class DiffLogosFacade {
     return '$repositoryPath|$filePath|${revisionRef ?? ''}|$digest|${parsedLines.length}';
   }
 
-  String _symbolCouplingKey(Map<String, Map<String, double>> symbolCoupling) {
-    if (symbolCoupling.isEmpty) return '';
-    final outer = symbolCoupling.keys.toList()..sort();
+  String _spectralCouplingKey(Map<String, Map<String, double>> spectralCoupling) {
+    if (spectralCoupling.isEmpty) return '';
+    final outer = spectralCoupling.keys.toList()..sort();
     final buf = StringBuffer();
     for (final key in outer) {
       buf.write(key);
-      final inner = symbolCoupling[key]!;
+      final inner = spectralCoupling[key]!;
       final innerKeys = inner.keys.toList()..sort();
       for (final other in innerKeys) {
         buf
@@ -1794,7 +1794,7 @@ DiffProbe _buildLightweightDiffProbe({
     if (engine.pathToId.containsKey(path)) {
       continue;
     }
-    if (engine.symbolEdges[path]?.isNotEmpty ?? false) {
+    if (engine.spectralEdges[path]?.isNotEmpty ?? false) {
       symbolMatches++;
     }
   }

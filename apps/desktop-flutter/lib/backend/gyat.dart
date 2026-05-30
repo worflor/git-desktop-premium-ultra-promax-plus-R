@@ -22,16 +22,14 @@
 //      semantically unrelated observations.
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:path/path.dart' as p;
-
-import 'git.dart' show runGitProbe;
 import 'logos_core.dart';
 import 'logos_flow.dart' show extractFlowGraph, optimizeGraph, simulateFlow;
+import 'peek_warm_cache.dart';
+import 'repo_blob_walk.dart';
 
 // Cap on files scanned during bootstrap. Huge repos (10k+ files)
 // don't need every blob — a sampled subset gives the same lattice
@@ -41,38 +39,64 @@ const int _kBootstrapFileCap = 800;
 // generated/vendored and pollute the bigram basis.
 const int _kBootstrapMaxBytes = 256 * 1024;
 
+const _kBootstrapWalkOptions = RepoBlobWalkOptions(
+  fileCap: _kBootstrapFileCap,
+  maxBytes: _kBootstrapMaxBytes,
+);
+
 /// Shared instance cache — one lattice per repo, shared across all
 /// consumers (DiffShell, FilamentPanel, etc.) for the lifetime of
 /// the session. Switching repos evicts the previous instance; the
 /// new repo bootstraps on first request.
-GyatLattice? _cachedInstance;
-Future<GyatLattice>? _inflightBootstrap;
-String? _inflightRepoPath;
+///
+/// Backed by [PeekWarmCache] — the cache also enforces a per-bootstrap
+/// timeout so a hung sync file read inside the isolate can't leave
+/// the cache permanently wedged in the in-flight state.
+final PeekWarmCache<GyatLattice> _gyatCache = PeekWarmCache<GyatLattice>(
+  bootstrap: GyatLattice.bootstrap,
+  matchesKey: (cached, key) => cached.repoPath == key,
+  label: 'gyat',
+);
 
 /// Return the GYAT lattice for [repoPath]. First call per repo
 /// triggers bootstrap from git contents in an isolate; subsequent
 /// calls return the cached instance instantly. Concurrent calls
 /// for the same repo share a single bootstrap future.
-Future<GyatLattice> gyatForRepo(String repoPath) async {
-  final cached = _cachedInstance;
-  if (cached != null && cached.repoPath == repoPath) return cached;
-  if (_inflightBootstrap != null && _inflightRepoPath == repoPath) {
-    return _inflightBootstrap!;
-  }
-  _inflightRepoPath = repoPath;
-  final future = GyatLattice.bootstrap(repoPath);
-  _inflightBootstrap = future;
-  try {
-    final loaded = await future;
-    _cachedInstance = loaded;
-    return loaded;
-  } finally {
-    if (_inflightRepoPath == repoPath) {
-      _inflightBootstrap = null;
-      _inflightRepoPath = null;
-    }
-  }
-}
+///
+/// Use this when the caller can afford to wait for cold-start
+/// (filament panel, explicit user-initiated scans). For caller-paths
+/// that should never block on a cold lattice (the AI muse pipeline,
+/// the diff shell), use [peekGyatForRepo] + [warmGyatForRepo]
+/// instead — fast peek for "do you have it now?", fire-and-forget
+/// warm-up for "have it ready for next time."
+Future<GyatLattice> gyatForRepo(String repoPath) =>
+    _gyatCache.loadOrAwait(repoPath);
+
+/// Synchronous peek into the cache. Returns the cached lattice for
+/// [repoPath] when it's already warm; null otherwise. NEVER triggers
+/// bootstrap — the caller must not assume a non-null return after a
+/// null one without also calling [warmGyatForRepo].
+///
+/// Use in latency-critical pipelines (muse, diff shell) so the cold-
+/// start cost doesn't surface as perceived AI latency. The pipeline
+/// degrades gracefully when the peek returns null: the spectral
+/// enhancements (lattice priors, factoredness signal, structural
+/// context) skip for this call; the next call after warm-up
+/// completes picks them up.
+GyatLattice? peekGyatForRepo(String repoPath) => _gyatCache.peek(repoPath);
+
+/// Fire-and-forget warm-up. Kicks GYAT bootstrap in the background
+/// when nothing matching [repoPath] is cached or already warming.
+/// Idempotent: safe to call from multiple lifecycle hooks
+/// (repo-open, panel-mount, pre-fire) — duplicate calls collapse
+/// into the single in-flight bootstrap future.
+///
+/// Pair with [peekGyatForRepo] in caller-paths that want the lattice
+/// if it's ready but can't wait for cold start. Workspace lifecycle
+/// (repo selection, filament-panel mount) calls this proactively so
+/// the lattice is usually warm by the time downstream consumers
+/// (muse, diff annotation) need it.
+void warmGyatForRepo(String repoPath) => _gyatCache.warm(repoPath);
 
 /// Per-repo GYAT lattice — in-memory only, derived from git contents.
 class GyatLattice {
@@ -177,33 +201,13 @@ class GyatLattice {
   ///
   /// Deterministic: two users on the same commit get the same
   /// bootstrapped lattice (modulo file-order, which is `ls-files`
-  /// alphabetical). Runs in an isolate so the main thread stays
-  /// responsive.
+  /// alphabetical). The entire pipeline — `git ls-files`, per-file
+  /// read/binary-filter/decode, CharCoupling sum, and lattice
+  /// synthesis — runs inside a single worker isolate. The main thread
+  /// is never blocked on file I/O even for cold-cache or network-
+  /// mounted repos at the 800-file cap.
   static Future<GyatLattice> bootstrap(String repoPath) async {
-    final lsProbe = await runGitProbe(repoPath, ['ls-files']);
-    if (lsProbe.exitCode != 0) {
-      return GyatLattice.fresh(repoPath);
-    }
-    final allPaths = (lsProbe.stdout as String)
-        .split('\n')
-        .where((l) => l.isNotEmpty)
-        .toList(growable: false);
-    if (allPaths.isEmpty) return GyatLattice.fresh(repoPath);
-
-    // Sample if the repo is huge. Stride keeps the sample uniform
-    // across the alphabetical path order so the bigram basis reflects
-    // the whole repo, not just `a*` files.
-    final paths = allPaths.length <= _kBootstrapFileCap
-        ? allPaths
-        : <String>[
-            for (var i = 0;
-                i < allPaths.length;
-                i += (allPaths.length / _kBootstrapFileCap).ceil())
-              allPaths[i],
-          ];
-
-    final result =
-        await Isolate.run(() => _bootstrapInIsolate(repoPath, paths));
+    final result = await Isolate.run(() => _bootstrapInIsolate(repoPath));
     return GyatLattice._(result.lattice, repoPath, result.coupling);
   }
 }
@@ -215,51 +219,18 @@ class _BootstrapResult {
 }
 
 /// Top-level so it can run in an isolate (closures can't cross).
-/// Reads each blob, sums its bigram counts into the repo-global
-/// CharCoupling, then synthetically scans each blob with the global
-/// basis and merges into the lattice.
-_BootstrapResult _bootstrapInIsolate(String repoPath, List<String> paths) {
-  // Two passes: first sum bigram counts to build the canonical basis,
-  // then scan each blob against the basis. The basis HAS to be
-  // built first because the scan depends on it.
-  final sources = <String>[];
-  for (final rel in paths) {
-    try {
-      final file = File(p.join(repoPath, rel));
-      if (!file.existsSync()) continue;
-      final stat = file.statSync();
-      if (stat.size <= 0 || stat.size > _kBootstrapMaxBytes) continue;
-      // Skip likely-binary by checking for nulls in the first 8KB.
-      final probe = file.openSync();
-      try {
-        final head = probe.readSync(math.min(8192, stat.size));
-        var nullSeen = false;
-        for (var i = 0; i < head.length; i++) {
-          if (head[i] == 0) {
-            nullSeen = true;
-            break;
-          }
-        }
-        if (nullSeen) continue;
-      } finally {
-        probe.closeSync();
-      }
-      final source = file.readAsStringSync();
-      if (source.length < 16) continue;
-      sources.add(source);
-    } catch (_) {
-      // Unreadable / non-UTF-8 — skip.
-    }
-  }
-  if (sources.isEmpty) {
+/// Lists the repo with `Process.runSync`, reads every surviving blob
+/// sync, builds the canonical CharCoupling, then synthetically scans
+/// each source against that basis and merges into the lattice.
+_BootstrapResult _bootstrapInIsolate(String repoPath) {
+  final walk = walkRepoBlobsSync(repoPath, options: _kBootstrapWalkOptions);
+  if (walk.blobs.isEmpty) {
     return _BootstrapResult(
         FlowSseLattice(), CharCoupling.fromSources(const []));
   }
-
+  final sources = [for (final b in walk.blobs) b.text];
+  // Two passes: build the canonical basis first, then scan against it.
   final coupling = CharCoupling.fromSources(sources);
-
-  // Second pass: scan each source with the canonical basis and
-  // accumulate into a single lattice.
   final lattice = FlowSseLattice();
   for (final source in sources) {
     try {

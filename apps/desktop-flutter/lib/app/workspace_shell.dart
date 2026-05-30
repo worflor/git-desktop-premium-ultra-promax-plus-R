@@ -9,6 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
 import '../backend/git.dart';
+import '../backend/gyat.dart' show warmGyatForRepo;
+import '../backend/release_state.dart' show warmReleaseState;
+import '../backend/spectral_trajectory_builder.dart'
+    show warmTrajectoryForRepo;
 import '../backend/logos_dream.dart';
 import '../backend/logos_free_energy.dart';
 import '../backend/logos_core.dart';
@@ -54,7 +58,6 @@ import 'hyper_reactivity.dart';
 import 'logos_git_state.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
-import 'symbol_frequency_state.dart';
 import 'theme_state.dart';
 import 'wick_state.dart';
 import 'worktree_state.dart';
@@ -89,6 +92,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   SettingsNavigationState? _settingsNavState;
   final ValueNotifier<String?> _settingsAiFeature = ValueNotifier(null);
   ModalRoute<dynamic>? _subscribedRoute;
+  Timer? _warmDebounce;
 
   @override
   void initState() {
@@ -169,6 +173,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
 
   @override
   void dispose() {
+    _warmDebounce?.cancel();
     manifoldRouteObserver.unsubscribe(this);
     _subscribedRoute = null;
     _settingsNavState?.removeListener(_onSettingsNavChanged);
@@ -192,17 +197,20 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           return;
         }
         context.read<RepositoryXrayState>().invalidateAllExcept(activeRepoPath);
-        // LogosGitState and FileCouplingState keep their LRU caches
-        // across repo switches — the resolver manages its own budget.
-        // Only xray and symbol frequency evict aggressively (larger
-        // footprint, less value when cached across repos).
-        context
-            .read<SymbolFrequencyState>()
-            .invalidateAllExcept(activeRepoPath);
         if (activeRepoPath != null) {
           final wick = context.read<WickState>();
           wick.setActiveRepo(activeRepoPath);
           unawaited(wick.indexRepo(activeRepoPath));
+          // Debounce warm-up calls so rapid repo-switching doesn't
+          // launch N×3 isolate bootstraps. Only the final repo's
+          // warm calls fire after the settling window.
+          _warmDebounce?.cancel();
+          final repoForWarm = activeRepoPath;
+          _warmDebounce = Timer(const Duration(milliseconds: 150), () {
+            warmGyatForRepo(repoForWarm);
+            warmTrajectoryForRepo(repoForWarm);
+            warmReleaseState(repoForWarm);
+          });
         }
       });
     }

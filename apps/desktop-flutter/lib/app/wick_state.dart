@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../backend/git.dart' show ensureManifoldExcluded;
+import '../backend/repo_head_cache.dart';
 import '../backend/wick.dart';
 
 class WickRepoState {
@@ -108,14 +109,6 @@ class WickState extends ChangeNotifier {
     return result.data;
   }
 
-  Future<String?> _currentHead(String repoPath) async {
-    try {
-      final r = await Process.run(
-        'git', ['rev-parse', 'HEAD'],
-        workingDirectory: repoPath,
-      );
-      if (r.exitCode == 0) return (r.stdout as String).trim();
-    } catch (_) {}
-    return null;
-  }
+  Future<String?> _currentHead(String repoPath) =>
+      RepoHeadCache.instance.head(repoPath);
 }

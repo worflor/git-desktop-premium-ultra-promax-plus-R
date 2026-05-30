@@ -54,6 +54,36 @@ void main() {
       }
     });
 
+    test('single-pass bit/XOR path equals the popcount-mask reference', () {
+      // alpha-math proof guard: whtFingerprint25D derives every Walsh sign
+      // from bits of m (L_i = commit bit, U_i = file bit, X_i = L_i⊕U_i,
+      // FFFF = parity of all 16 bits) instead of a popcount LUT. Pin it to
+      // the literal Σ_m (-1)^popcount(m & mask)·block[m] definition on a
+      // sparse integer histogram, where both paths are exact.
+      int popcount16(int x) {
+        var c = 0;
+        for (var v = x & 0xFFFF; v != 0; v &= v - 1) {
+          c++;
+        }
+        return c;
+      }
+
+      final rng = math.Random(20260530);
+      final hist = Float64List(kKizunaAddressSpace);
+      for (var t = 0; t < 4000; t++) {
+        hist[rng.nextInt(kKizunaAddressSpace)] += rng.nextInt(7).toDouble();
+      }
+      final got = whtFingerprint25D(hist);
+      for (var k = 0; k < 25; k++) {
+        final mask = kKizunaMasks25[k];
+        var ref = 0.0;
+        for (var m = 0; m < kKizunaAddressSpace; m++) {
+          ref += (popcount16(m & mask).isEven ? 1.0 : -1.0) * hist[m];
+        }
+        expect(got[k], ref, reason: 'coefficient $k (mask 0x${mask.toRadixString(16)})');
+      }
+    });
+
     test('canonical mask ordering: L (0-7), U (8-15), X (16-23), FFFF (24)',
         () {
       // Low byte = commit byte, high byte = file byte.

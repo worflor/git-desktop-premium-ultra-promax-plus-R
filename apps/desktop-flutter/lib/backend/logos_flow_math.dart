@@ -608,53 +608,116 @@ double flowBranchGain(int fanout) {
   return 0.25 * (e2x - 1.0) / (e2x + 1.0);
 }
 
-// ── Quantum walk weight vector ──────────────────────────────────────
+// ── Walker density: 3×3 Hermitian density matrix ───────────────────
 //
-// Each walker carries a priority weight on the 3-simplex
-// (anomaly, structure, certainty). The priority scalar is the dot
-// product w · (anomaly²·structure, anomaly·structure², certainty²·structure),
-// continuously interpolating what discrete strands (alpha/beta/delta)
-// sampled at the vertices. After each step, the walker absorbs: the
-// weight component aligned with the local observation decreases,
-// rotating the walker toward under-explored dimensions. The walk is
-// a spectroscopic scan — the walker's remaining spectrum encodes what
-// it still doesn't understand about the graph.
+// Each walker carries a density matrix ρ over the (anomaly, structure,
+// certainty) axes. Diagonal-only ρ (off-diagonal coherences zero) is
+// the classical-mixture special case; non-zero off-diagonals carry
+// phase coherence between strategy axes, expressing "the walker is
+// genuinely uncertain between two strategies" in a way no classical
+// mixture can.
+//
+// Absorption is a Kraus channel: diagonals decay at the rate
+// (1 − rate·x²); each off-diagonal ρ[i,j] decays at the geometric
+// mean of the two diagonals' decay factors. This is the amplitude-
+// damping channel — preserves positive semidefiniteness, reduces to
+// pure classical attenuation when all off-diagonals are zero.
 
-class WalkerWeight {
-  double wAnomaly, wStructure, wCertainty;
+class WalkerDensity {
+  // Diagonal — real, non-negative, sum to 1 after renormalization.
+  double pAnomaly, pStructure, pCertainty;
+  // Off-diagonal upper triangle of the Hermitian ρ. Each is a complex
+  // number (r + i·im). ρ[i,j] = conj(ρ[j,i]). Zero by default — the
+  // classical pure-state behaviour falls out automatically.
+  double rAS, iAS;
+  double rAC, iAC;
+  double rSC, iSC;
 
-  WalkerWeight(this.wAnomaly, this.wStructure, this.wCertainty);
+  WalkerDensity(
+    this.pAnomaly,
+    this.pStructure,
+    this.pCertainty, {
+    this.rAS = 0.0,
+    this.iAS = 0.0,
+    this.rAC = 0.0,
+    this.iAC = 0.0,
+    this.rSC = 0.0,
+    this.iSC = 0.0,
+  });
 
   /// Evenly-spaced points on the 2-simplex. N=3 recovers the
-  /// alpha/beta/delta vertices exactly.
-  static List<WalkerWeight> simplex(int n) {
+  /// alpha/beta/delta vertices exactly. All pure-state (no coherence).
+  static List<WalkerDensity> simplex(int n) {
     if (n <= 0) return [];
     if (n == 1) {
-      return [WalkerWeight(1.0 / 3, 1.0 / 3, 1.0 / 3)];
+      return [WalkerDensity(1.0 / 3, 1.0 / 3, 1.0 / 3)];
     }
     if (n <= 3) {
       return [
-        WalkerWeight(1.0, 0.0, 0.0),
-        WalkerWeight(0.0, 1.0, 0.0),
-        WalkerWeight(0.0, 0.0, 1.0),
+        WalkerDensity(1.0, 0.0, 0.0),
+        WalkerDensity(0.0, 1.0, 0.0),
+        WalkerDensity(0.0, 0.0, 1.0),
       ].sublist(0, n);
     }
     var k = 1;
     while ((k + 1) * (k + 2) ~/ 2 < n) k++;
-    final points = <WalkerWeight>[];
+    final points = <WalkerDensity>[];
     final invK = 1.0 / k;
     for (var i = 0; i <= k && points.length < n; i++) {
       for (var j = 0; j <= k - i && points.length < n; j++) {
-        points.add(WalkerWeight(i * invK, j * invK, 1.0 - i * invK - j * invK));
+        points.add(
+            WalkerDensity(i * invK, j * invK, 1.0 - i * invK - j * invK));
       }
     }
     return points;
   }
 
-  /// Beer-Lambert absorption: reduce weights aligned with what the
-  /// walker observed, proportional to 1/maxDepth per step. After a
-  /// full-depth walk the absorbed axis drops to ~1/e of its original
-  /// weight. No free parameters — the rate is the walk geometry.
+  /// Coherent superposition between two axes, parameterised by a
+  /// relative phase φ ∈ [0, 2π]. Produces a rank-1 state where the
+  /// off-diagonal element carries `cos(φ) + i·sin(φ)` weighted by the
+  /// geometric mean of the two diagonal probabilities. Constructive
+  /// interference (φ near 0) and destructive interference (φ near π)
+  /// produce observably different arrival statistics under Born
+  /// mixing — something no classical mixture can express.
+  ///
+  /// Defaults to a balanced anomaly↔certainty superposition; pass
+  /// explicit ([anomaly], [structure], [certainty]) to bias the
+  /// diagonal first.
+  factory WalkerDensity.coherent({
+    double anomaly = 0.5,
+    double structure = 0.0,
+    double certainty = 0.5,
+    double phaseAC = 0.0,
+    double phaseAS = 0.0,
+    double phaseSC = 0.0,
+  }) {
+    final sum = anomaly + structure + certainty;
+    if (sum <= 0) return WalkerDensity(1 / 3, 1 / 3, 1 / 3);
+    final inv = 1.0 / sum;
+    final pA = anomaly * inv;
+    final pS = structure * inv;
+    final pC = certainty * inv;
+    final gAS = math.sqrt(pA * pS);
+    final gAC = math.sqrt(pA * pC);
+    final gSC = math.sqrt(pS * pC);
+    return WalkerDensity(
+      pA,
+      pS,
+      pC,
+      rAS: gAS * math.cos(phaseAS),
+      iAS: gAS * math.sin(phaseAS),
+      rAC: gAC * math.cos(phaseAC),
+      iAC: gAC * math.sin(phaseAC),
+      rSC: gSC * math.cos(phaseSC),
+      iSC: gSC * math.sin(phaseSC),
+    );
+  }
+
+  /// Beer-Lambert absorption — Kraus-channel update. Diagonals decay
+  /// at `1 - rate·x²`; off-diagonals decay at the geometric mean of
+  /// the two diagonals' decay factors (amplitude-damping channel).
+  /// Preserves positive semidefiniteness and reduces to pure classical
+  /// attenuation when all off-diagonals are zero (the rank-1 case).
   void absorb(double anomaly, double structure, double certainty,
       int maxDepth) {
     if (maxDepth <= 0) return;
@@ -662,38 +725,217 @@ class WalkerWeight {
     final s = structure / (1.0 + structure);
     final c = certainty.clamp(0.0, 1.0);
     final rate = 1.0 / maxDepth;
-    wAnomaly *= 1.0 - rate * a * a;
-    wStructure *= 1.0 - rate * s * s;
-    wCertainty *= 1.0 - rate * c * c;
+    final fA = 1.0 - rate * a * a;
+    final fS = 1.0 - rate * s * s;
+    final fC = 1.0 - rate * c * c;
+    pAnomaly *= fA;
+    pStructure *= fS;
+    pCertainty *= fC;
+    // Geometric-mean damping for off-diagonals. Clamp to defend
+    // against tiny negatives from floating-point rounding.
+    final gAS = math.sqrt(fA * fS < 0 ? 0.0 : fA * fS);
+    final gAC = math.sqrt(fA * fC < 0 ? 0.0 : fA * fC);
+    final gSC = math.sqrt(fS * fC < 0 ? 0.0 : fS * fC);
+    rAS *= gAS;
+    iAS *= gAS;
+    rAC *= gAC;
+    iAC *= gAC;
+    rSC *= gSC;
+    iSC *= gSC;
     _renormalize();
   }
 
   void _renormalize() {
     const floor = 1e-6;
-    if (wAnomaly < floor) wAnomaly = floor;
-    if (wStructure < floor) wStructure = floor;
-    if (wCertainty < floor) wCertainty = floor;
-    final sum = wAnomaly + wStructure + wCertainty;
+    if (pAnomaly < floor) pAnomaly = floor;
+    if (pStructure < floor) pStructure = floor;
+    if (pCertainty < floor) pCertainty = floor;
+
+    // Defensive PSD hygiene: enforce the 2x2 principal-minor
+    // constraint |ρ_ij|² ≤ ρ_ii · ρ_jj on every off-diagonal pair.
+    // The amplitude-damping channel in [absorb] preserves PSD
+    // analytically, but floating-point rounding across many absorb
+    // cycles can let off-diagonals drift slightly past the bound.
+    // Without this clamp, [purity] can exceed 1 and the
+    // [_hermitianEigenvalues3] solver can return negative eigenvalues
+    // that produce NaN in [vonNeumannEntropy]. Note this enforces
+    // only the pairwise minors; the 3x3 determinant condition is
+    // left to the natural Kraus physics — pairwise is the dominant
+    // drift mode and a cheap, sufficient guard for the readouts.
+    _clampOffDiagonalPair(pAnomaly, pStructure, _rasGet, _iasGet,
+        _rasSet, _iasSet);
+    _clampOffDiagonalPair(pAnomaly, pCertainty, _racGet, _iacGet,
+        _racSet, _iacSet);
+    _clampOffDiagonalPair(pStructure, pCertainty, _rscGet, _iscGet,
+        _rscSet, _iscSet);
+
+    final sum = pAnomaly + pStructure + pCertainty;
     final inv = 1.0 / sum;
-    wAnomaly *= inv;
-    wStructure *= inv;
-    wCertainty *= inv;
+    pAnomaly *= inv;
+    pStructure *= inv;
+    pCertainty *= inv;
+    rAS *= inv;
+    iAS *= inv;
+    rAC *= inv;
+    iAC *= inv;
+    rSC *= inv;
+    iSC *= inv;
   }
 
-  WalkerWeight clone() => WalkerWeight(wAnomaly, wStructure, wCertainty);
+  // Closure-shaped getters/setters so [_clampOffDiagonalPair] can act
+  // on any (rᵢⱼ, iᵢⱼ) field pair without enumerating cases. The
+  // closures capture `this`; the indirection is one virtual call per
+  // pair per renormalize — negligible against the sqrt the clamp
+  // itself does.
+  double _rasGet() => rAS;
+  double _iasGet() => iAS;
+  void _rasSet(double v) => rAS = v;
+  void _iasSet(double v) => iAS = v;
+  double _racGet() => rAC;
+  double _iacGet() => iAC;
+  void _racSet(double v) => rAC = v;
+  void _iacSet(double v) => iAC = v;
+  double _rscGet() => rSC;
+  double _iscGet() => iSC;
+  void _rscSet(double v) => rSC = v;
+  void _iscSet(double v) => iSC = v;
+
+  static void _clampOffDiagonalPair(
+    double pi,
+    double pj,
+    double Function() rGet,
+    double Function() iGet,
+    void Function(double) rSet,
+    void Function(double) iSet,
+  ) {
+    final r = rGet();
+    final i = iGet();
+    final mag2 = r * r + i * i;
+    final maxMag2 = pi * pj;
+    if (mag2 > maxMag2 && mag2 > 0) {
+      final scale = math.sqrt(maxMag2 / mag2);
+      rSet(r * scale);
+      iSet(i * scale);
+    }
+  }
+
+  WalkerDensity clone() => WalkerDensity(
+        pAnomaly,
+        pStructure,
+        pCertainty,
+        rAS: rAS,
+        iAS: iAS,
+        rAC: rAC,
+        iAC: iAC,
+        rSC: rSC,
+        iSC: iSC,
+      );
 
   /// Walkers biased by a prior novelty score in [0, 1].
   /// Familiar addresses (novelty→0) get anomaly-heavy walkers (hunt
   /// for what changed). Novel addresses (novelty→1) get certainty-heavy
   /// walkers (map the territory first). At novelty=0 this recovers
   /// the three simplex vertices exactly.
-  static List<WalkerWeight> withPrior(double novelty) {
+  static List<WalkerDensity> withPrior(double novelty) {
     final n = novelty.clamp(0.0, 1.0);
     return [
-      WalkerWeight(1.0 - 0.5 * n, 0.25 * n, 0.25 * n),
-      WalkerWeight(0.0, 1.0, 0.0),
-      WalkerWeight(0.25 * n, 0.25 * n, 1.0 - 0.5 * n),
+      WalkerDensity(1.0 - 0.5 * n, 0.25 * n, 0.25 * n),
+      WalkerDensity(0.0, 1.0, 0.0),
+      WalkerDensity(0.25 * n, 0.25 * n, 1.0 - 0.5 * n),
     ];
+  }
+
+  /// Tr(ρ²) ∈ [1/3, 1]. Pure state = 1; maximally mixed = 1/3.
+  /// A walker that has absorbed contradictory observations decoheres —
+  /// purity drops below 1 even though no off-diagonal was seeded.
+  /// Free quantum-info readout — no extra state required.
+  double get purity {
+    return pAnomaly * pAnomaly +
+        pStructure * pStructure +
+        pCertainty * pCertainty +
+        2 * (rAS * rAS + iAS * iAS) +
+        2 * (rAC * rAC + iAC * iAC) +
+        2 * (rSC * rSC + iSC * iSC);
+  }
+
+  /// Von Neumann entropy `S(ρ) = −Σ λᵢ log λᵢ` over the eigenvalues
+  /// of ρ. For diagonal ρ this is Shannon entropy on the diagonals;
+  /// for mixed states with off-diagonal coherences, the eigenvalues
+  /// rotate to incorporate phase information and S can differ from
+  /// the diagonal Shannon entropy.
+  /// Zero → walker collapsed onto a single strategy (pure state).
+  /// log(3) → maximally undecided (maximally mixed state).
+  double get vonNeumannEntropy {
+    final eigs = _hermitianEigenvalues3();
+    var h = 0.0;
+    for (final e in eigs) {
+      if (e > 1e-12) h -= e * math.log(e);
+    }
+    return h;
+  }
+
+  /// Eigenvalues of the 3×3 Hermitian density matrix ρ.
+  /// Closed-form trigonometric solution to the depressed cubic
+  /// (Cardano). Returns the three real eigenvalues; falls back to
+  /// the diagonal when the off-diagonals are pure-numerical noise.
+  List<double> _hermitianEigenvalues3() {
+    // Characteristic polynomial: λ³ - t·λ² + p·λ - det(ρ) = 0,
+    // where t = tr(ρ) = 1 (post-renormalization), p = (t² - tr(ρ²))/2,
+    // and det(ρ) is computed below.
+    //
+    // Standard cubic in the form λ³ + a₂λ² + a₁λ + a₀:
+    //   a₂ = −t, a₁ = p, a₀ = −det(ρ)
+    // Cardano substitution λ = u − a₂/3 = u + t/3 gives the depressed
+    // form u³ + Pu + Q = 0 with:
+    //   P = a₁ − a₂²/3              = p − t²/3
+    //   Q = (2a₂³ − 9a₂a₁ + 27a₀)/27 = −2t³/27 + tp/3 − det(ρ)
+    const t = 1.0;
+    final t2 = purity;
+    final p = (t * t - t2) / 2.0;
+    final det = _det3();
+    final pp = p - (t * t) / 3.0;
+    final qq = -2 * t * t * t / 27.0 + (t * p) / 3.0 - det;
+    // Hermitian matrices always have real eigenvalues → discriminant
+    // should be ≤ 0 analytically. If numerical noise pushes it slightly
+    // positive, treat as the degenerate case and return the diagonal.
+    if (pp >= -1e-15) {
+      return [pAnomaly, pStructure, pCertainty];
+    }
+    final r = math.sqrt(-pp * pp * pp / 27.0);
+    if (r <= 1e-15) {
+      return [pAnomaly, pStructure, pCertainty];
+    }
+    final cosArg = (-qq / 2.0 / r).clamp(-1.0, 1.0);
+    final theta = math.acos(cosArg);
+    final twoSqrt = 2.0 * math.sqrt(-pp / 3.0);
+    const shift = t / 3.0;
+    return [
+      twoSqrt * math.cos(theta / 3.0) + shift,
+      twoSqrt * math.cos((theta + 2 * math.pi) / 3.0) + shift,
+      twoSqrt * math.cos((theta + 4 * math.pi) / 3.0) + shift,
+    ];
+  }
+
+  /// Determinant of the 3×3 Hermitian ρ. Used by [vonNeumannEntropy].
+  double _det3() {
+    // ρ = [[pA,    c_AS, c_AC],
+    //      [c_AS*, pS,   c_SC],
+    //      [c_AC*, c_SC*, pC]]
+    // det = pA·pS·pC - pA·|c_SC|² - pS·|c_AC|² - pC·|c_AS|²
+    //       + 2·Re(c_AS · c_SC · conj(c_AC))
+    final mAS = rAS * rAS + iAS * iAS;
+    final mAC = rAC * rAC + iAC * iAC;
+    final mSC = rSC * rSC + iSC * iSC;
+    // c_AS · c_SC = (rAS·rSC − iAS·iSC) + i(rAS·iSC + iAS·rSC)
+    final pAsScRe = rAS * rSC - iAS * iSC;
+    final pAsScIm = rAS * iSC + iAS * rSC;
+    // Real part of (c_AS · c_SC) · conj(c_AC) = ... · (rAC, −iAC)
+    final tripleRe = pAsScRe * rAC + pAsScIm * iAC;
+    return pAnomaly * pStructure * pCertainty -
+        pAnomaly * mSC -
+        pStructure * mAC -
+        pCertainty * mAS +
+        2.0 * tripleRe;
   }
 }
 
@@ -707,7 +949,7 @@ double flowSearchPriority({
   required double ssePrior,
   required int depth,
   required int maxDepth,
-  required WalkerWeight weight,
+  required WalkerDensity weight,
 }) {
   if (maxDepth <= 0) return 0.0;
   final anomaly = phaseVelocity * (1.0 - certainty);
@@ -715,9 +957,9 @@ double flowSearchPriority({
       * math.log(math.max(2, fanout)) / math.ln2;
   final attention = (1.0 + ssePrior)
       * (maxDepth - depth) / maxDepth.toDouble();
-  return (weight.wAnomaly * anomaly * anomaly * structure
-        + weight.wStructure * anomaly * structure * structure
-        + weight.wCertainty * certainty * certainty * structure)
+  return (weight.pAnomaly * anomaly * anomaly * structure
+        + weight.pStructure * anomaly * structure * structure
+        + weight.pCertainty * certainty * certainty * structure)
       * attention;
 }
 

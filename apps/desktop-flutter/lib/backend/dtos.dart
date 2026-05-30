@@ -1016,49 +1016,270 @@ class AiMuseIdea {
   });
 }
 
-/// Ambition tier for a muse proposal. The muse distributes its
-/// output across these tiers so every run offers a range from "could
-/// ship this week" to "genuinely unhinged." Ordered by ambition: low
-/// to high, with `fever` as the wildcard final.
-enum AiMuseIdeaTier {
-  /// Near-term, realistic — something that could ship as a normal PR.
+/// A muse strand — the walker character that generated an idea.
+///
+/// The first four are the canonical ambition tiers ("a spark of
+/// inspiration, a current in the water, a look over the horizon, and
+/// after you wake from a fever dream"). They form the default quiver
+/// and recover the original muse behavior bit-for-bit. The remaining
+/// four are optional strands the user can add to a custom quiver:
+///
+///   • [echo] — find analogues across the canyon. Where else does
+///     this pattern live? (K-space KNN walker.)
+///   • [vertigo] — feel the cliff edge. What does this jeopardize?
+///     (Hunk-graph adjacency walker.)
+///   • [ghost] — what came before in this place. What did this
+///     replace? (Commit-history backward walker.)
+///   • [mirror] — reflection on still water. What's the inverse
+///     question? (Post-hoc inverse of the other walkers.)
+///
+/// `AiMuseIdeaTier` is the historical name; the new code calls these
+/// "strands" to reflect the multi-walker model. A default quiver of
+/// [spark, current, horizon, fever] still tells the original four-part
+/// story.
+enum MuseStrandKind {
+  /// Near-term, realistic — the immediately next move. Grounded
+  /// walker, low temperature, short walks from diff anchors.
   spark,
-  /// Mid-term, this-month. Feels already in motion; naming where it goes.
+  /// Mid-term, present-tense extension. Feels already in motion;
+  /// names where it goes. Medium-grounded walker.
   current,
-  /// Grand but reachable. The project's destiny, named.
+  /// Grand but reachable. The project's destiny, named. Reaching
+  /// walker, medium-high temperature.
   horizon,
-  /// Absurd, wildly eldritch, possibly impossible. Permission granted
-  /// to propose the unhinged; still grounded in a real foothold so
-  /// the absurdity reads as "WISH this existed" rather than noise.
+  /// Absurd, wildly eldritch, possibly impossible. Pure anomaly walker,
+  /// hot temperature, leaves the local neighborhood.
   fever,
+  /// Find analogues. Walks the symbol-overlap graph for places that
+  /// resemble what's being changed. "Where else does this pattern live?"
+  echo,
+  /// Adjacent risks. Walks the coupling graph for things that will
+  /// break if this changes. "What does this jeopardize?"
+  vertigo,
+  /// Historical context. Walks backward through commit history.
+  /// "What does this replace, and why was that there?"
+  ghost,
+  /// Inversions. Coherent with the other walkers in the quiver;
+  /// generates the inverse of what they generate.
+  /// "What's the question you're NOT asking?"
+  mirror,
 }
 
-AiMuseIdeaTier? parseMuseIdeaTier(String raw) {
+/// The original 4-strand default quiver, in display order. Shipping a
+/// quiver with exactly these strands produces output that's bit-for-bit
+/// equivalent to the pre-quiver muse — same tiers, same glyphs, same
+/// renderer pathway.
+const List<MuseStrandKind> kDefaultMuseStrands = [
+  MuseStrandKind.spark,
+  MuseStrandKind.current,
+  MuseStrandKind.horizon,
+  MuseStrandKind.fever,
+];
+
+/// The canonical render order for muse strands. A time/attention arc
+/// that interleaves the lenses (echo, vertigo, ghost, mirror) into the
+/// ambition spine (spark, current, horizon, fever) at the moments they
+/// belong:
+///
+///   ghost    — what came before (archaeology)
+///   spark    — the immediately next step
+///   echo     — analogues to the small idea
+///   current  — present-tense extension
+///   vertigo  — adjacent risks of the present
+///   horizon  — reaching forward
+///   mirror   — invert the gesture before going wild
+///   fever    — full dream
+///
+/// Both the settings strand strip and the muse output panel iterate
+/// this list so the reader sees the same flow in both surfaces. Update
+/// in one place; the whole muse honors it.
+const List<MuseStrandKind> kMuseStrandDisplayOrder = [
+  MuseStrandKind.ghost,
+  MuseStrandKind.spark,
+  MuseStrandKind.echo,
+  MuseStrandKind.current,
+  MuseStrandKind.vertigo,
+  MuseStrandKind.horizon,
+  MuseStrandKind.mirror,
+  MuseStrandKind.fever,
+];
+
+/// Complete and de-duplicate a (possibly partial or stale) strand
+/// order into a canonical full ordering. Recognised entries keep the
+/// caller's relative order; any strand missing from [raw] is appended
+/// in [kMuseStrandDisplayOrder] order. The result always contains
+/// every [MuseStrandKind] exactly once, so both the settings strand
+/// strip and the muse output panel can iterate a user-reordered list
+/// without membership checks — and a strand added in a future build
+/// shows up automatically rather than vanishing from a stale persisted
+/// order.
+List<MuseStrandKind> normalizeMuseStrandOrder(Iterable<MuseStrandKind> raw) {
+  final seen = <MuseStrandKind>{};
+  final out = <MuseStrandKind>[];
+  for (final k in raw) {
+    if (seen.add(k)) out.add(k);
+  }
+  for (final k in kMuseStrandDisplayOrder) {
+    if (seen.add(k)) out.add(k);
+  }
+  return out;
+}
+
+MuseStrandKind? parseMuseStrand(String raw) {
   switch (raw.trim().toLowerCase()) {
     case 'spark':
-      return AiMuseIdeaTier.spark;
+      return MuseStrandKind.spark;
     case 'current':
-      return AiMuseIdeaTier.current;
+      return MuseStrandKind.current;
     case 'horizon':
-      return AiMuseIdeaTier.horizon;
+      return MuseStrandKind.horizon;
     case 'fever':
-      return AiMuseIdeaTier.fever;
+      return MuseStrandKind.fever;
+    case 'echo':
+      return MuseStrandKind.echo;
+    case 'vertigo':
+      return MuseStrandKind.vertigo;
+    case 'ghost':
+      return MuseStrandKind.ghost;
+    case 'mirror':
+      return MuseStrandKind.mirror;
   }
   return null;
 }
 
-String museIdeaTierLabel(AiMuseIdeaTier tier) {
-  switch (tier) {
-    case AiMuseIdeaTier.spark:
+String museStrandLabel(MuseStrandKind strand) {
+  switch (strand) {
+    case MuseStrandKind.spark:
       return 'spark';
-    case AiMuseIdeaTier.current:
+    case MuseStrandKind.current:
       return 'current';
-    case AiMuseIdeaTier.horizon:
+    case MuseStrandKind.horizon:
       return 'horizon';
-    case AiMuseIdeaTier.fever:
+    case MuseStrandKind.fever:
       return 'fever';
+    case MuseStrandKind.echo:
+      return 'echo';
+    case MuseStrandKind.vertigo:
+      return 'vertigo';
+    case MuseStrandKind.ghost:
+      return 'ghost';
+    case MuseStrandKind.mirror:
+      return 'mirror';
   }
 }
+
+/// Single source of truth for strand glyphs across every surface
+/// (settings strand strip, muse section headers, muse jump strip).
+/// Each strand has a distinct Unicode mark — the original ambition
+/// spectrum gets a star gradient (✧ open → ✦ solid → ✷ radiant)
+/// instead of three identical ✦'s, so spark/current/horizon are
+/// visually distinguishable wherever they appear. The lenses
+/// (echo/vertigo/ghost/mirror) and fever each carry their own
+/// signature mark.
+String museStrandGlyph(MuseStrandKind strand) {
+  switch (strand) {
+    case MuseStrandKind.spark:
+      return '✧'; // open four-point star — a glimmer, possibility
+    case MuseStrandKind.current:
+      return '✦'; // solid four-point star — present, anchored
+    case MuseStrandKind.horizon:
+      return '✷'; // radiant eight-point star — reaching outward
+    case MuseStrandKind.fever:
+      return '☽'; // waxing crescent — dream territory
+    case MuseStrandKind.echo:
+      return '◌'; // dotted ring — analogue, returning shape
+    case MuseStrandKind.vertigo:
+      return '◈'; // diamond with inset — precarious balance
+    case MuseStrandKind.ghost:
+      return '◐'; // half-shaded circle — partial visibility, past
+    case MuseStrandKind.mirror:
+      return '◯'; // open ring — reflective surface
+  }
+}
+
+// Backward-compatible alias. New code should use [MuseStrandKind].
+typedef AiMuseIdeaTier = MuseStrandKind;
+MuseStrandKind? parseMuseIdeaTier(String raw) => parseMuseStrand(raw);
+String museIdeaTierLabel(MuseStrandKind strand) => museStrandLabel(strand);
+
+/// One-line role tag for each strand — the character's job in a
+/// single phrase. Distinct from the full strand sheets used in the
+/// synthesis prompt: those carry block-specific instructions
+/// ("read <diff_motion>", "speak from <temporal_neighborhood>") that
+/// are synthesis-specific. This compact form is for the brainstorm
+/// pass where we want to tell the divergent model which characters
+/// will be downstream without bloating the cheap call or constraining
+/// the brainstorm to strand-tagged generation.
+String museStrandShortRole(MuseStrandKind strand) {
+  switch (strand) {
+    case MuseStrandKind.spark:
+      return 'apprentice of the smallest next move';
+    case MuseStrandKind.current:
+      return 'steward naming where the work is going';
+    case MuseStrandKind.horizon:
+      return 'visionary announcing the destiny';
+    case MuseStrandKind.fever:
+      return 'madwoman in the attic breaking the frame';
+    case MuseStrandKind.echo:
+      return 'folklorist of structural rhyme';
+    case MuseStrandKind.vertigo:
+      return 'sentry watching the edges';
+    case MuseStrandKind.ghost:
+      return 'archivist of recorded history';
+    case MuseStrandKind.mirror:
+      return 'trickster inverting the action';
+  }
+}
+
+/// One slot in the muse's active loadout: which strand to fire.
+///
+/// The [count] field is **forward-compat infrastructure**, not a
+/// live knob. The current muse pipeline reads only [kind] when
+/// composing the synthesis ensemble — strands are binary on/off,
+/// hardcoded to count=1 by the settings toggle. The field is
+/// persisted and round-tripped so that a future per-strand
+/// multiplicity (different walker thermals per strand, ranked
+/// idea-budget per strand) can land without migrating the
+/// settings format. Until then: changing count in a hand-edited
+/// settings file has no effect on output.
+class MuseQuiverEntry {
+  final MuseStrandKind kind;
+  final int count;
+
+  const MuseQuiverEntry({required this.kind, required this.count});
+
+  MuseQuiverEntry copyWith({MuseStrandKind? kind, int? count}) =>
+      MuseQuiverEntry(kind: kind ?? this.kind, count: count ?? this.count);
+
+  Map<String, dynamic> toJson() => {
+        'kind': museStrandLabel(kind),
+        'count': count,
+      };
+
+  static MuseQuiverEntry? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final kindStr = json['kind'];
+    final countRaw = json['count'];
+    if (kindStr is! String) return null;
+    final kind = parseMuseStrand(kindStr);
+    if (kind == null) return null;
+    final count = countRaw is int
+        ? countRaw
+        : (countRaw is num ? countRaw.toInt() : 1);
+    return MuseQuiverEntry(kind: kind, count: count.clamp(1, 5));
+  }
+}
+
+/// The initial loadout shipped on first install — the original four
+/// strands at count 1 each. Reproduces the pre-quiver muse exactly.
+/// After first install the user freely reshapes this; there are no
+/// "presets" to switch between, just the one loadout you tune.
+List<MuseQuiverEntry> defaultMuseQuiver() => const [
+      MuseQuiverEntry(kind: MuseStrandKind.spark, count: 1),
+      MuseQuiverEntry(kind: MuseStrandKind.current, count: 1),
+      MuseQuiverEntry(kind: MuseStrandKind.horizon, count: 1),
+      MuseQuiverEntry(kind: MuseStrandKind.fever, count: 1),
+    ];
 
 /// A single proposal in the muse output. Unlike the old "move" shape
 /// (which read as a summary of what the change rhymes with), a
@@ -1066,7 +1287,11 @@ String museIdeaTierLabel(AiMuseIdeaTier tier) {
 /// anchors the idea to something real in the codebase. Tier signals
 /// ambition range; the muse emits a distribution across all four.
 class AiMuseProposal {
-  final AiMuseIdeaTier tier;
+  /// The strand that generated this idea. For default-quiver runs this
+  /// is one of the original four (spark/current/horizon/fever) and
+  /// reads as the ambition tier; for custom quivers it identifies the
+  /// walker character of origin.
+  final MuseStrandKind strand;
   /// Short, memorable name for the idea (4-8 words). Named like a
   /// feature, not a sentence.
   final String title;
@@ -1086,13 +1311,16 @@ class AiMuseProposal {
   final int? originatingIdeaIndex;
 
   const AiMuseProposal({
-    required this.tier,
+    required this.strand,
     required this.title,
     required this.vision,
     required this.foothold,
     this.citations = const [],
     this.originatingIdeaIndex,
   });
+
+  /// Historical alias — old call sites read `.tier`.
+  MuseStrandKind get tier => strand;
 }
 
 /// Output of the three-phase muse pipeline.
@@ -1104,8 +1332,18 @@ class AiMuseProposal {
 /// The brainstorm phase-1 spew is preserved in [brainstormIdeas] for
 /// the UI's "raw ideas" drawer.
 class AiMuseData {
+  /// The synthesis model (phase 3) — the one that wrote the proposals.
+  /// The muse is a two-model pipeline: a separately-configured
+  /// brainstorm model (named by [brainstormProviderId]/
+  /// [brainstormModelId]) produces the phase-1 spew, then this model
+  /// synthesises it into proposals. They're often different (cheap
+  /// brainstorm, strong synthesis), so both are recorded.
   final String providerId;
   final String modelId;
+  /// The brainstorm model (phase 1). Empty when the run predates
+  /// two-model tracking; consumers fall back to a single model line.
+  final String brainstormProviderId;
+  final String brainstormModelId;
   final String scopeLabel;
   /// Ambition-distributed proposals. Ordered in emission order from
   /// the synthesis pass; consumers can re-group by tier via
@@ -1135,6 +1373,8 @@ class AiMuseData {
   const AiMuseData({
     required this.providerId,
     required this.modelId,
+    this.brainstormProviderId = '',
+    this.brainstormModelId = '',
     required this.scopeLabel,
     this.proposals = const [],
     this.brainstormIdeas = const [],
@@ -1153,11 +1393,15 @@ class AiMuseData {
 
   int get totalIdeaCount => brainstormIdeas.length;
 
-  /// Proposals filtered to a single tier, preserving emission order.
-  /// Used by the UI to group the display under tier headers without
+  /// Proposals filtered to a single strand, preserving emission order.
+  /// Used by the UI to group the display under strand headers without
   /// mutating the source list.
-  List<AiMuseProposal> proposalsForTier(AiMuseIdeaTier tier) =>
-      proposals.where((p) => p.tier == tier).toList(growable: false);
+  List<AiMuseProposal> proposalsForStrand(MuseStrandKind strand) =>
+      proposals.where((p) => p.strand == strand).toList(growable: false);
+
+  /// Backward-compatible alias for [proposalsForStrand].
+  List<AiMuseProposal> proposalsForTier(MuseStrandKind tier) =>
+      proposalsForStrand(tier);
 }
 
 class AiCommitMessageData {

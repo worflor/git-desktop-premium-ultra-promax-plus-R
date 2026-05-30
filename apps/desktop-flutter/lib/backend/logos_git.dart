@@ -513,7 +513,7 @@ class _VAxis {
 /// content). Pairwise cosine over the flattened 2P vector measures
 /// **content-semantic** affinity - orthogonal to CC's
 /// historical co-change and SP's directory geometry, complementary to
-/// the existing symbolEdges per-changeset symbol-overlap signal.
+/// the existing spectralEdges per-changeset spectral-overlap signal.
 /// What this catches that the other axes miss:
 ///   - Files with similar purpose that have never co-changed (refactored
 ///     out, renamed, freshly-added).
@@ -1693,8 +1693,8 @@ int _fingerprintRho(Float64List rho) {
 
 /// Monotonic counter used to tag each [LogosGit] with a stable revision id.
 /// Downstream caches can key on `manifoldRevision` to skip work whose
-/// inputs haven't logically changed; `withSymbolEdges` preserves the
-/// revision so symbol-edge overlays don't invalidate graph-derived work.
+/// inputs haven't logically changed; `withSpectralEdges` preserves the
+/// revision so spectral-edge overlays don't invalidate graph-derived work.
 int _logosGitRevisionCounter = 0;
 
 /// The Logos-inspired git context engine.
@@ -1734,15 +1734,15 @@ class LogosGit {
   final CouplingConstants couplingConstants;
 
   /// Symbol-overlap edges for the current change set. Injected per
-  /// change-set via [withSymbolEdges]; absent from the base engine built
+  /// change-set via [withSpectralEdges]; absent from the base engine built
   /// from history alone. Stored fully-symmetric (both directions present)
   /// so neighbour lookups are a single map access.
   /// Used in two places:
   ///   - [_buildRho] proxies heat from unknown (new/untracked) source
-  ///     paths through their symbol-linked known graph nodes.
+  ///     paths through their spectral-linked known graph nodes.
   ///   - [_deriveNewPathPhi] computes a derived phi for new paths so they
   ///     appear in diffusion output even though they aren't graph nodes.
-  final Map<String, Map<String, double>> symbolEdges;
+  final Map<String, Map<String, double>> spectralEdges;
 
   /// Per-file K-vector signatures from Alexandria, as a dense column
   /// store. Empty (`isEmpty == true`) when the engine was built
@@ -1760,13 +1760,13 @@ class LogosGit {
   /// Monotonic id of this engine instance. Two engines with the same
   /// revision share the same underlying graph topology and coupling — so
   /// any downstream cache keyed on `manifoldRevision` stays valid across
-  /// overlays like [withSymbolEdges]. Bumps on every fresh
-  /// [buildFromStats]; does NOT bump on symbol-edge derivation (by design
-  /// — symbol edges live in a sidecar, never touch the core Laplacian).
+  /// overlays like [withSpectralEdges]. Bumps on every fresh
+  /// [buildFromStats]; does NOT bump on spectral-edge derivation (by design
+  /// — spectral edges live in a sidecar, never touch the core Laplacian).
   final int manifoldRevision;
 
   /// Per-engine basis cache. Shared with instances derived via
-  /// [withSymbolEdges] so symbol-edge overlays don't cost a fresh build.
+  /// [withSpectralEdges] so spectral-edge overlays don't cost a fresh build.
   /// Late-initialised (not a constructor parameter) so callers don't have
   /// to thread it through; the cache is a private implementation detail.
   final LruCache<_BasisCacheKey, Float64List> _basisCache;
@@ -1776,7 +1776,7 @@ class LogosGit {
   /// fixed for the lifetime of an engine instance (see [manifoldRevision]),
   /// so a single basis per k is enough. A fresh basis is computed lazily
   /// the first time [_getOrBuildSpectralBasis] is called for a given k.
-  /// Shared with [withSymbolEdges] overlays — symbol edges live in a
+  /// Shared with [withSpectralEdges] overlays — spectral edges live in a
   /// sidecar and never touch L_sym.
   final Map<int, SpectralBasis> _spectralCache;
 
@@ -1861,8 +1861,18 @@ class LogosGit {
     return 0.0;
   }
 
+  Map<String, double>? _couplingStrengthsCache;
+
+  /// Per-file coupling strength, normalised to [0, 1] by dividing each
+  /// file's total edge weight by the repo-wide max. Cached lazily —
+  /// the engine is immutable once built, so the result is deterministic
+  /// and the cache is set once on first call. Muse, structural context,
+  /// and divergent-neighborhood formatters all hit this; without the
+  /// cache they each re-walked the graph.
   Map<String, double> couplingStrengths() {
-    if (graph.n == 0) return const {};
+    final cached = _couplingStrengthsCache;
+    if (cached != null) return cached;
+    if (graph.n == 0) return _couplingStrengthsCache = const {};
     final result = <String, double>{};
     var maxDeg = 0.0;
     for (var i = 0; i < graph.n; i++) {
@@ -1876,11 +1886,12 @@ class LogosGit {
       if (deg > maxDeg) maxDeg = deg;
     }
     if (maxDeg > 0) {
-      for (final key in result.keys.toList()) {
-        result[key] = result[key]! / maxDeg;
+      final inv = 1.0 / maxDeg;
+      for (final key in result.keys) {
+        result[key] = result[key]! * inv;
       }
     }
-    return result;
+    return _couplingStrengthsCache = Map.unmodifiable(result);
   }
 
   LogosGit._({
@@ -1893,18 +1904,20 @@ class LogosGit {
     required this.stats,
     required this.integrityByPath,
     this.couplingConstants = CouplingConstants.prior,
-    this.symbolEdges = const {},
+    this.spectralEdges = const {},
     EngramFileKTable? perFileKVectors,
     int? manifoldRevision,
     this.hyperbolicEmbedding,
     LruCache<_BasisCacheKey, Float64List>? basisCache,
     Map<int, SpectralBasis>? spectralCache,
+    Map<String, double>? couplingStrengthsCache,
   })  : perFileKVectors = perFileKVectors ?? _emptyTable,
         manifoldRevision = manifoldRevision ?? ++_logosGitRevisionCounter,
         _basisCache = basisCache ??
             LruCache<_BasisCacheKey, Float64List>(
                 maxSize: _kChebyshevBasisCacheSize),
-        _spectralCache = spectralCache ?? <int, SpectralBasis>{};
+        _spectralCache = spectralCache ?? <int, SpectralBasis>{},
+        _couplingStrengthsCache = couplingStrengthsCache;
 
   /// Singleton empty K-table used when no engram assets are loaded.
   /// Avoids per-engine empty allocations and ensures the field is
@@ -1958,12 +1971,12 @@ class LogosGit {
     return result.reversed.toList();
   }
 
-  /// Return a copy of this engine aware of symbol-overlap edges for the
+  /// Return a copy of this engine aware of spectral-overlap edges for the
   /// current change set. Cheap - shares the immutable graph; only the
   /// edge map is new. The symmetrisation step here means every caller
-  /// can do a single `symbolEdges[path]` lookup instead of checking
+  /// can do a single `spectralEdges[path]` lookup instead of checking
   /// both triangle directions.
-  LogosGit withSymbolEdges(Map<String, Map<String, double>> sym) {
+  LogosGit withSpectralEdges(Map<String, Map<String, double>> sym) {
     if (sym.isEmpty) return this;
     // Expand upper-triangle storage -> fully symmetric.
     final expanded = <String, Map<String, double>>{};
@@ -1986,12 +1999,13 @@ class LogosGit {
       stats: stats,
       integrityByPath: integrityByPath,
       couplingConstants: couplingConstants,
-      symbolEdges: expanded,
+      spectralEdges: expanded,
       perFileKVectors: perFileKVectors,
       hyperbolicEmbedding: hyperbolicEmbedding,
       manifoldRevision: manifoldRevision,
       basisCache: _basisCache,
       spectralCache: _spectralCache,
+      couplingStrengthsCache: _couplingStrengthsCache,
     );
   }
 
@@ -2579,38 +2593,6 @@ class LogosGit {
         curvatures[i] = (!r.isFinite || r <= 0) ? 1.0 : r.clamp(0.5, 1.0);
       }
     }
-    final symbolNeighbors = <int, List<int>>{};
-    if (repoRoot != null && n > 1) {
-      final symSets = <int, Set<String>>{};
-      for (var i = 0; i < n; i++) {
-        final syms = symbolsForFile(repoRoot, nodePaths[i]);
-        if (syms.isNotEmpty) symSets[i] = syms;
-      }
-      final postings = <String, List<int>>{};
-      for (final entry in symSets.entries) {
-        for (final sym in entry.value) {
-          (postings[sym] ??= []).add(entry.key);
-        }
-      }
-      final totalDocs = symSets.length.toDouble();
-      for (final entry in symSets.entries) {
-        final weights = <int, double>{};
-        for (final sym in entry.value) {
-          final files = postings[sym];
-          if (files == null) continue;
-          final idf = math.log(1 + totalDocs / (1 + files.length));
-          if (idf < 1.0) continue;
-          for (final j in files) {
-            if (j != entry.key) weights[j] = (weights[j] ?? 0.0) + idf;
-          }
-        }
-        if (weights.isNotEmpty) {
-          final ranked = weights.keys.toList()
-            ..sort((a, b) => weights[b]!.compareTo(weights[a]!));
-          symbolNeighbors[entry.key] = ranked;
-        }
-      }
-    }
     tick('indexes');
 
     final hypEmbed = _hyperbolicWeight > 0
@@ -2713,14 +2695,6 @@ class LogosGit {
             final id = wellSiblings[k];
             if (id != i) candidates.add(id);
           }
-        }
-      }
-
-      final symNbs = symbolNeighbors[i];
-      if (symNbs != null) {
-        final cap = edgeDensity < symNbs.length ? edgeDensity : symNbs.length;
-        for (var k = 0; k < cap; k++) {
-          candidates.add(symNbs[k]);
         }
       }
 
@@ -3233,7 +3207,7 @@ class LogosGit {
     final rho = _buildRho({for (final p in sourceFiles) p: 1.0});
     if (rho == null) return null;
     // `sources` tracks ORIGINAL source paths (both graph nodes and
-    // symbol-proxied new files) so downstream exclusion works on the
+    // spectral-proxied new files) so downstream exclusion works on the
     // caller's intent, not on the graph-level routing.
     return _buildDiffusionBasis(
       graph: graph,
@@ -3241,7 +3215,7 @@ class LogosGit {
       K: K,
       sources: {
         for (final p in sourceFiles)
-          if (pathToId.containsKey(p) || symbolEdges.containsKey(p)) p,
+          if (pathToId.containsKey(p) || spectralEdges.containsKey(p)) p,
       },
     );
   }
@@ -3266,13 +3240,13 @@ class LogosGit {
     final rho = _buildRho(weights);
     if (rho == null) return null;
     // Track all contributing source paths (both in-graph and
-    // symbol-proxied new files) so downstream exclusion respects the
+    // spectral-proxied new files) so downstream exclusion respects the
     // caller's intent regardless of the routing mechanism.
     final sources = <String>{
       for (final entry in weights.entries)
         if (entry.value > 0 &&
             (pathToId.containsKey(entry.key) ||
-                symbolEdges.containsKey(entry.key)))
+                spectralEdges.containsKey(entry.key)))
           entry.key,
     };
     return _buildDiffusionBasis(graph: graph, rho: rho, K: K, sources: sources);
@@ -3326,10 +3300,10 @@ class LogosGit {
 
   /// Build and normalise a source vector rho from [weights] (path -> weight).
   /// Returns null when total injected mass is zero (nothing in the graph
-  /// and no resolvable symbol proxy).
+  /// and no resolvable spectral proxy).
   /// For paths present in the graph: inject weight directly.
-  /// For paths absent but reachable via [symbolEdges]: distribute weight
-  /// across their known neighbours proportionally to symbol overlap score.
+  /// For paths absent but reachable via [spectralEdges]: distribute weight
+  /// across their known neighbours proportionally to spectral overlap score.
   /// This makes new/untracked files valid diffusion sources - heat enters
   /// the graph through the files they're structurally coupled to.
   Float64List? _buildRho(Map<String, double> weights) {
@@ -3350,9 +3324,9 @@ class LogosGit {
         if (rho[id] == 0.0) writtenIds.add(id);
         rho[id] += w;
         total += w;
-      } else if (symbolEdges.isNotEmpty) {
-        // Unknown node - proxy through symbol-linked known neighbours.
-        final neighbours = symbolEdges[entry.key];
+      } else if (spectralEdges.isNotEmpty) {
+        // Unknown node - proxy through spectral-linked known neighbours.
+        final neighbours = spectralEdges[entry.key];
         if (neighbours == null || neighbours.isEmpty) continue;
         for (final ne in neighbours.entries) {
           final nid = pathToId[ne.key];
@@ -3388,7 +3362,7 @@ class LogosGit {
     Map<String, double> weights,
     Map<String, String> axisLabelByPath,
   ) {
-    // Pass 1: accumulate total mass (direct + symbol-proxied). Must match
+    // Pass 1: accumulate total mass (direct + spectral-proxied). Must match
     // [_buildRho]'s denominator so focusRho here is bit-identical to
     // what _buildRho produces for the same input.
     var totalMass = 0.0;
@@ -3398,8 +3372,8 @@ class LogosGit {
       final path = entry.key;
       if (pathToId.containsKey(path)) {
         totalMass += w;
-      } else if (symbolEdges.isNotEmpty) {
-        final neighbours = symbolEdges[path];
+      } else if (spectralEdges.isNotEmpty) {
+        final neighbours = spectralEdges[path];
         if (neighbours == null || neighbours.isEmpty) continue;
         for (final ne in neighbours.entries) {
           if (pathToId.containsKey(ne.key)) totalMass += w * ne.value;
@@ -3431,8 +3405,8 @@ class LogosGit {
           final rho = perAxis.putIfAbsent(axis, () => Float64List(graph.n));
           rho[id] += contribution;
         }
-      } else if (symbolEdges.isNotEmpty) {
-        final neighbours = symbolEdges[path];
+      } else if (spectralEdges.isNotEmpty) {
+        final neighbours = spectralEdges[path];
         if (neighbours == null || neighbours.isEmpty) continue;
         for (final ne in neighbours.entries) {
           final nid = pathToId[ne.key];
@@ -3493,15 +3467,15 @@ class LogosGit {
   }
 
   /// Derive phi scores for paths that are not graph nodes but are reachable
-  /// via [symbolEdges]. Each new path's score is the symbol-overlap-weighted
+  /// via [spectralEdges]. Each new path's score is the spectral-overlap-weighted
   /// mean of its known neighbours' phi values - the same interpolation used
   /// in MDS for out-of-sample points.
-  /// Returns an empty map when [symbolEdges] is empty or no new paths have
+  /// Returns an empty map when [spectralEdges] is empty or no new paths have
   /// any known neighbour with non-zero phi.
   Map<String, double> _deriveNewPathPhi(Float64List phi) {
-    if (symbolEdges.isEmpty) return const {};
+    if (spectralEdges.isEmpty) return const {};
     final derived = <String, double>{};
-    for (final entry in symbolEdges.entries) {
+    for (final entry in spectralEdges.entries) {
       final path = entry.key;
       if (pathToId.containsKey(path)) continue; // already a node
       var weightedSum = 0.0;
@@ -5573,7 +5547,7 @@ class LogosGit {
     if (graph.n == 0 || weightsByPath.isEmpty) return null;
 
     // Symbol-axis routing: a source path absent from the graph but
-    // present in [symbolEdges] is proxied through its known neighbours,
+    // present in [spectralEdges] is proxied through its known neighbours,
     // with the proxied mass attributed to the `symbol` axis regardless
     // of the caller's label. This keeps attribution math consistent with
     // _buildRho and surfaces new-file contributions in per-axis phi.
@@ -5584,7 +5558,7 @@ class LogosGit {
     // compute totalMass including any proxied mass, then populate rho.
     double resolveMass(String path, double weight) {
       if (pathToId.containsKey(path)) return weight;
-      final neighbours = symbolEdges[path];
+      final neighbours = spectralEdges[path];
       if (neighbours == null || neighbours.isEmpty) return 0.0;
       var m = 0.0;
       for (final ne in neighbours.entries) {
@@ -5612,9 +5586,9 @@ class LogosGit {
         final rho = perAxisRaw.putIfAbsent(axis, () => Float64List(graph.n));
         rho[id] += w / totalMass;
       } else {
-        // Unknown path - proxy through symbol neighbours under the
+        // Unknown path - proxy through spectral neighbours under the
         // symbol axis label (the real mechanism that surfaced the heat).
-        final neighbours = symbolEdges[path];
+        final neighbours = spectralEdges[path];
         if (neighbours == null || neighbours.isEmpty) continue;
         final rho = perAxisRaw.putIfAbsent(
           symbolAxisLabel,
@@ -5712,7 +5686,7 @@ class LogosGit {
     // Derived phi for new / symbol-coupled paths not in the graph - same
     // interpolation as `_deriveNewPathPhi` but applied to combinedPhi.
     // Attribution for these paths is wholly the symbol axis: they exist
-    // only because the symbol-overlap axis surfaced them, so their
+    // only because the spectral-overlap axis surfaced them, so their
     // dominantAxis and full share (1.0) go to `LogosAxis.symbol.name`.
     final derived = _deriveNewPathPhi(combinedPhi);
     if (derived.isNotEmpty) {
@@ -5798,11 +5772,11 @@ class LogosGit {
     double t = 1.0,
     int limit = 20,
   }) {
-    // Seed may be a graph node OR a new/untracked file with symbol edges.
+    // Seed may be a graph node OR a new/untracked file with spectral edges.
     // In either case, `diffuse` via `_buildRho` routes heat correctly.
     // Only bail when neither path exists - nothing to diffuse from.
     final hasSeed =
-        pathToId.containsKey(seed) || (symbolEdges[seed]?.isNotEmpty ?? false);
+        pathToId.containsKey(seed) || (spectralEdges[seed]?.isNotEmpty ?? false);
     if (!hasSeed) return const [];
     final scores = diffuse({seed}, t: t);
     if (scores.length <= limit) return scores;

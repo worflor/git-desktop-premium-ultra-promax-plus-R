@@ -185,7 +185,7 @@ class DiffShell extends StatefulWidget {
   /// When null, that section is omitted; everything else in the
   /// panel still works (K-nearest, well, blame, rhymes-in-diff).
   final FileCouplingMatrix? couplingMatrix;
-  final Map<String, Map<String, double>> symbolCoupling;
+  final Map<String, Map<String, double>> spectralCoupling;
   final String? revisionRef;
   final DiffLogosSession? logosSession;
   final ValueChanged<String>? onOpenRelatedPath;
@@ -220,7 +220,7 @@ class DiffShell extends StatefulWidget {
     this.enableStaging = false,
     this.onStagingApplied,
     this.couplingMatrix,
-    this.symbolCoupling = const {},
+    this.spectralCoupling = const {},
     this.revisionRef,
     this.logosSession,
     this.onOpenRelatedPath,
@@ -574,7 +574,7 @@ class _DiffShellState extends State<DiffShell> {
     final diffScopeChanged = diffOrPathChanged || repositoryChanged;
     final logosInputsChanged = diffScopeChanged ||
         old.revisionRef != widget.revisionRef ||
-        !mapEquals(old.symbolCoupling, widget.symbolCoupling);
+        !mapEquals(old.spectralCoupling, widget.spectralCoupling);
     if (diffScopeChanged) {
       _blameFetchedFiles.clear();
       _blameFetchingFiles.clear();
@@ -1211,7 +1211,7 @@ class _DiffShellState extends State<DiffShell> {
             touchedPaths: _uniqueFilePathsInDiff(),
             hunkCount: _hunks.length,
           ),
-          symbolCoupling: widget.symbolCoupling,
+          spectralCoupling: widget.spectralCoupling,
           revisionRef: _activeRevisionRef,
           couplingMatrix: widget.couplingMatrix,
           warmEngine: _logosSession?.logos?.engine,
@@ -1591,7 +1591,7 @@ class _DiffShellState extends State<DiffShell> {
     if (_gyat == null || _gyat!.repoPath != repoPath) {
       gyatForRepo(repoPath).then((g) {
         if (mounted) setState(() => _gyat = g);
-      });
+      }).catchError((_) {});
     }
 
     analyzeFlowCached(absPath).then((result) {

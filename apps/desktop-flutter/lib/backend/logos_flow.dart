@@ -627,7 +627,7 @@ void _yaaStarPropagate(
 }) {
   if (maxDepth <= 0) return;
 
-  final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, WalkerWeight, int)>(
+  final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, WalkerDensity, int)>(
       (a, b) => b.$3.compareTo(a.$3));
 
   final bestByLineage = <(String, int), double>{};
@@ -636,8 +636,8 @@ void _yaaStarPropagate(
 
   final root = _PathChain(startId, null);
   final walkers = novelty != null
-      ? WalkerWeight.withPrior(novelty)
-      : WalkerWeight.simplex(3);
+      ? WalkerDensity.withPrior(novelty)
+      : WalkerDensity.simplex(3);
   for (var i = 0; i < walkers.length; i++) {
     heap.push((startId, FlowOscillator(), double.infinity, root, 0, walkers[i], i));
   }
@@ -845,7 +845,7 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
 
   // ── Phase 3: YAA* walk for path reconstruction ────────────────────
 
-  final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, WalkerWeight)>(
+  final heap = BinaryHeap<(int, FlowOscillator, double, Set<int>, int, WalkerDensity)>(
       (a, b) => b.$3.compareTo(a.$3));
 
   final arrivals = <int, List<(double, double)>>{};
@@ -856,7 +856,7 @@ List<FlowFinding> dreamAnalysis(FlowSseLattice lattice) {
     if (equilibrium[a] > bestEq) { bestEq = equilibrium[a]; certaintyStart = a; }
   }
 
-  final walkers = WalkerWeight.simplex(3);
+  final walkers = WalkerDensity.simplex(3);
   final seeds = [alphaStart, betaStart, certaintyStart];
   for (var i = 0; i < walkers.length; i++) {
     heap.push((seeds[i], FlowOscillator(), double.infinity,
@@ -993,6 +993,17 @@ class CrossFileInterference {
 /// independent measurements of the same structural role. Born-mix
 /// them, compute coherence and contradiction, observe the interference
 /// back into the lattice, and return the structured interference map.
+///
+/// alpha-math proof (caution, not optimization): this is a deliberate
+/// two-stage hierarchy. The `f.certainty` mixed here is itself a per-file
+/// [flowBornMix] output, so this is a Born mix OF Born mixes. alpha-math
+/// refuses [flowBornMix] as non-bilinear (it sums sqrt(certainty) amplitudes),
+/// and manifold-proofs.ts THEORY 10 exhibits the consequence: it is NOT
+/// associative — mixing per file then across files ≠ mixing every underlying
+/// path arrival in one pass. The per-file grouping is therefore load-bearing —
+/// do NOT "simplify" by flattening, reordering, or memo-merging the two
+/// stages; each file counts as one independent vote here regardless of its
+/// internal path count.
 List<CrossFileInterference> crossFileMix(
   Map<String, FlowAnalysisResult> rawResults,
   FlowSseLattice lattice,

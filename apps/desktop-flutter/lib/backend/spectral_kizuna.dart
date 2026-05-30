@@ -47,33 +47,38 @@ const List<int> kKizunaMasks25 = <int>[
   0xFFFF,
 ];
 
-/// `popcount(m) & 1` for m in [0, 65536). Built once on first access.
-/// 64 KiB fixed footprint.
-final Uint8List _parity16 = _buildParity16();
-
-Uint8List _buildParity16() {
-  final p = Uint8List(kKizunaAddressSpace);
-  for (var m = 1; m < kKizunaAddressSpace; m++) {
-    p[m] = p[m >> 1] ^ (m & 1);
-  }
-  return p;
-}
-
 /// Compute the 25D Walsh-Hadamard fingerprint of a length-65536
 /// real-valued histogram. `block[m]` is the weight at joint fingerprint
-/// address `m`. Returns the 25 WHT coefficients in canonical order.
-/// Cost is O(25 · 65536) ≈ 1.6 M ops per call.
+/// address `m = (fileFp << 8) | commitFp`. Returns the 25 WHT
+/// coefficients in canonical order (L0..L7, U0..U7, X0..X7, FFFF).
+///
+/// alpha-math proof: the 25 masks ([kKizunaMasks25]) live in the character
+/// group of (Z/2)^16 under XOR, where χ_S·χ_T = χ_{S⊕T}. Every mask's Walsh
+/// sign at bin m is an XOR of single-bit signs, and a single-bit sign is just
+/// a bit of m — L_i = commit bit i, U_i = file bit i, X_i = L_i ⊕ U_i, and the
+/// global mask is the parity of all 16 bits. So the sign needs no popcount and
+/// no 64 KiB parity LUT, and all 25 coefficients accumulate in ONE pass over
+/// the (sparse) histogram — skipping empty bins — instead of 25 passes over
+/// the 512 KB block. Each out[k] still sums sign·block[m] in ascending m
+/// order, so the result is bit-identical to the per-mask form (manifold-
+/// proofs.ts THEORY 1; pinned by spectral_kizuna_test against a popcount ref).
 Float64List whtFingerprint25D(Float64List block) {
   assert(block.length == kKizunaAddressSpace,
       'block must have length $kKizunaAddressSpace');
   final out = Float64List(25);
-  for (var k = 0; k < 25; k++) {
-    final mask = kKizunaMasks25[k];
-    var s = 0.0;
-    for (var m = 0; m < kKizunaAddressSpace; m++) {
-      s += (_parity16[m & mask] == 0 ? 1.0 : -1.0) * block[m];
+  for (var m = 0; m < kKizunaAddressSpace; m++) {
+    final w = block[m];
+    if (w == 0.0) continue; // joint-touch histograms are sparse
+    var globalParity = 0;
+    for (var i = 0; i < 8; i++) {
+      final lo = (m >> i) & 1; // commit bit i → L_i sign
+      final up = (m >> (i + 8)) & 1; // file bit i → U_i sign
+      globalParity ^= lo ^ up;
+      out[i] += lo == 1 ? -w : w; // L_i
+      out[8 + i] += up == 1 ? -w : w; // U_i
+      out[16 + i] += (lo ^ up) == 1 ? -w : w; // X_i = L_i ⊕ U_i
     }
-    out[k] = s;
+    out[24] += globalParity == 1 ? -w : w; // 0xFFFF global parity
   }
   return out;
 }

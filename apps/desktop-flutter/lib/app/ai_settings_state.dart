@@ -36,6 +36,11 @@ class AiSettingsState extends ChangeNotifier {
   String _musePromptPath = '';
   String _museBrainstormModelCategoryId = 'fast';
   String _museSynthesisModelCategoryId = 'quality';
+  List<MuseQuiverEntry> _museQuiver = defaultMuseQuiver();
+  List<MuseQuiverEntry> _museQuiverView = List.unmodifiable(defaultMuseQuiver());
+  List<MuseStrandKind> _museStrandOrder = List.of(kMuseStrandDisplayOrder);
+  List<MuseStrandKind> _museStrandOrderView =
+      List.unmodifiable(kMuseStrandDisplayOrder);
   String _presentModelCategoryId = 'quality';
   String _presentPrompt = '';
   String _presentPromptPath = '';
@@ -64,6 +69,14 @@ class AiSettingsState extends ChangeNotifier {
   String get musePromptPath => _musePromptPath;
   String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
   String get museSynthesisModelCategoryId => _museSynthesisModelCategoryId;
+  /// The user's active muse loadout — which strands the muse will
+  /// throw on its next call, and how many walkers of each. Read-only
+  /// view; mutate via [setMuseQuiver].
+  List<MuseQuiverEntry> get museQuiver => _museQuiverView;
+  /// The order strands render in across the settings strand strip and
+  /// the muse output panel. A complete ordering of every strand;
+  /// reorder via [setMuseStrandOrder]. Orthogonal to [museQuiver].
+  List<MuseStrandKind> get museStrandOrder => _museStrandOrderView;
   String get presentModelCategoryId => _presentModelCategoryId;
   String get presentPrompt => _presentPrompt;
   String get presentPromptPath => _presentPromptPath;
@@ -122,6 +135,13 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
     _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
     _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
+    final loadedQuiver = snapshot.museQuiver.isEmpty
+        ? defaultMuseQuiver()
+        : snapshot.museQuiver;
+    _museQuiver = List.of(loadedQuiver);
+    _museQuiverView = List.unmodifiable(_museQuiver);
+    _museStrandOrder = normalizeMuseStrandOrder(snapshot.museStrandOrder);
+    _museStrandOrderView = List.unmodifiable(_museStrandOrder);
     _presentModelCategoryId = snapshot.presentModelCategoryId;
 
     _commitMessagePrompt = await commitPromptFuture;
@@ -324,6 +344,53 @@ class AiSettingsState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Replace the active muse loadout. Empty list snaps back to the
+  /// default 4-strand quiver — the muse always has at least one
+  /// walker to throw.
+  Future<void> setMuseQuiver(List<MuseQuiverEntry> entries) async {
+    final next = entries.isEmpty ? defaultMuseQuiver() : List.of(entries);
+    // Skip the round-trip + notify if the new loadout is identical to
+    // the old. Quivers are small (≤16 entries); element-wise compare
+    // is trivial.
+    if (next.length == _museQuiver.length) {
+      var same = true;
+      for (var i = 0; i < next.length; i++) {
+        if (next[i].kind != _museQuiver[i].kind ||
+            next[i].count != _museQuiver[i].count) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    _museQuiver = next;
+    _museQuiverView = List.unmodifiable(_museQuiver);
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  /// Reorder the strands. The incoming list is normalised to a complete
+  /// ordering, so callers can pass a partial reorder and trust every
+  /// strand still ends up present exactly once. No-ops (and skips the
+  /// disk write + notify) when the resulting order is unchanged.
+  Future<void> setMuseStrandOrder(List<MuseStrandKind> order) async {
+    final next = normalizeMuseStrandOrder(order);
+    if (next.length == _museStrandOrder.length) {
+      var same = true;
+      for (var i = 0; i < next.length; i++) {
+        if (next[i] != _museStrandOrder[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    _museStrandOrder = next;
+    _museStrandOrderView = List.unmodifiable(_museStrandOrder);
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
   Future<void> setPresentModelCategoryId(String categoryId) async {
     if (_presentModelCategoryId == categoryId) return;
     _presentModelCategoryId = categoryId;
@@ -498,6 +565,8 @@ class AiSettingsState extends ChangeNotifier {
         museBrainstormModelCategoryId: _museBrainstormModelCategoryId,
         museSynthesisModelCategoryId: _museSynthesisModelCategoryId,
         presentModelCategoryId: _presentModelCategoryId,
+        museQuiver: _museQuiver,
+        museStrandOrder: _museStrandOrder,
       ),
     );
   }

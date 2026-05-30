@@ -1,20 +1,16 @@
 // text_harvest.dart — walk tracked files, read as UTF-8, skip binaries.
 //
-// One phase, one job. Binary detection is a null-byte sniff over the
-// first prefix of the file. There is NO path-based exclusion list —
-// boilerplate, generated code, and platform scaffolds are filtered
-// downstream by the relevance scalar, which reads the engine's
-// ritualness signal (commits with no semantic content) and temporal
-// mass (recent, meaningful touches). Files that don't belong fall out
-// of the active set silently; nothing here decides for them.
+// Thin adapter over the shared [walkRepoBlobs] pipeline that backs
+// GYAT bootstrap. Sorts by path (deterministic
+// ordering) and computes per-file line offsets for offset-keyed text
+// queries downstream.
+//
+// One phase, one job. Binary detection is a null-byte sniff in the
+// shared pipeline. There is NO path-based exclusion list — boilerplate,
+// generated code, and platform scaffolds are filtered downstream by the
+// relevance scalar.
 
-import 'dart:convert';
-import 'dart:io';
-import 'dart:typed_data';
-
-import 'package:path/path.dart' as p;
-
-import '../git.dart';
+import '../repo_blob_walk.dart';
 import 'types.dart';
 
 /// Result of a harvest pass.
@@ -47,87 +43,39 @@ class HarvestResult {
 /// are rare enough to not justify a larger sniff window.
 const int _kBinarySniffBytes = 4096;
 
+const _kHarvestOptions = RepoBlobWalkOptions(
+  binaryProbeBytes: _kBinarySniffBytes,
+  // Match the previous behavior: no per-file size cap. The downstream
+  // relevance scalar handles oversized files; the harvester just walks.
+  maxBytes: 1 << 30,
+  minBytes: 1,
+  // Preserve the prior `utf8.decode(bytes, allowMalformed: true)`
+  // semantic: files with stray malformed UTF-8 sequences are kept
+  // with replacement chars, not silently dropped. The downstream
+  // relevance scalar filters genuine garbage; the harvester just
+  // surfaces text faithfully.
+  allowMalformedUtf8: true,
+);
+
 /// Walk every tracked file in [repoRoot], read text, skip binaries.
 /// Returns a [HarvestResult] sorted by path for deterministic ordering.
+/// Uses the null-delimited `ls-files -z` enumeration so paths with
+/// embedded newlines (rare but legal on Unix filesystems) survive.
 Future<HarvestResult> harvestTextFiles(String repoRoot) async {
-  final probe = await runGitProbe(repoRoot, const ['ls-files', '-z']);
-  if (probe.exitCode != 0) {
-    return const HarvestResult(
-      files: [], trackedCount: 0, binarySkipped: 0, decodeFailed: 0,
-    );
-  }
-  final raw = probe.stdout is List<int>
-      ? utf8.decode(probe.stdout as List<int>, allowMalformed: true)
-      : probe.stdout.toString();
-  final paths = raw
-      .split('\u0000')
-      .where((s) => s.isNotEmpty)
-      .map((s) => s.replaceAll('\\', '/'))
-      .toList()
-    ..sort();
-
-  final files = <HarvestedFile>[];
-  var binarySkipped = 0;
-  var decodeFailed = 0;
-
-  for (final rel in paths) {
-    final absolute = p.join(repoRoot, rel);
-    try {
-      final file = File(absolute);
-      if (!await file.exists()) {
-        decodeFailed++;
-        continue;
-      }
-      final bytes = await file.readAsBytes();
-      if (_looksBinary(bytes)) {
-        binarySkipped++;
-        continue;
-      }
-      final text = utf8.decode(bytes, allowMalformed: true);
-      final offsets = _buildLineOffsets(text);
-      files.add(HarvestedFile(
-        path: rel, text: text, lineOffsets: offsets,
-      ));
-    } on FileSystemException {
-      decodeFailed++;
-    } on FormatException {
-      decodeFailed++;
-    }
-  }
-
+  final walk = await walkRepoBlobsNullDelimited(repoRoot,
+      options: _kHarvestOptions);
+  final files = <HarvestedFile>[
+    for (final blob in walk.blobs)
+      HarvestedFile(
+        path: blob.relativePath,
+        text: blob.text,
+        lineOffsets: buildLineOffsets(blob.text),
+      ),
+  ]..sort((a, b) => a.path.compareTo(b.path));
   return HarvestResult(
     files: files,
-    trackedCount: paths.length,
-    binarySkipped: binarySkipped,
-    decodeFailed: decodeFailed,
+    trackedCount: walk.trackedCount,
+    binarySkipped: walk.binarySkipped,
+    decodeFailed: walk.decodeFailed,
   );
-}
-
-/// Null-byte sniff on the first prefix bytes. Any 0x00 byte → binary.
-bool _looksBinary(Uint8List bytes) {
-  final n = bytes.length < _kBinarySniffBytes ? bytes.length : _kBinarySniffBytes;
-  for (var i = 0; i < n; i++) {
-    if (bytes[i] == 0) return true;
-  }
-  return false;
-}
-
-/// Byte-offset of each line's start + a trailing entry equal to
-/// `text.length`. Handles LF, CRLF, and CR-only line endings.
-Int32List _buildLineOffsets(String text) {
-  final offsets = <int>[0];
-  final n = text.length;
-  for (var i = 0; i < n; i++) {
-    final c = text.codeUnitAt(i);
-    if (c == 0x0A /* \n */) {
-      offsets.add(i + 1);
-    } else if (c == 0x0D /* \r */) {
-      if (i + 1 < n && text.codeUnitAt(i + 1) == 0x0A) {
-        i++;
-      }
-      offsets.add(i + 1);
-    }
-  }
-  offsets.add(n);
-  return Int32List.fromList(offsets);
 }

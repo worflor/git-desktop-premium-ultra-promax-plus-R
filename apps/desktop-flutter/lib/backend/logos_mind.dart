@@ -36,7 +36,7 @@ sealed class MindQuery {
   const factory MindQuery.line(String path, int line) = LineMindQuery;
 
   /// A list of code symbols / tokens. Matches them against the
-  /// engine's `symbolEdges` to find paths that share any of the
+  /// engine's `spectralEdges` to find paths that share any of the
   /// tokens; weights each path by overlap count.
   const factory MindQuery.tokens(List<String> tokens) = TokensMindQuery;
 
@@ -351,7 +351,7 @@ class LogosMind {
     if (tokens.isEmpty) return const {};
     final lcTokens = {for (final t in tokens) t.toLowerCase()};
     final scores = <String, double>{};
-    engine.symbolEdges.forEach((path, syms) {
+    engine.spectralEdges.forEach((path, syms) {
       if (!engine.pathToId.containsKey(path)) return;
       var overlap = 0.0;
       syms.forEach((sym, w) {
@@ -698,13 +698,13 @@ class LogosMind {
         grounding.add('weakly coupled to seed');
       }
     }
-    // Coupling to the strongest seed — reads from symbolEdges.
+    // Coupling to the strongest seed — reads from spectralEdges.
     String? strongestSeed;
     double strongestCoupling = 0.0;
     for (final seed in seeds.keys) {
-      final syms = engine.symbolEdges[seed];
+      final syms = engine.spectralEdges[seed];
       if (syms == null) continue;
-      final candSyms = engine.symbolEdges[candidate];
+      final candSyms = engine.spectralEdges[candidate];
       if (candSyms == null) continue;
       var shared = 0.0;
       candSyms.forEach((sym, w) {
@@ -832,10 +832,10 @@ class LogosMind {
 
     // Ab: symbol-edge overlap with any seed.
     var ab = 0.0;
-    final candSyms = engine.symbolEdges[candidate];
+    final candSyms = engine.spectralEdges[candidate];
     if (candSyms != null) {
       for (final seed in seeds.keys) {
-        final seedSyms = engine.symbolEdges[seed];
+        final seedSyms = engine.spectralEdges[seed];
         if (seedSyms == null) continue;
         var shared = 0.0;
         var denom = 0.0;

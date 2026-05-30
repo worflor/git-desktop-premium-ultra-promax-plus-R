@@ -66,7 +66,16 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     final gen = ++_gen;
 
     // ── GYAT: restore the repo's lifelong lattice ───────────────────
-    final gyat = await gyatForRepo(repoPath);
+    // gyatForRepo can throw (60s bootstrap timeout on a hung mount or a
+    // huge cold start). Degrade to a fresh empty lattice so the scan
+    // still runs to _done instead of wedging the panel in its loading
+    // state — the _gen==0 mount guard would never let it retry.
+    GyatLattice gyat;
+    try {
+      gyat = await gyatForRepo(repoPath);
+    } catch (_) {
+      gyat = GyatLattice.fresh(repoPath);
+    }
     if (!mounted || _gen != gen) return;
     _gyat = gyat;
 

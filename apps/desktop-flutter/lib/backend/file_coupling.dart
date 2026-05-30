@@ -10,8 +10,11 @@ import 'correlatedness_hunk_sort.dart'
 import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
+import 'logos_flow.dart' show FlowAnalysisResult;
+import 'logos_core.dart' show CharCoupling, eigenAddress, flowPhaseCoherence;
 import 'logos_git.dart' show LogosGit;
 import 'logos_git_integrity.dart';
+import 'repo_blob_walk.dart';
 
 // Re-export so callers that only import file_coupling.dart can still
 // construct the context — the changes panel and tests historically
@@ -30,12 +33,12 @@ const String _logMetaSep = '\u001f';
 /// *semantically* related. This is the truth git already holds — we just have
 /// to read it out and cluster the current change set by it.
 /// Built once per repo (keyed by HEAD hash) and reused across every render.
-/// The symbol axis is layered on top per change-set — same shape as the
-/// jaccard storage but computed from identifier overlap in the current
-/// working tree rather than from git history. See [computeSymbolCoupling].
+/// The spectral axis is layered on top per change-set — same shape as the
+/// jaccard storage but computed from eigenAddress histogram cosine similarity
+/// and flow coherence rather than from git history. See [computeSpectralCoupling].
 /// ─── Storage geometry ──────────────────────────────────────────────────
 /// The matrix is a sparse symmetric `nFiles × nFiles` floating-point
-/// table. Two of them — historical jaccard and current symbol overlap.
+/// table. Two of them — historical jaccard and current spectral profile.
 /// The hot accessors are `score(a, b)` (called per edge in graph
 /// builds), `coherenceFor(paths)` (called per commit during tag
 /// profile builds), and row iteration (called per node in graph
@@ -48,13 +51,11 @@ const String _logMetaSep = '\u001f';
 /// (int32 colIdx + f64 value), versus ~64+ bytes per nested-map
 /// entry. For a 1000-file repo with avg degree 50, the matrix
 /// shrinks from ~6MB of map overhead to ~600KB of typed-array data.
-/// **The public API is preserved.** `jaccard` and `symbol` are
-/// available as Map getters that lazily materialise from the CSR
-/// — for callers that haven't migrated to the new accessors, they
-/// see the old shape unchanged. New callers should prefer
-/// [containsPath], [jaccardKeysOf], and the existing
-/// [score]/[coherenceFor] methods, all of which talk to the CSR
-/// directly without materialising any maps.
+/// **The public API is preserved.** `jaccard` and `spectral` are
+/// available as Map getters that lazily materialise from the CSR.
+/// New callers should prefer [containsPath], [jaccardKeysOf], and
+/// the existing [score]/[coherenceFor] methods, all of which talk
+/// to the CSR directly without materialising any maps.
 class FileCouplingMatrix {
   /// Path at row id. Sorted alphabetically for determinism + so the
   /// CSR colIdx slices are stably ordered for binary search.
@@ -79,7 +80,7 @@ class FileCouplingMatrix {
   final int commitsAnalyzed;
 
   Map<String, Map<String, double>>? _jaccardMapView;
-  Map<String, Map<String, double>>? _symbolMapView;
+  Map<String, Map<String, double>>? _spectralMapView;
 
   // Lazy mirror CSR for the lower triangle of the jaccard matrix.
   // Built on first use so `fullJaccardRowOf` / `topJaccardNeighbours`
@@ -118,16 +119,14 @@ class FileCouplingMatrix {
     required Map<String, Map<String, double>> jaccard,
     required String headHash,
     required int commitsAnalyzed,
-    Map<String, Map<String, double>> symbol = const {},
+    Map<String, Map<String, double>> spectral = const {},
   }) {
-    // Union of every path that appears in either jaccard or symbol.
-    // Sorted for determinism so colIdx ordering is reproducible.
     final pathSet = <String>{};
     for (final entry in jaccard.entries) {
       pathSet.add(entry.key);
       pathSet.addAll(entry.value.keys);
     }
-    for (final entry in symbol.entries) {
+    for (final entry in spectral.entries) {
       pathSet.add(entry.key);
       pathSet.addAll(entry.value.keys);
     }
@@ -138,7 +137,7 @@ class FileCouplingMatrix {
     }
 
     final j = _buildSymmetricCsr(jaccard, pathToId, paths.length);
-    final s = _buildSymmetricCsr(symbol, pathToId, paths.length);
+    final s = _buildSymmetricCsr(spectral, pathToId, paths.length);
 
     return FileCouplingMatrix._(
       paths: List<String>.unmodifiable(paths),
@@ -155,8 +154,8 @@ class FileCouplingMatrix {
   }
 
   /// Coupling score for a pair — maximum of historical co-change and
-  /// structural symbol overlap. The two axes are independent evidence;
-  /// neither suppresses the other. New files have zero history, so symbol
+  /// spectral profile similarity. The two axes are independent evidence;
+  /// neither suppresses the other. New files have zero history, so spectral
   /// carries them. Old files use whichever axis is stronger.
   /// Implementation is two binary searches over the CSR row slices:
   /// O(log k) where k is the source row's degree. For typical k≈50 in
@@ -177,14 +176,14 @@ class FileCouplingMatrix {
     return hist > sym ? hist : sym;
   }
 
-  /// Return a copy with symbol overlap data merged in. Called once per
+  /// Return a copy with spectral coupling data merged in. Called once per
   /// change-set update; the rest of the pipeline consumes the merged matrix
   /// transparently through [score].
   /// The new matrix shares the jaccard CSR (immutable) but builds a
-  /// fresh symbol CSR over the union of the existing path set and any
+  /// fresh spectral CSR over the union of the existing path set and any
   /// new paths in [sym]. New paths get appended to the path id space.
-  FileCouplingMatrix withSymbol(Map<String, Map<String, double>> sym) {
-    // Fast path: no new paths in symbol → reuse the existing path id
+  FileCouplingMatrix withSpectral(Map<String, Map<String, double>> sym) {
+    // Fast path: no new paths in spectral → reuse the existing path id
     // space directly without rebuilding the union.
     var hasNewPaths = false;
     for (final entry in sym.entries) {
@@ -221,7 +220,7 @@ class FileCouplingMatrix {
     // its own performance regression. Instead we rebuild the path id
     // space, remap the existing jaccard CSR's column indices into the
     // new id space directly (no intermediate map), and build the
-    // symbol CSR fresh against the expanded path set.
+    // spectral CSR fresh against the expanded path set.
     final pathSet = <String>{...paths};
     for (final entry in sym.entries) {
       pathSet.add(entry.key);
@@ -317,10 +316,10 @@ class FileCouplingMatrix {
 
 
   /// O(1) check for whether [path] is known to the matrix — tracked
-  /// OR layered in via [withSymbol] for the current change set.
+  /// OR layered in via [withSpectral] for the current change set.
   /// Replaces `matrix.jaccard.containsKey(path)`.
   ///
-  /// Note: after a [withSymbol] call, untracked files also appear in
+  /// Note: after a [withSpectral] call, untracked files also appear in
   /// the id space, so this returns `true` for them too. Callers that
   /// need the stricter "has git co-change history" check should use
   /// [hasJaccardRow].
@@ -331,8 +330,8 @@ class FileCouplingMatrix {
   /// Stricter companion to [containsPath]: `true` iff the file has at
   /// least one historical co-change edge in the jaccard CSR.
   ///
-  /// Why this exists: [withSymbol] appends untracked files to the id
-  /// space so their symbol overlap can be queried, which makes
+  /// Why this exists: [withSpectral] appends untracked files to the id
+  /// space so their spectral overlap can be queried, which makes
   /// [containsPath] return `true` for them too. Several call sites
   /// (clustering step-2 guard, [combinedCouplingScore]'s
   /// "both tracked → trust history" fallback) really want to ask
@@ -369,13 +368,11 @@ class FileCouplingMatrix {
     }
   }
 
-  /// Iterate the symbol-overlap neighbours of [path]. Symmetric
-  /// accessor to [jaccardEntriesOf] for the symbol CSR — clustering
-  /// and diffusion-graph builders that want to treat symbol edges as
-  /// first-class coupling evidence (e.g. to let untracked files
-  /// participate in clustering the same way tracked files do) read
-  /// them through here rather than going through [score] per pair.
-  Iterable<MapEntry<String, double>> symbolEntriesOf(String path) sync* {
+  /// Iterate the spectral-profile neighbours of [path]. Symmetric
+  /// accessor to [jaccardEntriesOf] for the spectral CSR — clustering
+  /// reads these to let untracked files participate via eigenAddress
+  /// histogram similarity and flow coherence.
+  Iterable<MapEntry<String, double>> spectralEntriesOf(String path) sync* {
     final i = _pathToId[path];
     if (i == null) return;
     final lo = _sRowPtr[i];
@@ -385,11 +382,10 @@ class FileCouplingMatrix {
     }
   }
 
-  /// CSR-native lookup of the jaccard component ONLY (no symbol max).
+  /// CSR-native lookup of the jaccard component ONLY (no spectral max).
   /// Used by callers that want to read the historical co-change
-  /// component independent of the per-changeset symbol axis — e.g.
-  /// the semantic manifest's coupling pair report. Same algorithmic
-  /// shape as [score] but skips the symbol lookup.
+  /// component independent of the per-changeset spectral axis — e.g.
+  /// the semantic manifest's coupling pair report.
   double jaccardScoreOf(String a, String b) {
     if (a == b) return 1.0;
     final i = _pathToId[a];
@@ -624,10 +620,9 @@ class FileCouplingMatrix {
   Map<String, Map<String, double>> get jaccard =>
       _jaccardMapView ??= _materialiseMap(_jRowPtr, _jColIdx, _jValues);
 
-  /// Backward-compatible nested-map view of the symbol CSR. Same lazy
-  /// pattern as [jaccard].
-  Map<String, Map<String, double>> get symbol =>
-      _symbolMapView ??= _materialiseMap(_sRowPtr, _sColIdx, _sValues);
+  /// Backward-compatible nested-map view of the spectral CSR.
+  Map<String, Map<String, double>> get spectral =>
+      _spectralMapView ??= _materialiseMap(_sRowPtr, _sColIdx, _sValues);
 
   Map<String, Map<String, double>> _materialiseMap(
     Int32List rowPtr,
@@ -688,8 +683,8 @@ class FileCouplingMatrix {
 /// Translate an existing upper-triangle CSR matrix into a new path id
 /// space defined by [oldToNew], without round-tripping through the
 /// nested-map representation.
-/// Used by [FileCouplingMatrix.withSymbol]'s slow path when a new
-/// symbol overlay introduces previously-unseen paths. The path id
+/// Used by [FileCouplingMatrix.withSpectral]'s slow path when a new
+/// spectral overlay introduces previously-unseen paths. The path id
 /// space expands and shifts (we keep paths lex-sorted), so every
 /// edge `(oldI, oldJ)` needs to land at `(min(newI, newJ), max(newI,
 /// newJ))` in the new CSR.
@@ -1292,15 +1287,14 @@ enum FileSortGuide {
 /// so Atlas cards can show *why* these files group — not just a
 /// coherence number but the geometric reason.
 ///
-/// Priority order when a pair scores on multiple axes: transport >
-/// coChange > symbol > pathAffinity. `transport` is the most
-/// semantically specific (source↔test, manifest↔lockfile are
-/// unambiguous structural relations); `coChange` carries real git
-/// history; `symbol` is vocabulary overlap; `pathAffinity` is the
-/// weakest (mere directory siblings).
+/// Priority order when a pair scores on multiple axes (tiebreaker):
+/// spectral > transport > spectralProfile > hunk > coChange >
+/// pathAffinity. Strong axes (coChange, transport, hunk, spectral,
+/// spectralProfile) can anchor a cluster alone; pathAffinity needs
+/// corroboration from a second independent axis.
 enum RelatednessAxis {
   coChange,
-  symbol,
+  spectralProfile,
   transport,
   pathAffinity,
   hunk,
@@ -1378,7 +1372,7 @@ FileClusters clusterFiles(
   // Optional rich-signal context for the `relatedProximity` sort.
   // When supplied, intra-cluster ordering routes through the
   // spectrally-self-weighted seriator in `correlatedness_signals.dart`
-  // — combining jaccard×authenticity, symbol overlap, transport
+  // — combining jaccard×authenticity, spectral profile, transport
   // lanes, commit hyperedges, and engram K-vector cosine into one
   // Fiedler-seriated 1D order. When absent, falls back to the
   // legacy greedy nearest-neighbour chain on `combinedCouplingScore`.
@@ -1423,7 +1417,7 @@ FileClusters clusterFiles(
   // Collect candidate pairs above threshold. Each pair stored at most
   // once via a lexicographic (lo, hi) int-encoded key. `candidateIndex`
   // maps the encoded key to its slot in `candidates`, so when a pair is
-  // hit twice (e.g. once via jaccard, once via symbol overlap) we can
+  // hit twice (e.g. once via jaccard, once via spectral profile) we can
   // promote its score to the stronger of the two in O(1) instead of
   // scanning the candidates list.
   final candidates = <_PairScore>[];
@@ -1436,18 +1430,16 @@ FileClusters clusterFiles(
   }
 
   // -- 1. Direct coupling pairs: sparse iteration over the jaccard CSR
-  //    AND the symbol-overlap CSR. For each current file, walk both
+  //    AND the spectral-profile CSR. For each current file, walk both
   //    neighbour rows; only add pairs where the neighbour is also in
   //    the current change set. Both axes are independent evidence, so
   //    we record whichever score is larger when both fire — matches
-  //    the `score(a, b) = max(jaccard, symbol)` contract used
-  //    everywhere else in the coupling API.
+  //    the `score(a, b) = max(jaccard, spectral)` contract.
   //
-  //    The symbol walk is what makes untracked files cluster with
+  //    The spectral walk is what makes untracked files cluster with
   //    their structural peers: co-change history is blind to a file
-  //    that has never been committed, but symbol overlap sees the
-  //    identifier graph instantly, so a new test file groups with the
-  //    module it tests the moment it shows up in the working tree.
+  //    that has never been committed, but eigenAddress histogram
+  //    similarity + flow coherence see it instantly.
   // Track ALL axes that fire per pair for corroboration gating.
   final pairAxes2 = <int, Set<RelatednessAxis>>{};
 
@@ -1473,18 +1465,18 @@ FileClusters clusterFiles(
       if (j == null) continue;
       recordPair(i, j, s, RelatednessAxis.coChange);
     }
-    for (final entry in matrix.symbolEntriesOf(a)) {
+    for (final entry in matrix.spectralEntriesOf(a)) {
       final s = entry.value;
       if (s < effectiveThreshold) continue;
       final j = pathIndex[entry.key];
       if (j == null) continue;
-      recordPair(i, j, s, RelatednessAxis.symbol);
+      recordPair(i, j, s, RelatednessAxis.spectralProfile);
     }
   }
 
   // -- 1b. Transport-lane pairs: structural relations that path-based
   //    heuristics catch even on brand-new files with no history or
-  //    symbol overlap (`pubspec.yaml` ↔ `pubspec.lock`, `foo.dart` ↔
+  //    spectral profile (`pubspec.yaml` ↔ `pubspec.lock`, `foo.dart` ↔
   //    `foo_test.dart`, `schema.sql` ↔ migrations sharing a concept
   //    token). `logosTransportLane` returns a typed descriptor with a
   //    `strength` in [0, 0.5] we use as the pair score; every matching
@@ -1616,12 +1608,12 @@ FileClusters clusterFiles(
   //    sets.
   //
   //    The "skip if both tracked" guard uses [hasJaccardRow], NOT
-  //    [containsPath]: after [withSymbol] layers untracked paths into
+  //    [containsPath]: after [withSpectral] layers untracked paths into
   //    the id space, `containsPath` would return true for them too,
   //    causing this pass to skip the exact untracked-untracked pairs
   //    it was designed to cover. `hasJaccardRow` preserves the
   //    original intent — "does this file have real git history to
-  //    trust?" — regardless of symbol-layer expansion.
+  //    trust?" — regardless of spectral-layer expansion.
   final buckets = <String, List<int>>{};
   for (var i = 0; i < n; i++) {
     final p = currentPaths[i];
@@ -1652,12 +1644,13 @@ FileClusters clusterFiles(
   // -- 3. Corroboration gate + Union-Find.
   //
   //    The Born mixing philosophy: a single noisy axis shouldn't merge
-  //    files. Symbol overlap alone is cold-start IDF noise. Path affinity
+  //    files. A single weak axis alone can't be trusted. Path affinity
   //    alone is directory coincidence. These "weak" axes need at least
-  //    one "strong" corroborating axis (coChange, transport, hunk) to
-  //    be trusted. Strong axes are authoritative on their own — if the
-  //    history says files co-change, or the transport lane says source↔test,
-  //    that's enough.
+  //    one "strong" corroborating axis to be trusted. The strong axes —
+  //    coChange, transport, hunk, spectral, spectralProfile — are each
+  //    authoritative alone: co-change history, a source↔test transport
+  //    lane, hunk co-movement, or a spectral/eigenaddress fingerprint
+  //    match is enough on its own.
   //
   //    pairAxes2 tracks EVERY axis that fired per pair. The Union-Find
   //    only processes pairs that have at least one strong axis OR have
@@ -1667,6 +1660,7 @@ FileClusters clusterFiles(
     RelatednessAxis.transport,
     RelatednessAxis.hunk,
     RelatednessAxis.spectral,
+    RelatednessAxis.spectralProfile,
   };
   candidates.sort((a, b) => b.score.compareTo(a.score));
   final uf = _UnionFind(n);
@@ -1931,7 +1925,7 @@ FileClusters clusterFiles(
         }
         // When the caller supplied a CorrelatednessContext, route intra-
         // cluster ordering through the spectrally-self-weighted seriator
-        // — it combines jaccard×authenticity, symbol overlap, transport
+        // — it combines jaccard×authenticity, spectral profile, transport
         // lanes, hyperedge co-membership, and engram K-cosine into a
         // single Fiedler-seriated order, with each axis's weight set by
         // its own spectral gap. Falls back to the legacy greedy NN chain
@@ -2143,15 +2137,15 @@ FileClusters clusterFiles(
 int _axisPriority(RelatednessAxis a) {
   switch (a) {
     case RelatednessAxis.spectral:
-      return 5;
+      return 6;
     case RelatednessAxis.transport:
+      return 5;
+    case RelatednessAxis.spectralProfile:
       return 4;
     case RelatednessAxis.hunk:
       return 3;
     case RelatednessAxis.coChange:
       return 2;
-    case RelatednessAxis.symbol:
-      return 1;
     case RelatednessAxis.pathAffinity:
       return 0;
   }
@@ -2572,289 +2566,138 @@ String _stripExt(String filename) {
   return dot > 0 ? filename.substring(0, dot) : filename;
 }
 
-// SYMBOL-OVERLAP COUPLING — structural axis for new / untracked files
-//
-// Co-change history is a lagging signal: it can only score files that have
-// appeared together in at least one prior commit. A brand-new file has zero
-// Jaccard against everything, so the historical axis is blind to it.
-//
-// Symbol overlap is a leading signal: it scores files by shared identifier
-// usage right now, before any commit exists. A file that uses FileClusters
-// and FileCouplingMatrix is structurally coupled to file_coupling.dart
-// regardless of whether that relationship has ever appeared in git log.
-//
-//
-// Scoring is IDF-weighted Jaccard over identifier sets. The IDF weights
-// come from a CORPUS-WIDE document-frequency index built once per repo
-// ([SymbolFrequencyIndex] — scanned from every tracked file, cached by
-// HEAD hash). This makes the filter self-learning and language-agnostic:
-//   • `def` appears in every Python file → df is huge → idf ≈ 0 → ignored
-//   • `func` appears in every Go file → same
-//   • `FileCouplingMatrix` appears in 2 files repo-wide → idf is high
-//   • the repo *teaches* the filter what's noise vs signal
-//
-// No hardcoded language keywords. No per-language stop-word lists. The
-// math is the filter. The only fallback (when the corpus index hasn't
-// been built yet) is change-set-local IDF plus a tiny universal
-// C-family keyword set — enough to keep cold-start sane without biasing.
-//
-//   idf(id) = ln(1 + N / (1 + df(id)))   [corpus available]
-//   idf(id) = 1 / df_local(id)           [change-set fallback]
-//
-//   overlap(a, b) = Σ idf(id) for id in a∩b
-//                   Σ idf(id) for id in a∪b
+const int _spectralMaxBytes = 256 * 1024;
 
-/// Max file size we'll read for symbol extraction. Avoids tokenising
-/// multi-megabyte generated files or binary blobs with a source extension.
-const int _symMaxBytes = 256 * 1024; // 256 KB
-
-/// Hard cap on files scanned when building the corpus frequency index.
-/// Beyond this, a uniform random sample is taken — at 2000 files the
-/// df estimates are already well-converged for any reasonable codebase.
-const int _symCorpusSampleCap = 2000;
-
-/// Minimal, language-neutral cold-start filter. Only universal
-/// C-family keywords that the IDF corpus would downweight anyway if it
-/// were warm. Deliberately short — the corpus index is the real filter.
-/// Single-/two-character tokens are already excluded by the identifier
-/// regex (`{2,}` suffix), so nothing here is shorter than 3 chars.
-const Set<String> _symColdStartFilter = {
-  'for', 'while', 'return', 'class', 'struct', 'enum', 'union',
-  'true', 'false', 'null', 'nil', 'None', 'undefined',
-  'new', 'this', 'self', 'super', 'super_',
-  'public', 'private', 'protected', 'static', 'const', 'final',
-  'let', 'var', 'val', 'mut',
-  'import', 'export', 'from', 'package', 'using', 'module',
-  'void', 'int', 'bool', 'string', 'float',
-  'def', 'fun', 'func', 'fn', 'sub', 'lambda',
-  'try', 'catch', 'throw', 'throws', 'except', 'finally',
-  'async', 'await', 'yield',
-};
-
-/// Extract meaningful identifier tokens from [content].
-/// Language-agnostic: matches any C-family identifier (3+ chars,
-/// alphanumeric + underscore). Works for Dart, Python, Go, Rust, JS,
-/// TS, Java, C, C++, Kotlin, Swift, Ruby, etc.
-Set<String> _extractSymbols(String content) {
-  final out = <String>{};
-  final pattern = RegExp(r'\b([A-Za-z_][A-Za-z0-9_]{2,})\b');
-  for (final m in pattern.allMatches(content)) {
-    final id = m.group(1)!;
-    if (!_symColdStartFilter.contains(id)) out.add(id);
-  }
-  return out;
-}
-
-/// Read [path] (relative to [repoRoot]) and extract its symbol set.
-/// Returns empty on I/O error, missing file, or oversize file.
-Set<String> symbolsForFile(String repoRoot, String path) {
-  try {
-    final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
-    if (!file.existsSync()) return const {};
-    if (file.lengthSync() > _symMaxBytes) return const {};
-    return _extractSymbols(file.readAsStringSync());
-  } catch (_) {
-    return const {};
-  }
-}
-
-/// Corpus-wide identifier document-frequency index.
-/// Built once per repo (keyed by HEAD hash) by scanning every tracked
-/// file's identifier set. Replaces hardcoded language-specific stop-word
-/// lists: any identifier that appears in most of the repo's files ends up
-/// with near-zero IDF weight automatically, whether that's `def` in a
-/// Python project or `public` in a Java project. The repo teaches the
-/// filter what's noise.
-/// Computed asynchronously in the background (see
-/// `computeSymbolFrequencyIndex`); change-set coupling falls back to
-/// local IDF when the index isn't ready yet.
-class SymbolFrequencyIndex {
-  /// identifier → number of documents containing it (1 ≤ df ≤ totalDocuments).
-  final Map<String, int> documentFrequency;
-
-  /// Total distinct documents scanned (denominator for IDF).
-  final int totalDocuments;
-
-  /// HEAD hash at the time of indexing. Callers invalidate when HEAD moves.
-  final String headHash;
-
-  const SymbolFrequencyIndex({
-    required this.documentFrequency,
-    required this.totalDocuments,
-    required this.headHash,
-  });
-
-  /// Inverse-document-frequency weight for [term].
-  /// Uses the smoothed form `ln(1 + N / (1 + df))`. Bounded below by 0
-  /// (terms appearing in every document) and above by `ln(1 + N)` (terms
-  /// never seen in the corpus — could be new symbols in the change set).
-  /// A term in 50% of the corpus gets roughly `ln(1 + 2) ≈ 1.1`; a term
-  /// in 1% gets `ln(1 + 100) ≈ 4.6`. Rare terms dominate, common terms
-  /// vanish — the self-learning stop-word filter.
-  double idf(String term) {
-    if (totalDocuments <= 0) return 1.0;
-    final df = documentFrequency[term] ?? 0;
-    return math.log(1 + totalDocuments / (1 + df));
-  }
-
-  bool get isEmpty => totalDocuments == 0;
-  bool get isNotEmpty => totalDocuments > 0;
-
-  static const empty = SymbolFrequencyIndex(
-    documentFrequency: {},
-    totalDocuments: 0,
-    headHash: '',
-  );
-}
-
-/// Build a [SymbolFrequencyIndex] for the repo at [repoRoot].
-/// Uses `git ls-files` to enumerate tracked files. When the corpus
-/// exceeds [maxFiles], a uniform random sample is taken — df estimates
-/// converge fast, so 2000 files is plenty for any codebase.
-/// [sampleSeed] gives deterministic sampling for tests; leave null in
-/// production (wall-clock seeded).
-Future<GitResult<SymbolFrequencyIndex>> computeSymbolFrequencyIndex(
-  String repoRoot, {
-  int maxFiles = _symCorpusSampleCap,
-  int? sampleSeed,
-}) async {
-  final lsProbe = await runGitProbe(repoRoot, ['ls-files']);
-  if (lsProbe.exitCode != 0) {
-    return GitResult.err(lsProbe.stderr.toString().trim());
-  }
-
-  final headProbe = await runGitProbe(repoRoot, ['rev-parse', 'HEAD']);
-  final headHash =
-      headProbe.exitCode == 0 ? headProbe.stdout.toString().trim() : '';
-
-  final allPaths = const LineSplitter()
-      .convert(lsProbe.stdout.toString())
-      .where((l) => l.isNotEmpty)
-      .toList();
-
-  // Uniform random sample when the repo is large. Deterministic when
-  // [sampleSeed] is set. We pick files, not bytes — a tiny file counts
-  // the same as a big one for df estimation, which is what we want.
-  List<String> scan;
-  if (allPaths.length > maxFiles) {
-    final rng = math.Random(sampleSeed ?? DateTime.now().millisecondsSinceEpoch);
-    final shuffled = [...allPaths]..shuffle(rng);
-    scan = shuffled.take(maxFiles).toList();
-  } else {
-    scan = allPaths;
-  }
-
-  final df = <String, int>{};
-  var totalDocs = 0;
-  for (final path in scan) {
-    final syms = symbolsForFile(repoRoot, path);
-    if (syms.isEmpty) continue;
-    totalDocs++;
-    for (final sym in syms) {
-      df[sym] = (df[sym] ?? 0) + 1;
-    }
-  }
-
-  return GitResult.ok(
-    SymbolFrequencyIndex(
-      documentFrequency: df,
-      totalDocuments: totalDocs,
-      headHash: headHash,
-    ),
-  );
-}
-
-/// Compute pairwise symbol-overlap coupling for [paths].
-/// Returns an upper-triangle map (same convention as [FileCouplingMatrix.jaccard])
-/// of IDF-weighted Jaccard scores. Only pairs with a non-zero score are
-/// stored.
-/// When [corpus] is provided and non-empty, uses corpus-wide IDF (the
-/// self-learning, language-agnostic filter). Otherwise falls back to
-/// change-set-local IDF — the local `1 / df_local` form is a good
-/// proxy when n is small but can overweight rare language keywords in
-/// tiny change sets; prefer passing a warm corpus when available.
-Map<String, Map<String, double>> computeSymbolCoupling(
+Map<String, Map<String, double>> computeSpectralCoupling(
   List<String> paths,
-  String repoRoot, {
-  SymbolFrequencyIndex? corpus,
+  String repoRoot,
+  CharCoupling coupling, {
+  Map<String, FlowAnalysisResult>? flowResults,
 }) {
   if (paths.length < 2) return const {};
 
-  // Read identifier sets for every file in the change set.
-  final symSets = <String, Set<String>>{};
+  final histograms = <String, Float64List>{};
   for (final path in paths) {
-    final syms = symbolsForFile(repoRoot, path);
-    if (syms.isNotEmpty) symSets[path] = syms;
-  }
-  if (symSets.length < 2) return const {};
-
-  // Resolve an IDF function once — corpus if warm, local fallback if not.
-  final bool useCorpus = corpus != null && corpus.isNotEmpty;
-  double Function(String) idfOf;
-  if (useCorpus) {
-    idfOf = corpus.idf;
-  } else {
-    final localDf = <String, int>{};
-    for (final syms in symSets.values) {
-      for (final id in syms) {
-        localDf[id] = (localDf[id] ?? 0) + 1;
+    try {
+      final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
+      if (!file.existsSync()) continue;
+      if (file.lengthSync() > _spectralMaxBytes) continue;
+      final content = file.readAsStringSync();
+      final lines = content.split('\n');
+      final hist = Float64List(256);
+      var total = 0;
+      for (final line in lines) {
+        final addr = eigenAddress(line, coupling);
+        if (addr >= 0) {
+          hist[addr] += 1.0;
+          total++;
+        }
       }
+      if (total < 2) continue;
+      final invTotal = 1.0 / total;
+      for (var i = 0; i < 256; i++) {
+        hist[i] *= invTotal;
+      }
+      histograms[path] = hist;
+    } catch (_) {
+      continue;
     }
-    final localN = symSets.length;
-    idfOf = (id) {
-      final df = localDf[id] ?? 0;
-      return math.log(1 + localN / (1 + df));
-    };
   }
 
-  // IDF-weighted Jaccard for each pair (upper triangle only).
   final result = <String, Map<String, double>>{};
-  final fileList = symSets.keys.toList();
-  for (var i = 0; i < fileList.length; i++) {
-    for (var j = i + 1; j < fileList.length; j++) {
-      final a = fileList[i];
-      final b = fileList[j];
-      final symsA = symSets[a]!;
-      final symsB = symSets[b]!;
 
-      var numerator = 0.0;
-      var denominator = 0.0;
-
-      // Walk the union; intersection contributes to both.
-      for (final id in symsA) {
-        final w = idfOf(id);
-        denominator += w;
-        if (symsB.contains(id)) numerator += w;
+  if (histograms.length >= 2) {
+    final fileList = histograms.keys.toList();
+    for (var i = 0; i < fileList.length; i++) {
+      for (var j = i + 1; j < fileList.length; j++) {
+        final a = fileList[i];
+        final b = fileList[j];
+        final ha = histograms[a]!;
+        final hb = histograms[b]!;
+        var dot = 0.0, normA = 0.0, normB = 0.0;
+        for (var k = 0; k < 256; k++) {
+          dot += ha[k] * hb[k];
+          normA += ha[k] * ha[k];
+          normB += hb[k] * hb[k];
+        }
+        if (normA < 1e-15 || normB < 1e-15) continue;
+        final cosine = dot / (math.sqrt(normA) * math.sqrt(normB));
+        if (cosine < 0.25) continue;
+        final lo = a.compareTo(b) < 0 ? a : b;
+        final hi = a.compareTo(b) < 0 ? b : a;
+        (result[lo] ??= {})[hi] = cosine;
       }
-      for (final id in symsB) {
-        if (!symsA.contains(id)) denominator += idfOf(id);
-      }
-
-      if (numerator == 0 || denominator == 0) continue;
-      final score = numerator / denominator;
-
-      // Upper-triangle: lex order for consistency with jaccard storage.
-      final lo = a.compareTo(b) < 0 ? a : b;
-      final hi = a.compareTo(b) < 0 ? b : a;
-      (result[lo] ??= {})[hi] = score;
     }
+  }
+
+  if (flowResults != null && flowResults.length >= 2) {
+    final flowCoh = computeFlowCoherence(flowResults);
+    for (final entry in flowCoh.entries) {
+      final sub = result.putIfAbsent(entry.key, () => {});
+      for (final pair in entry.value.entries) {
+        sub[pair.key] = math.max(sub[pair.key] ?? 0, pair.value);
+      }
+    }
+  }
+
+  return result;
+}
+
+Map<String, Map<String, double>> computeFlowCoherence(
+  Map<String, FlowAnalysisResult> flowResults,
+) {
+  if (flowResults.length < 2) return const {};
+
+  final byAddress = <int, List<(String, double, double)>>{};
+  for (final entry in flowResults.entries) {
+    for (final f in entry.value.findings) {
+      byAddress.putIfAbsent(f.address, () => [])
+          .add((entry.key, f.certainty, f.phase));
+    }
+  }
+
+  final pairScores = <(String, String), List<double>>{};
+  for (final entry in byAddress.entries) {
+    if (entry.value.length < 2) continue;
+    final byFile = <String, List<(double, double)>>{};
+    for (final (file, cert, phase) in entry.value) {
+      byFile.putIfAbsent(file, () => []).add((cert, phase));
+    }
+    final files = byFile.keys.toList();
+    if (files.length < 2) continue;
+    for (var i = 0; i < files.length; i++) {
+      for (var j = i + 1; j < files.length; j++) {
+        final merged = [...byFile[files[i]]!, ...byFile[files[j]]!];
+        final coh = flowPhaseCoherence(merged);
+        final lo = files[i].compareTo(files[j]) < 0 ? files[i] : files[j];
+        final hi = files[i].compareTo(files[j]) < 0 ? files[j] : files[i];
+        pairScores.putIfAbsent((lo, hi), () => []).add(coh);
+      }
+    }
+  }
+
+  final result = <String, Map<String, double>>{};
+  for (final entry in pairScores.entries) {
+    final (lo, hi) = entry.key;
+    final scores = entry.value;
+    final mean = scores.reduce((a, b) => a + b) / scores.length;
+    if (mean < 0.1) continue;
+    (result[lo] ??= {})[hi] = mean;
   }
   return result;
 }
 
-
 /// Coupling score used by clustering and seriation.
-/// Reads the blended score from the matrix (historical Jaccard + symbol
-/// overlap, whichever is stronger). Falls back to path-structure affinity
-/// only when the matrix has no signal at all for the pair — typically two
-/// files that are both new AND share no identifiers.
+/// Reads the blended score from the matrix (historical Jaccard + spectral
+/// profile, whichever is stronger). Falls back to path-structure affinity
+/// only when the matrix has no signal at all for the pair.
 /// If BOTH files have real co-change history and the score is still 0,
 /// that's meaningful: they've been tracked and they don't co-change.
 /// pathAffinity must NOT fire in that case — it would manufacture
 /// coupling that contradicts the historical record and corrupt
 /// clustering for pairs that deliberately don't co-change.
 /// The gate uses [FileCouplingMatrix.hasJaccardRow], NOT `containsPath`:
-/// after `withSymbol` layers untracked files into the id space,
+/// after `withSpectral` layers untracked files into the id space,
 /// `containsPath` returns true for them too and the original "both
 /// tracked → trust history" fallback would mute pathAffinity for every
 /// untracked pair. Checking the jaccard row directly keeps the

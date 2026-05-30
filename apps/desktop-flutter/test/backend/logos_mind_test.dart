@@ -60,7 +60,7 @@ LogosGit _fixtureEngine() {
       commitsAnalyzed: 200,
     ),
     perFileCommitIndices: const {},
-  )).withSymbolEdges({
+  )).withSpectralEdges({
     'lib/auth/a.dart': {'getUser': 2.0, 'authToken': 1.0},
     'lib/auth/b.dart': {'getUser': 1.5, 'saveUser': 2.0},
     'lib/auth/c.dart': {'authToken': 2.5, 'validate': 1.0},

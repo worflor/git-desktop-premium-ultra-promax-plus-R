@@ -143,15 +143,6 @@ Future<_WarmResult<FileCouplingMatrix>> _awaitCoupling(
       notifier: ctx.fileCouplingState,
     );
 
-Future<_WarmResult<SymbolFrequencyIndex>> _awaitSymbols(
-  String repo,
-  ManifoldBridgeContext ctx,
-) =>
-    _awaitWarm(
-      probe: () => ctx.symbolFrequencyState.indexFor(repo),
-      kick: () => unawaited(ctx.symbolFrequencyState.loadForRepo(repo)),
-      notifier: ctx.symbolFrequencyState,
-    );
 
 Future<FileCouplingMatrix> _coupling(String repo, ManifoldBridgeContext ctx,
     [LogosGit? engine]) async {
@@ -995,15 +986,9 @@ Future<Map<String, dynamic>> _review(
   _progress('scope', '${scopeFiles.length} files');
 
   _progress('warmup');
-  final warmResults = await Future.wait([
-    _awaitCoupling(cacheRoot, ctx),
-    _awaitSymbols(cacheRoot, ctx),
-  ]);
-  final couplingWarm = warmResults[0] as _WarmResult<FileCouplingMatrix>;
-  final symbolsWarm = warmResults[1] as _WarmResult<SymbolFrequencyIndex>;
+  final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
   final cSym = couplingWarm.data != null ? '✓' : '–';
-  final sSym = symbolsWarm.data != null ? '✓' : '–';
-  _progress('warmup', 'coupling $cSym · symbols $sSym');
+  _progress('warmup', 'coupling $cSym');
 
   final shortModel = model.modelValue.split('/').last;
   _progress('ai', shortModel);
@@ -1024,7 +1009,6 @@ Future<Map<String, dynamic>> _review(
     doubleCheckEnabled: ai.reviewCommitDoubleCheckEnabled,
     readOnly: true,
     couplingMatrix: couplingWarm.data,
-    symbolIndex: symbolsWarm.data,
   );
   final aiMs = aiSw.elapsedMilliseconds;
   totalSw.stop();
@@ -1046,9 +1030,6 @@ Future<Map<String, dynamic>> _review(
       'coupling': couplingWarm.data != null,
       'couplingMs': couplingWarm.ms,
       'couplingTimedOut': couplingWarm.timedOut,
-      'symbols': symbolsWarm.data != null,
-      'symbolsMs': symbolsWarm.ms,
-      'symbolsTimedOut': symbolsWarm.timedOut,
     },
     'files': {
       'reviewed': scopeFiles.length,
@@ -1071,9 +1052,7 @@ Future<Map<String, dynamic>> _review(
     'timing': {
       'totalMs': totalSw.elapsedMilliseconds,
       'scopeMs': scopeMs,
-      'warmupMs': couplingWarm.ms > symbolsWarm.ms
-          ? couplingWarm.ms
-          : symbolsWarm.ms,
+      'warmupMs': couplingWarm.ms,
       'aiMs': aiMs,
     },
     'promptChars': d.promptCharacters,
@@ -1133,15 +1112,9 @@ Future<Map<String, dynamic>> _muse(
   _progress('scope', '${scopeFiles.length} files');
 
   _progress('warmup');
-  final warmResults = await Future.wait([
-    _awaitCoupling(cacheRoot, ctx),
-    _awaitSymbols(cacheRoot, ctx),
-  ]);
-  final couplingWarm = warmResults[0] as _WarmResult<FileCouplingMatrix>;
-  final symbolsWarm = warmResults[1] as _WarmResult<SymbolFrequencyIndex>;
+  final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
   final cSym = couplingWarm.data != null ? '✓' : '–';
-  final sSym = symbolsWarm.data != null ? '✓' : '–';
-  _progress('warmup', 'coupling $cSym · symbols $sSym');
+  _progress('warmup', 'coupling $cSym');
 
   final shortModel = brainstormModel.modelValue.split('/').last;
   _progress('brainstorm', shortModel);
@@ -1164,7 +1137,6 @@ Future<Map<String, dynamic>> _muse(
     guardrailStage: prefs.guardrailStage,
     readOnly: true,
     couplingMatrix: couplingWarm.data,
-    symbolIndex: symbolsWarm.data,
   );
   final aiMs = aiSw.elapsedMilliseconds;
   totalSw.stop();
@@ -1182,9 +1154,6 @@ Future<Map<String, dynamic>> _muse(
       'coupling': couplingWarm.data != null,
       'couplingMs': couplingWarm.ms,
       'couplingTimedOut': couplingWarm.timedOut,
-      'symbols': symbolsWarm.data != null,
-      'symbolsMs': symbolsWarm.ms,
-      'symbolsTimedOut': symbolsWarm.timedOut,
     },
     'files': {
       'reviewed': scopeFiles.length,
@@ -1215,9 +1184,7 @@ Future<Map<String, dynamic>> _muse(
     'timing': {
       'totalMs': totalSw.elapsedMilliseconds,
       'scopeMs': scopeMs,
-      'warmupMs': couplingWarm.ms > symbolsWarm.ms
-          ? couplingWarm.ms
-          : symbolsWarm.ms,
+      'warmupMs': couplingWarm.ms,
       'aiMs': aiMs,
     },
     'proposals': [

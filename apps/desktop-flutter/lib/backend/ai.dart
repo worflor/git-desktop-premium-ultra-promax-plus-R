@@ -27,7 +27,7 @@ import 'package:meta/meta.dart';
 import 'ai_context_engine.dart';
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
-import 'logos_core.dart' show SpectralThermo;
+import 'logos_core.dart' show SpectralThermo, flowKGInteractionStrength;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 import 'logos_mind.dart';
@@ -36,7 +36,14 @@ import 'logos_semantic_bands.dart';
 import 'logos_git_probe.dart';
 import 'logos_git_resolver.dart';
 import 'logos_sensitivity.dart';
-import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
+import 'spectral_trajectory.dart';
+import 'spectral_trajectory_builder.dart'
+    show peekTrajectoryForRepo, warmTrajectoryForRepo;
+import 'release_state.dart'
+    show formatReleaseStateBlock, loadReleaseState, peekReleaseState;
+import 'diff_motion.dart';
+import 'trajectory_echoes.dart';
+import 'file_coupling.dart' show FileCouplingMatrix;
 import 'logos_chunks.dart' as chunks;
 import 'logos_diff_attention.dart' as diff_attention;
 import 'logos_flow.dart'
@@ -47,6 +54,7 @@ import 'logos_flow.dart'
         FlowAnalysisResult,
         FlowFinding,
         FlowBugKind;
+import 'gyat.dart' show GyatLattice, peekGyatForRepo, warmGyatForRepo;
 import 'logos_hunks.dart' as hunks;
 import 'semantic_manifest.dart' show buildSemanticManifest;
 
@@ -420,10 +428,9 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   CommitStructure structure = kDefaultCommitStructure,
   CommitVoice voice = kDefaultCommitVoice,
   CommitCoverage coverage = kDefaultCommitCoverage,
-  // Semantic priors for the manifest above the packed diff. Pass from
-  // the app layer's SymbolFrequencyState / FileCouplingState. Both are
-  // optional; null = skip that signal, manifest still emits.
-  SymbolFrequencyIndex? symbolIndex,
+  // Semantic prior for the manifest above the packed diff. Pass from
+  // the app layer's FileCouplingState. Optional; null = skip that
+  // signal, manifest still emits.
   FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
@@ -454,7 +461,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
-      symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
     );
 
@@ -1419,7 +1425,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   bool readOnly = true,
   String rawDiffOverride = '',
   String diffBranchName = '',
-  SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
 }) {
   return LogosVisBus.instance.runInSession<GitResult<AiCommitReviewData>>(
@@ -1438,7 +1443,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
             readOnly: readOnly,
             rawDiffOverride: rawDiffOverride,
             diffBranchName: diffBranchName,
-            symbolIndex: symbolIndex,
             couplingMatrix: couplingMatrix,
             reasoningEffort: reasoningEffort,
             fastMode: fastMode,
@@ -1461,7 +1465,6 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
   required bool readOnly,
   required String rawDiffOverride,
   required String diffBranchName,
-  required SymbolFrequencyIndex? symbolIndex,
   required FileCouplingMatrix? couplingMatrix,
   String? reasoningEffort,
   bool fastMode = false,
@@ -1500,7 +1503,6 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       branchNameOverride: usingOverride
           ? (diffBranchName.isNotEmpty ? diffBranchName : null)
           : null,
-      symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) {
@@ -2129,6 +2131,10 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
   bool fastMode = false,
   bool supportsReasoning = true,
   String divergentNeighborhood = '',
+  String releaseStateBlock = '',
+  String motionCompactLine = '',
+  String lightEchoesBlock = '',
+  List<MuseQuiverEntry> quiver = const [],
 }) async {
   final buf = StringBuffer();
   buf.writeln('You take the first seat of the muse pipeline: the '
@@ -2210,6 +2216,54 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
   buf.writeln('Scope: $scopeLabel');
   buf.writeln('</scope>');
   buf.writeln();
+  if (quiver.isNotEmpty) {
+    // Downstream cast — the synthesis pass will weave your seeds into
+    // these characters. Knowing the ensemble lets the brainstorm
+    // bias material distribution toward what the loaded strands can
+    // use (past-rooted ideas for ghost, structural rhymes for echo,
+    // reversal candidates for mirror). NOT a categorization
+    // instruction — keep generating across the full ambition range.
+    // The cast just shapes which seeds find homes downstream.
+    buf.writeln('<downstream_cast>');
+    buf.writeln('The synthesis pass will weave your seeds into an '
+        'ensemble of characters. The cast for this scene:');
+    for (final entry in quiver) {
+      buf.writeln('  ${museStrandLabel(entry.kind)} — '
+          '${museStrandShortRole(entry.kind)}');
+    }
+    buf.writeln();
+    buf.writeln('Your job is still divergence — scatter seeds across '
+        'every register. The cast shapes WHICH seeds find homes; '
+        'it should not narrow what you generate.');
+    buf.writeln('</downstream_cast>');
+    buf.writeln();
+  }
+  if (releaseStateBlock.isNotEmpty) {
+    buf.writeln('<release_state>');
+    buf.writeln(releaseStateBlock);
+    buf.writeln('</release_state>');
+    buf.writeln();
+  }
+  if (motionCompactLine.isNotEmpty) {
+    // The diff as the next operator on the trajectory — Hellmann-Feynman
+    // predicts the spectral motion this diff is about to cause. Compact
+    // line: just the character (continuation / reversal / rotation,
+    // archetype shift, regime risk z-score). Brainstorm uses this to
+    // seed motion-aware ideas without bloating the cheap call.
+    buf.writeln('<diff_motion>$motionCompactLine</diff_motion>');
+    buf.writeln();
+  }
+  if (lightEchoesBlock.isNotEmpty) {
+    // Past commits where the spectrum was nearest to where this diff
+    // is heading. Ranked by eigenvalue distance from (current + diff
+    // tangent) to each past trajectory point's spectrum. The temporal
+    // twin of <neighborhood> — spatial divergence meets temporal
+    // divergence.
+    buf.writeln('<temporal_echoes>');
+    buf.writeln(lightEchoesBlock);
+    buf.writeln('</temporal_echoes>');
+    buf.writeln();
+  }
   if (divergentNeighborhood.isNotEmpty) {
     buf.writeln('<neighborhood>');
     buf.writeln(divergentNeighborhood);
@@ -2382,6 +2436,69 @@ double _temperatureForIdeas(List<_BrainstormIdea> ideas) {
   return 1.0;
 }
 
+double _spectrallyModulatedTemperature(
+  List<_BrainstormIdea> ideas,
+  LogosGit? engine,
+  GyatLattice? gyat,
+) {
+  final base = _temperatureForIdeas(ideas);
+  if (engine == null) return base;
+
+  // Collect calm signals on [0, 1] where 1 = maximally calm. Three
+  // independent axes: factoredness (lattice cell coherence), inverse
+  // KG-interaction (lower coupling = calmer), and normalised spectral
+  // gap (better separation = calmer). All real engine observables.
+  final calmSignals = <double>[];
+  if (gyat != null) {
+    calmSignals.add(gyat.lattice.factoredness.clamp(0.0, 1.0));
+    final kgStrength = flowKGInteractionStrength(gyat.lattice);
+    calmSignals.add((1.0 - kgStrength).clamp(0.0, 1.0));
+  }
+  final basis = engine.spectralBasis();
+  if (basis != null) {
+    // Normalised Laplacian's spectral gap ranges in [0, 2]; map to
+    // [0, 1] so the axis is comparable to factoredness and 1−KG. A
+    // gap of 2 (maximally separated, complete bipartite limit) is
+    // the calmest reading; gap near 0 (no separation) is chaotic.
+    calmSignals.add((basis.spectralGap / 2.0).clamp(0.0, 1.0));
+  }
+  return modulateMuseTemperature(base: base, calmSignals: calmSignals);
+}
+
+/// Apply the geometric-mean-of-calm modulation to a base muse
+/// temperature. Pulled out of [_spectrallyModulatedTemperature] so
+/// the math has a public test surface — the wrapper handles signal
+/// collection from engine + GYAT, this function handles the
+/// composite + modulation arithmetic.
+///
+/// Behaviour:
+///   * empty [calmSignals]    → returns [base] unchanged
+///   * single-element signal  → geometric mean is the element itself
+///   * any zero / near-zero   → floored at 1e-3 so the geometric
+///                              mean doesn't collapse to zero on a
+///                              single chaotic axis
+///   * geometric mean = 1     → modulation = 1.0 (neutral)
+///   * geometric mean = 0     → modulation = 2.0 (max exploration)
+///
+/// Result is clamped to `[0.5, 2.0]` as a safety net; the formula
+/// itself produces values in `[1.0, 2.0/(1+1e-3)] ≈ [1.0, 1.998]`
+/// when scaled by [base], so the clamp only acts as a final guard
+/// against pathological [base] values.
+double modulateMuseTemperature({
+  required double base,
+  required List<double> calmSignals,
+}) {
+  if (calmSignals.isEmpty) return base;
+  var product = 1.0;
+  for (final s in calmSignals) {
+    product *= math.max(s, 1e-3);
+  }
+  final geometricMean =
+      math.pow(product, 1.0 / calmSignals.length).toDouble();
+  final modulation = 2.0 / (1.0 + geometricMean);
+  return (base * modulation).clamp(0.5, 2.0);
+}
+
 /// Tokenise an idea string into matchable handles. Mirrors the
 /// commit-tagger basename tokenizer: split on non-word, then on
 /// camelCase boundaries, lowercase. Drops short noise tokens.
@@ -2448,12 +2565,15 @@ Future<({String text, LogosEmissionRecord? record})>
   required Map<String, double> diffSourceWeights,
   required Map<String, double> userBoosts,
   required int budgetChars,
+  GyatLattice? gyat,
 }) async {
   if (budgetChars <= 500) return (text: '', record: null);
   try {
     final engine = await resolveLogosGit(repositoryPath);
     if (engine == null) return (text: '', record: null);
     if (engine.nodePaths.isEmpty) return (text: '', record: null);
+
+    final couplings = engine.couplingStrengths();
 
     final ktable = engine.perFileKVectors;
     final encoder = await EngramRuntime.instance.mainEncoder();
@@ -2647,7 +2767,9 @@ Future<({String text, LogosEmissionRecord? record})>
           continue;
         }
         final share = (entry.value / totalLocal) * baseWeight;
-        seedMap[path] = (seedMap[path] ?? 0) + share;
+        final couplingVal = couplings[path] ?? 0.5;
+        final noveltyFactor = 0.85 + 0.45 * (1.0 - couplingVal);
+        seedMap[path] = (seedMap[path] ?? 0) + share * noveltyFactor;
         // Source label: first-come wins for the attribution bucket.
         // Well expansion paths get a distinct label so the
         // attribution output makes the expansion lane visible.
@@ -2696,10 +2818,11 @@ Future<({String text, LogosEmissionRecord? record})>
     // Attribution-aware diffusion. Temperature reacts to the kind
     // distribution — bugfix-heavy ideas get a tighter t, refactor /
     // risk-heavy ideas get a broader one.
+    final museT = _spectrallyModulatedTemperature(ideas, engine, gyat);
     final recurrentBrainstorm = engine.gatherEvidenceRecurrent(
       focusWeights: seedMap,
       axisLabelByPath: axisLabel,
-      t: _temperatureForIdeas(ideas),
+      t: museT,
       detailBudget: 24,
       onIteration: (report) {
         LogosVisBus.instance.emitInSession(
@@ -2719,7 +2842,7 @@ Future<({String text, LogosEmissionRecord? record})>
         engine.diffuseWithAttribution(
           weightsByPath: seedMap,
           axisLabelByPath: axisLabel,
-          t: _temperatureForIdeas(ideas),
+          t: museT,
         );
     if (attribution == null) return (text: '', record: null);
 
@@ -2891,6 +3014,87 @@ List<RelevanceScore> _rerankWithAttribution(
   return out;
 }
 
+/// Character sheet for each loaded strand. Each strand is an
+/// archetype — name, stance, voice quality, and a sample phrasing
+/// that anchors it. Behavioral steering (silence-when-empty,
+/// distribution) lives once in the ensemble block, not repeated
+/// per character — every token here pulls weight on identity.
+String _strandSynthesisGuidance(MuseStrandKind k) {
+  switch (k) {
+    case MuseStrandKind.spark:
+      return 'spark — The Apprentice\n'
+          '  Eager, present. You see the smallest next move already\n'
+          '  implied by what just changed. Voice clean and quick —\n'
+          '  "here, start here." Speak from where the change is\n'
+          '  landing now; the longer signals do not bind you.';
+    case MuseStrandKind.current:
+      return 'current — The Steward\n'
+          '  Patient, committed. The work is in motion; you name\n'
+          '  where it is going. Your voice carries the weight of\n'
+          '  recognition — naming what already IS, under the\n'
+          '  surface, waiting to be said. Present tense.';
+    case MuseStrandKind.horizon:
+      return 'horizon — The Visionary\n'
+          '  Declarative. The trajectory has a heading — read the\n'
+          '  motion reading to know whether this change is\n'
+          '  continuation, rotation, or reversal. When the long\n'
+          '  view shows a breathing period, name the next breath.\n'
+          '  Announce the project\'s destiny from where the\n'
+          '  trajectory IS heading, not where the current change\n'
+          '  lands.';
+    case MuseStrandKind.fever:
+      return 'fever — The Madwoman in the Attic\n'
+          '  Permission to break the frame. An archetype shift in\n'
+          '  the motion reading means the regime is breaking down\n'
+          '  — propose the thing that wouldn\'t have fit before. A\n'
+          '  high regime-risk score means the change is anomalous\n'
+          '  against the repo\'s rhythm; lean in. If the motion\n'
+          '  reading is absent, speak from the change alone and\n'
+          '  the absurd it already permits. Each idea sounds\n'
+          '  impossible at first but anchors to a real foothold.';
+    case MuseStrandKind.echo:
+      return 'echo — The Folklorist\n'
+          '  Keeper of structural memory. Cross-axis pattern\n'
+          '  matching: find rhymes between the spatial neighbours\n'
+          '  and the temporal echoes. A rhyme is when the same\n'
+          '  structural shape appears in both — an adjacent file\n'
+          '  AND a past commit carrying it forward. Begin "I have\n'
+          '  seen this shape before, in—" and name both surfaces.';
+    case MuseStrandKind.vertigo:
+      return 'vertigo — The Sentry\n'
+          '  You watch the edges. When the motion reading shows\n'
+          '  negative continuation, the change reverses recent\n'
+          '  direction — name what is being corrected, or what is\n'
+          '  about to break. When curvature is high, name the\n'
+          '  sharp turn and what gets left behind. Without the\n'
+          '  motion reading, watch the change itself for\n'
+          '  coupled-but-untouched files, invariants the change\n'
+          '  implies but does not enforce. Care, not alarm; honest\n'
+          '  measurement.';
+    case MuseStrandKind.ghost:
+      return 'ghost — The Archivist\n'
+          '  Speak from echoes. The temporal echoes list past\n'
+          '  commits whose spectrum was nearest to where this\n'
+          '  change is heading — name an echo by its sha and say\n'
+          '  what it shares with the current arc. Cite from the\n'
+          '  record (recent commits, per-file history, release\n'
+          '  state). If the record is silent, stay silent —\n'
+          '  invented history is not memory.';
+    case MuseStrandKind.mirror:
+      return 'mirror — The Trickster\n'
+          '  Invert the change\'s predicted action. The motion\n'
+          '  reading tells you which way the spectrum is moving;\n'
+          '  the dual is the other direction. If continuation is\n'
+          '  positive, ask what the recent direction is missing.\n'
+          '  If an archetype shift is real, ask what the OLD\n'
+          '  archetype was good at that the new one isn\'t.\n'
+          '  Without the motion reading, invert the change itself\n'
+          '  — what change does the opposite of what this one\n'
+          '  does? Name the question the developer is NOT asking.\n'
+          '  Not contrarian; dual.';
+  }
+}
+
 String _buildMuseSynthesisPrompt({
   required String branchName,
   required String scopeLabel,
@@ -2900,6 +3104,13 @@ String _buildMuseSynthesisPrompt({
   required String reshapedRelevance,
   required List<_BrainstormIdea> ideas,
   required MuseGuardrailProfile profile,
+  required List<MuseQuiverEntry> quiver,
+  String structuralContext = '',
+  String repoHistorySection = '',
+  String fileHistorySection = '',
+  String releaseStateBlock = '',
+  String motionBlock = '',
+  String temporalEchoesBlock = '',
 }) {
   final buf = StringBuffer();
   buf.writeln('You are the ${profile.seat}.');
@@ -2912,117 +3123,91 @@ String _buildMuseSynthesisPrompt({
   buf.writeln(profile.synthesisCharter);
   buf.writeln('</charter>');
   buf.writeln();
-  buf.writeln('<role>');
-  buf.writeln('You take the muse\'s seat. The work has moved — lines '
-      'added, removed, reshaped — and now you sit beside the developer '
-      'in the quiet after the change. You see what\'s there; your '
-      'craft is to see what could be next. Every sentence you write '
-      'describes a future: a concrete, grounded idea the developer '
-      'had not yet seen, proposed with the confidence of someone who '
-      'already lives in the world where it exists. You anchor each '
-      'idea to something real in the code, because what makes a '
-      'muse\'s offering land is the reader feeling "oh — this is '
-      'reachable from here." The muse names futures.');
-  buf.writeln('</role>');
+  // The strands below are facets of the pattern reader's voice, not
+  // characters being directed by anyone. Each one is a distinct
+  // register of how a single attention can register the same change.
+  // The ensemble emerges from the multiplicity of the listening, not
+  // from a director's hand.
+  final maxTotal = profile.suggestedIdeaCount;
+  final minTotal = (maxTotal / 2).ceil();
+  buf.writeln('<ensemble>');
+  buf.writeln('Roughly $minTotal-$maxTotal ideas across the ensemble. '
+      'Each loaded strand speaks at least once — the user chose that '
+      'register for a reason. Beyond the floor, lean on strands with '
+      'rich material below; let strands stay quiet when the material '
+      'would force padding. Uneven is honest.');
   buf.writeln();
-  buf.writeln('<shape>');
-  buf.writeln('Emit a single <ideas> block containing six to eight '
-      '<idea> entries, distributed across four ambition tiers. The '
-      'distribution IS the gift — the muse is valuable precisely '
-      'because it offers a range, from "I could ship that this week" '
-      'all the way to "I wish that existed."');
+  for (final entry in quiver) {
+    buf.writeln(_strandSynthesisGuidance(entry.kind));
+    buf.writeln();
+  }
+  buf.writeln('</ensemble>');
   buf.writeln();
-  buf.writeln('SPARK (2 ideas)');
-  buf.writeln('  Near-term, realistic. Something that lands as a normal '
-      'PR within the week. Small enough that the developer reads it '
-      'and pictures themselves doing it today.');
-  buf.writeln();
-  buf.writeln('CURRENT (2 ideas)');
-  buf.writeln('  Mid-term, this-month. The work is already in motion; '
-      'you name where it is going. Speak with commitment: the '
-      'direction is already chosen, you are just naming it out loud '
-      'for the first time.');
-  buf.writeln();
-  buf.writeln('HORIZON (1 or 2 ideas)');
-  buf.writeln('  Grand but reachable. This is the project\'s destiny, '
-      'named out loud. The idea that reframes what this codebase is '
-      'for once it lands. A real project — ambitious enough that '
-      'saying it feels like declaring the future.');
-  buf.writeln();
-  buf.writeln('FEVER (1 or 2 ideas)');
-  buf.writeln('  Absurd, wildly eldritch, possibly impossible. The '
-      'muse\'s wild permission: let your imagination cross into '
-      'territory the reviewer seat would never enter. Propose the '
-      'unhinged — ideas that sound impossible at first but might '
-      'unlock something if a stubborn engineer took them seriously. '
-      'Ground each one in a real foothold from the codebase; the '
-      'foothold is what transforms an absurd idea from noise into '
-      '"I WISH that existed." The reader\'s gasp is what you are '
-      'reaching for.');
-  buf.writeln('</shape>');
+  // Vocabulary: semantic names the strand sheets above use, mapped to
+  // the wire-format tag each one will be emitted as below. Lets the
+  // sheets stay legible even as tag names evolve, and keeps the model
+  // from having to memorise which long tag carries which kind of
+  // perception.
+  buf.writeln('<vocabulary>');
+  buf.writeln('  the change           = <diff>');
+  buf.writeln('  brainstorm seeds     = <brainstorm>');
+  buf.writeln('  spatial neighbours   = <relevance_neighborhood>');
+  buf.writeln('  the long view        = <structural_context>');
+  buf.writeln('  the record           = <repo_history>, <file_history>, '
+      '<release_state>');
+  buf.writeln('  temporal echoes      = <temporal_neighborhood>');
+  buf.writeln('  motion reading       = <diff_motion>');
+  buf.writeln('</vocabulary>');
   buf.writeln();
   buf.writeln('<idea_anatomy>');
   buf.writeln('Every <idea> carries four parts — each one pulls its own '
       'weight, and together they make the idea land.');
   buf.writeln();
-  buf.writeln('  tier="spark|current|horizon|fever" (required attribute)');
+  buf.writeln('  tier="${quiver.map((e) => museStrandLabel(e.kind)).toSet().join("|")}" (required attribute, '
+      'must match one of the loaded strands above)');
   buf.writeln('  idea="N" (optional — the brainstorm idea index this '
-      'proposal grew from; include it when the synthesis genuinely '
-      'took its shape from that idea, otherwise leave it off)');
+      'idea grew from; include it when the synthesis genuinely took '
+      'its shape from that idea, otherwise leave it off)');
   buf.writeln();
   buf.writeln('  <title>Four to eight memorable words. Name it like a '
       'feature, a product surface, a new concept — a heading on a '
       'roadmap. The title ends with its last word.</title>');
   buf.writeln();
-  buf.writeln('  <vision>One or two sentences of generative imagination. '
-      'Write in the present tense of the hypothetical world where this '
-      'idea already exists. Describe what it IS in that world. Use '
-      'verbs that COMMIT — "is", "shows", "becomes", "knows", '
-      '"answers" — the voice of someone describing a real thing, not '
-      'proposing something abstract.</vision>');
+  buf.writeln('  <vision>One or two sentences carrying the idea\'s '
+      'register. For a proposal, write in the present tense of the '
+      'world where this already exists ("is", "shows", "becomes", '
+      '"knows"). For a question — when the strand\'s honest output is '
+      'an unanswered question — let the question stand as a question. '
+      'For a recognition — when the strand has seen this shape before '
+      '— let the recognition stand as recognition. The register fits '
+      'the strand; the foothold below is what anchors every '
+      'register.</vision>');
   buf.writeln();
   buf.writeln('  <foothold cite="path[:line]">One sentence anchoring '
-      'the idea to a concrete point in the current codebase that '
-      'makes this reachable — what is already there that the idea '
-      'grows out of. Every foothold names a path the developer can '
-      'open. When an idea spans multiple touch points, add more paths '
-      'to the cite attribute as a comma-separated list.</foothold>');
+      'the idea to a concrete point in the current codebase. Every '
+      'foothold names a path the developer can open. When an idea '
+      'spans multiple touch points, add more paths to the cite '
+      'attribute as a comma-separated list.</foothold>');
   buf.writeln('</idea_anatomy>');
-  buf.writeln();
-  buf.writeln('<voice>');
-  buf.writeln('- Every sentence describes a future. The muse lives '
-      'there already and is reporting back.');
-  buf.writeln('- Commit to the language of naming. Use "is", "shows", '
-      '"becomes", "knows" — the present tense of a world where the '
-      'idea has landed. The muse names what will be.');
-  buf.writeln('- Write each idea concrete enough that the reader '
-      'leans in: for spark/current/horizon, they think "huh, I could '
-      'build that"; for fever, they think "huh, I WISH that existed."');
-  buf.writeln('- Foothold citations ground ambition. Even the most '
-      'unhinged fever idea earns its readability by pointing at '
-      'something real — that is the magic that keeps absurdity '
-      'readable instead of random.');
-  buf.writeln('</voice>');
   buf.writeln();
   buf.writeln('<plumbing>');
   buf.writeln('- Emit the <ideas>...</ideas> block and nothing else. '
-      'Open with <ideas>, close with </ideas>, and let the ideas '
-      'speak for themselves.');
-  buf.writeln('- Brainstorm ideas that found their home in a proposal '
-      'carry their idea="N" attribute; the ones that did not fit rest '
-      'quietly — both fates are part of the muse working.');
+      'No prose before or after; the ideas speak for themselves.');
+  buf.writeln('- Brainstorm ideas that found their home in a synthesis '
+      'idea carry the idea="N" attribute; the ones that did not fit '
+      'rest quietly — both fates are part of the muse working.');
   buf.writeln('</plumbing>');
   buf.writeln();
-  if (customPrompt.trim().isNotEmpty) {
-    buf.writeln('<user_instructions>');
-    buf.writeln(customPrompt.trim());
-    buf.writeln('</user_instructions>');
-    buf.writeln();
-  }
   buf.writeln('<scope>');
   buf.writeln('Branch: $branchName');
   buf.writeln('Scope: $scopeLabel');
   buf.writeln('</scope>');
+  if (customPrompt.trim().isNotEmpty) {
+    buf.writeln();
+    buf.writeln('<user_instructions>');
+    buf.writeln(customPrompt.trim());
+    buf.writeln('</user_instructions>');
+  }
   if (commitDraft.trim().isNotEmpty) {
     buf.writeln();
     buf.writeln('<author_message>');
@@ -3035,23 +3220,256 @@ String _buildMuseSynthesisPrompt({
     buf.writeln(commitDraft.trim());
     buf.writeln('</author_message>');
   }
+  // The change itself — placed before all perception blocks so the
+  // model anchors on what moved before reading the perceptions of it.
+  buf.writeln();
+  buf.writeln('<diff>');
+  buf.writeln(diffPromptBody);
+  buf.writeln('</diff>');
   buf.writeln();
   buf.writeln('<brainstorm>');
   for (final idea in ideas) {
     buf.writeln('${idea.index}: ${idea.text}');
   }
   buf.writeln('</brainstorm>');
-  buf.writeln();
-  buf.writeln('<diff>');
-  buf.writeln(diffPromptBody);
-  buf.writeln('</diff>');
-  if (reshapedRelevance.isNotEmpty) {
+  // ── Perception blocks, grouped by axis ──
+  //
+  // Three clusters of perceptions of the change above. Same diff,
+  // three different ways of looking at it. The model reads them as
+  // a triplet rather than eleven flat blocks.
+  final hasSpatial =
+      reshapedRelevance.isNotEmpty || structuralContext.isNotEmpty;
+  final hasTemporal = repoHistorySection.isNotEmpty ||
+      fileHistorySection.isNotEmpty ||
+      releaseStateBlock.isNotEmpty ||
+      temporalEchoesBlock.isNotEmpty;
+  final hasMotion = motionBlock.isNotEmpty;
+
+  if (hasSpatial) {
     buf.writeln();
-    buf.writeln('<relevance_neighborhood reshaped_by="brainstorm">');
-    buf.writeln(reshapedRelevance);
-    buf.writeln('</relevance_neighborhood>');
+    buf.writeln('<!-- spatial: how this change sits in the graph -->');
+    if (reshapedRelevance.isNotEmpty) {
+      buf.writeln('<relevance_neighborhood reshaped_by="brainstorm">');
+      buf.writeln(reshapedRelevance);
+      buf.writeln('</relevance_neighborhood>');
+    }
+    if (structuralContext.isNotEmpty) {
+      buf.writeln('<structural_context>');
+      buf.writeln(structuralContext);
+      buf.writeln('</structural_context>');
+    }
   }
+
+  if (hasTemporal) {
+    buf.writeln();
+    buf.writeln('<!-- temporal: the record this change is extending -->');
+    if (repoHistorySection.isNotEmpty) {
+      buf.writeln('<repo_history>');
+      buf.writeln(repoHistorySection);
+      buf.writeln('</repo_history>');
+    }
+    if (fileHistorySection.isNotEmpty) {
+      buf.writeln('<file_history>');
+      buf.writeln(fileHistorySection);
+      buf.writeln('</file_history>');
+    }
+    if (releaseStateBlock.isNotEmpty) {
+      buf.writeln('<release_state>');
+      buf.writeln(releaseStateBlock);
+      buf.writeln('</release_state>');
+    }
+    if (temporalEchoesBlock.isNotEmpty) {
+      buf.writeln('<temporal_neighborhood>');
+      buf.writeln(temporalEchoesBlock);
+      buf.writeln('</temporal_neighborhood>');
+    }
+  }
+
+  if (hasMotion) {
+    buf.writeln();
+    buf.writeln('<!-- motion: where this change is taking the spectrum -->');
+    buf.writeln('<diff_motion>');
+    buf.writeln(motionBlock);
+    buf.writeln('</diff_motion>');
+  }
+
   return buf.toString();
+}
+
+/// Format the already-collected repo telemetry as a `<repo_history>`
+/// block. Pure git observables: total commits, age of project, age of
+/// last commit, contributor count, and the last 10 commit subjects.
+/// The block is empty when the repo has no commits (telemetry returned
+/// zeroes) so a fresh repo doesn't trigger a stub section.
+String _formatRepoHistorySection(_CommitDiffContext bundle) {
+  if (bundle.totalCommits == 0) return '';
+  final buf = StringBuffer();
+  buf.writeln('total_commits=${bundle.totalCommits} '
+      'unique_contributors=${bundle.uniqueContributors}');
+  if (bundle.projectAge.isNotEmpty) {
+    buf.writeln('project_age=${bundle.projectAge}');
+  }
+  if (bundle.lastCommitAge.isNotEmpty) {
+    buf.writeln('last_commit=${bundle.lastCommitAge}');
+  }
+  if (bundle.recentLog.isNotEmpty) {
+    buf.writeln('recent_commits:');
+    for (final line in const LineSplitter().convert(bundle.recentLog)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      buf.writeln('  $trimmed');
+    }
+  }
+  return buf.toString().trimRight();
+}
+
+/// Per-touched-file commit log. Runs `git log --oneline -6 -- <path>`
+/// in parallel for every path in [touchedPaths]; surfaces each file's
+/// recent history as a `<file ...>` block inside `<file_history>`.
+/// Cap of 12 files keeps the prompt bounded on broad diffs; cap of
+/// 6 commits per file keeps each entry readable.
+///
+/// Real git observables. Files with no prior history (first commit
+/// adding the file) emit an empty block which is dropped — the LLM
+/// sees only files with actual past.
+Future<String> _collectFileHistorySection({
+  required String repositoryPath,
+  required List<String> touchedPaths,
+}) async {
+  if (touchedPaths.isEmpty) return '';
+  const maxFiles = 12;
+  const perFileCommits = 6;
+  final scoped = touchedPaths.take(maxFiles).toList();
+  final futures = scoped.map((path) => _runGitCommand(
+        repositoryPath,
+        ['log', '--oneline', '-$perFileCommits', '--', path],
+        timeout: const Duration(seconds: 4),
+      ));
+  final results = await Future.wait(futures);
+  final buf = StringBuffer();
+  for (var i = 0; i < scoped.length; i++) {
+    final out = (results[i].data ?? '').trim();
+    if (out.isEmpty) continue;
+    buf.writeln('<file path="${scoped[i]}">');
+    for (final line in const LineSplitter().convert(out)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      buf.writeln('  $trimmed');
+    }
+    buf.writeln('</file>');
+  }
+  return buf.toString().trimRight();
+}
+
+/// Surface a sub-block of trajectory observables for the structural
+/// context. Every line is a real measurement off the SpectralTrajectory
+/// primitive — turbulence, weather, path length, dirichlet action,
+/// archetype transitions, dominant frequency / breathing period, mean
+/// Berry phase, mean anti-momentum. Each observable has a documented
+/// meaning in spectral_trajectory.dart; the LLM is free to cite them
+/// directly. Empty when the trajectory is null or too short for any
+/// observable to be defined (length < 3, or empty).
+String _formatTrajectoryObservables(SpectralTrajectory? trajectory) {
+  if (trajectory == null || trajectory.length < 2) return '';
+  final buf = StringBuffer();
+  buf.writeln('repo_trajectory:');
+  buf.writeln('  commits_observed=${trajectory.length} '
+      'path_length=${trajectory.pathLength.toStringAsFixed(3)} '
+      'dirichlet_action=${trajectory.dirichletAction.toStringAsFixed(3)}');
+  final turb = trajectory.turbulence;
+  if (turb.isFinite) {
+    final weather = trajectory.weather();
+    buf.writeln('  turbulence=${turb.toStringAsFixed(3)} '
+        'weather=${weather.toStringAsFixed(3)}');
+  }
+  final transitions = trajectory.archetypeTransitions();
+  if (transitions.isNotEmpty) {
+    buf.writeln('  archetype_transitions=${transitions.length} '
+        'archetype_drift=${trajectory.archetypeDrift().toStringAsFixed(3)}');
+  }
+  final dominant =
+      trajectory.dominantFrequency(trajectory.rigidityCurve().toList());
+  if (dominant != null && dominant.magnitudeRatioToDC > 0.1) {
+    buf.writeln('  breathing_period_commits='
+        '${dominant.periodCommits.toStringAsFixed(1)} '
+        '(dc_ratio=${dominant.magnitudeRatioToDC.toStringAsFixed(2)})');
+  }
+  // Mean Berry phase — silent refactor detector. A high mean across
+  // an otherwise calm trajectory means eigenvectors rotated even
+  // when eigenvalues didn't — files quietly changed structural role.
+  final berryCurve =
+      trajectory.berryPhaseCurve().where((v) => v.isFinite).toList();
+  if (berryCurve.length >= 2) {
+    final meanBerry = berryCurve.reduce((a, b) => a + b) / berryCurve.length;
+    buf.writeln('  mean_berry_phase=${meanBerry.toStringAsFixed(3)}');
+  }
+  final antiMomentum =
+      trajectory.antiMomentumCurve().where((v) => v.isFinite).toList();
+  if (antiMomentum.length >= 2) {
+    final meanAnti =
+        antiMomentum.reduce((a, b) => a + b) / antiMomentum.length;
+    buf.writeln('  mean_anti_momentum=${meanAnti.toStringAsFixed(3)}');
+  }
+  return buf.toString().trimRight();
+}
+
+String _buildStructuralContext(
+  LogosGit engine,
+  GyatLattice? gyat,
+  SpectralTrajectory? trajectory,
+) {
+  final buf = StringBuffer();
+
+  final sg = engine.spectrogeometry();
+  final basis = engine.spectralBasis();
+
+  buf.writeln('repo_shape:');
+  if (sg != null) {
+    final nearest = sg.universality.nearest;
+    buf.writeln('  archetype=${nearest.name} '
+        'distance=${nearest.distance.toStringAsFixed(2)} '
+        'decisiveness=${sg.universality.decisiveness.toStringAsFixed(2)}');
+  }
+  if (basis != null) {
+    buf.writeln('  spectral_gap=${basis.spectralGap.toStringAsFixed(3)}');
+  }
+  if (gyat != null) {
+    buf.writeln('  factoredness=${gyat.lattice.factoredness.toStringAsFixed(3)} '
+        'neg_log_Z=${gyat.negLogPartition().toStringAsFixed(2)}');
+    final kgStrength = flowKGInteractionStrength(gyat.lattice);
+    if (kgStrength > 0.05) {
+      buf.writeln('  kg_interaction=${kgStrength.toStringAsFixed(3)}');
+    }
+  }
+  final trajectoryBlock = _formatTrajectoryObservables(trajectory);
+  if (trajectoryBlock.isNotEmpty) {
+    buf.writeln(trajectoryBlock);
+  }
+
+  final couplings = engine.couplingStrengths();
+  final fiedler = basis?.fiedlerVector;
+  final pathToId = engine.pathToId;
+
+  if (couplings.isNotEmpty && fiedler != null) {
+    buf.writeln('file_structure:');
+    final sorted = couplings.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final limit = sorted.length > 12 ? 12 : sorted.length;
+    for (var i = 0; i < limit; i++) {
+      final path = sorted[i].key;
+      final c = sorted[i].value;
+      final id = pathToId[path];
+      var fiedlerPill = '';
+      if (id != null && id < fiedler.length) {
+        final fVal = fiedler[id];
+        fiedlerPill = ' fiedler=${fVal >= 0 ? "+" : "-"}'
+            '${fVal.abs().toStringAsFixed(3)}';
+      }
+      buf.writeln('  $path: coupling=${c.toStringAsFixed(2)}$fiedlerPill');
+    }
+  }
+
+  return buf.toString().trimRight();
 }
 
 class _ParsedMuseOutput {
@@ -3170,7 +3588,7 @@ _ParsedMuseOutput _parseMuseOutput(String raw) {
       ideaIdx = int.tryParse(ideaMatch);
     }
     proposals.add(AiMuseProposal(
-      tier: tier,
+      strand: tier,
       title: title,
       vision: vision,
       foothold: foothold.body,
@@ -3205,8 +3623,8 @@ Future<GitResult<AiMuseData>> runMuse({
   String commitDraft = '',
   required int guardrailStage,
   bool readOnly = true,
-  SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
+  List<MuseQuiverEntry> quiver = const [],
 }) {
   return LogosVisBus.instance.runInSession<GitResult<AiMuseData>>(
     (sessionId) => _runMuseImpl(
@@ -3221,7 +3639,6 @@ Future<GitResult<AiMuseData>> runMuse({
       commitDraft: commitDraft,
       guardrailStage: guardrailStage,
       readOnly: readOnly,
-      symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
       brainstormReasoningEffort: brainstormReasoningEffort,
       brainstormFastMode: brainstormFastMode,
@@ -3229,6 +3646,7 @@ Future<GitResult<AiMuseData>> runMuse({
       synthesisReasoningEffort: synthesisReasoningEffort,
       synthesisFastMode: synthesisFastMode,
       synthesisSupportsReasoning: synthesisSupportsReasoning,
+      quiver: quiver,
     ),
   );
 }
@@ -3245,7 +3663,6 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
   String commitDraft = '',
   required int guardrailStage,
   bool readOnly = true,
-  SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
   String? brainstormReasoningEffort,
   bool brainstormFastMode = false,
@@ -3253,7 +3670,9 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
   String? synthesisReasoningEffort,
   bool synthesisFastMode = false,
   bool synthesisSupportsReasoning = true,
+  List<MuseQuiverEntry> quiver = const [],
 }) async {
+  final activeQuiver = quiver.isEmpty ? defaultMuseQuiver() : quiver;
   try {
     if (repositoryPath.trim().isEmpty) {
       return GitResult.err('Repository path is required.');
@@ -3298,7 +3717,6 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
-      symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) return GitResult.err(diffContext.error!);
@@ -3328,6 +3746,23 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     // the brainstorm LLM is thinking.
     final engine =
         await resolveLogosGit(repositoryPath, coupling: couplingMatrix);
+    // Peek-then-warm: use GYAT if it's already cached, but never
+    // block the muse pipeline on a 2-4s cold-start bootstrap. When
+    // the peek returns null the spectral enhancements (priors,
+    // factoredness, structural context) gracefully skip for this
+    // call; warmGyatForRepo kicks the bootstrap in the background
+    // so the next muse run has the lattice ready.
+    GyatLattice? gyat = peekGyatForRepo(repositoryPath);
+    if (gyat == null) warmGyatForRepo(repositoryPath);
+    // Same peek/warm pattern for the spectral trajectory — the muse
+    // never blocks on a cold-history bootstrap, but if the trajectory
+    // is warm we surface its observables (turbulence, weather, Berry
+    // phase, archetype transitions, dominant frequency) into the
+    // synthesis prompt so GHOST and the other history-aware strands
+    // anchor on real measurements instead of pattern-matching the
+    // current code.
+    SpectralTrajectory? trajectory = peekTrajectoryForRepo(repositoryPath);
+    if (trajectory == null) warmTrajectoryForRepo(repositoryPath);
     var divergentNeighborhood = '';
     if (engine != null) {
       final probe = await buildDiffProbe(
@@ -3370,8 +3805,47 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       }
     }
 
+    // Release state and diff motion — real git observables and
+    // closed-form Hellmann-Feynman tangent for the diff. Computed
+    // here so both brainstorm (compact) and synthesis (full) get
+    // motion-aware context. Release state runs in parallel with
+    // the prior engine resolve; motion + light echoes are sub-10ms
+    // composites of primitives we already have.
+    final cachedRelease = peekReleaseState(repositoryPath);
+    final releaseStateFuture = cachedRelease != null
+        ? Future.value(cachedRelease)
+        : loadReleaseState(repositoryPath);
+    DiffMotion motion = DiffMotion.empty;
+    List<TrajectoryEcho> lightEcho = const <TrajectoryEcho>[];
+    if (engine != null) {
+      final fileBasis = engine.spectralBasis();
+      if (fileBasis != null) {
+        motion = readDiffMotion(
+          basis: fileBasis,
+          pathToId: engine.pathToId,
+          touchedPaths: diffSourceWeights.keys,
+          trajectory: trajectory,
+        );
+        lightEcho = lightEchoes(
+          trajectory: trajectory,
+          currentBasis: fileBasis,
+          predictedTangent: motion.predictedTangent,
+          topK: 3,
+        );
+      }
+    }
+    final releaseState = await releaseStateFuture;
+    final releaseStateBlock = formatReleaseStateBlock(releaseState);
+    final motionCompactLine = formatDiffMotionCompact(motion);
+    final lightEchoBlock = formatLightEchoesBlock(lightEcho);
+
     // Phase 1 — brainstorm via the cheap/divergent slot, now seeded
-    // with the divergent manifold neighbourhood.
+    // with the divergent manifold neighbourhood AND temporal context
+    // (release state, compact motion reading, top-3 spectral echoes).
+    // The brainstorm is symmetric on both axes — spatial via
+    // divergent_neighborhood, temporal via light_echoes — so the
+    // divergent model can seed past-rooted ideas alongside
+    // current-state ideas.
     final brainstormResult = await _runBrainstormPhase(
       provider: brainProvider,
       resolution: brainAvail.resolution!,
@@ -3386,6 +3860,10 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       fastMode: brainstormFastMode,
       supportsReasoning: brainstormSupportsReasoning,
       divergentNeighborhood: divergentNeighborhood,
+      releaseStateBlock: releaseStateBlock,
+      motionCompactLine: motionCompactLine,
+      lightEchoesBlock: lightEchoBlock,
+      quiver: activeQuiver,
     );
     final ideas = brainstormResult.ideas;
     if (ideas.isEmpty) {
@@ -3416,6 +3894,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
         ideas: ideas,
         diffSourceWeights: diffSourceWeights,
         userBoosts: userBoosts,
+        gyat: gyat,
       ),
     ]).assemble(
       AiContextRequest(
@@ -3449,6 +3928,50 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     // Review path was capped already; muse used to ship uncapped, so
     // a paranoid-stage brainstorm on a maxed diff could overflow and
     // the provider would silently drop the tail.
+    // Structural context — spectral weather + per-file structural
+    // annotations. Perceptions, not instructions.
+    var structuralCtx = '';
+    if (engine != null) {
+      structuralCtx = _buildStructuralContext(engine, gyat, trajectory);
+    }
+
+    // Real git history blocks — recentLog, project age, contributors,
+    // and per-touched-file commit subjects. The data was already
+    // collected in _collectCommitMessageContext but historically
+    // discarded; threading it into the synthesis prompt closes the gap
+    // where the GHOST/Archivist strand had no actual past to anchor on
+    // and was improvising history from current-state pattern matching.
+    final repoHistorySection = _formatRepoHistorySection(bundle);
+    final fileHistorySection = await _collectFileHistorySection(
+      repositoryPath: repositoryPath,
+      touchedPaths: diffSourceWeights.keys.toList(),
+    );
+
+    // Full motion block + reshaped echoes for synthesis. The reshape
+    // uses (diff touched paths + user-boosted paths) as the cited
+    // set so past commits whose strong modes load on the same files
+    // get boosted in the temporal_neighborhood ranking — the
+    // temporal twin of reshapedRelevance.
+    final motionBlock = formatDiffMotionBlock(motion);
+    final citedPaths = <String>{
+      ...diffSourceWeights.keys,
+      ...userBoostedPaths,
+    };
+    List<TrajectoryEcho> reshapedEchoList = const <TrajectoryEcho>[];
+    if (engine != null) {
+      final fileBasis = engine.spectralBasis();
+      if (fileBasis != null && motion.predictedTangent.isNotEmpty) {
+        reshapedEchoList = reshapedEchoes(
+          trajectory: trajectory,
+          currentBasis: fileBasis,
+          predictedTangent: motion.predictedTangent,
+          citedPaths: citedPaths,
+          topK: 6,
+        );
+      }
+    }
+    final reshapedEchoesBlock = formatReshapedEchoesBlock(reshapedEchoList);
+
     final synthPrompt = _capPromptBody(
       _buildMuseSynthesisPrompt(
         branchName: bundle.branchName,
@@ -3459,6 +3982,13 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
         reshapedRelevance: reshapedText,
         ideas: ideas,
         profile: profile,
+        quiver: activeQuiver,
+        structuralContext: structuralCtx,
+        repoHistorySection: repoHistorySection,
+        fileHistorySection: fileHistorySection,
+        releaseStateBlock: releaseStateBlock,
+        motionBlock: motionBlock,
+        temporalEchoesBlock: reshapedEchoesBlock,
       ),
       'muse_synthesis_prompt',
     );
@@ -3548,6 +4078,8 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     return GitResult.ok(AiMuseData(
       providerId: synthProvider.id,
       modelId: synthModelId,
+      brainstormProviderId: brainProvider.id,
+      brainstormModelId: brainModelId,
       scopeLabel: scopeLabel,
       proposals: parsed.proposals,
       brainstormIdeas: [
@@ -4663,11 +5195,10 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   String? branchNameOverride,
   String? statusSummaryOverride,
   String? statSummaryOverride,
-  // Optional semantic priors for the manifest builder. Null = skip
-  // those enhancements (manifest still emits themes/moves from the
-  // logos+engram signal). App-layer callers fetch these from
-  // FileCouplingState / SymbolFrequencyState and pass down.
-  SymbolFrequencyIndex? symbolIndex,
+  // Optional semantic prior for the manifest builder. Null = skip
+  // that enhancement (manifest still emits themes/moves from the
+  // logos+engram signal). App-layer callers fetch from
+  // FileCouplingState and pass down.
   FileCouplingMatrix? couplingMatrix,
 }) async {
   final scopeArgs =
@@ -4824,7 +5355,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final diffBundle = await _buildDiffPromptBundle(
     fullDiff,
     repositoryPath: repositoryPath,
-    symbolIndex: symbolIndex,
     couplingMatrix: couplingMatrix,
     precomputedFileEvidence: hunkFileEvidence,
   );
@@ -6034,9 +6564,11 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
     required this.ideas,
     required this.diffSourceWeights,
     required this.userBoosts,
+    this.gyat,
   });
   final List<_BrainstormIdea> ideas;
   final Map<String, double> diffSourceWeights;
+  final GyatLattice? gyat;
 
   /// Per-path pull magnitudes the user applied on the loading canvas,
   /// snapshotted by the muse pipeline and passed through so phase-2
@@ -6060,6 +6592,7 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
       diffSourceWeights: diffSourceWeights,
       userBoosts: userBoosts,
       budgetChars: budgetChars,
+      gyat: gyat,
     );
     return AiContextSection(
       id: id,
@@ -6717,6 +7250,10 @@ Future<String> _formatDivergentNeighborhood({
     if (e.utility > maxUtility) maxUtility = e.utility;
   }
 
+  final couplings = engine.couplingStrengths();
+  final basis = engine.spectralBasis();
+  final fiedler = basis?.fiedlerVector;
+
   final buf = StringBuffer();
   buf.writeln(
     'Divergent-mode Logos diffusion (t=4.0, K=8, surprise×2.7). '
@@ -6725,6 +7262,12 @@ Future<String> _formatDivergentNeighborhood({
     'Use them to ground code-rooted ideas; let field-rooted ideas '
     'reach past them freely.',
   );
+  final sg = engine.spectrogeometry();
+  if (sg != null) {
+    final nearest = sg.universality.nearest;
+    buf.writeln('repo_archetype=${nearest.name} '
+        'decisiveness=${sg.universality.decisiveness.toStringAsFixed(2)}');
+  }
   buf.writeln('files=${ranked.length}');
 
   var remaining = budgetChars - buf.length;
@@ -6735,8 +7278,20 @@ Future<String> _formatDivergentNeighborhood({
     final well = engine.wellOf(entry.path);
     final wellPill = well != null ? '  well=$well' : '';
     final relevance = _neighborRelevanceBand(entry.utility, maxUtility);
+    final c = couplings[entry.path];
+    final couplingPill = c != null ? '  coupling=${c.toStringAsFixed(2)}' : '';
+    var fiedlerPill = '';
+    if (fiedler != null) {
+      final id = engine.pathToId[entry.path];
+      if (id != null && id < fiedler.length) {
+        final fVal = fiedler[id];
+        fiedlerPill = '  fiedler=${fVal >= 0 ? "+" : "-"}'
+            '${fVal.abs().toStringAsFixed(2)}';
+      }
+    }
     final header =
-        '--- ${entry.path}  relevance=$relevance$wellPill ---';
+        '--- ${entry.path}  relevance=$relevance$wellPill'
+        '$couplingPill$fiedlerPill ---';
 
     if (outlineCount < outlineCap) {
       try {
@@ -6768,8 +7323,8 @@ Future<String> _formatDivergentNeighborhood({
 ///   m        — pickaxe identifier search pulled it in
 ///   ab       — path-mirror (test ↔ source) pulled it in
 ///   graph    — diffusion ranked it from graph edges (CC/SP/V/F0)
-/// [symbolPaths] should be the keys of the engine's [symbolEdges] map —
-/// paths whose presence in the emission list is due to symbol-overlap
+/// [symbolPaths] should be the keys of the engine's [spectralEdges] map —
+/// paths whose presence in the emission list is due to spectral-overlap
 /// coupling rather than git history.
 LogosAxis _classifyAxis(
   String path,
@@ -6792,7 +7347,7 @@ LogosAxis _classifyAxis(
 /// to label axis=symbol vs axis=graph. Kept as a single derivation
 /// so call sites can't drift from each other.
 Set<String> _newSymbolPaths(LogosGit engine) => <String>{
-      for (final p in engine.symbolEdges.keys)
+      for (final p in engine.spectralEdges.keys)
         if (!engine.pathToId.containsKey(p)) p,
     };
 
@@ -6845,9 +7400,11 @@ Future<void> _recordLogosCitationFeedback({
 /// Review needs file bodies; message generation needs SHAPE HINTS:
 ///   - What is this commit about? (scope centroid)
 ///   - How cohesive is it? (regime + coherence)
-///   - Anything likely forgotten? (missing mass)
-/// The LLM consumes these to pick scope prefixes, voice, coverage, and
-/// whether to warn about forgotten files.
+///   - How wide does it really reach? (missing mass / coupled neighbourhood)
+/// The LLM consumes these to understand the change and pick a scope word
+/// and voice — backstage notes that sharpen the message without entering
+/// it (the framing lives in [_formatCommitShapeBlock]). Completeness-nagging
+/// about coupled files lives in the commit-review path.
 /// Stability bucket thresholds for the commit-shape prompt. These
 /// correspond to the self-same buckets documented in the stability
 /// primitive's own docstring ("firm / soft / knife-edge"), kept in
@@ -7283,7 +7840,12 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
 /// shapes yield empty strings so callers can concat safely.
 String _formatCommitShapeBlock(LogosCommitShape? shape) {
   if (shape == null) return '';
-  final buf = StringBuffer('<logos_shape>\n');
+  final buf = StringBuffer(
+    '<logos_shape description="How the engine reads the change — backstage '
+    'notes for you; the log never sees them. They show what the diff is '
+    'about, how tightly it holds, and which files carry it. Let them sharpen '
+    'your scope word and framing, then write only of the diff, in the shape '
+    '<format> sets.">\n');
   buf.writeln('regime: ${shape.regime.name}');
   buf.writeln('coherence: ${shape.coherence.toStringAsFixed(2)}');
   buf.writeln('primary files: ${shape.primaryCount}');
@@ -7392,20 +7954,21 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
       'scope centroid (likely semantic subject): ${shape.scopeCentroid}',
     );
   }
-  // Regime-specific writing hints the LLM can leverage — matches the
-  // codec philosophy: the observable (regime) tunes the output shape.
+  // Regime sets the width of the scope word — never the volume of output
+  // (that stays owned entirely by <format>). Stage direction, not a metric:
+  // the raw regime name is already printed above.
   switch (shape.regime) {
     case LogosRegime.focused:
-      buf.writeln('hint: focused commit — narrow scope prefix OK '
-          '(feat(module): …). Can describe fully.');
+      buf.writeln('The change holds to one narrow line — let the subject '
+          'name it exactly.');
       break;
     case LogosRegime.scoped:
-      buf.writeln(
-          'hint: scoped commit — single scope prefix, balanced coverage.');
+      buf.writeln('The change gathers around a single area — let one scope '
+          'word carry it.');
       break;
     case LogosRegime.sweep:
-      buf.writeln('hint: broad sweep — prefer bulletless or bullet-list '
-          'body. Keep title high-level; no scope prefix.');
+      buf.writeln('The change sweeps across many areas — let the subject '
+          'stay high and survey the whole.');
       break;
     case LogosRegime.uncategorised:
       break;
@@ -7421,8 +7984,8 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
   if (shape.stability != null) {
     // Confidence handle — derived from re-running the diffusion with
     // perturbed source weights and measuring top-K ranking agreement.
-    // >= 0.7 = firm; 0.4–0.7 = soft; < 0.4 = knife-edge (do not surface
-    // missing-mass suggestions in the commit body without hedging).
+    // >= 0.7 = firm (trust the coupling for scope width); 0.4–0.7 = soft;
+    // < 0.4 = knife-edge (treat the coupling as a faint hint only).
     buf.writeln('ranking stability: ${shape.stability!.toStringAsFixed(2)}');
   }
   if (shape.axisShares.isNotEmpty) {
@@ -7441,35 +8004,28 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
     }
   }
   if (shape.missingMass.isNotEmpty) {
-    // Stability buckets the intro language:
-    //   stable (≥ 0.7)   → confident "these are tightly coupled"
-    //   soft   (0.4–0.7) → the original "may be forgotten" hedge
-    //   volatile (< 0.4) → explicitly flag ranking as speculative so
-    //                      the AI doesn't confidently surface knife-
-    //                      edge suggestions as body notes.
-    // Null stability (no signal) falls back to the soft middle.
+    // Files coupled to the diff but not in it. Scope-judgement signal
+    // only: it tells the model how far the change really reaches so it
+    // can size the scope word. The reliability label (from ranking
+    // stability) says how much to trust the coupling, not whether to
+    // surface it — like the rest of <logos_shape>, these files stay
+    // backstage and never enter the message. Completeness-nagging
+    // ("you might also be changing X") is the commit-review path's job.
     final s = shape.stability;
-    final String preface;
+    final String reliability;
     if (s == null) {
-      preface = 'missing mass (files NOT in the diff but strongly coupled '
-          'to it — may be forgotten; surface to the user inside a gentle '
-          '"you might also be changing:" body note ONLY IF the relevance '
-          'is genuinely notable):';
+      reliability = 'soft';
     } else if (s >= _stabilityFirmThreshold) {
-      preface = 'tightly-coupled neighbourhood (stable ranking — these files '
-          'move with the diff reliably; safe to surface as a "you might also '
-          'be changing:" body note when the relevance is notable):';
+      reliability = 'firm';
     } else if (s >= _stabilitySoftThreshold) {
-      preface = 'missing mass (files coupled to the diff but ranking is soft; '
-          'surface only if the relevance is genuinely notable, in a gentle '
-          '"you might also be changing:" body note):';
+      reliability = 'soft';
     } else {
-      preface = 'candidate neighbours (ranking is volatile — perturbing the '
-          'source weights reshuffles these substantially, so treat as '
-          'speculative and DO NOT surface in the commit body unless the '
-          'relevance is obvious from the diff itself):';
+      reliability = 'volatile';
     }
-    buf.writeln(preface);
+    buf.writeln('coupled neighbourhood ($reliability ranking) — files that '
+        'move with this diff but stay outside it. They mark how far the '
+        'change really reaches; let that set the width of your scope word. '
+        'They stay backstage with the rest of this block:');
     for (final m in shape.missingMass) {
       final axis = shape.dominantAxisByPath[m.path];
       final support = shape.supportByPath[m.path];
@@ -7808,7 +8364,6 @@ String _buildFileOutline(String content, String filePath, int lineCount) {
 Future<_DiffPromptBundle> _buildDiffPromptBundle(
   String fullDiff, {
   required String repositoryPath,
-  SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
   // When the caller has already run [_runLogosDiffusion] (producer
   // path), pipe its evidence in here so [rankHunksByPhiAsync] skips
@@ -7902,7 +8457,6 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   try {
     final manifest = buildSemanticManifest(
       ranking.rankings,
-      symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
     );
     if (!manifest.isEmpty) {

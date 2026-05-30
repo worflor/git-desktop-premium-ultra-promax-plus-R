@@ -312,14 +312,14 @@ class LogosGitProbeBuilder {
     );
 
     // Symbol-axis diagnostic: count primary paths that are NOT graph
-    // nodes but have symbol-edge neighbours — these are the files where
-    // the symbol axis carries real information (new/untracked files with
-    // identifier overlap against the change set). Feeds SSE regime
+    // nodes but have spectral-edge neighbours — these are the files where
+    // the spectral axis carries real information (new/untracked files with
+    // spectral overlap against the change set). Feeds SSE regime
     // classification and the probe's toString() for observability.
     var symbolMatches = 0;
     for (final path in primaryPaths) {
       if (engine.pathToId.containsKey(path)) continue;
-      if (engine.symbolEdges[path]?.isNotEmpty ?? false) symbolMatches++;
+      if (engine.spectralEdges[path]?.isNotEmpty ?? false) symbolMatches++;
     }
 
     // Count +/- lines for dream's structural verb selection.
@@ -710,7 +710,7 @@ Future<DiffProbe> buildDiffProbe({
   required LogosGit engine,
 }) {
   final key =
-      '$repoPath|${diffText.hashCode}|${engine.stats.totalCommits}|${engine.nodePaths.length}|${engine.symbolEdges.length}';
+      '$repoPath|${diffText.hashCode}|${engine.stats.totalCommits}|${engine.nodePaths.length}|${engine.spectralEdges.length}';
   final inflight = _inflightProbeBuilds[key];
   if (inflight != null) return inflight;
   final future = LogosGitProbeBuilder(
@@ -747,7 +747,7 @@ List<RelevanceScore> diffuseFromProbe({
   // two agree.
   final t = _snapToNaturalScale(engine, heuristicT);
   final symbolPaths = <String>{
-    for (final p in engine.symbolEdges.keys)
+    for (final p in engine.spectralEdges.keys)
       if (!engine.pathToId.containsKey(p)) p,
   };
   final axisLabels = <String, String>{

@@ -1442,7 +1442,7 @@ void main() {
         ),
         perFileCommitIndices: const {},
       );
-      final engine = LogosGit.buildFromStats(stats).withSymbolEdges(const {
+      final engine = LogosGit.buildFromStats(stats).withSpectralEdges(const {
         'lib/generated/foo.extra.dart': {
           'lib/generated/foo.g.dart': 1.0,
         },

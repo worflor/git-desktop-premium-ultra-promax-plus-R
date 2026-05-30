@@ -43,39 +43,23 @@ const int kWitnessBits = 256;
 /// same pinned-seed convention `LogosGit` uses for stability trials.
 const int _kScrambleSeed = 0xABDE;
 
-/// The 25 canonical Kizuna masks over 16-bit indices.
-///   L0..L7 : single-bit masks 1<<i for i in [0,8)   — lower byte
-///   U0..U7 : single-bit masks 1<<(i+8) for i in [0,8) — upper byte
-///   X0..X7 : cross-byte pairs (1<<i) | (1<<(i+8))   — diagonal coupling
-///   FFFF   : global mask 0xFFFF                      — total parity
-/// Order is canonical and matches the sigil grid (5×5 reading row-major).
-final Uint16List _kKizunaMasks = (() {
-  final m = Uint16List(kFingerprintDim);
-  var k = 0;
-  for (var i = 0; i < 8; i++) {
-    m[k++] = 1 << i;
-  }
-  for (var i = 0; i < 8; i++) {
-    m[k++] = 1 << (i + 8);
-  }
-  for (var i = 0; i < 8; i++) {
-    m[k++] = (1 << i) | (1 << (i + 8));
-  }
-  m[k] = 0xFFFF;
-  return m;
-})();
-
-/// Precomputed 16-bit popcount LUT — 64 KB of bytes, built once. The
-/// fingerprint inner loop hits this instead of a SWAR popcount per call;
-/// for sparse commits with hundreds of thousands of (file, mask) probes
-/// the LUT path measurably wins on warm cache.
-final Uint8List _kPopcount16 = (() {
-  final t = Uint8List(0x10000);
-  for (var i = 1; i < 0x10000; i++) {
-    t[i] = t[i >> 1] + (i & 1);
-  }
-  return t;
-})();
+/// The 25 canonical Kizuna masks over 16-bit indices, in the fixed order the
+/// fingerprint and the 5×5 sigil grid both read (row-major):
+///   fp[0..7]   L0..L7 : single-bit masks 1<<i         — lower byte
+///   fp[8..15]  U0..U7 : single-bit masks 1<<(i+8)     — upper byte
+///   fp[16..23] X0..X7 : cross pairs (1<<i)|(1<<(i+8)) — diagonal coupling
+///   fp[24]     FFFF   : global mask 0xFFFF            — total parity
+///
+/// alpha-math proof: these masks are NOT stored. They live in the character
+/// group of (Z/2)^16 under XOR, where χ_S·χ_T = χ_{S⊕T}, so the 8 cross masks
+/// are X_i = L_i ⊕ U_i and the global mask is the XOR of all 16 single bits —
+/// only 16 of the 25 are independent. Every mask's Walsh sign is therefore an
+/// XOR of single-bit signs, and a single-bit sign 1<<b is just bit b of the
+/// bucket. So the whole 25-coefficient evaluation is bit reads + XOR: no mask
+/// table, no (m & mask), no popcount LUT. The alpha-math instrument reads the
+/// substrate commutative+associative and certifies the rewrite bit-identical
+/// across all 2^16 buckets (manifold-proofs.ts, THEORY 1–2); the structural
+/// path now lives in [computeCommitSignature].
 
 /// Scramble matrix for the bipolar witness projection — 256 rows of 25
 /// signed entries (±1, Achlioptas-style sketching). Lazy: built on the
@@ -132,19 +116,27 @@ CommitSignature computeCommitSignature(CommitDetailData detail) {
 
   final fp = Float32List(kFingerprintDim);
   if (buckets.isNotEmpty) {
-    // Hot loop: for each non-zero bucket, contribute ±weight to every
-    // mask coefficient based on the parity of (bucket & mask).
+    // Hot loop: contribute ±weight to each of the 25 Kizuna-mask Walsh
+    // coefficients per non-zero bucket. The sign is the mask's Walsh
+    // character χ_mask(m) = (-1)^popcount(m & mask) — but because the masks
+    // form an XOR character subgroup (see the doc on the mask family above),
+    // every sign reduces to bit reads + XOR of the bucket's bits. No mask
+    // table, no popcount LUT. Each fp[k] accumulates exactly one ±w per
+    // bucket, in the same bucket order as the old LUT path, so the float32
+    // result is bit-identical.
     for (final e in buckets.entries) {
       final m = e.key;
       final w = e.value;
-      for (var k = 0; k < kFingerprintDim; k++) {
-        final parity = _kPopcount16[m & _kKizunaMasks[k]] & 1;
-        if (parity == 1) {
-          fp[k] = fp[k] - w;
-        } else {
-          fp[k] = fp[k] + w;
-        }
+      var globalParity = 0;
+      for (var i = 0; i < 8; i++) {
+        final lo = (m >> i) & 1; // χ_{L_i}(m) — lower single bit
+        final up = (m >> (i + 8)) & 1; // χ_{U_i}(m) — upper single bit
+        globalParity ^= lo ^ up;
+        fp[i] += lo == 1 ? -w : w; // L_i
+        fp[8 + i] += up == 1 ? -w : w; // U_i
+        fp[16 + i] += (lo ^ up) == 1 ? -w : w; // X_i = L_i ⊕ U_i
       }
+      fp[24] += globalParity == 1 ? -w : w; // 0xFFFF = ⊕ all 16 single bits
     }
   }
 

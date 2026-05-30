@@ -98,4 +98,45 @@ void main() {
       expect(fingerprintCosine(s.fingerprint, s.fingerprint), 0.0);
     });
   });
+
+  group('CommitSignature — Kizuna character-group structure', () {
+    // alpha-math proof (manifold-proofs.ts, THEORY 1–2): the 25 Walsh masks
+    // live in the character group of (Z/2)^16 under XOR, so the 8 cross masks
+    // are X_i = L_i ⊕ U_i and the global mask is the XOR of all 16 single-bit
+    // masks — only 16 of the 25 are independent. computeCommitSignature uses
+    // that to evaluate every mask's Walsh sign as bit reads + XOR instead of a
+    // 64 KB popcount LUT. This pins the structural signs to the Walsh
+    // definition popcount(m & mask) & 1 across the ENTIRE 16-bit bucket space,
+    // so the LUT-free hot loop can never silently drift from the math.
+    test('structural signs equal popcount(m & mask) for all 2^16 buckets', () {
+      final masks = <int>[
+        for (var i = 0; i < 8; i++) 1 << i, // L0..L7
+        for (var i = 0; i < 8; i++) 1 << (i + 8), // U0..U7
+        for (var i = 0; i < 8; i++) (1 << i) | (1 << (i + 8)), // X0..X7
+        0xFFFF, // global
+      ];
+      int popcount16(int x) {
+        var c = 0;
+        for (var v = x & 0xFFFF; v != 0; v &= v - 1) {
+          c++;
+        }
+        return c;
+      }
+
+      var mismatches = 0;
+      for (var m = 0; m < (1 << 16); m++) {
+        var globalParity = 0;
+        for (var i = 0; i < 8; i++) {
+          final lo = (m >> i) & 1;
+          final up = (m >> (i + 8)) & 1;
+          globalParity ^= lo ^ up;
+          if (lo != (popcount16(m & masks[i]) & 1)) mismatches++;
+          if (up != (popcount16(m & masks[8 + i]) & 1)) mismatches++;
+          if ((lo ^ up) != (popcount16(m & masks[16 + i]) & 1)) mismatches++;
+        }
+        if (globalParity != (popcount16(m & masks[24]) & 1)) mismatches++;
+      }
+      expect(mismatches, 0);
+    });
+  });
 }

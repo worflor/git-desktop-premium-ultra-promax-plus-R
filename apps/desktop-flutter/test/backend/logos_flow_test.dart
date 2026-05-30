@@ -2228,70 +2228,135 @@ void main() {
           reason: 'certainty-seeking walker should reach interior addresses');
     });
 
-    test('WalkerWeight simplex(3) produces vertex weights', () {
-      final ws = WalkerWeight.simplex(3);
+    test('WalkerDensity simplex(3) produces vertex weights', () {
+      final ws = WalkerDensity.simplex(3);
       expect(ws.length, 3);
-      expect(ws[0].wAnomaly, closeTo(1.0, 1e-12));
-      expect(ws[0].wStructure, closeTo(0.0, 1e-12));
-      expect(ws[0].wCertainty, closeTo(0.0, 1e-12));
-      expect(ws[1].wStructure, closeTo(1.0, 1e-12));
-      expect(ws[2].wCertainty, closeTo(1.0, 1e-12));
+      expect(ws[0].pAnomaly, closeTo(1.0, 1e-12));
+      expect(ws[0].pStructure, closeTo(0.0, 1e-12));
+      expect(ws[0].pCertainty, closeTo(0.0, 1e-12));
+      expect(ws[1].pStructure, closeTo(1.0, 1e-12));
+      expect(ws[2].pCertainty, closeTo(1.0, 1e-12));
     });
 
-    test('WalkerWeight simplex(1) produces center', () {
-      final ws = WalkerWeight.simplex(1);
+    test('WalkerDensity simplex(1) produces center', () {
+      final ws = WalkerDensity.simplex(1);
       expect(ws.length, 1);
-      expect(ws[0].wAnomaly, closeTo(1 / 3, 1e-12));
-      expect(ws[0].wStructure, closeTo(1 / 3, 1e-12));
-      expect(ws[0].wCertainty, closeTo(1 / 3, 1e-12));
+      expect(ws[0].pAnomaly, closeTo(1 / 3, 1e-12));
+      expect(ws[0].pStructure, closeTo(1 / 3, 1e-12));
+      expect(ws[0].pCertainty, closeTo(1 / 3, 1e-12));
     });
 
-    test('WalkerWeight.absorb stays on simplex', () {
-      final w = WalkerWeight(0.5, 0.3, 0.2);
+    test('WalkerDensity.absorb stays on simplex', () {
+      final w = WalkerDensity(0.5, 0.3, 0.2);
       for (var i = 0; i < 20; i++) {
         w.absorb(0.8, 0.5, 0.2, 8);
-        final sum = w.wAnomaly + w.wStructure + w.wCertainty;
+        final sum = w.pAnomaly + w.pStructure + w.pCertainty;
         expect(sum, closeTo(1.0, 1e-10));
-        expect(w.wAnomaly, greaterThan(0));
-        expect(w.wStructure, greaterThan(0));
-        expect(w.wCertainty, greaterThan(0));
+        expect(w.pAnomaly, greaterThan(0));
+        expect(w.pStructure, greaterThan(0));
+        expect(w.pCertainty, greaterThan(0));
       }
     });
 
-    test('WalkerWeight.absorb rotates away from dominant signal', () {
-      final w = WalkerWeight(1 / 3, 1 / 3, 1 / 3);
-      final initial = w.wAnomaly;
+    test('WalkerDensity.absorb rotates away from dominant signal', () {
+      final w = WalkerDensity(1 / 3, 1 / 3, 1 / 3);
+      final initial = w.pAnomaly;
       w.absorb(1.0, 0.0, 0.0, 8);
-      expect(w.wAnomaly, lessThan(initial),
+      expect(w.pAnomaly, lessThan(initial),
           reason: 'anomaly weight should decrease after observing anomaly');
-      expect(w.wStructure, greaterThan(initial));
-      expect(w.wCertainty, greaterThan(initial));
+      expect(w.pStructure, greaterThan(initial));
+      expect(w.pCertainty, greaterThan(initial));
     });
 
-    test('WalkerWeight.absorb uniform observation preserves ratios', () {
-      final w = WalkerWeight(0.5, 0.3, 0.2);
-      final r01 = w.wAnomaly / w.wStructure;
-      final r02 = w.wAnomaly / w.wCertainty;
+    test('WalkerDensity.absorb uniform observation preserves ratios', () {
+      final w = WalkerDensity(0.5, 0.3, 0.2);
+      final r01 = w.pAnomaly / w.pStructure;
+      final r02 = w.pAnomaly / w.pCertainty;
       w.absorb(0.5, 1.0, 0.5, 8);
-      expect(w.wAnomaly / w.wStructure, closeTo(r01, 0.05),
+      expect(w.pAnomaly / w.pStructure, closeTo(r01, 0.05),
           reason: 'nearly-uniform absorption should roughly preserve ratios');
     });
 
-    test('WalkerWeight.withPrior(0) recovers simplex vertices', () {
-      final ws = WalkerWeight.withPrior(0.0);
+    test('WalkerDensity.withPrior(0) recovers simplex vertices', () {
+      final ws = WalkerDensity.withPrior(0.0);
       expect(ws.length, 3);
-      expect(ws[0].wAnomaly, closeTo(1.0, 1e-12));
-      expect(ws[0].wStructure, closeTo(0.0, 1e-12));
-      expect(ws[0].wCertainty, closeTo(0.0, 1e-12));
-      expect(ws[1].wStructure, closeTo(1.0, 1e-12));
-      expect(ws[2].wCertainty, closeTo(1.0, 1e-12));
+      expect(ws[0].pAnomaly, closeTo(1.0, 1e-12));
+      expect(ws[0].pStructure, closeTo(0.0, 1e-12));
+      expect(ws[0].pCertainty, closeTo(0.0, 1e-12));
+      expect(ws[1].pStructure, closeTo(1.0, 1e-12));
+      expect(ws[2].pCertainty, closeTo(1.0, 1e-12));
     });
 
-    test('WalkerWeight.withPrior(1) tilts anomaly toward certainty', () {
-      final ws = WalkerWeight.withPrior(1.0);
-      expect(ws[0].wAnomaly, closeTo(0.5, 1e-12));
-      expect(ws[2].wCertainty, closeTo(0.5, 1e-12));
-      expect(ws[2].wAnomaly, closeTo(0.25, 1e-12));
+    test('WalkerDensity.withPrior(1) tilts anomaly toward certainty', () {
+      final ws = WalkerDensity.withPrior(1.0);
+      expect(ws[0].pAnomaly, closeTo(0.5, 1e-12));
+      expect(ws[2].pCertainty, closeTo(0.5, 1e-12));
+      expect(ws[2].pAnomaly, closeTo(0.25, 1e-12));
+    });
+
+    test('pure state has purity = 1', () {
+      // Vertex of the simplex — rank-1, no off-diagonals.
+      final w = WalkerDensity(1.0, 0.0, 0.0);
+      expect(w.purity, closeTo(1.0, 1e-12));
+    });
+
+    test('maximally-mixed diagonal has purity = 1/3', () {
+      final w = WalkerDensity(1 / 3, 1 / 3, 1 / 3);
+      expect(w.purity, closeTo(1 / 3, 1e-12));
+    });
+
+    test('pure state has von Neumann entropy = 0', () {
+      final w = WalkerDensity(1.0, 0.0, 0.0);
+      expect(w.vonNeumannEntropy, closeTo(0.0, 1e-9));
+    });
+
+    test('maximally-mixed diagonal has entropy = log(3)', () {
+      final w = WalkerDensity(1 / 3, 1 / 3, 1 / 3);
+      // For a diagonal-degenerate case the eigvals fall back to the
+      // diagonal directly, giving Shannon entropy.
+      expect(w.vonNeumannEntropy, closeTo(math.log(3), 1e-9));
+    });
+
+    test('coherent superposition is rank-1 (purity = 1)', () {
+      // 50/50 anomaly+certainty with zero relative phase — a pure state
+      // with non-zero off-diagonal. Purity must still be exactly 1.
+      final w = WalkerDensity.coherent(anomaly: 0.5, certainty: 0.5);
+      expect(w.purity, closeTo(1.0, 1e-9));
+      // Off-diagonal magnitude is the geometric mean of the diagonals.
+      expect(w.rAC, closeTo(0.5, 1e-9));
+      expect(w.iAC, closeTo(0.0, 1e-9));
+    });
+
+    test('coherent and incoherent 50/50 have different purity', () {
+      final pure = WalkerDensity.coherent(anomaly: 0.5, certainty: 0.5);
+      final mixed = WalkerDensity(0.5, 0.0, 0.5);
+      // Same diagonal, different state — coherence shows up as purity.
+      expect(pure.purity, greaterThan(mixed.purity));
+    });
+
+    test('absorb preserves zero off-diagonals (classical compatibility)', () {
+      final w = WalkerDensity(0.5, 0.3, 0.2);
+      w.absorb(0.8, 0.2, 0.1, 20);
+      expect(w.rAS, 0.0);
+      expect(w.iAS, 0.0);
+      expect(w.rAC, 0.0);
+      expect(w.iAC, 0.0);
+      expect(w.rSC, 0.0);
+      expect(w.iSC, 0.0);
+    });
+
+    test('absorb damps off-diagonals via geometric mean', () {
+      // Seed a coherent state and absorb. Off-diagonal magnitude must
+      // shrink at the geometric mean of the two diagonals' decay
+      // factors (amplitude-damping channel).
+      final w = WalkerDensity.coherent(anomaly: 0.5, certainty: 0.5);
+      final mag0 = math.sqrt(w.rAC * w.rAC + w.iAC * w.iAC);
+      w.absorb(0.5, 0.0, 0.5, 10);
+      final mag1 = math.sqrt(w.rAC * w.rAC + w.iAC * w.iAC);
+      // After equal absorb on A and C, the off-diagonal should decay
+      // strictly but still be positive.
+      expect(mag1, lessThan(mag0));
+      expect(mag1, greaterThan(0.0));
     });
 
     test('eigenAddress returns -1 for degenerate lines', () {
@@ -2299,6 +2364,61 @@ void main() {
       expect(eigenAddress('ab', coupling), -1);
       expect(eigenAddress('x', coupling), -1);
       expect(eigenAddress('', coupling), -1);
+    });
+
+    test('renormalize keeps purity ≤ 1 across many heavy absorb cycles', () {
+      // Coherent superposition near the rank-1 boundary, hammered with
+      // asymmetric absorb cycles. Without the active 2x2-minor clamp,
+      // floating-point drift could push the off-diagonals past
+      // sqrt(ρᵢᵢ·ρⱼⱼ) and lift purity above 1, which would in turn
+      // break the eigenvalue solver for vonNeumannEntropy.
+      final w = WalkerDensity.coherent(
+        anomaly: 0.45,
+        certainty: 0.45,
+        structure: 0.10,
+      );
+      for (var i = 0; i < 200; i++) {
+        // Alternate heavy anomaly observation, heavy certainty
+        // observation, and structure pulses. This is the kind of
+        // schedule that drives the smallest diagonal close to (or
+        // through) the 1e-6 floor.
+        w.absorb(0.95, 0.0, 0.05, 8);
+        w.absorb(0.05, 0.0, 0.95, 8);
+        w.absorb(0.5, 0.7, 0.5, 8);
+        expect(w.purity, lessThanOrEqualTo(1.0 + 1e-9),
+            reason: 'purity exceeded 1 — PSD violated at cycle $i');
+        expect(w.purity, greaterThanOrEqualTo(1.0 / 3.0 - 1e-9));
+        // vonNeumannEntropy must stay finite (no NaN from log of a
+        // negative eigenvalue).
+        expect(w.vonNeumannEntropy.isFinite, isTrue,
+            reason: 'entropy not finite at cycle $i');
+        expect(w.vonNeumannEntropy, greaterThanOrEqualTo(-1e-9));
+      }
+    });
+
+    test('renormalize enforces |ρᵢⱼ|² ≤ ρᵢᵢ·ρⱼⱼ even after diagonal floor', () {
+      // Seed a near-degenerate state and confirm the pairwise minor
+      // constraint holds after a renormalize step. The floor activates
+      // when a diagonal sinks below 1e-6; the pairwise clamp then
+      // pulls any off-diagonal that had been near the pre-floor bound
+      // back to the new (tighter or looser) bound.
+      final w = WalkerDensity.coherent(
+        anomaly: 0.49,
+        structure: 0.02,
+        certainty: 0.49,
+      );
+      // Push structure toward the floor with repeated anomaly+
+      // certainty observations — structure decays both as a diagonal
+      // and through its coherences.
+      for (var i = 0; i < 100; i++) {
+        w.absorb(1.0, 0.0, 1.0, 4);
+      }
+      final magAS2 = w.rAS * w.rAS + w.iAS * w.iAS;
+      final magAC2 = w.rAC * w.rAC + w.iAC * w.iAC;
+      final magSC2 = w.rSC * w.rSC + w.iSC * w.iSC;
+      expect(magAS2, lessThanOrEqualTo(w.pAnomaly * w.pStructure + 1e-12));
+      expect(magAC2, lessThanOrEqualTo(w.pAnomaly * w.pCertainty + 1e-12));
+      expect(magSC2, lessThanOrEqualTo(w.pStructure * w.pCertainty + 1e-12));
     });
   });
 }

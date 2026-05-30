@@ -15,7 +15,6 @@ import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
 import 'app/file_coupling_state.dart';
-import 'app/symbol_frequency_state.dart';
 import 'app/logos_git_state.dart';
 import 'app/worktree_state.dart';
 import 'app/desk_pr_state.dart';
@@ -26,6 +25,7 @@ import 'app/hyper_reactivity.dart';
 import 'features/palette/palette_state.dart';
 import 'app/brand_lockup.dart';
 import 'app/settings_navigation_state.dart';
+import 'app/commit_mode_state.dart';
 import 'app/sidebar_org_state.dart';
 import 'app/sidebar_rail.dart';
 import 'app/tool_detection_state.dart';
@@ -137,6 +137,7 @@ void main() async {
   final aiSettingsState = AiSettingsState();
   final externalToolsState = ExternalToolsState();
   final sidebarOrgState = SidebarOrgState();
+  final commitModeState = CommitModeState();
   await themeState.load();
   // Fire-and-forget: sidebar shows a brief empty state until
   // loadRecents resolves (~50-200 ms post-runApp). Preferences,
@@ -161,6 +162,9 @@ void main() async {
   unawaited(sidebarOrgState
       .load()
       .catchError((Object e) => logInitError('sidebarOrg', e)));
+  unawaited(commitModeState
+      .load()
+      .catchError((Object e) => logInitError('commitMode', e)));
 
   // Fire-and-forget: probe PATH for known external tools so the
   // settings page renders only the chips for actually-installed
@@ -199,7 +203,6 @@ void main() async {
   }
   final repoXrayState = RepositoryXrayState();
   final fileCouplingState = FileCouplingState();
-  final symbolFrequencyState = SymbolFrequencyState();
   final logosGitState = LogosGitState();
   final worktreeState = WorktreeState(repoState);
   final deskPrState = DeskPrState(repoState, appIdentityState);
@@ -231,7 +234,6 @@ void main() async {
     logosGitState: logosGitState,
     undoCoordinator: undoCoordinator,
     fileCouplingState: fileCouplingState,
-    symbolFrequencyState: symbolFrequencyState,
   ));
   unawaited(pipeServer
       .start()
@@ -271,7 +273,6 @@ void main() async {
             ChangeNotifierProvider.value(value: repoState),
             ChangeNotifierProvider.value(value: repoXrayState),
             ChangeNotifierProvider.value(value: fileCouplingState),
-            ChangeNotifierProvider.value(value: symbolFrequencyState),
             ChangeNotifierProvider.value(value: logosGitState),
             ChangeNotifierProvider.value(value: worktreeState),
             ChangeNotifierProvider.value(value: deskPrState),
@@ -282,6 +283,7 @@ void main() async {
             ChangeNotifierProvider(create: (_) => AiActivityState()),
             ChangeNotifierProvider.value(value: externalToolsState),
             ChangeNotifierProvider.value(value: sidebarOrgState),
+            ChangeNotifierProvider.value(value: commitModeState),
             ChangeNotifierProvider.value(value: toolDetectionState),
             ChangeNotifierProvider.value(value: wickState),
             ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
