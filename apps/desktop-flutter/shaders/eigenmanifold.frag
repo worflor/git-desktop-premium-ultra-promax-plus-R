@@ -43,7 +43,12 @@ float fbm(vec2 p, int octaves) {
     float v = 0.0;
     float a = 0.5;
     vec2 shift = vec2(100.0);
-    for (int i = 0; i < octaves; i++) {
+    // SkSL/GLSL-ES needs a CONSTANT loop bound (it unrolls). Loop to the fixed
+    // max — `octaves` is clamped to <=4 at the call site — and break early for
+    // the dynamic count. A parameter bound ("i < octaves") fails on the Skia
+    // backend with "loop index must be compared with a constant expression".
+    for (int i = 0; i < 4; i++) {
+        if (i >= octaves) break;
         v += a * noise(p);
         p = p * 2.0 + shift;
         a *= 0.5;
@@ -83,7 +88,8 @@ void main() {
 
     // --- Spectral texture ---
     // Dimension controls complexity; gap controls coherence.
-    int octaves = clamp(int(uSpectralDim), 1, 4);
+    // SkSL has no integer clamp overload — clamp as float, then convert.
+    int octaves = int(clamp(uSpectralDim, 1.0, 4.0));
     float grain = fbm(
         uv * (6.0 + uSpectralDim * 2.0) + uTime * 0.01,
         octaves

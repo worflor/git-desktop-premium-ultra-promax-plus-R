@@ -1414,6 +1414,30 @@ String? parseCodexJsonlForTesting(String stdout) => _parseCodexJsonl(stdout);
 String? parseOpenCodeJsonlForTesting(String stdout) =>
     _parseOpenCodeJsonl(stdout);
 
+/// Test seam pinning [_runObservedProcess]'s launch-vs-timeout contract:
+/// returns `null` only on a genuine timeout; otherwise a record whose
+/// `exitCode` is -1 with the real OS error on `stderr` when the spawn itself
+/// fails. Conflating the two (the old `null`-on-spawn-failure) is what made an
+/// over-long argv look like a phantom timeout. Maps the private result type so
+/// the distinction can be asserted without exposing it.
+@visibleForTesting
+Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTesting(
+  String command,
+  List<String> args, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final r = await _runObservedProcess(
+    commandLabel: 'test.$command',
+    scope: 'test',
+    command: command,
+    args: args,
+    timeout: timeout,
+  );
+  return r == null
+      ? null
+      : (exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr);
+}
+
 Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String repositoryPath,
   required String modelValue,
@@ -10008,11 +10032,14 @@ List<_ProviderAttempt> _buildProviderAttempts(
             '--output-format', 'json',
           ],
           outputMode: _ProviderOutputMode.claudeJson,
+          // `claude -p` with no positional reads the prompt from stdin.
+          useStdinForPrompt: true,
         ),
         _ProviderAttempt(
           name: 'prompt',
           args: ['-p', '--model', modelId, ...effortArgs],
           outputMode: _ProviderOutputMode.plainText,
+          useStdinForPrompt: true,
         ),
       ];
     case _ProviderKind.geminiApi:
@@ -10028,11 +10055,18 @@ List<_ProviderAttempt> _buildProviderAttempts(
           name: 'run-json',
           args: ['run', '--format', 'json', '-m', modelId, ...variantArgs],
           outputMode: _ProviderOutputMode.openCodeJsonl,
+          // `opencode run` reads the prompt from stdin when given no positional
+          // message. Its `--help` documents only the `[message..]` positional
+          // and omits this, but it's verified against the binary — stdin keeps
+          // the prompt clear of the Windows 32767-char argv ceiling that a
+          // positional hits on any real-sized diff.
+          useStdinForPrompt: true,
         ),
         _ProviderAttempt(
           name: 'run',
           args: ['run', '-m', modelId, ...variantArgs],
           outputMode: _ProviderOutputMode.plainText,
+          useStdinForPrompt: true,
         ),
       ];
   }
@@ -10745,12 +10779,18 @@ Future<_CommandResult?> _runObservedProcess({
   } catch (error) {
     stopwatch.stop();
     final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
+    // Surface the real launch failure (e.g. "The filename or extension is too
+    // long", "The system cannot find the file specified"). Read
+    // ProcessException's `message`, never `toString()`: the latter appends the
+    // full argument list, which for a prompt passed as argv is hundreds of KB.
+    final launchError =
+        error is ProcessException ? error.message : error.toString();
     DiagnosticsState.instance.recordCommandLifecycleEvent(
       type: 'failure',
       command: commandLabel,
       durationMs: elapsedMs,
       errorCode: '$scope.invoke_failed',
-      message: error.toString(),
+      message: launchError,
     );
     unawaited(
       DiagnosticsState.instance.recordCommandLatency(
@@ -10762,7 +10802,11 @@ Future<_CommandResult?> _runObservedProcess({
         errorCode: '$scope.invoke_failed',
       ),
     );
-    return null;
+    // A failed spawn is a distinct outcome from a timeout: return it as a
+    // non-zero result carrying the OS error so callers report the real cause.
+    // `null` stays reserved for genuine timeouts (callers label that case
+    // "timed out"); conflating the two is what hid the argv-length failure.
+    return _CommandResult(exitCode: -1, stdout: '', stderr: launchError);
   } finally {
     // Clean up the stdin temp file + its .bat sibling. On Windows the
     // prompt body lives on disk briefly; shrink the exposure window by
@@ -11789,13 +11833,25 @@ class _ProviderAttempt {
   final String name;
   final List<String> args;
   final _ProviderOutputMode outputMode;
+
+  /// How this CLI receives the prompt — piped through the child's stdin
+  /// (`true`, file-backed on Windows) or appended as a positional argument
+  /// (`false`). Required and per-provider on purpose: there is no safe
+  /// default. Windows' CreateProcess caps the whole command line at 32767
+  /// chars, so a positional prompt silently dies once review/muse context
+  /// grows past that; but a CLI that doesn't read stdin breaks just as
+  /// silently the other way (empty prompt, then a timeout). Each attempt must
+  /// declare the channel its own CLI honors, verified against the binary and
+  /// not just its `--help`: codex (`-` stdin sentinel), claude (`-p` piped),
+  /// and opencode (`run` with no positional) all read the prompt from stdin —
+  /// opencode's stdin path is undocumented in `--help` but confirmed working.
   final bool useStdinForPrompt;
 
   const _ProviderAttempt({
     required this.name,
     required this.args,
     required this.outputMode,
-    this.useStdinForPrompt = false,
+    required this.useStdinForPrompt,
   });
 }
 

@@ -789,9 +789,13 @@ class _ChipRailMosaicState extends State<_ChipRailMosaic> {
               // Layer 1 — invisible sizing reference.
               Visibility(
                 visible: false,
+                // maintainSize requires maintainAnimation requires maintainState
+                // (Flutter asserts the whole chain). This is an invisible sizing
+                // reference — it must occupy space without painting, so all three
+                // are on. Setting maintainSize alone throws.
                 maintainSize: true,
-                maintainAnimation: false,
-                maintainState: false,
+                maintainAnimation: true,
+                maintainState: true,
                 child: Row(children: [
                   Expanded(
                     child: _MosaicChipCell(

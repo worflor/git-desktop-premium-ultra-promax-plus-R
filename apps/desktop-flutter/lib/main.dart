@@ -33,6 +33,7 @@ import 'app/tool_detection_state.dart';
 import 'app/wick_state.dart';
 import 'app/window_activity.dart';
 import 'app/theme_state.dart';
+import 'ui/easter_eggs.dart';
 import 'backend/ipc/bridge_context.dart';
 import 'backend/ipc/pipe_server.dart';
 import 'app/workspace_shell.dart';
@@ -364,7 +365,7 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
       scrollBehavior: const _SmoothScrollBehavior(),
       navigatorObservers: [manifoldRouteObserver],
       home: const _RootTickerMute(
-        child: LiquidGlassProviderWithSwitcher(),
+        child: EasterEggOverlay(child: LiquidGlassProviderWithSwitcher()),
       ),
     );
   }

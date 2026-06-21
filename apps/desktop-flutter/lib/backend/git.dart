@@ -459,11 +459,23 @@ Future<ProcessResult> runGitProbe(String workingDir, List<String> args) {
 }
 
 Future<GitResult<String>> openRepository(String path) async {
+  // Stale recent / moved folder: surface a clean message instead of letting
+  // `git rev-parse` throw a raw `ProcessException: The directory name is
+  // invalid` that would leak to the UI verbatim. Checked up front as a fast
+  // path, and again in the catch so a folder that vanishes in the TOCTOU
+  // window between this check and the spawn still gets the clean message
+  // rather than the raw exception text.
+  if (!await Directory(path).exists()) {
+    return const GitResult.err("This project's folder no longer exists.");
+  }
   try {
     final r = await _git(path, ['rev-parse', '--git-dir']);
     if (r.exitCode != 0) return const GitResult.err('Not a git repository');
     return GitResult.ok(path);
   } catch (error) {
+    if (!await Directory(path).exists()) {
+      return const GitResult.err("This project's folder no longer exists.");
+    }
     return GitResult.err(error.toString());
   }
 }
