@@ -1146,7 +1146,8 @@ RepositoryTagProfile buildTagProfile({
   // The commit acquires a label its subject never spoke — borrowed
   // from its semantic neighborhood.
   final borrowedLabels =
-      _computeBorrowedLabels(commits, detailsByHash, coupling, provisionalKinds: () {
+      _computeBorrowedLabels(commits, detailsByHash, coupling,
+          chronological: chronological, provisionalKinds: () {
     // Per-commit own-labels for affinity seeding. Structural labels
     // only — prefix, chain, bucket — all gated by kneedle/NPMI. We
     // tried raw subject-vocab seeding; it diffused filler verbs
@@ -1325,6 +1326,7 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   List<CommitHistoryEntry> commits,
   Map<String, CommitDetailData> detailsByHash,
   FileCouplingMatrix? coupling, {
+  required List<CommitHistoryEntry> chronological,
   required Map<String, Set<String>> Function() provisionalKinds,
 }) {
   final ownTokens = provisionalKinds();
@@ -1512,15 +1514,11 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   // current era label" everywhere — boring, indistinct. Keep the
   // epoch math computed (cheap, future-useful) but DON'T fold it into
   // file affinity; file affinity stays purely structural.
-  final chronologicalForEpochs = [...commits];
-  chronologicalForEpochs.sort((a, b) {
-    final ta = _parseTs(a.authoredAt);
-    final tb = _parseTs(b.authoredAt);
-    if (ta == null && tb == null) return 0;
-    if (ta == null) return 1;
-    if (tb == null) return -1;
-    return ta.compareTo(tb);
-  });
+  // Reuse the chronological order the caller already built — identical input
+  // (`commits`) and comparator, so re-sorting would reproduce the exact same
+  // order at the cost of a second O(n log n) timestamp-parse pass. Read-only
+  // below, so sharing the caller's list is safe.
+  final chronologicalForEpochs = chronological;
   // Each commit's "vector" = its set of own-tokens (1-hot in the
   // global label space). Inter-commit error = symmetric set distance.
   final transitionErrors = <double>[];

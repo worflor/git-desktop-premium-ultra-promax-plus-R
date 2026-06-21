@@ -32,26 +32,40 @@ import 'csr_builder.dart';
 /// The logos engines' `addEdge` helper establishes this invariant by
 /// writing both directions for every call.
 ///
-/// Cost: O(Σ (k·log k)) where k is the degree of each row.
+/// Cost: O(Σ dᵢ·log dᵢ) over rows whose degree dᵢ exceeds [topK]; rows
+/// that already fit within [topK] cost O(dᵢ) (the sort is skipped).
 List<CsrEdge> topKSymmetriseEdges({
   required Map<int, Map<int, double>> edges,
   required int topK,
 }) {
-  // Per-row top-K trim. We walk every row, sort its edges by
-  // descending weight, and keep the first [topK]. Lex-order ties
-  // are resolved by Map iteration order — stable enough that the
-  // graph structure is deterministic within a single build.
+  // Per-row top-K trim. We walk every row and keep its [topK] heaviest
+  // edges. Lex-order ties are resolved by Map iteration order — not
+  // observable for the spectra downstream (degree-fused values wash out
+  // any rank-tie permutation), so the graph structure is deterministic
+  // within a single build.
   final kept = <(int, int), double>{};
   for (final rowEntry in edges.entries) {
     final i = rowEntry.key;
     final row = rowEntry.value;
     if (row.isEmpty) continue;
-    final list = row.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final cap = list.length < topK ? list.length : topK;
-    for (var k = 0; k < cap; k++) {
-      final j = list[k].key;
-      final w = list[k].value;
+    // When the row already fits within topK, every edge is kept
+    // regardless of rank, so ranking it is pure waste — iterate the row
+    // directly. The (a,b)-keyed `kept` map makes the visit order
+    // irrelevant (each pair maps to the same weight either way), so
+    // skipping the sort here is bit-identical, not an approximation.
+    // Only over-degree rows pay the O(d·log d) sort; in a co-change
+    // graph most rows are small, so this skips the common case.
+    final Iterable<MapEntry<int, double>> top;
+    if (row.length <= topK) {
+      top = row.entries;
+    } else {
+      top = (row.entries.toList()
+            ..sort((a, b) => b.value.compareTo(a.value)))
+          .take(topK);
+    }
+    for (final e in top) {
+      final j = e.key;
+      final w = e.value;
       final a = i < j ? i : j;
       final b = i < j ? j : i;
       // Symmetry invariant: `edges[i][j] == edges[j][i]`. The union

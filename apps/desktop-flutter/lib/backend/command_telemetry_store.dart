@@ -146,8 +146,19 @@ class CommandTelemetryStore {
       );
       final latest = samples.removeLast()._withSerializedLen();
       samples.add(latest);
+      final countBeforeRetention = samples.length;
       _applyRetentionPolicy(samples, await _loadRetentionPolicy());
-      await _persistSamples(samples);
+      // Common case: retention dropped nothing, so the on-disk file already
+      // holds every prior sample — appending the single new line yields the
+      // same content as a full rewrite at O(1) I/O, instead of re-serializing
+      // and rewriting the entire .jsonl (up to the ~128 MB retention cap) on
+      // every backend command. Only when retention actually trims the head do
+      // we fall back to a whole-file rewrite.
+      if (samples.length == countBeforeRetention) {
+        await _appendSample(latest);
+      } else {
+        await _persistSamples(samples);
+      }
       return null;
     });
   }
@@ -378,6 +389,42 @@ class CommandTelemetryStore {
     } finally {
       await sink.close();
     }
+  }
+
+  /// Append a single sample line. Matches one `_persistSamples` line exactly
+  /// (`writeln` → trailing '\n'), so a file grown by append is byte-identical
+  /// to one rewritten whole. `FileMode.append` creates the file if absent.
+  ///
+  /// Torn-write guard: `writeAsString(append)` is not atomic, so a crash
+  /// mid-append can leave a partial last line with no trailing newline. If the
+  /// file doesn't already end in '\n', prepend one so that partial line stays
+  /// its own (skipped-on-read) line instead of swallowing this sample into an
+  /// unparseable `{partial}{latest}` concatenation — i.e. a torn write loses at
+  /// most the already-torn line, never the next one, matching the full-rewrite
+  /// path. The `_serialize` mutex means the length/last-byte probe is race-free,
+  /// and on the normal (clean) path the probe adds no bytes.
+  static Future<void> _appendSample(
+    _StoredCommandTelemetrySample sample,
+  ) async {
+    final file = await _file();
+    await file.parent.create(recursive: true);
+    var prefix = '';
+    final length = await file.exists() ? await file.length() : 0;
+    if (length > 0) {
+      final raf = await file.open();
+      try {
+        await raf.setPosition(length - 1);
+        final last = await raf.read(1);
+        if (last.isEmpty || last[0] != 0x0A) prefix = '\n';
+      } finally {
+        await raf.close();
+      }
+    }
+    await file.writeAsString(
+      '$prefix${jsonEncode(sample.toJson())}\n',
+      mode: FileMode.append,
+      flush: true,
+    );
   }
 
   static Future<File> _file() async {

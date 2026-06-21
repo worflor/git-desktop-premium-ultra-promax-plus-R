@@ -44,6 +44,8 @@ import '../../backend/logos_flow.dart'
     show FlowAnalysisResult, analyzeFlowCached;
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
+import '../../backend/review_logos.dart' show ClaimShape;
+import '../../backend/review_ratchet_store.dart' show ReviewRatchetStore;
 import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
 import '../../backend/system_paths.dart' show revealInFileManager;
@@ -292,6 +294,10 @@ class _ChangesPageState extends State<ChangesPage> {
   AiActivityKind? _openDrawer;
   bool _reviewTraceExpanded = false;
   bool _reviewReasoningExpanded = false;
+  // Finding ids the user has confirmed/dismissed this review session.
+  // Feeds the claim-outcome ratchet (review_ratchet) and disables the
+  // affordance after one action so each finding is voted once.
+  final Set<String> _reviewActionedFindings = <String>{};
   // Transient flash flags for "the X just succeeded." Cleared by a
   // 1.5s timer in the respective complete branches so the affordance
   // bumps green for a beat then settles. After the flash, the button
@@ -487,6 +493,21 @@ class _ChangesPageState extends State<ChangesPage> {
   int _clustersCacheIncludedHash = 0;
   int _clustersCacheConflictsHash = 0;
 
+  // Memoized spectral overlays. `withSpectral`/`withSpectralEdges` are pure
+  // shallow copies, but each call allocates a fresh object — and the cluster
+  // cache above keys on `identical(effectiveMatrix)`, so a fresh wrapper every
+  // build would defeat it and rerun the O(n²) seriation per frame. Cache the
+  // wrapper keyed on (base identity, _spectralCoupling identity); both are
+  // stable between updates (matrixFor/engineFor are cached, _spectralCoupling
+  // is reassigned wholesale on fetch), so the same object comes back out —
+  // byte-identical content, and the identity-keyed caches downstream hit.
+  Object? _effMatrixBase;
+  Object? _effMatrixSpectral;
+  FileCouplingMatrix? _effMatrixMemo;
+  Object? _effEngineBase;
+  Object? _effEngineSpectral;
+  LogosGit? _effEngineMemo;
+
   // Cached hunk-pipeline result for the correlatedness sort. We feed
   // the full change-set diff through `rankHunksByPhiAsync` (the
   // engine's own hunk pipeline — 4-axis blended graph + heat-kernel
@@ -559,6 +580,13 @@ class _ChangesPageState extends State<ChangesPage> {
   int _dejaVuGhostCount = 0;
   Set<String>? _lastCouplingDiffPaths;
   Object? _lastCouplingEngine;
+  // Memo for _recomputeFileDimOpacity — its O(n²) centrality sweep is a pure,
+  // deterministic function of (engine, coupling, ordered changed-path list),
+  // all stable identities across frames (engineFor/matrixFor are cached, change
+  // only on HEAD move). Skips the per-build recompute on a hit; byte-identical.
+  Object? _lastDimEngine;
+  Object? _lastDimCoupling;
+  List<String>? _lastDimPaths;
   bool _stashExpandedInitialized = false;
   String? _stashPeekDiff;
   // Per-stash expanded state (keyed by stash.index) — the filing-cabinet
@@ -708,7 +736,42 @@ class _ChangesPageState extends State<ChangesPage> {
       if (_openDrawer == AiActivityKind.review) _openDrawer = null;
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
+      _reviewActionedFindings.clear();
     });
+  }
+
+  /// Record the user's verdict on a single review finding into the
+  /// per-repo claim-outcome ratchet. The finding carries its own
+  /// [ClaimGroundingData] (attached at review time); we rebuild the
+  /// quantised shape from it and observe the outcome. Best-effort — the
+  /// learning loop is a bonus, never load-bearing.
+  Future<void> _recordFindingOutcome(
+    String repoPath,
+    AiCommitReviewFindingData finding,
+    bool verified,
+  ) async {
+    final g = finding.grounding;
+    if (g == null) return;
+    if (_reviewActionedFindings.contains(finding.id)) return;
+    setState(() => _reviewActionedFindings.add(finding.id));
+    // Serialised read-modify-write: two findings actioned in rapid
+    // succession would otherwise each load the pre-observation ratchet and
+    // the second persist would drop the first's observation. recordObservation
+    // runs the whole load→observe→persist under a single-writer lock.
+    await ReviewRatchetStore.recordObservation(
+      repoPath,
+      (ratchet) => ratchet.observe(
+        shape: ClaimShape(
+          grounding: g.grounding,
+          verifiability: g.verifiability,
+          reach: g.reach,
+          coherence: g.coherence,
+          symbolCount: g.symbolCount,
+          textLength: g.textLength,
+        ),
+        verified: verified,
+      ),
+    );
   }
 
   /// Per-kind clear timers for the celebratory flash bools. Stored
@@ -2075,10 +2138,35 @@ class _ChangesPageState extends State<ChangesPage> {
   ) {
     if (engine == null || status.files.length < 3) {
       _fileDimOpacity = const {};
+      _lastDimPaths = null; // invalidate so a later valid call recomputes
       return;
     }
-    final stats = engine.stats;
     final paths = status.files.map((f) => f.path).toList();
+    // Memo: `_fileDimOpacity` is a deterministic function of (engine, coupling,
+    // the *ordered* path list). Order is part of the key because the centrality
+    // axis sums coupling in path order — so a reorder recomputes rather than
+    // serving an FP-order-different cached map (byte-identical on a hit). All
+    // three identities are stable across frames (engineFor/matrixFor change only
+    // on HEAD move), so the frequent rebuilds — AI-notify, hover, dream-hint,
+    // drag — skip the O(n²) centrality sweep entirely.
+    final lastPaths = _lastDimPaths;
+    if (identical(engine, _lastDimEngine) &&
+        identical(coupling, _lastDimCoupling) &&
+        lastPaths != null &&
+        lastPaths.length == paths.length) {
+      var samePaths = true;
+      for (var i = 0; i < paths.length; i++) {
+        if (lastPaths[i] != paths[i]) {
+          samePaths = false;
+          break;
+        }
+      }
+      if (samePaths) return;
+    }
+    _lastDimEngine = engine;
+    _lastDimCoupling = coupling;
+    _lastDimPaths = paths;
+    final stats = engine.stats;
 
     // ── Axis 1: Surprise ──────────────────────────────────────────
     // Normalise volatility within the changeset so the score is
@@ -6071,9 +6159,26 @@ class _ChangesPageState extends State<ChangesPage> {
     // Layer symbol-overlap scores on top of the historical Jaccard matrix.
     // withSpectral() is a shallow copy — no data is duplicated, only the
     // reference to the symbol map is updated.
-    final effectiveMatrix = couplingMatrix != null && _spectralCoupling.isNotEmpty
-        ? couplingMatrix.withSpectral(_spectralCoupling)
-        : couplingMatrix;
+    // Spectral overlay, memoized: withSpectral is a pure shallow copy but
+    // allocates a fresh matrix each call, and `_clustersFor` keys its cache on
+    // `identical(effectiveMatrix)` — so a fresh wrapper every build reruns the
+    // O(n²) seriation per frame. Reuse the prior wrapper while (base, spectral)
+    // identities hold (both stable between updates). Byte-identical content.
+    final FileCouplingMatrix? effectiveMatrix;
+    if (couplingMatrix != null && _spectralCoupling.isNotEmpty) {
+      if (identical(couplingMatrix, _effMatrixBase) &&
+          identical(_spectralCoupling, _effMatrixSpectral) &&
+          _effMatrixMemo != null) {
+        effectiveMatrix = _effMatrixMemo;
+      } else {
+        effectiveMatrix = couplingMatrix.withSpectral(_spectralCoupling);
+        _effMatrixBase = couplingMatrix;
+        _effMatrixSpectral = _spectralCoupling;
+        _effMatrixMemo = effectiveMatrix;
+      }
+    } else {
+      effectiveMatrix = couplingMatrix;
+    }
 
     // Pull the Logos engine up-front so the clustering seriation AND
     // the downstream φ re-rank share a single fetch. The engine is
@@ -6088,9 +6193,25 @@ class _ChangesPageState extends State<ChangesPage> {
                   )
                 : context.read<LogosGitState>().engineFor(repoPath))
             : null;
-    final logosEngine = (logosEngineBase != null && _spectralCoupling.isNotEmpty)
-        ? logosEngineBase.withSpectralEdges(_spectralCoupling)
-        : logosEngineBase;
+    // Same memoization for the engine's spectral-edge overlay — withSpectralEdges
+    // shares the base engine's basis/graph caches but is a fresh instance each
+    // call, which would likewise churn the engine-identity-keyed work downstream
+    // (cluster cache, correlatedness context).
+    final LogosGit? logosEngine;
+    if (logosEngineBase != null && _spectralCoupling.isNotEmpty) {
+      if (identical(logosEngineBase, _effEngineBase) &&
+          identical(_spectralCoupling, _effEngineSpectral) &&
+          _effEngineMemo != null) {
+        logosEngine = _effEngineMemo;
+      } else {
+        logosEngine = logosEngineBase.withSpectralEdges(_spectralCoupling);
+        _effEngineBase = logosEngineBase;
+        _effEngineSpectral = _spectralCoupling;
+        _effEngineMemo = logosEngine;
+      }
+    } else {
+      logosEngine = logosEngineBase;
+    }
 
     // Route the correlatedness sort through the engine's own hunk
     // pipeline. `_correlatednessContextFor` returns whatever context
@@ -7300,6 +7421,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             onOpenFinding: (path, hunkLabel) =>
                                 _openReviewFinding(repoPath, path, status,
                                     hunkLabel: hunkLabel),
+                            onFindingOutcome: (finding, verified) =>
+                                _recordFindingOutcome(
+                                    repoPath, finding, verified),
+                            actionedFindingIds: _reviewActionedFindings,
                           ),
                         );
                       }
@@ -9187,6 +9312,9 @@ class _CommitReviewPane extends StatelessWidget {
   final VoidCallback onRerun;
   final VoidCallback? onCopy;
   final void Function(String path, String? hunkLabel) onOpenFinding;
+  final void Function(AiCommitReviewFindingData finding, bool verified)?
+      onFindingOutcome;
+  final Set<String> actionedFindingIds;
 
   final bool staleScope;
 
@@ -9213,6 +9341,8 @@ class _CommitReviewPane extends StatelessWidget {
     required this.onRerun,
     required this.onCopy,
     required this.onOpenFinding,
+    this.onFindingOutcome,
+    this.actionedFindingIds = const <String>{},
     this.staleScope = false,
   });
 
@@ -9655,6 +9785,12 @@ class _CommitReviewPane extends StatelessWidget {
                             ? null
                             : () => onOpenFinding(
                                 finding.filePath!, finding.hunkLabel),
+                        onOutcome: (onFindingOutcome == null ||
+                                finding.grounding == null)
+                            ? null
+                            : (verified) =>
+                                onFindingOutcome!(finding, verified),
+                        actioned: actionedFindingIds.contains(finding.id),
                       ),
                     ),
                   ),
@@ -10145,11 +10281,17 @@ class _ReviewFindingCard extends StatelessWidget {
   final AppTokens tokens;
   final AiCommitReviewFindingData finding;
   final VoidCallback? onOpenDiff;
+  // Confirm/dismiss verdict on this finding → claim-outcome ratchet.
+  // Null when no grounding is attached (engine-cold review).
+  final void Function(bool verified)? onOutcome;
+  final bool actioned;
 
   const _ReviewFindingCard({
     required this.tokens,
     required this.finding,
     this.onOpenDiff,
+    this.onOutcome,
+    this.actioned = false,
   });
 
   @override
@@ -10261,6 +10403,34 @@ class _ReviewFindingCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                    ],
+                    if (onOutcome != null) ...[
+                      const SizedBox(height: 10),
+                      if (actioned)
+                        Text(
+                          'recorded',
+                          style: TextStyle(
+                            color: tokens.textMuted.withValues(alpha: 0.55),
+                            fontSize: 10,
+                            letterSpacing: 0.3,
+                          ),
+                        )
+                      else
+                        Row(
+                          children: [
+                            _InlineActionLink(
+                              tokens: tokens,
+                              label: 'Confirm',
+                              onTap: () => onOutcome!(true),
+                            ),
+                            const SizedBox(width: 14),
+                            _InlineActionLink(
+                              tokens: tokens,
+                              label: 'Dismiss',
+                              onTap: () => onOutcome!(false),
+                            ),
+                          ],
+                        ),
                     ],
                   ],
                 ),

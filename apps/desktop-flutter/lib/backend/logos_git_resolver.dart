@@ -485,7 +485,7 @@ Future<LogosGit?> _resolveImpl(
     final reviewFut = collectReviewedCommitsAllForges(repoPath, topology);
     final statsFut = collectLogosGitStats(repoPath, coupling: coupling,
         forge: forge.name);
-    final shadowFut = _resolveShadowCoupling(repoPath);
+    final shadowFut = _resolveShadowCoupling(repoPath, currentHead: hash);
     final results = await Future.wait([reviewFut, statsFut, shadowFut]);
     final reviewedCommits = results[0] as Map<String, Set<String>>;
     final statsResultRaw = results[1] as GitResult<LogosGitStats>;
@@ -606,16 +606,12 @@ Future<LogosGit?> _resolveImpl(
   }
 }
 
-Future<FileCouplingMatrix?> _resolveShadowCoupling(String repoPath) async {
+Future<FileCouplingMatrix?> _resolveShadowCoupling(String repoPath,
+    {required String currentHead}) async {
   try {
-    final headResult = await Process.run(
-      'git', ['rev-parse', 'HEAD'],
-      workingDirectory: repoPath,
-    );
-    final currentHead = headResult.exitCode == 0
-        ? (headResult.stdout as String).trim()
-        : '';
-
+    // `currentHead` is threaded in from `_resolveImpl`'s rev-parse (read in
+    // the same resolve, same instant) — no redundant second `git rev-parse
+    // HEAD` spawn, and it goes through the shared `runGitProbe` dedup there.
     final cached = await ShadowCouplingCache.load(repoPath);
     final cacheValid = cached != null &&
         cached.isFresh &&

@@ -1,28 +1,56 @@
-# This file configures the analyzer, which statically analyzes Dart code to
-# check for errors, warnings, and lints.
+# Analyzer configuration — tuned for the LLM write→analyze→fix loop.
 #
-# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
-# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
-# invoked from the command line by running `flutter analyze`.
-
-# The following line activates a set of recommended lints for Flutter apps,
-# packages, and plugins designed to encourage good coding practices.
+# Goal: the analyzer catches genuine bugs *automatically*, so neither a human nor
+# an LLM has to remember project conventions — you write code, run `dart
+# analyze`, fix what it flags. To that end:
+#   • strict language modes close the implicit-`dynamic` holes (Rust-adjacent);
+#   • correctness lints with ZERO pre-existing violations are hard ERRORS, so the
+#     bug class can never ship and the loop must resolve them;
+#   • noisy/style lints are omitted so the error signal stays clean.
 include: package:flutter_lints/flutter.yaml
 
-linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
-  rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+analyzer:
+  language:
+    # No implicit-`dynamic` from failed inference; no raw generics. Low-noise,
+    # high-value — both stay on.
+    strict-inference: true
+    strict-raw-types: true
+    # strict-casts is the strongest lever but has a one-time cost HERE: it
+    # surfaces ~92 implicit dynamic→T casts, almost all in dtos.dart's fromJson
+    # factories (untyped JSON decode). Flip it on after those casts are made
+    # explicit (`j['x'] as String? ?? ''`) — then it also catches every *future*
+    # implicit-dynamic assignment. Left off for now so the baseline stays green
+    # and the in-flight dtos.dart isn't reddened. (avoid_dynamic_calls below
+    # already blocks the dangerous case — calling methods on a `dynamic`.)
+    # strict-casts: true
+  errors:
+    # Real-bug lints with ~zero pre-existing hits → hard errors (free wins:
+    # the bug class is blocked forever at no cleanup cost, no memorization).
+    unrelated_type_equality_checks: error      # `1 == 'a'` — always-false
+    collection_methods_unrelated_type: error   # `<int>[].contains('a')`
+    throw_in_finally: error                     # swallows the in-flight throw
+    literal_only_boolean_expressions: error     # `if (true && x)` dead logic
+    body_might_complete_normally_catch_error: error
+    cancel_subscriptions: error                 # StreamSubscription leak
+    close_sinks: error                          # Sink/IOSink leak
+    # no_adjacent_strings_in_list deliberately NOT here: measured 3 hits, all
+    # intentional long-string line-wrapping inside a list (gh `--json` field
+    # lists), zero real missing-commas — net-negative on this codebase.
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+linter:
+  rules:
+    # Genuine type / None / async bug catchers. Enabled at default severity
+    # (warning) where there's existing debt — visible, fixed in-loop.
+    unrelated_type_equality_checks: true
+    collection_methods_unrelated_type: true
+    avoid_dynamic_calls: true                   # blocks `dynamicValue.foo()`
+    cast_nullable_to_non_nullable: true
+    null_check_on_nullable_type_parameter: true
+    unawaited_futures: true                     # un-awaited Future in async body
+    cancel_subscriptions: true
+    close_sinks: true
+    throw_in_finally: true
+    literal_only_boolean_expressions: true
+    body_might_complete_normally_catch_error: true
+    # discarded_futures intentionally OMITTED — 268 hits here, almost all
+    # intentional fire-and-forget; unawaited_futures is the high-signal subset.

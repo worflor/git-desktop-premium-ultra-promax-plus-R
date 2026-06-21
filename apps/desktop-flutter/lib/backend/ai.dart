@@ -44,6 +44,13 @@ import 'release_state.dart'
 import 'diff_motion.dart';
 import 'trajectory_echoes.dart';
 import 'file_coupling.dart' show FileCouplingMatrix;
+import 'review_blast_radius.dart'
+    show computeBlastRadius, formatBlastRadiusBlock;
+import 'review_shadow.dart' show formatShadowBlock, shadowFlagsForPaths;
+import 'review_grounding.dart'
+    show GroundedFinding, formatClaimGroundingBlock, groundFindings;
+import 'review_ratchet_store.dart' show ReviewRatchetStore;
+import 'review_ratchet.dart' show ClaimOutcomeRatchet;
 import 'logos_chunks.dart' as chunks;
 import 'logos_diff_attention.dart' as diff_attention;
 import 'logos_flow.dart'
@@ -1504,6 +1511,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           ? (diffBranchName.isNotEmpty ? diffBranchName : null)
           : null,
       couplingMatrix: couplingMatrix,
+      includeShadowHistory: true, // review-only: scope the cold-git shadow scan
     );
     if (!diffContext.ok) {
       return GitResult.err(diffContext.error!);
@@ -1570,6 +1578,29 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       );
     }
 
+    // Spectral grounding — score the draft's own findings against the
+    // diffusion field. Advisory only: attached to each finding for the
+    // UI learning loop, and (on the verify pass) shown back to the model
+    // as a second witness. Skipped when the repo is engine-cold.
+    final reviewEngine = bundle.engine;
+    final reviewRawDiff = bundle.rawDiff;
+    final groundingEnabled =
+        reviewEngine != null && reviewRawDiff.trim().isNotEmpty;
+    final ClaimOutcomeRatchet? reviewRatchet =
+        groundingEnabled ? await ReviewRatchetStore.load(repositoryPath) : null;
+    final List<GroundedFinding> draftGrounded = groundingEnabled
+        ? groundFindings(
+            engine: reviewEngine,
+            rawDiff: reviewRawDiff,
+            findings: draftReview.findings,
+            ratchet: reviewRatchet!,
+          )
+        : const <GroundedFinding>[];
+    final List<AiCommitReviewFindingData> draftFindingsGrounded =
+        draftGrounded.isEmpty
+            ? draftReview.findings
+            : draftGrounded.map((g) => g.finding).toList();
+
     // Feed cited paths back into the SSE calibration store so useful
     // axes get reinforced per-regime. Fire-and-forget — review results
     // are returned regardless.
@@ -1596,7 +1627,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           score: draftReview.score,
           summary: draftReview.summary,
           reasoningReport: draftReview.reasoningReport,
-          findings: draftReview.findings,
+          findings: draftFindingsGrounded,
           observations: draftReview.observations,
           twoStepEnabled: false,
           hasVerificationTrace: false,
@@ -1614,6 +1645,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       diffSummary: bundle.diffBundle.promptBody,
       passMode: _ReviewPassMode.verify,
       priorReview: _serializeDraftReview(draftReview),
+      groundingReport: formatClaimGroundingBlock(draftGrounded),
     );
     final verifyPrompt = _buildCommitReviewPrompt(
       spec: verifySpec,
@@ -1659,14 +1691,14 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         score: draftReview.score,
         summary: draftReview.summary,
         reasoningReport: draftReview.reasoningReport,
-        findings: draftReview.findings,
+        findings: draftFindingsGrounded,
         observations: draftReview.observations,
         twoStepEnabled: true,
         hasVerificationTrace: false,
         verificationFailed: true,
         verificationError:
             verifyOutput.error ?? 'Verification did not return a result.',
-        draftFindings: draftReview.findings,
+        draftFindings: draftFindingsGrounded,
         draftSummary: draftReview.summary,
         draftReasoningReport: draftReview.reasoningReport,
       );
@@ -1690,14 +1722,14 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           score: draftReview.score,
           summary: draftReview.summary,
           reasoningReport: draftReview.reasoningReport,
-          findings: draftReview.findings,
+          findings: draftFindingsGrounded,
           observations: draftReview.observations,
           twoStepEnabled: true,
           hasVerificationTrace: false,
           verificationFailed: true,
           verificationError:
               'Verification output could not be parsed. Showing draft review.',
-          draftFindings: draftReview.findings,
+          draftFindings: draftFindingsGrounded,
           draftSummary: draftReview.summary,
           draftReasoningReport: draftReview.reasoningReport,
         ),
@@ -1708,6 +1740,18 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       draft: draftReview,
       verification: verification,
     );
+    // Re-ground the final merged set (verification may have added or
+    // dropped findings) so the surfaced findings carry grounding for
+    // the UI learning loop.
+    final List<AiCommitReviewFindingData> mergedFindingsGrounded =
+        groundingEnabled
+            ? groundFindings(
+                engine: reviewEngine,
+                rawDiff: reviewRawDiff,
+                findings: merged.findings,
+                ratchet: reviewRatchet!,
+              ).map((g) => g.finding).toList()
+            : merged.findings;
     await _recordReviewAudit(
       event: 'review_commit_final',
       providerId: provider.id,
@@ -1733,11 +1777,11 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         score: merged.score,
         summary: merged.summary,
         reasoningReport: merged.reasoningReport,
-        findings: merged.findings,
+        findings: mergedFindingsGrounded,
         observations: draftReview.observations,
         twoStepEnabled: true,
         hasVerificationTrace: true,
-        draftFindings: draftReview.findings,
+        draftFindings: draftFindingsGrounded,
         draftSummary: draftReview.summary,
         draftReasoningReport: draftReview.reasoningReport,
         verificationNotes: verification.verificationNotes,
@@ -5200,6 +5244,12 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // logos+engram signal). App-layer callers fetch from
   // FileCouplingState and pass down.
   FileCouplingMatrix? couplingMatrix,
+  // Shadow history is a review-evidence channel whose producer runs a cold
+  // multi-call git scan (revert grep + reflog walk + abandoned-branch diff).
+  // Gate it to the review path so commit-message / muse generation don't pay
+  // that cold-git first-call cost or carry a <shadow_history> section their
+  // prompts never describe. Timeout-bounded + 10-min memoised even when on.
+  bool includeShadowHistory = false,
 }) async {
   final scopeArgs =
       scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
@@ -5392,6 +5442,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       includeUnstaged: includeUnstaged,
     ),
     const _StructuralVerificationProducer(),
+    const _BlastRadiusProducer(),
+    if (includeShadowHistory) const _ShadowHistoryProducer(),
   ]);
   // Assemble + stitch in one pass. Each producer declares its own
   // wrapper tag and display order, so adding/removing a producer is a
@@ -5466,6 +5518,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       projectAge: projectAge,
       uniqueContributors: uniqueContributors,
       logosEmissionRecord: logosEmissionRecord,
+      engine: logos?.engine,
+      rawDiff: fullDiff,
     ),
   );
 }
@@ -6624,6 +6678,86 @@ class _StructuralVerificationProducer extends AiContextProducer {
       diffText: req.diffText,
     );
     return AiContextSection(id: id, body: body);
+  }
+}
+
+/// Always-on producer: the change's historical blast radius — files
+/// that co-change with this diff across the repo's history but are
+/// absent from it. Off-pool — the body is a handful of lines drawn from
+/// the co-change manifold the engine already holds, so it costs no
+/// budget and no extra git calls.
+class _BlastRadiusProducer extends AiContextProducer {
+  const _BlastRadiusProducer();
+  @override
+  String get id => 'blast_radius';
+  @override
+  int get order => 48;
+  @override
+  double? urgency(AiContextRequest req) => null;
+  @override
+  int fixedRequest(AiContextRequest req) => 0;
+  @override
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
+    return AiContextSection(id: id, body: _collectBlastRadius(req.logos));
+  }
+}
+
+String _collectBlastRadius(LogosDiffusionResult? logos) {
+  try {
+    if (logos == null) return '';
+    final engine = logos.engine;
+    final changed = logos.probe.primaryPaths;
+    if (changed.isEmpty) return '';
+    final files = computeBlastRadius(
+      coupling: engine.stats.coupling,
+      changedPaths: changed,
+      integrityByPath: engine.integrityByPath,
+    );
+    return formatBlastRadiusBlock(files);
+  } catch (e) {
+    return '<engine_failure channel="blast_radius" reason="${_escapeFailureReason(e)}"/>\n';
+  }
+}
+
+/// Always-on producer: files in this diff that git has previously
+/// reverted, reset, or abandoned (the "footgun" signal). Off-pool. The
+/// underlying shadow scan is cold git but timeout-bounded and memoised
+/// per repo (see review_shadow.dart).
+class _ShadowHistoryProducer extends AiContextProducer {
+  const _ShadowHistoryProducer();
+  @override
+  String get id => 'shadow_history';
+  @override
+  int get order => 22;
+  @override
+  double? urgency(AiContextRequest req) => null;
+  @override
+  int fixedRequest(AiContextRequest req) => 0;
+  @override
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
+    final body = await _collectShadowHistory(
+      req.repositoryPath,
+      req.diffText,
+      req.logos,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+Future<String> _collectShadowHistory(
+  String repositoryPath,
+  String diffText,
+  LogosDiffusionResult? logos,
+) async {
+  try {
+    final changed = logos?.probe.primaryPaths ?? extractDiffTouchedPaths(diffText);
+    if (changed.isEmpty) return '';
+    final flags = await shadowFlagsForPaths(repositoryPath, changed);
+    return formatShadowBlock(flags);
+  } catch (e) {
+    return '<engine_failure channel="shadow_history" reason="${_escapeFailureReason(e)}"/>\n';
   }
 }
 
@@ -8963,14 +9097,32 @@ String _buildCommitReviewPrompt({
     'exist where this diff says it does."\n'
     '  • <file_metadata> — authorship, churn, test coverage. Use it to '
     'ask "who has touched this recently and is it guarded."\n'
+    '  • <shadow_history> — the undo channel. Files in this diff that '
+    'git has reverted, reset, or abandoned before. The ground has '
+    'shifted at these paths once already, so read them closely — but '
+    'recurrence is a reason to look, never a verdict that this change '
+    'repeats the old mistake.\n'
     '  • <file_context> — full source of small changed files. Use it to '
     'verify imports, signatures, and the code around the edit.\n'
+    '  • <execution_flow> — the dataflow channel (engine: filament). '
+    'Per-file fragility (spectral_gap, higher = more fragile) and flow '
+    'findings — stale values, temporal shifts, context inversions — '
+    'inside the changed files. Use it to ask "does the logic inside this '
+    'edit hold together"; treat its findings as leads to confirm against '
+    'the diff, not standalone proof.\n'
     '  • <relevance_neighborhood> — files NOT in the diff that the '
     'engine felt pulled toward. Each carries a relevance band (trace → '
     'weak → moderate → strong → dominant) and a via= trail of coupling '
     'axes (symbol-pickaxe, code-coupling, path-mirror, folder-hub, '
     'enrichment) with a strength word. This is where you look for '
     '"what else might this affect."\n'
+    '  • <blast_radius> — the co-change channel. Files that historically '
+    'move with this diff yet are absent from it, each with a J= tie '
+    'strength and, where one fires, a named relationship (source↔test, '
+    'manifest↔lockfile). A strong tie left untouched can mean a '
+    'companion edit was missed or a deliberate decoupling — raise it as '
+    'a question unless you can prove the omission breaks something. The '
+    'tie is symmetric history, not causation.\n'
     '  • <logos_topology> — the spectral read. Qualitative bands for '
     'coherence, motion, stress, witness coverage. This is where you '
     'learn "what SHAPE is this change." Also carries three structural '
@@ -8979,8 +9131,8 @@ String _buildCommitReviewPrompt({
     '(crystalline / poisson / goe / tree / bulk / modular) with a '
     'decisiveness reading. A `tree` geometry means strict hierarchy '
     '(cross-cutting changes ripple far); `modular` means clustered '
-    '(API-boundary refactors are cheap); `goe` means chaotic (blast '
-    'radius is hard to predict).\n'
+    '(API-boundary refactors are cheap); `goe` means chaotic (ripple '
+    'is hard to predict).\n'
     '      – `structural:` gives component and cycle counts of the '
     'coupling graph. High components with low cycles means the diff '
     'touches isolated islands; the opposite means an integrated core.\n'
@@ -9049,6 +9201,13 @@ String _buildCommitReviewPrompt({
     'The score follows from findings alone. '
     'Leave code style to linters.',
   );
+  if (spec.groundingReport != null && spec.groundingReport!.trim().isNotEmpty) {
+    buffer.writeln(
+      'A <claim_grounding> channel scores each prior-pass finding against the '
+      'co-change manifold — read it as a second witness on which claims the '
+      'structure supports, never as a gate that overrides what you can prove.',
+    );
+  }
   buffer.writeln('</evidence_rules>');
   buffer.writeln();
   buffer.writeln('<escalation_rules>');
@@ -9090,6 +9249,12 @@ String _buildCommitReviewPrompt({
     buffer.writeln('<prior_review>');
     buffer.writeln(spec.priorReview!.trim());
     buffer.writeln('</prior_review>');
+  }
+  if (spec.groundingReport != null && spec.groundingReport!.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<claim_grounding>');
+    buffer.writeln(spec.groundingReport!.trim());
+    buffer.writeln('</claim_grounding>');
   }
   if (spec.statusSummary.trim().isNotEmpty) {
     buffer.writeln();
@@ -11665,6 +11830,16 @@ class _CommitDiffContext {
   final int uniqueContributors;
   final LogosEmissionRecord? logosEmissionRecord;
 
+  /// The resolved Logos engine for this review (null when the repo is
+  /// engine-cold). Carried so the review pass can score its own
+  /// findings against the diffusion field. See [groundFindings].
+  final LogosGit? engine;
+
+  /// The raw unified diff (pre-packing). [computeClaimShape] needs the
+  /// literal diff text for its verifiability axis, which the enriched
+  /// prompt body can't supply.
+  final String rawDiff;
+
   const _CommitDiffContext({
     required this.branchName,
     required this.statusSummary,
@@ -11677,6 +11852,8 @@ class _CommitDiffContext {
     this.projectAge = '',
     this.uniqueContributors = 0,
     this.logosEmissionRecord,
+    this.engine,
+    this.rawDiff = '',
   });
 }
 
@@ -11701,6 +11878,11 @@ class _ReviewPromptSpec {
   final _ReviewPassMode passMode;
   final String? priorReview;
 
+  /// Per-finding spectral grounding for the prior pass's findings,
+  /// rendered by [formatClaimGroundingBlock]. Only set on the verify
+  /// pass; surfaced as the `<claim_grounding>` channel.
+  final String? groundingReport;
+
   const _ReviewPromptSpec({
     required this.branchName,
     required this.modelCategoryLabel,
@@ -11712,6 +11894,7 @@ class _ReviewPromptSpec {
     required this.diffSummary,
     required this.passMode,
     this.priorReview,
+    this.groundingReport,
   });
 }
 

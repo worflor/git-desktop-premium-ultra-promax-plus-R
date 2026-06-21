@@ -1451,6 +1451,32 @@ class AiPatchData {
   });
 }
 
+/// Lightweight, engine-free projection of a finding's 5-axis claim
+/// grounding (see review_logos.dart). Carries only primitives so this
+/// DTO file stays free of engine dependencies; the UI rebuilds a
+/// ClaimShape from these fields when recording an outcome.
+class ClaimGroundingData {
+  final double grounding;
+  final double verifiability;
+  final double reach;
+  final double coherence;
+  final int symbolCount;
+  final int textLength;
+  final double composite;
+  final double ratchetPrior;
+
+  const ClaimGroundingData({
+    required this.grounding,
+    required this.verifiability,
+    required this.reach,
+    required this.coherence,
+    required this.symbolCount,
+    required this.textLength,
+    required this.composite,
+    required this.ratchetPrior,
+  });
+}
+
 class AiCommitReviewFindingData {
   final String id;
   final String severity;
@@ -1461,6 +1487,16 @@ class AiCommitReviewFindingData {
   final String? hunkLabel;
   final String origin;
 
+  /// Spectral grounding of this finding, attached after the review pass
+  /// scores it against the diff. Null when no engine was available (or
+  /// after a round-trip through persistence — it is deliberately NOT
+  /// serialised: a grounding score is only meaningful against the engine
+  /// state that produced it, and a stale score reloaded from disk would
+  /// mislead the claim-outcome ratchet. The intended consequence is that the
+  /// Confirm/Dismiss vote affordance (which feeds the ratchet) lives only in
+  /// the session the review ran — a re-opened/persisted review shows none.
+  final ClaimGroundingData? grounding;
+
   const AiCommitReviewFindingData({
     required this.id,
     required this.severity,
@@ -1470,7 +1506,22 @@ class AiCommitReviewFindingData {
     this.filePath,
     this.hunkLabel,
     required this.origin,
+    this.grounding,
   });
+
+  /// Return a copy with [grounding] attached.
+  AiCommitReviewFindingData withGrounding(ClaimGroundingData g) =>
+      AiCommitReviewFindingData(
+        id: id,
+        severity: severity,
+        title: title,
+        evidence: evidence,
+        whyItMatters: whyItMatters,
+        filePath: filePath,
+        hunkLabel: hunkLabel,
+        origin: origin,
+        grounding: g,
+      );
 }
 
 class AiCommitReviewObservationData {
