@@ -6,6 +6,7 @@
 ///   * [CommitVoice]     — grammatical mood (imperative, descriptive,
 ///                         narrative).
 ///   * [CommitCoverage]  — how much of the diff the message mentions.
+library;
 
 /// Skeleton of the generated message.
 enum CommitStructure {

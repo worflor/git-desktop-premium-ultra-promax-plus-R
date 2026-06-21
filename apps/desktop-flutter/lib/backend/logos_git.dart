@@ -213,7 +213,7 @@ _HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
   final children = <int, List<int>>{};
   final nodeId = <String, int>{};
 
-  final rootId = 0;
+  const rootId = 0;
   nodeId[''] = rootId;
   var nextId = 1;
 
@@ -273,8 +273,8 @@ _HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
       if (visited[v]) continue;
       visited[v] = true;
       final angle = c * angleStep;
-      final _e = math.exp(delta);
-      final r = (_e - 1.0) / (_e + 1.0);
+      final e = math.exp(delta);
+      final r = (e - 1.0) / (e + 1.0);
       // Möbius translation from parent position.
       final dx = r * math.cos(angle);
       final dy = r * math.sin(angle);
@@ -702,14 +702,14 @@ class GhostCoupling {
 
 // Gas-phase evaporation (1/e) — the thermodynamic minimum for both
 // transport integrity and shadow evidence discount.
-final double _kTransportIntegrityFloor = sc.gasPhase;
-final double _kShadowDiscount = sc.gasPhase;
+const double _kTransportIntegrityFloor = sc.gasPhase;
+const double _kShadowDiscount = sc.gasPhase;
 
 // Corroboration bonus: when shadow evidence reinforces a real edge,
 // the real score gets a small additive lift scaled by the shadow's
 // discounted strength. Derived from the Born mixer's amplitude
 // addition: sqrt(p_real) + sqrt(p_shadow) → squared back.
-final double _kCorroborationLift = sc.gasPhase * sc.phiDecay3; // ≈ 0.087
+const double _kCorroborationLift = sc.gasPhase * sc.phiDecay3; // ≈ 0.087
 
 Iterable<MapEntry<String, double>> _blendedJaccardEdges(
   FileCouplingMatrix real,
@@ -1967,7 +1967,9 @@ class LogosGit {
       }
     }
     final result = <({String from, String to, double strength})>[];
-    while (heap.isNotEmpty) result.add(heap.pop());
+    while (heap.isNotEmpty) {
+      result.add(heap.pop());
+    }
     return result.reversed.toList();
   }
 

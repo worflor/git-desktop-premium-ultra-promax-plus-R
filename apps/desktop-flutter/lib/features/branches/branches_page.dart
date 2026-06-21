@@ -1751,9 +1751,9 @@ class _BranchesPageState extends State<BranchesPage> {
     for (final entry in parsed.entries) {
       var adds = 0, dels = 0;
       for (final l in entry.value) {
-        if (l.kind == LineKind.added)
+        if (l.kind == LineKind.added) {
           adds++;
-        else if (l.kind == LineKind.deleted) dels++;
+        } else if (l.kind == LineKind.deleted) dels++;
       }
       prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
     }
@@ -2481,7 +2481,9 @@ class _BranchesPageState extends State<BranchesPage> {
   /// issue 100+ git logs.
   Future<void> _ensurePrFileSignalsLoaded(String repoPath, int prNumber) async {
     if (_prFileSignals.containsKey(prNumber) ||
-        _prFileSignalsLoading.contains(prNumber)) return;
+        _prFileSignalsLoading.contains(prNumber)) {
+      return;
+    }
     final detail = _prDetails[prNumber];
     if (detail == null || detail.files.isEmpty) return;
     final paths = ([...detail.files]..sort((a, b) =>
@@ -2901,7 +2903,7 @@ class _BranchesPageState extends State<BranchesPage> {
               pills: [
                 (
                   'MINE',
-                  _prs == null ? null : _prs!.where(_prMatchesMine).length,
+                  _prs?.where(_prMatchesMine).length,
                   _prFilters.contains('MINE'),
                 ),
                 ('DRAFTS', null, _prFilters.contains('DRAFTS')),
@@ -3229,7 +3231,7 @@ class _BranchesPageState extends State<BranchesPage> {
       _prWarmSweepToken = null;
     }
     if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
-      return _LensLoadingNotice(label: 'Reading pull requests…');
+      return const _LensLoadingNotice(label: 'Reading pull requests…');
     }
     // Remote PRs first — same data and lifecycle as before. Local desk
     // PRs are mixed in as PullRequestSummary adapters so the row
@@ -3281,7 +3283,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // async event handlers always see the current DeskPrState.)
     final prs = allPrs.where(_prMatchesFilters).toList();
     final mainColumn = prs.isEmpty
-        ? _LensEmptyNotice(
+        ? const _LensEmptyNotice(
             primary: 'No PRs match these filters',
             secondary: 'Toggle filters off in the row above.',
           )
@@ -3433,7 +3435,7 @@ class _BranchesPageState extends State<BranchesPage> {
       return _RemoteMissingNotice(status: _remoteStatus!);
     }
     if (_issuesLoading && (_issues == null || _issues!.isEmpty)) {
-      return _LensLoadingNotice(label: 'reading issues…');
+      return const _LensLoadingNotice(label: 'reading issues…');
     }
     if (all.isEmpty) {
       return _LensEmptyNotice(
@@ -3442,7 +3444,7 @@ class _BranchesPageState extends State<BranchesPage> {
       );
     }
     if (filtered.isEmpty) {
-      return _LensEmptyNotice(
+      return const _LensEmptyNotice(
         primary: 'Nothing matches',
         secondary: 'Toggle filters off above.',
       );
@@ -4269,7 +4271,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (_issuesLoading &&
         (_issues == null || _issues!.isEmpty) &&
         deskIssues.isEmpty) {
-      return _LensLoadingNotice(label: 'Reading issues…');
+      return const _LensLoadingNotice(label: 'Reading issues…');
     }
     // Mix local desk issues into the list. Issues don't have a branch
     // join key like PRs do, so there's no dedupe — local + remote
@@ -4290,7 +4292,7 @@ class _BranchesPageState extends State<BranchesPage> {
     }
     final issues = allIssues.where(_issueMatchesFilters).toList();
     if (issues.isEmpty) {
-      return _LensEmptyNotice(
+      return const _LensEmptyNotice(
         primary: 'No issues match these filters',
         secondary: 'Toggle filters off in the row above.',
       );
@@ -6954,12 +6956,12 @@ class _PrExpanded extends StatelessWidget {
             }),
           ],
           const SizedBox(height: 16),
-          _SectionLabel('REVIEW'),
+          const _SectionLabel('REVIEW'),
           const SizedBox(height: 6),
           _ReviewForm(onSubmit: onSubmitReview),
           const SizedBox(height: 16),
           if (checks != null && checks!.isNotEmpty) ...[
-            _SectionLabel('CHECKS'),
+            const _SectionLabel('CHECKS'),
             const SizedBox(height: 6),
             for (final c in checks!) _CheckLine(check: c),
             const SizedBox(height: 14),
@@ -6975,7 +6977,7 @@ class _PrExpanded extends StatelessWidget {
           if (pr.reviewers.isNotEmpty ||
               (fileSignals != null && fileSignals!.authors.isNotEmpty) ||
               fileSignalsLoading) ...[
-            _SectionLabel('PEOPLE'),
+            const _SectionLabel('PEOPLE'),
             const SizedBox(height: 6),
             _PeopleSection(
               reviewers: pr.reviewers,
@@ -6985,7 +6987,7 @@ class _PrExpanded extends StatelessWidget {
             const SizedBox(height: 14),
           ],
           if (detail != null && detail!.comments.isNotEmpty) ...[
-            _SectionLabel('CONVERSATION'),
+            const _SectionLabel('CONVERSATION'),
             const SizedBox(height: 6),
             // Full thread, sorted chronologically (oldest first). Mixes
             // top-level PR comments with review submission bodies,
@@ -7833,7 +7835,7 @@ class _FilesSectionHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _SectionLabel('FILES'),
+                const _SectionLabel('FILES'),
                 const SizedBox(width: 6),
                 Text(
                   isWrapped ? '⇕' : '↔',
@@ -8781,7 +8783,7 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
     final overlay = Overlay.of(context);
     _entry = OverlayEntry(builder: (ctx) {
       final t = ctx.tokens;
-      final box = context.findRenderObject() as RenderBox;
+      final box = context.findRenderObject()! as RenderBox;
       final target = box.localToGlobal(Offset(box.size.width, box.size.height))
           + const Offset(0, 6);
       return Stack(
@@ -9453,7 +9455,7 @@ class _IssueRowState extends State<_IssueRow> {
                                   // FIRST so the reader sees "this is being
                                   // worked on" before reading the body.
                                   if (widget.addressingPrs.isNotEmpty) ...[
-                                    _SectionLabel('ADDRESSED BY'),
+                                    const _SectionLabel('ADDRESSED BY'),
                                     const SizedBox(height: 6),
                                     Wrap(
                                       spacing: 6,
@@ -9470,7 +9472,7 @@ class _IssueRowState extends State<_IssueRow> {
                                     const SizedBox(height: 14),
                                   ],
                                   if (widget.detail!.body.isNotEmpty) ...[
-                                    _SectionLabel('DESCRIPTION'),
+                                    const _SectionLabel('DESCRIPTION'),
                                     const SizedBox(height: 6),
                                     _CommentBlock(
                                       comment: RemoteComment(
@@ -9482,7 +9484,7 @@ class _IssueRowState extends State<_IssueRow> {
                                     const SizedBox(height: 6),
                                   ],
                                   if (widget.detail!.comments.isNotEmpty) ...[
-                                    _SectionLabel('THREAD'),
+                                    const _SectionLabel('THREAD'),
                                     const SizedBox(height: 6),
                                     for (final c in widget.detail!.comments)
                                       _CommentBlock(comment: c),
@@ -9714,7 +9716,7 @@ class _RemoteMissingNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final headline = 'Remote provider unavailable';
+    const headline = 'Remote provider unavailable';
     final hint = status.reason ?? 'No recognised remote host for this repo.';
     return Center(
       child: Padding(
@@ -10541,9 +10543,9 @@ Future<void> showPatchPreviewDialog(
   for (final entry in parsed.entries) {
     var adds = 0, dels = 0;
     for (final l in entry.value) {
-      if (l.kind == LineKind.added)
+      if (l.kind == LineKind.added) {
         adds++;
-      else if (l.kind == LineKind.deleted) dels++;
+      } else if (l.kind == LineKind.deleted) dels++;
     }
     prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
   }
@@ -10852,9 +10854,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   (int, int) _countsFor(List<ParsedLine> lines) {
     var adds = 0, dels = 0;
     for (final l in lines) {
-      if (l.kind == LineKind.added)
+      if (l.kind == LineKind.added) {
         adds++;
-      else if (l.kind == LineKind.deleted) dels++;
+      } else if (l.kind == LineKind.deleted) dels++;
     }
     return (adds, dels);
   }
@@ -11408,9 +11410,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       for (final entry in parsed.entries) {
         var adds = 0, dels = 0;
         for (final l in entry.value) {
-          if (l.kind == LineKind.added)
+          if (l.kind == LineKind.added) {
             adds++;
-          else if (l.kind == LineKind.deleted) dels++;
+          } else if (l.kind == LineKind.deleted) dels++;
         }
         newPrFiles
             .add(PrFile(path: entry.key, additions: adds, deletions: dels));
@@ -12017,7 +12019,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
         .toList();
     if (alt.isEmpty) return;
     _entry = OverlayEntry(builder: (ctx) {
-      final box = context.findRenderObject() as RenderBox;
+      final box = context.findRenderObject()! as RenderBox;
       final target = box.localToGlobal(Offset(box.size.width, box.size.height))
           + const Offset(0, 6);
       return Stack(children: [

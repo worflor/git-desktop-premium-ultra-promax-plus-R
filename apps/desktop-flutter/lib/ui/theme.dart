@@ -184,7 +184,7 @@ ThemeData _buildTheme(AppTokens t) {
     ),
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStatePropertyAll(t.scrollbarThumb),
-      thickness: WidgetStatePropertyAll(4),
+      thickness: const WidgetStatePropertyAll(4),
       radius: const Radius.circular(4),
     ),
     // Drop the default Material gray Tooltip in favor of the app's
@@ -751,7 +751,7 @@ class _BrassSliderThumbShape extends SliderComponentShape {
     canvas.rotate(angle);
 
     final rect = Rect.fromCenter(center: Offset.zero, width: size, height: size);
-    final gradient = const LinearGradient(
+    const gradient = LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [Color(0xFFE2D1B6), Color(0xFFCFB996)],

@@ -18,9 +18,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'gh.dart' as _gh;
-import 'gitea_api.dart' as _gitea;
-import 'glab.dart' as _glab;
+import 'gh.dart' as gh;
+import 'gitea_api.dart' as gitea;
+import 'glab.dart' as glab;
 import 'git_result.dart';
 import 'remote_types.dart';
 
@@ -102,7 +102,7 @@ class GhPrProvider extends RemotePrProvider {
 
   @override
   Future<RemoteProviderStatus> status(String repoPath) async {
-    final s = await _gh.ghStatus();
+    final s = await gh.ghStatus();
     if (s.usable) return RemoteProviderStatus.yes;
     if (!s.installed) {
       return const RemoteProviderStatus(
@@ -124,12 +124,12 @@ class GhPrProvider extends RemotePrProvider {
     String state = 'open',
     int limit = 50,
   }) =>
-      _gh.listPullRequests(repoPath, state: state, limit: limit);
+      gh.listPullRequests(repoPath, state: state, limit: limit);
 
   @override
   Future<GitResult<PullRequestSummary>> getPullRequest(
           String repoPath, int number) =>
-      _gh.getPullRequestSummary(repoPath, number);
+      gh.getPullRequestSummary(repoPath, number);
 
   @override
   Future<GitResult<PullRequestDetail>> getPullRequestDetail(
@@ -137,12 +137,12 @@ class GhPrProvider extends RemotePrProvider {
     int number, {
     bool includeDiff = true,
   }) =>
-      _gh.pullRequestDetail(repoPath, number, includeDiff: includeDiff);
+      gh.pullRequestDetail(repoPath, number, includeDiff: includeDiff);
 
   @override
   Future<GitResult<List<CheckSummary>>> listChecks(
           String repoPath, int prNumber) =>
-      _gh.listChecks(repoPath, prNumber);
+      gh.listChecks(repoPath, prNumber);
 
   @override
   Future<GitResult<void>> submitReview(
@@ -151,7 +151,7 @@ class GhPrProvider extends RemotePrProvider {
     required String event,
     String body = '',
   }) =>
-      _gh.submitPrReview(repoPath, number, event: event, body: body);
+      gh.submitPrReview(repoPath, number, event: event, body: body);
 
   @override
   Future<GitResult<void>> merge(
@@ -160,21 +160,21 @@ class GhPrProvider extends RemotePrProvider {
     required String method,
     bool deleteBranch = false,
   }) =>
-      _gh.mergePullRequest(repoPath, number,
+      gh.mergePullRequest(repoPath, number,
           method: method, deleteBranch: deleteBranch);
 
   @override
   Future<GitResult<void>> checkout(String repoPath, int number) =>
-      _gh.checkoutPullRequest(repoPath, number);
+      gh.checkoutPullRequest(repoPath, number);
 
   @override
   Future<GitResult<void>> close(String repoPath, int number) =>
-      _gh.closePullRequest(repoPath, number);
+      gh.closePullRequest(repoPath, number);
 
   @override
   Future<GitResult<void>> comment(
           String repoPath, int number, String body) =>
-      _gh.commentOnPullRequest(repoPath, number, body);
+      gh.commentOnPullRequest(repoPath, number, body);
 
   @override
   Future<GitResult<int>> createPullRequest(
@@ -188,7 +188,7 @@ class GhPrProvider extends RemotePrProvider {
     List<String> assignees = const [],
     List<String> reviewers = const [],
   }) =>
-      _gh.createGhPr(repoPath,
+      gh.createGhPr(repoPath,
           title: title, body: body, headRef: headRef, baseRef: baseRef,
           draft: draft, labels: labels, assignees: assignees, reviewers: reviewers);
 
@@ -196,7 +196,7 @@ class GhPrProvider extends RemotePrProvider {
   String fetchRefspec(int number) => 'pull/$number/head';
 
   @override
-  Future<String> whoami() => _gh.whoami();
+  Future<String> whoami() => gh.whoami();
 }
 
 
@@ -205,7 +205,7 @@ class GlabPrProvider extends RemotePrProvider {
 
   @override
   Future<RemoteProviderStatus> status(String repoPath) async {
-    final s = await _glab.glabStatus();
+    final s = await glab.glabStatus();
     if (s.usable) return RemoteProviderStatus.yes;
     if (!s.installed) {
       return const RemoteProviderStatus(
@@ -227,13 +227,13 @@ class GlabPrProvider extends RemotePrProvider {
     String state = 'open',
     int limit = 50,
   }) =>
-      _glab.listMergeRequests(repoPath,
+      glab.listMergeRequests(repoPath,
           state: state == 'open' ? 'opened' : state, limit: limit);
 
   @override
   Future<GitResult<PullRequestSummary>> getPullRequest(
           String repoPath, int number) =>
-      _glab.getMergeRequest(repoPath, number);
+      glab.getMergeRequest(repoPath, number);
 
   @override
   Future<GitResult<PullRequestDetail>> getPullRequestDetail(
@@ -241,12 +241,12 @@ class GlabPrProvider extends RemotePrProvider {
     int number, {
     bool includeDiff = true,
   }) =>
-      _glab.mergeRequestDetail(repoPath, number, includeDiff: includeDiff);
+      glab.mergeRequestDetail(repoPath, number, includeDiff: includeDiff);
 
   @override
   Future<GitResult<List<CheckSummary>>> listChecks(
           String repoPath, int prNumber) =>
-      _glab.listMrPipelines(repoPath, prNumber);
+      glab.listMrPipelines(repoPath, prNumber);
 
   @override
   Future<GitResult<void>> submitReview(
@@ -255,7 +255,7 @@ class GlabPrProvider extends RemotePrProvider {
     required String event,
     String body = '',
   }) =>
-      _glab.submitMrReview(repoPath, number, event: event, body: body);
+      glab.submitMrReview(repoPath, number, event: event, body: body);
 
   @override
   Future<GitResult<void>> merge(
@@ -264,21 +264,21 @@ class GlabPrProvider extends RemotePrProvider {
     required String method,
     bool deleteBranch = false,
   }) =>
-      _glab.mergeMr(repoPath, number,
+      glab.mergeMr(repoPath, number,
           method: method, deleteBranch: deleteBranch);
 
   @override
   Future<GitResult<void>> checkout(String repoPath, int number) =>
-      _glab.checkoutMr(repoPath, number);
+      glab.checkoutMr(repoPath, number);
 
   @override
   Future<GitResult<void>> close(String repoPath, int number) =>
-      _glab.closeMr(repoPath, number);
+      glab.closeMr(repoPath, number);
 
   @override
   Future<GitResult<void>> comment(
           String repoPath, int number, String body) =>
-      _glab.commentOnMr(repoPath, number, body);
+      glab.commentOnMr(repoPath, number, body);
 
   @override
   Future<GitResult<int>> createPullRequest(
@@ -292,7 +292,7 @@ class GlabPrProvider extends RemotePrProvider {
     List<String> assignees = const [],
     List<String> reviewers = const [],
   }) =>
-      _glab.createGlabMr(repoPath,
+      glab.createGlabMr(repoPath,
           title: title, body: body, headRef: headRef, baseRef: baseRef,
           draft: draft, labels: labels, assignees: assignees, reviewers: reviewers);
 
@@ -300,7 +300,7 @@ class GlabPrProvider extends RemotePrProvider {
   String fetchRefspec(int number) => 'merge-requests/$number/head';
 
   @override
-  Future<String> whoami() => _glab.glabWhoami();
+  Future<String> whoami() => glab.glabWhoami();
 }
 
 
@@ -309,14 +309,14 @@ class GiteaPrProvider extends RemotePrProvider {
 
   @override
   Future<RemoteProviderStatus> status(String repoPath) async {
-    final coords = await _gitea.resolveGiteaCoords(repoPath);
+    final coords = await gitea.resolveGiteaCoords(repoPath);
     if (coords == null) {
       return const RemoteProviderStatus(
         available: false,
         reason: 'could not resolve Gitea/Forgejo API URL',
       );
     }
-    final s = await _gitea.giteaApiStatus(coords.apiBase);
+    final s = await gitea.giteaApiStatus(coords.apiBase);
     if (!s.reachable) {
       return RemoteProviderStatus(available: false, reason: s.reason);
     }
@@ -330,13 +330,13 @@ class GiteaPrProvider extends RemotePrProvider {
     int limit = 50,
   }) async {
       await _ensureLogin(repoPath);
-      return _gitea.listGiteaPulls(repoPath, state: state, limit: limit);
+      return gitea.listGiteaPulls(repoPath, state: state, limit: limit);
   }
 
   @override
   Future<GitResult<PullRequestSummary>> getPullRequest(
           String repoPath, int number) =>
-      _gitea.getGiteaPull(repoPath, number);
+      gitea.getGiteaPull(repoPath, number);
 
   @override
   Future<GitResult<PullRequestDetail>> getPullRequestDetail(
@@ -344,12 +344,12 @@ class GiteaPrProvider extends RemotePrProvider {
     int number, {
     bool includeDiff = true,
   }) =>
-      _gitea.giteaPullDetail(repoPath, number, includeDiff: includeDiff);
+      gitea.giteaPullDetail(repoPath, number, includeDiff: includeDiff);
 
   @override
   Future<GitResult<List<CheckSummary>>> listChecks(
           String repoPath, int prNumber) =>
-      _gitea.listGiteaCommitStatuses(repoPath, prNumber);
+      gitea.listGiteaCommitStatuses(repoPath, prNumber);
 
   @override
   Future<GitResult<void>> submitReview(
@@ -358,7 +358,7 @@ class GiteaPrProvider extends RemotePrProvider {
     required String event,
     String body = '',
   }) =>
-      _gitea.giteaApprovePull(repoPath, number, event: event, body: body);
+      gitea.giteaApprovePull(repoPath, number, event: event, body: body);
 
   @override
   Future<GitResult<void>> merge(
@@ -367,7 +367,7 @@ class GiteaPrProvider extends RemotePrProvider {
     required String method,
     bool deleteBranch = false,
   }) =>
-      _gitea.giteaMergePull(repoPath, number,
+      gitea.giteaMergePull(repoPath, number,
           method: method, deleteBranch: deleteBranch);
 
   @override
@@ -392,12 +392,12 @@ class GiteaPrProvider extends RemotePrProvider {
 
   @override
   Future<GitResult<void>> close(String repoPath, int number) =>
-      _gitea.closeGiteaPull(repoPath, number);
+      gitea.closeGiteaPull(repoPath, number);
 
   @override
   Future<GitResult<void>> comment(
           String repoPath, int number, String body) =>
-      _gitea.giteaCommentOnIssue(repoPath, number, body);
+      gitea.giteaCommentOnIssue(repoPath, number, body);
 
   @override
   Future<GitResult<int>> createPullRequest(
@@ -411,7 +411,7 @@ class GiteaPrProvider extends RemotePrProvider {
     List<String> assignees = const [],
     List<String> reviewers = const [],
   }) =>
-      _gitea.createGiteaPull(repoPath,
+      gitea.createGiteaPull(repoPath,
           title: title, body: body, headRef: headRef, baseRef: baseRef,
           labels: labels, assignees: assignees, draft: draft,
           reviewers: reviewers);
@@ -431,11 +431,11 @@ class GiteaPrProvider extends RemotePrProvider {
   }
 
   Future<void> _ensureLogin(String repoPath) async {
-    final coords = await _gitea.resolveGiteaCoords(repoPath);
+    final coords = await gitea.resolveGiteaCoords(repoPath);
     final host = coords?.apiBase ?? '';
     if (_cachedLogin.isNotEmpty && _cachedForHost == host) return;
     _cachedForHost = host;
-    _cachedLogin = await _gitea.giteaWhoami(repoPath);
+    _cachedLogin = await gitea.giteaWhoami(repoPath);
   }
 }
 
@@ -453,7 +453,7 @@ class _NullPrProvider extends RemotePrProvider {
   @override
   Future<GitResult<List<PullRequestSummary>>> listPullRequests(
           String _, {String state = 'open', int limit = 50}) async =>
-      GitResult.ok(const []);
+      const GitResult.ok([]);
 
   GitResult<T> _noRemote<T>() =>
       GitResult.err('no remote PR host for this repo');

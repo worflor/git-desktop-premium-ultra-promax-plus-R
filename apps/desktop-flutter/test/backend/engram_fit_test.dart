@@ -181,7 +181,7 @@ void main() {
     test('oscillationPeriodSamples recovers a known cosine period', () {
       // Sustained cosine z[n] = cos(2π·n / 10) — period 10 samples.
       // The AR(2) fit should recover ω₀ = 2π/10, giving period ≈ 10.
-      final period = 10.0;
+      const period = 10.0;
       final z = [
         for (var n = 0; n < 64; n++) math.cos(2 * math.pi * n / period),
       ];

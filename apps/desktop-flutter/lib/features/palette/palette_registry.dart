@@ -90,7 +90,7 @@ List<PaletteEntry> buildStaticEntries(
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
         onExecute: () {
-          final rp = repoPath!;
+          final rp = repoPath;
           Navigator.of(context).push(MaterialPageRoute(
             builder: (ctx) => _TestMergeEditorLoader(
               repoPath: rp,
@@ -123,7 +123,7 @@ List<PaletteEntry> buildStaticEntries(
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
         onExecute: () {
-          final rp = repoPath!;
+          final rp = repoPath;
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => HistorySurgeryLoader(
               repoPath: rp,
@@ -146,7 +146,7 @@ List<PaletteEntry> buildStaticEntries(
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
         onExecute: () {
-          final rp = repoPath!;
+          final rp = repoPath;
           Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => HistorySurgeryLoader(repoPath: rp),
           ));
@@ -162,7 +162,7 @@ List<PaletteEntry> buildStaticEntries(
         chipTone: ChipTone.muted,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
-        onExecute: () => _showEngineStatus(context, engine!),
+        onExecute: () => _showEngineStatus(context, engine),
       ),
     if (engine != null && status != null)
       PaletteEntry(
@@ -174,7 +174,7 @@ List<PaletteEntry> buildStaticEntries(
         chipTone: ChipTone.muted,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
-        onExecute: () => _showCouplingInspector(context, engine!, status!),
+        onExecute: () => _showCouplingInspector(context, engine, status),
       ),
   ];
 }
@@ -563,22 +563,30 @@ String? _buildSyntheticConflict(
         headLines[hi] != oldLines[oi]) {
       for (var j = hi; j < (hi + 10).clamp(0, headLines.length); j++) {
         if (headLines[j] == oldLines[oi]) {
-          while (hi < j) headBlock.add(headLines[hi++]);
+          while (hi < j) {
+            headBlock.add(headLines[hi++]);
+          }
           break;
         }
       }
       for (var j = oi; j < (oi + 10).clamp(0, oldLines.length); j++) {
         if (oldLines[j] == headLines[hi]) {
-          while (oi < j) oldBlock.add(oldLines[oi++]);
+          while (oi < j) {
+            oldBlock.add(oldLines[oi++]);
+          }
           break;
         }
       }
     }
     if (headBlock.isNotEmpty || oldBlock.isNotEmpty) {
       buf.writeln('<<<<<<< HEAD');
-      for (final l in headBlock) buf.writeln(l);
+      for (final l in headBlock) {
+        buf.writeln(l);
+      }
       buf.writeln('=======');
-      for (final l in oldBlock) buf.writeln(l);
+      for (final l in oldBlock) {
+        buf.writeln(l);
+      }
       buf.writeln('>>>>>>> $baseRef');
       conflictCount++;
     } else {
@@ -1068,7 +1076,7 @@ List<PaletteEntry> _gitCommandEntries(
           ? '$behind behind${upstream != null ? ' $upstream' : ''}'
           : null,
       keywords: const ['sync', 'download', 'merge', 'update'],
-      chipLabel: behind > 0 ? '${behind}↓' : null,
+      chipLabel: behind > 0 ? '$behind↓' : null,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncPull},
@@ -1081,7 +1089,7 @@ List<PaletteEntry> _gitCommandEntries(
           ? '$ahead commit${ahead > 1 ? 's' : ''}${upstream != null ? ' to $upstream' : ''}'
           : null,
       keywords: const ['sync', 'upload', 'publish'],
-      chipLabel: ahead > 0 ? '${ahead}↑' : null,
+      chipLabel: ahead > 0 ? '$ahead↑' : null,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncPush},
@@ -1644,7 +1652,7 @@ class _ThemeSpecimenPage extends StatelessWidget {
           children: [
             // ── Header ──
             Row(children: [
-              Text('${t.id.name}', style: TextStyle(color: t.textStrong,
+              Text(t.id.name, style: TextStyle(color: t.textStrong,
                   fontSize: 14, fontWeight: FontWeight.w700,
                   fontFamily: AppFonts.mono)),
               const SizedBox(width: 6),

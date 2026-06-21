@@ -156,7 +156,9 @@ void main() {
       final response = mind.ask(const MindQuery.path('lib/auth/a.dart'));
       expect(response.focus.length, mind.engine.graph.n);
       var s = 0.0;
-      for (final v in response.focus) s += v.abs();
+      for (final v in response.focus) {
+        s += v.abs();
+      }
       expect(s, greaterThan(0),
           reason: 'propagated focus should have nonzero mass');
     });

@@ -412,9 +412,13 @@ class LogosField {
     final jUpper = jHi ?? k;
     final omegaUpper = omegaHi ?? commitCount;
     final jp = Float64List(k);
-    for (var j = jLo; j < jUpper && j < k; j++) jp[j] = 1.0;
+    for (var j = jLo; j < jUpper && j < k; j++) {
+      jp[j] = 1.0;
+    }
     final op = Float64List(commitCount);
-    for (var w = omegaLo; w < omegaUpper && w < commitCount; w++) op[w] = 1.0;
+    for (var w = omegaLo; w < omegaUpper && w < commitCount; w++) {
+      op[w] = 1.0;
+    }
     return filter(jProfile: jp, omegaProfile: op);
   }
 

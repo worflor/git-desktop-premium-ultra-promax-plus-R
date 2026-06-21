@@ -278,7 +278,7 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
   try {
     final mrJson = jsonDecode(mrRes.stdout.toString()) as Map<String, dynamic>;
     final pipeline = mrJson['pipeline'] as Map<String, dynamic>?;
-    if (pipeline == null) return GitResult.ok(const []);
+    if (pipeline == null) return const GitResult.ok([]);
     final pipelineId = pipeline['id'];
     if (pipelineId == null) {
       // Fallback: use the pipeline object itself as a single check.
@@ -454,7 +454,7 @@ Future<GitResult<void>> commentOnGlabIssue(
 Future<GitResult<void>> assignSelfToGlabIssue(
     String repoPath, int number) async {
   final login = await glabWhoami();
-  if (login.isEmpty) return GitResult.err('not authenticated with glab');
+  if (login.isEmpty) return const GitResult.err('not authenticated with glab');
   final r = await _glab(
       repoPath, ['issue', 'update', '$number', '--assignee', login]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());

@@ -44,7 +44,9 @@ extension SpectralGenerative on SpectralBasis {
   /// structure in the covariance — this is pure white noise.
   Float64List sampleWhiteNoise(math.Random rng) {
     final out = Float64List(n);
-    for (var i = 0; i < n; i++) out[i] = _gaussianStd(rng);
+    for (var i = 0; i < n; i++) {
+      out[i] = _gaussianStd(rng);
+    }
     return out;
   }
 

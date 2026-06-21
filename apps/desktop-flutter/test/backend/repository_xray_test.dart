@@ -17,8 +17,8 @@ void main() {
     test('detects hidden refs, migration strata, and filtered pivot commits', () async {
       final snapshotResult = await buildRepositoryXraySnapshot(
         r'C:\repo',
-        statusLoader: (_) async => GitResult.ok(
-          const RepositoryStatus(
+        statusLoader: (_) async => const GitResult.ok(
+          RepositoryStatus(
             branch: 'main',
             ahead: 0,
             behind: 0,
@@ -119,8 +119,8 @@ void main() {
     test('fingerprint uses repo path, branch, head, and dirty count', () async {
       final result = await computeRepositoryXrayFingerprint(
         r'C:\repo',
-        (_) async => GitResult.ok(
-          const RepositoryStatus(
+        (_) async => const GitResult.ok(
+          RepositoryStatus(
             branch: 'feature/xray',
             ahead: 0,
             behind: 0,
@@ -152,8 +152,8 @@ void main() {
         r'C:\repo',
         statusLoader: (_) async {
           statusCalls += 1;
-          return GitResult.ok(
-            const RepositoryStatus(
+          return const GitResult.ok(
+            RepositoryStatus(
               branch: 'main',
               ahead: 0,
               behind: 0,

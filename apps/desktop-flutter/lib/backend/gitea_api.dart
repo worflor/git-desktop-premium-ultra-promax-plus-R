@@ -148,7 +148,7 @@ Future<GitResult<List<PullRequestSummary>>> listGiteaPulls(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final all = <PullRequestSummary>[];
   var page = 1;
@@ -193,7 +193,7 @@ Future<GitResult<int>> createGiteaPull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
@@ -253,7 +253,7 @@ Future<GitResult<PullRequestSummary>> getGiteaPull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await giteaGet(
     coords.apiBase,
@@ -276,7 +276,7 @@ Future<GitResult<PullRequestDetail>> giteaPullDetail(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final viewFut = giteaGet(coords.apiBase, '/${coords.repoPath}/pulls/$number', token: token);
   final commentsFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number/comments', token: token);
@@ -366,7 +366,7 @@ Future<GitResult<void>> giteaApprovePull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final reviewBody = {
     'event': event == 'approve' ? 'APPROVED' : (event == 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT'),
@@ -391,7 +391,7 @@ Future<GitResult<void>> giteaMergePull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final doMethod = switch (method) {
     'squash' => 'squash',
@@ -419,7 +419,7 @@ Future<GitResult<void>> giteaCommentOnIssue(
 }) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await _post(
     coords.apiBase,
@@ -445,7 +445,7 @@ Future<GitResult<List<IssueSummary>>> listGiteaIssues(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final all = <IssueSummary>[];
   var page = 1;
@@ -482,7 +482,7 @@ Future<GitResult<IssueSummary>> getGiteaIssue(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await giteaGet(
     coords.apiBase,
@@ -503,7 +503,7 @@ Future<GitResult<IssueDetail>> giteaIssueDetail(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final issueFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number', token: token);
   final commentsFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number/comments', token: token);
@@ -539,7 +539,7 @@ Future<GitResult<int>> createGiteaIssue(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
@@ -583,7 +583,7 @@ Future<GitResult<void>> editGiteaIssue(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final patch = <String, dynamic>{};
   if (title != null) patch['title'] = title;
@@ -604,7 +604,7 @@ Future<GitResult<void>> editGiteaIssue(
 Future<GitResult<void>> closeGiteaIssue(
   String repoPath, int number, {String? token}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await _patch(
     coords.apiBase,
@@ -621,7 +621,7 @@ Future<GitResult<void>> closeGiteaIssue(
 Future<GitResult<void>> reopenGiteaIssue(
   String repoPath, int number, {String? token}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await _patch(
     coords.apiBase,
@@ -638,7 +638,7 @@ Future<GitResult<void>> reopenGiteaIssue(
 Future<GitResult<void>> addGiteaIssueLabel(
   String repoPath, int number, String label, {String? token}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   // Gitea label API requires label IDs, not names. Resolve first.
   final labelsRes = await giteaGet(
@@ -646,7 +646,7 @@ Future<GitResult<void>> addGiteaIssueLabel(
     '/${coords.repoPath}/labels?limit=50',
     token: token,
   );
-  if (labelsRes.statusCode != 200) return GitResult.err('Could not fetch labels');
+  if (labelsRes.statusCode != 200) return const GitResult.err('Could not fetch labels');
   final allLabels = jsonDecode(labelsRes.body) as List;
   final match = allLabels
       .whereType<Map<String, dynamic>>()
@@ -693,25 +693,25 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
   String repoPath, int prNumber, {String? token,}
 ) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final prRes = await giteaGet(
     coords.apiBase,
     '/${coords.repoPath}/pulls/$prNumber',
     token: token,
   );
-  if (prRes.statusCode != 200) return GitResult.ok(const []);
+  if (prRes.statusCode != 200) return const GitResult.ok([]);
   final prJson = jsonDecode(prRes.body) as Map<String, dynamic>;
   final head = prJson['head'] as Map<String, dynamic>?;
   final sha = head?['sha'] as String? ?? '';
-  if (sha.isEmpty) return GitResult.ok(const []);
+  if (sha.isEmpty) return const GitResult.ok([]);
 
   final r = await giteaGet(
     coords.apiBase,
     '/${coords.repoPath}/commits/$sha/statuses?limit=50',
     token: token,
   );
-  if (r.statusCode != 200) return GitResult.ok(const []);
+  if (r.statusCode != 200) return const GitResult.ok([]);
   try {
     final parsed = jsonDecode(r.body) as List;
     final checks = parsed
@@ -733,7 +733,7 @@ Future<GitResult<void>> closeGiteaPull(
   String repoPath, int number, {String? token,}
 ) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await _patch(
     coords.apiBase,
@@ -751,10 +751,10 @@ Future<GitResult<void>> assignSelfToGiteaIssue(
   String repoPath, int number, {String? token,}
 ) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
   final login = await giteaWhoami(repoPath);
-  if (login.isEmpty) return GitResult.err('not authenticated');
+  if (login.isEmpty) return const GitResult.err('not authenticated');
   final r = await _patch(
     coords.apiBase,
     '/${coords.repoPath}/issues/$number',

@@ -33,9 +33,9 @@ const int _kMaxTotalShadowCommits = 200;
 const int _kMaxCommitsPerSource = 50;
 const int _kLargeCommitCutoff = 60;
 
-final double _kRevertConfidence = sc.phiDecay1;    // 1/φ ≈ 0.618
-final double _kResetConfidence = sc.phiDecay2;     // 1/φ² ≈ 0.382
-final double _kAbandonedConfidence = sc.phiDecay3; // 1/φ³ ≈ 0.236
+const double _kRevertConfidence = sc.phiDecay1;    // 1/φ ≈ 0.618
+const double _kResetConfidence = sc.phiDecay2;     // 1/φ² ≈ 0.382
+const double _kAbandonedConfidence = sc.phiDecay3; // 1/φ³ ≈ 0.236
 
 Future<ShadowHistoryResult> discoverShadowHistory(
   String repoPath, {

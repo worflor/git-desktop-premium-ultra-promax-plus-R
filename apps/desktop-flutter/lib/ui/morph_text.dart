@@ -451,7 +451,9 @@ class _MorphPainter extends CustomPainter {
       if (op.fromIdx >= 0 && op.toIdx >= 0) {
         // keep
         if (op.fromIdx >= from.glyphs.length ||
-            op.toIdx >= to.glyphs.length) continue;
+            op.toIdx >= to.glyphs.length) {
+          continue;
+        }
         final p = Offset.lerp(
             from.positions[op.fromIdx], to.positions[op.toIdx], t)!;
         final tint = _tintFor(op, t, p.dx, dist, signs[i]);

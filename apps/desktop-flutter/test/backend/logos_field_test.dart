@@ -112,14 +112,14 @@ void main() {
 
     test('fromDiffProbe maps weights to node slots', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {
+      const probe = DiffProbe(
+        sourceWeights: {
           'lib/f000.dart': 1.0,
           'lib/f001.dart': 0.5,
         },
-        primaryPaths: const {'lib/f000.dart', 'lib/f001.dart'},
+        primaryPaths: {'lib/f000.dart', 'lib/f001.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 2,
           mMatches: 0,
           abMatches: 0,
@@ -143,7 +143,9 @@ void main() {
       final rng = math.Random(4);
       final f = LogosField.gff(basis: basis, commitCount: 6, rng: rng);
       var primalE = 0.0;
-      for (final v in f.primal) primalE += v * v;
+      for (final v in f.primal) {
+        primalE += v * v;
+      }
       var dualE = 0.0;
       for (var i = 0; i < f.dualReal.length; i++) {
         dualE += f.dualReal[i] * f.dualReal[i] +
@@ -159,10 +161,14 @@ void main() {
       final rng = math.Random(5);
       final f = LogosField.gff(basis: basis, commitCount: 4, rng: rng);
       var e0 = 0.0;
-      for (final v in f.primal) e0 += v * v;
+      for (final v in f.primal) {
+        e0 += v * v;
+      }
       final d = f.diffuse(1.0);
       var e1 = 0.0;
-      for (final v in d.primal) e1 += v * v;
+      for (final v in d.primal) {
+        e1 += v * v;
+      }
       expect(e1, lessThanOrEqualTo(e0 + 1e-9));
     });
 
@@ -309,14 +315,14 @@ void main() {
 
     test('topPathsViaEngine ranks seed paths at the top', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {
+      const probe = DiffProbe(
+        sourceWeights: {
           'lib/f000.dart': 1.0,
           'lib/f005.dart': 0.3,
         },
-        primaryPaths: const {'lib/f000.dart', 'lib/f005.dart'},
+        primaryPaths: {'lib/f000.dart', 'lib/f005.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 2,
           mMatches: 0,
           abMatches: 0,

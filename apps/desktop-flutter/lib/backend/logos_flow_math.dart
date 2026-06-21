@@ -17,8 +17,8 @@ const int kFlowRestabilizes = 1 << 7;
 final double _sinPi8Sq  = math.sin(math.pi / 8) * math.sin(math.pi / 8);
 final double _sinPi16Sq = math.sin(math.pi / 16) * math.sin(math.pi / 16);
 final double _sinPi4    = math.sin(math.pi / 4);
-final double _inv2Pi    = 1.0 / (2 * math.pi);
-final double _inv8Pi    = 1.0 / (8 * math.pi);
+const double _inv2Pi    = 1.0 / (2 * math.pi);
+const double _inv8Pi    = 1.0 / (8 * math.pi);
 
 // ── K-G spectrum ─────────────────────────────────────────────────────
 
@@ -468,7 +468,9 @@ class FlowSseLattice {
   double entropy(Set<int> warmSet) {
     if (warmSet.isEmpty) return 0.0;
     var total = 0;
-    for (final a in warmSet) total += _cells[a].n;
+    for (final a in warmSet) {
+      total += _cells[a].n;
+    }
     if (total == 0) return 0.0;
     var h = 0.0;
     final invTotal = 1.0 / total;
@@ -660,7 +662,9 @@ class WalkerDensity {
       ].sublist(0, n);
     }
     var k = 1;
-    while ((k + 1) * (k + 2) ~/ 2 < n) k++;
+    while ((k + 1) * (k + 2) ~/ 2 < n) {
+      k++;
+    }
     final points = <WalkerDensity>[];
     final invK = 1.0 / k;
     for (var i = 0; i <= k && points.length < n; i++) {

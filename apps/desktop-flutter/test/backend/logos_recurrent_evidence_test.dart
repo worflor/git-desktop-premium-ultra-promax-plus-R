@@ -14,7 +14,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_git.dart';
-import 'package:git_desktop/backend/logos_git_stats.dart';
 
 LogosGit _makeEngine() {
   // Four files: a-b-c are tightly coupled; d is a weak outlier.

@@ -11,7 +11,6 @@ import 'package:git_desktop/backend/engram_file_ktable.dart';
 import 'package:git_desktop/backend/engram_hunk_encoder.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_git.dart';
-import 'package:git_desktop/backend/logos_git_stats.dart';
 
 EngramFileKTable _kTable(Map<String, HunkKVector> m, {int pairs = 2}) {
   // Build a small wellNamesByOriginalIndex from observed wells (each

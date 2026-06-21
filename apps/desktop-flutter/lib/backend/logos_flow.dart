@@ -385,7 +385,7 @@ FlowGraph fuseCooperPairs(FlowGraph g) {
             partner.hasAxis(kFlowRestabilizes) &&
             partner.hasAxis(kFlowMutates)) {
           final fusedAddr = node.address | partner.address;
-          final fusedName = '${nid}+${partner.id}';
+          final fusedName = '$nid+${partner.id}';
           pairs.add((nid, partner.id, fusedName, fusedAddr));
           fused[nid] = fusedName;
           fused[partner.id] = fusedName;

@@ -1,10 +1,8 @@
 // Tests for ObservableCurve + the engine curve constructors.
 
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:git_desktop/backend/logos_chaos.dart' show relaxationCurve;
 import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_curve.dart';
 

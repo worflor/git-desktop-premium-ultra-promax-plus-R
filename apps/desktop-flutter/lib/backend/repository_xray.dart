@@ -170,7 +170,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         '--name-status',
         '-M95',
         '--date=short',
-        '--format=${_kCommitMarker}%H\t%h\t%ad\t%an'
+        '--format=$_kCommitMarker%H\t%h\t%ad\t%an'
       ]),
       cachedProbe.run([
         'log',
@@ -180,7 +180,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         '--name-status',
         '-M95',
         '--date=short',
-        '--format=${_kCommitMarker}%H\t%h\t%ad\t%an',
+        '--format=$_kCommitMarker%H\t%h\t%ad\t%an',
       ]),
       cachedProbe.run(
         [
@@ -188,7 +188,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--all',
           '--shortstat',
           '--date=short',
-          '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s'
+          '--pretty=format:$_kCommitMarker%H\t%h\t%ad\t%an\t%s'
         ],
       ),
       cachedProbe.run(
@@ -199,7 +199,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--invert-grep',
           '--shortstat',
           '--date=short',
-          '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s',
+          '--pretty=format:$_kCommitMarker%H\t%h\t%ad\t%an\t%s',
         ],
       ),
       cachedProbe.run(['log', '--all', '--date=short', '--pretty=format:%ad']),
@@ -235,7 +235,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--all',
           '--diff-filter=R',
           '--summary',
-          '--pretty=format:${_kCommitMarker}%H'
+          '--pretty=format:$_kCommitMarker%H'
         ],
       ),
       cachedProbe.run(['remote', '-v']),
@@ -2167,7 +2167,7 @@ List<RepositoryXrayCardData> _buildCards({
         verdict: 'hard-fact',
         confidence: 'high',
         evidence: [
-          RepositoryXrayEvidenceData(
+          const RepositoryXrayEvidenceData(
             label: 'Tag count',
             detail: '0 tags found.',
             kind: 'ref',

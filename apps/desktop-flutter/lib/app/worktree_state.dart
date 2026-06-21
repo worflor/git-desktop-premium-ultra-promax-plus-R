@@ -161,7 +161,7 @@ class WorktreeState extends ChangeNotifier {
     final abFuture = _deskAheadBehind(d.path);
     final results = await Future.wait([logFuture, abFuture]);
     final lastActivity = results[0] as DateTime?;
-    final ab = results[1] as ({int ahead, int behind});
+    final ab = results[1]! as ({int ahead, int behind});
     return DeskActivity(
       ahead: ab.ahead,
       behind: ab.behind,

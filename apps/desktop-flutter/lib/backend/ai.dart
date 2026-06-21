@@ -252,7 +252,7 @@ class _ModelParse {
 GitResult<_ModelParse> _parseModelValue(String modelValue) {
   final trimmed = modelValue.trim();
   if (trimmed.isEmpty || !trimmed.contains(_modelValueSeparator)) {
-    return GitResult.err('Select a valid AI model.');
+    return const GitResult.err('Select a valid AI model.');
   }
   final sep = trimmed.indexOf(_modelValueSeparator);
   final providerId = trimmed.substring(0, sep).trim();
@@ -265,7 +265,7 @@ GitResult<_ModelParse> _parseModelValue(String modelValue) {
     return GitResult.err('Unknown AI provider: $providerId');
   }
   if (modelId.isEmpty) {
-    return GitResult.err('Selected model is missing a model id.');
+    return const GitResult.err('Selected model is missing a model id.');
   }
   return GitResult.ok(_ModelParse(provider: provider, modelId: modelId));
 }
@@ -442,10 +442,10 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
-      return GitResult.err('Repository path is required.');
+      return const GitResult.err('Repository path is required.');
     }
     if (!includeStaged && !includeUnstaged) {
-      return GitResult.err('No diff scope is available for generation.');
+      return const GitResult.err('No diff scope is available for generation.');
     }
 
     final modelParse = _parseModelValue(modelValue);
@@ -521,7 +521,7 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
 
     final message = _normalizeCommitMessage(providerResult.output!);
     if (message.isEmpty) {
-      return GitResult.err('Provider returned an empty commit message.');
+      return const GitResult.err('Provider returned an empty commit message.');
     }
 
     return GitResult.ok(
@@ -562,7 +562,7 @@ Future<GitResult<AiPatchData>> generatePatch({
 }) async {
   try {
     if (prompt.trim().isEmpty) {
-      return GitResult.err('Prompt is empty.');
+      return const GitResult.err('Prompt is empty.');
     }
     final modelParse = _parseModelValue(modelValue);
     if (!modelParse.ok) {
@@ -589,7 +589,7 @@ Future<GitResult<AiPatchData>> generatePatch({
       }
       final patch = _extractPatchFromModelOutput(apiResult.text!);
       if (patch.isEmpty) {
-        return GitResult.err('Model returned no usable patch.');
+        return const GitResult.err('Model returned no usable patch.');
       }
       return GitResult.ok(AiPatchData(
         providerId: provider.id,
@@ -653,7 +653,7 @@ Future<GitResult<AiPatchData>> generatePatch({
     }
     final patch = _extractPatchFromModelOutput(providerOutput);
     if (patch.isEmpty) {
-      return GitResult.err('Model returned no usable patch.');
+      return const GitResult.err('Model returned no usable patch.');
     }
     return GitResult.ok(AiPatchData(
       providerId: provider.id,
@@ -686,7 +686,7 @@ Future<GitResult<String>> runAsk({
 }) async {
   try {
     if (prompt.trim().isEmpty) {
-      return GitResult.err('Question is empty.');
+      return const GitResult.err('Question is empty.');
     }
     final modelParse = _parseModelValue(modelValue);
     if (!modelParse.ok) {
@@ -744,7 +744,7 @@ Future<GitResult<AiDebugData>> runDebug({
 }) async {
   try {
     if (symptom.trim().isEmpty) {
-      return GitResult.err('Symptom description is empty.');
+      return const GitResult.err('Symptom description is empty.');
     }
     final modelParse = _parseModelValue(modelValue);
     if (!modelParse.ok) return GitResult.err(modelParse.error!);
@@ -760,7 +760,7 @@ Future<GitResult<AiDebugData>> runDebug({
 
     final engine = await resolveLogosGit(repositoryPath);
     if (engine == null) {
-      return GitResult.err('Logos engine not ready for this repository.');
+      return const GitResult.err('Logos engine not ready for this repository.');
     }
 
     final mind = LogosMind(engine: engine);
@@ -1479,11 +1479,11 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
-      return GitResult.err('Repository path is required.');
+      return const GitResult.err('Repository path is required.');
     }
     final usingOverride = rawDiffOverride.trim().isNotEmpty;
     if (!usingOverride && !includeStaged && !includeUnstaged) {
-      return GitResult.err('No diff scope is available for review.');
+      return const GitResult.err('No diff scope is available for review.');
     }
 
     final modelParse = _parseModelValue(modelValue);
@@ -1573,7 +1573,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
 
     final draftReview = _parseDraftReview(providerOutput.output!);
     if (draftReview == null) {
-      return GitResult.err(
+      return const GitResult.err(
         'Review output could not be parsed. Try again or use a stronger model.',
       );
     }
@@ -2979,9 +2979,9 @@ Future<({String text, LogosEmissionRecord? record})>
 
     return (
       text: buffer.toString(),
-      record: LogosEmissionRecord(
+      record: const LogosEmissionRecord(
         regime: LogosRegime.scoped,
-        axisByPath: const {},
+        axisByPath: {},
       ),
     );
   } catch (_) {
@@ -3719,10 +3719,10 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
   final activeQuiver = quiver.isEmpty ? defaultMuseQuiver() : quiver;
   try {
     if (repositoryPath.trim().isEmpty) {
-      return GitResult.err('Repository path is required.');
+      return const GitResult.err('Repository path is required.');
     }
     if (!includeStaged && !includeUnstaged) {
-      return GitResult.err('No diff scope is available for the muse.');
+      return const GitResult.err('No diff scope is available for the muse.');
     }
 
     // Resolve the brainstorm slot (cheap, divergent) and the synthesis
@@ -3911,7 +3911,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     );
     final ideas = brainstormResult.ideas;
     if (ideas.isEmpty) {
-      return GitResult.err(
+      return const GitResult.err(
         'Brainstorm produced no usable ideas. Try again or use a stronger model slot.',
       );
     }
@@ -4191,7 +4191,7 @@ Future<_ProviderAvailability> _inspectProvider(_ProviderSpec provider) async {
     return _ProviderAvailability(
       ready: hasRefresh,
       resolution: hasRefresh
-          ? _ProviderResolution(
+          ? const _ProviderResolution(
               command: 'http-api',
               source: 'gemini-api-direct',
               healthCheck: 'oauth',
@@ -5624,8 +5624,7 @@ Future<String> _collectUntrackedFilesDiff(
         // Decode as UTF-8 (most source files) and fall back to the raw
         // code points if that fails, so we don't corrupt multi-byte
         // characters (emoji, non-Latin scripts, smart quotes).
-        content = _tryDecodeUtf8(bytes) +
-            '\n(truncated — file larger than ${perFileCapBytes ~/ 1024}KB)';
+        content = '${_tryDecodeUtf8(bytes)}\n(truncated — file larger than ${perFileCapBytes ~/ 1024}KB)';
       } else {
         final bytes = await file.readAsBytes();
         if (bytes.contains(0)) continue; // binary
@@ -6001,8 +6000,9 @@ Future<String> _verifyImports(String repositoryPath, String diffText) async {
 
     final importPath = match.group(1) ?? match.group(2) ?? match.group(3);
     if (importPath == null) continue;
-    if (importPath.startsWith('dart:') || importPath.startsWith('package:'))
+    if (importPath.startsWith('dart:') || importPath.startsWith('package:')) {
       continue;
+    }
     if (!seen.add('$currentFile→$importPath')) continue;
 
     // Resolve relative to the importing file's directory.
@@ -8837,8 +8837,9 @@ String _buildCommitMessagePrompt({
   if (totalCommits > 0) buffer.writeln('Commits: $totalCommits');
   if (projectAge.isNotEmpty) buffer.writeln('Started: $projectAge');
   if (lastCommitAge.isNotEmpty) buffer.writeln('Last commit: $lastCommitAge');
-  if (uniqueContributors > 0)
+  if (uniqueContributors > 0) {
     buffer.writeln('Contributors: $uniqueContributors');
+  }
   buffer.writeln('</repo>');
   if (recentLog.isNotEmpty) {
     buffer.writeln();
@@ -11180,7 +11181,7 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
     if (cmdLine == null) return null;
 
     // Extract the quoted script path: the last "%dp0%\..." before %*
-    final dp0Token = '%dp0%';
+    const dp0Token = '%dp0%';
     final scriptStart = cmdLine.lastIndexOf('"$dp0Token');
     if (scriptStart < 0) return null;
     final scriptEnd = cmdLine.indexOf('"', scriptStart + 1);
@@ -11784,7 +11785,6 @@ class _ProviderAttempt {
     required this.name,
     required this.args,
     required this.outputMode,
-    this.useStdinForPrompt = true,
   });
 }
 

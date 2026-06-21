@@ -146,9 +146,9 @@ void main() {
     });
 
     test('records emissions and reads them back', () async {
-      await store.recordEmissions(LogosEmissionRecord(
+      await store.recordEmissions(const LogosEmissionRecord(
         regime: LogosRegime.focused,
-        axisByPath: const {
+        axisByPath: {
           'lib/a.dart': LogosAxis.primary,
           'lib/b.dart': LogosAxis.m,
           'test/a_test.dart': LogosAxis.ab,
@@ -168,9 +168,9 @@ void main() {
     });
 
     test('records citations against emitted paths', () async {
-      final record = LogosEmissionRecord(
+      const record = LogosEmissionRecord(
         regime: LogosRegime.scoped,
-        axisByPath: const {
+        axisByPath: {
           'lib/foo.dart': LogosAxis.primary,
           'lib/bar.dart': LogosAxis.m,
           'test/foo_test.dart': LogosAxis.ab,
@@ -195,9 +195,9 @@ void main() {
     });
 
     test('persists across fresh store instances on same repo', () async {
-      await store.recordEmissions(LogosEmissionRecord(
+      await store.recordEmissions(const LogosEmissionRecord(
         regime: LogosRegime.focused,
-        axisByPath: const {'lib/x.dart': LogosAxis.primary},
+        axisByPath: {'lib/x.dart': LogosAxis.primary},
       ));
       final fresh = LogosSseStore(repo.path);
       final cell =
@@ -209,18 +209,18 @@ void main() {
       // Build a history: axis M very useful (high cited/emitted), axis
       // Ab rarely useful. Utilities after n >= 4 should reflect that.
       for (var i = 0; i < 6; i++) {
-        await store.recordEmissions(LogosEmissionRecord(
+        await store.recordEmissions(const LogosEmissionRecord(
           regime: LogosRegime.focused,
-          axisByPath: const {
+          axisByPath: {
             'lib/m-hit.dart': LogosAxis.m,
             'lib/ab-hit.dart': LogosAxis.ab,
           },
         ));
         // M cited every time; Ab never.
         await store.recordCitations(
-          record: LogosEmissionRecord(
+          record: const LogosEmissionRecord(
             regime: LogosRegime.focused,
-            axisByPath: const {
+            axisByPath: {
               'lib/m-hit.dart': LogosAxis.m,
               'lib/ab-hit.dart': LogosAxis.ab,
             },
@@ -247,9 +247,9 @@ void main() {
       final futures = <Future<void>>[];
       for (var i = 0; i < 20; i++) {
         final sibling = LogosSseStore(repo.path);
-        futures.add(sibling.recordEmissions(LogosEmissionRecord(
+        futures.add(sibling.recordEmissions(const LogosEmissionRecord(
           regime: LogosRegime.scoped,
-          axisByPath: const {'lib/contended.dart': LogosAxis.primary},
+          axisByPath: {'lib/contended.dart': LogosAxis.primary},
         )));
       }
       await Future.wait(futures);

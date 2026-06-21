@@ -42,7 +42,7 @@ class FilamentFindingsPanel extends StatefulWidget {
 class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
   final Map<String, FlowAnalysisResult> _results = {};
   final Map<String, FlowAnalysisResult> _rawResults = {};
-  FlowSseLattice _lattice = FlowSseLattice();
+  final FlowSseLattice _lattice = FlowSseLattice();
   GyatLattice? _gyat;
   List<CrossFileInterference> _crossFileInterference = const [];
   InterFileResult? _interFileResult;

@@ -18,9 +18,9 @@
 //   GlabIssueProvider — GitLab  via `glab` CLI
 //   _NullIssueProvider — local / unknown remotes — read-only no-op
 
-import 'gh.dart' as _gh;
-import 'gitea_api.dart' as _gitea;
-import 'glab.dart' as _glab;
+import 'gh.dart' as gh;
+import 'gitea_api.dart' as gitea;
+import 'glab.dart' as glab;
 import 'git_result.dart';
 import 'remote_types.dart';
 
@@ -83,8 +83,8 @@ class GhIssueProvider extends RemoteIssueProvider {
   const GhIssueProvider();
 
   @override
-  Future<RemoteProviderStatus> status(String _repoPath) async {
-    final s = await _gh.ghStatus();
+  Future<RemoteProviderStatus> status(String repoPath) async {
+    final s = await gh.ghStatus();
     if (s.usable) return RemoteProviderStatus.yes;
     if (!s.installed) {
       return const RemoteProviderStatus(
@@ -104,17 +104,17 @@ class GhIssueProvider extends RemoteIssueProvider {
     String state = 'open',
     int limit = 100,
   }) =>
-      _gh.listIssues(repoPath, state: state, limit: limit);
+      gh.listIssues(repoPath, state: state, limit: limit);
 
   @override
   Future<GitResult<IssueSummary>> getIssue(
           String repoPath, int number) =>
-      _gh.getIssueSummary(repoPath, number);
+      gh.getIssueSummary(repoPath, number);
 
   @override
   Future<GitResult<IssueDetail>> getIssueDetail(
           String repoPath, int number) =>
-      _gh.issueDetail(repoPath, number);
+      gh.issueDetail(repoPath, number);
 
   @override
   Future<GitResult<int>> createIssue(
@@ -124,7 +124,7 @@ class GhIssueProvider extends RemoteIssueProvider {
     List<String> labels = const [],
     List<String> assignees = const [],
   }) =>
-      _gh.createGhIssue(repoPath,
+      gh.createGhIssue(repoPath,
           title: title, body: body, labels: labels, assignees: assignees);
 
   @override
@@ -136,7 +136,7 @@ class GhIssueProvider extends RemoteIssueProvider {
     List<String> addLabels = const [],
     List<String> removeLabels = const [],
   }) =>
-      _gh.editGhIssue(repoPath, number,
+      gh.editGhIssue(repoPath, number,
           title: title,
           body: body,
           addLabels: addLabels,
@@ -144,25 +144,25 @@ class GhIssueProvider extends RemoteIssueProvider {
 
   @override
   Future<GitResult<void>> closeIssue(String repoPath, int number) =>
-      _gh.closeIssue(repoPath, number);
+      gh.closeIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> reopenIssue(String repoPath, int number) =>
-      _gh.reopenGhIssue(repoPath, number);
+      gh.reopenGhIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addComment(
           String repoPath, int number, String body) =>
-      _gh.commentOnIssue(repoPath, number, body);
+      gh.commentOnIssue(repoPath, number, body);
 
   @override
   Future<GitResult<void>> assignSelf(String repoPath, int number) =>
-      _gh.assignSelfToIssue(repoPath, number);
+      gh.assignSelfToIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addLabel(
           String repoPath, int number, String label) =>
-      _gh.addIssueLabel(repoPath, number, label);
+      gh.addIssueLabel(repoPath, number, label);
 }
 
 
@@ -170,8 +170,8 @@ class GlabIssueProvider extends RemoteIssueProvider {
   const GlabIssueProvider();
 
   @override
-  Future<RemoteProviderStatus> status(String _repoPath) async {
-    final s = await _glab.glabStatus();
+  Future<RemoteProviderStatus> status(String repoPath) async {
+    final s = await glab.glabStatus();
     if (s.usable) return RemoteProviderStatus.yes;
     if (!s.installed) {
       return const RemoteProviderStatus(
@@ -191,16 +191,16 @@ class GlabIssueProvider extends RemoteIssueProvider {
     String state = 'open',
     int limit = 100,
   }) =>
-      _glab.listGlabIssues(repoPath,
+      glab.listGlabIssues(repoPath,
           state: state == 'open' ? 'opened' : state, limit: limit);
 
   @override
   Future<GitResult<IssueSummary>> getIssue(String repoPath, int number) =>
-      _glab.getGlabIssue(repoPath, number);
+      glab.getGlabIssue(repoPath, number);
 
   @override
   Future<GitResult<IssueDetail>> getIssueDetail(String repoPath, int number) =>
-      _glab.glabIssueDetail(repoPath, number);
+      glab.glabIssueDetail(repoPath, number);
 
   @override
   Future<GitResult<int>> createIssue(
@@ -210,7 +210,7 @@ class GlabIssueProvider extends RemoteIssueProvider {
     List<String> labels = const [],
     List<String> assignees = const [],
   }) =>
-      _glab.createGlabIssue(repoPath,
+      glab.createGlabIssue(repoPath,
           title: title, body: body, labels: labels, assignees: assignees);
 
   @override
@@ -222,28 +222,28 @@ class GlabIssueProvider extends RemoteIssueProvider {
     List<String> addLabels = const [],
     List<String> removeLabels = const [],
   }) =>
-      _glab.editGlabIssue(repoPath, number,
+      glab.editGlabIssue(repoPath, number,
           title: title, body: body, addLabels: addLabels, removeLabels: removeLabels);
 
   @override
   Future<GitResult<void>> closeIssue(String repoPath, int number) =>
-      _glab.closeGlabIssue(repoPath, number);
+      glab.closeGlabIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> reopenIssue(String repoPath, int number) =>
-      _glab.reopenGlabIssue(repoPath, number);
+      glab.reopenGlabIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addComment(String repoPath, int number, String body) =>
-      _glab.commentOnGlabIssue(repoPath, number, body);
+      glab.commentOnGlabIssue(repoPath, number, body);
 
   @override
   Future<GitResult<void>> assignSelf(String repoPath, int number) =>
-      _glab.assignSelfToGlabIssue(repoPath, number);
+      glab.assignSelfToGlabIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addLabel(String repoPath, int number, String label) =>
-      _glab.addGlabIssueLabel(repoPath, number, label);
+      glab.addGlabIssueLabel(repoPath, number, label);
 }
 
 
@@ -252,14 +252,14 @@ class GiteaIssueProvider extends RemoteIssueProvider {
 
   @override
   Future<RemoteProviderStatus> status(String repoPath) async {
-    final coords = await _gitea.resolveGiteaCoords(repoPath);
+    final coords = await gitea.resolveGiteaCoords(repoPath);
     if (coords == null) {
       return const RemoteProviderStatus(
         available: false,
         reason: 'could not resolve Gitea/Forgejo API URL',
       );
     }
-    final s = await _gitea.giteaApiStatus(coords.apiBase);
+    final s = await gitea.giteaApiStatus(coords.apiBase);
     if (!s.reachable) {
       return RemoteProviderStatus(available: false, reason: s.reason);
     }
@@ -272,15 +272,15 @@ class GiteaIssueProvider extends RemoteIssueProvider {
     String state = 'open',
     int limit = 100,
   }) =>
-      _gitea.listGiteaIssues(repoPath, state: state, limit: limit);
+      gitea.listGiteaIssues(repoPath, state: state, limit: limit);
 
   @override
   Future<GitResult<IssueSummary>> getIssue(String repoPath, int number) =>
-      _gitea.getGiteaIssue(repoPath, number);
+      gitea.getGiteaIssue(repoPath, number);
 
   @override
   Future<GitResult<IssueDetail>> getIssueDetail(String repoPath, int number) =>
-      _gitea.giteaIssueDetail(repoPath, number);
+      gitea.giteaIssueDetail(repoPath, number);
 
   @override
   Future<GitResult<int>> createIssue(
@@ -290,7 +290,7 @@ class GiteaIssueProvider extends RemoteIssueProvider {
     List<String> labels = const [],
     List<String> assignees = const [],
   }) =>
-      _gitea.createGiteaIssue(repoPath,
+      gitea.createGiteaIssue(repoPath,
           title: title, body: body, labels: labels, assignees: assignees);
 
   @override
@@ -302,33 +302,33 @@ class GiteaIssueProvider extends RemoteIssueProvider {
     List<String> addLabels = const [],
     List<String> removeLabels = const [],
   }) async {
-    final r = await _gitea.editGiteaIssue(repoPath, number, title: title, body: body);
+    final r = await gitea.editGiteaIssue(repoPath, number, title: title, body: body);
     if (!r.ok) return r;
     for (final label in addLabels) {
-      await _gitea.addGiteaIssueLabel(repoPath, number, label);
+      await gitea.addGiteaIssueLabel(repoPath, number, label);
     }
     return const GitResult.ok(null);
   }
 
   @override
   Future<GitResult<void>> closeIssue(String repoPath, int number) =>
-      _gitea.closeGiteaIssue(repoPath, number);
+      gitea.closeGiteaIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> reopenIssue(String repoPath, int number) =>
-      _gitea.reopenGiteaIssue(repoPath, number);
+      gitea.reopenGiteaIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addComment(String repoPath, int number, String body) =>
-      _gitea.giteaCommentOnIssue(repoPath, number, body);
+      gitea.giteaCommentOnIssue(repoPath, number, body);
 
   @override
   Future<GitResult<void>> assignSelf(String repoPath, int number) =>
-      _gitea.assignSelfToGiteaIssue(repoPath, number);
+      gitea.assignSelfToGiteaIssue(repoPath, number);
 
   @override
   Future<GitResult<void>> addLabel(String repoPath, int number, String label) =>
-      _gitea.addGiteaIssueLabel(repoPath, number, label);
+      gitea.addGiteaIssueLabel(repoPath, number, label);
 }
 
 
@@ -344,7 +344,7 @@ class _NullIssueProvider extends RemoteIssueProvider {
 
   @override
   Future<GitResult<List<IssueSummary>>> listIssues(String _, {String state = 'open', int limit = 100}) async =>
-      GitResult.ok(const []);
+      const GitResult.ok([]);
 
   GitResult<T> _noRemote<T>() =>
       GitResult.err('no remote issue host for this repo');

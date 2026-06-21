@@ -120,7 +120,7 @@ class _SigilPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.6
         ..color = accentColor.withValues(alpha: 0.35 + 0.5 * globalMag);
-      final col = 4, row = 4;
+      const col = 4, row = 4;
       final x = col * (cell + 1);
       final y = row * (cell + 1);
       canvas.drawRect(Rect.fromLTWH(x, y, cell, cell), ring);

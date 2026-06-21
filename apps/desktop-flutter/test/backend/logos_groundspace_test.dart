@@ -82,12 +82,14 @@ void main() {
       // don't hit bit-perfect zero — we assert the reduction is
       // dramatic (> 95%).
       final basis = SpectralBasis.fromGraph(_path(16), 16);
-      final c = 0.37;
+      const c = 0.37;
       final rho = Float64List(basis.n)..fillRange(0, basis.n, c);
       final origNorm = math.sqrt(basis.n * c * c);
       final out = basis.projectOutGround(rho);
       var norm2 = 0.0;
-      for (var i = 0; i < basis.n; i++) norm2 += out[i] * out[i];
+      for (var i = 0; i < basis.n; i++) {
+        norm2 += out[i] * out[i];
+      }
       final outNorm = math.sqrt(norm2);
       expect(outNorm / origNorm, lessThan(0.15),
           reason: 'constant vector residual after projection = '
@@ -106,15 +108,23 @@ void main() {
         // it is precisely by subtracting the mean.
       }
       var m = 0.0;
-      for (final v in rho) m += v;
+      for (final v in rho) {
+        m += v;
+      }
       m /= basis.n;
-      for (var i = 0; i < basis.n; i++) rho[i] -= m;
+      for (var i = 0; i < basis.n; i++) {
+        rho[i] -= m;
+      }
 
       final ground = basis.groundComponent(rho);
       var norm2 = 0.0;
-      for (final v in ground) norm2 += v * v;
+      for (final v in ground) {
+        norm2 += v * v;
+      }
       var rhoNorm2 = 0.0;
-      for (final v in rho) rhoNorm2 += v * v;
+      for (final v in rho) {
+        rhoNorm2 += v * v;
+      }
       // Ground-mode Lanczos residuals are O(1e-1) on a 20-node path
       // before re-orthogonalisation; that's the floor. What we assert
       // is that the ground component is a small FRACTION of the

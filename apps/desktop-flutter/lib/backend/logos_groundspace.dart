@@ -61,8 +61,11 @@ extension SpectralGroundSpace on SpectralBasis {
   int get kernelDim {
     var c = 0;
     for (var j = 0; j < k; j++) {
-      if (eigenvalues[j] <= kGroundStateEps) c++;
-      else break; // sorted ascending — first non-zero ends the run
+      if (eigenvalues[j] <= kGroundStateEps) {
+        c++;
+      } else {
+        break; // sorted ascending — first non-zero ends the run
+      }
     }
     return c;
   }
@@ -93,7 +96,9 @@ extension SpectralGroundSpace on SpectralBasis {
   /// can e.g. `for (final j in basis.nonZeroIndices) { ... }`.
   Iterable<int> get nonZeroIndices sync* {
     final start = firstExcitedIndex;
-    for (var j = start; j < k; j++) yield j;
+    for (var j = start; j < k; j++) {
+      yield j;
+    }
   }
 
   /// Return a new vector equal to `ρ` with its projection onto the

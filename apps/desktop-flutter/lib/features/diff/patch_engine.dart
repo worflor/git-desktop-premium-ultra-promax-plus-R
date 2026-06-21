@@ -106,12 +106,12 @@ class PatchEngine {
       for (final line in activeLines) {
         if (line.kind == LineKind.context || (line.kind == LineKind.deleted && !line.isStaged)) {
           // Format as context
-          final rawText = line.text.startsWith('-') || line.text.startsWith('+') ? ' ' + line.text.substring(1) : line.text;
-          builder.writeln(rawText.startsWith(' ') ? rawText : ' ' + rawText);
+          final rawText = line.text.startsWith('-') || line.text.startsWith('+') ? ' ${line.text.substring(1)}' : line.text;
+          builder.writeln(rawText.startsWith(' ') ? rawText : ' $rawText');
         } else if (line.kind == LineKind.deleted && line.isStaged) {
-          builder.writeln('-' + (line.text.startsWith('-') ? line.text.substring(1) : line.text));
+          builder.writeln('-${line.text.startsWith('-') ? line.text.substring(1) : line.text}');
         } else if (line.kind == LineKind.added && line.isStaged) {
-          builder.writeln('+' + (line.text.startsWith('+') ? line.text.substring(1) : line.text));
+          builder.writeln('+${line.text.startsWith('+') ? line.text.substring(1) : line.text}');
         }
         // If git's unified diff flagged this line as having no trailing
         // newline in its source file, re-emit the `\ No newline at end

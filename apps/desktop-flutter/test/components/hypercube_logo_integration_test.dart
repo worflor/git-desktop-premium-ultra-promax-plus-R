@@ -22,13 +22,13 @@ void main() {
         ],
         child: MaterialApp(
           theme: buildTheme(AppTokens.fromId(defaultThemeId)),
-          home: Scaffold(
+          home: const Scaffold(
             body: Column(
               children: [
-                const HypercubeLogo(size: 64),
+                HypercubeLogo(size: 64),
                 HyperReactive(
                   key: probeKey,
-                  child: const SizedBox(width: 120, height: 24),
+                  child: SizedBox(width: 120, height: 24),
                 ),
               ],
             ),

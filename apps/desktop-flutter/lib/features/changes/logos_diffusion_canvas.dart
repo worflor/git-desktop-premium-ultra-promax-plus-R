@@ -660,8 +660,12 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       final hypAngle = math.atan2(hyp.y, hyp.x);
       final hashAngle = _unitHashLocal(path) * 2 * math.pi;
       var diff = hypAngle - hashAngle;
-      while (diff > math.pi) diff -= 2 * math.pi;
-      while (diff < -math.pi) diff += 2 * math.pi;
+      while (diff > math.pi) {
+        diff -= 2 * math.pi;
+      }
+      while (diff < -math.pi) {
+        diff += 2 * math.pi;
+      }
       return hashAngle + diff * 0.7;
     }
     return _unitHashLocal(path) * 2 * math.pi;
@@ -1760,8 +1764,12 @@ class _TopoPainter {
 
   static double _lerpAngle(double a, double b, double t) {
     var diff = b - a;
-    while (diff > math.pi) diff -= 2 * math.pi;
-    while (diff < -math.pi) diff += 2 * math.pi;
+    while (diff > math.pi) {
+      diff -= 2 * math.pi;
+    }
+    while (diff < -math.pi) {
+      diff += 2 * math.pi;
+    }
     return a + diff * t;
   }
 
@@ -1884,8 +1892,8 @@ class _TopoPainter {
       }
       canvas.drawPath(dPath, paint);
 
-      final tipT = 0.97;
-      final u2 = 1.0 - tipT;
+      const tipT = 0.97;
+      const u2 = 1.0 - tipT;
       final tipX = u2 * u2 * sx + 2 * u2 * tipT * cx1 + tipT * tipT * tx;
       final tipY = u2 * u2 * sy + 2 * u2 * tipT * cy1 + tipT * tipT * ty;
       final tipAlpha = alpha * 1.4;
@@ -1943,7 +1951,7 @@ class _FooterPainter {
     if (hunkRankings.isEmpty) return;
     final footerEnv = envFor(_Element.footer, fadeMs: 700);
     if (footerEnv <= 0) return;
-    final padding = const EdgeInsets.fromLTRB(28, 8, 28, 12);
+    const padding = EdgeInsets.fromLTRB(28, 8, 28, 12);
     final inner = Rect.fromLTWH(
       rect.left + padding.left,
       rect.top + padding.top,
@@ -2012,14 +2020,14 @@ class _FooterPainter {
     final meterEnv = envFor(_Element.budgetMeter, fadeMs: 600);
     if (meterEnv > 0) {
       final meterTop = inner.top + barSpace + 6;
-      final meterH = 3.5;
+      const meterH = 3.5;
       if (meterTop + meterH < inner.bottom) {
         final meterRect =
             Rect.fromLTWH(inner.left, meterTop, inner.width, meterH);
         final trackPaint = Paint()
           ..color = tokens.chromeBorder.withValues(alpha: 0.20 + 0.05 * meterEnv);
         canvas.drawRRect(
-          RRect.fromRectAndRadius(meterRect, Radius.circular(meterH / 2)),
+          RRect.fromRectAndRadius(meterRect, const Radius.circular(meterH / 2)),
           trackPaint,
         );
         final fill = Rect.fromLTWH(
@@ -2033,7 +2041,7 @@ class _FooterPainter {
         final fillPaint = Paint()
           ..color = tokens.accentBright.withValues(alpha: 0.85 * meterEnv);
         canvas.drawRRect(
-          RRect.fromRectAndRadius(fill, Radius.circular(meterH / 2)),
+          RRect.fromRectAndRadius(fill, const Radius.circular(meterH / 2)),
           fillPaint,
         );
       }

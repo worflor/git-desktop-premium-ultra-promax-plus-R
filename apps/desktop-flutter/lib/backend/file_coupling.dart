@@ -14,7 +14,6 @@ import 'logos_flow.dart' show FlowAnalysisResult;
 import 'logos_core.dart' show CharCoupling, eigenAddress, flowPhaseCoherence;
 import 'logos_git.dart' show LogosGit;
 import 'logos_git_integrity.dart';
-import 'repo_blob_walk.dart';
 
 // Re-export so callers that only import file_coupling.dart can still
 // construct the context — the changes panel and tests historically
@@ -942,7 +941,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   var currentNumstat = <(String, int)>[];
   String currentAuthor = '';
   String currentSubject = '';
-  final sepLen = logCommitSeparator.length;
+  const sepLen = logCommitSeparator.length;
 
   void flushCommit() {
     if (currentRaw.isEmpty && currentNumstat.isEmpty) return;
@@ -1032,9 +1031,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     ));
   }
 
-  final double effectiveHalfLife = halfLifeCommits == null
-      ? _deriveAdaptiveHalfLife([for (final c in commits) [for (final f in c.files) f.path]])
-      : halfLifeCommits;
+  final double effectiveHalfLife = halfLifeCommits ?? _deriveAdaptiveHalfLife([for (final c in commits) [for (final f in c.files) f.path]]);
   // Commits are in reverse-chrono order — index 0 is the most recent.
   // Weight is evaluated on the semantic clock, not raw ordinal rank:
   // w(age) = 2^(-age / halfLife). This prevents long runs of ritual
@@ -1804,7 +1801,7 @@ FileClusters clusterFiles(
       }
     }
   }
-  bool _clusterHasIncluded(List<int> members) {
+  bool clusterHasIncluded(List<int> members) {
     if (includedPaths == null || includedPaths.isEmpty) return true;
     return members.any((i) => includedPaths.contains(currentPaths[i]));
   }
@@ -1823,7 +1820,7 @@ FileClusters clusterFiles(
   final clusterSortKeys = <List<int>, _ClusterSortKey>{
     for (final c in realClusters)
       c: _ClusterSortKey(
-        hasInc: _clusterHasIncluded(c) ? 0 : 1,
+        hasInc: clusterHasIncluded(c) ? 0 : 1,
         coh100: (_meanClusterCoherence(c, currentPaths, matrix) * 100)
             .round(),
         size: c.length,

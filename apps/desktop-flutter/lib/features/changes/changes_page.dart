@@ -15476,7 +15476,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
         .toList();
     if (alt.isEmpty) return;
     _entry = OverlayEntry(builder: (ctx) {
-      final box = context.findRenderObject() as RenderBox;
+      final box = context.findRenderObject()! as RenderBox;
       final target = box.localToGlobal(Offset(box.size.width, box.size.height))
           + const Offset(0, 6);
       final menuCard = CustomSingleChildLayout(

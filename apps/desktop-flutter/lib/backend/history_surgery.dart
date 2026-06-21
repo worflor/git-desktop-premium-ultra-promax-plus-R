@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'dtos.dart';
 import 'git.dart' as git;
 import 'git_result.dart';
 import 'logos_git.dart';
@@ -442,7 +441,7 @@ class HistorySurgeryEngine {
         currentHash: oldHash.substring(0, 7),
       ));
 
-      SurgeryResult? _cancelResult() => _cancelled
+      SurgeryResult? cancelResult() => _cancelled
           ? SurgeryResult(
               success: false,
               error: 'Cancelled at commit $i of $total. '
@@ -459,7 +458,7 @@ class HistorySurgeryEngine {
         ['cat-file', 'commit', oldHash],
         workingDirectory: repoPath,
       );
-      final cr1 = _cancelResult();
+      final cr1 = cancelResult();
       if (cr1 != null) return cr1;
       if (metaR.exitCode != 0) {
         return SurgeryResult(
@@ -475,7 +474,7 @@ class HistorySurgeryEngine {
 
       // Read and prune tree
       final newTreeHash = await _pruneTree(parsed.treeHash, targetPaths);
-      final cr2 = _cancelResult();
+      final cr2 = cancelResult();
       if (cr2 != null) return cr2;
 
       // Map parent hashes to their rewritten versions

@@ -165,7 +165,7 @@ Future<void> _profile(String label, String path) async {
   _p('         · +diagnostics                : ${evDiag.toStringAsFixed(2)} ms   (Δ ${(evDiag - evMin).toStringAsFixed(2)})');
   _p('         · +attribution (w/ axes)      : ${evAttr.toStringAsFixed(2)} ms   (Δ ${(evAttr - evMin).toStringAsFixed(2)})');
   _p('         · FULL (spec+attr+diag)       : ${evFull.toStringAsFixed(2)} ms');
-  _p('  [QUERY] ${n}×24 score lookups      : ${scoreMs.toStringAsFixed(3)} ms');
+  _p('  [QUERY] $n×24 score lookups      : ${scoreMs.toStringAsFixed(3)} ms');
   _p('  RSS=${(ProcessInfo.currentRss / (1024 * 1024)).toStringAsFixed(0)} MB');
   _p('  >>> COLD BUILD ≈ ${coldTotal.toStringAsFixed(1)} ms  |  ingest(∥) ${(ingest / coldTotal * 100).toStringAsFixed(0)}%   compute ${(buildMed / coldTotal * 100).toStringAsFixed(0)}%');
 }

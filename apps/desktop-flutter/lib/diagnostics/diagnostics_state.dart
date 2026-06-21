@@ -1155,16 +1155,16 @@ class DiagnosticsState extends ChangeNotifier {
       };
     }).toList()
       ..sort((left, right) =>
-          (right['score'] as double).compareTo(left['score'] as double));
+          (right['score']! as double).compareTo(left['score']! as double));
     final offender = ranked.first;
-    final summary = offender['summary'] as CommandLatencySummary;
-    final failureRate = offender['failureRate'] as double;
+    final summary = offender['summary']! as CommandLatencySummary;
+    final failureRate = offender['failureRate']! as double;
     return {
       'stream': 'Command',
       'name': summary.command,
       'metric':
           '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
-      'score': offender['score'] as double,
+      'score': offender['score']! as double,
     };
   }
 
@@ -1184,15 +1184,15 @@ class DiagnosticsState extends ChangeNotifier {
       return {'summary': summary, 'score': score};
     }).toList()
       ..sort((left, right) =>
-          (right['score'] as double).compareTo(left['score'] as double));
+          (right['score']! as double).compareTo(left['score']! as double));
     final offender = ranked.first;
-    final summary = offender['summary'] as DiffRenderModeSummary;
+    final summary = offender['summary']! as DiffRenderModeSummary;
     return {
       'stream': 'Diff Render',
       'name': '${summary.rendererMode} renderer',
       'metric':
           '${(summary.jankyFrameRate * 100).toStringAsFixed(0)}% jank | ${summary.frameTimeP95Ms.toStringAsFixed(0)}ms frame p95',
-      'score': offender['score'] as double,
+      'score': offender['score']! as double,
     };
   }
 
@@ -1212,16 +1212,16 @@ class DiagnosticsState extends ChangeNotifier {
       };
     }).toList()
       ..sort((left, right) =>
-          (right['score'] as double).compareTo(left['score'] as double));
+          (right['score']! as double).compareTo(left['score']! as double));
     final offender = ranked.first;
-    final summary = offender['summary'] as UiTimingSummary;
-    final failureRate = offender['failureRate'] as double;
+    final summary = offender['summary']! as UiTimingSummary;
+    final failureRate = offender['failureRate']! as double;
     return {
       'stream': 'UI Timing',
       'name': '${summary.phase}:${summary.event}',
       'metric':
           '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
-      'score': offender['score'] as double,
+      'score': offender['score']! as double,
     };
   }
 

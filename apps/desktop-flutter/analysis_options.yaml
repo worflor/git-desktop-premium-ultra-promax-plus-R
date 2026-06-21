@@ -15,14 +15,10 @@ analyzer:
     # high-value — both stay on.
     strict-inference: true
     strict-raw-types: true
-    # strict-casts is the strongest lever but has a one-time cost HERE: it
-    # surfaces ~92 implicit dynamic→T casts, almost all in dtos.dart's fromJson
-    # factories (untyped JSON decode). Flip it on after those casts are made
-    # explicit (`j['x'] as String? ?? ''`) — then it also catches every *future*
-    # implicit-dynamic assignment. Left off for now so the baseline stays green
-    # and the in-flight dtos.dart isn't reddened. (avoid_dynamic_calls below
-    # already blocks the dangerous case — calling methods on a `dynamic`.)
-    # strict-casts: true
+    # No implicit dynamic→T casts. The JSON-decode casts this surfaces are made
+    # explicit at their source (`j['x'] as String? ?? ''`), so it now also
+    # catches every future implicit-dynamic assignment.
+    strict-casts: true
   errors:
     # Real-bug lints with ~zero pre-existing hits → hard errors (free wins:
     # the bug class is blocked forever at no cleanup cost, no memorization).

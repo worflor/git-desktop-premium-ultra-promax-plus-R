@@ -27,7 +27,7 @@ const _handAuthored = <String, double>{
 void main() {
   test('empirical coupling vs hand-authored constants', () async {
     // Point at the repo root — two levels up from apps/desktop-flutter
-    final repoPath = '${Directory.current.path}';
+    final repoPath = Directory.current.path;
     // Walk up if we're inside apps/desktop-flutter
     final effectivePath = repoPath.contains('desktop-flutter')
         ? repoPath.substring(
@@ -218,7 +218,7 @@ void main() {
     // Pin integrity engine constants derived from spectral_constants.
     // knee = phiDecay2 ≈ 0.382, rate = -ln(1-0.85)/(1-0.382) ≈ 3.069
     expect(kNeutralIntegrity, equals(0.85));
-    final expectedKnee = sc.phiDecay2;
+    const expectedKnee = sc.phiDecay2;
     final expectedRate =
         -math.log(1.0 - kNeutralIntegrity) / (1.0 - expectedKnee);
     expect(expectedKnee, closeTo(0.382, 0.001));

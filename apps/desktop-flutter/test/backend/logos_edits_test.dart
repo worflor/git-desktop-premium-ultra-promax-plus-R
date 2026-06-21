@@ -418,7 +418,7 @@ void main() {
     // a bug we didn't catch in fixture tests. This is the honest
     // stress test: ~100,000 applyEditSet calls total.
 
-    List<LogosEdit> _generateRandomEditSet(math.Random rng, int n) {
+    List<LogosEdit> generateRandomEditSet(math.Random rng, int n) {
       final peers = ['alice', 'bob', 'charlie', 'dana', 'eve'];
       final paths = List<String>.generate(8, (i) => 'file_$i.dart');
       final edits = <LogosEdit>[];
@@ -462,7 +462,7 @@ void main() {
         () {
       for (var seed = 0; seed < 20; seed++) {
         final gen = math.Random(seed * 1000 + 17);
-        final edits = _generateRandomEditSet(gen, 30);
+        final edits = generateRandomEditSet(gen, 30);
         final reference =
             mockStateSignature(applyEditSet(_emptyState(), edits));
 
@@ -480,7 +480,7 @@ void main() {
     test('fuzz: 3 peers applying interleaved random edits converge', () {
       final rng = math.Random(0xFACE);
       final generator = math.Random(0xABBA);
-      final edits = _generateRandomEditSet(generator, 50);
+      final edits = generateRandomEditSet(generator, 50);
 
       // Partition edits across 3 peers — each peer receives the same
       // multiset but in a locally-unique interleaving.
@@ -504,7 +504,7 @@ void main() {
 
     test('stress: 500 random edits across 5 peers, 10 permutations', () {
       final gen = math.Random(0xDEAF);
-      final edits = _generateRandomEditSet(gen, 500);
+      final edits = generateRandomEditSet(gen, 500);
       final reference = mockStateSignature(applyEditSet(_emptyState(), edits));
       final shuffler = math.Random(0xBEEF);
       for (var trial = 0; trial < 10; trial++) {
@@ -555,7 +555,7 @@ void _sessionTests() {
     test('receive advances lamport to max(seen, incoming)', () {
       final s = LogosSession(peerId: 'alice');
       s.addPath('a.dart'); // lamport = 1
-      s.receive(AddPathEdit(
+      s.receive(const AddPathEdit(
           clock: EditClock(lamport: 10, peer: 'bob'), path: 'b.dart'));
       expect(s.currentLamport, greaterThanOrEqualTo(10));
       // Next local edit must be strictly greater.

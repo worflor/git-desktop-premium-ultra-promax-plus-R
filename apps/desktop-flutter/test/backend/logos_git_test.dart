@@ -1875,11 +1875,11 @@ void _spectralRatchetTests() {
 
   test('Forward-only: past ops are silently discarded', () {
     final r = LogosRatchet.fromEngine(miniEngine());
-    r.advance(FileEvent(sequence: 1, paths: const {'lib/a.dart'}));
-    r.advance(FileEvent(sequence: 2, paths: const {'lib/b.dart'}));
+    r.advance(const FileEvent(sequence: 1, paths: {'lib/a.dart'}));
+    r.advance(const FileEvent(sequence: 2, paths: {'lib/b.dart'}));
     expect(r.revision, 2);
     // A "past" event — already applied — must not rewind the counter.
-    r.advance(FileEvent(sequence: 1, paths: const {'lib/a.dart'}));
+    r.advance(const FileEvent(sequence: 1, paths: {'lib/a.dart'}));
     expect(r.revision, 2);
   });
 
@@ -1895,18 +1895,18 @@ void _spectralRatchetTests() {
 
   test('Out-of-order ops buffer until their slot comes up', () {
     final r = LogosRatchet.fromEngine(miniEngine());
-    r.advance(FileEvent(sequence: 3, paths: const {}));
-    r.advance(FileEvent(sequence: 5, paths: const {}));
+    r.advance(const FileEvent(sequence: 3, paths: {}));
+    r.advance(const FileEvent(sequence: 5, paths: {}));
     expect(r.revision, 0);
     expect(r.skippedCount, 2);
-    r.advance(FileEvent(sequence: 1, paths: const {}));
+    r.advance(const FileEvent(sequence: 1, paths: {}));
     expect(r.revision, 1);
     expect(r.skippedCount, 2);
-    r.advance(FileEvent(sequence: 2, paths: const {}));
+    r.advance(const FileEvent(sequence: 2, paths: {}));
     // Now ops 3 drains immediately (4 is still missing).
     expect(r.revision, 3);
     expect(r.skippedCount, 1);
-    r.advance(FileEvent(sequence: 4, paths: const {}));
+    r.advance(const FileEvent(sequence: 4, paths: {}));
     // Both 4 and 5 drain.
     expect(r.revision, 5);
     expect(r.skippedCount, 0);
@@ -1923,7 +1923,7 @@ void _spectralRatchetTests() {
     // The oldest eviction is sequence=2 (the first out-of-order one).
     // When seq=1 finally lands, the drain skips the evicted slots
     // and stops at the first missing sequence in the buffer.
-    r.advance(FileEvent(sequence: 1, paths: const {}));
+    r.advance(const FileEvent(sequence: 1, paths: {}));
     expect(r.revision, 1);
     // The surviving ops are the most-recent kMaxSkip, starting at
     // some sequence > 2. So draining from seq=2 fails at slot 2 (it
@@ -1969,8 +1969,8 @@ void _spectralRatchetTests() {
   test('diagnose detects revision divergence', () {
     final a = LogosRatchet.fromEngine(miniEngine());
     final b = LogosRatchet.fromEngine(miniEngine());
-    a.advance(FileEvent(sequence: 1, paths: const {}));
-    a.advance(FileEvent(sequence: 2, paths: const {}));
+    a.advance(const FileEvent(sequence: 1, paths: {}));
+    a.advance(const FileEvent(sequence: 2, paths: {}));
     final diag = a.diagnose(b);
     expect(diag.revisionMatch, false);
     expect(diag.selfRevision, 2);
@@ -2933,7 +2933,7 @@ void _spectralTests() {
     final coeffs = basis.labelProject(weights);
     // Equivalent plain rho (normalised weights on those nodes).
     final plainRho = Float64List(20)..[3] = 0.7..[12] = 0.3;
-    final total = 1.0;
+    const total = 1.0;
     for (var i = 0; i < 20; i++) {
       plainRho[i] /= total;
     }

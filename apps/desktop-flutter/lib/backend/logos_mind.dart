@@ -535,17 +535,17 @@ class LogosMind {
   }) {
     final basis = engine.spectralBasis();
     if (basis == null) {
-      return MindEvolution(
-        trajectory: const [],
-        finalRanking: const [],
+      return const MindEvolution(
+        trajectory: [],
+        finalRanking: [],
         finalStepDelta: 0.0,
       );
     }
     final seeds = resolveQuery(query);
     if (seeds.isEmpty) {
-      return MindEvolution(
-        trajectory: const [],
-        finalRanking: const [],
+      return const MindEvolution(
+        trajectory: [],
+        finalRanking: [],
         finalStepDelta: 0.0,
       );
     }

@@ -1049,7 +1049,7 @@ void main() {
     });
 
     test('tab indentation handled: tabs = 4 spaces', () {
-      final source = 'top\n\t\tbody\n\t\t\t\tdeep\nback';
+      const source = 'top\n\t\tbody\n\t\t\t\tdeep\nback';
       final g = extractFlowGraph(source);
       expect(g.nodes, isNotEmpty);
       // tab indentation should produce valid addresses
@@ -1786,7 +1786,7 @@ void main() {
     });
 
     test('labeled mode: explicit labels', () {
-      final source = 'line0\nline1\nline2\nline3\nline4';
+      const source = 'line0\nline1\nline2\nline3\nline4';
       final labels = <int, (int, double)>{
         0: (kFlowLifecycle, 0.0),
         1: (kFlowMutates, 0.5),
@@ -1804,7 +1804,7 @@ void main() {
     });
 
     test('labeled early-return guard', () {
-      final source = 'entry\ncheck\nreturn null\nrest\nresource';
+      const source = 'entry\ncheck\nreturn null\nrest\nresource';
       final labels = <int, (int, double)>{
         0: (kFlowLifecycle, 0.0),
         1: (kFlowPure, 0.0),
@@ -1945,7 +1945,7 @@ void main() {
     test('all three FlowBugKind reachable across phase range', () {
       final kinds = <FlowBugKind>{};
       for (var p = -math.pi; p <= math.pi; p += 0.01) {
-        final source = 'a\nb\nc';
+        const source = 'a\nb\nc';
         final labels = <int, (int, double)>{
           0: (kFlowLifecycle, 0.0),
           1: (kFlowAsync, p.abs()), // high Lyapunov → phase shift
@@ -2172,7 +2172,7 @@ void main() {
 
     test('labeled mode: all 256 addresses on a 3-node graph', () {
       for (var addr = 0; addr < 256; addr++) {
-        final source = 'entry\nmiddle\nresource';
+        const source = 'entry\nmiddle\nresource';
         final labels = <int, (int, double)>{
           0: (kFlowLifecycle, 0.0),
           1: (addr, 1.0),

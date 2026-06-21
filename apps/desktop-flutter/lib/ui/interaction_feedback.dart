@@ -579,7 +579,7 @@ class _GlossPainter extends CustomPainter {
     final env = math.sin(t * math.pi);
     final peakAlpha = (0.55 * env * lum).clamp(0.0, 0.85);
 
-    final gold = const Color(0xFFFFC727);
+    const gold = Color(0xFFFFC727);
 
     // ~12° tilt so it doesn't read as a flat vertical bar
     const tilt = 0.2094;

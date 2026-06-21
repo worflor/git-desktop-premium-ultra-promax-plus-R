@@ -131,7 +131,9 @@ RmtReport? rmtReport(SpectralBasis basis) {
   }
   // Mean spacing — used to unfold so the series is dimensionless.
   var sumS = 0.0;
-  for (final s in spacings) sumS += s;
+  for (final s in spacings) {
+    sumS += s;
+  }
   final meanS = sumS / spacings.length;
   if (meanS <= 1e-300) return null;
   final unfolded = Float64List(spacings.length);
@@ -151,7 +153,9 @@ RmtReport? rmtReport(SpectralBasis basis) {
     rValues[i] = math.min(s1, s2) / mx;
   }
   var sumR = 0.0;
-  for (final r in rValues) sumR += r;
+  for (final r in rValues) {
+    sumR += r;
+  }
   final meanR = rValues.isEmpty ? 0.0 : sumR / rValues.length;
   // CDF distances vs Wigner and Poisson shapes.
   final wigner = _cdfDeviation(unfolded, _wignerCdf);
@@ -252,7 +256,9 @@ double? numberVariance(SpectralBasis basis, double L, {int windows = 32}) {
   }
   // Sample mean and variance.
   var sum = 0.0;
-  for (final c in counts) sum += c;
+  for (final c in counts) {
+    sum += c;
+  }
   final m = sum / counts.length;
   var v = 0.0;
   for (final c in counts) {

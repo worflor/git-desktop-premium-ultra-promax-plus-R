@@ -47,7 +47,9 @@ import 'logos_core.dart';
 
 int _nextPow2(int n) {
   var p = 1;
-  while (p < n) p <<= 1;
+  while (p < n) {
+    p <<= 1;
+  }
   return p;
 }
 

@@ -461,7 +461,7 @@ Future<ProcessResult> runGitProbe(String workingDir, List<String> args) {
 Future<GitResult<String>> openRepository(String path) async {
   try {
     final r = await _git(path, ['rev-parse', '--git-dir']);
-    if (r.exitCode != 0) return GitResult.err('Not a git repository');
+    if (r.exitCode != 0) return const GitResult.err('Not a git repository');
     return GitResult.ok(path);
   } catch (error) {
     return GitResult.err(error.toString());
@@ -470,7 +470,7 @@ Future<GitResult<String>> openRepository(String path) async {
 
 Future<GitResult<List<String>>> listRecentRepositories() async {
   // Stored in shared_preferences — handled at app layer
-  return GitResult.ok([]);
+  return const GitResult.ok([]);
 }
 
 Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
@@ -654,7 +654,9 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
       authoredAt: lines[i + 7].trim(),
     ));
     i += 8;
-    while (i < lines.length && lines[i].trim().isEmpty) i++;
+    while (i < lines.length && lines[i].trim().isEmpty) {
+      i++;
+    }
   }
   return entries;
 }
@@ -703,7 +705,7 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
   int limit = 200,
   String? branch,
 }) async {
-  if (commits.isEmpty) return GitResult.ok({});
+  if (commits.isEmpty) return const GitResult.ok({});
 
   final args = ['log', '--format=>>>%H', '-n', '$limit'];
   if (branch != null) args.add(branch);
@@ -885,7 +887,9 @@ Future<GitResult<List<FileHistoryEntry>>> listFileHistoryWithPaths(
     }
     metadataLines.add('');
     i += 8;
-    while (i < raw.length && raw[i].trim().isEmpty) i++;
+    while (i < raw.length && raw[i].trim().isEmpty) {
+      i++;
+    }
     // Name-status lines: "STATUS\tpath" or "R100\told\tnew". In both cases
     // we want parts[1]: the first path (old name for renames, which is what
     // the file was called AT this commit in the file's history chain).
@@ -1073,7 +1077,7 @@ Future<GitResult<void>> applyBranchToBase({
       );
     }
   }
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
@@ -1132,7 +1136,7 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
 
   final output = r.stdout.toString();
   final metaEnd = output.indexOf('---END-META---');
-  if (metaEnd == -1) return GitResult.err('Unexpected git output');
+  if (metaEnd == -1) return const GitResult.err('Unexpected git output');
 
   final metaLines = output.substring(0, metaEnd).split('\n');
   final fullHash = metaLines[0].trim();
@@ -1495,8 +1499,9 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
       final aheadMatch = RegExp(r'ahead (\d+)').firstMatch(track);
       final behindMatch = RegExp(r'behind (\d+)').firstMatch(track);
       if (aheadMatch != null) ahead = int.tryParse(aheadMatch.group(1)!) ?? 0;
-      if (behindMatch != null)
+      if (behindMatch != null) {
         behind = int.tryParse(behindMatch.group(1)!) ?? 0;
+      }
       // git reports `[gone]` in the upstream:track field when the
       // remote tracking branch was deleted (typically: PR merged +
       // remote branch deleted on the forge). The local copy is now
@@ -1826,10 +1831,12 @@ Future<GitResult<List<BlameLineData>>> getFileBlame(String repo, String path,
       commitData.putIfAbsent(currentHash, () => {});
       continue;
     }
-    if (line.startsWith('author '))
+    if (line.startsWith('author ')) {
       commitData[currentHash]?['author'] = line.substring(7);
-    if (line.startsWith('author-time '))
+    }
+    if (line.startsWith('author-time ')) {
       commitData[currentHash]?['time'] = line.substring(12);
+    }
     if (line.startsWith('\t')) {
       final data = commitData[currentHash] ?? {};
       lines.add(BlameLineData(
@@ -2260,9 +2267,10 @@ Future<GitResult<void>> applyPatch(
       errorCode: ok ? null : 'git.exit_$exit',
       message: ok ? null : stderrText,
     );
-    if (!ok)
+    if (!ok) {
       return GitResult.err(
           stderrText.isEmpty ? 'git apply exit $exit' : stderrText);
+    }
     return const GitResult.ok(null);
   } catch (e) {
     stopwatch.stop();
@@ -2315,7 +2323,7 @@ Future<GitResult<CommitData>> createCommit(String repo, String message,
       // but defend the API surface anyway: an empty `-m ""` on a
       // non-amend commit produces an actually-empty subject and
       // is almost never what the caller wanted.
-      return GitResult.err('Commit message is required.');
+      return const GitResult.err('Commit message is required.');
     }
   } else {
     args.addAll(['-m', message]);
@@ -2337,8 +2345,9 @@ Future<GitResult<SyncData>> fetchRemote(String repo,
   final r = remote ?? 'origin';
   final args = ['fetch', if (prune) '--prune', r];
   final result = await _git(repo, args);
-  if (result.exitCode != 0)
+  if (result.exitCode != 0) {
     return GitResult.err(result.stderr.toString().trim());
+  }
   return GitResult.ok(SyncData(
       operation: 'fetch', remote: r, output: result.stdout.toString().trim()));
 }
@@ -2348,8 +2357,9 @@ Future<GitResult<SyncData>> pullRemote(String repo,
   final r = remote ?? 'origin';
   final args = ['pull', if (rebase) '--rebase', r, if (branch != null) branch];
   final result = await _git(repo, args);
-  if (result.exitCode != 0)
+  if (result.exitCode != 0) {
     return GitResult.err(result.stderr.toString().trim());
+  }
   return GitResult.ok(SyncData(
       operation: 'pull', remote: r, output: result.stdout.toString().trim()));
 }
@@ -2374,8 +2384,9 @@ Future<GitResult<SyncData>> pushRemote(String repo,
     if (branch != null) args.add(branch);
   }
   final result = await _git(repo, args);
-  if (result.exitCode != 0)
+  if (result.exitCode != 0) {
     return GitResult.err(result.stderr.toString().trim());
+  }
   return GitResult.ok(SyncData(
       operation: 'push', remote: r, output: result.stdout.toString().trim()));
 }
@@ -2386,7 +2397,7 @@ Future<GitResult<SyncData>> syncRemote(
     String repo, RepositoryStatus status) async {
   final branch = status.branch;
   if (branch == 'HEAD' || branch.startsWith('(')) {
-    return GitResult.err(
+    return const GitResult.err(
         'Cannot sync: detached HEAD state. Check out a branch first.');
   }
 
@@ -2429,7 +2440,7 @@ Future<GitResult<String>> templateFromRepository(
   try {
     final dir = Directory(targetPath);
     if (await dir.exists()) {
-      return GitResult.err('Target directory already exists.');
+      return const GitResult.err('Target directory already exists.');
     }
     final clone =
         await _git(sourceRepo, ['clone', '--depth', '1', sourceRepo, targetPath]);
@@ -2475,7 +2486,7 @@ Future<GitResult<String>> cloneRepository(
   void Function(String line)? onProgress,
 }) async {
   if (_activeCloneProcess != null) {
-    return GitResult.err('Clone already in progress');
+    return const GitResult.err('Clone already in progress');
   }
   try {
     final absTarget = p.canonicalize(targetPath);
@@ -2611,7 +2622,7 @@ Future<GitResult<void>> startInteractiveRebase(
   }
 
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 String _shellSingleQuote(String value) {
@@ -2750,19 +2761,19 @@ Future<GitResult<String>> stashPush(
 Future<GitResult<void>> stashPop(String repo, {int index = 0}) async {
   final r = await _git(repo, ['stash', 'pop', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> stashApply(String repo, {int index = 0}) async {
   final r = await _git(repo, ['stash', 'apply', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> stashDrop(String repo, {int index = 0}) async {
   final r = await _git(repo, ['stash', 'drop', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 Future<GitResult<String>> stashShow(String repo, {int index = 0}) async {
@@ -2952,13 +2963,13 @@ Future<GitResult<void>> removeWorktree(
   args.add(worktreePath);
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> pruneWorktrees(String repo) async {
   final r = await _git(repo, ['worktree', 'prune']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(null);
+  return const GitResult.ok(null);
 }
 
 Future<GitResult<String>> getRepositoryXrayFingerprint(String repo) {

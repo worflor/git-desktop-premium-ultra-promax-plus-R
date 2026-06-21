@@ -269,11 +269,15 @@ class SpacetimeBasis {
         if (lam <= kGroundStateEps) continue;
         if (s > 0) {
           var den = 1.0;
-          for (var p = 0; p < s; p++) den *= lam;
+          for (var p = 0; p < s; p++) {
+            den *= lam;
+          }
           if (den > 0) sum += 1.0 / den;
         } else {
           var num = 1.0;
-          for (var p = 0; p < -s; p++) num *= lam;
+          for (var p = 0; p < -s; p++) {
+            num *= lam;
+          }
           sum += num;
         }
       }

@@ -2606,7 +2606,7 @@ class _TerritoryBoard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              _BoardHeader(label: 'Territory'),
+              const _BoardHeader(label: 'Territory'),
               const Spacer(),
               Text(
                 '${topLevel.length}',
@@ -2642,7 +2642,9 @@ class _TerritoryBoard extends StatelessWidget {
                         .firstWhere((h) => h!.path == selPath,
                             orElse: () => null);
                     if (selHotspot == null ||
-                        selHotspot.coupledTo.isEmpty) continue;
+                        selHotspot.coupledTo.isEmpty) {
+                      continue;
+                    }
                     final targets = <Rect>[];
                     for (final tgt in selHotspot.coupledTo) {
                       final r = pathToRect[tgt];
@@ -3768,9 +3770,13 @@ String _compactCardTitle(String title) {
   if (lower.contains('bursty development cadence')) return 'bursty';
   if (lower.contains('branch model')) return 'branches';
   if (lower.contains('reflog') ||
-      lower.contains('intense local editing')) return 'reflog';
+      lower.contains('intense local editing')) {
+    return 'reflog';
+  }
   if (lower.contains('hotspot concentration') ||
-      lower.contains('narrow')) return 'narrow hotspot';
+      lower.contains('narrow')) {
+    return 'narrow hotspot';
+  }
   return title.toLowerCase();
 }
 
@@ -4045,7 +4051,7 @@ class _RingsSectionState extends State<_RingsSection> {
           // samples without snapping.
           _ApertureScrubber(sweep: rings.sweep),
           const SizedBox(height: 14),
-          _SectionSubHeader(
+          const _SectionSubHeader(
               label: 'Centre-of-gravity trajectory',
               hint: 'close focus → wide focus'),
           const SizedBox(height: 6),

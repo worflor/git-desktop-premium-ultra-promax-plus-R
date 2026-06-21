@@ -752,7 +752,7 @@ class LogosSseStore {
       // is PID-namespaced so concurrent writers (shouldn't happen, but
       // SSE is background work) don't stomp each other's temp files.
       final finalPath = _sseFilePath();
-      final tempPath = '$finalPath.tmp.${pid}.'
+      final tempPath = '$finalPath.tmp.$pid.'
           '${DateTime.now().microsecondsSinceEpoch}';
       final tempFile = File(tempPath);
       try {

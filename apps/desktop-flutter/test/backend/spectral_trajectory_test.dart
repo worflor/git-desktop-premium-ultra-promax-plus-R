@@ -10,7 +10,6 @@
 //   * Linear forecast on a planted linear trend
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/logos_core.dart';
@@ -816,7 +815,7 @@ void main() {
   });
 
   group('Time reversal (duality)', () {
-    SpectralTrajectory _buildJourney() => SpectralTrajectory(points: [
+    SpectralTrajectory buildJourney() => SpectralTrajectory(points: [
           for (var i = 0; i < 6; i++)
             _point(
                 rev: i + 1,
@@ -835,18 +834,18 @@ void main() {
     });
 
     test('pathLength is reversal-invariant', () {
-      final t = _buildJourney();
+      final t = buildJourney();
       expect(t.reversed().pathLength, closeTo(t.pathLength, 1e-9));
     });
 
     test('dirichletAction is reversal-invariant', () {
-      final t = _buildJourney();
+      final t = buildJourney();
       expect(t.reversed().dirichletAction,
           closeTo(t.dirichletAction, 1e-9));
     });
 
     test('turbulence is reversal-invariant', () {
-      final t = _buildJourney();
+      final t = buildJourney();
       if (t.turbulence.isFinite) {
         expect(t.reversed().turbulence,
             closeTo(t.turbulence, 1e-9));
@@ -884,7 +883,7 @@ void main() {
     });
 
     test('double reversal is identity (up to revision re-stamping)', () {
-      final t = _buildJourney();
+      final t = buildJourney();
       final twice = t.reversed().reversed();
       expect(twice.length, equals(t.length));
       for (var i = 0; i < t.length; i++) {
@@ -895,7 +894,7 @@ void main() {
 
     test('signature is order-sensitive (not reversal-invariant in general)',
         () {
-      final t = _buildJourney();
+      final t = buildJourney();
       // Unless the trajectory is palindromic (rare for non-trivial
       // graphs), the signature should change after reversal.
       expect(t.reversed().trajectorySignature,

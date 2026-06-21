@@ -13,7 +13,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../lib/backend/repo_web_url.dart' show resolveRepoWebInfo;
+import 'package:git_desktop/backend/repo_web_url.dart' show resolveRepoWebInfo;
 
 const int _maxDepth = 4;
 

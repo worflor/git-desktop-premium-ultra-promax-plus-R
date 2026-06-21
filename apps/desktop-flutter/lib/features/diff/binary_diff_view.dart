@@ -162,7 +162,7 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
     final oldTooLarge = _oldResult is BlobTooLarge;
     final newTooLarge = _newResult is BlobTooLarge;
     if (oldTooLarge || newTooLarge) {
-      final tl = (oldTooLarge ? _oldResult : _newResult) as BlobTooLarge;
+      final tl = (oldTooLarge ? _oldResult : _newResult)! as BlobTooLarge;
       return MetadataOnlyRenderer(
         oldBlob: null,
         newBlob: null,
@@ -184,8 +184,8 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
       );
     }
 
-    final oldBlob = _oldResult is BlobLoaded ? (_oldResult as BlobLoaded).data : null;
-    final newBlob = _newResult is BlobLoaded ? (_newResult as BlobLoaded).data : null;
+    final oldBlob = _oldResult is BlobLoaded ? (_oldResult! as BlobLoaded).data : null;
+    final newBlob = _newResult is BlobLoaded ? (_newResult! as BlobLoaded).data : null;
 
     if (oldBlob == null && newBlob == null) {
       return MetadataOnlyRenderer(

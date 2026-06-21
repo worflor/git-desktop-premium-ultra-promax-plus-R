@@ -3296,7 +3296,7 @@ class _BranchPillState extends State<_BranchPill> {
   }
 
   void _insertOverlay() {
-    final box = _pillKey.currentContext!.findRenderObject() as RenderBox;
+    final box = _pillKey.currentContext!.findRenderObject()! as RenderBox;
     final origin = box.localToGlobal(Offset.zero);
     final pillSize = box.size;
     // Snapshot the worktree state at overlay-open time so the "+ desk" /

@@ -61,7 +61,7 @@ void main() {
 
   group('ClaimGroundingData round-trip', () {
     test('reconstructed ClaimShape hashes to the same bucket', () {
-      final shape = ClaimShape(
+      const shape = ClaimShape(
         grounding: 0.7,
         verifiability: 1.0,
         reach: 0.3,

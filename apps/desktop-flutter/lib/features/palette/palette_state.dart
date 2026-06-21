@@ -58,10 +58,10 @@ class PaletteState extends ChangeNotifier {
   List<WickUnit> _wickEntries = [];
   WickPosture? _wickPosture;
 
-  Map<String, Map<String, int>> _allFrequency = {};
-  Map<String, Map<String, DateTime>> _allRecency = {};
-  Map<String, Map<String, Map<String, int>>> _allQueryFrequency = {};
-  Map<String, Map<String, Map<String, int>>> _allTransitions = {};
+  final Map<String, Map<String, int>> _allFrequency = {};
+  final Map<String, Map<String, DateTime>> _allRecency = {};
+  final Map<String, Map<String, Map<String, int>>> _allQueryFrequency = {};
+  final Map<String, Map<String, Map<String, int>>> _allTransitions = {};
   String? _lastExecutedId;
   bool _usageLoaded = false;
 

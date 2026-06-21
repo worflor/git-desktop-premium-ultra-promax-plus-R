@@ -9,13 +9,13 @@ const double phi = 1.6180339887498949;
 // exp(−(1−c)²) at maximum spectral entropy (c=0) returns 1/e.
 // Used as the thermodynamic minimum for shadow discount and
 // transport integrity floor — the weakest signal that's still signal.
-final double gasPhase = 1.0 / math.e; // ≈ 0.368
+const double gasPhase = 1.0 / math.e; // ≈ 0.368
 
 // Golden-ratio powers: heat-kernel decay at the φ scale.
 // 1/φ^t for t = 1 (near), 2 (deeper), 3 (exiled).
-final double phiDecay1 = 1.0 / phi;           // ≈ 0.618
-final double phiDecay2 = 1.0 / (phi * phi);   // ≈ 0.382
-final double phiDecay3 = 1.0 / (phi * phi * phi); // ≈ 0.236
+const double phiDecay1 = 1.0 / phi;           // ≈ 0.618
+const double phiDecay2 = 1.0 / (phi * phi);   // ≈ 0.382
+const double phiDecay3 = 1.0 / (phi * phi * phi); // ≈ 0.236
 
 // CC-axis evidence square: k² where k=4 is the number of
 // distinguishable co-change regimes. Same information-theoretic

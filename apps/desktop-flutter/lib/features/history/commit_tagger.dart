@@ -1051,9 +1051,7 @@ RepositoryTagProfile buildTagProfile({
       }
       if (d.files.length >= 2 && coherenceP90 > coherenceP10) {
         final coh = engineCoherences?[c.commitHash] ??
-            (coupling != null
-                ? coupling.coherenceFor(d.files.map((f) => f.path))
-                : null);
+            (coupling?.coherenceFor(d.files.map((f) => f.path)));
         if (coh != null) {
           if (coh >= coherenceP90) bucketFocusedIdx.add(i);
           if (coh <= coherenceP10) bucketSprawlIdx.add(i);
@@ -1285,11 +1283,11 @@ bool _belongsToBucket(
     case CommitTagKind.axisSprawl:
       if (d == null ||
           d.files.length < 2 ||
-          coherenceP90 <= coherenceP10) return false;
+          coherenceP90 <= coherenceP10) {
+        return false;
+      }
       final coh = engineCoherence ??
-          (coupling != null
-              ? coupling.coherenceFor(d.files.map((f) => f.path))
-              : null);
+          (coupling?.coherenceFor(d.files.map((f) => f.path)));
       if (coh == null) return false;
       return kind == CommitTagKind.axisFocused
           ? coh >= coherenceP90

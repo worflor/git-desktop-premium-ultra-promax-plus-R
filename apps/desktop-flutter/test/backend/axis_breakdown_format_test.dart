@@ -5,7 +5,6 @@
 // Locks the contract so a future refactor can't silently break the
 // AI's ability to ground its findings in the axis attribution.
 
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/ai.dart' show formatAxisBreakdownForTesting;

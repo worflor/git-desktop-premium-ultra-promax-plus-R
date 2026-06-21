@@ -766,7 +766,7 @@ void main() {
   });
 
   group('Negative-time heat deconvolution', () {
-    SpectralProjection _deltaAt(SpectralBasis b, int node) {
+    SpectralProjection deltaAt(SpectralBasis b, int node) {
       final rho = Float64List(b.n);
       if (node >= 0 && node < b.n) rho[node] = 1.0;
       return b.projectSource(rho);
@@ -774,7 +774,7 @@ void main() {
 
     test('round-trip at small t recovers source exactly', () {
       final b = _pathBasis(16);
-      final source = _deltaAt(b, 5);
+      final source = deltaAt(b, 5);
       const t = 0.3;
       // Diffuse → deconvolve should be (approximately) identity.
       final diffusedCoeffs = Float64List(b.k);
@@ -795,7 +795,7 @@ void main() {
 
     test('cutoff zeroes out high-frequency modes', () {
       final b = _pathBasis(20);
-      final source = _deltaAt(b, 3);
+      final source = deltaAt(b, 3);
       final diffusedCoeffs = Float64List(b.k);
       for (var j = 0; j < b.k; j++) {
         diffusedCoeffs[j] =
@@ -815,7 +815,7 @@ void main() {
 
     test('zero t is the identity', () {
       final b = _pathBasis(14);
-      final p = _deltaAt(b, 4);
+      final p = deltaAt(b, 4);
       final d = p.deconvolveTo(0.0, cutoffLambda: 10.0);
       for (var j = 0; j < b.k; j++) {
         expect(d.coefficients[j],
@@ -1237,7 +1237,7 @@ void main() {
       // ρ = u_j + u_k with coefficients c_j = c_k = 1.
       // Rayleigh = (λⱼ·1 + λ_k·1) / (1 + 1) = (λⱼ + λ_k) / 2.
       final b = _pathBasis(14);
-      final j = 2, kp = 4;
+      const j = 2, kp = 4;
       final rho = Float64List(b.n);
       for (var v = 0; v < b.n; v++) {
         rho[v] = b.eigenvectors[j * b.n + v] +
@@ -1380,7 +1380,7 @@ void main() {
   });
 
   group('SpectralProjection orthogonal decomposition', () {
-    SpectralProjection _deltaAt(SpectralBasis b, int node) {
+    SpectralProjection deltaAt(SpectralBasis b, int node) {
       final rho = Float64List(b.n);
       if (node >= 0 && node < b.n) rho[node] = 1.0;
       return b.projectSource(rho);
@@ -1388,7 +1388,7 @@ void main() {
 
     test('self-decomposition: parallel=self, orthogonal=0, alignment=1', () {
       final b = _pathBasis(18);
-      final p = _deltaAt(b, 3);
+      final p = deltaAt(b, 3);
       final d = p.decomposeAgainst(p);
       expect(d.alignment, closeTo(1.0, 1e-12));
       // Orthogonal part has zero norm.
@@ -1402,7 +1402,7 @@ void main() {
 
     test('decomposition against a zero reference returns the full query', () {
       final b = _pathBasis(14);
-      final p = _deltaAt(b, 2);
+      final p = deltaAt(b, 2);
       final zeroProj = SpectralProjection(
         basis: b,
         coefficients: Float64List(b.k),
@@ -1418,8 +1418,8 @@ void main() {
 
     test('parallel + orthogonal reconstructs the original', () {
       final b = _pathBasis(20);
-      final p = _deltaAt(b, 4);
-      final q = _deltaAt(b, 10);
+      final p = deltaAt(b, 4);
+      final q = deltaAt(b, 10);
       final d = p.decomposeAgainst(q);
       final reconstructed = d.parallel + d.orthogonal;
       for (var j = 0; j < b.k; j++) {
@@ -1430,8 +1430,8 @@ void main() {
 
     test('parallel and orthogonal components are ACTUALLY orthogonal', () {
       final b = _pathBasis(24);
-      final p = _deltaAt(b, 5);
-      final q = _deltaAt(b, 18);
+      final p = deltaAt(b, 5);
+      final q = deltaAt(b, 18);
       final d = p.decomposeAgainst(q);
       expect(d.parallel.dot(d.orthogonal).abs(), lessThan(1e-10),
           reason: '⟨parallel, orthogonal⟩ must vanish');
@@ -1443,15 +1443,15 @@ void main() {
       // Even if k matches, signatures differ — so ⊕ / dot / decompose
       // must all throw.
       if (b1.signature != b2.signature) {
-        final p1 = _deltaAt(b1, 3);
-        final p2 = _deltaAt(b2, 3);
+        final p1 = deltaAt(b1, 3);
+        final p2 = deltaAt(b2, 3);
         expect(() => p1.decomposeAgainst(p2), throwsStateError);
       }
     });
   });
 
   group('SpectralProjection.dreamFill — reverse compression', () {
-    SpectralProjection _deltaProj(SpectralBasis b, int node) {
+    SpectralProjection deltaProj(SpectralBasis b, int node) {
       final rho = Float64List(b.n);
       if (node >= 0 && node < b.n) rho[node] = 1.0;
       return b.projectSource(rho);
@@ -1459,7 +1459,7 @@ void main() {
 
     test('preserves non-zero coefficients exactly', () {
       final b = _pathBasis(16);
-      final orig = _deltaProj(b, 5);
+      final orig = deltaProj(b, 5);
       final compressed = orig.compressToTopK(3);
       final dreamed = compressed.dreamFill(priorVariance: 0.01);
       // Every coefficient that WAS non-zero in compressed must
@@ -1475,7 +1475,7 @@ void main() {
 
     test('priorVariance=0 is the identity of compress-then-fill', () {
       final b = _pathBasis(14);
-      final orig = _deltaProj(b, 3);
+      final orig = deltaProj(b, 3);
       final compressed = orig.compressToTopK(4);
       final dreamed = compressed.dreamFill(priorVariance: 0.0);
       for (var j = 0; j < b.k; j++) {
@@ -1486,7 +1486,7 @@ void main() {
 
     test('deterministic under equal seeds', () {
       final b = _pathBasis(14);
-      final orig = _deltaProj(b, 4);
+      final orig = deltaProj(b, 4);
       final compressed = orig.compressToTopK(2);
       final a = compressed.dreamFill(seed: 12345);
       final c = compressed.dreamFill(seed: 12345);
@@ -1497,7 +1497,7 @@ void main() {
 
     test('different seeds diverge in filled coefficients', () {
       final b = _pathBasis(14);
-      final orig = _deltaProj(b, 6);
+      final orig = deltaProj(b, 6);
       final compressed = orig.compressToTopK(2);
       final a = compressed.dreamFill(seed: 1);
       final c = compressed.dreamFill(seed: 2);
@@ -1541,7 +1541,7 @@ void main() {
   });
 
   group('SpectralProjection.compressToTopK', () {
-    SpectralProjection _randProj(SpectralBasis b, int seed) {
+    SpectralProjection randProj(SpectralBasis b, int seed) {
       final rng = math.Random(seed);
       final rho = Float64List(b.n);
       for (var i = 0; i < b.n; i++) {
@@ -1552,14 +1552,14 @@ void main() {
 
     test('k=0 returns the zero projection', () {
       final b = _pathBasis(16);
-      final p = _randProj(b, 1);
+      final p = randProj(b, 1);
       final z = p.compressToTopK(0);
       expect(z.squaredNorm, closeTo(0.0, 1e-20));
     });
 
     test('k>=basis.k returns a copy identical to the original', () {
       final b = _pathBasis(14);
-      final p = _randProj(b, 2);
+      final p = randProj(b, 2);
       final full = p.compressToTopK(b.k + 100);
       for (var j = 0; j < b.k; j++) {
         expect(full.coefficients[j],
@@ -1569,7 +1569,7 @@ void main() {
 
     test('compressed support has exactly k non-zeros', () {
       final b = _pathBasis(20);
-      final p = _randProj(b, 3);
+      final p = randProj(b, 3);
       final c = p.compressToTopK(4);
       final nonzero =
           c.coefficients.where((v) => v != 0.0).length;
@@ -1578,7 +1578,7 @@ void main() {
 
     test('kept coefficients have the largest absolute values', () {
       final b = _pathBasis(18);
-      final p = _randProj(b, 4);
+      final p = randProj(b, 4);
       const k = 5;
       final c = p.compressToTopK(k);
       // The smallest kept |coeff| must be >= the largest dropped |coeff|.
@@ -1601,7 +1601,7 @@ void main() {
 
     test('reconstruction error² = Σ discarded² (Parseval theorem)', () {
       final b = _pathBasis(20);
-      final p = _randProj(b, 5);
+      final p = randProj(b, 5);
       for (final k in [1, 3, 5, 10]) {
         final c = p.compressToTopK(k);
         final err = p.reconstructionErrorTo(c);
@@ -1621,7 +1621,7 @@ void main() {
       // Brute-force check on a small basis: no size-k subset
       // reconstruction beats the top-k-by-magnitude choice.
       final b = _pathBasis(8);
-      final p = _randProj(b, 6);
+      final p = randProj(b, 6);
       const k = 3;
       final canonical = p.compressToTopK(k);
       final canonicalErr = p.reconstructionErrorTo(canonical);
@@ -1646,7 +1646,7 @@ void main() {
 
     test('reconstruction against same basis: zero error', () {
       final b = _pathBasis(14);
-      final p = _randProj(b, 7);
+      final p = randProj(b, 7);
       expect(p.reconstructionErrorTo(p), closeTo(0.0, 1e-20));
     });
 
@@ -1654,15 +1654,15 @@ void main() {
       final b1 = _pathBasis(16);
       final b2 = _cycleBasis(16);
       if (b1.signature != b2.signature) {
-        final p1 = _randProj(b1, 8);
-        final p2 = _randProj(b2, 8);
+        final p1 = randProj(b1, 8);
+        final p2 = randProj(b2, 8);
         expect(() => p1.reconstructionErrorTo(p2), throwsStateError);
       }
     });
   });
 
   group('SpectralProjection band decomposition', () {
-    SpectralProjection _deltaAt(SpectralBasis b, int node) {
+    SpectralProjection deltaAt(SpectralBasis b, int node) {
       final rho = Float64List(b.n);
       if (node >= 0 && node < b.n) rho[node] = 1.0;
       return b.projectSource(rho);
@@ -1670,7 +1670,7 @@ void main() {
 
     test('no cuts → single band equal to the original', () {
       final b = _pathBasis(20);
-      final p = _deltaAt(b, 3);
+      final p = deltaAt(b, 3);
       final bands = p.bandDecompose(const []);
       expect(bands, hasLength(1));
       for (var j = 0; j < b.k; j++) {
@@ -1681,7 +1681,7 @@ void main() {
 
     test('single cut → 2 bands that sum to the original', () {
       final b = _pathBasis(20);
-      final p = _deltaAt(b, 7);
+      final p = deltaAt(b, 7);
       final bands = p.bandDecompose([b.k ~/ 2]);
       expect(bands, hasLength(2));
       for (var j = 0; j < b.k; j++) {
@@ -1692,7 +1692,7 @@ void main() {
 
     test('bands have DISJOINT mode support (⟨bᵢ, bⱼ⟩ = 0, i ≠ j)', () {
       final b = _pathBasis(24);
-      final p = _deltaAt(b, 5);
+      final p = deltaAt(b, 5);
       final bands = p.bandDecompose([4, 8, 12]);
       expect(bands, hasLength(4));
       for (var i = 0; i < bands.length; i++) {
@@ -1705,7 +1705,7 @@ void main() {
 
     test('sum of all bands reconstructs the original', () {
       final b = _pathBasis(22);
-      final p = _deltaAt(b, 9);
+      final p = deltaAt(b, 9);
       final bands = p.bandDecompose([3, 7, 11, 15]);
       SpectralProjection? sum;
       for (final band in bands) {
@@ -1719,7 +1719,7 @@ void main() {
 
     test('throws on out-of-range cut', () {
       final b = _pathBasis(14);
-      final p = _deltaAt(b, 2);
+      final p = deltaAt(b, 2);
       expect(() => p.bandDecompose([0]), throwsStateError);
       expect(() => p.bandDecompose([b.k]), throwsStateError);
       expect(() => p.bandDecompose([-1]), throwsStateError);
@@ -1727,15 +1727,15 @@ void main() {
 
     test('throws on non-monotone cuts', () {
       final b = _pathBasis(16);
-      final p = _deltaAt(b, 2);
+      final p = deltaAt(b, 2);
       expect(() => p.bandDecompose([5, 5]), throwsStateError);
       expect(() => p.bandDecompose([7, 3]), throwsStateError);
     });
 
     test('bandAlignmentWith returns one cosine per band', () {
       final b = _pathBasis(20);
-      final p = _deltaAt(b, 3);
-      final q = _deltaAt(b, 15);
+      final p = deltaAt(b, 3);
+      final q = deltaAt(b, 15);
       final aligns = p.bandAlignmentWith(q, [b.k ~/ 3, 2 * b.k ~/ 3]);
       expect(aligns, hasLength(3));
       for (final a in aligns) {
@@ -1745,7 +1745,7 @@ void main() {
 
     test('bandAlignmentWith self yields 1.0 per band', () {
       final b = _pathBasis(16);
-      final p = _deltaAt(b, 5);
+      final p = deltaAt(b, 5);
       final aligns = p.bandAlignmentWith(p, [4, 8]);
       for (final a in aligns) {
         expect(a, closeTo(1.0, 1e-12));
@@ -1754,7 +1754,7 @@ void main() {
   });
 
   group('SpectralProjection.gramSchmidt', () {
-    SpectralProjection _deltaAt(SpectralBasis b, int node) {
+    SpectralProjection deltaAt(SpectralBasis b, int node) {
       final rho = Float64List(b.n);
       if (node >= 0 && node < b.n) rho[node] = 1.0;
       return b.projectSource(rho);
@@ -1766,7 +1766,7 @@ void main() {
 
     test('single projection is normalised to unit norm', () {
       final b = _pathBasis(14);
-      final p = _deltaAt(b, 3);
+      final p = deltaAt(b, 3);
       final gs = SpectralProjection.gramSchmidt([p]);
       expect(gs, hasLength(1));
       expect(gs.single.squaredNorm, closeTo(1.0, 1e-12));
@@ -1775,9 +1775,9 @@ void main() {
     test('pairwise orthogonal output (non-degenerate inputs)', () {
       final b = _pathBasis(20);
       final qs = [
-        _deltaAt(b, 2),
-        _deltaAt(b, 10),
-        _deltaAt(b, 17),
+        deltaAt(b, 2),
+        deltaAt(b, 10),
+        deltaAt(b, 17),
       ];
       final gs = SpectralProjection.gramSchmidt(qs);
       expect(gs, hasLength(3));
@@ -1785,14 +1785,14 @@ void main() {
         for (var j = i + 1; j < gs.length; j++) {
           final d = gs[i].dot(gs[j]);
           expect(d.abs(), lessThan(1e-10),
-              reason: 'GS output ${i},${j} must be orthogonal');
+              reason: 'GS output $i,$j must be orthogonal');
         }
       }
     });
 
     test('duplicate input → second residue has zero norm', () {
       final b = _pathBasis(14);
-      final p = _deltaAt(b, 4);
+      final p = deltaAt(b, 4);
       final gs = SpectralProjection.gramSchmidt([p, p]);
       expect(gs, hasLength(2));
       expect(gs[0].squaredNorm, closeTo(1.0, 1e-12));
@@ -1804,8 +1804,8 @@ void main() {
       final b1 = _pathBasis(16);
       final b2 = _cycleBasis(16);
       if (b1.signature != b2.signature) {
-        final p1 = _deltaAt(b1, 3);
-        final p2 = _deltaAt(b2, 3);
+        final p1 = deltaAt(b1, 3);
+        final p2 = deltaAt(b2, 3);
         expect(
           () => SpectralProjection.gramSchmidt([p1, p2]),
           throwsStateError,
@@ -2397,7 +2397,7 @@ void main() {
     // while high-frequency modes are integrated out.
     test('coarsening preserves node count shape', () {
       // Start: path of 16 nodes. Group: pairs (0,1), (2,3), ... → 8 nodes.
-      final n = 16;
+      const n = 16;
       final edges = List<List<(int, double)>>.generate(n, (_) => []);
       for (var i = 0; i < n - 1; i++) {
         edges[i].add((i + 1, 1.0));
@@ -2573,7 +2573,9 @@ void main() {
                    + sinT * basis.eigenvectors[2 * basis.n + v];
         }
         var dot = 0.0;
-        for (var v = 0; v < basis.n; v++) dot += alpha[v] * beta[v];
+        for (var v = 0; v < basis.n; v++) {
+          dot += alpha[v] * beta[v];
+        }
         final residual = dot - dot * dot;
         if (target < 1e-9 || target > 1.0 - 1e-9) {
           expect(residual.abs(), lessThan(1e-9),
@@ -2628,8 +2630,12 @@ void main() {
       // Left side total mass ≈ − right side total mass (up to sign).
       var leftMass = 0.0;
       var rightMass = 0.0;
-      for (var v = 0; v < 3; v++) leftMass += u1[v];
-      for (var v = 3; v < 6; v++) rightMass += u1[v];
+      for (var v = 0; v < 3; v++) {
+        leftMass += u1[v];
+      }
+      for (var v = 3; v < 6; v++) {
+        rightMass += u1[v];
+      }
       expect(leftMass.sign, -rightMass.sign,
           reason: 'fiedler vector must have opposite signs on each lobe');
       expect((leftMass.abs() - rightMass.abs()).abs(), lessThan(0.1),
@@ -2648,8 +2654,12 @@ void main() {
       // |leftMass| − |rightMass| normalized.
       var leftMass = 0.0;
       var rightMass = 0.0;
-      for (var v = 0; v < 3; v++) leftMass += u1[v];
-      for (var v = 3; v < 6; v++) rightMass += u1[v];
+      for (var v = 0; v < 3; v++) {
+        leftMass += u1[v];
+      }
+      for (var v = 3; v < 6; v++) {
+        rightMass += u1[v];
+      }
       final imbalance = (leftMass.abs() - rightMass.abs()).abs();
       expect(imbalance, greaterThan(0.02),
           reason: 'broken symmetry must produce a visible mass imbalance; got $imbalance');
@@ -3279,7 +3289,7 @@ void main() {
       for (var i = 1; i < evs.length; i++) {
         final step = (evs[i] - evs[i - 1]).abs();
         expect(step, lessThan(0.2),
-            reason: 'smooth eigenvalue: jump ${step} between w=${wValues[i-1]} and ${wValues[i]}');
+            reason: 'smooth eigenvalue: jump $step between w=${wValues[i-1]} and ${wValues[i]}');
       }
     });
   });
@@ -3454,7 +3464,7 @@ void main() {
       double integralGff(int x, int y) {
         const nSteps = 5000;
         const tMax = 30.0;
-        final dt = tMax / nSteps;
+        const dt = tMax / nSteps;
         final u0x = basis.eigenvectors[0 * basis.n + x];
         final u0y = basis.eigenvectors[0 * basis.n + y];
         final zero = u0x * u0y;
@@ -3529,9 +3539,13 @@ void main() {
       }
       // Normalise.
       var norm = 0.0;
-      for (var v = 0; v < n; v++) norm += rho[v] * rho[v];
+      for (var v = 0; v < n; v++) {
+        norm += rho[v] * rho[v];
+      }
       norm = math.sqrt(norm);
-      for (var v = 0; v < n; v++) rho[v] /= norm;
+      for (var v = 0; v < n; v++) {
+        rho[v] /= norm;
+      }
       // Evolve.
       for (final t in [0.1, 0.5, 2.0]) {
         final phi = basis.diffuse(rho, t);
@@ -3553,10 +3567,14 @@ void main() {
         rho[v] = x * math.exp(-x * x / 4);
       }
       var norm = 0.0;
-      for (var v = 0; v < n; v++) norm += rho[v] * rho[v];
+      for (var v = 0; v < n; v++) {
+        norm += rho[v] * rho[v];
+      }
       norm = math.sqrt(norm);
       if (norm > 0) {
-        for (var v = 0; v < n; v++) rho[v] /= norm;
+        for (var v = 0; v < n; v++) {
+          rho[v] /= norm;
+        }
       }
       for (final t in [0.1, 0.5, 2.0]) {
         final phi = basis.diffuse(rho, t);
@@ -3576,11 +3594,17 @@ void main() {
       final basis = SpectralBasis.fromGraph(symmetricPath(n), n);
       final rng = math.Random(42);
       final rho = Float64List(n);
-      for (var v = 0; v < n; v++) rho[v] = rng.nextDouble() - 0.5;
+      for (var v = 0; v < n; v++) {
+        rho[v] = rng.nextDouble() - 0.5;
+      }
       var norm = 0.0;
-      for (var v = 0; v < n; v++) norm += rho[v] * rho[v];
+      for (var v = 0; v < n; v++) {
+        norm += rho[v] * rho[v];
+      }
       norm = math.sqrt(norm);
-      for (var v = 0; v < n; v++) rho[v] /= norm;
+      for (var v = 0; v < n; v++) {
+        rho[v] /= norm;
+      }
 
       double parityReal(Float64List re, Float64List im) {
         // ⟨ψ|P|ψ⟩ = Σ_v conj(ψ(v))·ψ(n-1-v). Real part since P is self-adjoint.
@@ -3650,7 +3674,9 @@ void main() {
       final rng = math.Random(0xCACE);
       for (var trial = 0; trial < 30; trial++) {
         final v = Float64List(n);
-        for (var i = 0; i < n; i++) v[i] = rng.nextDouble() * 2 - 1;
+        for (var i = 0; i < n; i++) {
+          v[i] = rng.nextDouble() * 2 - 1;
+        }
         final rq = basis.rayleighQuotient(v);
         expect(rq, greaterThanOrEqualTo(lamMin - 1e-9),
             reason: 'Rayleigh quotient $rq below λ_min=$lamMin');
@@ -3664,7 +3690,9 @@ void main() {
       final basis = SpectralBasis.fromGraph(path(n), n);
       for (var j = 0; j < basis.k; j++) {
         final v = Float64List(n);
-        for (var i = 0; i < n; i++) v[i] = basis.eigenvectors[j * n + i];
+        for (var i = 0; i < n; i++) {
+          v[i] = basis.eigenvectors[j * n + i];
+        }
         final rq = basis.rayleighQuotient(v);
         expect(rq, closeTo(basis.eigenvalues[j], 1e-8),
             reason: 'R-quotient at u_$j should equal λ_$j=${basis.eigenvalues[j]}');
@@ -3754,7 +3782,7 @@ void main() {
         final basis = SpectralBasis.fromGraph(cycle(n), 6);
         final predicted = 1.0 - math.cos(2 * math.pi / n);
         expect(basis.eigenvalues[1], closeTo(predicted, 1e-8),
-            reason: 'C_$n: λ_1 should be ${predicted} (got ${basis.eigenvalues[1]})');
+            reason: 'C_$n: λ_1 should be $predicted (got ${basis.eigenvalues[1]})');
       }
     });
   });
@@ -3899,7 +3927,9 @@ void main() {
       final rng = math.Random(0xF0F);
       for (var trial = 0; trial < 20; trial++) {
         final v = Float64List(n);
-        for (var i = 0; i < n; i++) v[i] = rng.nextDouble() * 2 - 1;
+        for (var i = 0; i < n; i++) {
+          v[i] = rng.nextDouble() * 2 - 1;
+        }
         // Project out zero mode.
         var zeroProj = 0.0;
         for (var i = 0; i < n; i++) {
@@ -3909,7 +3939,9 @@ void main() {
           v[i] -= zeroProj * basis.eigenvectors[0 * n + i];
         }
         var norm2 = 0.0;
-        for (var i = 0; i < n; i++) norm2 += v[i] * v[i];
+        for (var i = 0; i < n; i++) {
+          norm2 += v[i] * v[i];
+        }
         if (norm2 < 1e-12) continue;
         final rq = basis.rayleighQuotient(v);
         expect(rq, greaterThan(lam1 - 1e-9),
@@ -4004,8 +4036,8 @@ void main() {
         }
         var sum = 0.0;
         for (var v = 0; v < n; v++) {
-          final pi_v = proj0 * basis.eigenvectors[0 * n + v];
-          sum += (projected[v] - pi_v) * (projected[v] - pi_v);
+          final piV = proj0 * basis.eigenvectors[0 * n + v];
+          sum += (projected[v] - piV) * (projected[v] - piV);
         }
         return math.sqrt(sum);
       }
@@ -4099,9 +4131,11 @@ void main() {
       // endpoint), pick f ≡ 1 (constant is harmonic in any Laplacian's
       // nullspace or a degree-weighted analogue).
       final f = Float64List(n);
-      for (var v = 0; v < n; v++) f[v] = math.sqrt(g.rawWeights.length > 0
+      for (var v = 0; v < n; v++) {
+        f[v] = math.sqrt(g.rawWeights.isNotEmpty
           ? (1.0 / (g.degreeInvSqrt[v] * g.degreeInvSqrt[v]))
           : 1.0);
+      }
       // Check L_sym f ≈ 0 everywhere (constant × √deg is the zero mode).
       final out = Float64List(n);
       g.applyLsym(f, out);
@@ -4125,7 +4159,9 @@ void main() {
       final basis = SpectralBasis.fromGraph(g, n);
       // Extract u₀.
       final u0 = Float64List(n);
-      for (var v = 0; v < n; v++) u0[v] = basis.eigenvectors[0 * n + v];
+      for (var v = 0; v < n; v++) {
+        u0[v] = basis.eigenvectors[0 * n + v];
+      }
       // Verify u₀(v) = Σ_u W_norm(v,u) u₀(u) for every node.
       for (var v = 0; v < n; v++) {
         var avg = 0.0;
@@ -4171,7 +4207,9 @@ void main() {
       final phi = Float64List(n);
       var emp = 0.0;
       for (var s = 0; s < nSamples; s++) {
-        for (var v = 0; v < n; v++) phi[v] = 0.0;
+        for (var v = 0; v < n; v++) {
+          phi[v] = 0.0;
+        }
         for (var j = 1; j < basis.k; j++) {
           final z = _gaussian(rng);
           final scale = z / math.sqrt(basis.eigenvalues[j]);
@@ -4210,7 +4248,9 @@ void main() {
       final phi = Float64List(n);
       var emp = 0.0;
       for (var s = 0; s < nSamples; s++) {
-        for (var v = 0; v < n; v++) phi[v] = 0.0;
+        for (var v = 0; v < n; v++) {
+          phi[v] = 0.0;
+        }
         for (var j = 1; j < basis.k; j++) {
           final z = _gaussian(rng);
           final scale = z / math.sqrt(basis.eigenvalues[j]);
@@ -4245,7 +4285,9 @@ void main() {
     test('Shannon entropy of uniform n-state is exactly ln n', () {
       for (final n in [3, 5, 8, 16, 64]) {
         final p = Float64List(n);
-        for (var i = 0; i < n; i++) p[i] = 1.0 / n;
+        for (var i = 0; i < n; i++) {
+          p[i] = 1.0 / n;
+        }
         var h = 0.0;
         for (var i = 0; i < n; i++) {
           h -= p[i] * math.log(p[i]);
@@ -4301,7 +4343,9 @@ void main() {
           final phi = t == 0.0 ? rho : basis.diffuse(rho, t);
           // Normalise |φ|² to a probability distribution.
           var z = 0.0;
-          for (var v = 0; v < 8; v++) z += phi[v] * phi[v];
+          for (var v = 0; v < 8; v++) {
+            z += phi[v] * phi[v];
+          }
           if (z < 1e-300) { entropies.add(0.0); continue; }
           var h = 0.0;
           for (var v = 0; v < 8; v++) {
@@ -4326,7 +4370,9 @@ void main() {
       rho[0] = 1.0;
       final phi = basis.diffuse(rho, 50.0);
       var z = 0.0;
-      for (var v = 0; v < 8; v++) z += phi[v] * phi[v];
+      for (var v = 0; v < 8; v++) {
+        z += phi[v] * phi[v];
+      }
       var h = 0.0;
       for (var v = 0; v < 8; v++) {
         final p = phi[v] * phi[v] / z;
@@ -4371,7 +4417,9 @@ void main() {
       // Build K(·, y, t) as a vector at fixed y.
       const y = 4;
       final kVec = Float64List(n);
-      for (var x = 0; x < n; x++) kVec[x] = basis.pathPropagator(x, y, t);
+      for (var x = 0; x < n; x++) {
+        kVec[x] = basis.pathPropagator(x, y, t);
+      }
       // -L · K(·, y, t): apply L_sym and negate.
       final LK = Float64List(n);
       g.applyLsym(kVec, LK);
@@ -4427,7 +4475,7 @@ void main() {
     }
 
     test('Kirchhoff identity holds on a path', () {
-      final n = 8;
+      const n = 8;
       final edges = List<List<(int, double)>>.generate(n, (_) => []);
       for (var i = 0; i < n - 1; i++) {
         edges[i].add((i + 1, 1.0));
@@ -4437,7 +4485,7 @@ void main() {
     });
 
     test('Kirchhoff identity holds on a cycle', () {
-      final n = 10;
+      const n = 10;
       final edges = List<List<(int, double)>>.generate(n, (_) => []);
       for (var i = 0; i < n; i++) {
         edges[i].add(((i + 1) % n, 1.0));
@@ -4603,7 +4651,7 @@ void main() {
       // Var(E) = heatCapacity / β² (since C = β² · Var).
       final variance = thermo.heatCapacity / (beta * beta);
       expect(d2lz, closeTo(variance, 1e-3),
-          reason: 'Var(E) = d²/dβ² log Z: fd ${d2lz} vs spectral ${variance}');
+          reason: 'Var(E) = d²/dβ² log Z: fd $d2lz vs spectral $variance');
     });
   });
 

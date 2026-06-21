@@ -200,7 +200,9 @@ class RunPrefix extends PalettePrefix {
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
     if (ctx.tools == null ||
         !ctx.tools!.isLoaded ||
-        ctx.repoPath == null) return [];
+        ctx.repoPath == null) {
+      return [];
+    }
     final q = body.toLowerCase();
     final repoPath = ctx.repoPath!;
 

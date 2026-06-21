@@ -487,8 +487,8 @@ Future<LogosGit?> _resolveImpl(
         forge: forge.name);
     final shadowFut = _resolveShadowCoupling(repoPath, currentHead: hash);
     final results = await Future.wait([reviewFut, statsFut, shadowFut]);
-    final reviewedCommits = results[0] as Map<String, Set<String>>;
-    final statsResultRaw = results[1] as GitResult<LogosGitStats>;
+    final reviewedCommits = results[0]! as Map<String, Set<String>>;
+    final statsResultRaw = results[1]! as GitResult<LogosGitStats>;
     final shadowCoupling = results[2] as FileCouplingMatrix?;
     // Merge review data into the stats post-hoc — tag hyperedges with
     // reviewer identities now that both results are available.

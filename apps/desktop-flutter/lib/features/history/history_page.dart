@@ -384,7 +384,9 @@ class _TimelinePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     final lanesUsed = <int>{};
-    for (final n in layout.nodes) lanesUsed.add(n.lane);
+    for (final n in layout.nodes) {
+      lanesUsed.add(n.lane);
+    }
     for (final lane in lanesUsed) {
       final laneNodes = <int>[];
       for (var i = 0; i < layout.nodes.length; i++) {
@@ -806,7 +808,9 @@ class _TimelineStripState extends State<_TimelineStrip>
     if (idx == null || idx >= _layout!.nodes.length) return;
     final author = _layout!.nodes[idx].entry.authorEmail;
     if (author == _resonanceAuthorNotifier.value &&
-        _resonanceCtrl.value > 0) return;
+        _resonanceCtrl.value > 0) {
+      return;
+    }
     ++_resonanceGen;
     _resonanceAuthorNotifier.value = author;
     _resonanceCtrl.forward(from: 0);
@@ -957,8 +961,9 @@ class _TimelineStripState extends State<_TimelineStrip>
   Widget build(BuildContext context) {
     if (widget.commits.isEmpty) return const SizedBox.shrink();
 
-    if (_layout == null || _layoutSignature != _signatureOf(widget.commits))
+    if (_layout == null || _layoutSignature != _signatureOf(widget.commits)) {
       _rebuildLayout();
+    }
 
     return LayoutBuilder(builder: (ctx, constraints) {
       final width = max(constraints.maxWidth, 64.0);
@@ -994,7 +999,7 @@ class _TimelineStripState extends State<_TimelineStrip>
           ),
         ),
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: _kHorizPad),
+          padding: const EdgeInsets.symmetric(horizontal: _kHorizPad),
           child: Listener(
             onPointerHover: (e) {
               _hoverXNotifier.value = e.localPosition.dx;
@@ -1632,7 +1637,9 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> _openCommitFileDiff(String repo, String hash, String filePath) async {
     if (filePath == _commitDiffFile &&
         hash == _commitDiffHash &&
-        !_commitDiffLoading) return;
+        !_commitDiffLoading) {
+      return;
+    }
     final reqId = ++_commitDiffReqId;
     setState(() {
       _commitDiffFile = filePath;
@@ -2313,7 +2320,7 @@ class _HistoryPageState extends State<HistoryPage> {
                           if (rawIndex < previewCount) {
                             return _PreviewCommitRow(
                               key: ValueKey(
-                                  'prev:${_previewDeskPath}:${preview[rawIndex].commitHash}'),
+                                  'prev:$_previewDeskPath:${preview[rawIndex].commitHash}'),
                               commit: preview[rawIndex],
                               tokens: t,
                               indexInPreview: rawIndex,

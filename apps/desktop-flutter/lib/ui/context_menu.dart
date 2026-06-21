@@ -738,7 +738,9 @@ class _ChipRailMosaicState extends State<_ChipRailMosaic> {
   static _MosaicSeam _generateSeam(math.Random rng) {
     final segments = 4 + rng.nextInt(5);
     final ys = <double>[0.0];
-    for (var i = 1; i < segments; i++) ys.add(rng.nextDouble());
+    for (var i = 1; i < segments; i++) {
+      ys.add(rng.nextDouble());
+    }
     ys.add(1.0);
     ys.sort();
     final vertices = <Offset>[

@@ -186,7 +186,9 @@ double _zetaInt(SpectralBasis basis, int s) {
       final lam = eigs[j];
       if (!lam.isFinite) continue;
       var den = 1.0;
-      for (var i = 0; i < s; i++) den *= lam;
+      for (var i = 0; i < s; i++) {
+        den *= lam;
+      }
       if (den > 0) sum += 1.0 / den;
     }
   } else {
@@ -196,7 +198,9 @@ double _zetaInt(SpectralBasis basis, int s) {
       final lam = eigs[j];
       if (!lam.isFinite) continue;
       var num = 1.0;
-      for (var i = 0; i < absS; i++) num *= lam;
+      for (var i = 0; i < absS; i++) {
+        num *= lam;
+      }
       sum += num;
     }
   }

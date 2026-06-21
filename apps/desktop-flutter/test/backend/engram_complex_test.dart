@@ -55,7 +55,7 @@ void main() {
       const p = 4;
       final zRe = Float64List(t * p);
       final zIm = Float64List(t * p);
-      final theta = 2 * math.pi / 8.0;
+      const theta = 2 * math.pi / 8.0;
       for (var i = 0; i < t; i++) {
         final c = math.cos(theta * i);
         final s = math.sin(theta * i);
@@ -87,7 +87,7 @@ void main() {
       const p = 2;
       final zRe = Float64List(t * p);
       final zIm = Float64List(t * p);
-      final theta = 2 * math.pi / 12.0;
+      const theta = 2 * math.pi / 12.0;
       for (var i = 0; i < t; i++) {
         final decay = math.pow(0.95, i).toDouble();
         final c = decay * math.cos(theta * i);
@@ -121,7 +121,7 @@ void main() {
       if (!fit.anyValid) return;
 
       // Direct RMS: Σ|tgt - (K·A - G·B)|² / n, then sqrt.
-      final n = t - 2;
+      const n = t - 2;
       final kRe = fit.kRe[0], kIm = fit.kIm[0];
       final gRe = fit.gRe[0], gIm = fit.gIm[0];
       double errSq = 0;

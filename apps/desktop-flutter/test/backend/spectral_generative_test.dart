@@ -345,7 +345,9 @@ void main() {
       final rng = math.Random(0x12);
       const mass = 0.3;
       final clean = Float64List(10);
-      for (var v = 0; v < 10; v++) clean[v] = math.sin(v * 0.5);
+      for (var v = 0; v < 10; v++) {
+        clean[v] = math.sin(v * 0.5);
+      }
       final noised = basis.forwardNoisingStep(
           rho: clean, alpha: 0.3, rng: rng, mass: mass);
       final denoised = basis.reverseDenoisingStepAnalytic(

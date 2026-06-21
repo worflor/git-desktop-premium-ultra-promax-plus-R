@@ -96,8 +96,8 @@ void main() async {
   // settings is already loaded synchronously above.
   final preMountTokens = AppTokens.fromId(normalizeThemeId(settings.themeId));
   final windowOptions = WindowOptions(
-    size: Size(980, 660),
-    minimumSize: Size(620, 500),
+    size: const Size(980, 660),
+    minimumSize: const Size(620, 500),
     center: true,
     title: appIdentityState.identity.shortName,
     backgroundColor: preMountTokens.bg0,
@@ -259,7 +259,7 @@ void main() async {
         // ignore: avoid_print
         print(
             'FPS-PROBE: ${(frameCount * 1000 / frameSw.elapsedMilliseconds).toStringAsFixed(1)} fps '
-            '(${frameCount} frames in ${frameSw.elapsedMilliseconds} ms)');
+            '($frameCount frames in ${frameSw.elapsedMilliseconds} ms)');
         frameCount = 0;
         frameSw.reset();
       }
@@ -564,13 +564,13 @@ class _AppFrameState extends State<_AppFrame> {
                 ),
               ),
             if (t.id == AppThemeId.loverboy)
-              Positioned.fill(
+              const Positioned.fill(
                 child: IgnorePointer(
                   child: _LoveboyBackground(),
                 ),
               ),
             if (t.id == AppThemeId.petrichor)
-              Positioned.fill(
+              const Positioned.fill(
                 child: IgnorePointer(
                   child: _PetrichorFog(),
                 ),
@@ -943,8 +943,12 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
         if (lastVictim != null) {
           final look = (lastVictim.pos - ch.pos).direction;
           var diff = look - ch.heading;
-          while (diff > math.pi) diff -= math.pi * 2;
-          while (diff < -math.pi) diff += math.pi * 2;
+          while (diff > math.pi) {
+            diff -= math.pi * 2;
+          }
+          while (diff < -math.pi) {
+            diff += math.pi * 2;
+          }
           ch.heading += diff * (2.0 * dt).clamp(0.0, 1.0);
         }
         continue;
@@ -1052,8 +1056,12 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
           if (flockN > 0) {
             final avgH = flockH / flockN;
             var diff = avgH - targetH;
-            while (diff > math.pi) diff -= math.pi * 2;
-            while (diff < -math.pi) diff += math.pi * 2;
+            while (diff > math.pi) {
+              diff -= math.pi * 2;
+            }
+            while (diff < -math.pi) {
+              diff += math.pi * 2;
+            }
             targetH += diff * 0.15;
           }
           _steerBot(r, targetH, dt, r.baseSpeed * 0.55);
@@ -1114,14 +1122,22 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
       final inward = math.atan2(cy - bot.pos.dy, cx - bot.pos.dx);
       final pull = ((edgeDist - 0.20) / 0.25).clamp(0.0, 1.0);
       var diff = inward - targetHeading;
-      while (diff > math.pi) diff -= math.pi * 2;
-      while (diff < -math.pi) diff += math.pi * 2;
+      while (diff > math.pi) {
+        diff -= math.pi * 2;
+      }
+      while (diff < -math.pi) {
+        diff += math.pi * 2;
+      }
       targetHeading += diff * pull * 0.6;
     }
 
     var diff = targetHeading - bot.heading;
-    while (diff > math.pi) diff -= math.pi * 2;
-    while (diff < -math.pi) diff += math.pi * 2;
+    while (diff > math.pi) {
+      diff -= math.pi * 2;
+    }
+    while (diff < -math.pi) {
+      diff += math.pi * 2;
+    }
     bot.heading += diff * (3.0 * dt).clamp(0.0, 1.0);
     bot.pos = bot.pos +
         Offset(math.cos(bot.heading), math.sin(bot.heading)) * speed * dt;
@@ -1161,7 +1177,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
         blinkOffset: _simRng.nextDouble() * math.pi * 2,
         baseSpeed: isChaser ? 0.030 + _simRng.nextDouble() * 0.008
                             : 0.022 + _simRng.nextDouble() * 0.008,
-        heading: (Offset(0.5, 0.5) - pos).direction +
+        heading: (const Offset(0.5, 0.5) - pos).direction +
             (_simRng.nextDouble() - 0.5) * 0.6,
       ));
     }

@@ -66,7 +66,7 @@ void main() {
       final erDist = (rEr!.meanR - kGoeMeanR).abs();
       final pathDist = (rPath!.meanR - kGoeMeanR).abs();
       expect(erDist, lessThan(pathDist),
-          reason: 'ER (chaotic) should sit closer to GOE ${kGoeMeanR} than '
+          reason: 'ER (chaotic) should sit closer to GOE $kGoeMeanR than '
               'a path (${rPath.meanR}); ER gave ${rEr.meanR}');
     });
 

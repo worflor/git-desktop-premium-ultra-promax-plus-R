@@ -168,14 +168,14 @@ void main() {
 
   group('WickResult', () {
     test('ok result', () {
-      final r = WickResult.ok(42);
+      const r = WickResult.ok(42);
       expect(r.ok, isTrue);
       expect(r.data, 42);
       expect(r.error, isNull);
     });
 
     test('err result', () {
-      final r = WickResult<int>.err('failed');
+      const r = WickResult<int>.err('failed');
       expect(r.ok, isFalse);
       expect(r.data, isNull);
       expect(r.error, 'failed');

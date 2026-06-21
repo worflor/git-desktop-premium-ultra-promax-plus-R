@@ -15,6 +15,7 @@
 /// pair. The prompt builder emits the label as the primary citation
 /// target and the gloss as a one-line explanation. Models are
 /// instructed to cite labels, never raw numbers.
+library;
 
 import 'logos_git_calibration.dart' show LogosAxis, LogosRegime;
 

@@ -89,12 +89,20 @@ CsrGraph directSum(CsrGraph a, CsrGraph b) {
   Float64List? rawWeights;
   if (a.supportsRankOneUpdates && b.supportsRankOneUpdates) {
     degreeInvSqrt = Float64List(n);
-    for (var i = 0; i < nA; i++) degreeInvSqrt[i] = a.degreeInvSqrt[i];
-    for (var i = 0; i < nB; i++) degreeInvSqrt[nA + i] = b.degreeInvSqrt[i];
+    for (var i = 0; i < nA; i++) {
+      degreeInvSqrt[i] = a.degreeInvSqrt[i];
+    }
+    for (var i = 0; i < nB; i++) {
+      degreeInvSqrt[nA + i] = b.degreeInvSqrt[i];
+    }
 
     rawWeights = Float64List(m);
-    for (var p = 0; p < mA; p++) rawWeights[p] = a.rawWeights[p];
-    for (var p = 0; p < mB; p++) rawWeights[mA + p] = b.rawWeights[p];
+    for (var p = 0; p < mA; p++) {
+      rawWeights[p] = a.rawWeights[p];
+    }
+    for (var p = 0; p < mB; p++) {
+      rawWeights[mA + p] = b.rawWeights[p];
+    }
   }
 
   return CsrGraph(

@@ -627,7 +627,9 @@ Future<Map<String, dynamic>> _architecture(
       for (final p in parts) {
         depth++;
         if (const {'lib', 'src', 'apps', 'packages', 'test', 'tests'}
-            .contains(p)) continue;
+            .contains(p)) {
+          continue;
+        }
         break;
       }
       key = parts.take(depth).join('/');

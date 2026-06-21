@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import '../../app/logos_git_state.dart';
 import '../../backend/history_surgery.dart';
 import '../../ui/design_primitives.dart';
-import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'surgery_state.dart';
@@ -112,15 +111,15 @@ class _HistorySurgeryPage extends StatelessWidget {
   Widget _buildPhase(SurgeryState state) {
     switch (state.phase) {
       case SurgeryPhase.select:
-        return _SelectPhase(key: const ValueKey('select'));
+        return const _SelectPhase(key: ValueKey('select'));
       case SurgeryPhase.understand:
-        return _UnderstandPhase(key: const ValueKey('understand'));
+        return const _UnderstandPhase(key: ValueKey('understand'));
       case SurgeryPhase.confirm:
-        return _ConfirmPhase(key: const ValueKey('confirm'));
+        return const _ConfirmPhase(key: ValueKey('confirm'));
       case SurgeryPhase.execute:
-        return _ExecutePhase(key: const ValueKey('execute'));
+        return const _ExecutePhase(key: ValueKey('execute'));
       case SurgeryPhase.verify:
-        return _VerifyPhase(key: const ValueKey('verify'));
+        return const _VerifyPhase(key: ValueKey('verify'));
     }
   }
 }

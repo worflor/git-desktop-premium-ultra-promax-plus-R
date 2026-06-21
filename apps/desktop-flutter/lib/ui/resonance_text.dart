@@ -259,7 +259,7 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
     final lineCount = '\n'.allMatches(widget.code).length + 1;
     // Only collapse when hiding at least 4 lines — the toggle itself
     // takes visual space, so hiding 1-3 lines isn't worth it.
-    final collapsedLines = 6;
+    const collapsedLines = 6;
     final hiddenLines = lineCount - collapsedLines;
     final isLong = hiddenLines >= 4;
     final codeStyle = TextStyle(

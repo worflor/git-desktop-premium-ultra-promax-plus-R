@@ -15,7 +15,7 @@ void main() {
     test('same HEAD + file list but different staging yields different '
         'fingerprint', () async {
       // Status A: 3 files, 1 staged, 2 unstaged
-      final statusA = const RepositoryStatus(
+      const statusA = RepositoryStatus(
         branch: 'main',
         ahead: 0,
         behind: 0,
@@ -26,7 +26,7 @@ void main() {
         ],
       );
       // Status B: same files, but 2 staged, 1 unstaged (staging drift)
-      final statusB = const RepositoryStatus(
+      const statusB = RepositoryStatus(
         branch: 'main',
         ahead: 0,
         behind: 0,
@@ -38,12 +38,12 @@ void main() {
       );
       final fingerprintA = await computeRepositoryXrayFingerprint(
         r'C:\repo',
-        (_) async => GitResult.ok(statusA),
+        (_) async => const GitResult.ok(statusA),
         _fakeHeadProbe,
       );
       final fingerprintB = await computeRepositoryXrayFingerprint(
         r'C:\repo',
-        (_) async => GitResult.ok(statusB),
+        (_) async => const GitResult.ok(statusB),
         _fakeHeadProbe,
       );
       expect(fingerprintA.ok, isTrue);
@@ -53,7 +53,7 @@ void main() {
     });
 
     test('identical staging produces identical fingerprint', () async {
-      final status = const RepositoryStatus(
+      const status = RepositoryStatus(
         branch: 'main',
         ahead: 0,
         behind: 0,
@@ -63,12 +63,12 @@ void main() {
       );
       final f1 = await computeRepositoryXrayFingerprint(
         r'C:\repo',
-        (_) async => GitResult.ok(status),
+        (_) async => const GitResult.ok(status),
         _fakeHeadProbe,
       );
       final f2 = await computeRepositoryXrayFingerprint(
         r'C:\repo',
-        (_) async => GitResult.ok(status),
+        (_) async => const GitResult.ok(status),
         _fakeHeadProbe,
       );
       expect(f1.data, f2.data);

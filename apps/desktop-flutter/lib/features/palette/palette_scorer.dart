@@ -429,7 +429,9 @@ class PaletteScorer {
   double _repoProb(PaletteEntry entry, PaletteContext ctx) {
     if (!entry.hasTag(EntryTag.repoEntry) &&
         !entry.hasTag(EntryTag.deskEntry) &&
-        !entry.hasTag(EntryTag.repoChild)) return 0.5;
+        !entry.hasTag(EntryTag.repoChild)) {
+      return 0.5;
+    }
 
     // repoChild entries exist only for NON-active repos. p < 0.5
     // (demoted) with evidence from the recents pool size.
@@ -454,7 +456,9 @@ class PaletteScorer {
   int _repoEvidence(PaletteEntry entry, PaletteContext ctx) {
     if (!entry.hasTag(EntryTag.repoEntry) &&
         !entry.hasTag(EntryTag.deskEntry) &&
-        !entry.hasTag(EntryTag.repoChild)) return 0;
+        !entry.hasTag(EntryTag.repoChild)) {
+      return 0;
+    }
     return math.max(1, ctx.recentPaths.length);
   }
 

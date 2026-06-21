@@ -30,7 +30,7 @@ class LogosCommitMeaningfulness {
 const double kNeutralIntegrity = 0.85;
 
 // Ritual decay knee: 1/φ² ≈ 0.382
-final double _kRitualDecayKnee = sc.phiDecay2;
+const double _kRitualDecayKnee = sc.phiDecay2;
 
 // Decay rate: -ln(1 - kNeutralIntegrity) / (1 - knee).
 final double _kRitualDecayRate =

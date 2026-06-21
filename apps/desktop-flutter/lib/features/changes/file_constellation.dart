@@ -702,7 +702,7 @@ class _BindingPainter extends CustomPainter {
       )
       ..lineTo(o, o + r)
       ..arcToPoint(
-        Offset(o + r, o),
+        const Offset(o + r, o),
         radius: const Radius.circular(r),
       );
 

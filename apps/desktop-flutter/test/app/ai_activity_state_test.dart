@@ -67,7 +67,7 @@ void main() {
       expect(r.seen, isFalse);
       final payload = r.result;
       expect(payload, isA<AiAskResult>());
-      expect((payload as AiAskResult).answer, 'answer');
+      expect((payload! as AiAskResult).answer, 'answer');
     });
 
     test('markSeen has no effect on a non-existent record', () {
@@ -191,7 +191,7 @@ void main() {
         repoPath: '/a',
         kind: AiActivityKind.muse,
         scopeKey: 'k',
-        result: AiAskResult('ignored'),
+        result: const AiAskResult('ignored'),
       );
       // Done-but-unread records appear in active.
       expect(s.activeFor('/a').length, 1);

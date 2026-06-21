@@ -59,16 +59,16 @@ void main() {
     });
 
     test('valid loadout survives round-trip', () {
-      final original = AiSettingsSnapshot(
-        modelSelections: const {},
-        modelCategoryLabels: const {'quality': 'Quality', 'fast': 'Fast'},
+      const original = AiSettingsSnapshot(
+        modelSelections: {},
+        modelCategoryLabels: {'quality': 'Quality', 'fast': 'Fast'},
         commitMessageModelCategoryId: 'quality',
         reviewCommitModelCategoryId: 'quality',
         reviewCommitDoubleCheckEnabled: false,
         museBrainstormModelCategoryId: 'fast',
         museSynthesisModelCategoryId: 'quality',
         presentModelCategoryId: 'quality',
-        museQuiver: const [
+        museQuiver: [
           MuseQuiverEntry(kind: MuseStrandKind.ghost, count: 1),
           MuseQuiverEntry(kind: MuseStrandKind.fever, count: 1),
           MuseQuiverEntry(kind: MuseStrandKind.mirror, count: 1),
@@ -171,7 +171,7 @@ void main() {
     });
 
     test('valid full order round-trips verbatim', () {
-      final custom = const ['fever', 'mirror', 'spark', 'ghost'];
+      const custom = ['fever', 'mirror', 'spark', 'ghost'];
       final rest = MuseStrandKind.values
           .where((k) => !custom.contains(museStrandLabel(k)))
           .map(museStrandLabel)

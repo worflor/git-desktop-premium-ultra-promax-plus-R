@@ -11,7 +11,6 @@
 // runs (post-JIT / post-cache-build) for fairness.
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';

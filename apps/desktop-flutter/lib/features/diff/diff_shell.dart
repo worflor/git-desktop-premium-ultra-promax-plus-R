@@ -3321,11 +3321,11 @@ class _DiffShellState extends State<DiffShell> {
     final historyEntry = _trailHistory.firstWhere(
       (e) => e.commit.commitHash == commitHash,
       orElse: () => FileHistoryEntry(
-        commit: CommitHistoryEntry(
+        commit: const CommitHistoryEntry(
           commitHash: '',
           shortHash: '',
-          parentHashes: const [],
-          refNames: const [],
+          parentHashes: [],
+          refNames: [],
           isMerge: false,
           subject: '',
           authorName: '',
@@ -3904,8 +3904,9 @@ class _DiffShellState extends State<DiffShell> {
                                     // predicted a landing here — a faint
                                     // "approaching" marker. The prediction
                                     // drives EMPHASIS, not a phantom halo.
-                                    if (line.kind != LineKind.hunk)
+                                    if (line.kind != LineKind.hunk) {
                                       return wrapped;
+                                    }
                                     if (hunkHeader == null) return wrapped;
                                     final hunkOrdinal =
                                         _hunks.indexOf(hunkHeader) + 1;
@@ -4123,7 +4124,7 @@ class DiffLineView extends StatefulWidget {
   final VoidCallback? onHunkDoubleTap;
 
   const DiffLineView({
-    Key? key,
+    super.key,
     required this.line,
     this.editUnit,
     this.pulseActive = false,
@@ -4157,7 +4158,7 @@ class DiffLineView extends StatefulWidget {
     this.onPaintMove,
     this.onPaintEnd,
     this.onHunkDoubleTap,
-  }) : super(key: key);
+  });
 
   @override
   State<DiffLineView> createState() => _DiffLineState();
@@ -5177,7 +5178,7 @@ class _DiffMeltTextPainter extends CustomPainter {
     canvas.save();
     canvas.clipRect(Offset.zero & size);
 
-    final textHeight = _fontSize * _lineHeight;
+    const textHeight = _fontSize * _lineHeight;
     final baselineY = (size.height - textHeight) / 2;
     final charWidth = _measureCharWidth();
 
@@ -5573,7 +5574,7 @@ class _TrailRailPainter extends CustomPainter {
     if (total <= 0) return;
 
     const horizontalInset = 6.0;
-    final left = horizontalInset;
+    const left = horizontalInset;
     final right = size.width - horizontalInset;
     final centerY = size.height / 2;
     final usableWidth = right - left;

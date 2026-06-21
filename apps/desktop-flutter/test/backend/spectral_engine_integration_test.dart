@@ -16,7 +16,6 @@ import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_git.dart';
 import 'package:git_desktop/backend/spectral_kizuna.dart';
 import 'package:git_desktop/backend/spectral_operator.dart';
-import 'package:git_desktop/backend/spectral_ricci.dart';
 import 'package:git_desktop/backend/spectral_state.dart';
 
 /// Minimal 4-file fixture — small graph; LogosGit.spectralBasis() will

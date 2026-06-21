@@ -161,13 +161,13 @@ void main() {
   group('dreamCommitPhrase — sync capstone', () {
     test('returns a phrase composed from verb + subject', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {
+      const probe = DiffProbe(
+        sourceWeights: {
           'lib/auth/spectral_ricci.dart': 1.0,
         },
-        primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+        primaryPaths: {'lib/auth/spectral_ricci.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1,
           mMatches: 0,
           abMatches: 0,
@@ -195,13 +195,13 @@ void main() {
 
     test('defaults to "update" when no commits have been harvested', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {
+      const probe = DiffProbe(
+        sourceWeights: {
           'lib/auth/AuthToken.dart': 1.0,
         },
-        primaryPaths: const {'lib/auth/AuthToken.dart'},
+        primaryPaths: {'lib/auth/AuthToken.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1,
           mMatches: 0,
           abMatches: 0,
@@ -223,11 +223,11 @@ void main() {
 
     test('null on empty probe', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {},
-        primaryPaths: const {},
+      const probe = DiffProbe(
+        sourceWeights: {},
+        primaryPaths: {},
         suggestedTemperature: null,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 0,
           mMatches: 0,
           abMatches: 0,
@@ -243,11 +243,11 @@ void main() {
 
     test('null on unphrase-able subject (hex-only path)', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {'tmp/deadbeef1234.log': 1.0},
-        primaryPaths: const {'tmp/deadbeef1234.log'},
+      const probe = DiffProbe(
+        sourceWeights: {'tmp/deadbeef1234.log': 1.0},
+        primaryPaths: {'tmp/deadbeef1234.log'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1,
           mMatches: 0,
           abMatches: 0,
@@ -325,15 +325,15 @@ void main() {
   group('dreamCommitPhrase with diffSymbols', () {
     test('qualifies path phrase with dominant symbol theme', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {'lib/auth/spectral_ricci.dart': 1.0},
-        primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+      const probe = DiffProbe(
+        sourceWeights: {'lib/auth/spectral_ricci.dart': 1.0},
+        primaryPaths: {'lib/auth/spectral_ricci.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1, mMatches: 0, abMatches: 0,
           mSymbols: 3, coherence: 1.0,
         ),
-        diffSymbols: const ['retryCount', 'maxRetries', 'handleRetry'],
+        diffSymbols: ['retryCount', 'maxRetries', 'handleRetry'],
       );
       final mind = LogosMind(engine: engine);
       final phrase = dreamCommitPhrase(
@@ -350,11 +350,11 @@ void main() {
 
     test('falls back to path phrase when no symbols', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {'lib/auth/AuthToken.dart': 1.0},
-        primaryPaths: const {'lib/auth/AuthToken.dart'},
+      const probe = DiffProbe(
+        sourceWeights: {'lib/auth/AuthToken.dart': 1.0},
+        primaryPaths: {'lib/auth/AuthToken.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1, mMatches: 0, abMatches: 0,
           mSymbols: 0, coherence: 1.0,
         ),
@@ -370,16 +370,16 @@ void main() {
 
     test('structural verb fires on strong add signal', () {
       final engine = _fixtureEngine();
-      final probe = DiffProbe(
-        sourceWeights: const {'lib/auth/spectral_ricci.dart': 1.0},
-        primaryPaths: const {'lib/auth/spectral_ricci.dart'},
+      const probe = DiffProbe(
+        sourceWeights: {'lib/auth/spectral_ricci.dart': 1.0},
+        primaryPaths: {'lib/auth/spectral_ricci.dart'},
         suggestedTemperature: 1.0,
-        stats: const ProbeStats(
+        stats: ProbeStats(
           primaryCount: 1, mMatches: 0, abMatches: 0,
           mSymbols: 2, coherence: 1.0,
           addedLineCount: 30, removedLineCount: 2,
         ),
-        diffSymbols: const ['cacheLayer', 'cacheStore'],
+        diffSymbols: ['cacheLayer', 'cacheStore'],
       );
       final mind = LogosMind(engine: engine);
       final phrase = dreamCommitPhrase(
@@ -403,7 +403,7 @@ void main() {
             diffSymbols: syms,
           );
       final mind = LogosMind(engine: engine);
-      final subjects = const ['refactor core', 'add feature'];
+      const subjects = ['refactor core', 'add feature'];
 
       final phraseA = dreamCommitPhrase(
         probe: makeProbe(const ['retryLogic', 'retryHandler']),

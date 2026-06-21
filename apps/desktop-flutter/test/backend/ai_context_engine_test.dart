@@ -49,7 +49,7 @@ class _StaticUrgencyProducer extends AiContextProducer {
 
 void main() {
   group('AiContextEngine allocation', () {
-    final req = const AiContextRequest(
+    const req = AiContextRequest(
       repositoryPath: '/r',
       diffText: '',
     );
@@ -226,10 +226,10 @@ void main() {
       // Type-safe alternative to `as T?` — a producer that changes its
       // metadata type silently breaks `as`-based callers; this returns
       // null instead, which callers can react to.
-      final s1 = const AiContextSection(id: 'x', body: '', metadata: 42);
+      const s1 = AiContextSection(id: 'x', body: '', metadata: 42);
       expect(s1.metadataOfType<int>(), 42);
       expect(s1.metadataOfType<String>(), isNull);
-      final s2 = const AiContextSection(id: 'x', body: '');
+      const s2 = AiContextSection(id: 'x', body: '');
       expect(s2.metadataOfType<int>(), isNull);
     });
 
