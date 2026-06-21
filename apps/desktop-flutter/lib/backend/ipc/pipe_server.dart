@@ -137,7 +137,8 @@ class ManifoldPipeServer {
     } on ArgumentError catch (e) {
       sw.stop();
       debugPrint('[IPC] ${request.method} → error (${sw.elapsedMilliseconds}ms): ${e.message}');
-      _send(socket, encodeError(request.id, kInvalidParams, e.message));
+      _send(socket,
+          encodeError(request.id, kInvalidParams, e.message?.toString() ?? e.toString()));
     } on StateError catch (e) {
       sw.stop();
       debugPrint('[IPC] ${request.method} → error (${sw.elapsedMilliseconds}ms): ${e.message}');

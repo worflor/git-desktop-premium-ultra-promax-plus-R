@@ -1879,6 +1879,7 @@ class _DeskRow extends StatelessWidget {
     }
 
     if (!stillOnTarget()) return;
+    if (!navigator.mounted) return;
     await _openDeskPatchPreviewFlow(
       navigator.context,
       sourceDesk: desk,
@@ -2813,9 +2814,9 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
     final desk = widget.desk;
     final hasDirty = desk.dirtyFileCount > 0;
     if (hasDirty) {
-      _loadWorkingTree();
+      unawaited(_loadWorkingTree());
     }
-    _loadCommits();
+    unawaited(_loadCommits());
   }
 
   Future<void> _loadWorkingTree() async {

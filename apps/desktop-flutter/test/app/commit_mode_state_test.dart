@@ -43,7 +43,8 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('commit_mode');
-    final json = raw == null ? const {} : jsonDecode(raw) as Map;
+    final json =
+        raw == null ? const <String, dynamic>{} : jsonDecode(raw) as Map<String, dynamic>;
     expect(json.containsKey('/repo/app'), isFalse);
 
     final loaded = CommitModeState();

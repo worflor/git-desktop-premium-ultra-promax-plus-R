@@ -1112,7 +1112,7 @@ class _DiffShellState extends State<DiffShell> {
         applyResult();
       }
     } finally {
-      _blameLoadFutures.remove(key);
+      unawaited(_blameLoadFutures.remove(key));
       if (!completer.isCompleted) completer.complete();
     }
   }
@@ -3262,7 +3262,7 @@ class _DiffShellState extends State<DiffShell> {
       });
       _schedulePinnedContextRefresh();
       if (_wearMapVisible) {
-        _batchLoadWearBlame();
+        unawaited(_batchLoadWearBlame());
       }
       return;
     }
@@ -5800,19 +5800,17 @@ class _HunkDropdown extends StatelessWidget {
                 child: _HunkDropdownRow(hunk: e.value, t: t),
               ))
           .toList(),
-      child: Container(
-        child: AppInputShell(
-          height: 24,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          fillColor: t.itemHoverBg,
-          borderColor: t.secondaryBtnBorder,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('${hunks.length} change${hunks.length == 1 ? "" : "s"}',
-                style: TextStyle(color: t.textMuted, fontSize: 10)),
-            const SizedBox(width: 4),
-            AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
-          ]),
-        ),
+      child: AppInputShell(
+        height: 24,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        fillColor: t.itemHoverBg,
+        borderColor: t.secondaryBtnBorder,
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('${hunks.length} change${hunks.length == 1 ? "" : "s"}',
+              style: TextStyle(color: t.textMuted, fontSize: 10)),
+          const SizedBox(width: 4),
+          AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
+        ]),
       ),
     );
   }

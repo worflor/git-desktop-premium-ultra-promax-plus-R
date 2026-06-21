@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../backend/git.dart' as git;
@@ -52,7 +54,7 @@ class SurgeryState extends ChangeNotifier {
     final chain = await _engine.discoverAllPaths(path);
     renameChains[path] = chain;
     _safeNotify();
-    _refreshImpact();
+    unawaited(_refreshImpact());
   }
 
   void removePath(String path) {

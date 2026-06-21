@@ -1089,13 +1089,13 @@ class _BranchesPageState extends State<BranchesPage> {
               detail = _prDetails[pr.number];
             }
             if (detail == null || detail.diff.isEmpty) {
-              if (!mounted) return;
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Could not load PR diff.')),
               );
               return;
             }
-            if (!mounted) return;
+            if (!context.mounted) return;
             await _openPatchPreview(
               repoPath,
               detail.diff,
@@ -1157,13 +1157,13 @@ class _BranchesPageState extends State<BranchesPage> {
               detail = _prDetails[pr.number];
             }
             if (detail == null || detail.diff.isEmpty) {
-              if (!mounted) return;
+              if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Could not load PR diff.')),
               );
               return;
             }
-            if (!mounted) return;
+            if (!context.mounted) return;
             await _exportPrAsPatch(context, pr, detail);
           },
         ),
@@ -1172,7 +1172,7 @@ class _BranchesPageState extends State<BranchesPage> {
           label: 'Copy branch name',
           onTap: () async {
             await Clipboard.setData(ClipboardData(text: pr.headRef));
-            if (!mounted) return;
+            if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Copied "${pr.headRef}"')),
             );
@@ -1561,13 +1561,17 @@ class _BranchesPageState extends State<BranchesPage> {
       // Write to the local issue's addressedBy (either branch name or
       // pr#N convention). Mirror on the LOCAL PR side when applicable.
       final addressedKey = candidate.isRemote ? 'pr#${candidate.id}' : prBranch;
-      final err = await context.read<DeskIssueState>().toggleAddressedBy(
+      // Capture the provider references before the async gap so the post-await
+      // mirror write never touches a possibly-unmounted context.
+      final issueState = context.read<DeskIssueState>();
+      final prState = context.read<DeskPrState>();
+      final err = await issueState.toggleAddressedBy(
             repoPath: repoPath,
             id: issue.number,
             branch: addressedKey,
           );
       if (err == null && !candidate.isRemote) {
-        await context.read<DeskPrState>().toggleLinkedIssue(
+        await prState.toggleLinkedIssue(
               repoPath: repoPath,
               branch: prBranch,
               issueId: issue.number,
@@ -1619,8 +1623,12 @@ class _BranchesPageState extends State<BranchesPage> {
   ) async {
     String? err;
     if (prIsLocal) {
-      // LOCAL PR side: toggle the link on the PR's metadata.
-      err = await context.read<DeskPrState>().toggleLinkedIssue(
+      // LOCAL PR side: toggle the link on the PR's metadata. Capture both
+      // provider references before the async gap so the post-await
+      // back-reference write doesn't touch a possibly-unmounted context.
+      final prState = context.read<DeskPrState>();
+      final issueState = context.read<DeskIssueState>();
+      err = await prState.toggleLinkedIssue(
             repoPath: repoPath,
             branch: pr.headRef,
             issueId: candidate.id,
@@ -1629,7 +1637,7 @@ class _BranchesPageState extends State<BranchesPage> {
       // For LOCAL PR + LOCAL issue, also write the symmetric
       // back-reference on the issue side.
       if (err == null && !candidate.isRemote) {
-        await context.read<DeskIssueState>().toggleAddressedBy(
+        await issueState.toggleAddressedBy(
               repoPath: repoPath,
               id: candidate.id,
               branch: pr.headRef,
@@ -1753,7 +1761,9 @@ class _BranchesPageState extends State<BranchesPage> {
       for (final l in entry.value) {
         if (l.kind == LineKind.added) {
           adds++;
-        } else if (l.kind == LineKind.deleted) dels++;
+        } else if (l.kind == LineKind.deleted) {
+          dels++;
+        }
       }
       prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
     }
@@ -3809,11 +3819,11 @@ class _BranchesPageState extends State<BranchesPage> {
     final prCouplingMatrix =
         context.read<FileCouplingState>().matrixFor(repoPath);
 
-    showDialog<void>(
+    unawaited(showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => const _AiReviewProgressDialog(),
-    );
+    ));
     final prEffort =
         aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
     final result = await reviewCommit(
@@ -10545,7 +10555,9 @@ Future<void> showPatchPreviewDialog(
     for (final l in entry.value) {
       if (l.kind == LineKind.added) {
         adds++;
-      } else if (l.kind == LineKind.deleted) dels++;
+      } else if (l.kind == LineKind.deleted) {
+        dels++;
+      }
     }
     prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
   }
@@ -10856,7 +10868,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     for (final l in lines) {
       if (l.kind == LineKind.added) {
         adds++;
-      } else if (l.kind == LineKind.deleted) dels++;
+      } else if (l.kind == LineKind.deleted) {
+        dels++;
+      }
     }
     return (adds, dels);
   }
@@ -11412,7 +11426,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         for (final l in entry.value) {
           if (l.kind == LineKind.added) {
             adds++;
-          } else if (l.kind == LineKind.deleted) dels++;
+          } else if (l.kind == LineKind.deleted) {
+            dels++;
+          }
         }
         newPrFiles
             .add(PrFile(path: entry.key, additions: adds, deletions: dels));

@@ -227,7 +227,7 @@ abstract class OpenAiCompatibleApiProvider extends AiApiProvider {
       }
 
       final choices = json['choices'] as List?;
-      final text = (choices?.firstOrNull as Map?)?['message']?['content']
+      final text = ((choices?.firstOrNull as Map?)?['message'] as Map?)?['content']
           as String?;
       final usage = json['usage'] as Map?;
       final inputTokens = (usage?['prompt_tokens'] as int?) ?? 0;
@@ -254,7 +254,7 @@ abstract class OpenAiCompatibleApiProvider extends AiApiProvider {
   }
 }
 
-bool _hasTextOutput(Map entry) {
+bool _hasTextOutput(Map<dynamic, dynamic> entry) {
   final arch = entry['architecture'];
   if (arch is! Map) return true;
   final modality = arch['modality'];

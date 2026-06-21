@@ -1,0 +1,7 @@
+# Command-line tools/scripts print to stdout as their primary output, so
+# avoid_print is relaxed here; everything else inherits the strict root config.
+include: ../analysis_options.yaml
+
+linter:
+  rules:
+    avoid_print: false

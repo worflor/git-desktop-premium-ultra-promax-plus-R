@@ -4264,7 +4264,7 @@ Future<_ProviderModelDiscovery?> _discoverProviderModelsCached(
     );
   }
   if (provider.kind == _ProviderKind.apiProvider && discovery != null) {
-    _saveApiModelCacheToDisk(cacheKey, discovery);
+    unawaited(_saveApiModelCacheToDisk(cacheKey, discovery));
   }
   return discovery;
 }
@@ -4281,7 +4281,7 @@ void _refreshApiModelCacheInBackground(
         checkedAt: DateTime.now(),
         value: discovery,
       );
-      _saveApiModelCacheToDisk(cacheKey, discovery);
+      unawaited(_saveApiModelCacheToDisk(cacheKey, discovery));
     }
   });
 }
@@ -4339,10 +4339,11 @@ Future<_ProviderModelDiscovery?> _loadApiModelCacheFromDisk(
     final rawPricing = json['pricing'];
     if (rawPricing is Map) {
       for (final e in rawPricing.entries) {
-        if (e.key is String && e.value is List && e.value.length == 2) {
+        final value = e.value;
+        if (e.key is String && value is List && value.length == 2) {
           pricing[e.key as String] = (
-            (e.value[0] as num?)?.toDouble(),
-            (e.value[1] as num?)?.toDouble(),
+            (value[0] as num?)?.toDouble(),
+            (value[1] as num?)?.toDouble(),
           );
         }
       }
@@ -9983,11 +9984,15 @@ List<_ProviderAttempt> _buildProviderAttempts(
             'exec', '--model', modelId, ...configArgs, '--json', '-',
           ],
           outputMode: _ProviderOutputMode.codexJsonl,
+          // Trailing `-` reads the prompt from stdin; pipe it there instead of
+          // appending it as a positional after the `-`.
+          useStdinForPrompt: true,
         ),
         _ProviderAttempt(
           name: 'exec',
           args: ['exec', '--model', modelId, ...configArgs, '-'],
           outputMode: _ProviderOutputMode.plainText,
+          useStdinForPrompt: true,
         ),
       ];
     case _ProviderKind.claude:
@@ -11013,8 +11018,9 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
       // Try to extract a meaningful error message.
       try {
         final errJson = jsonDecode(body);
-        final message =
-            errJson['error']?['message'] ?? 'HTTP ${response.statusCode}';
+        final errObj = errJson is Map ? errJson['error'] : null;
+        final message = (errObj is Map ? errObj['message'] : null) ??
+            'HTTP ${response.statusCode}';
         return (
           text: null,
           error: 'Gemini API: $message',
@@ -11043,9 +11049,13 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
 
     // Extract text from response.candidates[0].content.parts[0].text
     final candidates = (json['response'] as Map?)?['candidates'] as List?;
-    final text = (candidates?.firstOrNull as Map?)?['content']?['parts']
-            ?.firstWhere((p) => p['text'] != null, orElse: () => null)?['text']
-        as String?;
+    final content = (candidates?.firstOrNull as Map?)?['content'] as Map?;
+    final parts = content?['parts'] as List?;
+    final partWithText = parts?.firstWhere(
+      (Object? p) => p is Map && p['text'] != null,
+      orElse: () => null,
+    );
+    final text = (partWithText as Map?)?['text'] as String?;
 
     final usage = (json['response'] as Map?)?['usageMetadata'] as Map?;
     final inputTokens = (usage?['promptTokenCount'] as int?) ?? 0;
@@ -11785,6 +11795,7 @@ class _ProviderAttempt {
     required this.name,
     required this.args,
     required this.outputMode,
+    this.useStdinForPrompt = false,
   });
 }
 

@@ -211,7 +211,7 @@ class _SidebarRailState extends State<SidebarRail> {
       }
 
       unawaited(saveCloneParentDir(result.data!)
-          .catchError((e) => debugPrint('Failed to save clone dir: $e')));
+          .catchError((Object e) => debugPrint('Failed to save clone dir: $e')));
       final repo = context.read<RepositoryState>();
       final err = await repo.setActivePath(result.data!);
       if (!mounted || gen != _cloneGeneration) return;

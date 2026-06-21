@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../backend/ai.dart';
@@ -162,8 +164,8 @@ class AiSettingsState extends ChangeNotifier {
     // the isNotEmpty guard would short-circuit if the settings page
     // triggered a CLI-only discovery before load() finished.
     final hasApiKeys = _apiKeys.entries.isNotEmpty;
-    refreshProviders(forceRefresh: hasApiKeys);
-    refreshModelCategories(forceRefresh: hasApiKeys);
+    unawaited(refreshProviders(forceRefresh: hasApiKeys));
+    unawaited(refreshModelCategories(forceRefresh: hasApiKeys));
   }
 
   void _rebuildModelViews() {

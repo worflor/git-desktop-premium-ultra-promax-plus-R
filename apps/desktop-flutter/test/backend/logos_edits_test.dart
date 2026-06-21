@@ -590,8 +590,8 @@ void _sessionTests() {
       final bob = LogosSession(peerId: 'bob');
 
       // Both create the same path at the same logical time.
-      final aEdit = alice.addPath('x.dart');
-      final bEdit = bob.addPath('x.dart');
+      alice.addPath('x.dart');
+      bob.addPath('x.dart');
       // Both also create their own view of a neighbor.
       alice.addPath('y.dart');
       bob.addPath('y.dart');
@@ -1113,7 +1113,6 @@ void _compactionTests() {
     test('fuzz: 10 random logs compact to the same state signature', () {
       final rng = math.Random(0xCC0);
       for (var seed = 0; seed < 10; seed++) {
-        final gen = math.Random(seed * 101 + 3);
         final peers = ['a', 'b', 'c'];
         final paths = ['x.dart', 'y.dart', 'z.dart', 'q.dart'];
         final edits = <LogosEdit>[];

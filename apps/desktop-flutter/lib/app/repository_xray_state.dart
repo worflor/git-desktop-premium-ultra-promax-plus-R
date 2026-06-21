@@ -162,7 +162,8 @@ class RepositoryXrayState extends ChangeNotifier {
       if (streaming.isEmpty) return;
       final liveSweep = ApertureSweep(
         samples: List<ApertureSample>.unmodifiable(
-            [...streaming]..sort((a, b) => a.window.compareTo(b.window))),
+            <ApertureSample>[...streaming]
+              ..sort((a, b) => a.window.compareTo(b.window))),
         computedAt: DateTime.now(),
         headHash: '',
       );

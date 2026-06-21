@@ -563,7 +563,7 @@ class LogosGitProbeBuilder {
       symbol: symbol,
     );
     _inflightPickaxeLookups[cacheKey] = future;
-    future.whenComplete(() => _inflightPickaxeLookups.remove(cacheKey));
+    unawaited(future.whenComplete(() => _inflightPickaxeLookups.remove(cacheKey)));
     return future;
   }
 

@@ -873,13 +873,13 @@ List<String> _loginList(dynamic value) {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-class _HttpResult {
+class GiteaHttpResult {
   final int statusCode;
   final String body;
-  const _HttpResult(this.statusCode, this.body);
+  const GiteaHttpResult(this.statusCode, this.body);
 }
 
-Future<_HttpResult> giteaGet(String baseUrl, String path, {String? token}) async {
+Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) async {
   final label = 'gitea.GET $path';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
@@ -899,7 +899,7 @@ Future<_HttpResult> giteaGet(String baseUrl, String path, {String? token}) async
         durationMs: stopwatch.elapsedMicroseconds / 1000,
         errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
       );
-      return _HttpResult(response.statusCode, body);
+      return GiteaHttpResult(response.statusCode, body);
     } finally {
       client.close();
     }
@@ -910,7 +910,7 @@ Future<_HttpResult> giteaGet(String baseUrl, String path, {String? token}) async
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: 'http.exception',
     );
-    return _HttpResult(0, e.toString());
+    return GiteaHttpResult(0, e.toString());
   }
 }
 
@@ -932,7 +932,7 @@ Future<String> _getRaw(String baseUrl, String path, {String? token}) async {
   }
 }
 
-Future<_HttpResult> _post(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
+Future<GiteaHttpResult> _post(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
   final label = 'gitea.POST $path';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
@@ -954,7 +954,7 @@ Future<_HttpResult> _post(String baseUrl, String path, Map<String, dynamic> body
         durationMs: stopwatch.elapsedMicroseconds / 1000,
         errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
       );
-      return _HttpResult(response.statusCode, responseBody);
+      return GiteaHttpResult(response.statusCode, responseBody);
     } finally {
       client.close();
     }
@@ -965,11 +965,11 @@ Future<_HttpResult> _post(String baseUrl, String path, Map<String, dynamic> body
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: 'http.exception',
     );
-    return _HttpResult(0, e.toString());
+    return GiteaHttpResult(0, e.toString());
   }
 }
 
-Future<_HttpResult> _patch(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
+Future<GiteaHttpResult> _patch(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
   final label = 'gitea.PATCH $path';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
@@ -991,7 +991,7 @@ Future<_HttpResult> _patch(String baseUrl, String path, Map<String, dynamic> bod
         durationMs: stopwatch.elapsedMicroseconds / 1000,
         errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
       );
-      return _HttpResult(response.statusCode, responseBody);
+      return GiteaHttpResult(response.statusCode, responseBody);
     } finally {
       client.close();
     }
@@ -1002,6 +1002,6 @@ Future<_HttpResult> _patch(String baseUrl, String path, Map<String, dynamic> bod
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: 'http.exception',
     );
-    return _HttpResult(0, e.toString());
+    return GiteaHttpResult(0, e.toString());
   }
 }

@@ -198,17 +198,17 @@ class AxisObs {
 const double _hyperbolicScale = 4.0;
 const double _hyperbolicWeight = 0.15;
 
-class _HyperbolicEmbedding {
+class HyperbolicEmbedding {
   final Float64List x;
   final Float64List y;
-  _HyperbolicEmbedding(this.x, this.y);
+  HyperbolicEmbedding(this.x, this.y);
 }
 
-_HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
+HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
   final n = paths.length;
   final x = Float64List(n);
   final y = Float64List(n);
-  if (n == 0) return _HyperbolicEmbedding(x, y);
+  if (n == 0) return HyperbolicEmbedding(x, y);
 
   final children = <int, List<int>>{};
   final nodeId = <String, int>{};
@@ -290,7 +290,7 @@ _HyperbolicEmbedding _poincareDiskEmbed(List<String> paths) {
     x[i] = treeX[tid];
     y[i] = treeY[tid];
   }
-  return _HyperbolicEmbedding(x, y);
+  return HyperbolicEmbedding(x, y);
 }
 
 double _coth(double x) {
@@ -1788,7 +1788,7 @@ class LogosGit {
   /// guaranteed coherent.
   final Map<int, sg_lib.SpectroGeometry> _spectrogeometryCache = {};
 
-  final _HyperbolicEmbedding? hyperbolicEmbedding;
+  final HyperbolicEmbedding? hyperbolicEmbedding;
 
   late final double _advectionEps =
       _advectionEpsBase / math.max(1e-6, graph.estimateSpectralRadius());

@@ -68,7 +68,7 @@ class WinJobObject {
     // JobObjectExtendedLimitInformation = 9.
     final infoSize = sizeOf<IntPtr>() == 8 ? 144 : 112;
     final info = calloc<Uint8>(infoSize);
-    info.elementAt(16).cast<Uint32>().value = 0x2000;
+    (info + 16).cast<Uint32>().value = 0x2000;
     setInfo(handle, 9, info.cast(), infoSize);
     calloc.free(info);
     return handle;

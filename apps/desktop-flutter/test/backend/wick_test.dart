@@ -41,7 +41,7 @@ void main() {
 
     test('parses empty packet', () {
       final json = <String, dynamic>{
-        'packet': [],
+        'packet': <dynamic>[],
         'posture': 'flinching',
         'confidence': 0.0,
         'elapsed_ms': 1.0,

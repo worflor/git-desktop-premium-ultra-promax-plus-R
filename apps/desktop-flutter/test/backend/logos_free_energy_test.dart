@@ -22,46 +22,6 @@ CsrGraph _pathGraph(int n) {
 
 SpectralBasis _basis(int n) => SpectralBasis.fromGraph(_pathGraph(n), n);
 
-LogosGit _fixtureEngine({bool noisy = false}) {
-  final touches = <String, int>{};
-  final volatility = <String, double>{};
-  final jaccard = <String, Map<String, double>>{};
-  final paths = [
-    for (var i = 0; i < 260; i++)
-      'lib/m${i.toString().padLeft(3, '0')}.dart',
-  ];
-  final rng = math.Random(noisy ? 1 : 0);
-  for (var i = 0; i < paths.length; i++) {
-    final p = paths[i];
-    touches[p] = 10;
-    // Healthy: smooth volatility from a low-frequency sinusoid.
-    // Noisy: random-uniform volatility (scatters across modes).
-    volatility[p] = noisy
-        ? rng.nextDouble() * 2.0
-        : 1.0 + math.sin(2.0 * math.pi * i / paths.length);
-    jaccard[p] = <String, double>{};
-  }
-  for (var i = 0; i < paths.length; i++) {
-    for (var j = i + 1; j < paths.length; j++) {
-      jaccard[paths[i]]![paths[j]] = 0.8;
-      jaccard[paths[j]]![paths[i]] = 0.8;
-    }
-  }
-  return LogosGit.buildFromStats(LogosGitStats(
-    touches: touches,
-    totalCommits: 200,
-    volatility: volatility,
-    volMean: 1.0,
-    volStddev: 0.3,
-    coupling: FileCouplingMatrix(
-      jaccard: jaccard,
-      headHash: noisy ? 'noisy' : 'healthy',
-      commitsAnalyzed: 200,
-    ),
-    perFileCommitIndices: const {},
-  ));
-}
-
 void main() {
   group('freeEnergy — primal scalar', () {
     test('zero field has zero free energy', () {

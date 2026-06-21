@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -91,7 +92,7 @@ List<PaletteEntry> buildStaticEntries(
         actionType: PaletteActionType.execute,
         onExecute: () {
           final rp = repoPath;
-          Navigator.of(context).push(MaterialPageRoute(
+          Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (ctx) => _TestMergeEditorLoader(
               repoPath: rp,
             ),
@@ -108,7 +109,7 @@ List<PaletteEntry> buildStaticEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       onExecute: () {
-        Navigator.of(context).push(MaterialPageRoute(
+        Navigator.of(context).push(MaterialPageRoute<void>(
           builder: (_) => const _ThemeSpecimenPage(),
         ));
       },
@@ -124,7 +125,7 @@ List<PaletteEntry> buildStaticEntries(
         actionType: PaletteActionType.execute,
         onExecute: () {
           final rp = repoPath;
-          Navigator.of(context).push(MaterialPageRoute(
+          Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => HistorySurgeryLoader(
               repoPath: rp,
               dryRun: true,
@@ -147,7 +148,7 @@ List<PaletteEntry> buildStaticEntries(
         actionType: PaletteActionType.execute,
         onExecute: () {
           final rp = repoPath;
-          Navigator.of(context).push(MaterialPageRoute(
+          Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => HistorySurgeryLoader(repoPath: rp),
           ));
         },
@@ -224,7 +225,7 @@ void _showEngineStatus(BuildContext context, LogosGit engine) {
     ..writeln('  reviewed merges  $reviewedCount')
     ..writeln('  unique reviewers ${reviewerCount.length}');
 
-  showDialog(
+  showDialog<void>(
     context: context,
     builder: (ctx) => _DebugPanel(
       title: 'Engine Status',
@@ -270,7 +271,7 @@ void _showCouplingInspector(
     lines.writeln('No staged files.');
   }
 
-  showDialog(
+  showDialog<void>(
     context: context,
     builder: (ctx) => _DebugPanel(
       title: 'File Coupling',
@@ -384,7 +385,7 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
     if (_building) return;
     _building = true;
     try {
-      _logosState.loadForRepo(widget.repoPath);
+      unawaited(_logosState.loadForRepo(widget.repoPath));
       final files = await _buildConflictsFromHistory(
           widget.repoPath, null);
       if (!mounted) return;
@@ -953,10 +954,10 @@ List<PaletteEntry> _actionEntries(
           if (info != null) {
             cb.onOpenBrowser(info.webUrl);
           } else {
-            revealInFileManager(repoPath);
+            unawaited(revealInFileManager(repoPath));
           }
         } catch (_) {
-          revealInFileManager(repoPath);
+          unawaited(revealInFileManager(repoPath));
         }
       },
     ),

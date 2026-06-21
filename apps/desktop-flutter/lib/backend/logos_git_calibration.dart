@@ -464,7 +464,7 @@ class LogosSseStore {
       // Only remove the chain entry if no later caller has chained
       // onto our completer. Otherwise leave it for the next waiter.
       if (identical(_writeChains[key], completer.future)) {
-        _writeChains.remove(key);
+        unawaited(_writeChains.remove(key));
       }
     }
   }
@@ -627,12 +627,12 @@ class LogosSseStore {
     }
     final transitionRate = transitions / (window.length - 1);
     var mean = 0.0;
-    for (final (_, __, fs) in window) {
+    for (final (_, _, fs) in window) {
       mean += fs;
     }
     mean /= window.length;
     var variance = 0.0;
-    for (final (_, __, fs) in window) {
+    for (final (_, _, fs) in window) {
       final d = fs - mean;
       variance += d * d;
     }

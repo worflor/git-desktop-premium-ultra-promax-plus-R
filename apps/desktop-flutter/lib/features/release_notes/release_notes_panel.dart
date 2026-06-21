@@ -384,12 +384,12 @@ const _aboutDevelopment = <_AboutEntry>[
   _AboutEntry(
     question: 'WHY FLUTTER?',
     body: 'The first version of this was a Tauri app (Rust + TypeScript). '
-        'I already knew it felt slow. Caught a streamer saying the same '
-        'thing on a live stream I don\'t usually watch to '
-        'finally to swap. He didn\'t suggest Flutter; far from it. I found Dart '
-        'on my own, threw together a prototype, and app startup went from about '
-        '15 seconds to under a second. Night and day. '
-        'farewell Tauri era.\n\n'
+        'I already knew it felt slow. Then I caught a streamer saying the '
+        'same thing on a stream I don\'t usually watch, and that was the '
+        'nudge to finally swap. He didn\'t suggest Flutter; far from it. I '
+        'found Dart on my own, threw together a prototype, and startup went '
+        'from about 15 seconds to under a second. Night and day. '
+        'Farewell Tauri era.\n\n'
         'Flutter\'s rendering pipeline is closer to a game engine than a '
         'DOM, and for a desktop app where the UI is the product that\'s '
         'everything. Dart turned out to be a genuinely good language too. '
@@ -429,13 +429,25 @@ const _aboutDevelopment = <_AboutEntry>[
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.1.3',
+    date: '2026-06-21',
+    bullets: [
+      'Review grew two new senses. Blast radius surfaces the files that usually move with a change but sat this one out. Shadow history flags paths git has reverted, reset, or walked away from before.',
+      'Review learns your repo now. Every confirm and dismiss tunes the scorer, so it sharpens the longer you live somewhere.',
+      'Two things that stick now: your Muse strand order, and commit mode per repo.',
+      'Relatedness got richer. The old symbol-frequency index is gone; spectral coupling does the job everywhere now.',
+      'Filament\'s walkers went quantum. YAA* now carries a density matrix per walker, Born-mixed across its anomaly, structure, and certainty strategies.',
+      'Snappier review and changes views. The spectral matrix and engine overlays stopped rebuilding on every widget pass.',
+      'Mostly an engine-room stretch: piles of low-level tests and bug fixes galore. Some of the math is still placeholder while the real version settles in, but everything runs clean.',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.2',
     date: '2026-05-24',
     bullets: [
-      'Filament got Yassified. As well as the math backing it getting a Logos-inspired face lift, it\'s core search algorithm got properly re-overengineered.',
-      'DFS got booted for YAA*. A double-helix attention-driven a-star hybrid that... also appears oddly Logos-inspired..? cRaaAzYyyY',
+      'Filament got Yassified: the math underneath got a Logos-flavored facelift and the search core ditched DFS for YAA*, a walker-based attention search over the double-helix strands. Properly re-overengineered.',
       'Added tabs for diffs.',
-      'Binary files geare now diffable. Turns out all it needed was a universal physics-based codec for every major media format. Whisper Harmonic, Whisper Lumen, and Whisper Logos [now/soon] plug in through Prism as the binary-diff backend.',
+      'Binary files are diffable now. Images, video, and audio render side by side, sorted out by magic bytes, with per-type toggles for what you want shown.',
       'Clone dialog, tag management, PR toolbar, and file coupling all got polish passes.',
     ],
   ),
@@ -443,22 +455,21 @@ const _changelog = <_ReleaseNote>[
     version: 'v0.1.1',
     date: '2026-05-18',
     bullets: [
-      'Welcome to the first non-internal release. We have:',
-      'Filament, an experimental execution-flow engine makes its first appearnce! :o',
-      'Beep beep, Wick.exe alpha integration is here in the cmd palette for those who have the binary. Much unreleased. (real-time semantic search)',
-      'Inline interactive re-order for commits. (allegedly)',
-      'I spent an afternoon designing how Manifold should present a 3-way merge and settled on a unified fullscreen per-file experience. Built in Logos magic to assist, but designed for The Manual Way™.',
-      'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
+      'First build to leave the lab.',
+      'Filament, an experimental execution-flow engine, makes its debut.',
+      'Wick.exe alpha lands in the command palette: real-time semantic search, if you have the binary.',
+      'Inline interactive commit reorder.',
+      'Spent an afternoon designing how Manifold should present a 3-way merge and settled on a unified fullscreen per-file view. Logos assists, but it is designed for The Manual Way™.',
+      'Command palette got smarter mostly by getting smaller. Some options removed, some merged. Fewer ways to ask for the same thing badly.',
       'OpenRouter API support.',
-      'Ask has been reworked into more of a debug thing. Very alpha - may change.',
-      'Settings got shorter to scroll through. And the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
-      'Essays written in the commit field prompt an expanded composer menu. Yap unbothered.',
+      'Ask got reworked into more of a debug tool.',
+      'Settings got shorter to scroll, and the scrollbar grew a little breadcrumb bubble that follows along so you always know where you are.',
+      'Essays written in the commit field now pop an expanded composer. Yap unbothered.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
-      'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
-      'Adjusted Petrichor to keep the same rainy feel, but with shaders and more vibesss.',
-      'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
-      'Theme and motion system pass.',
-      'Reduced motion and accessability passes too.',
+      'Tweaked Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
+      'Petrichor keeps its rainy feel, now with shaders and more vibes.',
+      'New Lady Entropy theme: bot-eye freeze tag, per-surface tint variation, and a dataScrawl text effect.',
+      'Theme, motion, reduced-motion, and accessibility all got system-wide passes.',
     ],
   ),
   _ReleaseNote(
@@ -470,7 +481,7 @@ const _changelog = <_ReleaseNote>[
       'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea; Git and GitHub are the deepest integrations right now.',
       'PR conflict hints go past plain file overlap. Each PR gets an orbital shape from Logos diffusion; WILL FIGHT combines shared files with cross-orbit similarity, so related branches can surface as merge-order risk even when they are not editing the exact same paths.',
       'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply, or reverse. For when you\'re not down to big git.',
-      'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map. The useful part is the receipts: when Logos surfaces a related file, it can point at the signal that pulled it in: co-change, path structure, transport lanes like source->test, integrity gates, residual surprise, or shadow history. Practically, that means better review context, better commit grouping, better Muse suggestions, and UI that reacts to the actual shape of the change instead of just the file list.',
+      'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map. The useful part is the receipts: when Logos surfaces a related file, it can point at the exact signal that pulled it in, whether co-change, path structure, source->test transport lanes, integrity gates, residual surprise, or shadow history. Practically, that means better review context, better commit grouping, better Muse suggestions, and UI that reacts to the actual shape of the change instead of just the file list.',
       'Logos has counterfactual memory too. Reverts, reset-away commits, and abandoned branches are mined into a discounted shadow-coupling graph, so discarded timelines can corroborate real co-change signals or flag a current diff as deja-vu.',
       'The interactive starfield during commit review and Muse is a live readout of that process: files, evidence, and diffusion energy moving around while the engine decides what matters.',
       'History renders each commit as a drillable seismograph. The painted bar under each subject encodes importance, add/del ratio, coherence, and working-tree overlap without labels.',
@@ -478,7 +489,7 @@ const _changelog = <_ReleaseNote>[
       'Muse is a three-phase pipeline (diverge, reshape, synthesize) that brainstorms around what your staged changes could lead to. Results come back in four tiers: Spark, Current, Horizon, and Fever. You can drag file spokes while it runs to steer where it looks.',
       'Atlas, the File Constellation beta, groups staged files by correlatedness into candidate commits. Still early but the direction is there.',
       'Repo X-Ray gives a structural snapshot across map, time, signals, and summary views.',
-      'Known rough edges: CPU usage on Windows runs hotter than expected, so if your fans spin up, that\'s me. The Linux AppImage ships but is untested as of this build. Some UI elements still have minor visual bugs, mostly in newer or weirder corners of the app. Most flows already surface diagnostics, and the heavier paths show profiling data, but a few very new commit-timeline anomaly paths may still be under-instrumented, so some niche failures there might not explain themselves properly yet. macOS is planned, but shipping it properly means dealing with the Apple developer license and signing/notarization ritual. I know. Extremely glamorous. Windows and Linux are more forgiving of lazily signed software, so they come first.',
+      'Known rough edges: CPU on Windows runs hotter than it should, so if your fans spin up, that\'s me. The Linux AppImage ships but is untested this build. A few newer corners still have minor visual bugs. macOS is planned, but shipping it properly means the Apple developer license and the signing/notarization ritual. I know. Extremely glamorous. Windows and Linux are more forgiving of lazily signed software, so they come first.',
     ],
   ),
 ];

@@ -33,7 +33,7 @@ import 'package:git_desktop/backend/spectral_walks.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  double csrWeight(dynamic graph, int from, int to) {
+  double csrWeight(CsrGraph graph, int from, int to) {
     for (var k = graph.indptr[from]; k < graph.indptr[from + 1]; k++) {
       if (graph.indices[k] == to) return graph.values[k];
     }

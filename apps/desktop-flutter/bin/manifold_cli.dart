@@ -58,7 +58,7 @@ void main(List<String> args) async {
         buffer.removeRange(0, 4 + len);
         final decoded = jsonDecode(body);
         if (decoded is Map && !decoded.containsKey('id')) {
-          _handleProgress(decoded);
+          _handleProgress(decoded as Map<String, dynamic>);
           continue;
         }
         sw.stop();
@@ -108,8 +108,8 @@ void _clearStatus() {
   _statusLine = '';
 }
 
-void _handleProgress(Map decoded) {
-  final params = decoded['params'] as Map?;
+void _handleProgress(Map<String, dynamic> decoded) {
+  final params = decoded['params'] as Map<String, dynamic>?;
   if (params == null) return;
   final phase = params['phase'] as String? ?? '';
   final detail = params['detail'] as String? ?? '';
@@ -248,10 +248,11 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
   }
   if (decoded.containsKey('error')) {
     final err = decoded['error'];
-    stderr.writeln('error: ${err['message'] ?? err}');
+    final errMsg = err is Map ? err['message'] : null;
+    stderr.writeln('error: ${errMsg ?? err}');
     exit(1);
   }
-  final result = decoded['result'];
+  final result = decoded['result'] as Map<String, dynamic>?;
   if (result == null) {
     stdout.writeln('(no result)');
     return;
@@ -266,22 +267,25 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
     case 'status':
       stdout.writeln('${result['branch']} '
           '↑${result['ahead']} ↓${result['behind']}');
-      for (final f in (result['files'] as List? ?? [])) {
-        stdout.writeln('  ${f['staged']}${f['unstaged']} ${f['path']}');
+      for (final f in (result['files'] as List<dynamic>? ?? [])) {
+        final fm = f as Map<String, dynamic>;
+        stdout.writeln('  ${fm['staged']}${fm['unstaged']} ${fm['path']}');
       }
       break;
     case 'repos':
-      for (final r in (result['repos'] as List? ?? [])) {
-        final active = r['active'] == true ? '* ' : '  ';
-        final engine = r['engineReady'] == true ? ' ${_dim('[engine]')}' : '';
-        stdout.writeln('$active${r['path']}$engine');
+      for (final r in (result['repos'] as List<dynamic>? ?? [])) {
+        final rm = r as Map<String, dynamic>;
+        final active = rm['active'] == true ? '* ' : '  ';
+        final engine = rm['engineReady'] == true ? ' ${_dim('[engine]')}' : '';
+        stdout.writeln('$active${rm['path']}$engine');
       }
       break;
     case 'blast-radius':
-      stdout.writeln('Blast radius for ${(result['seeds'] as List).join(', ')}:');
-      for (final r in (result['results'] as List? ?? [])) {
-        final anchor = r['anchor'] != null ? ' ${_dim('via ${r['anchor']}')}' : '';
-        stdout.writeln('  ${_pad(r['coupling'])} ${r['path']}$anchor');
+      stdout.writeln('Blast radius for ${(result['seeds'] as List<dynamic>).join(', ')}:');
+      for (final r in (result['results'] as List<dynamic>? ?? [])) {
+        final rm = r as Map<String, dynamic>;
+        final anchor = rm['anchor'] != null ? ' ${_dim('via ${rm['anchor']}')}' : '';
+        stdout.writeln('  ${_pad(rm['coupling'])} ${rm['path']}$anchor');
       }
       break;
     case 'coherence':
@@ -290,12 +294,13 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
       );
       break;
     case 'suggest':
-      final suggestions = result['suggestions'] as List? ?? [];
+      final suggestions = result['suggestions'] as List<dynamic>? ?? [];
       if (suggestions.isEmpty) {
         stdout.writeln(_dim('No suggestions.'));
       } else {
         for (final s in suggestions) {
-          stdout.writeln('  ${s['score']}  ${s['path']}  ${_dim('via ${s['anchor']}')}');
+          final sm = s as Map<String, dynamic>;
+          stdout.writeln('  ${sm['score']}  ${sm['path']}  ${_dim('via ${sm['anchor']}')}');
         }
       }
       break;
@@ -307,15 +312,16 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
       stdout.writeln('  touches     ${result['touchCount']}');
       break;
     case 'architecture':
-      for (final c in (result['subsystems'] as List? ?? [])) {
-        final density = c['density'] ?? 0;
+      for (final c in (result['subsystems'] as List<dynamic>? ?? [])) {
+        final cm = c as Map<String, dynamic>;
+        final density = cm['density'] ?? 0;
         stdout.writeln(
-          '${_bold(c['label'])} ${_dim('${c['fileCount']} files · density $density')}',
+          '${_bold(cm['label'] as String)} ${_dim('${cm['fileCount']} files · density $density')}',
         );
-        for (final f in (c['sample'] as List? ?? [])) {
+        for (final f in (cm['sample'] as List<dynamic>? ?? [])) {
           stdout.writeln('  $f');
         }
-        if ((c['sample'] as List? ?? []).length < (c['fileCount'] as int? ?? 0)) {
+        if ((cm['sample'] as List<dynamic>? ?? []).length < (cm['fileCount'] as int? ?? 0)) {
           stdout.writeln(_dim('  ...'));
         }
       }
@@ -324,38 +330,44 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
       stdout.writeln('${result['file']}: ${result['summary']}');
       break;
     case 'recent':
-      for (final c in (result['commits'] as List? ?? [])) {
-        stdout.writeln('  ${_dim(c['hash'])} ${c['subject']}');
+      for (final c in (result['commits'] as List<dynamic>? ?? [])) {
+        final cm = c as Map<String, dynamic>;
+        stdout.writeln('  ${_dim(cm['hash'] as String)} ${cm['subject']}');
       }
       break;
     case 'dream':
       stdout.writeln(result['phrase'] ?? _dim('(no dream)'));
       break;
     case 'search':
-      for (final r in (result['results'] as List? ?? [])) {
-        stdout.writeln('  ${_pad(r['relevance'])} ${r['path']}');
+      for (final r in (result['results'] as List<dynamic>? ?? [])) {
+        final rm = r as Map<String, dynamic>;
+        stdout.writeln('  ${_pad(rm['relevance'])} ${rm['path']}');
       }
       break;
     case 'test-map':
-      for (final t in (result['tests'] as List? ?? [])) {
-        stdout.writeln('  ${_pad(t['coupling'])} ${t['path']}');
+      for (final t in (result['tests'] as List<dynamic>? ?? [])) {
+        final tm = t as Map<String, dynamic>;
+        stdout.writeln('  ${_pad(tm['coupling'])} ${tm['path']}');
       }
       break;
     case 'who-knows':
-      for (final e in (result['experts'] as List? ?? [])) {
+      for (final e in (result['experts'] as List<dynamic>? ?? [])) {
+        final em = e as Map<String, dynamic>;
         stdout.writeln(
-          '  ${(e['share'] * 100).round()}%  ${e['email']} ${_dim('(${e['commits']})')}',
+          '  ${((em['share'] as num) * 100).round()}%  ${em['email']} ${_dim('(${em['commits']})')}',
         );
       }
       break;
     case 'impact':
       stdout.writeln('Sources:');
-      for (final s in (result['sources'] as List? ?? [])) {
-        stdout.writeln('  ${_pad(s['weight'])} ${s['path']}');
+      for (final s in (result['sources'] as List<dynamic>? ?? [])) {
+        final sm = s as Map<String, dynamic>;
+        stdout.writeln('  ${_pad(sm['weight'])} ${sm['path']}');
       }
       stdout.writeln('Ripple:');
-      for (final r in (result['ripple'] as List? ?? [])) {
-        stdout.writeln('  φ${_pad(r['phi'])} ${r['path']}');
+      for (final r in (result['ripple'] as List<dynamic>? ?? [])) {
+        final rm = r as Map<String, dynamic>;
+        stdout.writeln('  φ${_pad(rm['phi'])} ${rm['path']}');
       }
       break;
     default:
@@ -365,14 +377,14 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
   }
 }
 
-void _printReview(Map result, int elapsedMs) {
-  final files = result['files'] as Map?;
+void _printReview(Map<String, dynamic> result, int elapsedMs) {
+  final files = result['files'] as Map<String, dynamic>?;
   final reviewed = files?['reviewed'] ?? '?';
   final total = files?['total'] ?? '?';
   final model = (result['model'] as String? ?? '?').split('/').last;
   final score = result['score'];
   final verdict = result['verdict'] ?? '';
-  final enrichment = result['enrichment'] as Map?;
+  final enrichment = result['enrichment'] as Map<String, dynamic>?;
   final coupling = enrichment?['coupling'] == true;
   final symbols = enrichment?['symbols'] == true;
   final inTok = result['inputTokens'] as int? ?? 0;
@@ -392,21 +404,22 @@ void _printReview(Map result, int elapsedMs) {
   stdout.writeln('');
 
   // Findings
-  final findings = result['findings'] as List? ?? [];
+  final findings = result['findings'] as List<dynamic>? ?? [];
   if (findings.isNotEmpty) {
     for (final f in findings) {
-      final sev = (f['severity'] as String?) ?? '';
+      final fm = f as Map<String, dynamic>;
+      final sev = (fm['severity'] as String?) ?? '';
       final marker = sev == 'warn' || sev == 'critical'
           ? _yellow('▲') : '△';
       final sevLabel = sev.isNotEmpty ? _dim(sev) : '';
-      stdout.writeln(' $marker ${_bold(f['title'])}  $sevLabel');
-      final loc = f['file'] as String?;
+      stdout.writeln(' $marker ${_bold(fm['title'] as String)}  $sevLabel');
+      final loc = fm['file'] as String?;
       if (loc != null) {
-        final hunk = f['hunk'] as String?;
+        final hunk = fm['hunk'] as String?;
         stdout.writeln('   ${_dim(hunk != null ? '$loc $hunk' : loc)}');
       }
-      stdout.writeln('   ${f['evidence']}');
-      final why = f['why'] as String?;
+      stdout.writeln('   ${fm['evidence']}');
+      final why = fm['why'] as String?;
       if (why != null && why.isNotEmpty) {
         stdout.writeln('   ${_dim('→ $why')}');
       }
@@ -415,11 +428,12 @@ void _printReview(Map result, int elapsedMs) {
   }
 
   // Observations — compact
-  final obs = result['observations'] as List? ?? [];
+  final obs = result['observations'] as List<dynamic>? ?? [];
   if (obs.isNotEmpty) {
     stdout.writeln(_dim(' ${obs.length} observation${obs.length == 1 ? '' : 's'}'));
     for (final o in obs) {
-      stdout.writeln(' ${_dim('·')} ${o['title']}');
+      final om = o as Map<String, dynamic>;
+      stdout.writeln(' ${_dim('·')} ${om['title']}');
     }
   }
 
@@ -428,16 +442,16 @@ void _printReview(Map result, int elapsedMs) {
   }
 }
 
-void _printMuse(Map result, int elapsedMs) {
-  final files = result['files'] as Map?;
+void _printMuse(Map<String, dynamic> result, int elapsedMs) {
+  final files = result['files'] as Map<String, dynamic>?;
   final reviewed = files?['reviewed'] ?? '?';
   final total = files?['total'] ?? '?';
   final model = (result['brainstormModel'] ?? result['model'] ?? '?')
       .toString().split('/').last;
-  final enrichment = result['enrichment'] as Map?;
+  final enrichment = result['enrichment'] as Map<String, dynamic>?;
   final coupling = enrichment?['coupling'] == true;
   final symbols = enrichment?['symbols'] == true;
-  final tokens = result['tokens'] as Map?;
+  final tokens = result['tokens'] as Map<String, dynamic>?;
   final totalIn = tokens?['totalIn'] as int? ?? 0;
   final totalOut = tokens?['totalOut'] as int? ?? 0;
 
@@ -453,20 +467,21 @@ void _printMuse(Map result, int elapsedMs) {
   stdout.writeln('');
 
   // Proposals grouped by tier
-  final proposals = result['proposals'] as List? ?? [];
+  final proposals = result['proposals'] as List<dynamic>? ?? [];
   String? lastTier;
   for (final p in proposals) {
-    if (p['tier'] != lastTier) {
-      lastTier = p['tier'] as String?;
+    final pm = p as Map<String, dynamic>;
+    if (pm['tier'] != lastTier) {
+      lastTier = pm['tier'] as String?;
       stdout.writeln(_dim(' ${(lastTier ?? 'unknown').toUpperCase()}'));
     }
-    stdout.writeln(' ${_bold('·')} ${_bold(p['title'])}');
-    stdout.writeln('   ${p['vision']}');
-    final foothold = p['foothold'] as String?;
+    stdout.writeln(' ${_bold('·')} ${_bold(pm['title'] as String)}');
+    stdout.writeln('   ${pm['vision']}');
+    final foothold = pm['foothold'] as String?;
     if (foothold != null && foothold.isNotEmpty) {
       stdout.writeln('   ${_dim('foothold:')} $foothold');
     }
-    final cites = (p['citations'] as List?)?.join(', ') ?? '';
+    final cites = (pm['citations'] as List<dynamic>?)?.join(', ') ?? '';
     if (cites.isNotEmpty) stdout.writeln('   ${_dim(cites)}');
     stdout.writeln('');
   }

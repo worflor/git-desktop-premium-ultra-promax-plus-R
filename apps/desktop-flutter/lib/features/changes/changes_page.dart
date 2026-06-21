@@ -5694,7 +5694,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
     await _refreshAndReadStatus();
-    if (mounted) _loadStashes(repo);
+    if (mounted) unawaited(_loadStashes(repo));
   }
 
   Future<void> _pickUpStash(String repo, int index) async {
@@ -5709,7 +5709,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _stashPeekIndex = null;
     });
     await _refreshAndReadStatus();
-    if (mounted) _loadStashes(repo);
+    if (mounted) unawaited(_loadStashes(repo));
   }
 
   Future<void> _tossStash(String repo, int index) async {
@@ -5725,7 +5725,7 @@ class _ChangesPageState extends State<ChangesPage> {
         _stashPeekIndex = null;
       }
     });
-    if (mounted) _loadStashes(repo);
+    if (mounted) unawaited(_loadStashes(repo));
   }
 
   Future<void> _peekStash(String repo, int index) async {
@@ -5909,7 +5909,9 @@ class _ChangesPageState extends State<ChangesPage> {
         final matrix = couplingState.matrixFor(repoPath);
         if (matrix != null) {
           // ignore: use_build_context_synchronously
-          context.read<LogosGitState>().loadForRepo(repoPath, coupling: matrix);
+          unawaited(context
+              .read<LogosGitState>()
+              .loadForRepo(repoPath, coupling: matrix));
           // Compute shapes for any stashes whose files loaded before the matrix.
           for (final idx in _stashFiles.keys) {
             if (!_stashShapes.containsKey(idx)) {
@@ -6018,8 +6020,9 @@ class _ChangesPageState extends State<ChangesPage> {
         if (oldRepo != null && textToSave.trim().isNotEmpty) {
           await _flushDraft(oldRepo, oldBranch, textToSave);
         }
-        _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true);
-        _loadStashes(repoPath);
+        unawaited(
+            _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true));
+        unawaited(_loadStashes(repoPath));
       });
     }
     if (statusError != null) {

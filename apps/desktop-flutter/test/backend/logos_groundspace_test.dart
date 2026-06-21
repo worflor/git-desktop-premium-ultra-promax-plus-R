@@ -101,7 +101,6 @@ void main() {
       // Build a vector that's orthogonal to the ground state: a
       // centered sine.
       final rho = Float64List(basis.n);
-      final mean = (basis.n - 1) / 2;
       for (var i = 0; i < basis.n; i++) {
         rho[i] = math.sin(2 * math.pi * i / basis.n);
         // The raw sine has mean ≈ 0 so already mostly excited. Ensure

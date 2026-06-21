@@ -58,7 +58,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _isTickerModeVisible = TickerMode.of(context);
+    _isTickerModeVisible = TickerMode.valuesOf(context).enabled;
     _hyperReactivity = context.read<HyperReactivity>();
 
     // Use a manual listener so only logoAnimatesWhenUnfocused changes (not all

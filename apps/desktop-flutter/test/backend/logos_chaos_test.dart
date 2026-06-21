@@ -16,16 +16,6 @@ CsrGraph _path(int n) {
   return CsrGraph.fromRawEdges(n: n, edgesPerNode: edges);
 }
 
-CsrGraph _cycle(int n) {
-  final edges = List<List<(int, double)>>.generate(n, (_) => []);
-  for (var i = 0; i < n; i++) {
-    final j = (i + 1) % n;
-    edges[i].add((j, 1.0));
-    edges[j].add((i, 1.0));
-  }
-  return CsrGraph.fromRawEdges(n: n, edgesPerNode: edges);
-}
-
 CsrGraph _er(int n, double p, int seed) {
   final rng = math.Random(seed);
   final edges = List<List<(int, double)>>.generate(n, (_) => []);

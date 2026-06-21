@@ -2275,6 +2275,8 @@ void main() {
       w.absorb(0.5, 1.0, 0.5, 8);
       expect(w.pAnomaly / w.pStructure, closeTo(r01, 0.05),
           reason: 'nearly-uniform absorption should roughly preserve ratios');
+      expect(w.pAnomaly / w.pCertainty, closeTo(r02, 0.05),
+          reason: 'nearly-uniform absorption should roughly preserve ratios');
     });
 
     test('WalkerDensity.withPrior(0) recovers simplex vertices', () {

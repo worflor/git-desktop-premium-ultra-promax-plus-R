@@ -1,6 +1,7 @@
 // Filament — execution-flow analysis on code graphs.
 // AR(2) oscillator + Born mixing, language-agnostic.
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -1396,7 +1397,7 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
       if (result != null && !usingExtraContext) _flowCache.put(key, result);
       return result;
     } finally {
-      _inFlight.remove(key);
+      unawaited(_inFlight.remove(key));
     }
   }();
 

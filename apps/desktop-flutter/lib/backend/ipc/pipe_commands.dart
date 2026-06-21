@@ -544,7 +544,7 @@ Future<Map<String, dynamic>> _recent(
     '--',
     ...neighborhood.take(30),
   ]);
-  if (r.exitCode != 0) return {'commits': []};
+  if (r.exitCode != 0) return {'commits': <Map<String, dynamic>>[]};
   final commits = <Map<String, dynamic>>[];
   for (final line in r.stdout.toString().split('\n')) {
     final parts = line.split('|');
@@ -573,7 +573,7 @@ Future<Map<String, dynamic>> _testMap(
       final engine = await _awaitEngine(repo, ctx);
       coupling = engine.stats.coupling;
     } catch (_) {
-      return {'tests': []};
+      return {'tests': <Map<String, dynamic>>[]};
     }
   }
 
@@ -683,7 +683,7 @@ Future<Map<String, dynamic>> _whoKnows(
   }
   final r = await runGitProbe(
       repo, ['log', '--follow', '--format=%ae', '-50', '--', file]);
-  if (r.exitCode != 0) return {'file': file, 'experts': []};
+  if (r.exitCode != 0) return {'file': file, 'experts': <Map<String, dynamic>>[]};
   final counts = <String, int>{};
   for (final line in r.stdout.toString().split('\n')) {
     final email = line.trim();
@@ -720,7 +720,7 @@ Future<Map<String, dynamic>> _search(
       .split(RegExp(r'[^a-z0-9]+'))
       .where((t) => t.length >= 2)
       .toSet();
-  if (keywords.isEmpty) return {'query': query, 'results': []};
+  if (keywords.isEmpty) return {'query': query, 'results': <Map<String, dynamic>>[]};
 
   // TF-IDF style: score each file by how many query tokens appear
   // in its path segments, weighted inversely by how common each
@@ -804,7 +804,7 @@ Future<Map<String, dynamic>> _impact(
   final probe = await buildDiffProbe(
       repoPath: repo, diffText: diffText, engine: engine);
   if (probe.sourceWeights.isEmpty) {
-    return {'sources': [], 'ripple': []};
+    return {'sources': <Map<String, dynamic>>[], 'ripple': <Map<String, dynamic>>[]};
   }
   final coupling = await _coupling(repo, ctx, engine);
   final scores = engine.diffuseWeighted(

@@ -346,7 +346,7 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     }
     final future = _gitRaw(workingDir, args);
     _inflightGitReads[key] = future;
-    future.whenComplete(() {
+    unawaited(future.whenComplete(() {
       // Only clear if this is still the live entry. A concurrent
       // race where another caller replaced the future would be a
       // bug in the caller, not this cache; defensive equality check
@@ -354,7 +354,7 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
       if (identical(_inflightGitReads[key], future)) {
         _inflightGitReads.remove(key);
       }
-    });
+    }));
     return future;
   }
   return _gitRaw(workingDir, args);

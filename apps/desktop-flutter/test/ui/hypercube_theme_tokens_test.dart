@@ -78,11 +78,11 @@ void main() {
 
     for (final entry in expected.entries) {
       final tokens = AppTokens.fromId(entry.key);
-      expect(tokens.hyperChromatic1.value, entry.value.chromatic1);
-      expect(tokens.hyperChromatic2.value, entry.value.chromatic2);
-      expect(tokens.hyperCore.value, entry.value.core);
-      expect(tokens.hypercubePositive.value, entry.value.positive);
-      expect(tokens.hypercubeNegative.value, entry.value.negative);
+      expect(tokens.hyperChromatic1.toARGB32(), entry.value.chromatic1);
+      expect(tokens.hyperChromatic2.toARGB32(), entry.value.chromatic2);
+      expect(tokens.hyperCore.toARGB32(), entry.value.core);
+      expect(tokens.hypercubePositive.toARGB32(), entry.value.positive);
+      expect(tokens.hypercubeNegative.toARGB32(), entry.value.negative);
     }
   });
 }

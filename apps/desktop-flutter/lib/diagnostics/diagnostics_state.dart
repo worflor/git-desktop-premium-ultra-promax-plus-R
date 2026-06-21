@@ -1639,7 +1639,7 @@ class DiagnosticsState extends ChangeNotifier {
   }
 
   void _enqueueBackgroundIo(Future<void> Function() action) {
-    _backgroundIo = _backgroundIo.then((_) => action()).catchError((error) {
+    _backgroundIo = _backgroundIo.then((_) => action()).catchError((Object error) {
       debugPrint('Diagnostics background IO failed: $error');
     });
   }

@@ -8760,7 +8760,7 @@ class _TelemetryTable extends StatelessWidget {
   }
 
   Widget _buildRow(
-    dynamic t, {
+    AppTokens t, {
     required List<String> cells,
     required bool isHeader,
     required int colCount,
@@ -8772,7 +8772,7 @@ class _TelemetryTable extends StatelessWidget {
     );
     return Container(
       color: tinted && !isHeader
-          ? (t.rowBg as Color).withValues(alpha: 0.10)
+          ? t.rowBg.withValues(alpha: 0.10)
           : null,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
@@ -12811,13 +12811,13 @@ class _ExternalToolsCard extends StatelessWidget {
   static List<Widget> _buildPresetShelves(
     BuildContext context,
     List<ExternalToolPreset> available,
-    dynamic t,
+    AppTokens t,
   ) {
     final grouped = <ExternalToolCategory, List<ExternalToolPreset>>{};
     for (final p in available) {
       (grouped[p.category] ??= []).add(p);
     }
-    final accent = (t.accentBright as Color).withValues(alpha: 0.40);
+    final accent = t.accentBright.withValues(alpha: 0.40);
     final shelves = <Widget>[];
     for (final cat in ExternalToolCategory.values) {
       final presets = grouped[cat];

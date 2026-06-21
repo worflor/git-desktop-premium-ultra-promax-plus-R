@@ -103,7 +103,7 @@ class HyperReactive extends StatelessWidget {
     final scale = 1 + drag * 0.02 + pull * 0.08;
     final transform = Matrix4.identity()
       ..setEntry(3, 2, 0.001)
-      ..translate(translateX, translateY, pull * 22 + drag * 4)
+      ..translateByDouble(translateX, translateY, pull * 22 + drag * 4, 1)
       ..scaleByDouble(scale, scale, 1, 1)
       ..rotateX(tiltX)
       ..rotateY(tiltY);

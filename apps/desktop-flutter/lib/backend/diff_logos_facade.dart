@@ -408,7 +408,7 @@ class DiffLogosSession extends ChangeNotifier {
       );
       rethrow;
     } finally {
-      _contextInflightByPath.remove(filePath);
+      unawaited(_contextInflightByPath.remove(filePath));
       if (!_disposed && !recordedTiming) {
         unawaited(
           _recordDiffLogosUiTiming(

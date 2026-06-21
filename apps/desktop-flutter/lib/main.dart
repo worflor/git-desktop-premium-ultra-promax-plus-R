@@ -123,7 +123,7 @@ void main() async {
   // diff prompt builder either finds them ready or waits on the same
   // load we kicked off here. Failure is silent — H_sym degrades to
   // pure Jaccard.
-  EngramRuntime.instance.assets();
+  unawaited(EngramRuntime.instance.assets());
 
   // Theme must resolve before runApp so the first paint has the
   // right colors/fonts. Everything else (recent repos, preferences,
@@ -206,7 +206,8 @@ void main() async {
   final mruRepo =
       repoState.recentPaths.isNotEmpty ? repoState.recentPaths.first : null;
   if (mruRepo != null) {
-    logos_resolver.resolveLogosGit(mruRepo).then((_) {}, onError: (_) {});
+    unawaited(
+        logos_resolver.resolveLogosGit(mruRepo).then((_) {}, onError: (_) {}));
   }
   final repoXrayState = RepositoryXrayState();
   final fileCouplingState = FileCouplingState();

@@ -1519,8 +1519,6 @@ void main() {
       // All-zero projection so every coefficient gets filled.
       final empty = SpectralProjection(
           basis: b, coefficients: Float64List(b.k));
-      final dreamed = empty.dreamFill(
-          priorVariance: 1.0, priorTemperature: 2.0, seed: 99);
       // Compute sample RMS per-mode (well, it's one sample, so this
       // is noisy, but we can check that the TOP mode is smaller in
       // magnitude than the BOTTOM on average over multiple seeds).
@@ -4421,14 +4419,14 @@ void main() {
         kVec[x] = basis.pathPropagator(x, y, t);
       }
       // -L · K(·, y, t): apply L_sym and negate.
-      final LK = Float64List(n);
-      g.applyLsym(kVec, LK);
+      final lk = Float64List(n);
+      g.applyLsym(kVec, lk);
       // Compare to finite difference in t.
       for (var x = 0; x < n; x++) {
         final fd = (basis.pathPropagator(x, y, t + dt) -
                     basis.pathPropagator(x, y, t - dt)) / (2 * dt);
-        expect(fd, closeTo(-LK[x], 1e-5),
-            reason: 'Kolmogorov at x=$x: fd=$fd vs -L_x K = ${-LK[x]}');
+        expect(fd, closeTo(-lk[x], 1e-5),
+            reason: 'Kolmogorov at x=$x: fd=$fd vs -L_x K = ${-lk[x]}');
       }
     });
   });

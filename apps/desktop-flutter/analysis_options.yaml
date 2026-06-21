@@ -26,7 +26,6 @@ analyzer:
     collection_methods_unrelated_type: error   # `<int>[].contains('a')`
     throw_in_finally: error                     # swallows the in-flight throw
     literal_only_boolean_expressions: error     # `if (true && x)` dead logic
-    body_might_complete_normally_catch_error: error
     cancel_subscriptions: error                 # StreamSubscription leak
     close_sinks: error                          # Sink/IOSink leak
     # no_adjacent_strings_in_list deliberately NOT here: measured 3 hits, all
@@ -47,6 +46,5 @@ linter:
     close_sinks: true
     throw_in_finally: true
     literal_only_boolean_expressions: true
-    body_might_complete_normally_catch_error: true
     # discarded_futures intentionally OMITTED — 268 hits here, almost all
     # intentional fire-and-forget; unawaited_futures is the high-signal subset.
