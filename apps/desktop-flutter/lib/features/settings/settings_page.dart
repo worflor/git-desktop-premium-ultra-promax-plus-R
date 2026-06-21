@@ -24,6 +24,7 @@ import '../../backend/logos_flow.dart' show analyzeFlowCached;
 import '../../backend/logos_git.dart';
 import '../../backend/release_check.dart';
 import '../../backend/settings_store.dart';
+import '../../app/alpha_math_state.dart';
 import '../../app/wick_state.dart';
 import '../../ui/context_menu.dart';
 import '../../backend/storage_paths.dart';
@@ -1302,6 +1303,19 @@ class _SettingsPageState extends State<SettingsPage>
                       .read<PreferencesState>()
                       .setFetchOnlineIssuesOnBranchLoad(value));
                 },
+              ),
+              const SizedBox(height: 16),
+              const _SettingsSubtitle('diff diff-ability'),
+              const SizedBox(height: 12),
+              _DiffDiffabilityStage(
+                mediaEnabled: preferences.diffMediaEnabled,
+                binaryEnabled: preferences.diffBinaryEnabled,
+                onToggleMedia: () => unawaited(context
+                    .read<PreferencesState>()
+                    .setDiffMediaEnabled(!preferences.diffMediaEnabled)),
+                onToggleBinary: () => unawaited(context
+                    .read<PreferencesState>()
+                    .setDiffBinaryEnabled(!preferences.diffBinaryEnabled)),
               ),
               const SizedBox(height: 16),
               _LogosDynamicsStage(
@@ -10194,6 +10208,146 @@ class _CheckboxRow extends StatelessWidget {
   }
 }
 
+/// The "diff diff-ability" pseudo-stage: a small frame mimicking the diff
+/// viewport, holding two content tiles — media and binary. A lit tile is
+/// shown in the real diff viewer; tapping ghosts it in place (dim + a
+/// "hidden" marker), previewing exactly what an omitted file looks like.
+/// Both lit by default — rendering is already fast.
+class _DiffDiffabilityStage extends StatelessWidget {
+  final bool mediaEnabled;
+  final bool binaryEnabled;
+  final VoidCallback onToggleMedia;
+  final VoidCallback onToggleBinary;
+
+  const _DiffDiffabilityStage({
+    required this.mediaEnabled,
+    required this.binaryEnabled,
+    required this.onToggleMedia,
+    required this.onToggleBinary,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final radius = context.surfaceShader.geometry.badgeRadius;
+    return Container(
+      decoration: BoxDecoration(
+        color: t.inputBg,
+        border: Border.all(color: t.inputBorder),
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'viewer',
+            style: TextStyle(
+              fontSize: 8,
+              fontFamily: AppFonts.mono,
+              letterSpacing: 0.8,
+              color: t.textFaint.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _DiffDiffabilityTile(
+            icon: Icons.image_outlined,
+            label: 'media',
+            enabled: mediaEnabled,
+            onTap: onToggleMedia,
+          ),
+          const SizedBox(height: 6),
+          _DiffDiffabilityTile(
+            icon: Icons.memory,
+            label: 'binary',
+            enabled: binaryEnabled,
+            onTap: onToggleBinary,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One content tile on the [_DiffDiffabilityStage]. Lit = shown in the
+/// real viewer; ghosted (dim + "hidden") = omitted. Tap toggles, snappy.
+class _DiffDiffabilityTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _DiffDiffabilityTile({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final duration = context.motion(AppMotion.snap);
+    final radius = context.surfaceShader.geometry.badgeRadius;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedOpacity(
+          duration: duration,
+          opacity: enabled ? 1.0 : 0.4,
+          child: AnimatedContainer(
+            duration: duration,
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: enabled
+                  ? t.accentBright.withValues(alpha: 0.10)
+                  : Colors.transparent,
+              border: Border.all(
+                color: enabled
+                    ? t.accentBright.withValues(alpha: 0.30)
+                    : t.inputBorder.withValues(alpha: 0.5),
+              ),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 13,
+                  color: enabled ? t.accentBright : t.textFaint,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: AppFonts.mono,
+                    color: t.textNormal,
+                  ),
+                ),
+                const Spacer(),
+                if (!enabled)
+                  Text(
+                    'hidden',
+                    style: TextStyle(
+                      fontSize: 8,
+                      fontFamily: AppFonts.mono,
+                      letterSpacing: 0.8,
+                      color: t.textFaint.withValues(alpha: 0.7),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Interactive "semi-stage" row — taller than a checkbox, shorter than
 /// a full control stage. Renders a small tick-stop slider on the right
 /// side with N labeled stops. The last stop's label is an inline
@@ -13312,6 +13466,11 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
     final live = wick.available;
     final statusColor = live ? t.stateAdded : t.textFaint;
     final hint = live ? 'wick · connected' : 'wick · path to executable';
+    // alpha-math is scaffolded but not yet a live engine, so `available`
+    // is always false today and this renders the blanked "coming soon"
+    // tease. When the engine ships and detect() flips available, the row
+    // auto-promotes its label, badge, and opacity.
+    final alphaMathLive = context.watch<AlphaMathState>().available;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -13405,6 +13564,54 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                 const Spacer(),
                 Text(
                   'planned',
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontFamily: AppFonts.mono,
+                    letterSpacing: 0.8,
+                    color: t.textFaint.withValues(alpha: 0.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Opacity(
+          opacity: alphaMathLive ? 1.0 : 0.3,
+          child: Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: t.chromeAccent.withValues(alpha: 0.08),
+              ),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 5,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: alphaMathLive ? t.stateAdded : t.textFaint,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  alphaMathLive
+                      ? 'alpha-math · connected'
+                      : 'alpha-math · coming soon',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    color: t.textFaint,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  alphaMathLive ? 'alpha' : 'planned',
                   style: TextStyle(
                     fontSize: 8,
                     fontFamily: AppFonts.mono,

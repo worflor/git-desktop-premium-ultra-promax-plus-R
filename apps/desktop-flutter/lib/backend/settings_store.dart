@@ -48,6 +48,13 @@ class AppSettingsSnapshot {
   /// refresh are automatically added to the commit selection. Off by
   /// default — historical behavior is purely subtractive reconciliation.
   final bool autoSelectNewChanges;
+  /// Diff diff-ability: when false, media files (images / video / audio)
+  /// are omitted from the diff viewer and shown as a compact hidden stub.
+  /// Default on — rendering is already fast and efficient.
+  final bool diffMediaEnabled;
+  /// Diff diff-ability: when false, opaque binary files are omitted from
+  /// the diff viewer and shown as a compact hidden stub. Default on.
+  final bool diffBinaryEnabled;
   /// When true, the branches page fires a background prefetch of PR /
   /// issue metadata on load. Off = pull on demand (when the user
   /// switches to that lens). Default on to preserve existing behavior.
@@ -109,6 +116,7 @@ class AppSettingsSnapshot {
   final List<ExternalTool> externalTools;
   final int changesPanelWidthPx;
   final String wickExePath;
+  final String alphaMathPath;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -131,6 +139,8 @@ class AppSettingsSnapshot {
     required this.stashCabinetDefaultExpanded,
     required this.instantBlameHover,
     required this.autoSelectNewChanges,
+    this.diffMediaEnabled = true,
+    this.diffBinaryEnabled = true,
     required this.fetchOnlineIssuesOnBranchLoad,
     required this.rememberWorkInProgress,
     required this.hideAiFeatures,
@@ -150,6 +160,7 @@ class AppSettingsSnapshot {
     required this.externalTools,
     required this.changesPanelWidthPx,
     this.wickExePath = '',
+    this.alphaMathPath = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -173,6 +184,8 @@ class AppSettingsSnapshot {
         'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
         'instantBlameHover': instantBlameHover,
         'autoSelectNewChanges': autoSelectNewChanges,
+        'diffMediaEnabled': diffMediaEnabled,
+        'diffBinaryEnabled': diffBinaryEnabled,
         'fetchOnlineIssuesOnBranchLoad': fetchOnlineIssuesOnBranchLoad,
         'rememberWorkInProgress': rememberWorkInProgress,
         'hideAiFeatures': hideAiFeatures,
@@ -192,6 +205,7 @@ class AppSettingsSnapshot {
         'externalTools': [for (final t in externalTools) t.toJson()],
         'changesPanelWidthPx': changesPanelWidthPx,
         'wickExePath': wickExePath,
+        'alphaMathPath': alphaMathPath,
       };
 
   factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
@@ -343,6 +357,14 @@ class AppSettingsSnapshot {
         json['autoSelectNewChanges'],
         defaults.autoSelectNewChanges,
       ),
+      diffMediaEnabled: SettingsStore._boolOr(
+        json['diffMediaEnabled'],
+        defaults.diffMediaEnabled,
+      ),
+      diffBinaryEnabled: SettingsStore._boolOr(
+        json['diffBinaryEnabled'],
+        defaults.diffBinaryEnabled,
+      ),
       fetchOnlineIssuesOnBranchLoad: SettingsStore._boolOr(
         json['fetchOnlineIssuesOnBranchLoad'],
         defaults.fetchOnlineIssuesOnBranchLoad,
@@ -418,6 +440,9 @@ class AppSettingsSnapshot {
         defaults.changesPanelWidthPx,
       ).clamp(220, 520),
       wickExePath: json['wickExePath'] as String? ?? '',
+      alphaMathPath: json['alphaMathPath'] is String
+          ? json['alphaMathPath'] as String
+          : '',
     );
   }
 
@@ -442,6 +467,8 @@ class AppSettingsSnapshot {
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
     bool? autoSelectNewChanges,
+    bool? diffMediaEnabled,
+    bool? diffBinaryEnabled,
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
     bool? hideAiFeatures,
@@ -461,6 +488,7 @@ class AppSettingsSnapshot {
     List<ExternalTool>? externalTools,
     int? changesPanelWidthPx,
     String? wickExePath,
+    String? alphaMathPath,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -491,6 +519,8 @@ class AppSettingsSnapshot {
       instantBlameHover: instantBlameHover ?? this.instantBlameHover,
       autoSelectNewChanges:
           autoSelectNewChanges ?? this.autoSelectNewChanges,
+      diffMediaEnabled: diffMediaEnabled ?? this.diffMediaEnabled,
+      diffBinaryEnabled: diffBinaryEnabled ?? this.diffBinaryEnabled,
       fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad ??
           this.fetchOnlineIssuesOnBranchLoad,
       rememberWorkInProgress:
@@ -515,6 +545,7 @@ class AppSettingsSnapshot {
       externalTools: externalTools ?? this.externalTools,
       changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
       wickExePath: wickExePath ?? this.wickExePath,
+      alphaMathPath: alphaMathPath ?? this.alphaMathPath,
     );
   }
 }

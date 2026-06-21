@@ -488,10 +488,25 @@ CouplingConstants calibrateCouplingConstants(
   List<String> paths,
   double Function(String a, String b) jaccardScore, {
   Iterable<MapEntry<String, double>> Function(String path)? jaccardEdges,
+  TransportRoles? Function(String path)? rolesOf,
 }) {
-  final roles = <String, TransportRoles>{};
-  for (final p in paths) {
-    roles[p] = TransportRoles.of(p);
+  // `buildFromStats` already materialises a `TransportRoles` per node
+  // (the same lowercase + seed-key + ten-pattern sweep) and indexes the
+  // node set. When it threads that lookup in via [rolesOf] we read roles
+  // back through it instead of re-running `TransportRoles.of` for every
+  // path a second time — that redundant rebuild was a large slice of
+  // this phase at scale. Classification is byte-for-byte unchanged:
+  // [rolesOf] returns the exact role object `TransportRoles.of(path)`
+  // would, so the buckets, sums, and CouplingConstants all match. When
+  // absent (standalone callers, tests) we build the map once as before.
+  final TransportRoles? Function(String) lookup;
+  if (rolesOf != null) {
+    lookup = rolesOf;
+  } else {
+    final built = <String, TransportRoles>{
+      for (final p in paths) p: TransportRoles.of(p),
+    };
+    lookup = (p) => built[p];
   }
 
   final sums = <String, double>{};
@@ -499,10 +514,10 @@ CouplingConstants calibrateCouplingConstants(
 
   if (jaccardEdges != null) {
     for (final a in paths) {
-      final ra = roles[a]!;
+      final ra = lookup(a)!;
       for (final entry in jaccardEdges(a)) {
         final b = entry.key;
-        final rb = roles[b];
+        final rb = lookup(b);
         if (rb == null) continue;
         final bucket = _classifyRolePair(ra, rb);
         if (bucket == null) continue;
@@ -515,10 +530,10 @@ CouplingConstants calibrateCouplingConstants(
   } else {
     for (var i = 0; i < paths.length; i++) {
       final a = paths[i];
-      final ra = roles[a]!;
+      final ra = lookup(a)!;
       for (var j = i + 1; j < paths.length; j++) {
         final b = paths[j];
-        final rb = roles[b]!;
+        final rb = lookup(b)!;
         final bucket = _classifyRolePair(ra, rb);
         if (bucket == null) continue;
         final score = jaccardScore(a, b);
@@ -587,172 +602,116 @@ double _laneStrength(double tSrc, double tCand, double totalCoupling) =>
 /// [TransportRoles] per unique path once, reuse here. The returned
 /// value is byte-identical to [logosTransportLane] called with the
 /// same raw strings.
+/// The transport-lane taxonomy — one tag per role-pair relationship. Both the
+/// strength-only fast path (hot scoreLoop) and the full witness object share
+/// THIS single classifier, so the two can never drift.
+enum _TransportLaneTag {
+  manifestLockfile, lockfileManifest,
+  sourceGenerated, generatedSource,
+  sourceTest, testSource,
+  sourceDoc, docSource,
+  sourceMigration, migrationSource,
+  fixtureSource, sourceFixture,
+  sourceCiConfig, ciConfigSource,
+}
+
+/// The lane cascade, computed ONCE. Byte-for-byte the same branch order and
+/// conditions as the original; only the per-branch payload moved into tables.
+_TransportLaneTag? _classifyTransportLane(TransportRoles src, TransportRoles cand) {
+  final sharesManifest = src._sharesManifestRoot(cand);
+  if (sharesManifest && src.isManifest && cand.isLockfile) return _TransportLaneTag.manifestLockfile;
+  if (sharesManifest && src.isLockfile && cand.isManifest) return _TransportLaneTag.lockfileManifest;
+  final sharesConcept = src._sharesTransportConcept(cand);
+  if (sharesConcept && src.isSource && cand.isGenerated) return _TransportLaneTag.sourceGenerated;
+  if (sharesConcept && src.isGenerated && cand.isSource) return _TransportLaneTag.generatedSource;
+  if (sharesConcept && !src.isTest && src.isSource && cand.isTest) return _TransportLaneTag.sourceTest;
+  if (sharesConcept && src.isTest && cand.isSource && !cand.isTest) return _TransportLaneTag.testSource;
+  if (sharesConcept && !src.isDoc && src.isSource && cand.isDoc) return _TransportLaneTag.sourceDoc;
+  if (sharesConcept && src.isDoc && cand.isSource && !cand.isDoc) return _TransportLaneTag.docSource;
+  if (sharesConcept && !src.isMigration && src.isSource && cand.isMigration) return _TransportLaneTag.sourceMigration;
+  if (sharesConcept && src.isMigration && cand.isSource && !cand.isMigration) return _TransportLaneTag.migrationSource;
+  if (src.isFixture && !cand.isFixture) return _TransportLaneTag.fixtureSource;
+  if (!src.isFixture && cand.isFixture) return _TransportLaneTag.sourceFixture;
+  if (src.isSource && cand.isCiConfig) return _TransportLaneTag.sourceCiConfig;
+  if (src.isCiConfig && cand.isSource) return _TransportLaneTag.ciConfigSource;
+  return null;
+}
+
+/// The CouplingConstants field each lane reads — the exact constant the
+/// original branch passed to [_laneStrength].
+double _laneCoupling(_TransportLaneTag tag, CouplingConstants cc) {
+  switch (tag) {
+    case _TransportLaneTag.manifestLockfile:
+    case _TransportLaneTag.lockfileManifest:
+      return cc.manifestLockfile;
+    case _TransportLaneTag.sourceGenerated:
+    case _TransportLaneTag.generatedSource:
+      return cc.sourceGenerated;
+    case _TransportLaneTag.sourceTest:
+    case _TransportLaneTag.testSource:
+      return cc.sourceTest;
+    case _TransportLaneTag.sourceDoc:
+    case _TransportLaneTag.docSource:
+      return cc.sourceDoc;
+    case _TransportLaneTag.sourceMigration:
+    case _TransportLaneTag.migrationSource:
+      return cc.sourceMigration;
+    case _TransportLaneTag.fixtureSource:
+    case _TransportLaneTag.sourceFixture:
+      return cc.fixture;
+    case _TransportLaneTag.sourceCiConfig:
+    case _TransportLaneTag.ciConfigSource:
+      return cc.ciConfig;
+  }
+}
+
+/// Display metadata per lane. ONLY the witness-object path reads this; the hot
+/// scoreLoop never touches it.
+const Map<_TransportLaneTag, ({String label, String note, String sourceRole, String targetRole})> _laneMeta = {
+  _TransportLaneTag.manifestLockfile: (label: 'manifest->lockfile', note: 'receive-heavy witness', sourceRole: 'manifest', targetRole: 'lockfile'),
+  _TransportLaneTag.lockfileManifest: (label: 'lockfile->manifest', note: 'receive-heavy witness', sourceRole: 'lockfile', targetRole: 'manifest'),
+  _TransportLaneTag.sourceGenerated: (label: 'source->generated', note: 'generated companion witness', sourceRole: 'source', targetRole: 'generated'),
+  _TransportLaneTag.generatedSource: (label: 'generated->source', note: 'source-of-truth witness', sourceRole: 'generated', targetRole: 'source'),
+  _TransportLaneTag.sourceTest: (label: 'source->test', note: 'test witness', sourceRole: 'source', targetRole: 'test'),
+  _TransportLaneTag.testSource: (label: 'test->source', note: 'behavior/source witness', sourceRole: 'test', targetRole: 'source'),
+  _TransportLaneTag.sourceDoc: (label: 'source->doc', note: 'documentation witness', sourceRole: 'source', targetRole: 'doc'),
+  _TransportLaneTag.docSource: (label: 'doc->source', note: 'behavior/source witness', sourceRole: 'doc', targetRole: 'source'),
+  _TransportLaneTag.sourceMigration: (label: 'source->migration', note: 'migration witness', sourceRole: 'source', targetRole: 'migration'),
+  _TransportLaneTag.migrationSource: (label: 'migration->source', note: 'source-of-truth witness', sourceRole: 'migration', targetRole: 'source'),
+  _TransportLaneTag.fixtureSource: (label: 'fixture->source', note: 'test witness', sourceRole: 'fixture', targetRole: 'source'),
+  _TransportLaneTag.sourceFixture: (label: 'source->fixture', note: 'fixture witness', sourceRole: 'source', targetRole: 'fixture'),
+  _TransportLaneTag.sourceCiConfig: (label: 'source->ci-config', note: 'CI configuration witness', sourceRole: 'source', targetRole: 'ci-config'),
+  _TransportLaneTag.ciConfigSource: (label: 'ci-config->source', note: 'CI-driven source witness', sourceRole: 'ci-config', targetRole: 'source'),
+};
+
+/// Strength-only transport lane — the hot-loop fast path. Returns the
+/// byte-identical `strength` of [logosTransportLaneOfRoles] WITHOUT allocating
+/// the witness object (the scoreLoop reads only `.strength`, fwd+rev per scored
+/// pair). 0.0 when no lane fires. Profiling (2026-06-19) put transport at
+/// 36–44% of scoreLoop with this object allocated and never read.
+double logosTransportLaneStrengthOfRoles(
+    TransportRoles src, TransportRoles cand,
+    [CouplingConstants cc = CouplingConstants.prior]) {
+  final tag = _classifyTransportLane(src, cand);
+  if (tag == null) return 0.0;
+  return _laneStrength(
+      _roleTransmissivity(src), _roleTransmissivity(cand), _laneCoupling(tag, cc));
+}
+
 LogosTransportLane? logosTransportLaneOfRoles(
     TransportRoles src, TransportRoles cand,
     [CouplingConstants cc = CouplingConstants.prior]) {
-  final sharesManifest = src._sharesManifestRoot(cand);
-  if (sharesManifest && src.isManifest && cand.isLockfile) {
-    return LogosTransportLane(
-      label: 'manifest->lockfile',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.manifestLockfile),
-      note: 'receive-heavy witness',
-      sourceRole: 'manifest',
-      targetRole: 'lockfile',
-    );
-  }
-  if (sharesManifest && src.isLockfile && cand.isManifest) {
-    return LogosTransportLane(
-      label: 'lockfile->manifest',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.manifestLockfile),
-      note: 'receive-heavy witness',
-      sourceRole: 'lockfile',
-      targetRole: 'manifest',
-    );
-  }
-  final sharesConcept = src._sharesTransportConcept(cand);
-  if (sharesConcept && src.isSource && cand.isGenerated) {
-    return LogosTransportLane(
-      label: 'source->generated',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceGenerated),
-      note: 'generated companion witness',
-      sourceRole: 'source',
-      targetRole: 'generated',
-    );
-  }
-  if (sharesConcept && src.isGenerated && cand.isSource) {
-    return LogosTransportLane(
-      label: 'generated->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceGenerated),
-      note: 'source-of-truth witness',
-      sourceRole: 'generated',
-      targetRole: 'source',
-    );
-  }
-  if (sharesConcept && !src.isTest && src.isSource && cand.isTest) {
-    return LogosTransportLane(
-      label: 'source->test',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceTest),
-      note: 'test witness',
-      sourceRole: 'source',
-      targetRole: 'test',
-    );
-  }
-  if (sharesConcept && src.isTest && cand.isSource && !cand.isTest) {
-    return LogosTransportLane(
-      label: 'test->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceTest),
-      note: 'behavior/source witness',
-      sourceRole: 'test',
-      targetRole: 'source',
-    );
-  }
-  if (sharesConcept && !src.isDoc && src.isSource && cand.isDoc) {
-    return LogosTransportLane(
-      label: 'source->doc',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceDoc),
-      note: 'documentation witness',
-      sourceRole: 'source',
-      targetRole: 'doc',
-    );
-  }
-  if (sharesConcept && src.isDoc && cand.isSource && !cand.isDoc) {
-    return LogosTransportLane(
-      label: 'doc->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceDoc),
-      note: 'behavior/source witness',
-      sourceRole: 'doc',
-      targetRole: 'source',
-    );
-  }
-  if (sharesConcept &&
-      !src.isMigration &&
-      src.isSource &&
-      cand.isMigration) {
-    return LogosTransportLane(
-      label: 'source->migration',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceMigration),
-      note: 'migration witness',
-      sourceRole: 'source',
-      targetRole: 'migration',
-    );
-  }
-  if (sharesConcept &&
-      src.isMigration &&
-      cand.isSource &&
-      !cand.isMigration) {
-    return LogosTransportLane(
-      label: 'migration->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.sourceMigration),
-      note: 'source-of-truth witness',
-      sourceRole: 'migration',
-      targetRole: 'source',
-    );
-  }
-  if (src.isFixture && !cand.isFixture) {
-    return LogosTransportLane(
-      label: 'fixture->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.fixture),
-      note: 'test witness',
-      sourceRole: 'fixture',
-      targetRole: 'source',
-    );
-  }
-  if (!src.isFixture && cand.isFixture) {
-    return LogosTransportLane(
-      label: 'source->fixture',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.fixture),
-      note: 'fixture witness',
-      sourceRole: 'source',
-      targetRole: 'fixture',
-    );
-  }
-  if (src.isSource && cand.isCiConfig) {
-    return LogosTransportLane(
-      label: 'source->ci-config',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.ciConfig),
-      note: 'CI configuration witness',
-      sourceRole: 'source',
-      targetRole: 'ci-config',
-    );
-  }
-  if (src.isCiConfig && cand.isSource) {
-    return LogosTransportLane(
-      label: 'ci-config->source',
-      strength: _laneStrength(
-          _roleTransmissivity(src), _roleTransmissivity(cand),
-          cc.ciConfig),
-      note: 'CI-driven source witness',
-      sourceRole: 'ci-config',
-      targetRole: 'source',
-    );
-  }
-  return null;
+  final tag = _classifyTransportLane(src, cand);
+  if (tag == null) return null;
+  final m = _laneMeta[tag]!;
+  return LogosTransportLane(
+    label: m.label,
+    strength: _laneStrength(
+        _roleTransmissivity(src), _roleTransmissivity(cand), _laneCoupling(tag, cc)),
+    note: m.note,
+    sourceRole: m.sourceRole,
+    targetRole: m.targetRole,
+  );
 }
 
 LogosTransportLane? logosTransportLane(String source, String candidate,

@@ -84,4 +84,58 @@ void main() {
       expect(snap.updateChannelExplicit, isFalse);
     });
   });
+
+  group('AppSettingsSnapshot — alphaMathPath', () {
+    test('missing key → defaults to empty (pre-field installs)', () {
+      final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});
+      expect(snap.alphaMathPath, '');
+    });
+
+    test('persisted value round-trips through toJson/fromJson', () {
+      final base = AppSettingsSnapshot.defaults()
+          .copyWith(alphaMathPath: r'C:\engines\alpha-math.exe');
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.alphaMathPath, r'C:\engines\alpha-math.exe');
+    });
+
+    test('copyWith leaves the path untouched when omitted', () {
+      final base =
+          AppSettingsSnapshot.defaults().copyWith(alphaMathPath: '/opt/am');
+      expect(base.copyWith(themeId: 'petrichor').alphaMathPath, '/opt/am');
+    });
+
+    test('non-string value → defaults to empty, no crash', () {
+      final snap = AppSettingsSnapshot.fromJson({'alphaMathPath': 42});
+      expect(snap.alphaMathPath, '');
+    });
+  });
+
+  group('AppSettingsSnapshot — diff diff-ability', () {
+    test('missing keys → both default to true (pre-field installs)', () {
+      final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});
+      expect(snap.diffMediaEnabled, isTrue);
+      expect(snap.diffBinaryEnabled, isTrue);
+    });
+
+    test('persisted false values round-trip through toJson/fromJson', () {
+      final base = AppSettingsSnapshot.defaults()
+          .copyWith(diffMediaEnabled: false, diffBinaryEnabled: false);
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.diffMediaEnabled, isFalse);
+      expect(reloaded.diffBinaryEnabled, isFalse);
+    });
+
+    test('the two flags are independent', () {
+      final base = AppSettingsSnapshot.defaults()
+          .copyWith(diffMediaEnabled: false);
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.diffMediaEnabled, isFalse);
+      expect(reloaded.diffBinaryEnabled, isTrue);
+    });
+
+    test('non-bool value → falls back to default true, no crash', () {
+      final snap = AppSettingsSnapshot.fromJson({'diffMediaEnabled': 'nope'});
+      expect(snap.diffMediaEnabled, isTrue);
+    });
+  });
 }

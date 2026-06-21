@@ -38,6 +38,8 @@ class PreferencesState extends ChangeNotifier {
   bool _stashCabinetDefaultExpanded = false;
   bool _instantBlameHover = false;
   bool _autoSelectNewChanges = false;
+  bool _diffMediaEnabled = true;
+  bool _diffBinaryEnabled = true;
   bool _fetchOnlineIssuesOnBranchLoad = true;
   bool _rememberWorkInProgress = true;
   bool _hideAiFeatures = false;
@@ -77,6 +79,8 @@ class PreferencesState extends ChangeNotifier {
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
   bool get autoSelectNewChanges => _autoSelectNewChanges;
+  bool get diffMediaEnabled => _diffMediaEnabled;
+  bool get diffBinaryEnabled => _diffBinaryEnabled;
   bool get fetchOnlineIssuesOnBranchLoad => _fetchOnlineIssuesOnBranchLoad;
   bool get rememberWorkInProgress => _rememberWorkInProgress;
   bool get hideAiFeatures => _hideAiFeatures;
@@ -123,6 +127,8 @@ class PreferencesState extends ChangeNotifier {
     _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
     _instantBlameHover = settings.instantBlameHover;
     _autoSelectNewChanges = settings.autoSelectNewChanges;
+    _diffMediaEnabled = settings.diffMediaEnabled;
+    _diffBinaryEnabled = settings.diffBinaryEnabled;
     _fetchOnlineIssuesOnBranchLoad = settings.fetchOnlineIssuesOnBranchLoad;
     _rememberWorkInProgress = settings.rememberWorkInProgress;
     _hideAiFeatures = settings.hideAiFeatures;
@@ -156,6 +162,8 @@ class PreferencesState extends ChangeNotifier {
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
     bool? autoSelectNewChanges,
+    bool? diffMediaEnabled,
+    bool? diffBinaryEnabled,
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
     bool? hideAiFeatures,
@@ -185,6 +193,8 @@ class PreferencesState extends ChangeNotifier {
         stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
         instantBlameHover: instantBlameHover,
         autoSelectNewChanges: autoSelectNewChanges,
+        diffMediaEnabled: diffMediaEnabled,
+        diffBinaryEnabled: diffBinaryEnabled,
         fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad,
         rememberWorkInProgress: rememberWorkInProgress,
         hideAiFeatures: hideAiFeatures,
@@ -278,6 +288,20 @@ class PreferencesState extends ChangeNotifier {
     if (_autoSelectNewChanges == value) return;
     _autoSelectNewChanges = value;
     await _persistWith(autoSelectNewChanges: value);
+    notifyListeners();
+  }
+
+  Future<void> setDiffMediaEnabled(bool value) async {
+    if (_diffMediaEnabled == value) return;
+    _diffMediaEnabled = value;
+    await _persistWith(diffMediaEnabled: value);
+    notifyListeners();
+  }
+
+  Future<void> setDiffBinaryEnabled(bool value) async {
+    if (_diffBinaryEnabled == value) return;
+    _diffBinaryEnabled = value;
+    await _persistWith(diffBinaryEnabled: value);
     notifyListeners();
   }
 

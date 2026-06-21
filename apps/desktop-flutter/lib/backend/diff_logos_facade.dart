@@ -2018,6 +2018,20 @@ bool _pathLooksLikeMirrorOf(String candidate, Set<String> primary) {
   return false;
 }
 
+// Hoisted once — compile-time-constant patterns. Building these per call (per
+// hunk × the snapshot pass AND each per-file-context pass) recompiled 9 regexes
+// on every diff analysis; module-level `final` compiles them once.
+final RegExp _reHunkTest = RegExp(r'\b(test|expect|assert|group|describe|it)\b');
+final RegExp _reHunkType = RegExp(r'\b(class|enum|extension|typedef|mixin|interface)\b');
+final RegExp _reHunkFlow = RegExp(r'\b(if|else|switch|case|for|while|try|catch|throw|return)\b');
+final RegExp _reHunkConstKw = RegExp(r'\b(const|final|static)\b');
+final RegExp _reHunkConstLit = RegExp("[\"']|\\b\\d+(?:\\.\\d+)?\\b");
+final RegExp _reHunkCall = RegExp(r'\b[A-Za-z_][A-Za-z0-9_<>,? ]+\(');
+final RegExp _reHunkAccess = RegExp(r'^\s*(public|private|protected)\b', multiLine: true);
+final RegExp _reHunkReturnType =
+    RegExp(r'^\s*(Future|Stream|void|int|double|String|bool)\b', multiLine: true);
+final RegExp _reHunkMechToken = RegExp(r'^[A-Za-z0-9_<>,?]+\s*[),;]?$');
+
 String? _classifyHunkTag(hunks.DiffHunk hunk) {
   final body = hunk.body.toLowerCase();
   final filePath = hunk.filePath.toLowerCase();
@@ -2044,29 +2058,22 @@ String? _classifyHunkTag(hunks.DiffHunk hunk) {
           line == ',' ||
           line == ';');
 
-  if (looksLikeTestPath(filePath) ||
-      RegExp(r'\b(test|expect|assert|group|describe|it)\b')
-          .hasMatch(changedBody)) {
+  if (looksLikeTestPath(filePath) || _reHunkTest.hasMatch(changedBody)) {
     categories.add('test');
   }
-  if (RegExp(r'\b(class|enum|extension|typedef|mixin|interface)\b')
-      .hasMatch(changedBody)) {
+  if (_reHunkType.hasMatch(changedBody)) {
     categories.add('type');
   }
-  if (RegExp(r'\b(if|else|switch|case|for|while|try|catch|throw|return)\b')
-      .hasMatch(changedBody)) {
+  if (_reHunkFlow.hasMatch(changedBody)) {
     categories.add('flow');
   }
-  if (RegExp(r'\b(const|final|static)\b').hasMatch(changedBody) &&
-      RegExp("[\"']|\\b\\d+(?:\\.\\d+)?\\b").hasMatch(changedBody)) {
+  if (_reHunkConstKw.hasMatch(changedBody) &&
+      _reHunkConstLit.hasMatch(changedBody)) {
     categories.add('const');
   }
-  if (RegExp(r'\b[A-Za-z_][A-Za-z0-9_<>,? ]+\(').hasMatch(changedBody) ||
-      RegExp(r'^\s*(public|private|protected)\b', multiLine: true)
-          .hasMatch(changedBody) ||
-      RegExp(r'^\s*(Future|Stream|void|int|double|String|bool)\b',
-              multiLine: true)
-          .hasMatch(changedBody)) {
+  if (_reHunkCall.hasMatch(changedBody) ||
+      _reHunkAccess.hasMatch(changedBody) ||
+      _reHunkReturnType.hasMatch(changedBody)) {
     categories.add('API');
   }
   if (importOnly ||
@@ -2078,7 +2085,7 @@ String? _classifyHunkTag(hunks.DiffHunk hunk) {
               line.startsWith('@') ||
               line == '{' ||
               line == '}' ||
-              RegExp(r'^[A-Za-z0-9_<>,?]+\s*[),;]?$').hasMatch(line)))) {
+              _reHunkMechToken.hasMatch(line)))) {
     categories.add('mechanical');
   }
 

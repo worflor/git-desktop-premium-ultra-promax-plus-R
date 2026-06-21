@@ -25,6 +25,7 @@ import 'app/hyper_reactivity.dart';
 import 'features/palette/palette_state.dart';
 import 'app/brand_lockup.dart';
 import 'app/settings_navigation_state.dart';
+import 'app/alpha_math_state.dart';
 import 'app/commit_mode_state.dart';
 import 'app/sidebar_org_state.dart';
 import 'app/sidebar_rail.dart';
@@ -181,6 +182,12 @@ void main() async {
   } else {
     unawaited(wickState.detectWick());
   }
+  // alpha-math: settings scaffold only — the engine isn't built yet, so we
+  // just restore the configured path. No auto-detect (nothing to probe).
+  final alphaMathState = AlphaMathState();
+  if (settings.alphaMathPath.isNotEmpty) {
+    alphaMathState.setCustomPath(settings.alphaMathPath);
+  }
 
   // Pre-warm the most-recently-used repo's LogosGit engine in the
   // background. Wick's index completion invalidates the Logos engine
@@ -286,6 +293,7 @@ void main() async {
             ChangeNotifierProvider.value(value: commitModeState),
             ChangeNotifierProvider.value(value: toolDetectionState),
             ChangeNotifierProvider.value(value: wickState),
+            ChangeNotifierProvider.value(value: alphaMathState),
             ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
             ChangeNotifierProvider.value(value: diagnosticsState),
             ChangeNotifierProvider.value(value: appIdentityState),

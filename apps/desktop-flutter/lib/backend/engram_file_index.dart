@@ -58,7 +58,7 @@ const int _kMaxFileBytes = 16 * 1024;
 /// generated assets — they either fail to decode as UTF-8 or contain
 /// no useful identifier signal. Membership in this set is the gate;
 /// extension comparison is case-insensitive at lookup.
-const Set<String> _kIndexableExtensions = {
+const Set<String> kIndexableExtensions = {
   '.dart', '.rs', '.py', '.ts', '.tsx', '.js', '.jsx', '.mjs',
   '.go', '.java', '.kt', '.kts', '.scala', '.swift', '.m', '.mm',
   '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.hxx',
@@ -72,6 +72,15 @@ const Set<String> _kIndexableExtensions = {
   '.vue', '.svelte', '.elm', '.ex', '.exs', '.erl', '.hrl',
   '.zig', '.nim', '.cr', '.d', '.hs', '.ml', '.clj', '.cljs',
 };
+
+/// Single source of truth for "should this repo-relative path be
+/// engram-indexed?". Both the encoder loop below and the resolver's
+/// pre-stat gate (`_buildEngramFileIndexFast`) route through this so the
+/// membership set and the extension-extraction rule can never drift
+/// apart. `p.extension` returns '' for dotfiles / extension-less names,
+/// which correctly fall outside the set.
+bool isEngramIndexablePath(String relPath) =>
+    kIndexableExtensions.contains(p.extension(relPath).toLowerCase());
 
 /// Tokeniser regex — matches identifier-shaped runs (letters, digits,
 /// underscores). Used to extract raw tokens from file content before
@@ -93,8 +102,7 @@ Map<String, HunkKVector> buildEngramFileIndex({
   final out = <String, HunkKVector>{};
 
   for (final relPath in paths) {
-    final ext = p.extension(relPath).toLowerCase();
-    if (!_kIndexableExtensions.contains(ext)) continue;
+    if (!isEngramIndexablePath(relPath)) continue;
 
     final absPath = p.join(repoPath, relPath);
     final f = File(absPath);

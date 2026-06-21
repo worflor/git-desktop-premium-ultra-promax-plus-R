@@ -154,6 +154,12 @@ Future<EngramFileKTable?> _buildEngramFileIndexFast({
   // total, parallelism-free. Worth it to skip a full read + encode
   // for files whose mtime+size haven't moved.
   for (final rel in repoRelPaths) {
+    // Skip non-indexable extensions BEFORE the stat syscall. The encoder
+    // (`buildEngramFileIndex`) drops exactly these via the same
+    // `isEngramIndexablePath` gate, so the encoded set — and therefore
+    // the EngramFileKTable and the persisted cache — is unchanged; we
+    // just avoid statSync on paths whose stat would be thrown away.
+    if (!isEngramIndexablePath(rel)) continue;
     try {
       final file = File(_join(repoPath, rel));
       final stat = file.statSync();
@@ -209,16 +215,26 @@ Future<EngramFileKTable?> _buildEngramFileIndexFast({
     ..addAll(hits)
     ..addAll(encoded);
 
-  // Persist the updated cache (fire-and-forget). We write the full
-  // cache including both prior hits and new misses so stale entries
-  // for files that moved out of the node set eventually get flushed
-  // when the user opens a different repo that causes a rewrite.
-  unawaited(_persistCache(
-    repoPath: repoPath,
-    pairs: pairs,
-    merged: merged,
-    freshMeta: freshMeta,
-  ));
+  // Persist the updated cache (fire-and-forget) — but only when the
+  // write would actually change the on-disk bytes. Two dirty triggers:
+  //  • new encodes (missPaths non-empty) → fresh K-vectors to store;
+  //  • a prune is due → the on-disk cache holds more entries than we got
+  //    hits for, i.e. stale paths (moved out of the node set, or no
+  //    longer stattable) that this write would flush.
+  // Every hit came FROM this cache with a matching (mtime, size), so
+  // with no misses AND equal counts the rewrite is a semantic no-op
+  // (same keys, same values). Skipping it then avoids a ~1–10 MB
+  // BytesBuilder + disk write that would otherwise contend with the
+  // foreground build during the warming window.
+  final cacheDirty = missPaths.isNotEmpty || cache.size != hits.length;
+  if (cacheDirty) {
+    unawaited(_persistCache(
+      repoPath: repoPath,
+      pairs: pairs,
+      merged: merged,
+      freshMeta: freshMeta,
+    ));
+  }
 
   if (merged.isEmpty) return null;
   return EngramFileKTable.fromMap(

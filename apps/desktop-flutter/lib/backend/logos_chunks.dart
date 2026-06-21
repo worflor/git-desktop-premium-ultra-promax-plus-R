@@ -338,7 +338,14 @@ CsrGraph _buildChunkGraph({
     rowB[a] = (rowB[a] ?? 0.0) + w;
   }
 
-  final symNumerator = <int, Map<int, int>>{};
+  // Flat single-map with a record key — the same shape logos_hunks.dart
+  // already uses (see its comment at the H_sym pass). The nested
+  // `Map<int, Map<int, int>>` allocated an inner map on every first-seen
+  // `lo`, firing thousands of small heap allocations per chunk-graph build
+  // inside the hottest token-bucket loop. One flat table keyed by `(lo, hi)`
+  // is O(1) per upsert with zero auxiliary allocations. Bit-identical: each
+  // canonical pair is counted once, so `addEdge` order is irrelevant.
+  final symNumerator = <(int, int), int>{};
   for (final bucket in tokenBuckets.values) {
     if (bucket.length < 2) continue;
     // No upper bucket cap: an identifier shared by many chunks lowers
@@ -350,21 +357,18 @@ CsrGraph _buildChunkGraph({
         final ib = bucket[b];
         final lo = ia < ib ? ia : ib;
         final hi = ia < ib ? ib : ia;
-        (symNumerator[lo] ??= <int, int>{})[hi] =
-            (symNumerator[lo]![hi] ?? 0) + 1;
+        final key = (lo, hi);
+        symNumerator[key] = (symNumerator[key] ?? 0) + 1;
       }
     }
   }
-  for (final outer in symNumerator.entries) {
-    final i = outer.key;
-    final iTokens = tokens[i].length;
-    for (final inner in outer.value.entries) {
-      final j = inner.key;
-      final overlap = inner.value;
-      final denom = iTokens + tokens[j].length - overlap;
-      if (denom <= 0) continue;
-      addEdge(i, j, wSym * overlap / denom);
-    }
+  for (final entry in symNumerator.entries) {
+    final i = entry.key.$1;
+    final j = entry.key.$2;
+    final overlap = entry.value;
+    final denom = tokens[i].length + tokens[j].length - overlap;
+    if (denom <= 0) continue;
+    addEdge(i, j, wSym * overlap / denom);
   }
 
   // Fused pass for proximity + struct-sibling. Grimoire circles XXI

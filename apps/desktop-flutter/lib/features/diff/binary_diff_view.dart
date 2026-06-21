@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../backend/blob_loader.dart';
+import '../../backend/magic_bytes.dart';
 import '../../ui/tokens.dart';
 import 'media_renderer.dart';
 
@@ -15,6 +16,12 @@ class BinaryDiffView extends StatefulWidget {
   final double? viewportWidth;
   final AppTokens tokens;
 
+  /// diff diff-ability gates. When the file's bucket is disabled its
+  /// content is omitted from the viewer and a compact hidden stub shows
+  /// instead. media bucket = image/video/audio; binary bucket = the rest.
+  final bool mediaEnabled;
+  final bool binaryEnabled;
+
   const BinaryDiffView({
     super.key,
     required this.repoPath,
@@ -23,6 +30,8 @@ class BinaryDiffView extends StatefulWidget {
     this.newBlobHash,
     this.viewportWidth,
     required this.tokens,
+    this.mediaEnabled = true,
+    this.binaryEnabled = true,
   });
 
   @override
@@ -198,6 +207,24 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
 
     final cls = (newBlob ?? oldBlob)!.contentClass.cls;
 
+    // diff diff-ability: omit the file's content when its bucket is
+    // disabled, showing a compact hidden stub in place. The blob is still
+    // probed (we need [cls] to know the bucket), but the expensive media
+    // decode / paint is skipped.
+    final isMediaBucket = cls == ContentClass.image ||
+        cls == ContentClass.video ||
+        cls == ContentClass.audio;
+    final bucketEnabled =
+        isMediaBucket ? widget.mediaEnabled : widget.binaryEnabled;
+    if (!bucketEnabled) {
+      return _OmittedDiffStub(
+        tokens: t,
+        filePath: widget.filePath,
+        kindLabel: isMediaBucket ? 'media' : 'binary',
+        icon: isMediaBucket ? Icons.image_outlined : Icons.memory,
+      );
+    }
+
     return MediaRendererRegistry.build(
       cls: cls,
       oldBlob: oldBlob,
@@ -205,6 +232,75 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
       state: effectiveState,
       tokens: t,
       viewportWidth: widget.viewportWidth,
+    );
+  }
+}
+
+/// Compact placeholder shown in place of an omitted media / binary file
+/// when its diff diff-ability bucket is disabled. Echoes the ghosted tile
+/// in the settings pseudo-stage: the file still appears, its content does
+/// not.
+class _OmittedDiffStub extends StatelessWidget {
+  final AppTokens tokens;
+  final String filePath;
+  final String kindLabel;
+  final IconData icon;
+
+  const _OmittedDiffStub({
+    required this.tokens,
+    required this.filePath,
+    required this.kindLabel,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final name = p.basename(filePath);
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, right: 16, top: 12, bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: t.surface0.withValues(alpha: 0.2),
+          border: Border.all(color: t.textFaint.withValues(alpha: 0.2)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: t.textFaint),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                name,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 12,
+                  fontFamily: 'JetBrains Mono',
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: t.textFaint.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(
+                '$kindLabel · hidden',
+                style: TextStyle(
+                  color: t.textFaint,
+                  fontSize: 10,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

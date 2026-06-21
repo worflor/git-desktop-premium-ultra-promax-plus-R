@@ -2600,12 +2600,21 @@ class LogosGit {
         : null;
 
     final shadow = stats.shadowCoupling;
+    // Reuse the `transportRoles` already built per node (just above),
+    // read back through `pathToId`, instead of letting calibration
+    // re-run `TransportRoles.of` for every path — same roles → same
+    // CouplingConstants, faster on this phase at scale (measured,
+    // bit-for-bit identical) with no throwaway map allocation.
     final couplingConstants = calibrateCouplingConstants(
       nodePaths,
       (a, b) => stats.coupling.jaccardScoreOf(a, b),
       jaccardEdges: shadow == null
           ? (p) => stats.coupling.jaccardEntriesOf(p)
           : (p) => _blendedJaccardEdges(stats.coupling, shadow, p),
+      rolesOf: (path) {
+        final id = pathToId[path];
+        return id == null ? null : transportRoles[id];
+      },
     );
     tick('coupling-calibration');
 
@@ -2791,9 +2800,9 @@ class LogosGit {
         if (probeActive) probeTransportCalls += 2;
         final rolesA = transportRoles[i];
         final rolesB = transportRoles[j];
-        final lane = logosTransportLaneOfRoles(rolesA, rolesB, couplingConstants);
-        if (lane != null && lane.strength > 0) {
-          final transportWeight = (lane.strength *
+        final laneStrength = logosTransportLaneStrengthOfRoles(rolesA, rolesB, couplingConstants);
+        if (laneStrength > 0) {
+          final transportWeight = (laneStrength *
                   math.max(integrityA, _kTransportIntegrityFloor) *
                   math.sqrt(integrityB))
               .clamp(0.0, 1.0)
@@ -2806,9 +2815,9 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA, couplingConstants);
-        if (reverseLane != null && reverseLane.strength > 0) {
-          final reverseWeight = (reverseLane.strength *
+        final reverseStrength = logosTransportLaneStrengthOfRoles(rolesB, rolesA, couplingConstants);
+        if (reverseStrength > 0) {
+          final reverseWeight = (reverseStrength *
                   math.max(integrityB, _kTransportIntegrityFloor) *
                   math.sqrt(integrityA))
               .clamp(0.0, 1.0)
@@ -2836,9 +2845,9 @@ class LogosGit {
         final integrityB = stats.integrityByPath[b] ?? 1.0;
         final rolesA = transportRoles[i];
         final rolesB = transportRoles[j];
-        final lane = logosTransportLaneOfRoles(rolesA, rolesB, couplingConstants);
-        if (lane != null && lane.strength > 0) {
-          final transportWeight = (lane.strength *
+        final laneStrength = logosTransportLaneStrengthOfRoles(rolesA, rolesB, couplingConstants);
+        if (laneStrength > 0) {
+          final transportWeight = (laneStrength *
                   math.max(integrityA, _kTransportIntegrityFloor) *
                   math.sqrt(integrityB))
               .clamp(0.0, 1.0)
@@ -2851,9 +2860,9 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA, couplingConstants);
-        if (reverseLane != null && reverseLane.strength > 0) {
-          final reverseWeight = (reverseLane.strength *
+        final reverseStrength = logosTransportLaneStrengthOfRoles(rolesB, rolesA, couplingConstants);
+        if (reverseStrength > 0) {
+          final reverseWeight = (reverseStrength *
                   math.max(integrityB, _kTransportIntegrityFloor) *
                   math.sqrt(integrityA))
               .clamp(0.0, 1.0)
@@ -5326,7 +5335,7 @@ class LogosGit {
   ) {
     for (final entry in focusRoles) {
       if (entry.path == path) continue;
-      if (logosTransportLaneOfRoles(entry.roles, candRoles, couplingConstants) != null) {
+      if (logosTransportLaneStrengthOfRoles(entry.roles, candRoles, couplingConstants) > 0) {
         return true;
       }
     }

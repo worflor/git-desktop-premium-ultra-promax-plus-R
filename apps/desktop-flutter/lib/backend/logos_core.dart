@@ -1729,6 +1729,25 @@ void _jacobiSymmetricEigen(Float64List A, int n, Float64List eigvecs) {
   }
 }
 
+/// Dense symmetric eigendecomposition of a row-major [matrix] of size
+/// [n]×[n]. Returns [values] (eigenvalues as they fall on the diagonal,
+/// unsorted) and [vectors] row-major with column j the j-th eigenvector
+/// (component i of eigenvector j at `vectors[i * n + j]`). Thin public
+/// wrapper over the in-house cyclic-Jacobi routine; intended for small
+/// dense symmetric matrices (n ≲ 128) such as the character-coupling
+/// metric the geometric tokenizer diagonalises. Does not mutate [matrix].
+({Float64List values, Float64List vectors}) denseSymmetricEigen(
+    Float64List matrix, int n) {
+  final a = Float64List.fromList(matrix);
+  final vectors = Float64List(n * n);
+  _jacobiSymmetricEigen(a, n, vectors);
+  final values = Float64List(n);
+  for (var i = 0; i < n; i++) {
+    values[i] = a[i * n + i];
+  }
+  return (values: values, vectors: vectors);
+}
+
 /// Result of [lanczosSmallEigenpairs] — the top-k SMALLEST eigenpairs
 /// of the normalised Laplacian, with eigenvectors row-major
 /// (`eigenvectors[j * n + i]` = entry i of eigenvector j) and

@@ -390,6 +390,8 @@ class _DiffShellState extends State<DiffShell> {
   bool _reduceMotion = false;
   double _motionRate = 1.0;
   bool _instantBlameHover = false;
+  bool _diffMediaEnabled = true;
+  bool _diffBinaryEnabled = true;
 
   static const Duration _kApplyDebounce = Duration(milliseconds: 250);
   static const Duration _kTrailScrubDebounce = Duration(milliseconds: 32);
@@ -2956,6 +2958,8 @@ class _DiffShellState extends State<DiffShell> {
     required double viewportWidth,
     required AppTokens t,
     required Widget Function(BuildContext, int) textRowBuilder,
+    required bool mediaEnabled,
+    required bool binaryEnabled,
   }) {
     return CustomScrollView(
       key: _listViewKey,
@@ -2980,6 +2984,8 @@ class _DiffShellState extends State<DiffShell> {
                   newBlobHash: seg.binaryFile!.newBlobHash,
                   viewportWidth: viewportWidth,
                   tokens: t,
+                  mediaEnabled: mediaEnabled,
+                  binaryEnabled: binaryEnabled,
                 ),
               ),
             )
@@ -3410,17 +3416,28 @@ class _DiffShellState extends State<DiffShell> {
     // commit voice, update channel, …) don't invalidate the entire
     // diff body. Dart records use structural equality, so the rebuild
     // fires only on a genuine value change.
-    final motionPrefs = context.select<PreferencesState,
-        ({bool reduceMotion, double motionRate, bool instantBlameHover})>(
+    final motionPrefs = context.select<
+        PreferencesState,
+        ({
+          bool reduceMotion,
+          double motionRate,
+          bool instantBlameHover,
+          bool diffMediaEnabled,
+          bool diffBinaryEnabled,
+        })>(
       (s) => (
         reduceMotion: s.reduceMotion,
         motionRate: s.motionRate,
         instantBlameHover: s.instantBlameHover,
+        diffMediaEnabled: s.diffMediaEnabled,
+        diffBinaryEnabled: s.diffBinaryEnabled,
       ),
     );
     _reduceMotion = motionPrefs.reduceMotion;
     _motionRate = motionPrefs.motionRate;
     _instantBlameHover = motionPrefs.instantBlameHover;
+    _diffMediaEnabled = motionPrefs.diffMediaEnabled;
+    _diffBinaryEnabled = motionPrefs.diffBinaryEnabled;
     final hasContent =
         (_effectiveDiffContent != null && _effectiveDiffContent!.isNotEmpty) ||
             _lines.isNotEmpty;
@@ -3639,6 +3656,8 @@ class _DiffShellState extends State<DiffShell> {
                                   displayLines: displayLines,
                                   viewportWidth: constraints.maxWidth,
                                   t: t,
+                                  mediaEnabled: _diffMediaEnabled,
+                                  binaryEnabled: _diffBinaryEnabled,
                                   textRowBuilder: (ctx, i) {
                                     final line = displayLines[i];
                                     final lineFile =
