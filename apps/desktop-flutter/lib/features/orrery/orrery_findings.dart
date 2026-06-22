@@ -23,7 +23,6 @@ enum OrreryFindingKind {
   regime,
   tangle,
   clarify,
-  identity,
   thrash, // a file reorganising back and forth — motion without progress
   reshuffle, // a quiet-looking commit that moved which files are central
   forecast, // where connectivity is heading — toward a split or a dense mass
