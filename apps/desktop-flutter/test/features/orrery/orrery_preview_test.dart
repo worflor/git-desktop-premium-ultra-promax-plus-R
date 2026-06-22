@@ -36,7 +36,10 @@ void main() {
       'reorg': 13,
       'head': model.headPosition,
     };
-    for (final themeId in <AppThemeId>[AppThemeId.petrichor, AppThemeId.aether]) {
+    for (final themeId in <AppThemeId>[
+      AppThemeId.petrichor,
+      AppThemeId.aether
+    ]) {
       final colors = OrreryColors.fromTokens(AppTokens.fromId(themeId));
       for (final entry in frames.entries) {
         await _renderPng(

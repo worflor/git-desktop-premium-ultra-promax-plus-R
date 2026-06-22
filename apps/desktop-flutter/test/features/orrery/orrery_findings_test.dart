@@ -85,12 +85,15 @@ void main() {
     }
 
     test('fires on a big internal motion spike with steady connectivity', () {
-      expect(_has(computeFindings(build()), OrreryFindingKind.reshuffle), isTrue);
+      expect(
+          _has(computeFindings(build()), OrreryFindingKind.reshuffle), isTrue);
     });
 
     test('stays silent on a flat history (no spike)', () {
-      expect(_has(computeFindings(build(kick: false)),
-          OrreryFindingKind.reshuffle), isFalse);
+      expect(
+          _has(
+              computeFindings(build(kick: false)), OrreryFindingKind.reshuffle),
+          isFalse);
     });
 
     test('defers to a regime change — that is the loud kind, not silent', () {
@@ -128,14 +131,16 @@ void main() {
     test('warns of a split when connectivity slides toward its low', () {
       final fs = computeFindings(fromGaps(ramp(0.9, 0.1)));
       expect(_has(fs, OrreryFindingKind.forecast), isTrue);
-      expect(fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
+      expect(
+          fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
           contains('splitting'));
     });
 
     test('warns of a monolith when connectivity climbs toward its peak', () {
       final fs = computeFindings(fromGaps(ramp(0.1, 0.9)));
       expect(_has(fs, OrreryFindingKind.forecast), isTrue);
-      expect(fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
+      expect(
+          fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
           contains('monolith'));
     });
 

@@ -8,6 +8,7 @@ import 'package:git_desktop/features/orrery/orrery_page.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
 import 'orrery_fixture.dart';
+import 'orrery_test_harness.dart';
 
 void main() {
   testWidgets('a drilled-in module shows a breadcrumb that collapses on tap',
@@ -19,15 +20,13 @@ void main() {
 
     final model = syntheticOrrery();
     // A real module label from the same partition the view will use.
-    final label =
-        OrreryModel.aggregateByModule(model).nodes.firstWhere((n) => n.isModule).path!;
+    final label = OrreryModel.aggregateByModule(model)
+        .nodes
+        .firstWhere((n) => n.isModule)
+        .path!;
 
-    final tokens = AppTokens.fromId(AppThemeId.aether);
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
+    await tester.pumpWidget(orreryTestApp(
+      theme: AppThemeId.aether,
       home: Scaffold(
         body: OrreryView(model: model, initialExpand: label),
       ),

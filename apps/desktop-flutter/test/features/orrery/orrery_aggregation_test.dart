@@ -77,8 +77,9 @@ void main() {
         for (int i = 0; i < 8; i++)
           ('docs/d$i.md', 0.05, const Offset(0.0, -0.4)),
       ];
-      final labels =
-          OrreryModel.aggregateByModule(_model(files)).nodes.map((n) => n.path!);
+      final labels = OrreryModel.aggregateByModule(_model(files))
+          .nodes
+          .map((n) => n.path!);
 
       // The dense backend subtree resolved into its parts...
       expect(labels.any((l) => l.startsWith('app/lib/backend/')), isTrue);
@@ -154,8 +155,7 @@ void main() {
       final collapsed = OrreryModel.aggregateByModule(files);
       expect(collapsed.nodes.every((n) => n.isModule), isTrue);
 
-      final aLabel =
-          collapsed.nodes.firstWhere((n) => n.memberCount == 3).path;
+      final aLabel = collapsed.nodes.firstWhere((n) => n.memberCount == 3).path;
       final expanded = OrreryModel.aggregateByModule(files, expand: aLabel);
 
       final fileNodes = expanded.nodes.where((n) => !n.isModule).toList();
@@ -176,7 +176,8 @@ void main() {
           ('a/b/c/f$i.dart', 0.4, const Offset(0.1, 0.1)),
         for (int i = 0; i < 50; i++)
           ('a/b/d/f$i.dart', 0.4, const Offset(0.2, 0.2)),
-        for (int i = 0; i < 20; i++) ('x/f$i.dart', 0.1, const Offset(0.0, 0.3)),
+        for (int i = 0; i < 20; i++)
+          ('x/f$i.dart', 0.1, const Offset(0.0, 0.3)),
       ];
       final a = OrreryModel.aggregateByModule(_model(files));
       final b = OrreryModel.aggregateByModule(_model(files));

@@ -216,8 +216,7 @@ class OrreryPainter extends CustomPainter {
       if (dist > 1.0) continue; // outside the disk — skip
       final double centrality = (1.0 - dist / _embedRadius).clamp(0.0, 1.0);
       final double speed = OrreryModel.sampleSpeed(node, head);
-      final double heat =
-          ((speed - _heatFloor) * _heatScale).clamp(0.0, 1.0);
+      final double heat = ((speed - _heatFloor) * _heatScale).clamp(0.0, 1.0);
 
       final Color base =
           Color.lerp(colors.nodeEdge, colors.nodeCore, centrality)!;

@@ -13,6 +13,7 @@ import 'package:git_desktop/features/orrery/orrery_page.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
 import 'orrery_fixture.dart';
+import 'orrery_test_harness.dart';
 
 Future<void> _capture(WidgetTester tester, GlobalKey key, String path) async {
   final boundary =
@@ -46,11 +47,8 @@ void main() {
     }) async {
       final tokens = AppTokens.fromId(themeId);
       final key = GlobalKey();
-      await tester.pumpWidget(MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-          AppThemeExtension(tokens),
-        ]),
+      await tester.pumpWidget(orreryTestApp(
+        theme: themeId,
         home: Scaffold(
           backgroundColor: tokens.bg0,
           body: RepaintBoundary(
@@ -66,7 +64,8 @@ void main() {
         ),
       ));
       await tester.pumpAndSettle(); // let the theme lerp finish
-      await _capture(tester, key, '.preview/orrery_page_${themeId.name}_$label.png');
+      await _capture(
+          tester, key, '.preview/orrery_page_${themeId.name}_$label.png');
     }
 
     for (final themeId in AppThemeId.values) {
@@ -79,6 +78,7 @@ void main() {
     await shoot(AppThemeId.petrichor, 'modules', null, lod: OrreryLod.modules);
     // Compare mode — static small-multiples at the regime boundaries.
     await shoot(AppThemeId.aether, 'compare', null, mode: OrreryMode.compare);
-    await shoot(AppThemeId.petrichor, 'compare', null, mode: OrreryMode.compare);
+    await shoot(AppThemeId.petrichor, 'compare', null,
+        mode: OrreryMode.compare);
   });
 }

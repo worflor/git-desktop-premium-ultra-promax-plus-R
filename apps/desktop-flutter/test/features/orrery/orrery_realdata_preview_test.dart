@@ -16,6 +16,8 @@ import 'package:git_desktop/features/orrery/orrery_painter.dart';
 import 'package:git_desktop/features/orrery/orrery_page.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
+import 'orrery_test_harness.dart';
+
 const _repo =
     'C:/Users/mini server/Documents/Projects/git-desktop-premium-ultra-promax-plus-R';
 
@@ -52,7 +54,8 @@ void main() {
 
     // Disk-only, straight to a picture (fast, no widget tree).
     await tester.runAsync(() async {
-      final colors = OrreryColors.fromTokens(AppTokens.fromId(AppThemeId.aether));
+      final colors =
+          OrreryColors.fromTokens(AppTokens.fromId(AppThemeId.aether));
       final recorder = ui.PictureRecorder();
       const size = Size(900, 900);
       final canvas = Canvas(recorder, Offset.zero & size);
@@ -75,7 +78,8 @@ void main() {
           'churn ${n.churn.toStringAsFixed(2)}');
     }
     await tester.runAsync(() async {
-      final colors = OrreryColors.fromTokens(AppTokens.fromId(AppThemeId.aether));
+      final colors =
+          OrreryColors.fromTokens(AppTokens.fromId(AppThemeId.aether));
       final recorder = ui.PictureRecorder();
       const size = Size(900, 900);
       final canvas = Canvas(recorder, Offset.zero & size);
@@ -95,11 +99,8 @@ void main() {
     }
     final key = GlobalKey();
     final tokens = AppTokens.fromId(AppThemeId.aether);
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
+    await tester.pumpWidget(orreryTestApp(
+      theme: AppThemeId.aether,
       home: Scaffold(
         backgroundColor: tokens.bg0,
         body: RepaintBoundary(
@@ -108,7 +109,8 @@ void main() {
             model: m,
             repoLabel: 'manifold',
             initialPinned: pinned,
-            initialLod: OrreryLod.files, // this shot tests file-level drill-down
+            initialLod:
+                OrreryLod.files, // this shot tests file-level drill-down
           ),
         ),
       ),
@@ -127,16 +129,14 @@ void main() {
         .first
         .path!;
     final xkey = GlobalKey();
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
+    await tester.pumpWidget(orreryTestApp(
+      theme: AppThemeId.aether,
       home: Scaffold(
         backgroundColor: tokens.bg0,
         body: RepaintBoundary(
           key: xkey,
-          child: OrreryView(model: m, repoLabel: 'manifold', initialExpand: biggest),
+          child: OrreryView(
+              model: m, repoLabel: 'manifold', initialExpand: biggest),
         ),
       ),
     ));
@@ -150,11 +150,8 @@ void main() {
 
     // The actual default first impression: module view, scrub, nothing pinned.
     final dkey = GlobalKey();
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
+    await tester.pumpWidget(orreryTestApp(
+      theme: AppThemeId.aether,
       home: Scaffold(
         backgroundColor: tokens.bg0,
         body: RepaintBoundary(
@@ -173,11 +170,8 @@ void main() {
 
     // Compare mode — static small-multiples at the regime boundaries.
     final ckey = GlobalKey();
-    await tester.pumpWidget(MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
+    await tester.pumpWidget(orreryTestApp(
+      theme: AppThemeId.aether,
       home: Scaffold(
         backgroundColor: tokens.bg0,
         body: RepaintBoundary(

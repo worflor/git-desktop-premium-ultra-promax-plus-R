@@ -45,7 +45,10 @@ void main() {
     final b = [5, 6, 7, 8, 9];
 
     final f0 = [..._clique(a), ..._clique(b)]; // two communities
-    final f1 = [..._clique(a), ..._clique([5, 6, 7, 8, 9, 10])]; // B grows
+    final f1 = [
+      ..._clique(a),
+      ..._clique([5, 6, 7, 8, 9, 10])
+    ]; // B grows
     final f2 = [
       ..._clique([0, 1, 2, 3]),
       ..._clique([4, 5, 6, 7, 8, 9, 10]), // node 4 defects A → B

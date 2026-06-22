@@ -1,8 +1,12 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../backend/spectral_trajectory_builder.dart';
+import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'orrery_findings.dart';
@@ -126,8 +130,8 @@ class _OrreryStatus extends StatelessWidget {
 /// where the current step sits within the repo's own range.
 class _Ranges {
   final double gapLo, gapHi, rigLo, rigHi, vnLo, vnHi;
-  const _Ranges(this.gapLo, this.gapHi, this.rigLo, this.rigHi, this.vnLo,
-      this.vnHi);
+  const _Ranges(
+      this.gapLo, this.gapHi, this.rigLo, this.rigHi, this.vnLo, this.vnHi);
 
   factory _Ranges.of(OrreryModel model) {
     double gl = double.infinity, gh = -double.infinity;
@@ -202,7 +206,8 @@ class _OrreryViewState extends State<OrreryView>
   late final AnimationController _play;
   final ValueNotifier<double> _head = ValueNotifier<double>(0);
   final ValueNotifier<int?> _hover = ValueNotifier<int?>(null);
-  final ValueNotifier<_HoverInfo?> _hoverInfo = ValueNotifier<_HoverInfo?>(null);
+  final ValueNotifier<_HoverInfo?> _hoverInfo =
+      ValueNotifier<_HoverInfo?>(null);
   final ValueNotifier<int?> _pinned = ValueNotifier<int?>(null);
   late final _Ranges _ranges;
   late final List<OrreryFinding> _findings;
@@ -261,8 +266,8 @@ class _OrreryViewState extends State<OrreryView>
       vsync: this,
       duration: const Duration(seconds: 9),
     );
-    _head.value =
-        (widget.initialHead ?? _maxHead).clamp(0.0, _maxHead); // open at present
+    _head.value = (widget.initialHead ?? _maxHead)
+        .clamp(0.0, _maxHead); // open at present
     _pinned.value = widget.initialPinned;
     _play.addListener(() {
       _head.value = _play.value * _maxHead;
@@ -292,7 +297,8 @@ class _OrreryViewState extends State<OrreryView>
       _head.value = _maxHead; // honour reduce-motion: jump, don't sweep
       return;
     }
-    final from = (_head.value >= _maxHead - 1e-3) ? 0.0 : _head.value / _maxHead;
+    final from =
+        (_head.value >= _maxHead - 1e-3) ? 0.0 : _head.value / _maxHead;
     _play.value = from;
     _play.duration = context.motionRead(const Duration(seconds: 9));
     _play.forward();
@@ -525,62 +531,105 @@ class _OrreryViewState extends State<OrreryView>
   Widget build(BuildContext context) {
     final t = context.tokens;
     final colors = OrreryColors.fromTokens(t);
-    return Column(
-      children: [
-        ValueListenableBuilder<double>(
-          valueListenable: _head,
-          builder: (_, head, __) => _OrreryHeader(
-            repoLabel: widget.repoLabel,
-            step: _stepAt(head),
-            index: head.round(),
-            total: widget.model.stepCount,
-            mode: _mode,
-            onMode: _setMode,
-            lod: _lod,
-            onLod: _setLod,
-            showLodToggle: _canAggregate,
-            onClose: widget.onClose,
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _handleKey,
+      child: Column(
+        children: [
+          ValueListenableBuilder<double>(
+            valueListenable: _head,
+            builder: (_, head, __) => _OrreryHeader(
+              repoLabel: widget.repoLabel,
+              step: _stepAt(head),
+              index: head.round(),
+              total: widget.model.stepCount,
+              mode: _mode,
+              onMode: _setMode,
+              lod: _lod,
+              onLod: _setLod,
+              showLodToggle: _canAggregate,
+              onClose: widget.onClose,
+            ),
           ),
-        ),
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _mode == OrreryMode.scrub
-                    ? _buildDisk(colors)
-                    : _buildCompare(colors),
-              ),
-              ValueListenableBuilder<double>(
-                valueListenable: _head,
-                builder: (_, head, __) => ValueListenableBuilder<int?>(
-                  valueListenable: _pinned,
-                  builder: (_, pinned, __) => _OrreryRail(
-                    model: widget.model,
-                    step: _stepAt(head),
-                    index: head.round(),
-                    ranges: _ranges,
-                    findings: _findings,
-                    onSelect: _select,
-                    selection: _selectionInfo(pinned, head),
-                    onClearSelection: () => _pinned.value = null,
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  // Animate the explore↔analyze swap so it reads as one surface
+                  // changing, not a hard cut. Motion honours the user's rate.
+                  child: AnimatedSwitcher(
+                    duration: context.motion(AppMotion.fade),
+                    child: _mode == OrreryMode.scrub
+                        ? KeyedSubtree(
+                            key: const ValueKey('scrub'),
+                            child: _buildDisk(colors))
+                        : KeyedSubtree(
+                            key: const ValueKey('compare'),
+                            child: _buildCompare(colors)),
                   ),
                 ),
-              ),
-            ],
+                ValueListenableBuilder<double>(
+                  valueListenable: _head,
+                  builder: (_, head, __) => ValueListenableBuilder<int?>(
+                    valueListenable: _pinned,
+                    builder: (_, pinned, __) => _OrreryRail(
+                      model: widget.model,
+                      step: _stepAt(head),
+                      index: head.round(),
+                      ranges: _ranges,
+                      findings: _findings,
+                      onSelect: _select,
+                      selection: _selectionInfo(pinned, head),
+                      onClearSelection: () => _pinned.value = null,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        // The compare grid is its own timeline, so the scrubber belongs to scrub.
-        if (_mode == OrreryMode.scrub)
-          _OrreryScrubber(
-            model: widget.model,
-            head: _head,
-            playing: _playing,
-            onTogglePlay: _togglePlay,
-            onScrub: _scrubTo,
-          ),
-      ],
+          // The compare grid is its own timeline, so the scrubber belongs to scrub.
+          if (_mode == OrreryMode.scrub)
+            _OrreryScrubber(
+              model: widget.model,
+              head: _head,
+              playing: _playing,
+              onTogglePlay: _togglePlay,
+              onScrub: _scrubTo,
+            ),
+        ],
+      ),
     );
+  }
+
+  /// Keyboard: Esc closes, ←/→ step the scrub, Space toggles play. Mirrors the
+  /// reflexes a desktop user brings to a timeline.
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape && widget.onClose != null) {
+      widget.onClose!();
+      return KeyEventResult.handled;
+    }
+    if (_mode == OrreryMode.scrub) {
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _scrubTo(
+            (_head.value.round() + 1).clamp(0, _maxHead.round()).toDouble());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _scrubTo(
+            (_head.value.round() - 1).clamp(0, _maxHead.round()).toDouble());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.space) {
+        _togglePlay();
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
   }
 
   /// Compare mode: static small-multiples of the structure at each milestone,
@@ -606,9 +655,18 @@ class _OrreryViewState extends State<OrreryView>
           child: LayoutBuilder(
             builder: (context, c) {
               final side = math.min(c.maxWidth, c.maxHeight);
-              return MouseRegion(
-                onHover: (e) => _updateHover(e.localPosition, side),
-                onExit: (_) => _clearHover(),
+              // Cursor turns to a pointer over a node (a file to pin, or a
+              // module to drill into), so the disk reads as interactive.
+              return ValueListenableBuilder<int?>(
+                valueListenable: _hover,
+                builder: (_, hoverId, child) => MouseRegion(
+                  cursor: hoverId != null
+                      ? SystemMouseCursors.click
+                      : MouseCursor.defer,
+                  onHover: (e) => _updateHover(e.localPosition, side),
+                  onExit: (_) => _clearHover(),
+                  child: child,
+                ),
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTapUp: (e) => _tapDisk(e.localPosition, side),
@@ -712,8 +770,7 @@ class _OrreryHeader extends StatelessWidget {
               )),
           const SizedBox(width: 10),
           if (repoLabel.isNotEmpty)
-            Text(repoLabel,
-                style: TextStyle(color: t.textFaint, fontSize: 12)),
+            Text(repoLabel, style: TextStyle(color: t.textFaint, fontSize: 12)),
           const SizedBox(width: 14),
           _SegToggle<OrreryMode>(
             value: mode,
@@ -741,8 +798,7 @@ class _OrreryHeader extends StatelessWidget {
                   color: t.textStrong,
                   fontSize: 12,
                   fontWeight: FontWeight.w600)),
-          Text(' / $total',
-              style: TextStyle(color: t.textFaint, fontSize: 12)),
+          Text(' / $total', style: TextStyle(color: t.textFaint, fontSize: 12)),
           const SizedBox(width: 12),
           Text(step.shortSha,
               style: TextStyle(
@@ -777,11 +833,10 @@ class _SegToggle<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Container(
-      height: 24,
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         color: t.surface1.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: AppRadii.smAll,
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.6)),
       ),
       child: Row(
@@ -793,28 +848,24 @@ class _SegToggle<T> extends StatelessWidget {
     );
   }
 
+  // Each segment is a house ChromeButton in mode-button chrome: it owns the
+  // active fill, the hover highlight, the click cursor, the per-theme tap
+  // feedback, and snap-tier motion — so the toggle matches every other control.
   Widget _seg(BuildContext context, String label, T v) {
     final t = context.tokens;
     final bool on = value == v;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return ChromeButton(
       onTap: () => onChanged(v),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 110),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 9),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: on ? t.itemActiveBg : Colors.transparent,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: on ? t.textStrong : t.textMuted,
-            fontSize: 11,
-            fontWeight: on ? FontWeight.w600 : FontWeight.w400,
-          ),
+      borderRadius: AppRadii.xsAll,
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      chromeBuilder: ({required bool hovered, required bool pressed}) =>
+          modeButtonChrome(t, hovered: hovered, pressed: pressed, active: on),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: on ? t.textStrong : t.textMuted,
+          fontSize: 11,
+          fontWeight: on ? FontWeight.w600 : FontWeight.w400,
         ),
       ),
     );
@@ -828,19 +879,26 @@ class _CloseChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return InkWell(
+    return ChromeButton(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.all(5),
-        child: Icon(Icons.close_rounded, size: 16, color: t.textMuted),
-      ),
+      borderRadius: AppRadii.smAll,
+      padding: const EdgeInsets.all(5),
+      chromeBuilder: ({required bool hovered, required bool pressed}) =>
+          ghostButtonChrome(t,
+              hovered: hovered,
+              pressed: pressed,
+              enabled: true,
+              baseBorderColor: Colors.transparent),
+      child:
+          Icon(Icons.close_rounded, size: AppIconSize.md, color: t.textMuted),
     );
   }
 }
 
 /// Shown while a module is drilled in: the focused module's name with a back
-/// chevron. Tapping it (or empty space) collapses back to the full map.
+/// chevron. Tapping it (or empty space) collapses back to the full map. Floats
+/// over the disk, so it keeps a resting fill for legibility and brightens on
+/// hover (with the house cursor + per-theme tap feedback via HoverableTap).
 class _ExpandBreadcrumb extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
@@ -849,23 +907,25 @@ class _ExpandBreadcrumb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return InkWell(
+    return HoverableTap(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(7),
-      child: Container(
+      borderRadius: AppRadii.smAll,
+      builder: (context, hovered) => Container(
         padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
         decoration: BoxDecoration(
-          color: t.surface1.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.7)),
+          color: t.surface1.withValues(alpha: hovered ? 0.88 : 0.7),
+          borderRadius: AppRadii.smAll,
+          border: Border.all(
+              color: t.chromeBorder.withValues(alpha: hovered ? 0.95 : 0.7)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.chevron_left_rounded, size: 16, color: t.textMuted),
+            Icon(Icons.chevron_left_rounded,
+                size: AppIconSize.md,
+                color: hovered ? t.textNormal : t.textMuted),
             const SizedBox(width: 2),
-            Text(label,
-                style: TextStyle(color: t.textNormal, fontSize: 11.5)),
+            Text(label, style: TextStyle(color: t.textNormal, fontSize: 11.5)),
           ],
         ),
       ),
@@ -1030,7 +1090,21 @@ class _OrreryRail extends StatelessWidget {
             color: t.textNormal,
           ),
           const SizedBox(height: 20),
-          const _RailLabel('FINDINGS'),
+          Row(
+            children: [
+              const _RailLabel('FINDINGS'),
+              if (findings.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Text('${findings.length}',
+                    style: TextStyle(
+                      color: t.textFaint,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    )),
+              ],
+            ],
+          ),
           const SizedBox(height: 8),
           Expanded(
             child: findings.isEmpty
@@ -1092,20 +1166,20 @@ class _FindingCard extends StatelessWidget {
       OrreryFindingKind.reshuffle => Icons.shuffle_rounded,
       OrreryFindingKind.forecast => Icons.trending_down_rounded,
     };
-    return InkWell(
+    return HoverableTap(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
+      borderRadius: AppRadii.baseAll,
+      builder: (context, hovered) => Container(
         padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
         decoration: BoxDecoration(
           color: active
               ? t.itemActiveBg.withValues(alpha: 0.55)
-              : t.surface1.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(8),
+              : t.surface1.withValues(alpha: hovered ? 0.6 : 0.4),
+          borderRadius: AppRadii.baseAll,
           border: Border.all(
             color: active
                 ? accent.withValues(alpha: 0.5)
-                : t.chromeBorder.withValues(alpha: 0.45),
+                : t.chromeBorder.withValues(alpha: hovered ? 0.8 : 0.45),
           ),
         ),
         child: Column(
@@ -1167,10 +1241,19 @@ class _SelectionCard extends StatelessWidget {
             children: [
               const _RailLabel('SELECTED'),
               const Spacer(),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              ChromeButton(
                 onTap: onClear,
-                child: Icon(Icons.close_rounded, size: 14, color: t.textMuted),
+                borderRadius: AppRadii.xsAll,
+                padding: const EdgeInsets.all(3),
+                chromeBuilder: (
+                        {required bool hovered, required bool pressed}) =>
+                    ghostButtonChrome(t,
+                        hovered: hovered,
+                        pressed: pressed,
+                        enabled: true,
+                        baseBorderColor: Colors.transparent),
+                child: Icon(Icons.close_rounded,
+                    size: AppIconSize.sm, color: t.textMuted),
               ),
             ],
           ),
@@ -1298,8 +1381,8 @@ class _OrreryCompare extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 12, 12, 14),
       child: LayoutBuilder(
         builder: (context, c) {
-          final cols =
-              math.min((c.maxWidth / 290).floor().clamp(1, 4), milestones.length);
+          final cols = math.min(
+              (c.maxWidth / 290).floor().clamp(1, 4), milestones.length);
           return GridView.count(
             crossAxisCount: cols,
             mainAxisSpacing: 14,
@@ -1342,18 +1425,20 @@ class _CompareCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return InkWell(
+    return HoverableTap(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Column(
+      borderRadius: AppRadii.baseAll,
+      builder: (context, hovered) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border:
-                    Border.all(color: t.chromeBorder.withValues(alpha: 0.5)),
+                borderRadius: AppRadii.baseAll,
+                color: hovered ? t.surface1.withValues(alpha: 0.25) : null,
+                border: Border.all(
+                    color:
+                        t.chromeBorder.withValues(alpha: hovered ? 0.85 : 0.5)),
               ),
               clipBehavior: Clip.antiAlias,
               child: CustomPaint(
@@ -1382,7 +1467,9 @@ class _CompareCard extends StatelessWidget {
                 child: Text(label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: t.textNormal, fontSize: 11.5)),
+                    style: TextStyle(
+                        color: hovered ? t.textStrong : t.textNormal,
+                        fontSize: 11.5)),
               ),
               const SizedBox(width: 6),
               Text(_fmtDate(stepData.date),
@@ -1443,22 +1530,27 @@ class _OrreryScrubber extends StatelessWidget {
                       onScrub((dx / w) * maxHead);
                     }
 
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) => handle(d.localPosition.dx),
-                      onHorizontalDragStart: (d) => handle(d.localPosition.dx),
-                      onHorizontalDragUpdate: (d) => handle(d.localPosition.dx),
-                      child: SizedBox(
-                        height: 44,
-                        child: ValueListenableBuilder<double>(
-                          valueListenable: head,
-                          builder: (_, h, __) => CustomPaint(
-                            painter: _ScrubberPainter(
-                              model: model,
-                              head: h,
-                              colors: colors,
+                    return MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: (d) => handle(d.localPosition.dx),
+                        onHorizontalDragStart: (d) =>
+                            handle(d.localPosition.dx),
+                        onHorizontalDragUpdate: (d) =>
+                            handle(d.localPosition.dx),
+                        child: SizedBox(
+                          height: 44,
+                          child: ValueListenableBuilder<double>(
+                            valueListenable: head,
+                            builder: (_, h, __) => CustomPaint(
+                              painter: _ScrubberPainter(
+                                model: model,
+                                head: h,
+                                colors: colors,
+                              ),
+                              size: Size.infinite,
                             ),
-                            size: Size.infinite,
                           ),
                         ),
                       ),
@@ -1495,21 +1587,23 @@ class _PlayButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return InkWell(
+    return HoverableTap(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
+      borderRadius: AppRadii.pillAll,
+      builder: (context, hovered) => Container(
         width: 34,
         height: 34,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: t.surface1.withValues(alpha: 0.6),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.7)),
+          color: t.surface1.withValues(alpha: hovered ? 0.85 : 0.6),
+          border: Border.all(
+              color: t.chromeBorder.withValues(alpha: hovered ? 0.95 : 0.7)),
         ),
         child: Icon(
           playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
           size: 19,
-          color: t.textNormal,
+          color: hovered ? t.textStrong : t.textNormal,
         ),
       ),
     );
@@ -1664,8 +1758,18 @@ String _shortPath(String path) {
 String _fmtDate(DateTime? d) {
   if (d == null) return '—';
   const m = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
   return '${m[d.month - 1]} ${d.day}, ${d.year}';
 }

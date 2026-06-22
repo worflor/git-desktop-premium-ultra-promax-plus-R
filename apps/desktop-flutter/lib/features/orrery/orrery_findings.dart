@@ -58,9 +58,30 @@ const Map<String, int> _archetypeOrder = <String, int>{
 // Extensions that aren't source — docs/config co-change with everything and
 // would dominate the "hub"/"drift" findings without being actionable code.
 const Set<String> _nonCodeExt = <String>{
-  'md', 'txt', 'json', 'yaml', 'yml', 'toml', 'lock', 'cfg', 'ini',
-  'properties', 'xml', 'csv', 'log', 'png', 'jpg', 'jpeg', 'gif', 'svg',
-  'ico', 'webp', 'ttf', 'otf', 'woff', 'woff2',
+  'md',
+  'txt',
+  'json',
+  'yaml',
+  'yml',
+  'toml',
+  'lock',
+  'cfg',
+  'ini',
+  'properties',
+  'xml',
+  'csv',
+  'log',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'svg',
+  'ico',
+  'webp',
+  'ttf',
+  'otf',
+  'woff',
+  'woff2',
 };
 
 bool _isCodeFile(String path) {
@@ -166,8 +187,7 @@ List<OrreryFinding> _thrashFinding(OrreryModel model) {
   for (final node in model.nodes) {
     final path = node.path;
     if (path == null || !_isCodeFile(path)) continue;
-    if (node.positions.length <= headStep ||
-        node.positions[headStep] == null) {
+    if (node.positions.length <= headStep || node.positions[headStep] == null) {
       continue; // must still exist at the present
     }
     Offset? first, prev;
@@ -241,7 +261,8 @@ List<OrreryFinding> _reshuffleFinding(OrreryModel model) {
   int best = -1;
   double bestMotion = 0;
   for (int s = (n * 0.2).ceil(); s < n; s++) {
-    final gapChange = (model.steps[s].gap - model.steps[s - 1].gap).abs() / gSpan;
+    final gapChange =
+        (model.steps[s].gap - model.steps[s - 1].gap).abs() / gSpan;
     if (model.steps[s].regimeChange) continue; // that's the *loud* kind
     if (motion[s] < 2.4 * median) continue; // a genuine internal spike
     if (gapChange > 0.18) continue; // overall shape held still
@@ -309,7 +330,8 @@ List<OrreryFinding> _positionFindings(OrreryModel model) {
       }
     }
     if (birthR == null) continue;
-    drifts.add((node: node, drift: node.positions[headStep]!.distance - birthR));
+    drifts
+        .add((node: node, drift: node.positions[headStep]!.distance - birthR));
   }
   drifts.sort((a, b) => b.drift.abs().compareTo(a.drift.abs()));
   var emitted = 0;

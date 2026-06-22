@@ -9,7 +9,8 @@ import 'package:git_desktop/features/orrery/orrery_model.dart';
 
 double _easeInOut(double x) => x * x * (3 - 2 * x);
 
-OrreryModel syntheticOrrery({int steps = 26, int nodeCount = 220, int seed = 7}) {
+OrreryModel syntheticOrrery(
+    {int steps = 26, int nodeCount = 220, int seed = 7}) {
   final rng = math.Random(seed);
   const clusterAngles = <double>[0.7, 2.85, 4.95];
   final cluster = List<int>.generate(nodeCount, (i) => i % 3);
@@ -20,12 +21,15 @@ OrreryModel syntheticOrrery({int steps = 26, int nodeCount = 220, int seed = 7})
   // leaves fan out more than hubs, so the core stays tight and the rim feathers.
   final spread = List<double>.generate(
       nodeCount, (i) => (rng.nextDouble() - 0.5) * (0.4 + 0.95 * depth[i]));
-  final phase = List<double>.generate(nodeCount, (_) => rng.nextDouble() * math.pi * 2);
-  final wobble = List<double>.generate(nodeCount, (_) => 0.025 + rng.nextDouble() * 0.06);
+  final phase =
+      List<double>.generate(nodeCount, (_) => rng.nextDouble() * math.pi * 2);
+  final wobble =
+      List<double>.generate(nodeCount, (_) => 0.025 + rng.nextDouble() * 0.06);
   const reorgAt = 13;
-  final switched = List<bool>.generate(nodeCount, (_) => rng.nextDouble() < 0.16);
-  final newCluster =
-      List<int>.generate(nodeCount, (i) => (cluster[i] + 1 + rng.nextInt(2)) % 3);
+  final switched =
+      List<bool>.generate(nodeCount, (_) => rng.nextDouble() < 0.16);
+  final newCluster = List<int>.generate(
+      nodeCount, (i) => (cluster[i] + 1 + rng.nextInt(2)) % 3);
 
   final positions = List.generate(nodeCount, (_) => <Offset?>[]);
   for (int s = 0; s < steps; s++) {
@@ -63,7 +67,8 @@ OrreryModel syntheticOrrery({int steps = 26, int nodeCount = 220, int seed = 7})
       archetype: p < 0.42 ? 'tree' : (p < 0.82 ? 'modular' : 'goe'),
       canonicality: 0.5 + 0.32 * math.sin(p * math.pi),
       regimeChange: s == reorgAt,
-      archetypeShift: s == (steps * 0.42).round() || s == (steps * 0.82).round(),
+      archetypeShift:
+          s == (steps * 0.42).round() || s == (steps * 0.82).round(),
     ));
   }
   // Plausible directory paths so the fixture exercises module aggregation and

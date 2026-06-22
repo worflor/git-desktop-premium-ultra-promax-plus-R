@@ -8,6 +8,8 @@ import 'package:git_desktop/features/orrery/orrery_model.dart';
 import 'package:git_desktop/features/orrery/orrery_page.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
+import 'orrery_test_harness.dart';
+
 OrreryModel _model(List<(String, double, List<Offset?>)> files) {
   final steps = files.first.$3.length;
   return OrreryModel(
@@ -41,12 +43,8 @@ Future<void> _pump(WidgetTester tester, OrreryModel model, int pinned) async {
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final tokens = AppTokens.fromId(AppThemeId.aether);
-  await tester.pumpWidget(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-      AppThemeExtension(tokens),
-    ]),
+  await tester.pumpWidget(orreryTestApp(
+    theme: AppThemeId.aether,
     home: Scaffold(
       body: OrreryView(model: model, initialPinned: pinned),
     ),
@@ -58,11 +56,11 @@ void main() {
   testWidgets('a core file reads as structurally central', (tester) async {
     final model = _model([
       ('lib/core.dart', 0.9, const [Offset.zero, Offset.zero, Offset.zero]),
-      ('lib/leaf.dart', 0.1, const [
-        Offset(0.85, 0),
-        Offset(0.85, 0),
-        Offset(0.85, 0)
-      ]),
+      (
+        'lib/leaf.dart',
+        0.1,
+        const [Offset(0.85, 0), Offset(0.85, 0), Offset(0.85, 0)]
+      ),
     ]);
     await _pump(tester, model, 0);
     // 'Structurally central' is unique to the selection card; the path itself
@@ -74,11 +72,11 @@ void main() {
   testWidgets('a rim file reads as peripheral', (tester) async {
     final model = _model([
       ('lib/core.dart', 0.9, const [Offset.zero, Offset.zero, Offset.zero]),
-      ('lib/leaf.dart', 0.1, const [
-        Offset(0.85, 0),
-        Offset(0.85, 0),
-        Offset(0.85, 0)
-      ]),
+      (
+        'lib/leaf.dart',
+        0.1,
+        const [Offset(0.85, 0), Offset(0.85, 0), Offset(0.85, 0)]
+      ),
     ]);
     await _pump(tester, model, 1);
     expect(find.textContaining('Peripheral'), findsOneWidget);
@@ -87,11 +85,15 @@ void main() {
   testWidgets('a file that moved core→rim is called out as decoupling',
       (tester) async {
     final model = _model([
-      ('lib/drifter.dart', 0.5, const [
-        Offset(0.05, 0), // born central
-        Offset(0.5, 0),
-        Offset(0.88, 0), // ends peripheral
-      ]),
+      (
+        'lib/drifter.dart',
+        0.5,
+        const [
+          Offset(0.05, 0), // born central
+          Offset(0.5, 0),
+          Offset(0.88, 0), // ends peripheral
+        ]
+      ),
     ]);
     await _pump(tester, model, 0);
     expect(find.textContaining('decoupling'), findsOneWidget);

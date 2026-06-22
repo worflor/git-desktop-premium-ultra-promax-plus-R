@@ -245,7 +245,8 @@ class OrreryModel {
         id: nodes.length,
         path: b.label,
         positions: positions,
-        churn: denom > 0 ? (math.log(1 + agg[mi]) / denom).clamp(0.0, 1.0) : 0.0,
+        churn:
+            denom > 0 ? (math.log(1 + agg[mi]) / denom).clamp(0.0, 1.0) : 0.0,
         memberCount: members.length,
         isModule: true,
       ));
@@ -357,7 +358,8 @@ class OrreryModel {
         uaseFrames.length == pts.length) {
       // Shared-basis positions: stable by construction, so no alignment or
       // smoothing (those would only blur real motion).
-      nodes = _nodesFromUase(uaseFrames, traj.uaseDims, pts.length, paths, churn);
+      nodes =
+          _nodesFromUase(uaseFrames, traj.uaseDims, pts.length, paths, churn);
     } else {
       final byNode = <List<Offset?>>[
         for (int id = 0; id < maxN; id++)
