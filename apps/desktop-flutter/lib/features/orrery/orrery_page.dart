@@ -416,6 +416,60 @@ class _OrreryViewState extends State<OrreryView>
     _hoverInfo.value = null;
   }
 
+  /// The pinned node's path + a plain-language account of *why it sits where it
+  /// sits* — coupling-central vs peripheral, and which way it has drifted. No
+  /// eigen-anything reaches the surface; this is the answer to "why is this
+  /// file here?". Null when nothing is pinned / the pin is off-model.
+  ({String path, String story})? _selectionInfo(int? pinned, double head) {
+    if (pinned == null) return null;
+    final nodes = _activeModel.nodes;
+    if (pinned < 0 || pinned >= nodes.length) return null;
+    final node = nodes[pinned];
+    return (
+      path: node.path ?? 'node #${node.id}',
+      story: _positionStory(node, head),
+    );
+  }
+
+  String _positionStory(OrreryNode node, double head) {
+    final pos = OrreryModel.sampleNode(node, head);
+    if (pos == null) return 'Not present at this point in history.';
+    final double r = pos.distance.clamp(0.0, 1.0);
+
+    double? birthR;
+    for (final p in node.positions) {
+      if (p != null) {
+        birthR = p.distance.clamp(0.0, 1.0);
+        break;
+      }
+    }
+
+    final String role, coupling;
+    if (r < 0.45) {
+      role = 'Structurally central';
+      coupling = 'co-changes with much of the system — high blast-radius';
+    } else if (r > 0.72) {
+      role = 'Peripheral';
+      coupling = 'loosely coupled, mostly changes on its own';
+    } else {
+      role = 'Mid-structure';
+      coupling = 'moderately coupled to the rest of the system';
+    }
+
+    String drift = '';
+    if (birthR != null) {
+      final d = r - birthR;
+      if (d > 0.15) {
+        drift = ' Drifted outward over its history — decoupling.';
+      } else if (d < -0.15) {
+        drift = ' Moved inward over its history — integrating.';
+      } else {
+        drift = ' Held its position through history.';
+      }
+    }
+    return '$role — $coupling.$drift';
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -448,13 +502,18 @@ class _OrreryViewState extends State<OrreryView>
               ),
               ValueListenableBuilder<double>(
                 valueListenable: _head,
-                builder: (_, head, __) => _OrreryRail(
-                  model: widget.model,
-                  step: _stepAt(head),
-                  index: head.round(),
-                  ranges: _ranges,
-                  findings: _findings,
-                  onSelect: _select,
+                builder: (_, head, __) => ValueListenableBuilder<int?>(
+                  valueListenable: _pinned,
+                  builder: (_, pinned, __) => _OrreryRail(
+                    model: widget.model,
+                    step: _stepAt(head),
+                    index: head.round(),
+                    ranges: _ranges,
+                    findings: _findings,
+                    onSelect: _select,
+                    selection: _selectionInfo(pinned, head),
+                    onClearSelection: () => _pinned.value = null,
+                  ),
                 ),
               ),
             ],
@@ -518,6 +577,11 @@ class _OrreryViewState extends State<OrreryView>
                             size: Size.infinite,
                           ),
                         ),
+                      ),
+                      const Positioned(
+                        left: 10,
+                        bottom: 8,
+                        child: _DiskLegend(),
                       ),
                       ValueListenableBuilder<_HoverInfo?>(
                         valueListenable: _hoverInfo,
@@ -715,6 +779,49 @@ class _CloseChip extends StatelessWidget {
   }
 }
 
+/// A whisper-faint key for the radial axis: centre = coupling-central, edge =
+/// peripheral. The only persistent annotation on the disk — the rest of the
+/// "why is it here" answer is on-demand in the selection card.
+class _DiskLegend extends StatelessWidget {
+  const _DiskLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    Widget row({required bool filled, required String label}) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: filled
+                    ? t.hyperCore.withValues(alpha: 0.85)
+                    : Colors.transparent,
+                border: filled
+                    ? null
+                    : Border.all(color: t.textFaint.withValues(alpha: 0.7)),
+              ),
+            ),
+            const SizedBox(width: 7),
+            Text(label, style: TextStyle(color: t.textFaint, fontSize: 10)),
+          ],
+        );
+    return IgnorePointer(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          row(filled: true, label: 'central'),
+          const SizedBox(height: 5),
+          row(filled: false, label: 'peripheral'),
+        ],
+      ),
+    );
+  }
+}
+
 class _NodeTooltip extends StatelessWidget {
   final String label;
   const _NodeTooltip({required this.label});
@@ -753,6 +860,8 @@ class _OrreryRail extends StatelessWidget {
   final _Ranges ranges;
   final List<OrreryFinding> findings;
   final void Function(int step, int? nodeId) onSelect;
+  final ({String path, String story})? selection;
+  final VoidCallback onClearSelection;
   const _OrreryRail({
     required this.model,
     required this.step,
@@ -760,6 +869,8 @@ class _OrreryRail extends StatelessWidget {
     required this.ranges,
     required this.findings,
     required this.onSelect,
+    required this.selection,
+    required this.onClearSelection,
   });
 
   @override
@@ -776,6 +887,14 @@ class _OrreryRail extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (selection != null) ...[
+            _SelectionCard(
+              path: selection!.path,
+              story: selection!.story,
+              onClear: onClearSelection,
+            ),
+            const SizedBox(height: 20),
+          ],
           const _RailLabel('STRUCTURE'),
           const SizedBox(height: 7),
           Text(
@@ -915,6 +1034,66 @@ class _FindingCard extends StatelessWidget {
                 )),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The inspector for a pinned file/module: its name and a plain-language
+/// account of where it sits and how it has drifted (P1 #9 — "why is it here?").
+class _SelectionCard extends StatelessWidget {
+  final String path;
+  final String story;
+  final VoidCallback onClear;
+  const _SelectionCard({
+    required this.path,
+    required this.story,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(11, 9, 9, 11),
+      decoration: BoxDecoration(
+        color: t.itemActiveBg.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: t.accentBright.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const _RailLabel('SELECTED'),
+              const Spacer(),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onClear,
+                child: Icon(Icons.close_rounded, size: 14, color: t.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          Text(
+            _shortPath(path),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            story,
+            style: TextStyle(color: t.textNormal, fontSize: 11.5, height: 1.34),
+          ),
+        ],
       ),
     );
   }
@@ -1374,6 +1553,14 @@ class _ScrubberPainter extends CustomPainter {
   @override
   bool shouldRepaint(_ScrubberPainter old) =>
       old.head != head || old.model != model;
+}
+
+/// Last two path segments — enough to identify a file/module without the full
+/// prefix. '(root)' and other bare labels pass through unchanged.
+String _shortPath(String path) {
+  final segs = path.split('/');
+  if (segs.length <= 2) return path;
+  return segs.sublist(segs.length - 2).join('/');
 }
 
 String _fmtDate(DateTime? d) {
