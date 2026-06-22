@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/spectral_trajectory_builder.dart';
+import 'package:git_desktop/features/orrery/orrery_findings.dart';
 import 'package:git_desktop/features/orrery/orrery_model.dart';
 import 'package:git_desktop/features/orrery/orrery_painter.dart';
 import 'package:git_desktop/features/orrery/orrery_page.dart';
@@ -43,6 +44,11 @@ void main() {
     // ignore: avoid_print
     print('REAL trajectory: steps=${m.stepCount} nodes=${m.nodes.length}');
     expect(m.stepCount, greaterThan(1));
+
+    for (final f in computeFindings(m)) {
+      // ignore: avoid_print
+      print('FINDING [${f.kind.name}] ${f.headline}');
+    }
 
     // Disk-only, straight to a picture (fast, no widget tree).
     await tester.runAsync(() async {

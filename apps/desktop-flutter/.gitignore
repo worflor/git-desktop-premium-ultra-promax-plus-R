@@ -4,6 +4,9 @@
 *.pyc
 *.swp
 
+# Orrery screenshot-loop render output (regenerable)
+.preview/
+
 # Build artifacts
 *.exe
 *.AppImage

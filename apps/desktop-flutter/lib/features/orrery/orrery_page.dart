@@ -595,12 +595,18 @@ class _FindingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final Color accent = switch (finding.kind) {
+      OrreryFindingKind.hub => t.accentBright,
+      OrreryFindingKind.driftOut => t.stateModified,
+      OrreryFindingKind.driftIn => t.stateAdded,
       OrreryFindingKind.tangle => t.stateModified,
       OrreryFindingKind.clarify => t.stateAdded,
       OrreryFindingKind.regime => t.accentBright,
       OrreryFindingKind.identity => t.accentBright,
     };
     final IconData icon = switch (finding.kind) {
+      OrreryFindingKind.hub => Icons.adjust_rounded,
+      OrreryFindingKind.driftOut => Icons.call_made_rounded,
+      OrreryFindingKind.driftIn => Icons.call_received_rounded,
       OrreryFindingKind.tangle => Icons.warning_amber_rounded,
       OrreryFindingKind.clarify => Icons.auto_awesome_rounded,
       OrreryFindingKind.regime => Icons.bolt_rounded,
