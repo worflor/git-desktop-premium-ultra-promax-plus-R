@@ -78,13 +78,22 @@ class OrreryNode {
   /// this file. Sizes the node — busier files read as bigger.
   final double churn;
 
+  /// How many files this node stands for. 1 for a real file; >1 for a module
+  /// super-node in the aggregated ([OrreryLod.modules]) view.
+  final int memberCount;
+
   const OrreryNode({
     required this.id,
     required this.path,
     required this.positions,
     this.churn = 0,
+    this.memberCount = 1,
   });
 }
+
+/// Level of detail for the disk: every file as its own point, or files
+/// collapsed into directory super-nodes (the answer to the hairball at scale).
+enum OrreryLod { files, modules }
 
 class OrreryModel {
   final List<OrreryStep> steps;
@@ -129,6 +138,146 @@ class OrreryModel {
     final Offset? b = node.positions[i + 1];
     if (a == null || b == null) return 0;
     return (b - a).distance;
+  }
+
+  /// Ideal module count when aggregating — small enough to read at a glance,
+  /// large enough to keep distinct subsystems apart.
+  static const int _idealModules = 16;
+
+  /// Below this many files the disk reads fine as points; above it, lead with
+  /// the aggregated module view (the "don't blob at scale" prescription).
+  static const int aggregationThreshold = 80;
+
+  /// A tiny floor so quiet files still nudge a module's centroid — keeps a
+  /// module of all-untouched files from collapsing to the origin.
+  static const double _centroidFloor = 0.05;
+
+  /// Collapse files into directory super-nodes so the disk stays legible at
+  /// scale (a handful of components, not thousands of dots). Grouping is by
+  /// directory path — the unit a developer reasons about — but each module's
+  /// position is the churn-weighted centroid of its members' disk positions at
+  /// every step, so the *spatial* encoding stays spectral while the *grouping*
+  /// stays human. Weights are constant over time, so a module drifts only when
+  /// its files genuinely move or are born/retired — never from a weight jump.
+  ///
+  /// Depth is **non-uniform**: a greedy balanced partition keeps splitting the
+  /// largest bucket one directory level deeper until the module budget is hit,
+  /// so a dense subtree (a monorepo's `lib/`) resolves into its parts while a
+  /// sparse one (`docs/`) stays whole — no single super-node swallows the repo.
+  /// [steps] are shared unchanged; the result has one node per module.
+  static OrreryModel aggregateByModule(OrreryModel files) {
+    if (files.nodes.isEmpty || files.steps.isEmpty) return files;
+    final int stepCount = files.steps.length;
+
+    // Directory segments per file (filename dropped; '' for a root file).
+    final dirs = <List<String>>[
+      for (final node in files.nodes)
+        () {
+          final p = node.path;
+          if (p == null || p.isEmpty) return const <String>[];
+          final segs = p.split('/');
+          return segs.length <= 1
+              ? const <String>[]
+              : segs.sublist(0, segs.length - 1);
+        }(),
+    ];
+
+    final buckets = _balancedModulePartition(dirs, files.nodes.length);
+
+    // Aggregate (summed) churn per module, then log-normalise across modules so
+    // one mega-module doesn't dwarf the rest — same heavy-tail taming as files.
+    final agg = <double>[
+      for (final b in buckets)
+        () {
+          double c = 0;
+          for (final id in b.members) {
+            c += files.nodes[id].churn;
+          }
+          return c;
+        }(),
+    ];
+    double maxAgg = 0;
+    for (final v in agg) {
+      if (v > maxAgg) maxAgg = v;
+    }
+    final double denom = math.log(1 + maxAgg);
+
+    final nodes = <OrreryNode>[];
+    for (int mi = 0; mi < buckets.length; mi++) {
+      final members = buckets[mi].members;
+      final positions = List<Offset?>.filled(stepCount, null);
+      for (int s = 0; s < stepCount; s++) {
+        double wx = 0, wy = 0, wsum = 0;
+        for (final id in members) {
+          final p = files.nodes[id].positions[s];
+          if (p == null) continue;
+          final w = files.nodes[id].churn + _centroidFloor;
+          wx += p.dx * w;
+          wy += p.dy * w;
+          wsum += w;
+        }
+        if (wsum > 0) positions[s] = Offset(wx / wsum, wy / wsum);
+      }
+      nodes.add(OrreryNode(
+        id: mi,
+        path: buckets[mi].label,
+        positions: positions,
+        churn: denom > 0 ? (math.log(1 + agg[mi]) / denom).clamp(0.0, 1.0) : 0.0,
+        memberCount: members.length,
+      ));
+    }
+    return OrreryModel(steps: files.steps, nodes: nodes);
+  }
+
+  /// Greedy balanced partition of files (given each file's [dirs] segments) into
+  /// up to [_idealModules] directory buckets. Start with everything in one
+  /// bucket; repeatedly split the largest *splittable* bucket one level deeper.
+  /// Splitting a bucket sends each member to the child for its next directory
+  /// segment, and any files that live *directly* in the bucket's directory form
+  /// an unsplittable leaf residue.
+  static List<_ModuleBucket> _balancedModulePartition(
+      List<List<String>> dirs, int n) {
+    final buckets = <_ModuleBucket>[
+      _ModuleBucket(const <String>[], List<int>.generate(n, (i) => i)),
+    ];
+    bool splittable(_ModuleBucket b) {
+      for (final m in b.members) {
+        if (dirs[m].length > b.prefix.length) return true;
+      }
+      return false;
+    }
+
+    while (buckets.length < _idealModules) {
+      int pick = -1, pickSize = 0;
+      for (int i = 0; i < buckets.length; i++) {
+        if (buckets[i].members.length > pickSize && splittable(buckets[i])) {
+          pick = i;
+          pickSize = buckets[i].members.length;
+        }
+      }
+      if (pick < 0) break; // nothing left to split
+
+      final b = buckets.removeAt(pick);
+      final children = <String, List<int>>{};
+      final residue = <int>[];
+      for (final m in b.members) {
+        final d = dirs[m];
+        if (d.length > b.prefix.length) {
+          (children[d[b.prefix.length]] ??= <int>[]).add(m);
+        } else {
+          residue.add(m); // file lives directly in this directory
+        }
+      }
+      // Keep child order stable (largest first) so the partition is
+      // deterministic regardless of map iteration order.
+      final keys = children.keys.toList()
+        ..sort((a, c) => children[c]!.length.compareTo(children[a]!.length));
+      for (final k in keys) {
+        buckets.add(_ModuleBucket(<String>[...b.prefix, k], children[k]!));
+      }
+      if (residue.isNotEmpty) buckets.add(_ModuleBucket(b.prefix, residue));
+    }
+    return buckets;
   }
 
   /// Map the engine's [SpectralTrajectory] into the view-model the painter
@@ -326,6 +475,17 @@ class OrreryModel {
 double _tanh(double x) {
   final e2 = math.exp(2 * x);
   return (e2 - 1) / (e2 + 1);
+}
+
+/// One directory bucket during module aggregation: the shared directory
+/// [prefix] and the file ids under it. See [OrreryModel.aggregateByModule].
+class _ModuleBucket {
+  final List<String> prefix;
+  final List<int> members;
+  _ModuleBucket(this.prefix, this.members);
+
+  /// Display label: the directory path, or '(root)' for files at the repo root.
+  String get label => prefix.isEmpty ? '(root)' : prefix.join('/');
 }
 
 /// 2D orthogonal Procrustes (Kabsch, reflections allowed) — rotate/reflect each

@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/features/orrery/orrery_model.dart';
 import 'package:git_desktop/features/orrery/orrery_page.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
@@ -36,7 +37,12 @@ void main() {
 
     final model = syntheticOrrery();
 
-    Future<void> shoot(AppThemeId themeId, String label, double? head) async {
+    Future<void> shoot(
+      AppThemeId themeId,
+      String label,
+      double? head, {
+      OrreryLod lod = OrreryLod.files,
+    }) async {
       final tokens = AppTokens.fromId(themeId);
       final key = GlobalKey();
       await tester.pumpWidget(MaterialApp(
@@ -52,6 +58,7 @@ void main() {
               model: model,
               repoLabel: 'manifold',
               initialHead: head,
+              initialLod: lod,
             ),
           ),
         ),
@@ -65,5 +72,8 @@ void main() {
     }
     await shoot(AppThemeId.aether, 'reorg', 13);
     await shoot(AppThemeId.petrichor, 'reorg', 13);
+    // Aggregated module view (the large-repo default).
+    await shoot(AppThemeId.aether, 'modules', null, lod: OrreryLod.modules);
+    await shoot(AppThemeId.petrichor, 'modules', null, lod: OrreryLod.modules);
   });
 }

@@ -72,6 +72,7 @@ class OrreryPainter extends CustomPainter {
   static const double _heatFloor = 0.015; // disk-speed below this doesn't glow
   static const double _heatScale = 17.0; // disk-speed above the floor → glow
   static const double _baseDot = 1.9;
+  static const double _massDot = 1.15; // per-ln(memberCount) growth for modules
 
   OrreryPainter({
     required this.model,
@@ -228,9 +229,15 @@ class OrreryPainter extends CustomPainter {
       // Size carries churn — how much the file changes — as its own channel,
       // orthogonal to position (structural role) and colour (centrality/heat).
       // Log-normalised upstream, so this is linear here, over a floor that keeps
-      // never-touched files legible as points.
+      // never-touched files legible as points. A module super-node also grows
+      // with the log of how many files it stands for (ln 1 = 0, so a real file
+      // is unaffected) — so an aggregated component reads as substantial.
+      final double mass =
+          node.memberCount > 1 ? _massDot * math.log(node.memberCount) : 0.0;
       final double radius =
-          _baseDot * (0.55 + 0.3 * centrality + 1.15 * node.churn) + heat * 1.4;
+          _baseDot * (0.55 + 0.3 * centrality + 1.15 * node.churn) +
+              heat * 1.4 +
+              mass;
       // Glow — the file's presence bleeding into the field. Kept tight so
       // dense clusters of active files read as points, not a single smear.
       canvas.drawCircle(

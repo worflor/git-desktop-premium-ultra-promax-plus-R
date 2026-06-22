@@ -66,11 +66,27 @@ OrreryModel syntheticOrrery({int steps = 26, int nodeCount = 220, int seed = 7})
       archetypeShift: s == (steps * 0.42).round() || s == (steps * 0.82).round(),
     ));
   }
+  // Plausible directory paths so the fixture exercises module aggregation and
+  // hover labels: each co-change cluster maps to a top-level area, with sub-dirs
+  // for depth, plus a few root/docs files.
+  const area = <String>['lib/core', 'lib/features', 'lib/ui'];
+  const sub = <String>['model', 'view', 'service', 'util'];
+  String pathFor(int i) {
+    if (i % 37 == 0) return 'README$i.md'; // a few root files
+    if (i % 19 == 0) return 'docs/note$i.md'; // a small sparse area
+    return '${area[cluster[i]]}/${sub[i % sub.length]}/file$i.dart';
+  }
+
   return OrreryModel(
     steps: stepList,
     nodes: <OrreryNode>[
       for (int i = 0; i < nodeCount; i++)
-        OrreryNode(id: i, path: null, positions: positions[i]),
+        OrreryNode(
+          id: i,
+          path: pathFor(i),
+          positions: positions[i],
+          churn: 1.0 - depth[i], // central files (low depth) churn more
+        ),
     ],
   );
 }

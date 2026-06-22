@@ -165,6 +165,10 @@ class OrreryView extends StatefulWidget {
   /// Node id to pin on open (highlight + full journey). For deep-links/tests.
   final int? initialPinned;
 
+  /// Level of detail to open in. Null = auto (modules on large repos, files on
+  /// small). Force a level for deep-links/previews.
+  final OrreryLod? initialLod;
+
   const OrreryView({
     super.key,
     required this.model,
@@ -172,6 +176,7 @@ class OrreryView extends StatefulWidget {
     this.onClose,
     this.initialHead,
     this.initialPinned,
+    this.initialLod,
   });
 
   @override
@@ -189,6 +194,20 @@ class _OrreryViewState extends State<OrreryView>
   late final List<OrreryFinding> _findings;
   bool _playing = false;
 
+  // Level of detail. The disk swaps between files and module super-nodes; the
+  // module model is derived once on demand. Steps (and thus the scrubber,
+  // meters, and findings) are level-independent, so only the disk + its
+  // hit-testing read [_activeModel].
+  OrreryLod _lod = OrreryLod.files;
+  OrreryModel? _modulesCache;
+
+  OrreryModel get _activeModel =>
+      _lod == OrreryLod.modules ? _modules : widget.model;
+  OrreryModel get _modules =>
+      _modulesCache ??= OrreryModel.aggregateByModule(widget.model);
+  bool get _canAggregate =>
+      widget.model.nodes.length > OrreryModel.aggregationThreshold;
+
   double get _maxHead => widget.model.headPosition;
   OrreryStep _stepAt(double head) =>
       widget.model.steps[head.round().clamp(0, widget.model.stepCount - 1)];
@@ -198,6 +217,10 @@ class _OrreryViewState extends State<OrreryView>
     super.initState();
     _ranges = _Ranges.of(widget.model);
     _findings = computeFindings(widget.model);
+    // Lead with the aggregated view on large repos — a handful of modules reads
+    // where thousands of file-dots fog out. An explicit initialLod overrides.
+    _lod = widget.initialLod ??
+        (_canAggregate ? OrreryLod.modules : OrreryLod.files);
     _play = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 9),
@@ -248,9 +271,20 @@ class _OrreryViewState extends State<OrreryView>
     _head.value = head.clamp(0.0, _maxHead);
   }
 
+  /// Switch level of detail. Node ids live in different spaces per level, so any
+  /// pin/hover is cleared on the way across.
+  void _setLod(OrreryLod lod) {
+    if (_lod == lod) return;
+    setState(() => _lod = lod);
+    _pinned.value = null;
+    _clearHover();
+  }
+
   /// A finding was tapped: jump to its moment and pin the file it's about, so
-  /// the disk lights up where that file is and traces where it's been.
+  /// the disk lights up where that file is and traces where it's been. Findings
+  /// point at real files, so drop to file level if we're aggregated.
   void _select(int step, int? nodeId) {
+    if (_lod != OrreryLod.files) setState(() => _lod = OrreryLod.files);
     _scrubTo(step.toDouble());
     _pinned.value = nodeId;
   }
@@ -262,7 +296,7 @@ class _OrreryViewState extends State<OrreryView>
     final double head = _head.value;
     int? best;
     double bestD = 13.0;
-    for (final node in widget.model.nodes) {
+    for (final node in _activeModel.nodes) {
       final pos = OrreryModel.sampleNode(node, head);
       if (pos == null) continue;
       final screen = Offset(center.dx + pos.dx * r, center.dy + pos.dy * r);
@@ -281,8 +315,9 @@ class _OrreryViewState extends State<OrreryView>
     final double head = _head.value;
     int? best;
     Offset? bestScreen;
+    OrreryNode? bestNode;
     double bestD = 13.0; // px pick radius
-    for (final node in widget.model.nodes) {
+    for (final node in _activeModel.nodes) {
       final pos = OrreryModel.sampleNode(node, head);
       if (pos == null) continue;
       final screen = Offset(center.dx + pos.dx * r, center.dy + pos.dy * r);
@@ -291,14 +326,17 @@ class _OrreryViewState extends State<OrreryView>
         bestD = d;
         best = node.id;
         bestScreen = screen;
+        bestNode = node;
       }
     }
     _hover.value = best;
-    if (best == null || bestScreen == null) {
+    if (bestNode == null || bestScreen == null) {
       _hoverInfo.value = null;
     } else {
-      final node = widget.model.nodes[best];
-      _hoverInfo.value = _HoverInfo(bestScreen, node.path ?? 'file #${node.id}');
+      final label = bestNode.memberCount > 1
+          ? '${bestNode.path ?? 'module'} · ${bestNode.memberCount} files'
+          : (bestNode.path ?? 'file #${bestNode.id}');
+      _hoverInfo.value = _HoverInfo(bestScreen, label);
     }
   }
 
@@ -320,6 +358,9 @@ class _OrreryViewState extends State<OrreryView>
             step: _stepAt(head),
             index: head.round(),
             total: widget.model.stepCount,
+            lod: _lod,
+            onLod: _setLod,
+            showLodToggle: _canAggregate,
             onClose: widget.onClose,
           ),
         ),
@@ -375,7 +416,7 @@ class _OrreryViewState extends State<OrreryView>
                           animation: Listenable.merge([_head, _hover, _pinned]),
                           builder: (_, __) => CustomPaint(
                             painter: OrreryPainter(
-                              model: widget.model,
+                              model: _activeModel,
                               head: _head.value,
                               colors: colors,
                               highlightId: _hover.value,
@@ -413,12 +454,18 @@ class _OrreryHeader extends StatelessWidget {
   final OrreryStep step;
   final int index;
   final int total;
+  final OrreryLod lod;
+  final ValueChanged<OrreryLod> onLod;
+  final bool showLodToggle;
   final VoidCallback? onClose;
   const _OrreryHeader({
     required this.repoLabel,
     required this.step,
     required this.index,
     required this.total,
+    required this.lod,
+    required this.onLod,
+    required this.showLodToggle,
     this.onClose,
   });
 
@@ -446,6 +493,10 @@ class _OrreryHeader extends StatelessWidget {
           if (repoLabel.isNotEmpty)
             Text(repoLabel,
                 style: TextStyle(color: t.textFaint, fontSize: 12)),
+          if (showLodToggle) ...[
+            const SizedBox(width: 14),
+            _LodToggle(lod: lod, onChanged: onLod),
+          ],
           const Spacer(),
           // Where you are in history.
           Text('${index + 1}',
@@ -468,6 +519,62 @@ class _OrreryHeader extends StatelessWidget {
           const SizedBox(width: 12),
           if (onClose != null) _CloseChip(onTap: onClose!),
         ],
+      ),
+    );
+  }
+}
+
+/// Two-state level-of-detail switch: collapse to module super-nodes, or expand
+/// to every file. Shown only when the repo is big enough for it to matter.
+class _LodToggle extends StatelessWidget {
+  final OrreryLod lod;
+  final ValueChanged<OrreryLod> onChanged;
+  const _LodToggle({required this.lod, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: t.surface1.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _seg(context, 'Modules', OrreryLod.modules),
+          _seg(context, 'Files', OrreryLod.files),
+        ],
+      ),
+    );
+  }
+
+  Widget _seg(BuildContext context, String label, OrreryLod value) {
+    final t = context.tokens;
+    final bool on = lod == value;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onChanged(value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 9),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: on ? t.itemActiveBg : Colors.transparent,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: on ? t.textStrong : t.textMuted,
+            fontSize: 11,
+            fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
       ),
     );
   }

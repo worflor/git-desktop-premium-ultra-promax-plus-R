@@ -62,6 +62,29 @@ void main() {
       await _writeImage(image, '.preview/orrery_REAL_disk.png');
     });
 
+    // Aggregated module view — the legible-at-scale default. Print what it
+    // collapsed to (label · member count · churn) and render it.
+    final modules = OrreryModel.aggregateByModule(m);
+    // ignore: avoid_print
+    print('MODULES: ${modules.nodes.length} (from ${m.nodes.length} files)');
+    final byChurn = [...modules.nodes]
+      ..sort((a, b) => b.churn.compareTo(a.churn));
+    for (final n in byChurn.take(12)) {
+      // ignore: avoid_print
+      print('  ${n.path}  ·  ${n.memberCount} files  ·  '
+          'churn ${n.churn.toStringAsFixed(2)}');
+    }
+    await tester.runAsync(() async {
+      final colors = OrreryColors.fromTokens(AppTokens.fromId(AppThemeId.aether));
+      final recorder = ui.PictureRecorder();
+      const size = Size(900, 900);
+      final canvas = Canvas(recorder, Offset.zero & size);
+      OrreryPainter(model: modules, head: modules.headPosition, colors: colors)
+          .paint(canvas, size);
+      final image = await recorder.endRecording().toImage(900, 900);
+      await _writeImage(image, '.preview/orrery_REAL_modules.png');
+    });
+
     // Full page, aether — pin a drifting file so the drill-down trail shows.
     int? pinned;
     for (final f in computeFindings(m)) {
@@ -85,6 +108,7 @@ void main() {
             model: m,
             repoLabel: 'manifold',
             initialPinned: pinned,
+            initialLod: OrreryLod.files, // this shot tests file-level drill-down
           ),
         ),
       ),
