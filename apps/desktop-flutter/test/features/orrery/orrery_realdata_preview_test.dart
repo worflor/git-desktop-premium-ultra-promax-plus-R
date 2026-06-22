@@ -47,7 +47,7 @@ void main() {
 
     for (final f in computeFindings(m)) {
       // ignore: avoid_print
-      print('FINDING [${f.kind.name}] ${f.headline}');
+      print('FINDING [${f.kind.name}] @${f.anchor} ${f.headline}');
     }
 
     // Disk-only, straight to a picture (fast, no widget tree).

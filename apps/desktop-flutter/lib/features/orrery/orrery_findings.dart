@@ -1,3 +1,5 @@
+import 'dart:ui' show Offset;
+
 import 'orrery_model.dart';
 
 /// Plain-language, commit-anchored findings derived from the trajectory — the
@@ -22,6 +24,8 @@ enum OrreryFindingKind {
   tangle,
   clarify,
   identity,
+  thrash, // a file reorganising back and forth — motion without progress
+  reshuffle, // a quiet-looking commit that moved which files are central
 }
 
 class OrreryFinding {
@@ -74,8 +78,120 @@ String _shortPath(String path) {
 List<OrreryFinding> computeFindings(OrreryModel model) {
   return <OrreryFinding>[
     ..._positionFindings(model),
+    ..._thrashFinding(model),
+    ..._reshuffleFinding(model),
     ..._regimeFindings(model),
     ..._archetypeTrendFinding(model),
+  ];
+}
+
+/// Thrashing — a file that keeps getting reorganised back and forth: it travels
+/// a long way through the manifold but ends up near where it started. A net-new
+/// signal CodeScene can't produce (it has no spatial embedding); here the
+/// hyperbolic path length vs net displacement makes it plain. Emits at most one
+/// — the worst offender — and only when the motion is real.
+List<OrreryFinding> _thrashFinding(OrreryModel model) {
+  if (model.stepCount < 6) return const <OrreryFinding>[];
+  final headStep = model.stepCount - 1;
+  OrreryNode? worst;
+  double worstRatio = 0;
+  for (final node in model.nodes) {
+    final path = node.path;
+    if (path == null || !_isCodeFile(path)) continue;
+    if (node.positions.length <= headStep ||
+        node.positions[headStep] == null) {
+      continue; // must still exist at the present
+    }
+    Offset? first, prev;
+    double pathLen = 0;
+    int present = 0;
+    for (final p in node.positions) {
+      if (p == null) continue;
+      present++;
+      first ??= p;
+      if (prev != null) pathLen += (p - prev).distance;
+      prev = p;
+    }
+    if (present < 5 || first == null || prev == null) continue;
+    if (pathLen < 0.6) continue; // it has to actually move to be thrashing
+    final net = (prev - first).distance;
+    final ratio = pathLen / (net + 0.05);
+    if (ratio > worstRatio) {
+      worstRatio = ratio;
+      worst = node;
+    }
+  }
+  if (worst == null || worstRatio < 3.2) return const <OrreryFinding>[];
+  return <OrreryFinding>[
+    OrreryFinding(
+      kind: OrreryFindingKind.thrash,
+      stepIndex: headStep,
+      nodeId: worst.id,
+      headline:
+          '${_shortPath(worst.path!)} keeps getting reorganised back and forth — lots of structural churn, little net movement. Settle its coupling or stop touching it.',
+      anchor: 'thrash',
+    ),
+  ];
+}
+
+/// A silent role-reassignment — a commit where many files changed how central
+/// they are, yet the codebase's overall connectivity barely moved. It reads as
+/// routine in a diff but quietly reshuffled the structure (a Berry-phase-like
+/// event: big internal rotation, small global change). Net-new, and the
+/// complement of a regime change (which is a *large* connectivity jump).
+List<OrreryFinding> _reshuffleFinding(OrreryModel model) {
+  final n = model.stepCount;
+  if (n < 8) return const <OrreryFinding>[];
+
+  // Per-step mean motion of files present on both sides of the step.
+  final motion = List<double>.filled(n, 0);
+  for (int s = 1; s < n; s++) {
+    double sum = 0;
+    int count = 0;
+    for (final node in model.nodes) {
+      if (s >= node.positions.length) continue;
+      final a = node.positions[s - 1];
+      final b = node.positions[s];
+      if (a == null || b == null) continue;
+      sum += (b - a).distance;
+      count++;
+    }
+    motion[s] = count >= 8 ? sum / count : 0; // need enough files to mean much
+  }
+
+  final sorted = motion.sublist(1)..sort();
+  final median = sorted.isEmpty ? 0.0 : sorted[sorted.length ~/ 2];
+  if (median <= 1e-9) return const <OrreryFinding>[];
+
+  double gLo = double.infinity, gHi = -double.infinity;
+  for (final st in model.steps) {
+    gLo = gLo < st.gap ? gLo : st.gap;
+    gHi = gHi > st.gap ? gHi : st.gap;
+  }
+  final gSpan = (gHi - gLo).abs() < 1e-9 ? 1.0 : (gHi - gLo);
+
+  int best = -1;
+  double bestMotion = 0;
+  for (int s = (n * 0.2).ceil(); s < n; s++) {
+    final gapChange = (model.steps[s].gap - model.steps[s - 1].gap).abs() / gSpan;
+    if (model.steps[s].regimeChange) continue; // that's the *loud* kind
+    if (motion[s] < 2.4 * median) continue; // a genuine internal spike
+    if (gapChange > 0.18) continue; // overall shape held still
+    if (motion[s] > bestMotion) {
+      bestMotion = motion[s];
+      best = s;
+    }
+  }
+  if (best < 0) return const <OrreryFinding>[];
+  final s = model.steps[best];
+  return <OrreryFinding>[
+    OrreryFinding(
+      kind: OrreryFindingKind.reshuffle,
+      stepIndex: best,
+      headline:
+          'This commit looked routine but quietly moved which files are central — the overall shape held while the structure reshuffled underneath. Review it carefully.',
+      anchor: '${best + 1} · ${s.shortSha}',
+    ),
   ];
 }
 
