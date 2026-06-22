@@ -121,6 +121,29 @@ void main() {
       await _writeImage(image, '.preview/orrery_REAL_page.png');
     });
 
+    // The actual default first impression: module view, scrub, nothing pinned.
+    final dkey = GlobalKey();
+    await tester.pumpWidget(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
+        AppThemeExtension(tokens),
+      ]),
+      home: Scaffold(
+        backgroundColor: tokens.bg0,
+        body: RepaintBoundary(
+          key: dkey,
+          child: OrreryView(model: m, repoLabel: 'manifold'),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final dboundary =
+        tester.renderObject(find.byKey(dkey)) as RenderRepaintBoundary;
+    await tester.runAsync(() async {
+      final image = await dboundary.toImage(pixelRatio: 1.5);
+      await _writeImage(image, '.preview/orrery_REAL_default.png');
+    });
+
     // Compare mode — static small-multiples at the regime boundaries.
     final ckey = GlobalKey();
     await tester.pumpWidget(MaterialApp(
