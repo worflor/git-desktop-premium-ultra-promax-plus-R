@@ -501,30 +501,27 @@ class _OrreryViewState extends State<OrreryView>
       }
     }
 
-    final String role, coupling;
+    final String role;
     if (r < 0.45) {
-      role = 'Structurally central';
-      coupling = 'co-changes with much of the system — high blast-radius';
+      role = 'Coupling-central — changes here ripple across the system.';
     } else if (r > 0.72) {
-      role = 'Peripheral';
-      coupling = 'loosely coupled, mostly changes on its own';
+      role = 'Peripheral — loosely coupled, mostly changes on its own.';
     } else {
-      role = 'Mid-structure';
-      coupling = 'moderately coupled to the rest of the system';
+      role = 'Mid-structure — moderately coupled.';
     }
 
     String drift = '';
     if (birthR != null) {
       final d = r - birthR;
       if (d > 0.15) {
-        drift = ' Drifted outward over its history — decoupling.';
+        drift = ' Drifting outward — decoupling.';
       } else if (d < -0.15) {
-        drift = ' Moved inward over its history — integrating.';
+        drift = ' Drifting inward — integrating.';
       } else {
-        drift = ' Held its position through history.';
+        drift = ' Holding its position.';
       }
     }
-    return '$role — $coupling.$drift';
+    return '$role$drift';
   }
 
   @override
@@ -1053,7 +1050,7 @@ class _OrreryRail extends StatelessWidget {
     final t = context.tokens;
     return Container(
       width: 250,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       decoration: BoxDecoration(
         border: Border(
           left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
@@ -1068,49 +1065,49 @@ class _OrreryRail extends StatelessWidget {
               story: selection!.story,
               onClear: onClearSelection,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
           ],
           const _RailLabel('STRUCTURE'),
-          const SizedBox(height: 7),
+          const SizedBox(height: 6),
           Text(
             step.archetype.isEmpty ? 'forming…' : step.archetype,
             style: TextStyle(
               color: t.accentBright,
-              fontSize: 22,
+              fontSize: 17,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(height: 9),
+          const SizedBox(height: 8),
           _Meter(
             label: 'canonical',
             value: step.canonicality,
             color: t.accentBright,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
           const _RailLabel('FIELD'),
-          const SizedBox(height: 9),
+          const SizedBox(height: 8),
           _Meter(
             label: 'connectivity',
             value: _Ranges.norm(step.gap, ranges.gapLo, ranges.gapHi),
             trailing: step.gap.toStringAsFixed(3),
             color: t.textNormal,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           _Meter(
             label: 'rigidity',
             value: _Ranges.norm(step.rigidity, ranges.rigLo, ranges.rigHi),
             trailing: step.rigidity.toStringAsFixed(3),
             color: t.textNormal,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           _Meter(
             label: 'entropy',
             value: _Ranges.norm(step.vonNeumann, ranges.vnLo, ranges.vnHi),
             trailing: step.vonNeumann.toStringAsFixed(2),
             color: t.textNormal,
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
           Row(
             children: [
               const _RailLabel('FINDINGS'),
@@ -1209,14 +1206,15 @@ class _FindingCard extends StatelessWidget {
       builder: (context, hovered) => Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: active
-              ? t.itemActiveBg.withValues(alpha: 0.55)
-              : t.surface1.withValues(alpha: hovered ? 0.6 : 0.4),
+          // Inset, lightweight: the recessed input surface under a hairline;
+          // the active card lifts to a faint accent tint + thin accent edge.
+          color: active ? t.itemActiveBg.withValues(alpha: 0.4) : t.inputBg,
           borderRadius: AppRadii.baseAll,
           border: Border.all(
             color: active
-                ? accent.withValues(alpha: 0.55)
-                : t.chromeBorder.withValues(alpha: hovered ? 0.8 : 0.45),
+                ? accent.withValues(alpha: 0.5)
+                : t.inputBorder.withValues(alpha: hovered ? 1.0 : 0.7),
+            width: active ? AppBorderWidth.thin : AppBorderWidth.hairline,
           ),
         ),
         child: Stack(
@@ -1298,20 +1296,42 @@ class _SelectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // Split the path so the filename leads (bold) over a faint directory line,
+    // instead of one long token wrapping mid-word.
+    final segs = path.split('/');
+    final filename = segs.isEmpty ? path : segs.last;
+    final dirSegs =
+        segs.length > 1 ? segs.sublist(0, segs.length - 1) : const <String>[];
+    final dir = dirSegs.isEmpty
+        ? ''
+        : (dirSegs.length <= 2
+            ? dirSegs.join('/')
+            : '…/${dirSegs.sublist(dirSegs.length - 2).join('/')}');
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(11, 9, 9, 11),
+      padding: const EdgeInsets.fromLTRB(11, 8, 8, 11),
       decoration: BoxDecoration(
-        color: t.itemActiveBg.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: t.accentBright.withValues(alpha: 0.4)),
+        // Inset, lightweight: the app's recessed input surface under a hairline
+        // tinted with the accent — reads as a quiet panel, not a raised box.
+        color: t.inputBg,
+        borderRadius: AppRadii.baseAll,
+        border: Border.all(
+          color: t.accentBright.withValues(alpha: 0.3),
+          width: AppBorderWidth.hairline,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const _RailLabel('SELECTED'),
+              Text('SELECTED',
+                  style: TextStyle(
+                    color: t.accentBright,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.4,
+                  )),
               const Spacer(),
               ChromeButton(
                 onTap: onClear,
@@ -1325,26 +1345,32 @@ class _SelectionCard extends StatelessWidget {
                         enabled: true,
                         baseBorderColor: Colors.transparent),
                 child: Icon(Icons.close_rounded,
-                    size: AppIconSize.sm, color: t.textMuted),
+                    size: AppIconSize.xs, color: t.textMuted),
               ),
             ],
           ),
-          const SizedBox(height: 7),
+          const SizedBox(height: 6),
+          if (dir.isNotEmpty)
+            Text(dir,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    TextStyle(color: t.textFaint, fontSize: 10, height: 1.2)),
           Text(
-            _shortPath(path),
+            filename,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: t.textStrong,
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               height: 1.25,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 7),
           Text(
             story,
-            style: TextStyle(color: t.textNormal, fontSize: 11.5, height: 1.34),
+            style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.5),
           ),
         ],
       ),

@@ -63,10 +63,10 @@ void main() {
       ),
     ]);
     await _pump(tester, model, 0);
-    // 'Structurally central' is unique to the selection card; the path itself
+    // 'Coupling-central' is unique to the selection card; the filename itself
     // also shows up in the hub finding, so just require it present.
-    expect(find.textContaining('Structurally central'), findsOneWidget);
-    expect(find.textContaining('lib/core.dart'), findsWidgets);
+    expect(find.textContaining('Coupling-central'), findsOneWidget);
+    expect(find.textContaining('core.dart'), findsWidgets);
   });
 
   testWidgets('a rim file reads as peripheral', (tester) async {

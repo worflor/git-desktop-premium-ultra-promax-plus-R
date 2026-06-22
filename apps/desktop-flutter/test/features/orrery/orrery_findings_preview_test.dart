@@ -39,6 +39,7 @@ void main() {
               model: model,
               repoLabel: 'manifold',
               initialLod: OrreryLod.files,
+              initialPinned: 5, // show the SELECTED inspector too
             ),
           ),
         ),
