@@ -759,59 +759,80 @@ class _OrreryHeader extends StatelessWidget {
           bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
         ),
       ),
-      child: Row(
-        children: [
-          Text('Orrery',
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.3,
-              )),
-          const SizedBox(width: 10),
-          if (repoLabel.isNotEmpty)
-            Text(repoLabel, style: TextStyle(color: t.textFaint, fontSize: 12)),
-          const SizedBox(width: 14),
-          _SegToggle<OrreryMode>(
-            value: mode,
-            options: const [
-              ('Scrub', OrreryMode.scrub),
-              ('Compare', OrreryMode.compare),
-            ],
-            onChanged: onMode,
-          ),
-          if (showLodToggle) ...[
-            const SizedBox(width: 8),
-            _SegToggle<OrreryLod>(
-              value: lod,
-              options: const [
-                ('Modules', OrreryLod.modules),
-                ('Files', OrreryLod.files),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          // Shed the least-essential metadata as the window narrows so the
+          // header never overflows; the toggles and position always stay, and
+          // a long repo name ellipsises rather than pushing anything off-edge.
+          final double w = c.maxWidth;
+          final bool showDate = w > 980;
+          final bool showSha = w > 880;
+          final bool showRepo = repoLabel.isNotEmpty && w > 740;
+          return Row(
+            children: [
+              Text('Orrery',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  )),
+              if (showRepo) ...[
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(repoLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: t.textFaint, fontSize: 12)),
+                ),
               ],
-              onChanged: onLod,
-            ),
-          ],
-          const Spacer(),
-          // Where you are in history.
-          Text('${index + 1}',
-              style: TextStyle(
-                  color: t.textStrong,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600)),
-          Text(' / $total', style: TextStyle(color: t.textFaint, fontSize: 12)),
-          const SizedBox(width: 12),
-          Text(step.shortSha,
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 12,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              )),
-          const SizedBox(width: 8),
-          Text(_fmtDate(step.date),
-              style: TextStyle(color: t.textFaint, fontSize: 12)),
-          const SizedBox(width: 12),
-          if (onClose != null) _CloseChip(onTap: onClose!),
-        ],
+              const SizedBox(width: 14),
+              _SegToggle<OrreryMode>(
+                value: mode,
+                options: const [
+                  ('Scrub', OrreryMode.scrub),
+                  ('Compare', OrreryMode.compare),
+                ],
+                onChanged: onMode,
+              ),
+              if (showLodToggle) ...[
+                const SizedBox(width: 8),
+                _SegToggle<OrreryLod>(
+                  value: lod,
+                  options: const [
+                    ('Modules', OrreryLod.modules),
+                    ('Files', OrreryLod.files),
+                  ],
+                  onChanged: onLod,
+                ),
+              ],
+              const Spacer(),
+              Text('${index + 1}',
+                  style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+              Text(' / $total',
+                  style: TextStyle(color: t.textFaint, fontSize: 12)),
+              if (showSha) ...[
+                const SizedBox(width: 12),
+                Text(step.shortSha,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 12,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    )),
+              ],
+              if (showDate) ...[
+                const SizedBox(width: 8),
+                Text(_fmtDate(step.date),
+                    style: TextStyle(color: t.textFaint, fontSize: 12)),
+              ],
+              const SizedBox(width: 12),
+              if (onClose != null) _CloseChip(onTap: onClose!),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1166,11 +1187,27 @@ class _FindingCard extends StatelessWidget {
       OrreryFindingKind.reshuffle => Icons.shuffle_rounded,
       OrreryFindingKind.forecast => Icons.trending_down_rounded,
     };
+    final String kindLabel = switch (finding.kind) {
+      OrreryFindingKind.hub => 'HUB',
+      OrreryFindingKind.driftOut => 'DRIFTING OUT',
+      OrreryFindingKind.driftIn => 'DRIFTING IN',
+      OrreryFindingKind.tangle => 'TANGLING',
+      OrreryFindingKind.clarify => 'CLARIFYING',
+      OrreryFindingKind.regime => 'REORG',
+      OrreryFindingKind.thrash => 'THRASHING',
+      OrreryFindingKind.reshuffle => 'RESHUFFLE',
+      OrreryFindingKind.forecast => 'FORECAST',
+    };
+    // The anchor is a commit ref on the event findings ("13 · a1b2c3d") and a
+    // bare word on the position ones ("core"); show only the former, since the
+    // kind label already says what a position finding is.
+    final bool showAnchor = finding.anchor.contains('·');
+
     return HoverableTap(
       onTap: onTap,
       borderRadius: AppRadii.baseAll,
       builder: (context, hovered) => Container(
-        padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: active
               ? t.itemActiveBg.withValues(alpha: 0.55)
@@ -1178,32 +1215,67 @@ class _FindingCard extends StatelessWidget {
           borderRadius: AppRadii.baseAll,
           border: Border.all(
             color: active
-                ? accent.withValues(alpha: 0.5)
+                ? accent.withValues(alpha: 0.55)
                 : t.chromeBorder.withValues(alpha: hovered ? 0.8 : 0.45),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 13, color: accent.withValues(alpha: 0.95)),
-                const SizedBox(width: 6),
-                Text(finding.anchor,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(13, 8, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(icon, size: 12, color: accent),
+                      const SizedBox(width: 6),
+                      Text(
+                        kindLabel,
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (showAnchor)
+                        Text(
+                          finding.anchor,
+                          style: TextStyle(
+                            color: t.textFaint,
+                            fontSize: 9.5,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 7),
+                  Text(
+                    finding.headline,
                     style: TextStyle(
-                      color: t.textFaint,
-                      fontSize: 10.5,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    )),
-              ],
+                      color: active ? t.textStrong : t.textNormal,
+                      fontSize: 11.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 6),
-            Text(finding.headline,
-                style: TextStyle(
-                  color: active ? t.textStrong : t.textNormal,
-                  fontSize: 12,
-                  height: 1.32,
-                )),
+            // A kind-coloured spine down the left edge — colour-codes the
+            // finding and gives the card structure. Positioned so it spans the
+            // card's content height without forcing an intrinsic pass.
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                width: 2.5,
+                color: accent.withValues(
+                    alpha: active ? 0.95 : (hovered ? 0.7 : 0.5)),
+              ),
+            ),
           ],
         ),
       ),
