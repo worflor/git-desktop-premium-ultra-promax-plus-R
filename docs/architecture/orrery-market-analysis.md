@@ -193,6 +193,29 @@ to triage by eye) → TREND (better or worse / did my fix work) → PRIORITY (a 
 ranked list, not a dashboard) → STORY (a memorable handle) — and **every finding
 terminates in one concrete next action**, never a bare metric.
 
+### Status (shipped, on the `orrery` worktree branch)
+
+- **P0** — all four shipped: UASE stabilization (matrix-free subspace iteration
+  on the degree-normalized co-change graph; teleport unrepresentable, unit-test
+  verified), the Findings rail, drill-down (pin from a finding or a disk tap →
+  full journey trail), and the >50-file bulk-commit filter.
+- **P1** — all shipped. #5 hierarchical LOD: a greedy *balanced* directory
+  partition (drills dense subtrees, leaves sparse ones whole) into module
+  super-nodes at the churn-weighted spectral centroid; Files/Modules toggle,
+  default modules above 80 files. #6 node size = churn (log-normalized, mass
+  floor; modules also grow with ln(memberCount)). #7 mid-history seeding is
+  inherent (snapshots built from the real file set per commit; absent files are
+  null, so nothing flashes). #8 Compare mode: static small-multiples at the
+  milestones (genesis + regime/archetype boundaries + head, padded to ≥5).
+  #9 axis legibility: a selection inspector ("why is this file here?" in plain
+  language) + a faint central/peripheral key.
+- **P2** — three net-new findings shipped (thrash = motion without progress,
+  reshuffle = a quiet commit that moved which files are central, forecast =
+  where connectivity is heading), each contract-tested to fire on signal and
+  **stay silent** otherwise. Deferred: God-file degree count and hidden coupling
+  — both need per-commit file-membership threaded into the view-model to be
+  trustworthy (do them right or not at all).
+
 ---
 
 ## 5. Positioning
