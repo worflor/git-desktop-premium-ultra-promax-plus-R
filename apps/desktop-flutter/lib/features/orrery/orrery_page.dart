@@ -178,6 +178,9 @@ class OrreryView extends StatefulWidget {
   /// View mode to open in. Defaults to scrub. For deep-links/previews.
   final OrreryMode? initialMode;
 
+  /// Module label to open drilled-in (forces module LOD). For deep-links/tests.
+  final String? initialExpand;
+
   const OrreryView({
     super.key,
     required this.model,
@@ -187,6 +190,7 @@ class OrreryView extends StatefulWidget {
     this.initialPinned,
     this.initialLod,
     this.initialMode,
+    this.initialExpand,
   });
 
   @override
@@ -209,10 +213,22 @@ class _OrreryViewState extends State<OrreryView>
   // meters, and findings) are level-independent, so only the disk + its
   // hit-testing read [_activeModel].
   OrreryLod _lod = OrreryLod.files;
+  String? _expandedModule; // the drilled-in module (modules LOD only)
   OrreryModel? _modulesCache;
+  String? _expandedKey;
+  OrreryModel? _expandedCache;
 
-  OrreryModel get _activeModel =>
-      _lod == OrreryLod.modules ? _modules : widget.model;
+  OrreryModel get _activeModel {
+    if (_lod != OrreryLod.modules) return widget.model;
+    final ex = _expandedModule;
+    if (ex == null) return _modules;
+    if (_expandedKey != ex) {
+      _expandedKey = ex;
+      _expandedCache = OrreryModel.aggregateByModule(widget.model, expand: ex);
+    }
+    return _expandedCache!;
+  }
+
   OrreryModel get _modules =>
       _modulesCache ??= OrreryModel.aggregateByModule(widget.model);
   bool get _canAggregate =>
@@ -237,6 +253,10 @@ class _OrreryViewState extends State<OrreryView>
     _lod = widget.initialLod ??
         (_canAggregate ? OrreryLod.modules : OrreryLod.files);
     _mode = widget.initialMode ?? OrreryMode.scrub;
+    if (widget.initialExpand != null) {
+      _expandedModule = widget.initialExpand;
+      _lod = OrreryLod.modules; // drill-in only means anything aggregated
+    }
     _play = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 9),
@@ -288,10 +308,13 @@ class _OrreryViewState extends State<OrreryView>
   }
 
   /// Switch level of detail. Node ids live in different spaces per level, so any
-  /// pin/hover is cleared on the way across.
+  /// pin/hover is cleared on the way across, and any drill-in is collapsed.
   void _setLod(OrreryLod lod) {
     if (_lod == lod) return;
-    setState(() => _lod = lod);
+    setState(() {
+      _lod = lod;
+      _expandedModule = null;
+    });
     _pinned.value = null;
     _clearHover();
   }
@@ -302,6 +325,7 @@ class _OrreryViewState extends State<OrreryView>
   void _select(int step, int? nodeId) {
     setState(() {
       if (_lod != OrreryLod.files) _lod = OrreryLod.files;
+      _expandedModule = null;
       _mode = OrreryMode.scrub; // findings drill into the live disk
     });
     _scrubTo(step.toDouble());
@@ -369,12 +393,13 @@ class _OrreryViewState extends State<OrreryView>
     return s.archetype.isEmpty ? 'snapshot' : s.archetype;
   }
 
-  /// A tap on the disk pins the nearest file, or clears the pin on empty space.
+  /// A tap on the disk: drill into the nearest module, pin the nearest file, or
+  /// — on empty space — collapse a drill-in / clear the pin.
   void _tapDisk(Offset local, double side) {
     final double r = OrreryPainter.radiusFor(side);
     final Offset center = Offset(side / 2, side / 2);
     final double head = _head.value;
-    int? best;
+    OrreryNode? best;
     double bestD = 13.0;
     for (final node in _activeModel.nodes) {
       final pos = OrreryModel.sampleNode(node, head);
@@ -383,10 +408,27 @@ class _OrreryViewState extends State<OrreryView>
       final d = (screen - local).distance;
       if (d < bestD) {
         bestD = d;
-        best = node.id;
+        best = node;
       }
     }
-    _pinned.value = best;
+    if (best == null) {
+      if (_expandedModule != null) setState(() => _expandedModule = null);
+      _pinned.value = null;
+      return;
+    }
+    if (best.isModule) {
+      _pinned.value = null;
+      _clearHover();
+      setState(() => _expandedModule = best!.path);
+      return;
+    }
+    _pinned.value = best.id;
+  }
+
+  void _collapseModule() {
+    _pinned.value = null;
+    _clearHover();
+    setState(() => _expandedModule = null);
   }
 
   void _updateHover(Offset local, double side) {
@@ -592,6 +634,15 @@ class _OrreryViewState extends State<OrreryView>
                         bottom: 8,
                         child: _DiskLegend(),
                       ),
+                      if (_lod == OrreryLod.modules && _expandedModule != null)
+                        Positioned(
+                          left: 8,
+                          top: 8,
+                          child: _ExpandBreadcrumb(
+                            label: _shortPath(_expandedModule!),
+                            onTap: _collapseModule,
+                          ),
+                        ),
                       ValueListenableBuilder<_HoverInfo?>(
                         valueListenable: _hoverInfo,
                         builder: (_, info, __) {
@@ -783,6 +834,40 @@ class _CloseChip extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(5),
         child: Icon(Icons.close_rounded, size: 16, color: t.textMuted),
+      ),
+    );
+  }
+}
+
+/// Shown while a module is drilled in: the focused module's name with a back
+/// chevron. Tapping it (or empty space) collapses back to the full map.
+class _ExpandBreadcrumb extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _ExpandBreadcrumb({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(7),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(6, 4, 10, 4),
+        decoration: BoxDecoration(
+          color: t.surface1.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.7)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chevron_left_rounded, size: 16, color: t.textMuted),
+            const SizedBox(width: 2),
+            Text(label,
+                style: TextStyle(color: t.textNormal, fontSize: 11.5)),
+          ],
+        ),
       ),
     );
   }

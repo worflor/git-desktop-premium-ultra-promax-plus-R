@@ -82,12 +82,17 @@ class OrreryNode {
   /// super-node in the aggregated ([OrreryLod.modules]) view.
   final int memberCount;
 
+  /// True for a module super-node (collapsed directory). Distinguishes a
+  /// 1-file module from a real file, so a tap knows whether to drill in or pin.
+  final bool isModule;
+
   const OrreryNode({
     required this.id,
     required this.path,
     required this.positions,
     this.churn = 0,
     this.memberCount = 1,
+    this.isModule = false,
   });
 }
 
@@ -165,7 +170,11 @@ class OrreryModel {
   /// so a dense subtree (a monorepo's `lib/`) resolves into its parts while a
   /// sparse one (`docs/`) stays whole — no single super-node swallows the repo.
   /// [steps] are shared unchanged; the result has one node per module.
-  static OrreryModel aggregateByModule(OrreryModel files) {
+  ///
+  /// If [expand] names a module, that one is shown as its individual files
+  /// (focus) while the rest stay collapsed (context) — drill-in without losing
+  /// the surrounding map. Module sizes are unchanged by which one is expanded.
+  static OrreryModel aggregateByModule(OrreryModel files, {String? expand}) {
     if (files.nodes.isEmpty || files.steps.isEmpty) return files;
     final int stepCount = files.steps.length;
 
@@ -204,7 +213,21 @@ class OrreryModel {
 
     final nodes = <OrreryNode>[];
     for (int mi = 0; mi < buckets.length; mi++) {
-      final members = buckets[mi].members;
+      final b = buckets[mi];
+      // The focused module: show its files individually, in context.
+      if (expand != null && b.label == expand) {
+        for (final fid in b.members) {
+          final f = files.nodes[fid];
+          nodes.add(OrreryNode(
+            id: nodes.length,
+            path: f.path,
+            positions: f.positions,
+            churn: f.churn,
+          ));
+        }
+        continue;
+      }
+      final members = b.members;
       final positions = List<Offset?>.filled(stepCount, null);
       for (int s = 0; s < stepCount; s++) {
         double wx = 0, wy = 0, wsum = 0;
@@ -219,11 +242,12 @@ class OrreryModel {
         if (wsum > 0) positions[s] = Offset(wx / wsum, wy / wsum);
       }
       nodes.add(OrreryNode(
-        id: mi,
-        path: buckets[mi].label,
+        id: nodes.length,
+        path: b.label,
         positions: positions,
         churn: denom > 0 ? (math.log(1 + agg[mi]) / denom).clamp(0.0, 1.0) : 0.0,
         memberCount: members.length,
+        isModule: true,
       ));
     }
     return OrreryModel(steps: files.steps, nodes: nodes);

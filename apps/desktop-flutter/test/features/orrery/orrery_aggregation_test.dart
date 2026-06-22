@@ -143,6 +143,33 @@ void main() {
       expect(mod.positions[2]!.dx, closeTo(-0.3, 1e-9)); // only b
     });
 
+    test('expand shows one module as files while the rest stay collapsed', () {
+      final files = _model([
+        ('a/f0.dart', 0.5, const Offset(0.1, 0)),
+        ('a/f1.dart', 0.5, const Offset(0.2, 0)),
+        ('a/f2.dart', 0.5, const Offset(0.3, 0)),
+        ('b/g0.dart', 0.5, const Offset(-0.1, 0)),
+        ('b/g1.dart', 0.5, const Offset(-0.2, 0)),
+      ]);
+      final collapsed = OrreryModel.aggregateByModule(files);
+      expect(collapsed.nodes.every((n) => n.isModule), isTrue);
+
+      final aLabel =
+          collapsed.nodes.firstWhere((n) => n.memberCount == 3).path;
+      final expanded = OrreryModel.aggregateByModule(files, expand: aLabel);
+
+      final fileNodes = expanded.nodes.where((n) => !n.isModule).toList();
+      final moduleNodes = expanded.nodes.where((n) => n.isModule).toList();
+      expect(fileNodes.length, 3, reason: "a's files, individually");
+      expect(moduleNodes.length, 1, reason: 'b stays a super-node');
+      expect(moduleNodes.single.memberCount, 2);
+
+      // The painter/hit-test invariant: id == index in nodes.
+      for (int i = 0; i < expanded.nodes.length; i++) {
+        expect(expanded.nodes[i].id, i);
+      }
+    });
+
     test('is deterministic — same input, identical partition', () {
       final files = <(String, double, Offset)>[
         for (int i = 0; i < 50; i++)

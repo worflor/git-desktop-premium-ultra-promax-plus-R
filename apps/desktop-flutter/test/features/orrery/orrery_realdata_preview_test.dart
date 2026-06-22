@@ -121,6 +121,33 @@ void main() {
       await _writeImage(image, '.preview/orrery_REAL_page.png');
     });
 
+    // Drill-in: the biggest module expanded to its files, the rest collapsed.
+    final biggest = (modules.nodes.toList()
+          ..sort((a, b) => b.memberCount.compareTo(a.memberCount)))
+        .first
+        .path!;
+    final xkey = GlobalKey();
+    await tester.pumpWidget(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
+        AppThemeExtension(tokens),
+      ]),
+      home: Scaffold(
+        backgroundColor: tokens.bg0,
+        body: RepaintBoundary(
+          key: xkey,
+          child: OrreryView(model: m, repoLabel: 'manifold', initialExpand: biggest),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final xboundary =
+        tester.renderObject(find.byKey(xkey)) as RenderRepaintBoundary;
+    await tester.runAsync(() async {
+      final image = await xboundary.toImage(pixelRatio: 1.5);
+      await _writeImage(image, '.preview/orrery_REAL_drillin.png');
+    });
+
     // The actual default first impression: module view, scrub, nothing pinned.
     final dkey = GlobalKey();
     await tester.pumpWidget(MaterialApp(
