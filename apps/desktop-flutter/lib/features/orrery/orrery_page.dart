@@ -346,7 +346,16 @@ class _OrreryViewState extends State<OrreryView>
       if (mid.length >= cap - 2) break;
       mid.add(s);
     }
-    return (<int>{0, last, ...mid}.toList()..sort());
+    final set = <int>{0, last, ...mid};
+    // If history has few structural inflections, pad with evenly-spaced frames
+    // so compare is still a useful filmstrip rather than just then-vs-now.
+    const minFrames = 5;
+    if (set.length < minFrames && last >= minFrames - 1) {
+      for (int k = 1; k < minFrames - 1; k++) {
+        set.add((last * k / (minFrames - 1)).round());
+      }
+    }
+    return set.toList()..sort();
   }
 
   /// Short caption for a milestone — what changed at that step.
