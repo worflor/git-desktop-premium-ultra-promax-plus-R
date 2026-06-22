@@ -154,6 +154,12 @@ class _HoverInfo {
   const _HoverInfo(this.pos, this.label);
 }
 
+/// How the central canvas reads history: [scrub] animates one disk through time
+/// to *explore*; [compare] lays the structure out as static small-multiples at
+/// the regime boundaries to *analyze* (animation is weak for comparison tasks —
+/// Robertson et al., Tversky — so the two are separate surfaces).
+enum OrreryMode { scrub, compare }
+
 class OrreryView extends StatefulWidget {
   final OrreryModel model;
   final String repoLabel;
@@ -169,6 +175,9 @@ class OrreryView extends StatefulWidget {
   /// small). Force a level for deep-links/previews.
   final OrreryLod? initialLod;
 
+  /// View mode to open in. Defaults to scrub. For deep-links/previews.
+  final OrreryMode? initialMode;
+
   const OrreryView({
     super.key,
     required this.model,
@@ -177,6 +186,7 @@ class OrreryView extends StatefulWidget {
     this.initialHead,
     this.initialPinned,
     this.initialLod,
+    this.initialMode,
   });
 
   @override
@@ -208,6 +218,11 @@ class _OrreryViewState extends State<OrreryView>
   bool get _canAggregate =>
       widget.model.nodes.length > OrreryModel.aggregationThreshold;
 
+  // Scrub vs compare. The compare grid's milestones (genesis, regime/archetype
+  // boundaries, head) are derived once — they're a property of history.
+  OrreryMode _mode = OrreryMode.scrub;
+  late final List<int> _milestones = _computeMilestones();
+
   double get _maxHead => widget.model.headPosition;
   OrreryStep _stepAt(double head) =>
       widget.model.steps[head.round().clamp(0, widget.model.stepCount - 1)];
@@ -221,6 +236,7 @@ class _OrreryViewState extends State<OrreryView>
     // where thousands of file-dots fog out. An explicit initialLod overrides.
     _lod = widget.initialLod ??
         (_canAggregate ? OrreryLod.modules : OrreryLod.files);
+    _mode = widget.initialMode ?? OrreryMode.scrub;
     _play = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 9),
@@ -284,9 +300,64 @@ class _OrreryViewState extends State<OrreryView>
   /// the disk lights up where that file is and traces where it's been. Findings
   /// point at real files, so drop to file level if we're aggregated.
   void _select(int step, int? nodeId) {
-    if (_lod != OrreryLod.files) setState(() => _lod = OrreryLod.files);
+    setState(() {
+      if (_lod != OrreryLod.files) _lod = OrreryLod.files;
+      _mode = OrreryMode.scrub; // findings drill into the live disk
+    });
     _scrubTo(step.toDouble());
     _pinned.value = nodeId;
+  }
+
+  void _setMode(OrreryMode mode) {
+    if (_mode == mode) return;
+    if (_playing) _play.stop();
+    setState(() {
+      _mode = mode;
+      _playing = false;
+    });
+  }
+
+  /// Tapping a compare-grid frame opens that moment in the live disk.
+  void _openMilestone(int step) {
+    setState(() => _mode = OrreryMode.scrub);
+    _scrubTo(step.toDouble());
+  }
+
+  /// The moments worth comparing side-by-side: genesis, every regime change and
+  /// archetype shift, and head — capped so the grid stays readable, with regime
+  /// changes kept ahead of archetype shifts when trimming.
+  List<int> _computeMilestones() {
+    final steps = widget.model.steps;
+    final n = steps.length;
+    if (n == 0) return const <int>[];
+    final last = n - 1;
+    final regime = <int>[];
+    final shift = <int>[];
+    for (int i = 1; i < last; i++) {
+      if (steps[i].regimeChange) {
+        regime.add(i);
+      } else if (steps[i].archetypeShift) {
+        shift.add(i);
+      }
+    }
+    const cap = 9; // genesis + head + up to 7 boundaries
+    final mid = <int>[...regime];
+    for (final s in shift) {
+      if (mid.length >= cap - 2) break;
+      mid.add(s);
+    }
+    return (<int>{0, last, ...mid}.toList()..sort());
+  }
+
+  /// Short caption for a milestone — what changed at that step.
+  String _milestoneLabel(int i) {
+    final steps = widget.model.steps;
+    if (i == 0) return 'genesis';
+    if (i == steps.length - 1) return 'now';
+    final s = steps[i];
+    if (s.regimeChange) return 'reorganized';
+    if (s.archetypeShift) return 'became ${s.archetype}';
+    return s.archetype.isEmpty ? 'snapshot' : s.archetype;
   }
 
   /// A tap on the disk pins the nearest file, or clears the pin on empty space.
@@ -358,6 +429,8 @@ class _OrreryViewState extends State<OrreryView>
             step: _stepAt(head),
             index: head.round(),
             total: widget.model.stepCount,
+            mode: _mode,
+            onMode: _setMode,
             lod: _lod,
             onLod: _setLod,
             showLodToggle: _canAggregate,
@@ -368,7 +441,11 @@ class _OrreryViewState extends State<OrreryView>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(child: _buildDisk(colors)),
+              Expanded(
+                child: _mode == OrreryMode.scrub
+                    ? _buildDisk(colors)
+                    : _buildCompare(colors),
+              ),
               ValueListenableBuilder<double>(
                 valueListenable: _head,
                 builder: (_, head, __) => _OrreryRail(
@@ -383,14 +460,30 @@ class _OrreryViewState extends State<OrreryView>
             ],
           ),
         ),
-        _OrreryScrubber(
-          model: widget.model,
-          head: _head,
-          playing: _playing,
-          onTogglePlay: _togglePlay,
-          onScrub: _scrubTo,
-        ),
+        // The compare grid is its own timeline, so the scrubber belongs to scrub.
+        if (_mode == OrreryMode.scrub)
+          _OrreryScrubber(
+            model: widget.model,
+            head: _head,
+            playing: _playing,
+            onTogglePlay: _togglePlay,
+            onScrub: _scrubTo,
+          ),
       ],
+    );
+  }
+
+  /// Compare mode: static small-multiples of the structure at each milestone,
+  /// for side-by-side analysis (what animation can't do well). Tapping a frame
+  /// opens that moment in the live disk.
+  Widget _buildCompare(OrreryColors colors) {
+    return _OrreryCompare(
+      model: _activeModel,
+      milestones: _milestones,
+      colors: colors,
+      labelOf: _milestoneLabel,
+      stepOf: (i) => widget.model.steps[i],
+      onOpen: _openMilestone,
     );
   }
 
@@ -454,6 +547,8 @@ class _OrreryHeader extends StatelessWidget {
   final OrreryStep step;
   final int index;
   final int total;
+  final OrreryMode mode;
+  final ValueChanged<OrreryMode> onMode;
   final OrreryLod lod;
   final ValueChanged<OrreryLod> onLod;
   final bool showLodToggle;
@@ -463,6 +558,8 @@ class _OrreryHeader extends StatelessWidget {
     required this.step,
     required this.index,
     required this.total,
+    required this.mode,
+    required this.onMode,
     required this.lod,
     required this.onLod,
     required this.showLodToggle,
@@ -493,9 +590,25 @@ class _OrreryHeader extends StatelessWidget {
           if (repoLabel.isNotEmpty)
             Text(repoLabel,
                 style: TextStyle(color: t.textFaint, fontSize: 12)),
+          const SizedBox(width: 14),
+          _SegToggle<OrreryMode>(
+            value: mode,
+            options: const [
+              ('Scrub', OrreryMode.scrub),
+              ('Compare', OrreryMode.compare),
+            ],
+            onChanged: onMode,
+          ),
           if (showLodToggle) ...[
-            const SizedBox(width: 14),
-            _LodToggle(lod: lod, onChanged: onLod),
+            const SizedBox(width: 8),
+            _SegToggle<OrreryLod>(
+              value: lod,
+              options: const [
+                ('Modules', OrreryLod.modules),
+                ('Files', OrreryLod.files),
+              ],
+              onChanged: onLod,
+            ),
           ],
           const Spacer(),
           // Where you are in history.
@@ -524,12 +637,17 @@ class _OrreryHeader extends StatelessWidget {
   }
 }
 
-/// Two-state level-of-detail switch: collapse to module super-nodes, or expand
-/// to every file. Shown only when the repo is big enough for it to matter.
-class _LodToggle extends StatelessWidget {
-  final OrreryLod lod;
-  final ValueChanged<OrreryLod> onChanged;
-  const _LodToggle({required this.lod, required this.onChanged});
+/// A compact two-or-more-state segmented switch. Used for the level-of-detail
+/// (Modules/Files) and view-mode (Scrub/Compare) toggles.
+class _SegToggle<T> extends StatelessWidget {
+  final T value;
+  final List<(String, T)> options;
+  final ValueChanged<T> onChanged;
+  const _SegToggle({
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -545,19 +663,18 @@ class _LodToggle extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _seg(context, 'Modules', OrreryLod.modules),
-          _seg(context, 'Files', OrreryLod.files),
+          for (final (label, v) in options) _seg(context, label, v),
         ],
       ),
     );
   }
 
-  Widget _seg(BuildContext context, String label, OrreryLod value) {
+  Widget _seg(BuildContext context, String label, T v) {
     final t = context.tokens;
-    final bool on = lod == value;
+    final bool on = value == v;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => onChanged(value),
+      onTap: () => onChanged(v),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 110),
         curve: Curves.easeOut,
@@ -875,6 +992,128 @@ class _Meter extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The compare surface: a grid of static disk snapshots at each milestone, for
+/// side-by-side structural comparison. Each frame opens that moment on tap.
+class _OrreryCompare extends StatelessWidget {
+  final OrreryModel model;
+  final List<int> milestones;
+  final OrreryColors colors;
+  final String Function(int) labelOf;
+  final OrreryStep Function(int) stepOf;
+  final ValueChanged<int> onOpen;
+  const _OrreryCompare({
+    required this.model,
+    required this.milestones,
+    required this.colors,
+    required this.labelOf,
+    required this.stepOf,
+    required this.onOpen,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (milestones.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 14),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final cols =
+              math.min((c.maxWidth / 290).floor().clamp(1, 4), milestones.length);
+          return GridView.count(
+            crossAxisCount: cols,
+            mainAxisSpacing: 14,
+            crossAxisSpacing: 14,
+            childAspectRatio: 0.84,
+            children: <Widget>[
+              for (final i in milestones)
+                _CompareCard(
+                  model: model,
+                  step: i,
+                  stepData: stepOf(i),
+                  label: labelOf(i),
+                  colors: colors,
+                  onTap: () => onOpen(i),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CompareCard extends StatelessWidget {
+  final OrreryModel model;
+  final int step;
+  final OrreryStep stepData;
+  final String label;
+  final OrreryColors colors;
+  final VoidCallback onTap;
+  const _CompareCard({
+    required this.model,
+    required this.step,
+    required this.stepData,
+    required this.label,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                border:
+                    Border.all(color: t.chromeBorder.withValues(alpha: 0.5)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: CustomPaint(
+                painter: OrreryPainter(
+                  model: model,
+                  head: step.toDouble(),
+                  colors: colors,
+                  trailSteps: 2,
+                ),
+                size: Size.infinite,
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              Text('${step + 1}',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  )),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: t.textNormal, fontSize: 11.5)),
+              ),
+              const SizedBox(width: 6),
+              Text(_fmtDate(stepData.date),
+                  style: TextStyle(color: t.textFaint, fontSize: 10)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

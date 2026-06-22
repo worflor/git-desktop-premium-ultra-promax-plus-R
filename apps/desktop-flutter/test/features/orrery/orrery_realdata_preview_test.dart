@@ -120,5 +120,32 @@ void main() {
       final image = await boundary.toImage(pixelRatio: 1.5);
       await _writeImage(image, '.preview/orrery_REAL_page.png');
     });
+
+    // Compare mode — static small-multiples at the regime boundaries.
+    final ckey = GlobalKey();
+    await tester.pumpWidget(MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
+        AppThemeExtension(tokens),
+      ]),
+      home: Scaffold(
+        backgroundColor: tokens.bg0,
+        body: RepaintBoundary(
+          key: ckey,
+          child: OrreryView(
+            model: m,
+            repoLabel: 'manifold',
+            initialMode: OrreryMode.compare,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final cboundary =
+        tester.renderObject(find.byKey(ckey)) as RenderRepaintBoundary;
+    await tester.runAsync(() async {
+      final image = await cboundary.toImage(pixelRatio: 1.5);
+      await _writeImage(image, '.preview/orrery_REAL_compare.png');
+    });
   });
 }

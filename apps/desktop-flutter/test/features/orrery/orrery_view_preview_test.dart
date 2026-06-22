@@ -42,6 +42,7 @@ void main() {
       String label,
       double? head, {
       OrreryLod lod = OrreryLod.files,
+      OrreryMode mode = OrreryMode.scrub,
     }) async {
       final tokens = AppTokens.fromId(themeId);
       final key = GlobalKey();
@@ -59,6 +60,7 @@ void main() {
               repoLabel: 'manifold',
               initialHead: head,
               initialLod: lod,
+              initialMode: mode,
             ),
           ),
         ),
@@ -75,5 +77,8 @@ void main() {
     // Aggregated module view (the large-repo default).
     await shoot(AppThemeId.aether, 'modules', null, lod: OrreryLod.modules);
     await shoot(AppThemeId.petrichor, 'modules', null, lod: OrreryLod.modules);
+    // Compare mode — static small-multiples at the regime boundaries.
+    await shoot(AppThemeId.aether, 'compare', null, mode: OrreryMode.compare);
+    await shoot(AppThemeId.petrichor, 'compare', null, mode: OrreryMode.compare);
   });
 }
