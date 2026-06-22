@@ -74,10 +74,15 @@ class OrreryNode {
   final String? path;
   final List<Offset?> positions;
 
+  /// Change magnitude in [0, 1]: log-normalised count of commits that touched
+  /// this file. Sizes the node — busier files read as bigger.
+  final double churn;
+
   const OrreryNode({
     required this.id,
     required this.path,
     required this.positions,
+    this.churn = 0,
   });
 }
 
@@ -170,6 +175,7 @@ class OrreryModel {
         paths = b.nodePaths;
       }
     }
+    final churn = _normalizedChurn(traj.nodeChurn, maxN);
 
     final List<OrreryNode> nodes;
     final uaseFrames = traj.uaseFrames;
@@ -178,7 +184,7 @@ class OrreryModel {
         uaseFrames.length == pts.length) {
       // Shared-basis positions: stable by construction, so no alignment or
       // smoothing (those would only blur real motion).
-      nodes = _nodesFromUase(uaseFrames, traj.uaseDims, pts.length, paths);
+      nodes = _nodesFromUase(uaseFrames, traj.uaseDims, pts.length, paths, churn);
     } else {
       final byNode = <List<Offset?>>[
         for (int id = 0; id < maxN; id++)
@@ -204,11 +210,30 @@ class OrreryModel {
             id: id,
             path: (paths != null && id < paths.length) ? paths[id] : null,
             positions: byNode[id],
+            churn: id < churn.length ? churn[id] : 0.0,
           ),
       ];
     }
 
     return OrreryModel(steps: steps, nodes: nodes);
+  }
+
+  /// Log-normalise raw per-file commit-touch counts to [0, 1]. Log because
+  /// churn is heavy-tailed — a few files dominate linearly and would flatten
+  /// everyone else.
+  static List<double> _normalizedChurn(Float64List? raw, int n) {
+    final out = List<double>.filled(n, 0.0);
+    if (raw == null || raw.isEmpty) return out;
+    double maxRaw = 0;
+    for (final v in raw) {
+      if (v > maxRaw) maxRaw = v;
+    }
+    final denom = math.log(1 + maxRaw);
+    if (denom <= 0) return out;
+    for (int i = 0; i < n && i < raw.length; i++) {
+      out[i] = (math.log(1 + raw[i]) / denom).clamp(0.0, 1.0);
+    }
+    return out;
   }
 
   /// Map the shared-basis UASE frames to Poincaré-disk positions. Each axis
@@ -224,6 +249,7 @@ class OrreryModel {
     int d,
     int stepCount,
     List<String>? paths,
+    List<double> churn,
   ) {
     final int n = frames.isEmpty ? 0 : frames.last.length ~/ d;
     const double targetRadius = 0.92;
@@ -290,6 +316,7 @@ class OrreryModel {
         id: id,
         path: (paths != null && id < paths.length) ? paths[id] : null,
         positions: positions,
+        churn: id < churn.length ? churn[id] : 0.0,
       ));
     }
     return nodes;

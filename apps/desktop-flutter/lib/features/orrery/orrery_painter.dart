@@ -225,7 +225,12 @@ class OrreryPainter extends CustomPainter {
       _paintTrail(canvas, node, center, r, lo, headStep, base);
 
       final Offset screen = _toScreen(pos, center, r);
-      final double radius = _baseDot * (0.7 + 0.7 * centrality) + heat * 1.6;
+      // Size carries churn — how much the file changes — as its own channel,
+      // orthogonal to position (structural role) and colour (centrality/heat).
+      // Log-normalised upstream, so this is linear here, over a floor that keeps
+      // never-touched files legible as points.
+      final double radius =
+          _baseDot * (0.55 + 0.3 * centrality + 1.15 * node.churn) + heat * 1.4;
       // Glow — the file's presence bleeding into the field. Kept tight so
       // dense clusters of active files read as points, not a single smear.
       canvas.drawCircle(

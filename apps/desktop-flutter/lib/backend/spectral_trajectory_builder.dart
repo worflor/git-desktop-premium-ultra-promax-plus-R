@@ -130,6 +130,9 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
   // stands at that point.
   final pathToId = <String, int>{};
   final coTouchCounts = <int, Map<int, int>>{};
+  // How many (non-bulk) commits touch each file id — the "change magnitude"
+  // that sizes a node, the most-requested feature these tools never had.
+  final touchCounts = <int, int>{};
   final deadline = DateTime.now().add(_kBudget);
 
   final points = <TrajectoryPoint>[];
@@ -144,7 +147,7 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
     // The snapshot at a stride point still anchors to this commit's sha/time;
     // it just doesn't fold the bulk commit's spurious co-touches into the graph.
     if (commit.paths.length <= _kBulkCommitThreshold) {
-      _ingestCommit(commit.paths, pathToId, coTouchCounts);
+      _ingestCommit(commit.paths, pathToId, coTouchCounts, touchCounts);
     }
 
     final isStridePoint = (i % stride == 0);
@@ -199,10 +202,16 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
     );
   }
 
+  final nodeChurn = Float64List(finalN);
+  touchCounts.forEach((id, count) {
+    if (id >= 0 && id < finalN) nodeChurn[id] = count.toDouble();
+  });
+
   return SpectralTrajectory(
     points: points,
     uaseFrames: uase?.frames,
     uaseDims: uase?.dims ?? 0,
+    nodeChurn: nodeChurn,
   );
 }
 
@@ -310,12 +319,14 @@ void _ingestCommit(
   List<String> commitPaths,
   Map<String, int> pathToId,
   Map<int, Map<int, int>> coTouchCounts,
+  Map<int, int> touchCounts,
 ) {
   if (commitPaths.isEmpty) return;
   final ids = <int>{};
   for (final path in commitPaths) {
     final id = pathToId.putIfAbsent(path, () => pathToId.length);
     ids.add(id);
+    touchCounts[id] = (touchCounts[id] ?? 0) + 1;
   }
   if (ids.length < 2) return;
   final sorted = ids.toList()..sort();

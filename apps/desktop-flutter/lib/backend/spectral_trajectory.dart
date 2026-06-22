@@ -143,6 +143,7 @@ class SpectralTrajectory {
     required List<TrajectoryPoint> points,
     this.uaseFrames,
     this.uaseDims = 0,
+    this.nodeChurn,
   })  : points = List.unmodifiable(points),
         assert(
           _isMonotoneRevisions(points),
@@ -157,6 +158,11 @@ class SpectralTrajectory {
   /// paths that don't need it (and on [appended]/[reversed]).
   final List<Float64List>? uaseFrames;
   final int uaseDims;
+
+  /// Optional per-file change magnitude — the count of (non-bulk) commits that
+  /// touched each node id over the window. Sizes the Orrery's nodes. Null when
+  /// not computed.
+  final Float64List? nodeChurn;
 
   /// Empty trajectory — zero points. Useful as the initial value before
   /// the first snapshot has been taken, and as the neutral element for
