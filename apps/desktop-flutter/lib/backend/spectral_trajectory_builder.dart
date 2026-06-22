@@ -35,12 +35,29 @@ import 'logos_core.dart' show SpectralBasis;
 import 'peek_warm_cache.dart';
 import 'spectral_state.dart';
 import 'spectral_trajectory.dart';
+import 'uase.dart';
 
 const Duration _kBudget = Duration(seconds: 45);
 const int _kMaxDepth = 32;
 const int _kMinDepth = 4;
 const int _kHistoryWindow = 256;
 const int _kSpectralK = 16;
+
+// Unfolded spectral embedding (the stable, shared-basis node positions the
+// Orrery scrubs). Computed once in-isolate after the walk. Capped at
+// [_kUaseMaxNodes] so a giant repo doesn't blow the budget — above the cap the
+// trajectory simply ships no UASE frames and the viz falls back.
+const int _kUaseDims = 8;
+const int _kUaseIterations = 35;
+const int _kUaseMaxNodes = 4000;
+
+// Mechanical mass-edits (reformatting, vendoring, license headers, generated
+// code, mass renames) co-touch dozens of unrelated files and manufacture false
+// coupling — and therefore phantom regime changes in the trajectory. Drop them
+// from graph accumulation, matching CodeScene's temporal-coupling hygiene
+// (changesets touching more than ~50 files are excluded). Data hygiene, not a
+// tuning knob — the same spirit as the builder's existing `--no-merges`.
+const int _kBulkCommitThreshold = 50;
 
 const _lenientUtf8 = Utf8Codec(allowMalformed: true);
 
@@ -116,11 +133,19 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
   final deadline = DateTime.now().add(_kBudget);
 
   final points = <TrajectoryPoint>[];
+  // One co-touch edge list per snapshot, captured at the same stride points —
+  // the input to the unfolded (shared-basis) embedding computed after the walk.
+  final snapshotEdgeSets = <List<UaseEdge>>[];
   var snapshotRevision = 0;
 
   for (var i = 0; i < commits.length; i++) {
     final commit = commits[i];
-    _ingestCommit(commit.paths, pathToId, coTouchCounts);
+    // Skip mechanical mass-edits — they pollute co-change coupling with noise.
+    // The snapshot at a stride point still anchors to this commit's sha/time;
+    // it just doesn't fold the bulk commit's spurious co-touches into the graph.
+    if (commit.paths.length <= _kBulkCommitThreshold) {
+      _ingestCommit(commit.paths, pathToId, coTouchCounts);
+    }
 
     final isStridePoint = (i % stride == 0);
     final isLast = (i == commits.length - 1);
@@ -135,6 +160,7 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
     }
 
     final basis = _buildSnapshotBasis(pathToId, coTouchCounts);
+    snapshotEdgeSets.add(_snapshotEdges(coTouchCounts));
     final state = LogosState(
       fileSpectrum: basis,
       commitSpectrum: null,
@@ -150,7 +176,64 @@ SpectralTrajectory _bootstrapInIsolate(String repoPath) {
     snapshotRevision += 1;
   }
 
-  return SpectralTrajectory(points: points);
+  // Stable shared-basis embedding over all captured snapshots. Skipped (frames
+  // stay null, viz falls back) on degenerate or oversized graphs.
+  final finalN = pathToId.length;
+  UaseResult? uase;
+  if (points.length >= 2 &&
+      finalN >= 2 &&
+      finalN <= _kUaseMaxNodes &&
+      snapshotEdgeSets.length == points.length) {
+    // Degree-normalise each snapshot (Â = D^{-1/2} A D^{-1/2}) before the shared
+    // decomposition. The top modes of the normalised adjacency are the smooth
+    // Laplacian-eigenmap modes, which spread communities into lobes — raw
+    // adjacency's near-binary eigenvectors collapse them onto axes.
+    final normalized = <List<UaseEdge>>[
+      for (final e in snapshotEdgeSets) _normalizeEdges(e, finalN),
+    ];
+    uase = unfoldedSpectralEmbedding(
+      normalized,
+      finalN,
+      _kUaseDims,
+      iterations: _kUaseIterations,
+    );
+  }
+
+  return SpectralTrajectory(
+    points: points,
+    uaseFrames: uase?.frames,
+    uaseDims: uase?.dims ?? 0,
+  );
+}
+
+/// Symmetric degree-normalisation of an edge list: w_ij ← w_ij / √(dᵢ·dⱼ).
+/// Turns the adjacency embedding into the smooth (Laplacian-eigenmap) one.
+List<UaseEdge> _normalizeEdges(List<UaseEdge> edges, int n) {
+  final deg = Float64List(n);
+  for (final e in edges) {
+    deg[e.a] += e.w;
+    deg[e.b] += e.w;
+  }
+  final out = <UaseEdge>[];
+  for (final e in edges) {
+    final da = deg[e.a];
+    final db = deg[e.b];
+    if (da > 0 && db > 0) {
+      out.add((a: e.a, b: e.b, w: e.w / math.sqrt(da * db)));
+    }
+  }
+  return out;
+}
+
+/// Snapshot the current co-touch matrix as a symmetric edge list for UASE.
+List<UaseEdge> _snapshotEdges(Map<int, Map<int, int>> coTouchCounts) {
+  final edges = <UaseEdge>[];
+  coTouchCounts.forEach((lo, row) {
+    row.forEach((hi, count) {
+      edges.add((a: lo, b: hi, w: count.toDouble()));
+    });
+  });
+  return edges;
 }
 
 /// Run `git log` once for the recent history window. Output is parsed

@@ -21,6 +21,7 @@ import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
 import '../changes/merge_conflict_editor.dart';
 import '../history_surgery/history_surgery_page.dart';
+import '../orrery/orrery_page.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/repo_web_url.dart';
 import '../../backend/system_paths.dart';
@@ -150,6 +151,24 @@ List<PaletteEntry> buildStaticEntries(
           final rp = repoPath;
           Navigator.of(context).push(MaterialPageRoute<void>(
             builder: (_) => HistorySurgeryLoader(repoPath: rp),
+          ));
+        },
+      ),
+    if (repoPath != null)
+      PaletteEntry(
+        id: 'cmd.orrery',
+        label: 'Orrery',
+        subtitle: 'Scrub the repo’s structural history through the manifold',
+        keywords: const [
+          'orrery', 'history', 'trajectory', 'evolution', 'timeline',
+          'manifold', 'spectral', 'replay', 'scrub', 'animate',
+        ],
+        category: PaletteCategory.command,
+        actionType: PaletteActionType.execute,
+        onExecute: () {
+          final rp = repoPath;
+          Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => OrreryPage(repoPath: rp),
           ));
         },
       ),

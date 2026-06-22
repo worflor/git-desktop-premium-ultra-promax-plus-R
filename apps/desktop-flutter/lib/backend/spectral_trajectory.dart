@@ -139,12 +139,24 @@ class TrajectoryPoint {
 /// at each advance and feed them into a trajectory. The two primitives
 /// are duals — forward-secret sync vs. forward-visible chronicle.
 class SpectralTrajectory {
-  SpectralTrajectory({required List<TrajectoryPoint> points})
-      : points = List.unmodifiable(points),
+  SpectralTrajectory({
+    required List<TrajectoryPoint> points,
+    this.uaseFrames,
+    this.uaseDims = 0,
+  })  : points = List.unmodifiable(points),
         assert(
           _isMonotoneRevisions(points),
           'points must have strictly increasing revisions',
         );
+
+  /// Optional Unfolded Adjacency Spectral Embedding of the same snapshots, in
+  /// ONE shared basis (see [unfoldedSpectralEmbedding]). One row-major n×[uaseDims]
+  /// frame per point, aligned 1:1 with [points]. When present, the Orrery uses
+  /// it for node positions instead of per-snapshot Poincaré coords — the shared
+  /// basis makes frame-to-frame "teleport" unrepresentable. Null on the engine
+  /// paths that don't need it (and on [appended]/[reversed]).
+  final List<Float64List>? uaseFrames;
+  final int uaseDims;
 
   /// Empty trajectory — zero points. Useful as the initial value before
   /// the first snapshot has been taken, and as the neutral element for
