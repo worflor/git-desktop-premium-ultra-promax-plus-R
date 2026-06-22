@@ -26,6 +26,7 @@ enum OrreryFindingKind {
   identity,
   thrash, // a file reorganising back and forth — motion without progress
   reshuffle, // a quiet-looking commit that moved which files are central
+  forecast, // where connectivity is heading — toward a split or a dense mass
 }
 
 class OrreryFinding {
@@ -80,9 +81,77 @@ List<OrreryFinding> computeFindings(OrreryModel model) {
     ..._positionFindings(model),
     ..._thrashFinding(model),
     ..._reshuffleFinding(model),
+    ..._forecastFinding(model),
     ..._regimeFindings(model),
     ..._archetypeTrendFinding(model),
   ];
+}
+
+/// The one forward-looking finding: where the codebase's connectivity is
+/// *heading*. The spectral gap reads high when the graph is one tight community
+/// and low as it approaches splitting into loosely-coupled halves. Fit its
+/// recent trend; call out a strong, sustained slide toward a split (or toward a
+/// single dense mass) while there's still time to choose. Framed on the
+/// observed trend with an explicit "if this holds" — never a fabricated
+/// countdown. Stays silent unless the trend is both strong and near a boundary.
+List<OrreryFinding> _forecastFinding(OrreryModel model) {
+  final n = model.stepCount;
+  if (n < 12) return const <OrreryFinding>[];
+
+  double gLo = double.infinity, gHi = -double.infinity;
+  for (final s in model.steps) {
+    if (s.gap < gLo) gLo = s.gap;
+    if (s.gap > gHi) gHi = s.gap;
+  }
+  final range = (gHi - gLo).abs();
+  if (range < 1e-6) return const <OrreryFinding>[]; // flat — nothing to call
+
+  // Least-squares slope of gap over the recent half (the current trajectory).
+  final lo = n ~/ 2;
+  final m = n - lo;
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (int i = lo; i < n; i++) {
+    final x = (i - lo).toDouble();
+    final y = model.steps[i].gap;
+    sx += x;
+    sy += y;
+    sxx += x * x;
+    sxy += x * y;
+  }
+  final denom = m * sxx - sx * sx;
+  if (denom.abs() < 1e-9) return const <OrreryFinding>[];
+  final slope = (m * sxy - sx * sy) / denom;
+
+  // Predicted change over the window, as a fraction of gap's own range.
+  final trend = slope * (m - 1) / range;
+  final cur = model.steps[n - 1].gap;
+  final headStep = n - 1;
+
+  // Heading toward a split: connectivity sliding and already in the low third.
+  if (trend <= -0.6 && cur < gLo + 0.35 * range) {
+    return <OrreryFinding>[
+      OrreryFinding(
+        kind: OrreryFindingKind.forecast,
+        stepIndex: headStep,
+        headline:
+            'Connectivity has been falling and is near its lowest — if this holds, the codebase is heading toward splitting into loosely-coupled halves. Decide now whether that’s the intent.',
+        anchor: 'trend',
+      ),
+    ];
+  }
+  // Heading toward one dense mass: connectivity climbing into the high third.
+  if (trend >= 0.6 && cur > gHi - 0.35 * range) {
+    return <OrreryFinding>[
+      OrreryFinding(
+        kind: OrreryFindingKind.forecast,
+        stepIndex: headStep,
+        headline:
+            'Connectivity has been climbing toward its peak — if this holds, the codebase is consolidating into one tightly-coupled mass. Watch for it hardening into a monolith.',
+        anchor: 'trend',
+      ),
+    ];
+  }
+  return const <OrreryFinding>[];
 }
 
 /// Thrashing — a file that keeps getting reorganised back and forth: it travels

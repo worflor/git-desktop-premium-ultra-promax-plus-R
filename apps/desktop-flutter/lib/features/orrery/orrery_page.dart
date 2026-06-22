@@ -986,6 +986,7 @@ class _FindingCard extends StatelessWidget {
       OrreryFindingKind.identity => t.accentBright,
       OrreryFindingKind.thrash => t.stateModified,
       OrreryFindingKind.reshuffle => t.accentBright,
+      OrreryFindingKind.forecast => t.stateModified,
     };
     final IconData icon = switch (finding.kind) {
       OrreryFindingKind.hub => Icons.adjust_rounded,
@@ -997,6 +998,7 @@ class _FindingCard extends StatelessWidget {
       OrreryFindingKind.identity => Icons.change_history_rounded,
       OrreryFindingKind.thrash => Icons.sync_problem_rounded,
       OrreryFindingKind.reshuffle => Icons.shuffle_rounded,
+      OrreryFindingKind.forecast => Icons.trending_down_rounded,
     };
     return InkWell(
       onTap: onTap,

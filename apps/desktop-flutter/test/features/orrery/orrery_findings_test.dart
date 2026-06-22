@@ -99,4 +99,49 @@ void main() {
       expect(_has(fs, OrreryFindingKind.regime), isTrue);
     });
   });
+
+  group('forecast', () {
+    // Gap flat-high through the first half, then a given trajectory in the
+    // recent half. A few static nodes so the position-based findings stay quiet.
+    OrreryModel fromGaps(List<double> gaps) => OrreryModel(
+          steps: [
+            for (int i = 0; i < gaps.length; i++) _step(i, gap: gaps[i]),
+          ],
+          nodes: const [
+            OrreryNode(
+              id: 0,
+              path: 'lib/a.dart',
+              positions: [Offset(0.1, 0), Offset(0.1, 0)],
+            ),
+          ],
+        );
+
+    List<double> ramp(double from, double to) {
+      const n = 14;
+      const lo = 7;
+      return [
+        for (int i = 0; i < n; i++)
+          i < lo ? from : from + (to - from) * (i - lo) / (n - 1 - lo),
+      ];
+    }
+
+    test('warns of a split when connectivity slides toward its low', () {
+      final fs = computeFindings(fromGaps(ramp(0.9, 0.1)));
+      expect(_has(fs, OrreryFindingKind.forecast), isTrue);
+      expect(fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
+          contains('splitting'));
+    });
+
+    test('warns of a monolith when connectivity climbs toward its peak', () {
+      final fs = computeFindings(fromGaps(ramp(0.1, 0.9)));
+      expect(_has(fs, OrreryFindingKind.forecast), isTrue);
+      expect(fs.firstWhere((f) => f.kind == OrreryFindingKind.forecast).headline,
+          contains('monolith'));
+    });
+
+    test('stays silent on a steady connectivity', () {
+      final fs = computeFindings(fromGaps(List<double>.filled(14, 0.5)));
+      expect(_has(fs, OrreryFindingKind.forecast), isFalse);
+    });
+  });
 }
