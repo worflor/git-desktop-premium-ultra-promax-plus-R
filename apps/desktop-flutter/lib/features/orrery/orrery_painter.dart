@@ -65,6 +65,7 @@ class OrreryPainter extends CustomPainter {
   final OrreryColors colors;
   final int trailSteps;
   final int? highlightId; // node under the cursor, ringed
+  final int? pinnedId; // node selected from a finding / click — full journey
 
   static const double diskMargin = 0.9; // screen padding inside the square
   static const double _embedRadius = 0.92; // engine's targetRadius (poincaré)
@@ -78,6 +79,7 @@ class OrreryPainter extends CustomPainter {
     required this.colors,
     this.trailSteps = 4,
     this.highlightId,
+    this.pinnedId,
     super.repaint,
   });
 
@@ -93,6 +95,67 @@ class OrreryPainter extends CustomPainter {
     _paintField(canvas, center, r);
     if (model.isEmpty) return;
     _paintNodes(canvas, center, r);
+    _paintPinned(canvas, center, r);
+  }
+
+  /// The selected file's whole journey through the manifold — genesis → now —
+  /// drawn on top, with a genesis dot and a prominent ring at its current
+  /// position. This is the "show me where this file is, and where it's been"
+  /// drill-down that connects a finding to the disk.
+  void _paintPinned(Canvas canvas, Offset center, double r) {
+    final int? id = pinnedId;
+    if (id == null || id < 0 || id >= model.nodes.length) return;
+    final OrreryNode node = model.nodes[id];
+    final int headStep = head.floor();
+
+    final List<Offset> pts = <Offset>[];
+    for (int s = 0; s <= headStep && s < node.positions.length; s++) {
+      final Offset? p = node.positions[s];
+      if (p != null) pts.add(_toScreen(p, center, r));
+    }
+    final Offset? headPos = OrreryModel.sampleNode(node, head);
+    if (headPos != null) pts.add(_toScreen(headPos, center, r));
+    if (pts.isEmpty) return;
+
+    if (pts.length >= 2) {
+      for (int k = 0; k < pts.length - 1; k++) {
+        final double recency = (k + 1) / (pts.length - 1);
+        canvas.drawLine(
+          pts[k],
+          pts[k + 1],
+          Paint()
+            ..color = colors.ring.withValues(alpha: 0.22 + recency * 0.55)
+            ..strokeWidth = 1.0 + recency * 1.1
+            ..strokeCap = StrokeCap.round,
+        );
+      }
+      // Where it began.
+      canvas.drawCircle(
+        pts.first,
+        2.6,
+        Paint()..color = colors.ring.withValues(alpha: 0.55),
+      );
+    }
+
+    // Prominent ring at the current position (or last known if retired).
+    final Offset marker = pts.last;
+    canvas.drawCircle(
+      marker,
+      9,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 6
+        ..color = colors.ring.withValues(alpha: 0.16)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+    canvas.drawCircle(
+      marker,
+      8.5,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..color = colors.ring,
+    );
   }
 
   Offset _toScreen(Offset unit, Offset center, double r) =>
@@ -229,5 +292,6 @@ class OrreryPainter extends CustomPainter {
       old.model != model ||
       old.trailSteps != trailSteps ||
       old.highlightId != highlightId ||
+      old.pinnedId != pinnedId ||
       !old.colors.sameAs(colors);
 }

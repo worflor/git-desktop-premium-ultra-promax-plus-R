@@ -62,7 +62,14 @@ void main() {
       await _writeImage(image, '.preview/orrery_REAL_disk.png');
     });
 
-    // Full page, aether.
+    // Full page, aether — pin a drifting file so the drill-down trail shows.
+    int? pinned;
+    for (final f in computeFindings(m)) {
+      if (f.nodeId != null) {
+        pinned = f.nodeId;
+        if (f.kind == OrreryFindingKind.driftOut) break;
+      }
+    }
     final key = GlobalKey();
     final tokens = AppTokens.fromId(AppThemeId.aether);
     await tester.pumpWidget(MaterialApp(
@@ -77,7 +84,7 @@ void main() {
           child: OrreryView(
             model: m,
             repoLabel: 'manifold',
-            initialHead: (m.stepCount * 0.45).floorToDouble(),
+            initialPinned: pinned,
           ),
         ),
       ),

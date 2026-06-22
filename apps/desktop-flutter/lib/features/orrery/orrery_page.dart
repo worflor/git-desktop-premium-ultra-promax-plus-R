@@ -162,12 +162,16 @@ class OrreryView extends StatefulWidget {
   /// Scrub position to open on; defaults to the present (head of history).
   final double? initialHead;
 
+  /// Node id to pin on open (highlight + full journey). For deep-links/tests.
+  final int? initialPinned;
+
   const OrreryView({
     super.key,
     required this.model,
     this.repoLabel = '',
     this.onClose,
     this.initialHead,
+    this.initialPinned,
   });
 
   @override
@@ -180,6 +184,7 @@ class _OrreryViewState extends State<OrreryView>
   final ValueNotifier<double> _head = ValueNotifier<double>(0);
   final ValueNotifier<int?> _hover = ValueNotifier<int?>(null);
   final ValueNotifier<_HoverInfo?> _hoverInfo = ValueNotifier<_HoverInfo?>(null);
+  final ValueNotifier<int?> _pinned = ValueNotifier<int?>(null);
   late final _Ranges _ranges;
   late final List<OrreryFinding> _findings;
   bool _playing = false;
@@ -199,6 +204,7 @@ class _OrreryViewState extends State<OrreryView>
     );
     _head.value =
         (widget.initialHead ?? _maxHead).clamp(0.0, _maxHead); // open at present
+    _pinned.value = widget.initialPinned;
     _play.addListener(() {
       _head.value = _play.value * _maxHead;
       if (_play.isCompleted && _playing) {
@@ -213,6 +219,7 @@ class _OrreryViewState extends State<OrreryView>
     _head.dispose();
     _hover.dispose();
     _hoverInfo.dispose();
+    _pinned.dispose();
     super.dispose();
   }
 
@@ -239,6 +246,33 @@ class _OrreryViewState extends State<OrreryView>
       setState(() => _playing = false);
     }
     _head.value = head.clamp(0.0, _maxHead);
+  }
+
+  /// A finding was tapped: jump to its moment and pin the file it's about, so
+  /// the disk lights up where that file is and traces where it's been.
+  void _select(int step, int? nodeId) {
+    _scrubTo(step.toDouble());
+    _pinned.value = nodeId;
+  }
+
+  /// A tap on the disk pins the nearest file, or clears the pin on empty space.
+  void _tapDisk(Offset local, double side) {
+    final double r = OrreryPainter.radiusFor(side);
+    final Offset center = Offset(side / 2, side / 2);
+    final double head = _head.value;
+    int? best;
+    double bestD = 13.0;
+    for (final node in widget.model.nodes) {
+      final pos = OrreryModel.sampleNode(node, head);
+      if (pos == null) continue;
+      final screen = Offset(center.dx + pos.dx * r, center.dy + pos.dy * r);
+      final d = (screen - local).distance;
+      if (d < bestD) {
+        bestD = d;
+        best = node.id;
+      }
+    }
+    _pinned.value = best;
   }
 
   void _updateHover(Offset local, double side) {
@@ -302,7 +336,7 @@ class _OrreryViewState extends State<OrreryView>
                   index: head.round(),
                   ranges: _ranges,
                   findings: _findings,
-                  onJump: (i) => _scrubTo(i.toDouble()),
+                  onSelect: _select,
                 ),
               ),
             ],
@@ -331,34 +365,39 @@ class _OrreryViewState extends State<OrreryView>
               return MouseRegion(
                 onHover: (e) => _updateHover(e.localPosition, side),
                 onExit: (_) => _clearHover(),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: AnimatedBuilder(
-                        animation: Listenable.merge([_head, _hover]),
-                        builder: (_, __) => CustomPaint(
-                          painter: OrreryPainter(
-                            model: widget.model,
-                            head: _head.value,
-                            colors: colors,
-                            highlightId: _hover.value,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (e) => _tapDisk(e.localPosition, side),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: Listenable.merge([_head, _hover, _pinned]),
+                          builder: (_, __) => CustomPaint(
+                            painter: OrreryPainter(
+                              model: widget.model,
+                              head: _head.value,
+                              colors: colors,
+                              highlightId: _hover.value,
+                              pinnedId: _pinned.value,
+                            ),
+                            size: Size.infinite,
                           ),
-                          size: Size.infinite,
                         ),
                       ),
-                    ),
-                    ValueListenableBuilder<_HoverInfo?>(
-                      valueListenable: _hoverInfo,
-                      builder: (_, info, __) {
-                        if (info == null) return const SizedBox.shrink();
-                        return Positioned(
-                          left: math.min(info.pos.dx + 12, side - 140),
-                          top: math.max(info.pos.dy - 10, 0),
-                          child: _NodeTooltip(label: info.label),
-                        );
-                      },
-                    ),
-                  ],
+                      ValueListenableBuilder<_HoverInfo?>(
+                        valueListenable: _hoverInfo,
+                        builder: (_, info, __) {
+                          if (info == null) return const SizedBox.shrink();
+                          return Positioned(
+                            left: math.min(info.pos.dx + 12, side - 140),
+                            top: math.max(info.pos.dy - 10, 0),
+                            child: _NodeTooltip(label: info.label),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -489,14 +528,14 @@ class _OrreryRail extends StatelessWidget {
   final int index;
   final _Ranges ranges;
   final List<OrreryFinding> findings;
-  final ValueChanged<int> onJump;
+  final void Function(int step, int? nodeId) onSelect;
   const _OrreryRail({
     required this.model,
     required this.step,
     required this.index,
     required this.ranges,
     required this.findings,
-    required this.onJump,
+    required this.onSelect,
   });
 
   @override
@@ -570,7 +609,7 @@ class _OrreryRail extends StatelessWidget {
                       return _FindingCard(
                         finding: f,
                         active: f.stepIndex == index,
-                        onTap: () => onJump(f.stepIndex),
+                        onTap: () => onSelect(f.stepIndex, f.nodeId),
                       );
                     },
                   ),
