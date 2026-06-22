@@ -1,3 +1,10 @@
+/// How many commits back the app reaches by default when reading history.
+/// Single source of truth shared by the History page (its limit field) and the
+/// Orrery (its trajectory window), so the two stay in step instead of each
+/// hard-coding its own number. Lives here because dtos.dart is dependency-free
+/// and safe to import from the Orrery's background isolate.
+const int kDefaultHistoryCommits = 100;
+
 class RepositoryStatusFile {
   final String path;
   final String staged;

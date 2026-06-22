@@ -50,7 +50,7 @@ const double _kGapLog = 1.1;
 const double _kTemporalBlend = 0.32;
 const double _kLensMin = 32;
 const double _kLensMax = 64;
-const int _kHistoryDefault = 100;
+const int _kHistoryDefault = kDefaultHistoryCommits;
 const int _kHistoryMax = 500;
 
 

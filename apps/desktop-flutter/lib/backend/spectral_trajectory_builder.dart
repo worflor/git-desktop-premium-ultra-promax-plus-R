@@ -30,6 +30,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'dtos.dart' show kDefaultHistoryCommits;
 import 'graph/csr_builder.dart' show CsrEdge, buildSymmetricCsrGraph;
 import 'logos_core.dart' show SpectralBasis;
 import 'peek_warm_cache.dart';
@@ -40,7 +41,9 @@ import 'uase.dart';
 const Duration _kBudget = Duration(seconds: 45);
 const int _kMaxDepth = 32;
 const int _kMinDepth = 4;
-const int _kHistoryWindow = 256;
+// Match the History page's window — one shared value (dtos.dart) so the Orrery
+// charts the same span of commits the history view reads, not its own number.
+const int _kHistoryWindow = kDefaultHistoryCommits;
 const int _kSpectralK = 16;
 
 // Unfolded spectral embedding (the stable, shared-basis node positions the
