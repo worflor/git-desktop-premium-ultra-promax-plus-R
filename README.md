@@ -57,7 +57,7 @@ Cellshaded comic book page, cosmic glass in three unique perspectives... you get
 
 ## Status
 
-Public Beta mk1. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
+Public Beta mk2. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
 
 ## Quick start
 
