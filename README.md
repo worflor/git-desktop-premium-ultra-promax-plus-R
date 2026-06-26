@@ -97,6 +97,12 @@ code review but quietly wreck properties the rest of the system depends
 on. Unwinding that eats the time I'd rather spend *not*. So read it,
 fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just not vibe-understood PRs or I'll vibe-respond.
 
+
+## Known Things
+
+- Runs hot 👉👈 (hot math ayo)
+- Muse needs to regurgitate less with all faces enabled (issue in 0.1.3)
+
 ## License
 
 See [LICENSE](LICENSE). WLAC and WEEC ship under the same Free License I hold the
