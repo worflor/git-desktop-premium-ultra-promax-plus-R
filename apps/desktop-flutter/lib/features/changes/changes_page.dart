@@ -40,8 +40,6 @@ import '../../backend/stash_shape.dart';
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/gyat.dart'
     show gyatForRepo, peekGyatForRepo, warmGyatForRepo;
-import '../../backend/logos_flow.dart'
-    show FlowAnalysisResult, analyzeFlowCached;
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/review_logos.dart' show ClaimShape;
@@ -66,6 +64,7 @@ import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_document.dart';
 import '../diff/diff_shell.dart';
 import '../diff/diff_models.dart';
+import 'changeset_controller.dart';
 import 'file_constellation.dart';
 
 String _guardrailLabelForStage(int stage) {
@@ -225,6 +224,12 @@ class _ChangesPageState extends State<ChangesPage> {
   /// Files below the changeset's median integrity dim; files at or
   /// above stay vivid. Empty until the engine loads — all files
   /// render at full opacity until then.
+  /// Owns the working-tree async sources (weights / flow / spectral) and the
+  /// coalesced derivation. Feeds the result fields below through one settled
+  /// [_onChangesetChanged] callback instead of the old five-source setState
+  /// cascade. See changeset_controller.dart.
+  final ChangesetController _changeset = ChangesetController();
+
   Map<String, double> _fileDimOpacity = const {};
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
@@ -478,32 +483,13 @@ class _ChangesPageState extends State<ChangesPage> {
     return ranked.take(6).map((e) => e.key).toList();
   }
 
-  // Single-slot cluster cache. `clusterFiles()` is O(n²) in candidate
-  // pair construction and runs inside the main state's build. Before
-  // caching, every hover-triggered rebuild paid the full cluster
-  // build even though nothing clusterFiles consumes had changed.
-  // Keyed on identity of the stable inputs plus a content hash of
-  // the in-place mutable Sets (_includedPaths, conflictedPaths).
-  FileClusters? _clustersCache;
-  Object? _clustersCacheStatus;
-  Object? _clustersCacheMatrix;
-  Object? _clustersCacheChangeWeights;
-  FileSortGuide? _clustersCacheSortGuide;
-  bool? _clustersCacheInverted;
-  int _clustersCacheIncludedHash = 0;
-  int _clustersCacheConflictsHash = 0;
 
-  // Memoized spectral overlays. `withSpectral`/`withSpectralEdges` are pure
-  // shallow copies, but each call allocates a fresh object — and the cluster
-  // cache above keys on `identical(effectiveMatrix)`, so a fresh wrapper every
-  // build would defeat it and rerun the O(n²) seriation per frame. Cache the
-  // wrapper keyed on (base identity, _spectralCoupling identity); both are
-  // stable between updates (matrixFor/engineFor are cached, _spectralCoupling
-  // is reassigned wholesale on fetch), so the same object comes back out —
-  // byte-identical content, and the identity-keyed caches downstream hit.
-  Object? _effMatrixBase;
-  Object? _effMatrixSpectral;
-  FileCouplingMatrix? _effMatrixMemo;
+  // Memoised engine spectral-edge overlay. `withSpectralEdges` is a pure shallow
+  // copy but allocates a fresh `LogosGit` each call; the correlatedness pipeline
+  // and the cluster key (manifoldRevision) want a stable instance. Cache the
+  // wrapper keyed on (base identity, _spectralCoupling identity) — both stable
+  // between updates (engineFor is cached, _spectralCoupling is reassigned
+  // wholesale by the controller), so the same overlaid engine comes back out.
   Object? _effEngineBase;
   Object? _effEngineSpectral;
   LogosGit? _effEngineMemo;
@@ -559,18 +545,14 @@ class _ChangesPageState extends State<ChangesPage> {
   // Refreshed whenever the status signature changes. Empty until the
   // first fetch lands; until then impact-sort tiebreaks alphabetically.
   Map<String, FileChangeWeight> _changeWeights = const {};
-  String? _weightsFetchedForKey;
 
   // Spectral coupling for the current change set. Computed from
   // eigenAddress histogram cosine similarity + flow coherence so
   // new/untracked files get a structural coupling score before first commit.
   Map<String, Map<String, double>> _spectralCoupling = const {};
-  String? _spectralCouplingFetchedForKey;
 
   // per-file spectral gap + full flow results from Filament
   Map<String, double> _flowFragility = const {};
-  Map<String, FlowAnalysisResult> _flowResults = const {};
-  String? _flowFragilityKey;
 
   // Filing cabinet (stashes)
   List<StashEntryData> _stashes = const [];
@@ -581,12 +563,6 @@ class _ChangesPageState extends State<ChangesPage> {
   Set<String>? _lastCouplingDiffPaths;
   Object? _lastCouplingEngine;
   // Memo for _recomputeFileDimOpacity — its O(n²) centrality sweep is a pure,
-  // deterministic function of (engine, coupling, ordered changed-path list),
-  // all stable identities across frames (engineFor/matrixFor are cached, change
-  // only on HEAD move). Skips the per-build recompute on a hit; byte-identical.
-  Object? _lastDimEngine;
-  Object? _lastDimCoupling;
-  List<String>? _lastDimPaths;
   bool _stashExpandedInitialized = false;
   String? _stashPeekDiff;
   // Per-stash expanded state (keyed by stash.index) — the filing-cabinet
@@ -823,6 +799,7 @@ class _ChangesPageState extends State<ChangesPage> {
   @override
   void initState() {
     super.initState();
+    _changeset.addListener(_onChangesetChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -1309,7 +1286,7 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     return [
       engineDigest,
-      _spectralCouplingFetchedForKey ?? '',
+      '${_changeset.spectralVersion}',
       orderedDigest,
       sourceDigest,
       t.toStringAsFixed(3),
@@ -1679,65 +1656,6 @@ class _ChangesPageState extends State<ChangesPage> {
     return false;
   }
 
-  FileClusters _clustersFor({
-    required RepositoryStatus status,
-    required FileCouplingMatrix? effectiveMatrix,
-    required List<String> currentPaths,
-    required FileSortGuide sortGuide,
-    required Map<String, FileImpactSignal> impactSignals,
-    required Set<String> conflictedPaths,
-    required bool inverted,
-    CorrelatednessContext? correlatednessContext,
-    CouplingConstants couplingConstants = CouplingConstants.prior,
-    LogosGit? engine,
-  }) {
-    if (effectiveMatrix == null || currentPaths.isEmpty) {
-      // Empty-case short-circuit; no point caching a zero-cost answer.
-      return FileClusters.empty(currentPaths);
-    }
-    // Stable content hashes for the mutable Sets: _includedPaths is a
-    // field that's mutated in place across builds, and conflictedPaths
-    // is derived fresh each build from `status`. Object.hashAll on a
-    // Set is iteration-order dependent, which is fine here because Set
-    // iteration in Dart is insertion order and we only need change
-    // detection, not semantic equality.
-    final includedHash = Object.hashAll(_includedPaths);
-    final conflictsHash = Object.hashAll(conflictedPaths);
-
-    if (identical(_clustersCacheStatus, status) &&
-        identical(_clustersCacheMatrix, effectiveMatrix) &&
-        identical(_clustersCacheChangeWeights, _changeWeights) &&
-        _clustersCacheSortGuide == sortGuide &&
-        _clustersCacheInverted == inverted &&
-        _clustersCacheIncludedHash == includedHash &&
-        _clustersCacheConflictsHash == conflictsHash &&
-        _clustersCache != null) {
-      return _clustersCache!;
-    }
-
-    final result = clusterFiles(
-      currentPaths,
-      effectiveMatrix,
-      couplingConstants: couplingConstants,
-      sortGuide: sortGuide,
-      impactSignals: impactSignals,
-      conflictedPaths: conflictedPaths,
-      includedPaths: _includedPaths,
-      inverted: inverted,
-      correlatednessContext: correlatednessContext,
-      engine: engine,
-    );
-    _clustersCache = result;
-    _clustersCacheStatus = status;
-    _clustersCacheMatrix = effectiveMatrix;
-    _clustersCacheChangeWeights = _changeWeights;
-    _clustersCacheSortGuide = sortGuide;
-    _clustersCacheInverted = inverted;
-    _clustersCacheIncludedHash = includedHash;
-    _clustersCacheConflictsHash = conflictsHash;
-    return result;
-  }
-
   /// Cached peer-score lookup: reads [_peerScoreCache] or computes
   /// and stores on miss. Invalidates when the coupling matrix
   /// identity changes (a new FileCouplingMatrix instance implies
@@ -1933,6 +1851,8 @@ class _ChangesPageState extends State<ChangesPage> {
 
   @override
   void dispose() {
+    _changeset.removeListener(_onChangesetChanged);
+    _changeset.dispose();
     _commitDraftSaveDebounce?.cancel();
     // Cancel any in-flight flash-clear timers. Each timer's callback
     // captures `this`, so leaving them uncancelled would keep the
@@ -2105,128 +2025,17 @@ class _ChangesPageState extends State<ChangesPage> {
     _museFlash = false;
   }
 
-  /// Recompute per-file dim opacity from the Logos engine's integrity
-  /// + volatility signals. Files whose integrity is below the
-  /// changeset's adaptive threshold dim; the rest stay vivid.
-  ///
-  /// The threshold is the changeset's own median integrity, so a repo
-  /// full of generated files doesn't dim everything — the dimming is
-  /// always relative to what's in front of the user right now.
-  /// Derive per-file attention weight from three Logos axes, then map
-  /// the bottom half of the distribution to reduced opacity.
-  ///
-  /// Axes (each normalised to [0, 1] within the current changeset):
-  ///
-  ///  1. **Surprise** — inverse of historical volatility. A lockfile
-  ///     that changes every commit scores 0; a rarely-touched config
-  ///     that suddenly appears scores 1. "Is this change unusual?"
-  ///
-  ///  2. **Centrality** — mean coupling to the other files in the same
-  ///     changeset. A tightly-coupled peer scores high; an incidental
-  ///     bystander scores 0. "Does this file belong with the others?"
-  ///
-  ///  3. **Integrity** — Logos' semantic transmissibility score. Filters
-  ///     generated code, lockfiles, vendor noise. "Is this a real
-  ///     source file?"
-  ///
-  /// Centrality dominates because it's the one axis that's context-
-  /// sensitive to *this* changeset rather than to the file's history.
-  void _recomputeFileDimOpacity(
-    RepositoryStatus status,
-    LogosGit? engine,
-    FileCouplingMatrix? coupling,
-  ) {
-    if (engine == null || status.files.length < 3) {
-      _fileDimOpacity = const {};
-      _lastDimPaths = null; // invalidate so a later valid call recomputes
-      return;
-    }
-    final paths = status.files.map((f) => f.path).toList();
-    // Memo: `_fileDimOpacity` is a deterministic function of (engine, coupling,
-    // the *ordered* path list). Order is part of the key because the centrality
-    // axis sums coupling in path order — so a reorder recomputes rather than
-    // serving an FP-order-different cached map (byte-identical on a hit). All
-    // three identities are stable across frames (engineFor/matrixFor change only
-    // on HEAD move), so the frequent rebuilds — AI-notify, hover, dream-hint,
-    // drag — skip the O(n²) centrality sweep entirely.
-    final lastPaths = _lastDimPaths;
-    if (identical(engine, _lastDimEngine) &&
-        identical(coupling, _lastDimCoupling) &&
-        lastPaths != null &&
-        lastPaths.length == paths.length) {
-      var samePaths = true;
-      for (var i = 0; i < paths.length; i++) {
-        if (lastPaths[i] != paths[i]) {
-          samePaths = false;
-          break;
-        }
-      }
-      if (samePaths) return;
-    }
-    _lastDimEngine = engine;
-    _lastDimCoupling = coupling;
-    _lastDimPaths = paths;
-    final stats = engine.stats;
-
-    // ── Axis 1: Surprise ──────────────────────────────────────────
-    // Normalise volatility within the changeset so the score is
-    // relative to what's on screen, not to the whole repo.
-    double volMax = 0;
-    final volRaw = <double>[];
-    for (final p in paths) {
-      final v = stats.volatility[p] ?? 0.0;
-      volRaw.add(v);
-      if (v > volMax) volMax = v;
-    }
-    final surprise = <String, double>{};
-    for (var i = 0; i < paths.length; i++) {
-      surprise[paths[i]] = volMax > 0 ? 1.0 - volRaw[i] / volMax : 1.0;
-    }
-
-    // ── Axis 2: Centrality ────────────────────────────────────────
-    // Mean pairwise coupling to every other changed file. Falls back
-    // to 0.5 (neutral) when the matrix isn't ready.
-    final centrality = <String, double>{};
-    if (coupling != null && paths.length > 1) {
-      for (final p in paths) {
-        double sum = 0;
-        for (final q in paths) {
-          if (q == p) continue;
-          sum += combinedCouplingScore(p, q, coupling);
-        }
-        centrality[p] = sum / (paths.length - 1);
-      }
-    }
-
-    // ── Axis 3: Integrity ─────────────────────────────────────────
-    final integrity = stats.integrityByPath;
-
-    // ── Blend ─────────────────────────────────────────────────────
-    final weights = <String, double>{};
-    for (final p in paths) {
-      final s = surprise[p] ?? 1.0;
-      final c = centrality[p] ?? 0.5;
-      final g = integrity[p] ?? 0.85;
-      weights[p] = c * 0.45 + s * 0.35 + g * 0.20;
-    }
-
-    // Adaptive threshold from the changeset's own distribution.
-    final sorted = weights.values.toList()..sort();
-    if (sorted.last - sorted.first < 0.04) {
-      _fileDimOpacity = const {};
-      return;
-    }
-    final median = sorted[sorted.length ~/ 2];
-
-    final result = <String, double>{};
-    for (final e in weights.entries) {
-      if (e.value < median) {
-        final t =
-            ((median - e.value) / median.clamp(0.01, 1.0)).clamp(0.0, 1.0);
-        result[e.key] = 1.0 - 0.45 * t;
-      }
-    }
-    _fileDimOpacity = result;
+  /// Copy the changeset controller's settled outputs into the page's result
+  /// fields and rebuild — ONE coalesced setState per derivation, replacing the
+  /// old five-source post-frame setState cascade.
+  void _onChangesetChanged() {
+    if (!mounted) return;
+    setState(() {
+      _changeWeights = _changeset.changeWeights;
+      _flowFragility = _changeset.flowFragility;
+      _spectralCoupling = _changeset.spectralCoupling;
+      _fileDimOpacity = _changeset.dimOpacity;
+    });
   }
 
   double _fileDimFor(String path) => _fileDimOpacity[path] ?? 1.0;
@@ -5921,86 +5730,21 @@ class _ChangesPageState extends State<ChangesPage> {
         }
       });
     }
-    // Refresh per-file impact weights whenever the status signature
-    // changes. One numstat call per refresh; results feed the "by impact"
-    // sort. Fire-and-forget — the list uses whatever's cached until the
-    // new fetch lands, then rebuilds.
-    if (_weightsFetchedForKey != couplingStateKey) {
-      _weightsFetchedForKey = couplingStateKey;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        final r = await fileChangeWeights(repoPath);
-        if (!mounted || _weightsFetchedForKey != couplingStateKey) return;
-        if (r.ok) {
-          setState(() => _changeWeights = r.data!);
-        }
-      });
-    }
-    // Flow fragility + flow results for coherence-based spectral coupling.
-    if (_flowFragilityKey != couplingStateKey) {
-      _flowFragilityKey = couplingStateKey;
-      final filePaths = status?.files.map((f) => f.path).toList() ?? [];
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted || _flowFragilityKey != couplingStateKey) return;
-        final gaps = <String, double>{};
-        final flowRes = <String, FlowAnalysisResult>{};
-        final staleKey = couplingStateKey;
-        const concurrency = 8;
-        for (var i = 0; i < filePaths.length; i += concurrency) {
-          if (!mounted || _flowFragilityKey != staleKey) return;
-          final batch = filePaths.skip(i).take(concurrency).map((fp) async {
-            try {
-              final result = await analyzeFlowCached(p.join(repoPath, fp));
-              if (result != null) return (fp, result);
-            } catch (_) {}
-            return null;
-          });
-          final results = await Future.wait(batch);
-          for (final r in results) {
-            if (r != null) {
-              if (r.$2.spectralGap > 0) gaps[r.$1] = r.$2.spectralGap;
-              flowRes[r.$1] = r.$2;
-            }
-          }
-        }
-        if (!mounted || _flowFragilityKey != staleKey) return;
-        setState(() {
-          _flowFragility = gaps;
-          _flowResults = flowRes;
-        });
-      });
-    }
-    // Spectral coupling: eigenAddress histogram cosine + flow coherence.
-    // Re-fires when GYAT coupling becomes available or flow results update.
-    final spectralFetchKey =
-        '$couplingStateKey|gyat=${gyatCoupling != null}|flow=${_flowResults.length}';
-    if (_spectralCouplingFetchedForKey != spectralFetchKey) {
-      _spectralCouplingFetchedForKey = spectralFetchKey;
-      final pathsSnapshot = status?.files.map((f) => f.path).toList() ?? [];
-      final coupling = gyatCoupling;
-      final flowSnapshot = Map<String, FlowAnalysisResult>.of(_flowResults);
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        Map<String, Map<String, double>> spec;
-        if (coupling != null) {
-          spec = await Future(
-            () => computeSpectralCoupling(
-              pathsSnapshot,
-              repoPath,
-              coupling,
-              flowResults: flowSnapshot.isNotEmpty ? flowSnapshot : null,
-            ),
-          );
-        } else if (flowSnapshot.isNotEmpty) {
-          spec = computeFlowCoherence(flowSnapshot);
-        } else {
-          spec = const {};
-        }
-        if (!mounted || _spectralCouplingFetchedForKey != spectralFetchKey) {
-          return;
-        }
-        setState(() => _spectralCoupling = spec);
-      });
+    // Working-tree async sources (per-file weights, flow, and the spectral
+    // overlay) plus the cheap fusions they feed are owned by [_changeset]. It
+    // coalesces what were five separate post-frame setState chains into ONE
+    // settled derivation per content change, and runs the file-reading spectral
+    // pass off the UI isolate. Results land in the page's fields via
+    // [_onChangesetChanged]; clustering below reads them, content-keyed.
+    if (status != null) {
+      _changeset.update(
+        repoPath: repoPath,
+        paths: status.files.map((f) => f.path).toList(),
+        couplingMatrix: couplingMatrix,
+        gyatCoupling: gyatCoupling,
+        statsVolatility: logosForDim?.stats.volatility,
+        statsIntegrity: logosForDim?.stats.integrityByPath,
+      );
     }
     // Detect repo or branch switch — cancel any pending saves,
     // then load the correct draft.
@@ -6127,8 +5871,6 @@ class _ChangesPageState extends State<ChangesPage> {
         .where((file) => _includedPaths.contains(file.path))
         .toList();
 
-    _recomputeFileDimOpacity(status, logosForDim, couplingMatrix);
-
     // Coupling clusters for the current change set. Computed once per build;
     // falls back to "all isolated" when the matrix isn't ready yet.
     final currentPaths = status.files.map((f) => f.path).toList();
@@ -6160,28 +5902,10 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     // Layer symbol-overlap scores on top of the historical Jaccard matrix.
-    // withSpectral() is a shallow copy — no data is duplicated, only the
-    // reference to the symbol map is updated.
-    // Spectral overlay, memoized: withSpectral is a pure shallow copy but
-    // allocates a fresh matrix each call, and `_clustersFor` keys its cache on
-    // `identical(effectiveMatrix)` — so a fresh wrapper every build reruns the
-    // O(n²) seriation per frame. Reuse the prior wrapper while (base, spectral)
-    // identities hold (both stable between updates). Byte-identical content.
-    final FileCouplingMatrix? effectiveMatrix;
-    if (couplingMatrix != null && _spectralCoupling.isNotEmpty) {
-      if (identical(couplingMatrix, _effMatrixBase) &&
-          identical(_spectralCoupling, _effMatrixSpectral) &&
-          _effMatrixMemo != null) {
-        effectiveMatrix = _effMatrixMemo;
-      } else {
-        effectiveMatrix = couplingMatrix.withSpectral(_spectralCoupling);
-        _effMatrixBase = couplingMatrix;
-        _effMatrixSpectral = _spectralCoupling;
-        _effMatrixMemo = effectiveMatrix;
-      }
-    } else {
-      effectiveMatrix = couplingMatrix;
-    }
+    // The spectral-augmented coupling matrix is produced by [_changeset] — a
+    // stable reference between derivations, so the cluster derivation it feeds
+    // doesn't churn on a fresh `withSpectral` wrapper each build.
+    final effectiveMatrix = _changeset.effectiveMatrix ?? couplingMatrix;
 
     // Pull the Logos engine up-front so the clustering seriation AND
     // the downstream φ re-rank share a single fetch. The engine is
@@ -6233,19 +5957,24 @@ class _ChangesPageState extends State<ChangesPage> {
           )
         : null;
 
-    final clusters = _clustersFor(
-      status: status,
-      effectiveMatrix: effectiveMatrix,
-      currentPaths: currentPaths,
-      sortGuide: preferences.fileSortGuide,
-      impactSignals: impactSignals,
-      conflictedPaths: conflictedPaths,
-      inverted: preferences.fileSortInverted,
+    // Clustering runs inside the controller on an `Isolate.run`, so the
+    // seriation (and its internal hunk-graph Lanczos) is off the UI isolate.
+    // Feed it the context-gathered inputs; read the last settled result, falling
+    // back to status order until the off-thread pass returns for these paths.
+    _changeset.setClusterInputs(
+      engine: logosEngine,
       correlatednessContext: correlatednessContext,
+      conflictedPaths: conflictedPaths,
+      includedPaths: _includedPaths,
+      sortGuide: preferences.fileSortGuide,
+      inverted: preferences.fileSortInverted,
       couplingConstants:
           logosEngine?.couplingConstants ?? CouplingConstants.prior,
-      engine: logosEngine,
     );
+    var clusters = _changeset.clusters;
+    if (clusters.orderedPaths.length != currentPaths.length) {
+      clusters = FileClusters.empty(currentPaths);
+    }
     // Map the Logos XY pad to diffusion controls:
     //   padY (NEAR=0 ↔ FAR=1) → temperature t = 0.5 × 4^padY ∈ [0.5, 2.0]
     //     padY=0 tight: just the staged cluster

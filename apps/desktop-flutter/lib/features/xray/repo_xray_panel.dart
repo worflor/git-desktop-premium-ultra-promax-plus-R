@@ -13,15 +13,20 @@ import '../../app/ai_activity_state.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
-import '../../backend/aperture_sweep.dart'
-    show ApertureEvent, ApertureSample, ApertureSweep, CenterOfGravityStratum;
 import '../../backend/dtos.dart';
 import '../../backend/engram_fit.dart'
     show branchLabelConverging, branchLabelDiverging, branchLabelSteady;
 import '../../backend/ai.dart';
 import '../../backend/repo_summary/api.dart';
 import '../../backend/repo_summary/types.dart' as rs;
+import '../../backend/lrg_rings.dart';
+import '../../backend/spectral_trajectory.dart' show SpectralTrajectory;
+import '../../backend/spectral_trajectory_builder.dart'
+    show peekTrajectoryForRepo, trajectoryForRepo;
 import '../../components/icons/app_icons.dart';
+import '../orrery/orrery_findings.dart';
+import '../orrery/orrery_model.dart';
+import '../orrery/orrery_page.dart' show OrreryPage;
 import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/design_primitives.dart';
@@ -540,6 +545,10 @@ class _Header extends StatelessWidget {
                       fontFamily: AppFonts.mono,
                     ),
                   ),
+                  if (snapshot.verdict != null) ...[
+                    const SizedBox(height: 3),
+                    _VerdictLine(verdict: snapshot.verdict!),
+                  ],
                   if (snapshot.metabolism.activeDays > 0) ...[
                     const SizedBox(height: 2),
                     _MetabolismLine(metabolism: snapshot.metabolism),
@@ -885,6 +894,11 @@ class _TimeView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // The spectral-trajectory pulse leads the Time view — the
+                // forward-looking structural read + the door into the Orrery —
+                // above the commit-grained pivots and the growth-rings sweep.
+                _TrajectorySection(repoPath: repoPath),
+                const SizedBox(height: 16),
                 _PivotList(
                   pivots: pivots,
                   selectedPivotHash: selectedPivotHash,
@@ -1993,6 +2007,72 @@ class _DenseBadge extends StatelessWidget {
 /// neutral; vitality from spectral radius scales stroke + halo).
 /// Hover tooltip still carries the numeric detail for anyone who
 /// wants it. Silent when the activity window is too short to fit.
+/// The structural verdict, woven into the header identity below the subtitle —
+/// the repo's nearest archetype (colour-coded by how clean that shape is) and a
+/// "NN% canonical" read of how cleanly it fits. The one-glance "what is this",
+/// promoted out of the spectral geometry where it used to sit unused. Sits as a
+/// sibling to [_MetabolismLine]: what the repo *is*, above how it's *pulsing*.
+class _VerdictLine extends StatelessWidget {
+  final RepositoryXrayVerdictData verdict;
+  const _VerdictLine({required this.verdict});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final a = verdict.archetype;
+    // Clean shapes read positive; tangled ones read as a caution; the rest are
+    // neutral-structural.
+    final clean = a == 'crystalline' || a == 'tree' || a == 'modular';
+    final tangled = a == 'goe' || a == 'bulk';
+    final color = clean
+        ? t.stateAdded
+        : tangled
+            ? t.stateModified
+            : t.accentBright;
+    final pct = (verdict.canonicality * 100).round();
+    return Tooltip(
+      message: '$a · $pct% canonical · '
+          '${(verdict.decisiveness * 100).round()}% decisive',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // The archetype's shape-stamp — a small lozenge coloured by how clean
+          // the structure is, its opacity tracking decisiveness so an ambiguous
+          // classification literally reads fainter.
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: color.withValues(
+                  alpha: (0.5 + 0.5 * verdict.decisiveness).clamp(0.0, 1.0)),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            a,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            '$pct% canonical',
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontFamily: AppFonts.mono,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 class _MetabolismLine extends StatelessWidget {
   final RepositoryXrayMetabolismData metabolism;
   const _MetabolismLine({required this.metabolism});
@@ -2192,9 +2272,16 @@ class _Parcel {
   /// its strongest co-changers.
   final List<String> coupledTo;
 
+  /// Spectral community this parcel belongs to (a file's coupling-module),
+  /// or — for a directory parcel — its *dominant* community: the module most
+  /// of its files actually move with. -1 when unclassified.
   final int communityId;
   final bool communityPeer;
 
+  /// A file filed in this directory whose coupling-community differs from the
+  /// directory's dominant one — it lives here but moves with another module.
+  /// The precise signal the spectral math adds to the familiar folder map.
+  final bool isStranger;
   const _Parcel({
     required this.key,
     required this.label,
@@ -2213,6 +2300,7 @@ class _Parcel {
     this.coupledTo = const [],
     this.communityId = -1,
     this.communityPeer = false,
+    this.isStranger = false,
   });
 }
 
@@ -2527,6 +2615,38 @@ class _TerritoryBoard extends StatelessWidget {
       childMap.putIfAbsent(parentId, () => []).add(h);
     }
 
+    // Each directory's *dominant* spectral community — the module most of its
+    // files actually move with. This reconciles the familiar folder map with
+    // the coupling truth: a directory reads as "module X", and any file whose
+    // own community differs from X is a stranger — filed here, couples
+    // elsewhere. Computed by simple plurality over the directory's files.
+    final dominantCommunityByStratum = <String, int>{};
+    for (final s in strata) {
+      final kids = childMap[s.id];
+      if (kids == null || kids.isEmpty) continue;
+      final counts = <int, int>{};
+      var classified = 0;
+      for (final h in kids) {
+        if (h.spectralCommunity < 0) continue;
+        classified++;
+        counts[h.spectralCommunity] = (counts[h.spectralCommunity] ?? 0) + 1;
+      }
+      if (counts.isEmpty) continue;
+      var best = -1, bestN = 0;
+      counts.forEach((c, n) {
+        if (n > bestN) {
+          bestN = n;
+          best = c;
+        }
+      });
+      // Only treat the directory as "module X" when X is a real majority of its
+      // classified files — otherwise it's a genuinely mixed folder and there's
+      // no single home for a file to be a stranger from. Mixed folders simply
+      // read as varied stripes (itself the "this folder isn't a module" tell).
+      if (bestN * 2 > classified) {
+        dominantCommunityByStratum[s.id] = best;
+      }
+    }
     // When hotspots are selected, collect their community IDs so
     // peer tiles can show a subtle highlight.
     final activeCommunities = <int>{};
@@ -2540,11 +2660,14 @@ class _TerritoryBoard extends StatelessWidget {
     }
 
     _Parcel hotspotParcel(RepositoryXrayHotspotData h,
-        {required bool isChild}) {
+        {required bool isChild, int parentDominant = -1}) {
       final accent = _hotspotAccent(t, h.kind);
       final isPeer = !selectedHotspotPaths.contains(h.path) &&
           h.spectralCommunity >= 0 &&
           activeCommunities.contains(h.spectralCommunity);
+      final isStranger = h.spectralCommunity >= 0 &&
+          parentDominant >= 0 &&
+          h.spectralCommunity != parentDominant;
       return _Parcel(
         key: 'h:${h.path}',
         label: _shortPath(h.path),
@@ -2566,14 +2689,16 @@ class _TerritoryBoard extends StatelessWidget {
         coupledTo: h.coupledTo,
         communityId: h.spectralCommunity,
         communityPeer: isPeer,
+        isStranger: isStranger,
       );
     }
 
     final topLevel = <_Parcel>[];
     for (final s in strata) {
       final accent = _stratumAccent(t, s.role);
+      final dom = dominantCommunityByStratum[s.id] ?? -1;
       final children = (childMap[s.id] ?? const <RepositoryXrayHotspotData>[])
-          .map((h) => hotspotParcel(h, isChild: true))
+          .map((h) => hotspotParcel(h, isChild: true, parentDominant: dom))
           .toList();
       topLevel.add(_Parcel(
         key: 's:${s.id}',
@@ -2588,6 +2713,8 @@ class _TerritoryBoard extends StatelessWidget {
         children: children,
         soloOwner: s.ownerCount == 1,
         recencyLabel: recencyLabelOf(s.lastTouchedAt),
+        // The directory's module identity — its dominant coupling-community.
+        communityId: dom,
       ));
     }
     for (final h in childMap[null] ?? const <RepositoryXrayHotspotData>[]) {
@@ -2777,7 +2904,8 @@ class _TerritoryCell extends StatelessWidget {
           },
           child: Tooltip(
             message: '${parcel.label}  ·  ${parcel.count}×'
-                '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${parcel.observerCount} reviewer${parcel.observerCount == 1 ? '' : 's'}' : '  ·  unreviewed') : ''}',
+                '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${parcel.observerCount} reviewer${parcel.observerCount == 1 ? '' : 's'}' : '  ·  unreviewed') : ''}'
+                '${parcel.isStranger ? '  ·  moves with another module' : ''}',
             waitDuration: const Duration(milliseconds: 400),
             child: AnimatedContainer(
               duration: context.motion(context.surfaceShader.duration),
@@ -2814,6 +2942,12 @@ class _TerritoryCell extends StatelessWidget {
                       : parcel.communityPeer
                           ? _communityColor(parcel.communityId)
                               .withValues(alpha: 0.40)
+                          // A stranger keeps a persistent outline in its *true*
+                          // module's colour — "this file belongs elsewhere",
+                          // visible without selecting anything.
+                          : parcel.isStranger
+                          ? _communityColor(parcel.communityId)
+                              .withValues(alpha: 0.5)
                           : parcel.isKeystone
                               ? accent.withValues(
                                   alpha: _keystoneBorderAlpha,
@@ -2872,8 +3006,14 @@ class _TerritoryCell extends StatelessWidget {
     final selected = parcel.selected;
     final isChild = parcel.isChild;
     final stripeW = isChild ? 2.0 : 3.0;
+    // The left stripe carries the parcel's coupling-community — the module it
+    // truly belongs to — so a coherent directory reads as one hue and a
+    // stranger's stripe stands apart from its neighbours. Falls back to the
+    // kind/role accent when the graph is too small to classify (community -1).
+    final stripeColor =
+        parcel.communityId >= 0 ? _communityColor(parcel.communityId) : accent;
     return Row(children: [
-      // Left edge: solid accent normally; dashed when this is a
+      // Left edge: solid community hue normally; dashed when this is a
       // bus-factor-of-one file. The hatch reads as "single-owner risk"
       // at a glance — same width and color family as the regular
       // stripe, just broken so it's distinguishable without a legend.
@@ -2882,11 +3022,11 @@ class _TerritoryCell extends StatelessWidget {
         child: parcel.soloOwner
             ? CustomPaint(
                 painter: _SoloOwnerStripePainter(
-                  color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+                  color: stripeColor.withValues(alpha: selected ? 0.95 : 0.7),
                 ),
               )
             : Container(
-                color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+                color: stripeColor.withValues(alpha: selected ? 0.95 : 0.7),
               ),
       ),
       const SizedBox(width: 7),
@@ -3929,407 +4069,462 @@ class _MiniButtonState extends State<_MiniButton> {
   }
 }
 
-// ── Growth-rings section — embedded inside [_TimeView] ───────────
+// ── Structural-evolution sections — embedded inside [_TimeView] ──
 //
-// Reads the codebase's history from its current shape via an aperture
-// sweep — a sequence of spectral probes at geometrically-spaced
-// commit-window depths. Surfaces three correlated views inline under
-// the existing cadence/pivots panel:
-//
-//   * centre-of-gravity trajectory — the sequence of "top
-//     housekeeping" files across the sweep; reads like a narrative
-//     of the repo's recent work order, deepest-focus first.
-//   * compound events — aperture bins where multiple observables
-//     flip together; each maps to an approximate commit range and
-//     is tagged with what changed (cleavage/topology/size/class).
-//   * invariant / running / artifact classification — which
-//     observables describe the repo's species (hold across all
-//     lens settings) vs its developmental arc (drift predictably
-//     with scale) vs lens noise.
-//
-// The sweep is expensive (multiple spectral-basis builds) and runs
-// per-sample inside [Isolate.run] so the main isolate stays
-// responsive. The section triggers a background load when first
-// rendered and reads through [RepositoryXrayState.ringsFor].
+// Two readouts of the repo's history, both reusing the Orrery's cached
+// spectral trajectory: the trajectory PULSE ([_TrajectorySection] —
+// connectivity sparkline + top structural findings + a door into the
+// Orrery) and the GROWTH RINGS ([_RingsSection] — the Laplacian-
+// renormalization ring profile from lrg_rings.dart: structural scales
+// read off the heat-kernel diffusion-time axis, plus how each scale
+// emerges and dissolves over history). Diffusion-time scales, not the
+// old commit-window aperture sweep. The trajectory build is the only
+// real cost and it is cached/shared; the per-snapshot ring math is
+// cheap.
+
+/// Structural-trajectory pulse — the one place X-Ray reaches into the Orrery's
+/// temporal engine. A connectivity sparkline of the repo's history, a taste of
+/// the top structural events (regime shifts, drift, forecast), and a door into
+/// the full evolution. X-Ray is the dashboard; the Orrery is the movie — this
+/// is where they finally meet. The trajectory is the same shared, cached object
+/// the Orrery builds, so reading it here also warms that view.
+class _TrajectorySection extends StatefulWidget {
+  final String repoPath;
+
+  const _TrajectorySection({required this.repoPath});
+
+  @override
+  State<_TrajectorySection> createState() => _TrajectorySectionState();
+}
+
+class _TrajectorySectionState extends State<_TrajectorySection> {
+  SpectralTrajectory? _traj;
+  bool _loading = true;
+  @override
+  void initState() {
+    super.initState();
+    // Warm path: render instantly if the Orrery (or a prior open) already built
+    // it; otherwise resolve in the background.
+    _traj = peekTrajectoryForRepo(widget.repoPath);
+    if (_traj != null) {
+      _loading = false;
+    } else {
+      _resolve();
+    }
+  }
+
+  Future<void> _resolve() async {
+    try {
+      final traj = await trajectoryForRepo(widget.repoPath);
+      if (!mounted) return;
+      setState(() {
+        _traj = traj;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  void _openOrrery() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+          builder: (_) => OrreryPage(repoPath: widget.repoPath)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final traj = _traj;
+    // Below two snapshots there's nothing to chart — stay silent rather than
+    // show an empty shell (same graceful-absence contract as metabolism/rings).
+    if (traj == null || traj.points.length < 2) {
+      if (!_loading) return const SizedBox.shrink();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _SectionHeader(
+              label: 'Structural trajectory', hint: 'reading history…'),
+          const SizedBox(height: 8),
+          Container(
+            height: 4,
+            decoration: BoxDecoration(
+              color: t.chromeBorder.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final model = OrreryModel.fromTrajectory(traj);
+    if (model.stepCount < 2) return const SizedBox.shrink();
+    final findings = computeFindings(model);
+
+    // Connectivity terrain — the spectral gap across history, min-max
+    // normalised for the sparkline (high = one tight community, low = near a
+    // split). Reuses the panel's own _Sparkline so it reads in the same hand.
+    final gaps = [for (final s in model.steps) s.gap];
+    var lo = double.infinity, hi = -double.infinity;
+    for (final g in gaps) {
+      if (g < lo) lo = g;
+      if (g > hi) hi = g;
+    }
+    final span = (hi - lo).abs() < 1e-9 ? 1.0 : (hi - lo);
+    final spark = [for (final g in gaps) ((g - lo) / span).clamp(0.0, 1.0)];
+
+    // A taste of the structural events; the full, drillable list lives one tap
+    // away in the Orrery.
+    final top = findings.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionHeader(
+          label: 'Structural trajectory',
+          hint: '${model.stepCount} snapshots'
+              '${findings.isEmpty ? '' : ' · ${findings.length} events'}',
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            _Sparkline(
+                values: spark, color: t.accentBright, width: 96, height: 14),
+            const SizedBox(width: 8),
+            Text('connectivity',
+                style: TextStyle(
+                  color: t.textFaint,
+                  fontSize: 10.5,
+                  fontFamily: AppFonts.mono,
+                )),
+          ],
+        ),
+        if (top.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          for (final f in top)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _TrajectoryFindingRow(finding: f),
+            ),
+        ] else ...[
+          const SizedBox(height: 8),
+          Text('Steady — no structural events in this window.',
+              style: TextStyle(color: t.textMuted, fontSize: 11)),
+        ],
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _MiniButton(
+            label: 'Open in Orrery',
+            icon: 'history',
+            enabled: true,
+            onTap: _openOrrery,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One structural finding as a quiet row in the X-Ray Time view — a kind-tinted
+/// dot and the plain-language headline. The drillable version lives in the
+/// Orrery; here it's a glance.
+class _TrajectoryFindingRow extends StatelessWidget {
+  final OrreryFinding finding;
+  const _TrajectoryFindingRow({required this.finding});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = switch (finding.kind) {
+      OrreryFindingKind.driftOut ||
+      OrreryFindingKind.thrash ||
+      OrreryFindingKind.tangle ||
+      OrreryFindingKind.forecast =>
+        t.stateModified,
+      OrreryFindingKind.driftIn || OrreryFindingKind.clarify => t.stateAdded,
+      _ => t.accentBright,
+    };
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 4),
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            finding.headline,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _RingsSection extends StatefulWidget {
   final String repoPath;
-
   const _RingsSection({required this.repoPath});
 
   @override
   State<_RingsSection> createState() => _RingsSectionState();
 }
-
 class _RingsSectionState extends State<_RingsSection> {
+  SpectralTrajectory? _traj;
+  bool _loading = true;
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Reuse the same cached trajectory the pulse builds — one walk of history
+    // feeds both the Orrery link and the rings. Warm path renders instantly.
+    _traj = peekTrajectoryForRepo(widget.repoPath);
+    if (_traj != null) {
+      _loading = false;
+    } else {
+      _resolve();
+    }
+  }
+
+  Future<void> _resolve() async {
+    try {
+      final traj = await trajectoryForRepo(widget.repoPath);
       if (!mounted) return;
-      context
-          .read<RepositoryXrayState>()
-          .loadRingsForRepo(widget.repoPath);
-    });
+      setState(() {
+        _traj = traj;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final state = context.watch<RepositoryXrayState>();
-    final rings = state.ringsFor(widget.repoPath);
-    final loading = state.isLoadingRings(widget.repoPath);
-    final error = state.ringsErrorFor(widget.repoPath);
-    final progress = state.ringsProgressFor(widget.repoPath);
+    final traj = _traj;
+    if (traj == null || traj.points.length < 2) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SectionHeader(
+              label: 'Growth rings',
+              hint: _loading ? 'reading structure…' : 'unavailable'),
+          if (_loading) ...[
+            const SizedBox(height: 8),
+            Container(
+              height: 4,
+              decoration: BoxDecoration(
+                color: t.chromeBorder.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ],
+      );
+    }
 
-    // Streaming UX: partial rings data appears as soon as the first
-    // sample completes, so the section is rarely in the pure "empty,
-    // loading" state for long. Three presentations coexist:
-    //   * rings=null, loading: slim progress bar only
-    //   * rings!=null, loading: partial data + progress hint
-    //   * rings!=null, done: final data
-    //   * rings=null, error: error banner
-    final hint = rings != null
-        ? loading
-            ? 'probing ${progress?.$1 ?? rings.sweep.length}/${progress?.$2 ?? rings.sweep.length}… · '
-                '${rings.sweep.length} samples so far · '
-                '${rings.events.length} events · '
-                '${rings.centerTrajectory.length} strata'
-            : '${rings.sweep.length} samples · ${rings.events.length} events · '
-                '${rings.centerTrajectory.length} strata'
-        : error != null
-            ? 'unavailable — $error'
-            : progress != null
-                ? 'probing ${progress.$1}/${progress.$2}…'
-                : loading
-                    ? 'probing…'
-                    : 'preparing sweep';
+    // Read the structural scales off the diffusion-time axis at every historical
+    // snapshot (the cumulative co-change graph at each commit), then watch them
+    // emerge and dissolve. This is the LRG ring profile — scale, not commit-
+    // window — so a "ring" is a real level of the module hierarchy, never an
+    // artefact of how much history we happened to integrate.
+    final snapshots = [
+      for (final p in traj.points)
+        if (p.state.fileSpectrum != null)
+          (
+            commitSha: p.commitSha ?? '',
+            timestamp: p.timestamp ?? DateTime.fromMillisecondsSinceEpoch(0),
+            basis: p.state.fileSpectrum!,
+          ),
+    ];
+    final history = lrgRingHistory(snapshots);
+    final profile = history.current;
+    // Coarsest scale first — the big modules read before the fine grain.
+    final scales = [...history.currentScales]
+      ..sort((a, b) => b.tau.compareTo(a.tau));
 
+    final hint = scales.isEmpty
+        ? (profile.scaleInvariant ? 'self-similar' : 'one blended structure')
+        : '${scales.length} scale${scales.length == 1 ? '' : 's'}'
+            '${history.events.isEmpty ? '' : ' · ${history.events.length} shift'
+                '${history.events.length == 1 ? '' : 's'} in history'}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionHeader(label: 'Growth rings', hint: hint),
-        const SizedBox(height: 8),
-        if (loading)
-          // Progress rail always visible while sweeping, whether
-          // partial data has arrived or not. The bar fills as
-          // samples complete; partial data fills in below it.
-          Container(
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(
-              color: t.chromeBorder.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: progress == null
-                ? null
-                : FractionallySizedBox(
-                    widthFactor:
-                        (progress.$1 / progress.$2).clamp(0.02, 1.0),
-                    alignment: Alignment.centerLeft,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: t.accentBright.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-          ),
-        if (rings == null && !loading)
-          // Only show this empty-state when there's truly nothing —
-          // not during the first sample's travel time.
-          Text('No rings data yet.',
-              style: TextStyle(color: t.textMuted, fontSize: 11))
-        else if (rings != null) ...[
-          _RingsClassificationRow(
-              classification: rings.observableClassification),
-          const SizedBox(height: 12),
-          // Aperture scrubber — drag through the probe to see the
-          // repo through different memory horizons. The live readout
-          // below the track uses `sweep.sampleAt(window)` continuous-
-          // domain interpolation so the cursor glides between real
-          // samples without snapping.
-          _ApertureScrubber(sweep: rings.sweep),
-          const SizedBox(height: 14),
-          const _SectionSubHeader(
-              label: 'Centre-of-gravity trajectory',
-              hint: 'close focus → wide focus'),
-          const SizedBox(height: 6),
-          _CenterTrajectoryList(strata: rings.centerTrajectory),
+        if (profile.specificHeat.length > 2) ...[
           const SizedBox(height: 10),
+          // The scale spectrum — the network specific heat C(τ) across diffusion
+          // scale. Each peak is a structural scale; the curve is the cross-
+          // section's grain.
+          Row(
+            children: [
+              _Sparkline(
+                values: _normalizeCurve(profile.specificHeat),
+                color: t.accentBright,
+                width: 132,
+                height: 16,
+              ),
+              const SizedBox(width: 8),
+              Text('scale spectrum',
+                  style: TextStyle(
+                    color: t.textFaint,
+                    fontSize: 10.5,
+                    fontFamily: AppFonts.mono,
+                  )),
+            ],
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (scales.isEmpty)
+          Text(
+            profile.scaleInvariant
+                ? 'Self-similar — structure repeats across scales, with no single characteristic level.'
+                : 'One blended structure — no separable module scales resolve yet.',
+            style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
+          )
+        else
+          for (var i = 0; i < scales.length; i++)
+            Padding(
+              padding:
+                  EdgeInsets.only(bottom: i == scales.length - 1 ? 0 : 7),
+              child: _ScaleRow(
+                ring: scales[i],
+                grain: _grainLabel(i, scales.length),
+              ),
+            ),
+        if (history.events.isNotEmpty) ...[
+          const SizedBox(height: 14),
           _SectionSubHeader(
-              label: 'Compound events',
-              hint: '${rings.events.length} detected'),
+              label: 'Over history',
+              hint: '${history.events.length} structural shift'
+                  '${history.events.length == 1 ? '' : 's'}'),
           const SizedBox(height: 6),
-          if (rings.events.isEmpty)
-            Text(loading
-                ? 'No compound events detected yet — still sampling.'
-                : 'No compound events in the sampled range.',
-                style: TextStyle(color: t.textMuted, fontSize: 11))
-          else
-            Column(
-              children: [
-                for (final e in rings.events)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: _EventCard(event: e),
-                  ),
-              ],
+          for (final e in history.events)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _ScaleEventRow(event: e),
             ),
         ],
       ],
     );
   }
+
+  String _grainLabel(int index, int total) {
+    if (total == 1) return 'one characteristic scale';
+    if (index == 0) return 'coarsest — top-level modules';
+    if (index == total - 1) return 'finest grain';
+    return 'mid grain';
+  }
 }
 
-/// Interactive aperture scrubber. Draggable track over the
-/// commit-window space of an [ApertureSweep]. Real sample positions
-/// render as ticks whose height reflects the sample's decisiveness
-/// (confident archetype = tall tick; uncertain = short). The thumb
-/// glides log-space between ticks via [ApertureSweep.sampleAt], and
-/// the compact readout below shows the interpolated observables at
-/// the cursor's window. No separate "slider" affordance — the ticks
-/// ARE the handles, the whole card surface scrubs.
-class _ApertureScrubber extends StatefulWidget {
-  const _ApertureScrubber({required this.sweep});
-  final ApertureSweep sweep;
-
-  @override
-  State<_ApertureScrubber> createState() => _ApertureScrubberState();
+/// Min–max normalise a curve into [0, 1] for the sparkline. Flat curves map to
+/// a baseline rather than dividing by zero.
+List<double> _normalizeCurve(List<double> ys) {
+  if (ys.isEmpty) return const [];
+  var lo = double.infinity, hi = -double.infinity;
+  for (final y in ys) {
+    if (y < lo) lo = y;
+    if (y > hi) hi = y;
+  }
+  final span = (hi - lo).abs() < 1e-12 ? 1.0 : (hi - lo);
+  return [for (final y in ys) ((y - lo) / span).clamp(0.0, 1.0)];
 }
 
-class _ApertureScrubberState extends State<_ApertureScrubber> {
-  // Current cursor position expressed as a window value. Defaults to
-  // the sweep's widest sample — the "full memory" lens — so the
-  // initial view matches the headline stats the rest of the panel
-  // shows.
-  int? _window;
-  bool _dragging = false;
-
-  int get _minWindow => widget.sweep.samples.first.window;
-  int get _maxWindow => widget.sweep.samples.last.window;
-  int get _currentWindow => _window ?? _maxWindow;
-
-  @override
-  void didUpdateWidget(covariant _ApertureScrubber old) {
-    super.didUpdateWidget(old);
-    // If the sweep range shifts (refresh, HEAD moved), clamp the
-    // cursor into the new bounds rather than holding a stale value.
-    if (_window != null) {
-      final w = _window!;
-      if (w < _minWindow || w > _maxWindow) _window = null;
-    }
-  }
-
-  double _tForWindow(int w) {
-    if (_maxWindow <= _minWindow) return 0.0;
-    final la = math.log(_minWindow.toDouble());
-    final lb = math.log(_maxWindow.toDouble());
-    final lw = math.log(w.toDouble());
-    return ((lw - la) / (lb - la)).clamp(0.0, 1.0).toDouble();
-  }
-
-  int _windowForT(double t) {
-    final la = math.log(_minWindow.toDouble());
-    final lb = math.log(_maxWindow.toDouble());
-    final lw = la + (lb - la) * t.clamp(0.0, 1.0);
-    return math.exp(lw).round().clamp(_minWindow, _maxWindow).toInt();
-  }
-
-  void _seek(double localX, double width) {
-    if (width <= 0) return;
-    setState(() {
-      _window = _windowForT(localX / width);
-    });
-  }
+/// One structural scale: a prominence bar, the part-count it resolves, and a
+/// plain-language grain label. "parts" is the comprehension number — how many
+/// quasi-independent pieces the repo splits into when viewed at this scale.
+class _ScaleRow extends StatelessWidget {
+  final LrgRing ring;
+  final String grain;
+  const _ScaleRow({required this.ring, required this.grain});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    if (widget.sweep.samples.length < 2) {
-      // One sample → there's nothing to scrub between. Just show the
-      // single-sample digest in the same slot so layout stays stable.
-      return _ApertureScrubberReadout(
-        sample: widget.sweep.samples.isEmpty
-            ? null
-            : widget.sweep.samples.first,
-        tokens: t,
-      );
-    }
-    final sample = widget.sweep.sampleAt(_currentWindow);
-    final cursorT = _tForWindow(_currentWindow);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Row(
       children: [
-        LayoutBuilder(
-          builder: (ctx, constraints) {
-            final width = constraints.maxWidth;
-            return MouseRegion(
-              cursor: SystemMouseCursors.grab,
-              child: Listener(
-                onPointerDown: (e) {
-                  setState(() => _dragging = true);
-                  _seek(e.localPosition.dx, width);
-                },
-                onPointerMove: (e) {
-                  if (!_dragging) return;
-                  _seek(e.localPosition.dx, width);
-                },
-                onPointerUp: (_) => setState(() => _dragging = false),
-                onPointerCancel: (_) => setState(() => _dragging = false),
-                child: SizedBox(
-                  height: 28,
-                  child: CustomPaint(
-                    painter: _ApertureScrubberPainter(
-                      sweep: widget.sweep,
-                      cursorT: cursorT,
-                      dragging: _dragging,
-                      accent: t.accentBright,
-                      faint: t.chromeBorder,
-                      textFaint: t.textFaint,
-                    ),
-                  ),
-                ),
+        SizedBox(
+          width: 34,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              height: 4,
+              width: (6 + 28 * ring.strength).clamp(6.0, 34.0),
+              decoration: BoxDecoration(
+                color: t.accentBright
+                    .withValues(alpha: 0.5 + 0.5 * ring.strength),
+                borderRadius: BorderRadius.circular(2),
               ),
-            );
-          },
+            ),
+          ),
         ),
-        const SizedBox(height: 6),
-        _ApertureScrubberReadout(sample: sample, tokens: t),
+        const SizedBox(width: 10),
+        Text('${ring.partsAtScale}',
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            )),
+        const SizedBox(width: 4),
+        Text('parts', style: TextStyle(color: t.textMuted, fontSize: 11)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(grain,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: t.textFaint, fontSize: 10.5)),
+        ),
       ],
     );
   }
 }
 
-class _ApertureScrubberPainter extends CustomPainter {
-  _ApertureScrubberPainter({
-    required this.sweep,
-    required this.cursorT,
-    required this.dragging,
-    required this.accent,
-    required this.faint,
-    required this.textFaint,
-  });
-  final ApertureSweep sweep;
-  final double cursorT;
-  final bool dragging;
-  final Color accent;
-  final Color faint;
-  final Color textFaint;
-
-  double _tForSample(ApertureSample s) {
-    final lo = sweep.samples.first.window;
-    final hi = sweep.samples.last.window;
-    if (hi <= lo) return 0.0;
-    final la = math.log(lo.toDouble());
-    final lb = math.log(hi.toDouble());
-    final lw = math.log(s.window.toDouble());
-    return ((lw - la) / (lb - la)).clamp(0.0, 1.0).toDouble();
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final midY = size.height / 2 + 4;
-    // Track — hairline baseline the ticks stand on.
-    canvas.drawLine(
-      Offset(0, midY),
-      Offset(size.width, midY),
-      Paint()
-        ..color = faint.withValues(alpha: 0.35)
-        ..strokeWidth = 0.75,
-    );
-    // Tick per real sample. Height reflects decisiveness so the user
-    // sees at a glance which windows the engine read confidently.
-    for (final s in sweep.samples) {
-      final t = _tForSample(s);
-      final x = t * size.width;
-      final h = 6 + 10 * s.decisiveness.clamp(0.0, 1.0);
-      canvas.drawLine(
-        Offset(x, midY - h / 2),
-        Offset(x, midY + h / 2),
-        Paint()
-          ..color = accent.withValues(alpha: 0.38 + 0.32 * s.decisiveness)
-          ..strokeWidth = 1.4,
-      );
-    }
-    // Cursor — fat line + soft halo. Halo brightens during drag to
-    // confirm capture without a separate indicator.
-    final cx = cursorT * size.width;
-    final haloAlpha = dragging ? 0.22 : 0.12;
-    canvas.drawLine(
-      Offset(cx, 2),
-      Offset(cx, size.height - 2),
-      Paint()
-        ..color = accent.withValues(alpha: haloAlpha)
-        ..strokeWidth = 12
-        ..strokeCap = StrokeCap.round,
-    );
-    canvas.drawLine(
-      Offset(cx, 4),
-      Offset(cx, size.height - 4),
-      Paint()
-        ..color = accent.withValues(alpha: dragging ? 0.95 : 0.78)
-        ..strokeWidth = 2
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _ApertureScrubberPainter old) =>
-      old.cursorT != cursorT ||
-      old.dragging != dragging ||
-      !identical(old.sweep, sweep);
-}
-
-class _ApertureScrubberReadout extends StatelessWidget {
-  const _ApertureScrubberReadout({
-    required this.sample,
-    required this.tokens,
-  });
-  final ApertureSample? sample;
-  final AppTokens tokens;
+/// A datable structural shift over history — a scale level emerging or
+/// dissolving, anchored to the commit where it stabilised.
+class _ScaleEventRow extends StatelessWidget {
+  final LrgHistoryEvent event;
+  const _ScaleEventRow({required this.event});
 
   @override
   Widget build(BuildContext context) {
-    final t = tokens;
-    final s = sample;
-    if (s == null) {
-      return Text(
-        'scrubbing unavailable — no samples yet',
-        style: TextStyle(color: t.textMuted, fontSize: 10.5),
-      );
-    }
-    final muted = TextStyle(
-      color: t.textMuted,
-      fontSize: 10,
-      letterSpacing: 1.2,
-      fontWeight: FontWeight.w600,
-      fontFamilyFallback: const ['monospace'],
-    );
-    final value = TextStyle(
-      color: t.textNormal,
-      fontSize: 11.5,
-      fontWeight: FontWeight.w500,
-      fontFamilyFallback: const ['monospace'],
-    );
-    String pair(String label, String body) => '$label $body';
-    final windowLabel = s.oldestDate != null
-        ? '${s.window} commits · since ${s.oldestDate}'
-        : '${s.window} commits';
-    return Wrap(
-      spacing: 14,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
+    final t = context.tokens;
+    final emerged = event.kind == LrgEventKind.scaleEmerged;
+    final color = emerged ? t.stateAdded : t.stateModified;
+    final date = event.timestamp.millisecondsSinceEpoch > 0
+        ? event.timestamp.toIso8601String().substring(0, 10)
+        : null;
+    final label = emerged
+        ? 'a structural scale emerged'
+        : 'a structural scale dissolved';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(pair('W', windowLabel),
-            style: value.copyWith(color: t.accentBright)),
-        Text(pair('ARCHETYPE', s.nearestArchetype), style: muted),
-        Text(pair('FIEDLER', s.fiedler.toStringAsFixed(3)), style: muted),
-        Text(pair('β₀/β₁', '${s.componentCount}/${s.cycleCount}'), style: muted),
-        if (s.spectralDim.isFinite)
-          Text(pair('DIM', s.spectralDim.toStringAsFixed(2)), style: muted),
-        Text(pair('ENTROPY', s.spectralEntropy.toStringAsFixed(2)), style: muted),
-        Text(pair('CENTRE', s.topHousekeepingPath), style: muted),
+        Container(
+          margin: const EdgeInsets.only(top: 4),
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '$label (${event.fromCount} → ${event.toCount})'
+            '${date != null ? '  ·  $date' : ''}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
+          ),
+        ),
       ],
     );
   }
@@ -4389,245 +4584,6 @@ class _SectionHeader extends StatelessWidget {
               overflow: TextOverflow.ellipsis),
         ),
       ],
-    );
-  }
-}
-
-class _RingsClassificationRow extends StatelessWidget {
-  final Map<String, String> classification;
-  const _RingsClassificationRow({required this.classification});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    if (classification.isEmpty) {
-      return Text('Observable classification unavailable.',
-          style: TextStyle(color: t.textMuted, fontSize: 11));
-    }
-    Color colorFor(String cls) {
-      switch (cls) {
-        case 'invariant':
-          return t.stateAdded;
-        case 'running':
-          return t.accentBright;
-        case 'artifact':
-          return t.textMuted;
-      }
-      return t.textMuted;
-    }
-
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        for (final entry in classification.entries)
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: colorFor(entry.value).withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                color: colorFor(entry.value).withValues(alpha: 0.35),
-                width: 1,
-              ),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(_observableLabels[entry.key] ?? entry.key,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
-                  )),
-              const SizedBox(width: 6),
-              Text(entry.value,
-                  style: TextStyle(
-                    color: colorFor(entry.value),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ]),
-          ),
-      ],
-    );
-  }
-}
-
-class _CenterTrajectoryList extends StatelessWidget {
-  final List<CenterOfGravityStratum> strata;
-  const _CenterTrajectoryList({required this.strata});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    if (strata.isEmpty) {
-      return Text('No trajectory — only one stratum observed.',
-          style: TextStyle(color: t.textMuted, fontSize: 11));
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (var i = 0; i < strata.length; i++)
-          _TrajectoryRow(
-            stratum: strata[i],
-            stratumIndex: i,
-            total: strata.length,
-          ),
-      ],
-    );
-  }
-}
-
-class _TrajectoryRow extends StatelessWidget {
-  final CenterOfGravityStratum stratum;
-  final int stratumIndex;
-  final int total;
-
-  const _TrajectoryRow({
-    required this.stratum,
-    required this.stratumIndex,
-    required this.total,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    // Close-focus (first) = current activity; wide-focus (last) = history.
-    final isFirst = stratumIndex == 0;
-    final isLast = stratumIndex == total - 1;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 48,
-            child: Text(
-              'w=${stratum.window}',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 10,
-                fontFamily: AppFonts.mono,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  stratum.path,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontFamily: AppFonts.mono,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  [
-                    if (isFirst) 'close focus · current attention',
-                    if (isLast) 'wide focus · deepest stratum',
-                    'archetype: ${stratum.nearestArchetype}',
-                  ].join('  ·  '),
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-const _observableLabels = <String, String>{
-  'n': 'files',
-  'fiedler': 'connectivity',
-  'beta0': 'components',
-  'beta1': 'cycles',
-  'spectralDim': 'dimension',
-  'spectralEntropy': 'entropy',
-  'nearestDistance': 'archetype fit',
-};
-
-class _EventCard extends StatelessWidget {
-  final ApertureEvent event;
-  const _EventCard({required this.event});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return MaterialSurface(
-      tone: AppMaterialTone.surface0,
-      borderAlpha: 0.22,
-      elevated: false,
-      innerHighlight: false,
-      glaze: false,
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(
-                  'aperture ${event.fromWindow}→${event.toWindow}',
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: AppFonts.mono,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'mag ${event.magnitude.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              children: [
-                for (final obs in event.flippedObservables)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: t.accentBright.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(3),
-                      border: Border.all(
-                        color: t.accentBright.withValues(alpha: 0.35),
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      _observableLabels[obs] ?? obs,
-                      style: TextStyle(
-                        color: t.textNormal,
-                        fontSize: 10,
-                        fontFamily: AppFonts.mono,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

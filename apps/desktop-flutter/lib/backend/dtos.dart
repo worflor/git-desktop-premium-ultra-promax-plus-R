@@ -495,6 +495,28 @@ class RepositoryXrayHeaderData {
   });
 }
 
+/// The repo's structural identity — its nearest universality archetype and how
+/// cleanly it fits. This is the X-ray "verdict": the one-glance answer to *what
+/// kind of codebase is this*. Computed every snapshot from the spectral
+/// geometry; null when the graph is too small for the classification to
+/// converge (the engine needs a few hundred coupled files).
+class RepositoryXrayVerdictData {
+  /// crystalline / poisson / goe / tree / bulk / modular.
+  final String archetype;
+
+  /// 0..1 — how cleanly the repo fits a known archetype (1 = textbook).
+  final double canonicality;
+
+  /// 0..1 — how decisively one archetype wins over the runner-up
+  /// (1 = unambiguous, 0 = sitting between two classes).
+  final double decisiveness;
+
+  const RepositoryXrayVerdictData({
+    required this.archetype,
+    required this.canonicality,
+    required this.decisiveness,
+  });
+}
 class RepositoryXrayEvidenceData {
   final String label;
   final String detail;
@@ -874,6 +896,9 @@ class RepositoryXraySnapshotData {
   final RepositoryXrayFlowData flow;
   final ReviewerConstellationData? reviewerConstellations;
 
+  /// The structural verdict — "what kind of codebase is this". Null when the
+  /// graph is too small for the spectral classification.
+  final RepositoryXrayVerdictData? verdict;
   const RepositoryXraySnapshotData({
     required this.header,
     required this.signalIntegrity,
@@ -890,6 +915,7 @@ class RepositoryXraySnapshotData {
     this.metabolism = RepositoryXrayMetabolismData.empty,
     this.flow = RepositoryXrayFlowData.empty,
     this.reviewerConstellations,
+    this.verdict,
   });
 }
 

@@ -50,6 +50,13 @@ import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
+import '../changes/merge_conflict_editor.dart'
+    show
+        MergeEditorPage,
+        ConflictFile,
+        parseConflictFile,
+        enrichConflictFileWithLogos;
+import '../changes/patch_as_merge.dart' show reviewMergeFromPatch;
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
 
@@ -10863,6 +10870,129 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     });
   }
 
+  /// Opens the built-in merge editor on the patch — always, not just when
+  /// git reports a conflict. The patch is presented as a reviewable merge:
+  /// every changed hunk is an ours/theirs block, pre-accepted to the
+  /// incoming side, that the user can flip to drop. Two routes:
+  ///
+  ///  1. When the patch aligns with the current working tree (it would
+  ///     apply cleanly), [reviewMergeFromPatch] builds the editor input
+  ///     directly from the patch — non-mutating, no git involved, so a
+  ///     cleanly-mergeable patch still opens the editor instead of silently
+  ///     applying.
+  ///  2. When it has drifted, fall back to `git apply --3way`; if that
+  ///     leaves real conflict markers, open the editor on those.
+  ///
+  /// Route 1 is forward-only — it presents the patch as written. When the
+  /// reverse toggle is armed the user wants to UNDO the patch, so Route 1 is
+  /// skipped and Route 2 owns it via `git apply -R` (which honours reverse).
+  Future<void> _openMergeEditor() async {
+    setState(() {
+      _applying = true;
+      _applyError = null;
+    });
+
+    // Route 1 — present the patch itself as a merge (forward direction only).
+    if (!_reverseArmed) {
+      final oursByPath = <String, String>{};
+      for (final path in _filesByPath.keys) {
+        final abs =
+            '${widget.repoPath}/$path'.replaceAll('/', Platform.pathSeparator);
+        final f = File(abs);
+        if (await f.exists()) oursByPath[path] = await f.readAsString();
+      }
+      if (!mounted) return;
+      final review = reviewMergeFromPatch(_rawPatch, oursByPath);
+      if (review != null && review.isNotEmpty) {
+        await _enrichAndOpen(review);
+        return;
+      }
+    }
+
+    // Route 2 — drift: let git 3-way merge, then open on whatever conflicts.
+    final r = await widget.onApply(
+      rawPatch: _rawPatch,
+      threeWay: true,
+      reverse: _reverseArmed,
+    );
+    if (!mounted) return;
+    if (r.ok) {
+      setState(() {
+        _applying = false;
+        _applied = true;
+      });
+      return;
+    }
+    final conflicted = await _conflictedPaths();
+    if (!mounted) return;
+    final files = <ConflictFile>[];
+    for (final path in conflicted) {
+      final abs =
+          '${widget.repoPath}/$path'.replaceAll('/', Platform.pathSeparator);
+      final f = File(abs);
+      if (!await f.exists()) continue;
+      final content = await f.readAsString();
+      if (!content.contains('<<<<<<<')) continue;
+      files.add(parseConflictFile(path, content));
+    }
+    if (!mounted) return;
+    if (files.isNotEmpty) {
+      await _enrichAndOpen(files);
+      return;
+    }
+    setState(() {
+      _applying = false;
+      _applyError = r.error ?? 'apply failed';
+    });
+  }
+
+  /// Conflicted (UU) paths in the active repo after an apply attempt.
+  /// Refreshes status first so the result reflects what `git apply --3way`
+  /// just wrote to the index.
+  Future<Set<String>> _conflictedPaths() async {
+    final repoState = context.read<RepositoryState>();
+    await repoState.refreshStatus();
+    if (!mounted) return const <String>{};
+    return {
+      for (final f in repoState.status?.files ?? const <RepositoryStatusFile>[])
+        if (f.isConflicted) f.path,
+    };
+  }
+
+  /// Enriches [files] with Logos signal (best-effort), dismisses this
+  /// preview, and pushes the full-screen [MergeEditorPage] — the same
+  /// built-in editor the Changes page uses. On return the repo status is
+  /// refreshed so the underlying view reflects the resolution.
+  Future<void> _enrichAndOpen(List<ConflictFile> files) async {
+    final repoPath = widget.repoPath;
+    final logosState = context.read<LogosGitState>();
+    var engine = logosState.engineFor(repoPath);
+    if (engine == null) {
+      await logosState.loadForRepo(repoPath);
+      if (!mounted) return;
+      engine = logosState.engineFor(repoPath);
+    }
+    if (engine != null) {
+      final paths = files.map((f) => f.path).toSet();
+      for (final cf in files) {
+        enrichConflictFileWithLogos(cf, engine, paths);
+      }
+    }
+    if (!mounted) return;
+
+    // Capture before popping: `this`/`context` go invalid once this dialog
+    // route is gone, but the navigator + repo-state instances outlive it.
+    final navigator = Navigator.of(context);
+    final repoState = context.read<RepositoryState>();
+    navigator.pop(); // dismiss the patch preview
+    await navigator.push<String>(
+      MaterialPageRoute(
+        builder: (_) => MergeEditorPage(files: files, repoPath: repoPath),
+      ),
+    );
+    await repoState.refreshStatus();
+  }
+
   (int, int) _countsFor(List<ParsedLine> lines) {
     var adds = 0, dels = 0;
     for (final l in lines) {
@@ -11723,11 +11853,17 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                               setState(() => _reverseArmed = !_reverseArmed),
                         ),
                         const SizedBox(width: 8),
+                        // Opens the built-in merge editor on the patch every
+                        // time — presents it as a reviewable ours/theirs merge
+                        // whether or not git could auto-apply. Primary when the
+                        // patch won't apply cleanly (the moment you need it).
                         _ActionButton(
-                          label: _applying ? 'applying…' : 'apply (3-way)',
-                          onTap: _applying
-                              ? () {}
-                              : () => _doApply(threeWay: true),
+                          label: _applying ? 'opening…' : '⇋ merge editor',
+                          tone: _dryRunOk
+                              ? _ActionTone.neutral
+                              : _ActionTone.primary,
+                          onTap:
+                              _applying ? () {} : () => _openMergeEditor(),
                         ),
                         const SizedBox(width: 8),
                       ],

@@ -501,6 +501,10 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         engine,
         rawHotspots.map((h) => h.path).toSet(),
       ),
+      // The structural verdict — "what kind of codebase is this" — lifted from
+      // the spectral geometry the snapshot already computed. The single most
+      // orienting fact in the whole x-ray; it was being thrown away.
+      verdict: _buildVerdict(spectral?.spectrogeometry),
     );
 
     stopwatch.stop();
@@ -754,6 +758,19 @@ const double _kXraySpectralT = 1.0;
 /// clusters are absorbed cleanly by the k-means implementation.
 const int _kXraySpectralCommunityCount = 8;
 
+/// The X-ray verdict — the repo's nearest universality archetype, how cleanly
+/// it fits, and how decisively that class wins. A direct read-off of the
+/// spectral geometry; null when the graph was too small to classify so the
+/// header simply omits the line (same graceful-absence contract as metabolism).
+RepositoryXrayVerdictData? _buildVerdict(SpectroGeometry? geo) {
+  if (geo == null) return null;
+  final u = geo.universality;
+  return RepositoryXrayVerdictData(
+    archetype: u.nearest.name,
+    canonicality: u.canonicality,
+    decisiveness: u.decisiveness,
+  );
+}
 /// Extract cacheable spectral observables from a resolved Logos engine.
 /// Returns null when the engine is null; otherwise always returns a
 /// `_SpectralSummary` — the summary's inner fields handle the

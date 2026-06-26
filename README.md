@@ -2,6 +2,10 @@
 
 A Git client. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
 
+<p align="center">
+  <img src="pics/code-review-hero.webp" alt="Manifold reviewing a diff: files and evidence orbiting a central node while Logos diffuses signal across the repo" width="760">
+</p>
+
 ## It's a Git client :]
 
 Stage, commit, push, pull, diff, branch, merge, rebase, stash, cherry-pick,
@@ -21,15 +25,15 @@ signal across the repo's spectral geometry. No grep. No
 stitching heuristics together and praying. It asks the geometry where the signal
 lands and tells you what it finds. Git-Logos is built on top of the
 **Whisper Logos Attention Codec** (WLAC), a 0d entropy codec, and the **Whisper Engram Embedding Codec** (WEEC), a 256d semantic trajectory codec. 
-> *turns out giving semantic meaning to arbitary entropy is useful.*
+> *turns out giving semantic meaning to arbitrary entropy is useful.*
 
 What that looks like in practice:
 
 - Manifold can map your diff to external file context automatically using repo history, the spectral graph, and an experimental execution flow engine; Filament.
   - Use non-agentic (one-shot) LLM-powered Code Review, Muse Brainstorming, and Generate Message with *logos-backed* context gathering. Cheap, efficient, extraordinarily thorough.
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
-- View changes by *geometric Atlas* rather than by file. 
-- PRs, worktrees, and branches have **Orbits**.
+- View changes by *geometric Atlas* rather than by file.
+- PRs, worktrees, and branches have **Orbits**. This allows Manifold to predict merge conflicts before you merge, and show you the exact files that will fight.
 - See through a repo with X-Ray. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
 
@@ -39,25 +43,74 @@ Oh yeah, and it's *free* ♥
 
 *monke add repo. repo get analyzed. monke see where banana generater was added vs banna VIEWER (monke doesnt add descriptions. too busy making banana generators in different languages). friend send monke spaghetti repo when monke prefer banana repo. Manifold show monke around the new repo as if monke's own repo. spaghetti turned lasagna. all with manifold*
 
+## Pics or it didn't happen
+
+Every shot below is in a different theme. And that's only a fraction of them.
+
+### The engine, made visible
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="pics/manifold-view-nacre.webp" alt="Repo rendered as 3D geometric shapes with co-change links" width="400"><br>
+<sub><b>Your repo as geometry.</b> files are shapes, co-change is distance · Nacre</sub>
+</td>
+<td align="center" width="50%">
+<img src="pics/xray-lady-entropy.webp" alt="Repo X-Ray structural treemap with clusters" width="400"><br>
+<sub><b>X-Ray the whole repo.</b> clusters, hotspots, keystone files, external coupling · Lady Entropy</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="pics/orbits-phosphor.webp" alt="Pull requests shown as orbital shapes with conflict prediction" width="400"><br>
+<sub><b>PRs as orbits.</b> Manifold knows which branches will fight before you merge · Phosphor</sub>
+</td>
+<td align="center" width="50%">
+<img src="pics/review-result-blackboard.webp" alt="Code review result with grounded findings and a score" width="400"><br>
+<sub><b>The verdict, with receipts.</b> findings that point at the exact signal that found them · Blackboard</sub>
+</td>
+</tr>
+</table>
+
+### The everyday client
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="pics/changes-kirby.webp" alt="Changes page with file list, commit box, and diff" width="400"><br>
+<sub><b>The everyday loop.</b> stage, write, commit, with the engine mapping your diff underneath · Kirby</sub>
+</td>
+<td align="center" width="50%">
+<img src="pics/history-petrichor.webp" alt="History view with a per-commit seismograph and treemap" width="400"><br>
+<sub><b>History as a seismograph.</b> importance, churn, and overlap per commit. Dig deep, or just glance. · Petrichor</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="pics/merge-bibble.webp" alt="Fullscreen three-way merge resolver" width="400"><br>
+<sub><b>Three-way merges, fullscreen and per-file.</b> built for The Manual Way™ · Bibble</sub>
+</td>
+<td align="center" width="50%">
+<img src="pics/line-staging-aether.webp" alt="Line-level diff staging" width="400"><br>
+<sub><b>Line-level staging.</b> split a hunk down to the exact lines that belong · Aether</sub>
+</td>
+</tr>
+</table>
+
+<p align="center">
+<img src="pics/palette-redshift.webp" alt="Command palette searching repos, files, and actions" width="400"><br>
+<sub><b>One palette for everything.</b> repos, files, actions. Right there · Redshift</sub>
+</p>
+
 ## Mine, and yours
 
 Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude inspired "Halo". Show off that you earned your fairy wings with Bibble or forget the world like a Nightwalker.
 
 Cellshaded comic book page, cosmic glass in three unique perspectives... you get the point.
 
-## Pics or it didn't happen
-
-| | |
-|:---:|:---:|
-| <img src="pics/code-review.webp" alt="Code review — Nightwalker" width="400"> | <img src="pics/review-result-blackboard.webp" alt="Code review result — Blackboard" width="400"> |
-| <img src="pics/changes-kirby.webp" alt="Changes page — Kirby" width="400"> | <img src="pics/history-petrichor.webp" alt="History — Petrichor" width="400"> |
-| <img src="pics/xray-lady-entropy.webp" alt="X-Ray — Lady Entropy" width="400"> | <img src="pics/orbits-phosphor.webp" alt="Orbital PRs — Phosphor" width="400"> |
-| <img src="pics/merge-bibble.webp" alt="3-way merge resolver — Bibble" width="400"> | <img src="pics/line-staging-aether.webp" alt="Line-level diff staging — Aether" width="400"> |
-| <img src="pics/palette-redshift.webp" alt="Command palette — Redshift" width="400"> | <img src="pics/manifold-view-nacre.webp" alt="Geometric co-change viewer — Nacre" width="400"> |
-
 ## Status
 
-Public Beta mk1. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
+Public Beta mk2. Windows is my primary machine but the target builds i'd like stability on are Windows and Linux. Portable exe and AppImage.
 
 ## Quick start
 

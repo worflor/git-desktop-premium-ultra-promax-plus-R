@@ -11,7 +11,8 @@ import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
 import 'logos_flow.dart' show FlowAnalysisResult;
-import 'logos_core.dart' show CharCoupling, eigenAddress, flowPhaseCoherence;
+import 'logos_core.dart'
+    show CharCoupling, CsrGraph, eigenAddress, flowPhaseCoherence;
 import 'logos_git.dart' show LogosGit;
 import 'logos_git_integrity.dart';
 
@@ -1336,6 +1337,28 @@ class FileClusters {
 ///   * bucketing untracked files by path prefix before enumerating path
 ///     pairs, so path-affinity lookups stay O(n·avg_bucket_size) rather
 ///     than O(n²) when the change set is dominated by untracked files.
+/// The slice of a [LogosGit] engine that [clusterFiles] reads — the Born-mixed
+/// co-change graph and its node↔path index. A sendable projection (CSR typed
+/// arrays + a string map) so clustering can run inside `Isolate.run` without
+/// marshalling the whole multi-megabyte engine — and its non-sendable basis
+/// caches — across the boundary.
+class ClusterEngineView {
+  final CsrGraph graph;
+  final Map<String, int> pathToId;
+  final List<String> nodePaths;
+  const ClusterEngineView({
+    required this.graph,
+    required this.pathToId,
+    required this.nodePaths,
+  });
+
+  factory ClusterEngineView.of(LogosGit engine) => ClusterEngineView(
+        graph: engine.graph,
+        pathToId: engine.pathToId,
+        nodePaths: engine.nodePaths,
+      );
+}
+
 FileClusters clusterFiles(
   List<String> currentPaths,
   FileCouplingMatrix matrix, {
@@ -1374,12 +1397,13 @@ FileClusters clusterFiles(
   // Fiedler-seriated 1D order. When absent, falls back to the
   // legacy greedy nearest-neighbour chain on `combinedCouplingScore`.
   CorrelatednessContext? correlatednessContext,
-  // The Logos spectral engine, when available. Its Born-mixed CsrGraph
-  // fuses 5 axes (frequency, co-change, spatial proximity, volatility,
-  // engram) with confidence-gated quantum mixing. When present, the
+  // The Logos spectral engine's clustering projection, when available. Its
+  // Born-mixed CsrGraph fuses 5 axes (frequency, co-change, spatial proximity,
+  // volatility, engram) with confidence-gated quantum mixing. When present, the
   // engine's own edge weights and spectral gap replace the statistical
-  // threshold — the physics IS the gate.
-  LogosGit? engine,
+  // threshold — the physics IS the gate. A [ClusterEngineView] (not the whole
+  // engine) so this stays sendable across an `Isolate.run` boundary.
+  ClusterEngineView? engine,
 }) {
   final n = currentPaths.length;
   if (n == 0) {
