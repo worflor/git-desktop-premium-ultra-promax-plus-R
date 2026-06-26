@@ -102,6 +102,7 @@ fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just 
 
 - Runs hot 👉👈 (hot math ayo)
 - Muse needs to regurgitate less with all faces enabled (issue in 0.1.3)
+- Dream Hint hasnt been implemented 'with seriousness' yet... yet.....
 
 ## License
 
