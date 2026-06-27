@@ -188,8 +188,8 @@ TangleIndex _computeTangleIndex(CsrGraph g, {required int rgLevels}) {
   for (var level = 0; level <= rgLevels; level++) {
     if (current.n < 4) break;
     final basis = SpectralBasis.fromGraph(current, math.min(current.n, 20));
-    final gap =
-        basis.eigenvalues.length < 2 ? 0.0 : basis.eigenvalues[1];
+    final fe = basis.firstExcitedIndex;
+    final gap = fe < basis.k ? basis.eigenvalues[fe] : 0.0;
     gaps.add(gap);
     if (level == rgLevels || current.n < 8) break;
     // Coarsen by pairing consecutive nodes.

@@ -206,6 +206,46 @@ abstract class AiContextProducer {
 
 // The engine
 
+/// One producer's allocation + production record for hot-path telemetry.
+/// Filled by [AiContextEngine.assemble] only when a trace list is passed;
+/// a null trace (the normal review path) costs nothing. [elapsedMicros] is
+/// wall-clock around the producer's `produce()` — producers run in parallel,
+/// so the *max* across the set approximates the assembly critical path while
+/// the *sum* would over-count overlapping work.
+class AiProducerTrace {
+  AiProducerTrace({
+    required this.id,
+    required this.order,
+    required this.urgency,
+    required this.fixedRequest,
+    required this.budgetChars,
+    required this.producedChars,
+    required this.elapsedMicros,
+  });
+  final String id;
+  final int order;
+  final double? urgency;
+  final int fixedRequest;
+  final int budgetChars;
+  final int producedChars;
+  final int elapsedMicros;
+
+  /// A producer that consumed budget/urgency yet emitted nothing — an
+  /// "awkward gap": its channel ran but produced no evidence.
+  bool get empty => producedChars == 0;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'order': order,
+        'urgency': urgency,
+        'fixedRequest': fixedRequest,
+        'budgetChars': budgetChars,
+        'producedChars': producedChars,
+        'elapsedMicros': elapsedMicros,
+        'empty': empty,
+      };
+}
+
 /// A registered set of producers + the allocator that hands them their
 /// budgets. Stateless past construction; a single engine instance can
 /// serve many requests concurrently.
@@ -224,8 +264,9 @@ class AiContextEngine {
   /// or no-op section).
   Future<Map<String, AiContextSection>> assemble(
     AiContextRequest req,
-    int totalBudgetChars,
-  ) async {
+    int totalBudgetChars, {
+    List<AiProducerTrace>? trace,
+  }) async {
     final fixedRequests = <String, int>{};
     var fixedSum = 0;
     for (final p in producers) {
@@ -291,7 +332,20 @@ class AiContextEngine {
 
     final entries = await Future.wait(
       producers.map((p) async {
+        final sw = trace != null ? (Stopwatch()..start()) : null;
         final section = await p.produce(req, budgets[p.id]!);
+        if (trace != null) {
+          sw!.stop();
+          trace.add(AiProducerTrace(
+            id: p.id,
+            order: p.order,
+            urgency: urgencies[p.id],
+            fixedRequest: fixedRequests[p.id] ?? 0,
+            budgetChars: budgets[p.id]!,
+            producedChars: section.body.length,
+            elapsedMicros: sw.elapsedMicroseconds,
+          ));
+        }
         return MapEntry(p.id, section);
       }),
     );
@@ -310,8 +364,9 @@ class AiContextEngine {
   /// [assemble] is for advanced flows that want to compose section
   /// bodies into something other than XML-tagged concatenation.
   Future<({String body, Map<String, AiContextSection> sections})>
-      assembleAndStitch(AiContextRequest req, int totalBudgetChars) async {
-    final sections = await assemble(req, totalBudgetChars);
+      assembleAndStitch(AiContextRequest req, int totalBudgetChars,
+          {List<AiProducerTrace>? trace}) async {
+    final sections = await assemble(req, totalBudgetChars, trace: trace);
     final ordered = [...producers]..sort((a, b) => a.order.compareTo(b.order));
     final parts = <String>[];
     for (final p in ordered) {

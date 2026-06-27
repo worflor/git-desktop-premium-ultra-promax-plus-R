@@ -162,7 +162,9 @@ class SpectroGeometry {
 SpectroGeometry spectrogeometry(CsrGraph graph, SpectralBasis basis) {
   final rmt = rmtReport(basis);
   final persistence = computeCouplingPersistence(graph);
-  final sd = spectralDimension(basis);
+  // Pass the graph so d_s is fit on the FULL-spectrum stochastic heat trace,
+  // not the truncated basis (which collapses to ~0 on fragmented repos).
+  final sd = spectralDimension(basis, graph: graph);
   final zetaR = zetaReport(basis);
 
   final universality = _universalityVector(

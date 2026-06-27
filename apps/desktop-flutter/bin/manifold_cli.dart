@@ -28,7 +28,8 @@ void main(List<String> args) async {
       if (gitRoot != null) params['repo'] = gitRoot;
     }
 
-    final slow = const {'review', 'muse', 'impact', 'dream'}.contains(method);
+    final slow = const {'review', 'review-evidence', 'muse', 'impact', 'dream'}
+        .contains(method);
     if (slow) {
       final repo = params['repo'] as String? ?? '.';
       final short = repo.split('/').last.split('\\').last;
@@ -261,6 +262,9 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
     case 'review':
       _printReview(result, elapsedMs);
       break;
+    case 'review-evidence':
+      _printEvidence(result, elapsedMs);
+      break;
     case 'muse':
       _printMuse(result, elapsedMs);
       break;
@@ -442,6 +446,86 @@ void _printReview(Map<String, dynamic> result, int elapsedMs) {
   }
 }
 
+String _p3(dynamic v) => (v as num?)?.toStringAsFixed(3) ?? '?';
+
+void _printEvidence(Map<String, dynamic> result, int elapsedMs) {
+  final files = result['files'] as Map<String, dynamic>?;
+  final reviewed = files?['reviewed'] ?? '?';
+  final total = files?['total'] ?? '?';
+  final diag = result['diagnostics'] as Map<String, dynamic>?;
+  final promptChars = result['promptChars'] as int? ?? 0;
+  final diffChars = result['diffChars'] as int? ?? 0;
+
+  stdout.writeln(
+    ' evidence · $reviewed/$total files · ${_timeFmt(elapsedMs)} · '
+    '${_fmtTokens(diffChars)} diff → ${_fmtTokens(promptChars)} prompt',
+  );
+  stdout.writeln('');
+
+  if (diag == null) {
+    stdout.writeln(_dim(' (no diagnostics)'));
+    return;
+  }
+
+  String ms(dynamic micros) =>
+      '${((micros as int? ?? 0) / 1000).toStringAsFixed(1)}ms';
+
+  // Phase timings
+  final t = diag['timingMicros'] as Map<String, dynamic>? ?? {};
+  stdout.writeln(_bold(' phases'));
+  stdout.writeln('   git        ${ms(t['gitDerivation'])}');
+  stdout.writeln('   diffusion  ${ms(t['logosDiffusion'])}');
+  stdout.writeln('   bundle     ${ms(t['diffBundle'])}');
+  stdout.writeln('   assembly   ${ms(t['producerAssembly'])}');
+  stdout.writeln('   telemetry  ${ms(t['telemetryAwait'])}');
+  stdout.writeln('   ${_dim('total')}      ${ms(t['total'])}');
+  stdout.writeln('');
+
+  // Channels + partition
+  final ch = diag['channels'] as Map<String, dynamic>? ?? {};
+  final dif = diag['diffusion'] as Map<String, dynamic>? ?? {};
+  stdout.writeln(_bold(' channels'));
+  stdout.writeln('   ranked ${ch['ranked']}  residuals ${ch['residuals']}  '
+      'transport ${ch['transportPull']}  inquiry ${ch['inquirySteps']}');
+  final part = dif['partition'] as Map<String, dynamic>?;
+  if (part != null) {
+    stdout.writeln('   partition  ctx ${_p3(part['ctx'])}  meta ${_p3(part['meta'])}  '
+        'nbhd ${_p3(part['nbhd'])}  flow ${_p3(part['flow'])}');
+  } else {
+    stdout.writeln(_dim('   partition  (cold-start — no spectral basis)'));
+  }
+  stdout.writeln('');
+
+  // Producers, sorted by wall time
+  final producers = diag['producers'] as List<dynamic>? ?? [];
+  if (producers.isNotEmpty) {
+    stdout.writeln('${_bold(' producers')} ${_dim('(budget→produced · ms)')}');
+    final sorted = [...producers]
+      ..sort((a, b) => ((b as Map)['elapsedMicros'] as int)
+          .compareTo((a as Map)['elapsedMicros'] as int));
+    for (final p in sorted) {
+      final pm = p as Map<String, dynamic>;
+      final empty = pm['empty'] == true ? _yellow(' ∅') : '';
+      stdout.writeln('   ${(pm['id'] as String).padRight(24)} '
+          '${_fmtTokens(pm['budgetChars'] as int)}→${_fmtTokens(pm['producedChars'] as int)}  '
+          '${ms(pm['elapsedMicros'])}$empty');
+    }
+    stdout.writeln('');
+  }
+
+  // Gaps
+  final gaps = diag['gaps'] as List<dynamic>? ?? [];
+  if (gaps.isEmpty) {
+    stdout.writeln(_dim(' no gaps'));
+  } else {
+    stdout.writeln(
+        _yellow(' ${gaps.length} gap${gaps.length == 1 ? '' : 's'}'));
+    for (final g in gaps) {
+      stdout.writeln(' ${_dim('·')} $g');
+    }
+  }
+}
+
 void _printMuse(Map<String, dynamic> result, int elapsedMs) {
   final files = result['files'] as Map<String, dynamic>?;
   final reviewed = files?['reviewed'] ?? '?';
@@ -505,6 +589,7 @@ Usage: manifold <command> [options]
 Commands:
   status                        Branch, ahead/behind, dirty files
   review [--files <paths>]      AI code review (default: dirty files)
+  review-evidence [--files ..]  Gathered review evidence + telemetry (no model call)
   muse [--files <paths>]        AI brainstorm (default: dirty files)
   blast-radius --files <paths>  Co-change neighbors
   suggest --files <paths>       Coupled files you might have missed

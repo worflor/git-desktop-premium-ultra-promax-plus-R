@@ -429,6 +429,14 @@ const _aboutDevelopment = <_AboutEntry>[
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.1.4',
+    date: '2026-06-27',
+    bullets: [
+      'Orrery lands in preview. Scrub the repo\'s full history and watch its structure drift, files orbiting in a Poincaré disk. Early, like Atlas, but the shape is already there.',
+      'More engine tuning under the hood.',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.3',
     date: '2026-06-21',
     bullets: [

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Process, pid;
+import 'dart:io' show File, Process, pid;
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:path/path.dart' as p;
@@ -38,6 +38,7 @@ final Map<String, CommandHandler> commands = {
   'dream': _dream,
   'impact': _impact,
   'review': _review,
+  'review-evidence': _reviewEvidence,
   'muse': _muse,
 };
 
@@ -1081,6 +1082,78 @@ Future<Map<String, dynamic>> _review(
           'file': o.filePath,
         },
     ],
+  };
+}
+
+/// Review-evidence dry-run. Runs the IDENTICAL gather + prompt assembly a
+/// real `review` runs ([gatherReviewEvidence]), but stops before the model
+/// and returns the structured evidence + per-phase/per-producer telemetry +
+/// the full assembled prompt. The faithful "see what the app feeds the LLM"
+/// path — no model cost, no alternate gather.
+Future<Map<String, dynamic>> _reviewEvidence(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final totalSw = Stopwatch()..start();
+  final repo = _requireRepo(params, ctx);
+  final cacheRoot = await _resolveCommonRoot(repo);
+  final categories = await _ensureCategories(ctx);
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+  final model = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.reviewCommitModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+
+  _progress('scope');
+  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
+      await _resolveScope(params, ctx);
+  _progress('scope', '${scopeFiles.length} files');
+
+  _progress('warmup');
+  final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
+  _progress('warmup', 'coupling ${couplingWarm.data != null ? '✓' : '–'}');
+
+  // Optional frozen-diff replay (--diff <path>) for clean A/B across rebuilds.
+  final diffPath = params['diff'] as String?;
+  var rawDiffOverride = '';
+  if (diffPath != null && diffPath.isNotEmpty) {
+    final f = File(diffPath);
+    if (await f.exists()) rawDiffOverride = await f.readAsString();
+  }
+
+  _progress('gather');
+  final result = await gatherReviewEvidence(
+    repositoryPath: repo,
+    modelCategoryLabel: model.categoryLabel,
+    scopeLabel: scopeLabel,
+    includeStaged: hasStaged,
+    includeUnstaged: hasUnstaged,
+    scopedPaths: scopeFiles,
+    customPrompt: ai.reviewCommitPrompt,
+    guardrailStage: prefs.guardrailStage,
+    couplingMatrix: couplingWarm.data,
+    rawDiffOverride: rawDiffOverride,
+  );
+  totalSw.stop();
+
+  if (!result.ok || result.data == null) {
+    return {'error': result.error ?? 'Evidence gather failed.'};
+  }
+  final d = result.data!;
+  return {
+    'repo': repo,
+    'files': {
+      'reviewed': scopeFiles.length,
+      'total': statusFiles.length,
+    },
+    'enrichment': {
+      'coupling': couplingWarm.data != null,
+      'couplingMs': couplingWarm.ms,
+    },
+    'wallMs': totalSw.elapsedMilliseconds,
+    ...d.toJson(),
   };
 }
 

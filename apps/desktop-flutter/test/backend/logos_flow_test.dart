@@ -966,6 +966,23 @@ void main() {
       expect(back.hasAxis(kFlowRestabilizes), true);
     });
 
+    test('scope exit across a blank line still gets RESTABILIZES', () {
+      // Blank lines between nodes must not break role classification — the
+      // classifier reads node-adjacent indents, not raw line-adjacent ones,
+      // so a blank line before the dedent doesn't read indent 0.
+      final g = extractFlowGraph('top\n          deep_body\n\nback');
+      final back =
+          g.nodes.values.firstWhere((n) => n.sourceText == 'back');
+      expect(back.hasAxis(kFlowRestabilizes), true);
+    });
+
+    test('scope entry (non-first line) across a blank still gets LIFECYCLE', () {
+      final g = extractFlowGraph('x = 1\nfn main:\n\n    body');
+      final opener =
+          g.nodes.values.firstWhere((n) => n.sourceText == 'fn main:');
+      expect(opener.hasAxis(kFlowLifecycle), true);
+    });
+
     test('sequential edges connect non-comment lines', () {
       final g = extractFlowGraph('a\nb\nc');
       final ids = g.nodes.keys.toList();

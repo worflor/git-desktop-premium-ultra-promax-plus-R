@@ -116,7 +116,6 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     // Snapshot the GYAT prior once per scan. The lattice may change
     // during the scan as observations land, but we want a stable
     // prior across the batch so walker novelty doesn't drift mid-scan.
-    final globalCouplingW = gyat.globalCoupling?.rawWeights;
     final priorMeans = gyat.cellMeansSnapshot;
     final priorCounts = gyat.cellCountsSnapshot;
 
@@ -142,7 +141,6 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
           final result = await analyzeFlowCached(
             p.join(repoPath, fp),
             logosCoupling: coupling,
-            globalCouplingWeights: globalCouplingW,
             priorMeans: priorMeans,
             priorCounts: priorCounts,
             lightweight: batchLightweight,

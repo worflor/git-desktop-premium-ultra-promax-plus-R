@@ -183,10 +183,9 @@ class FlowOscillator {
   /// The edge's Hamming distance provides impedance.
   /// Returns the new certainty.
   double step(double kr, double ki, double gr, int edgeHamming) {
-    // Same lattice address → same point on the Boolean hypercube.
-    // No structural boundary crossed, so suppress the damping term.
-    if (edgeHamming == 0) gr = 0.0;
-
+    // Same-address (h=0) edges keep their full AR(2) restoring term `gr`; the
+    // prior `if (h==0) gr=0` suppression diverged from the reference
+    // recurrence [_manualOscillator] and is intentionally gone.
     _kr = kr;
     _ki = ki;
     _gr = gr;
@@ -195,8 +194,10 @@ class FlowOscillator {
     var zi = kr * _z1i + ki * _z1r - gr * _z0i;
 
     if (edgeHamming > 0) {
-      final hNorm = edgeHamming / 8.0;
-      final r = hNorm * hNorm;
+      // Raised-cosine impedance across the Boolean-hypercube edge distance:
+      // h=4 damps half, h=8 fully blocks. (Plain (h/8)² gave 0.75 at h=4 —
+      // a regression from the intended cosine law in [_manualOscillator].)
+      final r = (1.0 - math.cos(math.pi * edgeHamming / 8.0)) / 2.0;
       final t = 1.0 - r;
       zr *= t;
       zi *= t;

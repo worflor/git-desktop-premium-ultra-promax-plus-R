@@ -25,6 +25,7 @@ import 'win_job_object.dart';
 import 'package:meta/meta.dart';
 
 import 'ai_context_engine.dart';
+import 'review_evidence.dart';
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_core.dart' show SpectralThermo, flowKGInteractionStrength;
@@ -5275,9 +5276,15 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // that cold-git first-call cost or carry a <shadow_history> section their
   // prompts never describe. Timeout-bounded + 10-min memoised even when on.
   bool includeShadowHistory = false,
+  // Optional hot-path telemetry sink. When non-null the gather records
+  // per-phase timings + the producer trace + an evidence-channel summary
+  // into it (the `review-evidence` dry-run reads it back). Null on the
+  // normal review/commit/muse paths — a handful of stopwatches of overhead.
+  GatherDiagnostics? diag,
 }) async {
   final scopeArgs =
       scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
+  final gitSw = diag != null ? (Stopwatch()..start()) : null;
 
   final String branchName;
   final String statusSummary;
@@ -5388,6 +5395,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     );
   }
 
+  if (diag != null) diag.gitDerivationMicros = gitSw!.elapsedMicroseconds;
+
   // Kick off git telemetry now — six subprocesses that don't depend on
   // any of the heavy work below. They run on isolate-backed Process
   // APIs while the main thread does its CPU work. Awaited at the end
@@ -5409,10 +5418,14 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // cache path for diffs touching many files; doing it twice per
   // review (once here, once inside rankHunksByPhiAsync via
   // `_resolveFileCoupling`) was pure waste.
+  final diffusionSw = diag != null ? (Stopwatch()..start()) : null;
   final logos = await _runLogosDiffusion(
     repositoryPath: repositoryPath,
     diffText: fullDiff,
   );
+  if (diag != null) {
+    diag.logosDiffusionMicros = diffusionSw!.elapsedMicroseconds;
+  }
 
   // Frame-yield after the diffusion CPU burst so Flutter can paint
   // before we start the hunk-level graph work.
@@ -5427,12 +5440,14 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
         )
       : null;
 
+  final bundleSw = diag != null ? (Stopwatch()..start()) : null;
   final diffBundle = await _buildDiffPromptBundle(
     fullDiff,
     repositoryPath: repositoryPath,
     couplingMatrix: couplingMatrix,
     precomputedFileEvidence: hunkFileEvidence,
   );
+  if (diag != null) diag.diffBundleMicros = bundleSw!.elapsedMicroseconds;
 
   await Future<void>.delayed(Duration.zero);
 
@@ -5476,6 +5491,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // hardcoded section ordering, no risk of forgetting to wire the
   // new section into the prompt body.
   final partition = logos?.partition ?? _coldStartPartition(fullDiff);
+  final assemblySw = diag != null ? (Stopwatch()..start()) : null;
   final assembled = await engine.assembleAndStitch(
     AiContextRequest(
       repositoryPath: repositoryPath,
@@ -5484,7 +5500,12 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       partition: partition,
     ),
     contextBudget,
+    trace: diag?.producers,
   );
+  if (diag != null) {
+    diag.producerAssemblyMicros = assemblySw!.elapsedMicroseconds;
+    _fillGatherDiagnostics(diag, logos, assembled.sections);
+  }
   DiagnosticsState.instance.recordCommandLifecycleEvent(
     type: 'info',
     command: 'ai.context.partition',
@@ -5507,7 +5528,9 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // Telemetry was kicked off at the top of the function concurrently
   // with the CPU-heavy diffusion/assembly phases. Await now — the
   // six subprocess fetches likely completed while logos did its work.
+  final telemetrySw = diag != null ? (Stopwatch()..start()) : null;
   final telemetry = await telemetryFuture;
+  if (diag != null) diag.telemetryAwaitMicros = telemetrySw!.elapsedMicroseconds;
 
   final totalCommits = int.tryParse((telemetry[0].data ?? '').trim()) ?? 0;
 
@@ -5547,6 +5570,150 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       rawDiff: fullDiff,
     ),
   );
+}
+
+/// Summarise the diffusion + evidence channels into [diag] and flag every
+/// "awkward gap" — a channel that ran but produced nothing, or a spectral
+/// signal that was unavailable. Called once per gather when telemetry is on.
+void _fillGatherDiagnostics(
+  GatherDiagnostics diag,
+  LogosDiffusionResult? logos,
+  Map<String, AiContextSection> sections,
+) {
+  diag.partition = logos?.partition;
+  if (logos == null) {
+    diag.diffusionCold = true;
+    diag.gaps.add(
+        'diffusion-cold: engine never warmed (small/fresh repo or skipped)');
+  } else {
+    diag.diffusionCold = false;
+    diag.recurrentIterations = logos.recurrentIterations;
+    diag.recurrentConverged = logos.recurrentConverged;
+    final ev = logos.evidence;
+    if (ev == null) {
+      diag.evidenceNull = true;
+      diag.gaps.add(
+          'evidence-null: gatherEvidence skipped (lightweight snapshot — large diff)');
+    } else {
+      diag.evidenceNull = false;
+      diag.rankedCount = ev.ranked.length;
+      diag.residualCount = ev.residualByPath.length;
+      diag.transportPullCount = ev.transportPullByPath.length;
+      diag.metricSidecarCount = ev.metricSidecars.length;
+      diag.inquiryStepCount = ev.inquiryPlan.steps.length;
+      diag.attributionPresent = ev.supportAttribution != null;
+      diag.coherence = ev.coherence;
+      diag.stability = ev.stability;
+      diag.sourceAlignment = ev.sourceAlignment;
+      diag.fieldAlignment = ev.fieldAlignment;
+      diag.sourceSurprise = ev.sourceSurprise;
+      diag.fieldSurprise = ev.fieldSurprise;
+      if (ev.ranked.isEmpty) {
+        diag.gaps.add('ranked-empty: diffusion produced no ranked files');
+      }
+      if (ev.residualByPath.isEmpty) {
+        diag.gaps.add('residuals-empty: all sources out-of-graph');
+      }
+      if (ev.transportPullByPath.isEmpty) {
+        diag.gaps
+            .add('transport-empty: disconnected graph / no inter-file pull');
+      }
+      if (ev.supportAttribution == null) {
+        diag.gaps.add('attribution-null: no per-axis breakdown');
+      }
+      if (ev.inquiryPlan.steps.isEmpty) {
+        diag.gaps
+            .add('inquiry-plan-empty: no high-confidence paths to recommend');
+      }
+      if (ev.sourceAlignment == null) {
+        diag.gaps.add('spectral-alignment-null: basis unavailable / degenerate');
+      }
+    }
+  }
+  if (logos?.partition == null) {
+    diag.gaps.add('partition-null: no spectral basis → cold-start budget split');
+  }
+  // Producer sections that consumed budget/urgency yet emitted nothing.
+  for (final entry in sections.entries) {
+    if (entry.value.body.isEmpty) {
+      diag.gaps.add('section-empty:${entry.key}');
+    }
+  }
+}
+
+/// Run the EXACT review gather ([_collectCommitMessageContext]) + prompt
+/// assembly ([_buildCommitReviewPrompt]) the real review runs, then return
+/// the structured evidence + hot-path telemetry + the full assembled prompt —
+/// stopping immediately before the provider call. This backs the
+/// `review-evidence` dry-run: identical gather to a real review, no model
+/// call, no alternate path.
+Future<GitResult<ReviewEvidenceData>> gatherReviewEvidence({
+  required String repositoryPath,
+  required String modelCategoryLabel,
+  required String scopeLabel,
+  required bool includeStaged,
+  required bool includeUnstaged,
+  List<String> scopedPaths = const [],
+  String customPrompt = '',
+  int guardrailStage = 2,
+  FileCouplingMatrix? couplingMatrix,
+  // Frozen-diff replay for clean A/B: when set, the gather skips git
+  // derivation and runs on this exact diff text, so the identical input can
+  // be re-measured across engine rebuilds. Real gather path otherwise.
+  String rawDiffOverride = '',
+}) async {
+  if (repositoryPath.trim().isEmpty) {
+    return const GitResult.err('Repository path is required.');
+  }
+  final usingOverride = rawDiffOverride.trim().isNotEmpty;
+  if (!usingOverride && !includeStaged && !includeUnstaged) {
+    return const GitResult.err('No diff scope is available for review.');
+  }
+  final diag = GatherDiagnostics();
+  final totalSw = Stopwatch()..start();
+  final diffContext = await _collectCommitMessageContext(
+    repositoryPath: repositoryPath,
+    scopeLabel: scopeLabel,
+    scopedPaths: scopedPaths,
+    includeStaged: includeStaged,
+    includeUnstaged: includeUnstaged,
+    rawDiffOverride: usingOverride ? rawDiffOverride : null,
+    branchNameOverride: usingOverride ? 'ab-frozen' : null,
+    couplingMatrix: couplingMatrix,
+    includeShadowHistory: true, // review-only channel; match the real review
+    diag: diag,
+  );
+  if (!diffContext.ok) {
+    return GitResult.err(diffContext.error!);
+  }
+  final bundle = diffContext.data!;
+  final profile = _guardrailProfileForStage(guardrailStage);
+  final draftSpec = _ReviewPromptSpec(
+    branchName: bundle.branchName,
+    modelCategoryLabel: modelCategoryLabel,
+    scopeLabel: scopeLabel,
+    customPrompt: customPrompt,
+    commitDraft: '',
+    statusSummary: bundle.statusSummary,
+    statSummary: bundle.statSummary,
+    diffSummary: bundle.diffBundle.promptBody,
+    passMode: _ReviewPassMode.draft,
+  );
+  final draftPrompt =
+      _buildCommitReviewPrompt(spec: draftSpec, profile: profile);
+  totalSw.stop();
+  diag.totalMicros = totalSw.elapsedMicroseconds;
+
+  return GitResult.ok(ReviewEvidenceData(
+    branchName: bundle.branchName,
+    scopeLabel: scopeLabel,
+    statusSummary: bundle.statusSummary,
+    statSummary: bundle.statSummary,
+    diffChars: bundle.rawDiff.length,
+    promptChars: draftPrompt.length,
+    prompt: draftPrompt,
+    diagnostics: diag,
+  ));
 }
 
 String _joinDiffSections({
@@ -7174,6 +7341,12 @@ Future<({String text, LogosEmissionRecord? record})>
       if (item.phi > planPhiMax) planPhiMax = item.phi;
     }
 
+    // Weak/trace breadcrumbs (header-only, sub-0.4 normalised pull) are
+    // noise at volume — a run of 400 near-identical lines drowns the
+    // signal neighbours. Divert them here (keyed by well) and emit one
+    // grouped summary after the loop instead of one repetitive line each.
+    final weakBread = <String, List<String>>{};
+
     for (final item in plan) {
       if (remaining <= 120) break;
       // Per-file axis breakdown so the AI can ground its findings in
@@ -7202,6 +7375,15 @@ Future<({String text, LogosEmissionRecord? record})>
       // priors for, instead of a number it has to invent meaning
       // for on every turn.
       final relevance = _neighborRelevanceBand(item.phi, planPhiMax);
+      // Content tiers (full/signature) are reserved for files with real pull.
+      // A trace/weak neighbour the engine ranks near-zero doesn't earn its
+      // whole contents in the prompt — cap it to a breadcrumb header, and the
+      // weak/trace tail then collapses into the grouped summary below. No
+      // engine-knapsack change: the renderer simply declines to spend content
+      // budget on low-relevance files.
+      final effectiveTier = (relevance == 'weak' || relevance == 'trace')
+          ? EmissionTier.breadcrumb
+          : item.tier;
       final viaPill = via.isEmpty
           ? '  via=(no axis support)'
           : '  via=$via';
@@ -7214,8 +7396,14 @@ Future<({String text, LogosEmissionRecord? record})>
       final depthPill =
           (depth != null && depth >= 1) ? '  depth=$depth' : '';
       final header =
-          '--- ${item.path}  relevance=$relevance  tier=${_tierName(item.tier)}$viaPill$evidencePill$wellPill$depthPill ---';
-      if (item.tier == EmissionTier.breadcrumb) {
+          '--- ${item.path}  relevance=$relevance  tier=${_tierName(effectiveTier)}$viaPill$evidencePill$wellPill$depthPill ---';
+      if (effectiveTier == EmissionTier.breadcrumb) {
+        // Signal-bearing breadcrumbs (moderate/strong/dominant) keep their
+        // full line; the weak/trace tail collapses into the grouped summary.
+        if (relevance == 'weak' || relevance == 'trace') {
+          weakBread.putIfAbsent(well ?? 'unwelled', () => []).add(item.path);
+          continue;
+        }
         final line = '$header\n';
         if (line.length > remaining) continue;
         buffer.write(line);
@@ -7227,7 +7415,7 @@ Future<({String text, LogosEmissionRecord? record})>
         if (!await file.exists()) continue;
         final content = await file.readAsString();
         final lineCount = _countLinesPlusOne(content);
-        if (item.tier == EmissionTier.full) {
+        if (effectiveTier == EmissionTier.full) {
           final fullBlock = '$header\n$content\n';
           if (fullBlock.length <= remaining) {
             buffer.write(fullBlock);
@@ -7265,6 +7453,27 @@ Future<({String text, LogosEmissionRecord? record})>
         continue;
       }
     }
+
+    // Collapse the weak/trace breadcrumb tail into a compact grouped-by-well
+    // summary: the reviewer still learns these files exist and where they
+    // sit, without hundreds of lines of repeated boilerplate burning the
+    // neighborhood's whole attention budget on near-zero-pull files.
+    if (weakBread.isNotEmpty && remaining > 120) {
+      final total = weakBread.values.fold<int>(0, (s, l) => s + l.length);
+      final summary = StringBuffer(
+          '--- weak neighbors ($total — present but low-pull, grouped by well) ---\n');
+      final wells = weakBread.entries.toList()
+        ..sort((a, b) => b.value.length.compareTo(a.value.length));
+      for (final e in wells) {
+        final names = e.value.map((path) => path.split('/').last);
+        final sample = names.take(8).join(', ');
+        final more = e.value.length > 8 ? ', +${e.value.length - 8} more' : '';
+        summary.writeln('  ${e.key} ×${e.value.length}: $sample$more');
+      }
+      final block = summary.toString();
+      if (block.length <= remaining) buffer.write(block);
+    }
+
     return (text: buffer.toString(), record: emissionRecord);
   } catch (e, st) {
     // No more silent swallow — surface failures through diagnostics

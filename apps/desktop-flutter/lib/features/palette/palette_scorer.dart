@@ -217,9 +217,11 @@ class PaletteScorer {
     _diffusionSourceCount = allSources.length;
 
     final basis = engine.spectralBasis();
-    final gap = basis != null && basis.eigenvalues.length > 1
-        ? (basis.eigenvalues[1] - basis.eigenvalues[0]).clamp(0.001, 2.0)
-        : 0.1;
+    // Use the spectralGap getter (= λ from the ground space to the first
+    // excited mode via firstExcitedIndex) rather than a hardcoded index 1 —
+    // on a fragmented graph eigenvalues[0] and [1] are both zero kernel
+    // modes, which would pin the gap (and the coherence gate) to its floor.
+    final gap = basis != null ? basis.spectralGap.clamp(0.001, 2.0) : 0.1;
     final coherenceGate = gap.clamp(0.05, 0.4);
 
     final localScores = engine.diffuseWeighted(

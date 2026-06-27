@@ -1055,6 +1055,47 @@ int adaptiveK(Float64List coeffs, double eps) {
 
 // Heat-kernel diffusion — one-shot and basis-cached forms
 
+/// Full-spectrum heat trace `Z(t) = tr(e^{−t·L_sym})` via Hutchinson
+/// stochastic trace estimation over the matrix-free Chebyshev heat kernel —
+/// no eigenvalue truncation. `tr(f(L)) ≈ (1/m)·Σᵢ zᵢ·f(L)zᵢ` for `±1`
+/// Rademacher probes `zᵢ` (variance `∝ 1/m`). Unlike `SpectralBasis.heatTrace`
+/// — which sums only the `k` retained eigenvalues and so reads `≤ k` at small
+/// `t` — this sees all `n` modes, the right object for the short/intermediate
+/// time regime that pins spectral dimension and the heat-trace tail.
+/// Deterministic given [seed].
+double stochasticHeatTrace(
+  CsrGraph graph,
+  double t, {
+  int probes = 24,
+  int K = kDefaultChebyshevK,
+  int seed = 0x5EED1234,
+}) {
+  final n = graph.n;
+  if (n == 0) return 0.0;
+  if (t <= 0) return n.toDouble(); // e^{0·L} = I, trace = n
+  var rngState = (seed | 1) & 0x7fffffff;
+  int nextBit() {
+    rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+    return (rngState >> 20) & 1;
+  }
+
+  final z = Float64List(n);
+  final phi = Float64List(n);
+  var acc = 0.0;
+  for (var p = 0; p < probes; p++) {
+    for (var i = 0; i < n; i++) {
+      z[i] = nextBit() == 0 ? 1.0 : -1.0;
+    }
+    chebyshevDiffuse(graph: graph, rho: z, phi: phi, t: t, K: K);
+    var dot = 0.0;
+    for (var i = 0; i < n; i++) {
+      dot += z[i] * phi[i];
+    }
+    acc += dot;
+  }
+  return acc / probes;
+}
+
 /// Apply the heat kernel to source ρ at temperature t using the
 /// Chebyshev expansion. Writes result into [phi]. Pure — no hidden
 /// state. Allocates three ring-buffer scratch vectors internally; each
@@ -1765,6 +1806,113 @@ class LaplacianEigenpairs {
   });
 }
 
+/// Exact closed-form kernel of the normalised Laplacian `L_sym`.
+///
+/// Because `L_sym = D^{-1/2}·(D − A)·D^{-1/2}`, its null space is
+/// `span{ D^{1/2}·1_C }` over the connected components `C` that carry at
+/// least one edge — each such vector (entries `√dᵢ` on `C`, normalised) is
+/// an *exact* zero eigenvector. Degree-0 isolated nodes sit at λ = 1 (not
+/// in the kernel) and are excluded.
+///
+/// Returns `(count, compOf, entry)`: `count` kernel components, `compOf[i]`
+/// the dense component index `0..count-1` of node `i` (or −1 when `i` is not
+/// in the kernel), and `entry[i]` its normalised amplitude `√dᵢ/√vol(C)`.
+/// Because the components have disjoint support this encodes an orthonormal
+/// basis whose projection (deflation) costs O(n) regardless of `count`.
+/// `count == 0` when per-node weighted degrees can't be recovered from
+/// [graph] — the caller then runs plain single-vector Lanczos (no worse
+/// than before).
+///
+/// This is what makes the kernel dimension *exact*: a single random Lanczos
+/// start vector can only surface ONE direction of a degenerate zero
+/// eigenspace, so on real (fragmented) coupling graphs it silently drops
+/// the other 8–13 ground modes and corrupts the whole Ritz extraction.
+(int, Int32List, Float64List) _exactLaplacianKernel(CsrGraph graph) {
+  final n = graph.n;
+  final compOf = Int32List(n);
+  final entry = Float64List(n);
+  for (var i = 0; i < n; i++) {
+    compOf[i] = -1;
+  }
+  if (n == 0) return (0, compOf, entry);
+
+  // Recover √degree per node from whichever metadata the graph carries.
+  final sqrtDeg = Float64List(n);
+  final dInv = graph.degreeInvSqrt;
+  if (dInv.length == n) {
+    for (var i = 0; i < n; i++) {
+      sqrtDeg[i] = dInv[i] > 0 ? 1.0 / dInv[i] : 0.0;
+    }
+  } else if (graph.rawWeights.isNotEmpty &&
+      graph.rawWeights.length == graph.values.length) {
+    for (var i = 0; i < n; i++) {
+      var d = 0.0;
+      for (var p = graph.indptr[i]; p < graph.indptr[i + 1]; p++) {
+        d += graph.rawWeights[p];
+      }
+      sqrtDeg[i] = d > 0 ? math.sqrt(d) : 0.0;
+    }
+  } else {
+    return (0, compOf, entry); // degrees unavailable — caller falls back
+  }
+
+  // Union-find over real (non-self) edges to label connected components.
+  final parent = Int32List(n);
+  for (var i = 0; i < n; i++) {
+    parent[i] = i;
+  }
+  int find(int x) {
+    var r = x;
+    while (parent[r] != r) {
+      r = parent[r];
+    }
+    var cur = x;
+    while (parent[cur] != r) {
+      final next = parent[cur];
+      parent[cur] = r;
+      cur = next;
+    }
+    return r;
+  }
+
+  for (var i = 0; i < n; i++) {
+    for (var p = graph.indptr[i]; p < graph.indptr[i + 1]; p++) {
+      final j = graph.indices[p];
+      if (j == i) continue;
+      // Skip zero-weight edges: L_sym sees them as no coupling, so the
+      // kernel must too — otherwise union-find would merge components the
+      // operator treats as disconnected and undercount β₀.
+      if (graph.values[p] == 0.0) continue;
+      final ri = find(i);
+      final rj = find(j);
+      if (ri != rj) parent[rj] = ri;
+    }
+  }
+
+  // Flatten roots, accumulate per-component volume Σ dᵢ, assign dense indices
+  // to the components that carry weight (vol > 0). Isolated singletons have
+  // vol = 0 → λ = 1, not kernel, so they keep compOf = −1.
+  final root = Int32List(n);
+  for (var i = 0; i < n; i++) {
+    root[i] = find(i);
+  }
+  final volByRoot = <int, double>{};
+  for (var i = 0; i < n; i++) {
+    volByRoot[root[i]] = (volByRoot[root[i]] ?? 0.0) + sqrtDeg[i] * sqrtDeg[i];
+  }
+  final indexByRoot = <int, int>{};
+  var count = 0;
+  for (var i = 0; i < n; i++) {
+    final r = root[i];
+    final vol = volByRoot[r]!;
+    if (vol <= 0.0) continue;
+    final c = indexByRoot[r] ??= count++;
+    compOf[i] = c;
+    entry[i] = sqrtDeg[i] / math.sqrt(vol);
+  }
+  return (count, compOf, entry);
+}
+
 /// Compute the top-`kRequested` SMALLEST eigenpairs of `graph`'s
 /// normalised Laplacian via folded-spectrum Lanczos. The fold
 /// `M = 2·I − L_sym` maps small L_sym eigenvalues to large M
@@ -1798,9 +1946,71 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
       eigenvectors: Float64List(0),
     );
   }
-  // Lanczos iterations capped at the dimension (T can be at most n×n).
-  final m = math.min(n, math.max(maxIters ?? 0, math.max(2 * kRequested, 30)));
-  final k = math.min(kRequested, m);
+  // Exact closed-form kernel: one zero eigenvector per edge-bearing
+  // connected component, in a compact per-node encoding (compOf/entry).
+  // Injecting these makes the kernel dimension exact (no single-vector
+  // under-count) and lets the Lanczos pass below spend its whole budget on
+  // the excited spectrum. Disjoint support ⇒ deflation is O(n) per step.
+  final (kernelCount, kComp, kEntry) = _exactLaplacianKernel(graph);
+  final kDot = Float64List(kernelCount);
+
+  // Project the exact kernel out of a length-n slice of [buf] at [off] —
+  // two O(n) passes, independent of how many components there are.
+  void deflateKernel(Float64List buf, int off) {
+    if (kernelCount == 0) return;
+    for (var c = 0; c < kernelCount; c++) {
+      kDot[c] = 0.0;
+    }
+    for (var i = 0; i < n; i++) {
+      final c = kComp[i];
+      if (c >= 0) kDot[c] += buf[off + i] * kEntry[i];
+    }
+    for (var i = 0; i < n; i++) {
+      final c = kComp[i];
+      if (c >= 0) buf[off + i] -= kDot[c] * kEntry[i];
+    }
+  }
+
+  // Write the first [limit] kernel eigenvectors (λ = 0) into [dst] row-major
+  // (row j is component j) — one O(n) pass; each node feeds its own row.
+  void writeKernelVecs(Float64List dst, int limit) {
+    for (var i = 0; i < n; i++) {
+      final c = kComp[i];
+      if (c >= 0 && c < limit) dst[c * n + i] = kEntry[i];
+    }
+  }
+
+  // If the caller wants no more modes than the kernel already provides,
+  // return the exact zero eigenpairs directly — no iteration needed.
+  if (kRequested <= kernelCount) {
+    final keepK = kRequested;
+    final evec = Float64List(keepK * n);
+    writeKernelVecs(evec, keepK);
+    return LaplacianEigenpairs(
+        n: n, k: keepK, eigenvalues: Float64List(keepK), eigenvectors: evec);
+  }
+
+  // Remaining modes come from a deflated folded-spectrum Lanczos hunting the
+  // smallest NONZERO eigenvalues; the Krylov subspace lives in the
+  // (n − kernelCount)-dim orthogonal complement of the kernel.
+  final kExcited = kRequested - kernelCount;
+  final mCap = n - kernelCount;
+  if (mCap <= 0) {
+    // Whole graph is kernel — return what we have (all zero modes).
+    final keepK = math.min(kRequested, kernelCount);
+    final evec = Float64List(keepK * n);
+    writeKernelVecs(evec, keepK);
+    return LaplacianEigenpairs(
+        n: n, k: keepK, eigenvalues: Float64List(keepK), eigenvectors: evec);
+  }
+  // Lanczos iterations capped at the complement dimension (T ≤ mCap×mCap).
+  // The kernel is injected for free, so the whole Krylov budget goes to the
+  // excited modes: 2·kExcited Ritz headroom with a floor of 44 — enough to
+  // converge clustered low spectra (fragmented repos) without ballooning the
+  // dimension when kExcited is already large (near-connected repos).
+  final m =
+      math.min(mCap, math.max(maxIters ?? 0, math.max(2 * kExcited, 44)));
+  final k = math.min(kExcited, m);
 
   // Lanczos vectors V[step * n + node]. step ranges 0..m (m+1 entries
   // total — step m is the residual that closes the recurrence).
@@ -1824,17 +2034,31 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
     return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2);
   }
 
+  for (var i = 0; i < n; i++) {
+    V[i] = nextNormal();
+  }
+  // Deflate the kernel from the seed so the Krylov subspace starts inside
+  // the excited complement (the zero modes are supplied exactly above).
+  if (kernelCount > 0) deflateKernel(V, 0);
   var seedNorm = 0.0;
   for (var i = 0; i < n; i++) {
-    final v = nextNormal();
-    V[i] = v;
-    seedNorm += v * v;
+    seedNorm += V[i] * V[i];
   }
   seedNorm = math.sqrt(seedNorm);
-  if (seedNorm == 0.0) {
-    // Pathological — synthesise an axis-aligned unit vector.
+  if (seedNorm < 1e-300) {
+    // Pathological (seed fell entirely in the kernel) — synthesise an
+    // axis-aligned unit vector and deflate that too.
+    for (var i = 0; i < n; i++) {
+      V[i] = 0.0;
+    }
     V[0] = 1.0;
-    seedNorm = 1.0;
+    if (kernelCount > 0) deflateKernel(V, 0);
+    seedNorm = 0.0;
+    for (var i = 0; i < n; i++) {
+      seedNorm += V[i] * V[i];
+    }
+    seedNorm = math.sqrt(seedNorm);
+    if (seedNorm < 1e-300) seedNorm = 1.0;
   }
   final invSeed = 1.0 / seedNorm;
   for (var i = 0; i < n; i++) {
@@ -1886,6 +2110,10 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
       }
     }
 
+    // Deflate the exact kernel each step so Lanczos never re-discovers
+    // (and under-resolves) the zero modes we already supply exactly.
+    if (kernelCount > 0) deflateKernel(w, 0);
+
     // beta_{j+1} = ||w||
     var bj = 0.0;
     for (var i = 0; i < n; i++) {
@@ -1929,9 +2157,10 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
   final indices = List<int>.generate(actualM, (i) => i);
   indices.sort((a, b) => ritzM[b].compareTo(ritzM[a]));
 
+  // Excited Ritz pairs — smallest NONZERO eigenvalues, ascending.
   final keep = math.min(k, actualM);
-  final eigenvalues = Float64List(keep);
-  final eigenvectors = Float64List(keep * n);
+  final exVals = Float64List(keep);
+  final exVecs = Float64List(keep * n);
   for (var j = 0; j < keep; j++) {
     final src = indices[j];
     // λ_L = 2 − λ_M, clamped to the Laplacian's [0, 2] spectrum to
@@ -1940,7 +2169,7 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
     var lam = 2.0 - ritzM[src];
     if (lam < 0.0) lam = 0.0;
     if (lam > 2.0) lam = 2.0;
-    eigenvalues[j] = lam;
+    exVals[j] = lam;
     // Ritz vector u_j = Σ_l Y[l, src] · v_l  (size n)
     final dst = j * n;
     for (var i = 0; i < n; i++) {
@@ -1948,13 +2177,25 @@ LaplacianEigenpairs lanczosSmallEigenpairs(
       for (var l = 0; l < actualM; l++) {
         v += Y[l * actualM + src] * V[l * n + i];
       }
-      eigenvectors[dst + i] = v;
+      exVecs[dst + i] = v;
     }
+  }
+
+  // Combine: exact kernel (λ = 0) first, then the excited modes ascending.
+  // The result stays sorted ascending in [0, 2] as the contract requires.
+  final total = kernelCount + keep;
+  final eigenvalues = Float64List(total);
+  final eigenvectors = Float64List(total * n);
+  writeKernelVecs(eigenvectors, kernelCount);
+  for (var j = 0; j < keep; j++) {
+    eigenvalues[kernelCount + j] = exVals[j];
+    eigenvectors.setRange(
+        (kernelCount + j) * n, (kernelCount + j) * n + n, exVecs, j * n);
   }
 
   return LaplacianEigenpairs(
     n: n,
-    k: keep,
+    k: total,
     eigenvalues: eigenvalues,
     eigenvectors: eigenvectors,
   );
@@ -2543,9 +2784,16 @@ class SpectralBasis {
   /// the trivial + first non-trivial mode).
   Float64List? get fiedlerVector {
     if (k < 2) return null;
+    // The Fiedler vector is the first NON-trivial mode — row
+    // [firstExcitedIndex], not a hardcoded 1. On a fragmented graph the
+    // ground space holds β₀ zero modes, so row 1 is a kernel
+    // component-indicator, not the deepest cleavage. (Mirrors how
+    // [spectralCommunityLabels] skips the whole kernel subspace.)
+    final fe = firstExcitedIndex;
+    if (fe >= k) return null; // whole basis is kernel — no excited mode
     return Float64List.view(
       eigenvectors.buffer,
-      eigenvectors.offsetInBytes + n * 8,
+      eigenvectors.offsetInBytes + fe * n * 8,
       n,
     );
   }
@@ -2623,14 +2871,23 @@ class SpectralBasis {
   /// is one cut away from splitting into two loosely-coupled halves.
   double get spectralGap {
     if (k < 2) return 0.0;
-    return eigenvalues[1] - eigenvalues[0];
+    // Gap from the ground space to the first excited mode. On a connected
+    // graph firstExcitedIndex == 1 and this is λ₁ − λ₀ = λ₁ (the Fiedler
+    // value); on a fragmented graph the ground space holds β₀ zero modes,
+    // so a hardcoded index 1 would always read 0. Measure from the last
+    // ground mode to the first excited one instead.
+    final fe = firstExcitedIndex;
+    if (fe >= k) return 0.0; // whole basis is kernel — no excited mode
+    if (fe < 1) return eigenvalues[1] - eigenvalues[0]; // no kernel modes
+    return eigenvalues[fe] - eigenvalues[fe - 1];
   }
 
   /// Mixing time of the random walk underlying the heat kernel,
-  /// `≈ 1 / λ₁`. The characteristic time for a delta distribution to
-  /// thermalise to the stationary distribution — the natural unit of
-  /// diffusion temperature for this graph. Returns `double.infinity`
-  /// when the graph is disconnected (λ₁ → 0).
+  /// `≈ 1 / λ₁`, where `λ₁` is the first excited (non-kernel) eigenvalue —
+  /// the natural unit of diffusion temperature for this graph. On a
+  /// fragmented graph this is the mixing time *within* its structure (the
+  /// ground-space disconnection is skipped via [spectralGap]); it returns
+  /// `double.infinity` only when there is no excited mode at all.
   ///
   /// **Reading**: the principled value for `t = 1.0`. Every "canonical
   /// heat query" in the engine that hard-coded `t = 1.0` was really
@@ -2651,7 +2908,7 @@ class SpectralBasis {
   /// [energyVariance].
   ///
   /// Returns `0.0` when the basis has fewer than 2 modes and
-  /// `double.infinity` when the graph is disconnected (`λ₁ → 0`).
+  /// `double.infinity` only when there is no excited mode at all.
   ///
   /// **Reading**: how heterogeneous is diffusion on this graph? A repo
   /// with chaos ≈ 1 is essentially uniform — every file equidistant
@@ -2659,7 +2916,12 @@ class SpectralBasis {
   /// a long structural axis (monolithic-linear, not clustered).
   double get spectralChaos {
     if (k < 2) return 0.0;
-    final l1 = eigenvalues[1];
+    // λ₁ = first excited (non-kernel) eigenvalue — firstExcitedIndex, not a
+    // hardcoded 1, so a fragmented graph reports the dynamic range of its
+    // structure instead of collapsing to ∞ via a zero kernel mode.
+    final fe = firstExcitedIndex;
+    if (fe >= k) return double.infinity;
+    final l1 = eigenvalues[fe];
     if (l1 <= _subnormalFloor) return double.infinity;
     final lTop = eigenvalues[k - 1];
     if (lTop <= 0) return 0.0;
@@ -2814,25 +3076,42 @@ class SpectralBasis {
   /// higher. For a repo: 2 ≈ architectural mesh, <2 ≈ tree-like,
   /// >2 ≈ dense coupling or small-world.
   double spectralDimension({
-    double tMin = 0.5,
-    double tMax = 50.0,
+    double? tMin,
+    double? tMax,
     int samples = 16,
-    double pFloor = 0.01,
+    double pFloor = 0.0,
   }) {
     if (k == 0) return double.nan;
-    final logMin = math.log(tMin);
-    final logMax = math.log(tMax);
+    // Fit the EXCITED heat trace Z_ex(t)=Σ_{j≥fe} e^{−tλ_j} ~ t^{−d/2}.
+    // Excluding the β₀ zero modes is essential: on a fragmented graph the
+    // kernel adds a constant `kernelDim` that flattens the curve and drives
+    // the slope (hence d_s) toward 0 — the old full-trace fit returned ~0.1
+    // on real repos where the structural dimension is really 1.6–3.5.
+    final fe = firstExcitedIndex;
+    final exCount = k - fe;
+    if (exCount < 3) return double.nan;
+    final lamGap = eigenvalues[fe]; // smallest excited = spectral gap
+    final lamMax = eigenvalues[k - 1]; // largest retained
+    if (!(lamMax > lamGap) || lamGap <= 0) return double.nan;
+    // λ-bracketed power-law window: between the fastest mode's timescale
+    // (1/λ_max) and the slowest excited mode's (1/λ_gap) — derived from the
+    // spectrum itself, not a magic [0.5, 50].
+    final lo = tMin ?? (1.0 / lamMax);
+    final hi = tMax ?? (1.0 / lamGap);
+    if (!(hi > lo) || lo <= 0) return double.nan;
+    final logMin = math.log(lo);
+    final logMax = math.log(hi);
     final step = (logMax - logMin) / (samples - 1);
     final ts = <double>[];
     final ps = <double>[];
     for (var s = 0; s < samples; s++) {
       final t = math.exp(logMin + s * step);
       var sum = 0.0;
-      for (var j = 0; j < k; j++) {
+      for (var j = fe; j < k; j++) {
         sum += math.exp(-t * eigenvalues[j]);
       }
-      final p = sum / k;
-      if (p > pFloor) {
+      final p = sum / exCount;
+      if (p > pFloor && p.isFinite) {
         ts.add(t);
         ps.add(p);
       }

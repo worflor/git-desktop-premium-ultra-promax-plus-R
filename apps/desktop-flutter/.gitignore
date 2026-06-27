@@ -11,6 +11,7 @@
 *.exe
 *.AppImage
 *.AppDir/
+Manifold-*.zip
 .DS_Store
 .atom/
 .build/

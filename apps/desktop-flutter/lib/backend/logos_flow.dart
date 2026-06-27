@@ -102,45 +102,17 @@ int _indentation(String line) {
   return n;
 }
 
-/// Shannon entropy of printable characters in [s], normalised to [0, 1].
-/// Low entropy → repetitive/structured (code). High entropy → natural
-/// language or noise (comments, docs, binary residue).
-double _charEntropy(String s) {
-  if (s.length < 4) return 0.0;
-  final counts = <int, int>{};
-  for (var i = 0; i < s.length; i++) {
-    final c = s.codeUnitAt(i);
-    counts[c] = (counts[c] ?? 0) + 1;
-  }
-  final n = s.length.toDouble();
-  var h = 0.0;
-  for (final c in counts.values) {
-    final p = c / n;
-    if (p > 0) h -= p * math.log(p);
-  }
-  return h / math.log(math.max(counts.length, 2));
-}
-
-/// True when a stripped line is likely non-code: high character entropy
-/// AND low structural-character density (few brackets, operators, semicolons).
+/// True when a stripped line is likely non-code (opens with a comment marker).
 bool _isLikelyNonCode(String stripped) {
-  if (stripped.length < 3) return true;
-  var structural = 0;
-  for (var i = 0; i < stripped.length; i++) {
-    final c = stripped.codeUnitAt(i);
-    if (c == 0x28 || c == 0x29 || // ( )
-        c == 0x7B || c == 0x7D || // { }
-        c == 0x5B || c == 0x5D || // [ ]
-        c == 0x3B || c == 0x3D || // ; =
-        c == 0x3C || c == 0x3E || // < >
-        c == 0x2E || c == 0x3A || // . :
-        c == 0x2C) {              // ,
-      structural++;
-    }
-  }
-  final density = structural / stripped.length;
-  if (density > 0.08) return false;
-  return _charEntropy(stripped) > 0.88;
+  // A line is treated as non-code iff it opens with a comment marker — the
+  // same definition the fuzz harness uses for "content lines". (An earlier
+  // structural-density + entropy heuristic also rejected short identifiers
+  // and bare words like `a` / `top`, silently dropping real code lines out
+  // of the flow graph and emptying it for minimal sources.)
+  return stripped.startsWith('//') ||
+      stripped.startsWith('#') ||
+      stripped.startsWith('/*') ||
+      stripped.startsWith('*');
 }
 
 /// Lyapunov exponent from indentation geometry.
@@ -153,22 +125,15 @@ double _lyapunovFromGeometry(
 // Graph extraction from source text
 // ═══════════════════════════════════════════════════════════════════
 
-/// Flow graph from indentation structure with eigenfrequency address.
+/// Flow graph from a source file's scope geometry (language-agnostic).
 ///
-/// Phase 1: build topology from indentation geometry (language-agnostic).
-/// Phase 2: compute Lanczos eigenpairs on the topology → spectral
-///          fingerprint. Compute eigenfrequency on each line's character
-///          coupling chain → content fingerprint. OR the two → the line's
-///          lattice address encodes both WHERE it sits (topology) and
-///          WHAT it looks like (character harmonics).
-///
-/// When [globalCoupling] is supplied, the eigenfrequency basis comes
-/// from the repo-wide bigram distribution rather than this file's own
-/// statistics. That makes address `0x47` mean the same thing across
-/// every file in the repo, which is required for the lifelong lattice's
-/// per-cell Welford accumulators to be coherent. When null, falls back
-/// to per-file coupling (legacy behaviour — addresses are file-local).
-FlowGraph extractFlowGraph(String source, {CharCoupling? globalCoupling}) {
+/// Phase 1 builds the topology from indentation: sequential edges between
+/// consecutive code lines, scope-exit cross-edges when indentation drops,
+/// and an early-return cut that breaks a scope-exit node's forward edge.
+/// Phase 2 assigns each node an 8-bit semantic flow-role address from that
+/// geometry via [_classifyFlowAxes] (LIFECYCLE / RESOURCE / RESTABILIZES /
+/// PURE) — the axes the whole downstream engine reads through `hasAxis()`.
+FlowGraph extractFlowGraph(String source) {
   final lines = source.split('\n');
   final nodeIds = <String>[];
   final nodeLines = <int>[];
@@ -247,61 +212,44 @@ FlowGraph extractFlowGraph(String source, {CharCoupling? globalCoupling}) {
     final indent = indents[nodeLines[i]];
     final prevInd = i > 0 ? indents[nodeLines[i - 1]] : 0;
     if (prevInd > indent + 4 && indent <= 4) {
-      // scope exit to shallow — check if out-degree is just the
-      // sequential edge (would make this a pass-through). If so,
-      // remove it — this node is a terminal.
-      if (edgesPerNode[i].length == 1) {
-        edgesPerNode[i].clear();
-      }
+      // Scope exit to shallow depth (e.g. an early return) breaks the
+      // forward sequential edge — control doesn't fall through to the next
+      // line. Drop only that edge; any scope-exit cross-edges remain.
+      edgesPerNode[i].removeWhere((e) => e.$1 == i + 1);
     }
   }
 
-  // ── Phase 2: spectral decomposition → fingerprint addresses ────
+  // ── Phase 2: semantic flow-role classification → node address ──
   //
-  // Build a CsrGraph from the topology, compute the Lanczos eigenpairs,
-  // and derive each node's 8-bit spectral fingerprint from the sign
-  // pattern of the first 8 non-trivial eigenvectors. This IS the Logos
-  // spectral byte fingerprint — universal, language-agnostic, computed
-  // from the graph's own Laplacian.
-
-  // Symmetrise edges for the Laplacian (undirected graph).
-  final symEdges = List<List<(int, double)>>.generate(n, (_) => []);
-  for (var i = 0; i < n; i++) {
-    for (final (j, w) in edgesPerNode[i]) {
-      symEdges[i].add((j, w));
-      symEdges[j].add((i, w));
-    }
-  }
-
-  final csr = CsrGraph.fromRawEdges(n: n, edgesPerNode: symEdges);
-  final kEig = n < 9 ? n : 9;
-  final basis = SpectralBasis.fromGraph(csr, kEig);
-  final topoFingerprints = basis.spectralFingerprintTable();
-
-  // ── Phase 2b: eigenfrequency on character coupling chains ─────
-  //
-  // Each line is a vibrating string. The coupling between adjacent
-  // characters is the tension. With a [globalCoupling] supplied by
-  // the caller, the basis is the repo's collective bigram distribution
-  // — same basis for every file → addresses with stable repo-wide
-  // meaning. With no global supplied, we fall back to file-local
-  // statistics (legacy path; addresses are file-local only).
-  final charCoupling = globalCoupling ?? CharCoupling.fromSource(source);
-
-  // ── Phase 3: assemble FlowGraph with hybrid addresses ─────────
+  // Each node's 8-bit address encodes its flow role from the scope
+  // geometry. _classifyFlowAxes emits four axes here — LIFECYCLE /
+  // RESOURCE / RESTABILIZES / PURE — read downstream via hasAxis():
+  // [renormalize] strips kFlowPure pass-throughs, the YAA* propagator
+  // gates arrivals on kFlowResource, and the UI fragility signals key off
+  // them. (The kFlowMutates/IO/Async axes — and the [fuseCooperPairs] fold
+  // + flowKG branches that consume them — are only set by other graph
+  // sources, not by this scope-geometry path.) A prior refactor overwrote
+  // this address with a spectral fingerprint, which left every hasAxis()
+  // check — and these tests — reading effectively random bits.
   final graph = FlowGraph();
   for (var i = 0; i < n; i++) {
-    final topoAddr = topoFingerprints[i];
-    final eigenAddr = eigenAddress(nodeTexts[i], charCoupling);
-    final highNibble = eigenAddr >= 0
-        ? (eigenAddr << 4) & 0xF0
-        : (nodeTexts[i].hashCode & 0x0F) << 4;
-    final hybridAddr = (topoAddr & 0x0F) | highNibble;
+    final l = nodeLines[i];
+    final addr = _classifyFlowAxes(
+      lineIndex: l,
+      indent: indents[l],
+      // Node-adjacent indents (the previous/next CODE node, skipping blank
+      // and comment lines), matching the Phase-1b scope-exit topology.
+      // Raw line-adjacent indents would read 0 across a blank line and
+      // under-label scope entry/exit on real (blank-separated) sources.
+      prevIndent: i > 0 ? indents[nodeLines[i - 1]] : 0,
+      nextIndent: i + 1 < n ? indents[nodeLines[i + 1]] : 0,
+      maxIndent: maxIndent,
+    );
     graph.addNode(FlowNode(
       id: nodeIds[i],
-      address: hybridAddr,
+      address: addr,
       lyapunov: nodeLyapunovs[i],
-      sourceLine: nodeLines[i],
+      sourceLine: l,
       sourceText: nodeTexts[i],
     ));
   }
@@ -311,6 +259,30 @@ FlowGraph extractFlowGraph(String source, {CharCoupling? globalCoupling}) {
     }
   }
   return graph;
+}
+
+/// Semantic flow-role address (the 8-bit kFlow* axes) for a line, derived
+/// from its scope geometry — the contract the flow engine and its tests
+/// rely on:
+///   * source line 0, or a scope entry (next line indents in)  → LIFECYCLE
+///   * deep nesting relative to the file's deepest line         → RESOURCE
+///   * a scope exit back to shallow depth after a deep excursion → RESTABILIZES
+///   * anything else (a plain statement)                        → PURE
+/// Never returns 0 — an unclassified line is PURE.
+int _classifyFlowAxes({
+  required int lineIndex,
+  required int indent,
+  required int prevIndent,
+  required int nextIndent,
+  required int maxIndent,
+}) {
+  var addr = 0;
+  if (lineIndex == 0) addr |= kFlowLifecycle;
+  if (nextIndent > indent + 2) addr |= kFlowLifecycle;
+  if (maxIndent > 0 && indent > maxIndent * 0.6) addr |= kFlowResource;
+  if (prevIndent > indent + 4 && indent <= 4) addr |= kFlowRestabilizes;
+  if (addr == 0) addr = kFlowPure;
+  return addr;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -538,14 +510,30 @@ List<FlowFinding> simulateFlow(
   double Function(int address)? priorNovelty,
 }) {
   if (entryNodes == null || entryNodes.isEmpty) {
-    entryNodes = graph.nodes.isNotEmpty
-        ? {graph.nodes.values.first.id}
-        : <String>{};
+    // Default entries are the lifecycle (flow-opening) nodes — the same seed
+    // a path enumeration uses. Fall back to the first node when a graph has
+    // none, so every non-empty graph still has an entry.
+    entryNodes = graph.nodes.values
+        .where((n) => n.hasAxis(kFlowLifecycle))
+        .map((n) => n.id)
+        .toSet();
+    if (entryNodes.isEmpty && graph.nodes.isNotEmpty) {
+      entryNodes = {graph.nodes.values.first.id};
+    }
   }
 
   final arrivals = <String, List<(double, double)>>{};
+  // Uncapped distinct-route count per resource node. The arrivals list above
+  // is capped for Born-mix cost, so pathCount must come from here to report
+  // the true number of routes (matching a brute-force enumeration).
+  final pathCounts = <String, int>{};
   final edgeCount = graph.adj.values.fold<int>(0, (s, e) => s + e.length);
-  final stepBudget = [graph.nodes.length * edgeCount];
+  // Budget total node-pops. The search stops as soon as the heap empties, so
+  // the floor costs nothing on sparse graphs (they drain early) while letting
+  // small-but-dense graphs enumerate distinct paths; large graphs keep their
+  // own larger `nodes·(edges+4)` bound. Kept modest (4096) so a pathologically
+  // dense small graph can't run the string-signature path enumeration away.
+  final stepBudget = [math.max(graph.nodes.length * (edgeCount + 4), 1 << 12)];
 
   for (final start in entryNodes) {
     if (!graph.nodes.containsKey(start)) continue;
@@ -553,7 +541,7 @@ List<FlowFinding> simulateFlow(
     final novelty = priorNovelty != null
         ? priorNovelty(graph.nodes[start]!.address)
         : null;
-    _yaaStarPropagate(graph, start, maxDepth, arrivals, stepBudget,
+    _yaaStarPropagate(graph, start, maxDepth, arrivals, pathCounts, stepBudget,
         sseLattice, novelty: novelty);
   }
 
@@ -580,7 +568,7 @@ List<FlowFinding> simulateFlow(
         kind: contradictory
             ? FlowBugKind.contradictoryFlow
             : _classifyPhase(mp),
-        pathCount: arrs.length,
+        pathCount: pathCounts[entry.key] ?? arrs.length,
         address: node.address,
         coherence: coh,
         lyapunov: node.lyapunov,
@@ -615,6 +603,19 @@ class _PathChain {
     }
     return false;
   }
+
+  /// Identity of the path (its node sequence). Two arrivals at the same node
+  /// via different routes have different signatures, so counting distinct
+  /// signatures counts distinct paths — what `pathCount` reports.
+  String signature() {
+    final parts = <String>[];
+    _PathChain? c = this;
+    while (c != null) {
+      parts.add(c.node);
+      c = c.parent;
+    }
+    return parts.join('>');
+  }
 }
 
 void _yaaStarPropagate(
@@ -622,6 +623,7 @@ void _yaaStarPropagate(
   String startId,
   int maxDepth,
   Map<String, List<(double, double)>> arrivals,
+  Map<String, int> pathCounts,
   List<int> stepBudget,
   FlowSseLattice? externalLattice, {
   double? novelty,
@@ -631,7 +633,12 @@ void _yaaStarPropagate(
   final heap = BinaryHeap<(String, FlowOscillator, double, _PathChain, int, WalkerDensity, int)>(
       (a, b) => b.$3.compareTo(a.$3));
 
-  final bestByLineage = <(String, int), double>{};
+  // Explore each DISTINCT path exactly once (keyed by its node sequence), so
+  // a node reached by N distinct routes records N arrivals — pathCount then
+  // matches a brute-force enumeration instead of capping at the walker count
+  // or double-counting a route two walkers happen to share.
+  final seenPaths = <String>{};
+  final arrivedPaths = <String>{}; // distinct (resource, path) arrivals
   final localLattice = FlowSseLattice();
   final arrivalCap = _adaptiveArrivalCap(graph);
 
@@ -664,9 +671,19 @@ void _yaaStarPropagate(
 
     localLattice.observe(node.address, osc.certainty);
 
-    final list = arrivals.putIfAbsent(nid, () => []);
-    if (list.length >= arrivalCap) continue;
-    list.add((osc.certainty, osc.phase));
+    // Findings land at resource nodes — the terminals where flow certainty
+    // accumulates. Interior nodes are still traversed (and observed above);
+    // they just don't emit a finding of their own. One arrival per DISTINCT
+    // path that reaches the resource (the multi-walker seed can pop the same
+    // route more than once), so pathCount counts routes, not walker visits.
+    if (node.hasAxis(kFlowResource) &&
+        arrivedPaths.add('$nid ${path.signature()}')) {
+      // Count every distinct route (uncapped); cap only the arrivals list
+      // that feeds the Born mix, to bound cost.
+      pathCounts[nid] = (pathCounts[nid] ?? 0) + 1;
+      final list = arrivals.putIfAbsent(nid, () => []);
+      if (list.length < arrivalCap) list.add((osc.certainty, osc.phase));
+    }
 
     if (depth >= maxDepth) continue;
 
@@ -730,13 +747,10 @@ void _yaaStarPropagate(
         weight: childWeight,
       );
 
-      final key = (edge.target, lineage);
-      final existing = bestByLineage[key];
-      if (existing != null && existing >= pri) continue;
-      bestByLineage[key] = pri;
+      final childPath = _PathChain(edge.target, path);
+      if (!seenPaths.add(childPath.signature())) continue;
 
-      heap.push((
-          edge.target, childOsc, pri, _PathChain(edge.target, path), depth + 1,
+      heap.push((edge.target, childOsc, pri, childPath, depth + 1,
           childWeight, lineage));
     }
   }
@@ -1348,9 +1362,6 @@ const int _kLightMaxDepth = 4;
 
 /// Memoized flow analysis. Computation runs in a worker isolate.
 /// [logosCoupling] bypasses cache and adds structural context.
-/// [globalCouplingWeights] is the repo-global CharCoupling matrix
-/// (128*128 doubles) — when supplied, all eigenAddress computations
-/// use the same basis, making lattice addresses coherent across files.
 /// [priorMeans] / [priorCounts] are an optional GYAT-derived prior:
 /// a 256-cell snapshot of the lifelong lattice's cell means and counts
 /// used to bias walker initialisation (familiar addresses get
@@ -1362,7 +1373,6 @@ const int _kLightMaxDepth = 4;
 Future<FlowAnalysisResult?> analyzeFlowCached(
   String absolutePath, {
   double? logosCoupling,
-  Float64List? globalCouplingWeights,
   Float64List? priorMeans,
   Int32List? priorCounts,
   bool lightweight = false,
@@ -1374,7 +1384,6 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
   final key = (absolutePath, stat.modified.millisecondsSinceEpoch);
 
   final usingExtraContext = logosCoupling != null ||
-      globalCouplingWeights != null ||
       priorMeans != null ||
       maxDepth != _kDefaultMaxDepth;
   if (!usingExtraContext) {
@@ -1388,12 +1397,11 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
     try {
       final source = await file.readAsString();
       final coupling = logosCoupling;
-      final globalW = globalCouplingWeights;
       final means = priorMeans;
       final counts = priorCounts;
       final depth = maxDepth;
       final result = await Isolate.run(() =>
-          _analyzeSource(source, coupling, globalW, means, counts, depth));
+          _analyzeSource(source, coupling, means, counts, depth));
       if (result != null && !usingExtraContext) _flowCache.put(key, result);
       return result;
     } finally {
@@ -1408,16 +1416,11 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
 FlowAnalysisResult? _analyzeSource(
   String source,
   double? logosCoupling,
-  Float64List? globalCouplingWeights,
   Float64List? priorMeans,
   Int32List? priorCounts,
   int maxDepth,
 ) {
-  final globalCoupling = globalCouplingWeights != null
-      ? CharCoupling.fromWeights(globalCouplingWeights)
-      : null;
-  final graph = optimizeGraph(
-      extractFlowGraph(source, globalCoupling: globalCoupling));
+  final graph = optimizeGraph(extractFlowGraph(source));
   if (graph.nodes.length < 2) return null;
 
   // Build a priorNovelty function from the GYAT snapshot when supplied.

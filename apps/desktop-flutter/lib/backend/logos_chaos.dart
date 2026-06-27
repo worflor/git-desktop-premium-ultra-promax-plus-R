@@ -100,23 +100,42 @@ class SpectralDimensionReport {
 /// the curve doesn't surface.
 SpectralDimensionReport? spectralDimension(
   SpectralBasis basis, {
-  double tMin = 0.1,
-  double tMax = 3.0,
+  CsrGraph? graph,
+  double? tMin,
+  double? tMax,
   int samples = 24,
 }) {
-  if (basis.k < 4) return null;
-  if (!(tMax > tMin) || tMin <= 0) return null;
-  if (samples < 4) return null;
+  if (basis.k < 4 || samples < 4) return null;
+  // Fit the EXCITED heat trace Z_ex(t)=Z(t)−kernelDim ~ t^{−d_s/2}. The β₀
+  // zero modes add a constant `kernelDim` that otherwise flattens the slope
+  // toward 0 on fragmented graphs. With [graph] supplied, the trace is the
+  // FULL operator's (matrix-free Hutchinson + Chebyshev), free of the
+  // truncated-basis bias (the k retained excited modes cluster in a tiny
+  // λ-range); without it, the truncated basis trace is used.
+  final fe = basis.firstExcitedIndex;
+  if (fe >= basis.k) return null;
+  final lamGap = basis.eigenvalues[fe];
+  if (lamGap <= 0) return null;
+  final kernelDim = fe.toDouble();
+  // λ-bracketed power-law window derived from the spectrum (not a magic
+  // [0.1, 3.0]): from the fastest mode's timescale to the slowest excited
+  // mode's. The full trace reaches the L_sym ceiling (2); the basis only
+  // its retained max.
+  final lamCeil = graph != null ? 2.0 : basis.eigenvalues[basis.k - 1];
+  if (!(lamCeil > lamGap)) return null;
+  final lo = tMin ?? (1.0 / lamCeil);
+  final hi = tMax ?? (1.0 / lamGap);
+  if (!(hi > lo) || lo <= 0) return null;
 
-  // Sample the heat trace on a log grid, dropping any t where the
-  // trace underflows — the curve primitive demands strictly finite
-  // positive y-values for logLogSlope to succeed.
-  final ts = logspace(tMin, tMax, samples);
+  final ts = logspace(lo, hi, samples);
   final validTs = <double>[];
   final validZs = <double>[];
   for (var i = 0; i < samples; i++) {
-    final z = basis.heatTrace(ts[i]);
-    if (z.isFinite && z > 1e-300) {
+    final z = (graph != null
+            ? stochasticHeatTrace(graph, ts[i])
+            : basis.heatTrace(ts[i])) -
+        kernelDim;
+    if (z.isFinite && z > 1e-6) {
       validTs.add(ts[i]);
       validZs.add(z);
     }
@@ -127,16 +146,16 @@ SpectralDimensionReport? spectralDimension(
     xs: Float64List.fromList(validTs),
     ys: Float64List.fromList(validZs),
     xLabel: 't',
-    yLabel: 'Z(t)',
+    yLabel: 'Z_ex(t)',
   );
   // One-pass log-log regression: slope + R² together (Circle XXI).
   final fit = curve.logLogFit();
   if (fit == null) return null;
 
-  // Derive log Z(t) once for the report; cheap O(n) pass.
-  final n = curve.xs.length;
-  final logZs = Float64List(n);
-  for (var i = 0; i < n; i++) {
+  // Derive log Z_ex(t) once for the report; cheap O(n) pass.
+  final nPts = curve.xs.length;
+  final logZs = Float64List(nPts);
+  for (var i = 0; i < nPts; i++) {
     logZs[i] = math.log(curve.ys[i]);
   }
 
@@ -145,8 +164,8 @@ SpectralDimensionReport? spectralDimension(
     rSquared: fit.rSquared,
     tSamples: Float64List.fromList(validTs),
     logZ: logZs,
-    tMin: tMin,
-    tMax: tMax,
+    tMin: lo,
+    tMax: hi,
   );
 }
 

@@ -229,13 +229,13 @@ _BootstrapResult _bootstrapInIsolate(String repoPath) {
         FlowSseLattice(), CharCoupling.fromSources(const []));
   }
   final sources = [for (final b in walk.blobs) b.text];
-  // Two passes: build the canonical basis first, then scan against it.
+  // Repo-wide character coupling — returned for the engine's lattice. (Flow
+  // graphs themselves now address by scope geometry, not this basis.)
   final coupling = CharCoupling.fromSources(sources);
   final lattice = FlowSseLattice();
   for (final source in sources) {
     try {
-      final graph = optimizeGraph(
-          extractFlowGraph(source, globalCoupling: coupling));
+      final graph = optimizeGraph(extractFlowGraph(source));
       if (graph.nodes.length < 2) continue;
       final scan = FlowSseLattice();
       simulateFlow(graph, threshold: 1.0, sseLattice: scan);

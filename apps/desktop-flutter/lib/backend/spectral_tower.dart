@@ -233,10 +233,12 @@ class SpectralTower {
       lifted = restrictions[i].restrict(lifted);
     }
     if (lifted.length != coarseFiedler.length) return 0.0;
-    // Thermal damping at scale t (both sides weighted by e^{−t·λ₁}).
-    final damping = coarse.k >= 2
-        ? _dampFactor(coarse.eigenvalues[1], t)
-        : 1.0;
+    // Thermal damping at scale t (both sides weighted by e^{−t·λ₁}, the
+    // first excited eigenvalue — firstExcitedIndex, not a hardcoded 1, so a
+    // fragmented coarse graph doesn't damp by a zero kernel mode).
+    final fe = coarse.firstExcitedIndex;
+    final damping =
+        fe < coarse.k ? _dampFactor(coarse.eigenvalues[fe], t) : 1.0;
 
     var dot = 0.0;
     var nc = 0.0;
