@@ -138,7 +138,7 @@ Pull requests touching the engine *aren't* preferred, and this isn't a community
 The engine mixes:
 
 - hypercomplex algebra
-- spectral graph theory: Laplacian, heat kernel, & Ricci flow.
+- spectral graph theory: Laplacian, heat kernel, & Ricci flow - because signal travels through a repo the way heat diffuses through a structure
 - chemistry-flavoured structural analogies. coupling, diffusion, phase
   transitions on the repo graph
 - **kizuna math**, a term I coined for a particular flavor of
@@ -149,6 +149,13 @@ PRs that touch the engine may violate invariants that look fine in
 code review but quietly wreck properties the rest of the system depends
 on. Unwinding that eats the time I'd rather spend *not*. So read it,
 fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just not vibe-understood PRs or I'll vibe-respond.
+
+
+## Known Things
+
+- Runs hot 👉👈 (hot math ayo)
+- Muse needs to regurgitate less with all faces enabled (issue in 0.1.3)
+- Dream Hint hasnt been implemented 'with seriousness' yet... yet.....
 
 ## License
 
