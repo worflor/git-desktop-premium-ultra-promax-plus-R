@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -88,11 +89,25 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     if (engine != null) {
       final basis = engine.spectralBasis();
       if (basis != null) {
-        interFile = analyzeInterFile(
-          engine.graph,
-          basis,
-          nodePaths: engine.nodePaths,
-        );
+        // Scale-2 runs a full YAA* path-search + dream loop over the WHOLE
+        // co-change graph. Done synchronously here it pinned the UI thread for
+        // the entire scan on a non-trivial repo — the freeze. Run it in a
+        // background isolate (Scale-1 per-file analysis already does); its
+        // inputs (CsrGraph / SpectralBasis) are plain TypedData and the result
+        // is plain data, so it round-trips. Degrade to skipping Scale-2 if it
+        // ever errors rather than wedging the panel.
+        final graph = engine.graph;
+        final nodePaths = engine.nodePaths;
+        try {
+          interFile = await Isolate.run(
+              () => analyzeInterFile(graph, basis, nodePaths: nodePaths));
+        } catch (e) {
+          // Don't silently disable Scale-2 forever — surface it so a
+          // "skipped because it errored" (e.g. an input ever became
+          // non-sendable) is distinguishable from "no engine".
+          debugPrint('filament: Scale-2 inter-file analysis skipped: $e');
+          interFile = null;
+        }
       }
     }
     if (!mounted || _gen != gen) return;

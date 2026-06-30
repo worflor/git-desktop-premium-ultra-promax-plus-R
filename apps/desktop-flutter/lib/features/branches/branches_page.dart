@@ -51,12 +51,17 @@ import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../changes/merge_conflict_editor.dart'
-    show
-        MergeEditorPage,
-        ConflictFile,
-        parseConflictFile,
-        enrichConflictFileWithLogos;
+    show MergeEditorPage, ConflictFile, enrichConflictFileWithLogos;
 import '../changes/patch_as_merge.dart' show reviewMergeFromPatch;
+import '../changes/merge_conflict_flow.dart'
+    show gatherConflictFiles, resolveNativeMergeConflicts, resolveCheckout;
+import '../../backend/merge_session.dart'
+    show
+        MergeClean,
+        MergeFailed,
+        MergeConflicted,
+        MergeBlockedByLocalChanges,
+        mergeOutcomeMessage;
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
 
@@ -781,13 +786,24 @@ class _BranchesPageState extends State<BranchesPage> {
       _actionRunning = true;
       _actionError = null;
     });
-    final r = await checkoutBranch(repo, name);
+    // Routes a dirty-overlap switch ("would be overwritten by checkout")
+    // through the same 3-way carry + editor the pull flow uses, instead of
+    // demanding a stash/commit first.
+    final outcome = await resolveCheckout(context, repo, name);
     if (!mounted) return;
     setState(() => _actionRunning = false);
-    if (!r.ok) {
-      setState(() => _actionError = r.error);
-      return;
-    }
+    // Surface EVERY non-clean outcome (failed / blocked / deferred conflicts)
+    // via the shared formatter — a clean or fully-resolved switch stays quiet.
+    // Exhaustive (no `_`) so a new MergeOutcome variant fails to compile here.
+    final err = switch (outcome) {
+      MergeClean() => null,
+      MergeConflicted(:final resolved) =>
+        resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
+    };
+    if (err != null) setState(() => _actionError = err);
+    if (outcome is MergeFailed) return; // hard failure: don't reload
     await _load(repo);
     if (!mounted) return;
     await context.read<RepositoryState>().refreshStatus();
@@ -4248,10 +4264,28 @@ class _BranchesPageState extends State<BranchesPage> {
     );
     if (!mounted) return;
     if (!result.ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? 'Merge failed')),
-      );
-      return;
+      // A merge-commit that hit conflicts leaves MERGE_HEAD + UU markers in
+      // the worktree — route them into the same editor pull and the patch
+      // preview use, instead of dead-ending on the raw stderr. Only fall
+      // through to the MERGED bookkeeping when the user actually resolved
+      // (and we committed) the merge; otherwise surface the original error.
+      final resolved =
+          await resolveNativeMergeConflicts(context, mergeRepoPath);
+      if (!resolved) {
+        // A still-in-progress merge means the text conflicts resolved but
+        // unmergeable UU (binary/rename) remain — paused, not failed.
+        final paused = (await inProgressOperation(mergeRepoPath)) != null;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(paused
+                ? 'Merge paused — finish the remaining conflicts on the '
+                    'Changes page.'
+                : (result.error ?? 'Merge failed')),
+          ));
+        }
+        return;
+      }
+      if (!mounted) return;
     }
     // `mergeRepoPath` may be the main worktree or a desk worktree.
     // DeskPrState.setStateFor resolves PR records via
@@ -10925,16 +10959,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     }
     final conflicted = await _conflictedPaths();
     if (!mounted) return;
-    final files = <ConflictFile>[];
-    for (final path in conflicted) {
-      final abs =
-          '${widget.repoPath}/$path'.replaceAll('/', Platform.pathSeparator);
-      final f = File(abs);
-      if (!await f.exists()) continue;
-      final content = await f.readAsString();
-      if (!content.contains('<<<<<<<')) continue;
-      files.add(parseConflictFile(path, content));
-    }
+    final files = await gatherConflictFiles(widget.repoPath, conflicted);
     if (!mounted) return;
     if (files.isNotEmpty) {
       await _enrichAndOpen(files);

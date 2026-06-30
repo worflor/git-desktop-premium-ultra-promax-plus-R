@@ -324,7 +324,14 @@ FlowGraph renormalize(FlowGraph g) {
     for (final e in g.adj[src]!) {
       // chase through removable chain
       var target = e.target;
+      // Cycle guard: PURE 1-in/1-out nodes can form a loop (A→B→A), and
+      // without this the chase would follow chain.first.target forever and
+      // hard-freeze the isolate. Stop as soon as we revisit a node — the
+      // edge then resolves to a still-removable target and is elided, which
+      // is correct: a pure cycle has no real exit node to reconnect to.
+      final seen = <String>{};
       while (removable.contains(target)) {
+        if (!seen.add(target)) break;
         final chain = g.adj[target];
         if (chain != null && chain.isNotEmpty) {
           target = chain.first.target;

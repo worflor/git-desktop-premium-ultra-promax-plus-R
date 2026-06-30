@@ -22,6 +22,8 @@ import '../../backend/logos_git.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
+import '../changes/merge_conflict_flow.dart'
+    show resolveSequencerConflicts, SequencerKind;
 import '../../app/worktree_state.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -1845,13 +1847,36 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> _cherryPick(String repoPath, String hash) async {
     final r = await cherryPickCommit(repoPath, hash);
     if (!mounted) return;
+    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
     if (!r.ok) {
+      // Conflicts → unified editor → `cherry-pick --continue`. Only a
+      // genuine non-conflict failure (or a cancel) falls back to the error.
+      final resolved =
+          await resolveSequencerConflicts(context, repoPath, SequencerKind.cherryPick);
+      if (!mounted) return;
+      if (!resolved) {
+        // If the cherry-pick is still in progress, the text conflicts were
+        // resolved but unmergeable UU (binary/rename) remain — it's paused,
+        // not failed. Don't mislabel a recoverable state.
+        final paused = (await inProgressOperation(repoPath)) != null;
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(paused
+              ? "Cherry-pick paused — finish the remaining conflicts on the "
+                  "Changes page."
+              : "Cherry-pick failed: ${r.error}"),
+        ));
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Cherry-pick failed: ${r.error}")),
+        SnackBar(content: Text("Cherry-picked $short (resolved conflicts)")),
       );
+      // The resolved pick created a commit — reload the history list (so it
+      // appears) and refresh status, matching the revert path.
+      await _load(repoPath);
+      if (mounted) await context.read<RepositoryState>().refreshStatus();
       return;
     }
-    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Cherry-picked $short")),
     );
@@ -1861,13 +1886,31 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> _revert(String repoPath, String hash) async {
     final r = await revertCommit(repoPath, hash);
     if (!mounted) return;
+    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
     if (!r.ok) {
+      final resolved =
+          await resolveSequencerConflicts(context, repoPath, SequencerKind.revert);
+      if (!mounted) return;
+      if (!resolved) {
+        final paused = (await inProgressOperation(repoPath)) != null;
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(paused
+              ? "Revert paused — finish the remaining conflicts on the "
+                  "Changes page."
+              : "Revert failed: ${r.error}"),
+        ));
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Revert failed: ${r.error}")),
+        SnackBar(content: Text("Reverted $short (resolved conflicts)")),
       );
+      await _load(repoPath);
+      // A resolved revert creates a commit — refresh the status bar
+      // (branch pill / ahead-behind), matching the cherry-pick path.
+      if (mounted) await context.read<RepositoryState>().refreshStatus();
       return;
     }
-    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Reverted $short")),
     );

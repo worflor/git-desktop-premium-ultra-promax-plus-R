@@ -20,6 +20,8 @@ import '../../backend/dtos.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
 import '../changes/merge_conflict_editor.dart';
+import '../changes/merge_conflict_flow.dart' as merge_flow;
+import '../../backend/merge_session.dart' show MergeClean, mergeOutcomeMessage;
 import '../history_surgery/history_surgery_page.dart';
 import '../orrery/orrery_page.dart';
 import '../../backend/logos_git.dart';
@@ -72,7 +74,8 @@ List<PaletteEntry> buildStaticEntries(
     if (repoPath != null)
       ..._actionEntries(repoPath, status, callbacks),
     if (repoPath != null) ..._externalToolEntries(tools, repoPath),
-    if (repoPath != null) ..._gitCommandEntries(repoPath, status, callbacks),
+    if (repoPath != null)
+      ..._gitCommandEntries(context, repoPath, status, callbacks),
     if (repoPath != null)
       ..._prEntries(deskPr, status?.branch, callbacks),
     if (repoPath != null)
@@ -1066,6 +1069,7 @@ List<PaletteEntry> _externalToolEntries(
 // ── Git Commands ───────────────────────────────────────────────────
 
 List<PaletteEntry> _gitCommandEntries(
+  BuildContext context,
   String repoPath,
   RepositoryStatus? status,
   PaletteCallbacks cb,
@@ -1100,7 +1104,17 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncPull},
-      onExecute: () => git.pullRemote(repoPath),
+      onExecute: () async {
+        // Surface the outcome like the branch pill / sync panel do, instead
+        // of the old silent fire-and-forget. The opener (shell) context
+        // outlives the palette; the mounted guard fails closed if not.
+        final outcome = await merge_flow.resolvePull(context, repoPath);
+        if (context.mounted && outcome is! MergeClean) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Pull'))),
+          );
+        }
+      },
     ),
     PaletteEntry(
       id: 'cmd.push',

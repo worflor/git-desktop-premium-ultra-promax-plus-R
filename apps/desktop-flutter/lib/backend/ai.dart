@@ -6132,8 +6132,18 @@ Future<String> _collectStructuralVerification({
   try {
     final buffer = StringBuffer();
 
+    // The three verifications are independent — run them concurrently
+    // rather than awaiting each in turn (each fans out its own git greps).
+    final verifications = await Future.wait([
+      _verifyImports(repositoryPath, diffText),
+      _verifySymbols(repositoryPath, diffText),
+      _verifyRemovals(repositoryPath, diffText),
+    ]);
+    final importVerification = verifications[0];
+    final symbolVerification = verifications[1];
+    final removalVerification = verifications[2];
+
     // 1. Import verification — check if import targets exist on disk.
-    final importVerification = await _verifyImports(repositoryPath, diffText);
     if (importVerification.isNotEmpty) {
       buffer.writeln('Import verification:');
       buffer.write(importVerification);
@@ -6141,14 +6151,12 @@ Future<String> _collectStructuralVerification({
     }
 
     // 2. Symbol grep — verify new function/class names exist in the repo.
-    final symbolVerification = await _verifySymbols(repositoryPath, diffText);
     if (symbolVerification.isNotEmpty) {
       buffer.writeln('Symbol verification:');
       buffer.write(symbolVerification);
     }
 
     // 3. Removal verification — confirm removed symbols are dead code.
-    final removalVerification = await _verifyRemovals(repositoryPath, diffText);
     if (removalVerification.isNotEmpty) {
       buffer.writeln();
       buffer.writeln('Removal verification:');
@@ -6235,36 +6243,41 @@ Future<String> _verifySymbols(String repositoryPath, String diffText) async {
   // sample when there are many. Diminishing returns past ~15.
   final maxLookups =
       symbols.length <= 5 ? symbols.length : (symbols.length <= 20 ? 12 : 8);
+  // Each symbol grep is an independent git subprocess — fan them out
+  // concurrently instead of awaiting one at a time (this was up to ~12
+  // serial greps, the slowest single producer in the review assembly).
+  final lookups = symbols.take(maxLookups).toList();
+  // Fan out concurrently but UNDER the global git-subprocess cap — an
+  // unthrottled burst of greps thrashes the OS scheduler / antivirus on
+  // Windows (see GitSubprocessSemaphore).
+  final lines = await Future.wait(
+      lookups.map((symbol) => withGitSubprocessLimit(() async {
+            try {
+              final grep = await _runGitCommand(repositoryPath, [
+                'grep',
+                '-l',
+                '-w',
+                '--fixed-strings',
+                symbol,
+              ]);
+              if (grep.ok && (grep.data ?? '').trim().isNotEmpty) {
+                final files = (grep.data ?? '')
+                    .trim()
+                    .split('\n')
+                    .where((f) => f.isNotEmpty)
+                    .toList();
+                return '  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})';
+              }
+              return '  $symbol: not found in repo';
+            } catch (_) {
+              return '';
+            }
+          })));
+
   final results = StringBuffer();
-  var count = 0;
-  for (final symbol in symbols) {
-    if (count >= maxLookups) break;
-    count++;
-
-    try {
-      final grep = await _runGitCommand(repositoryPath, [
-        'grep',
-        '-l',
-        '-w',
-        '--fixed-strings',
-        symbol,
-      ]);
-      if (grep.ok && (grep.data ?? '').trim().isNotEmpty) {
-        final files = (grep.data ?? '')
-            .trim()
-            .split('\n')
-            .where((f) => f.isNotEmpty)
-            .toList();
-        results.writeln(
-            '  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})');
-      } else {
-        results.writeln('  $symbol: not found in repo');
-      }
-    } catch (_) {
-      continue;
-    }
+  for (final line in lines) {
+    if (line.isNotEmpty) results.writeln(line);
   }
-
   return results.toString();
 }
 
@@ -6290,36 +6303,37 @@ Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
 
   if (removedSymbols.isEmpty) return '';
 
-  final results = StringBuffer();
-  var count = 0;
-  for (final symbol in removedSymbols) {
-    if (count >= 8) break;
-    count++;
-    try {
-      final grep = await _runGitCommand(repositoryPath, [
-        'grep',
-        '-l',
-        '-w',
-        '--fixed-strings',
-        symbol,
-      ]);
-      final files = (grep.ok ? (grep.data ?? '') : '')
-          .trim()
-          .split('\n')
-          .where((f) => f.isNotEmpty)
-          .toList();
-      if (files.isEmpty) {
-        results
-            .writeln('  ✓ $symbol: safely removed (no remaining references)');
-      } else {
-        results.writeln(
-            '  ⚠ $symbol: still referenced in ${files.length} file(s) (${files.take(3).join(", ")})');
-      }
-    } catch (_) {
-      continue;
-    }
-  }
+  // Independent greps — fan out concurrently (was up to 8 serial greps).
+  final lookups = removedSymbols.take(8).toList();
+  // Throttled fan-out — share the global git-subprocess cap (above).
+  final lines = await Future.wait(
+      lookups.map((symbol) => withGitSubprocessLimit(() async {
+            try {
+              final grep = await _runGitCommand(repositoryPath, [
+                'grep',
+                '-l',
+                '-w',
+                '--fixed-strings',
+                symbol,
+              ]);
+              final files = (grep.ok ? (grep.data ?? '') : '')
+                  .trim()
+                  .split('\n')
+                  .where((f) => f.isNotEmpty)
+                  .toList();
+              if (files.isEmpty) {
+                return '  ✓ $symbol: safely removed (no remaining references)';
+              }
+              return '  ⚠ $symbol: still referenced in ${files.length} file(s) (${files.take(3).join(", ")})';
+            } catch (_) {
+              return '';
+            }
+          })));
 
+  final results = StringBuffer();
+  for (final line in lines) {
+    if (line.isNotEmpty) results.writeln(line);
+  }
   return results.toString();
 }
 
@@ -6367,7 +6381,11 @@ Future<String> _collectFileContext({
       // Self-φ via heat-kernel: how much heat each source file retains
       // after t=1.0 diffusion. Files coupled to a strong neighborhood
       // bleed less; isolated files bleed most. Highest-retention files
-      // are the most "anchored" parts of the change.
+      // are the most "anchored" parts of the change. NOTE: this is a
+      // distinct query from the main review gather, which diffuses from
+      // these same paths but EXCLUDES them from its result (it hunts
+      // neighbors) — so its residuals never cover the touched paths and
+      // can't substitute for this self-φ pass.
       final sourceWeights = {for (final p in pathList) p: 1.0};
       fileContextEvidence = engine.gatherEvidence(
         focusWeights: sourceWeights,

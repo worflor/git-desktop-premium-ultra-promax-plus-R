@@ -430,10 +430,14 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.4',
-    date: '2026-06-27',
+    date: '2026-06-30',
     bullets: [
       'Orrery lands in preview. Scrub the repo\'s full history and watch its structure drift, files orbiting in a Poincaré disk. Early, like Atlas, but the shape is already there.',
-      'More engine tuning under the hood.',
+      'X-Ray\'s Time view runs on the same structural trajectory as Orrery now. The old aperture sweep is retired, so the two views share one backend.',
+      'Conflict handling is now one unified system. pull, sync, branch merge, anywhere a conflict can happen routes through the same resolver. thank u, next.',
+      'Logos evidence gathering got its first real relevance pass. It respects neighbourhood relevance now: more signal, less noise. Every LLM feature built on it (review, Muse, commit messages) works from sharper context.',
+      'Code review lost its confirm button. You tune by dismissing now; the yes was implied anyway.',
+      'Big refreshes should lag far less. The heavy recompute behind those freezes moved off the hot path, with a heap of redundant compute and duplicate git I/O cleared out underneath. Zero lag is the dream and it\'s being monitored to get there. So far it\'s held up against "working trees" averaging 20k LoC changed in active repos (don\'t ask).',
     ],
   ),
   _ReleaseNote(

@@ -26,7 +26,9 @@ import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
-import 'merge_conflict_editor.dart';
+import 'merge_conflict_flow.dart';
+import 'conflict_resolution.dart' show resolveConflictsWithAi;
+import '../../backend/merge_session.dart';
 import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -4196,158 +4198,43 @@ class _ChangesPageState extends State<ChangesPage> {
     final conflicted =
         status.files.where((f) => f.isConflicted).map((f) => f.path).toList();
     if (conflicted.isEmpty) return;
-
-    final aiSettings = context.read<AiSettingsState>();
-    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
-    if (modelValue.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              'No model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}". '
-              'Set one in Settings → AI.'),
-        ),
-      );
-      return;
-    }
-
+    // Delegates to the shared AI resolver so the Changes-page strip and the
+    // unified conflict window run identical logic (read → prompt → patch
+    // preview), with the sensitive-path + secret guardrails it carries.
     setState(() => _mergeResolving = true);
     try {
-      final snapshots = <({String path, String content})>[];
-      var skippedSensitive = 0;
-      for (final p in conflicted) {
-        // Hard default: never send credentials-shaped paths to a
-        // provider. User still sees them as UU in the file list and
-        // resolves by hand. No config, no toggle — this is a floor
-        // the feature respects automatically.
-        if (isSensitivePath(p)) {
-          skippedSensitive++;
-          continue;
-        }
-        try {
-          final text = await File(p.startsWith('/') || p.contains(':')
-                  ? p
-                  : '$repoPath${Platform.pathSeparator}$p')
-              .readAsString();
-          snapshots.add((path: p, content: _extractConflictExcerpts(text)));
-        } catch (_) {
-          // Skip unreadable files; the prompt will just not include them.
-        }
-      }
-      if (snapshots.isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(skippedSensitive > 0
-                  ? '$skippedSensitive sensitive file${skippedSensitive == 1 ? '' : 's'} skipped — resolve by hand.'
-                  : 'Could not read any conflicted files.')),
-        );
-        return;
-      }
-
-      final prompt = _buildMergeResolutionPrompt(snapshots);
-      // Second-pass guardrail: even if the path wasn't sensitive, the
-      // contents might be (API key pasted into a normal file). Refuse
-      // before the transport layer sees it.
-      final secretHit = detectLikelySecretInPrompt(prompt);
-      if (secretHit != null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'Blocked — a conflicted file looks like it contains a $secretHit. Resolve by hand.'),
-          ),
-        );
-        return;
-      }
-      final r = await generatePatch(
-        repositoryPath: repoPath,
-        modelValue: modelValue,
-        prompt: prompt,
-        commandLabelPrefix: 'ai.merge_resolve',
-      );
-      if (!mounted) return;
-      if (!r.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Resolution failed: ${r.error}')),
-        );
-        return;
-      }
-      // Parse the returned patch up-front so we can reconcile against
-      // the UU set the user was shown. The preview will do this too,
-      // but we need the path list here to gate stagePaths correctly —
-      // otherwise a partial resolution silently `git add`'s files that
-      // still have markers in them. That's the #1 failure-mode flagged
-      // by maintainers ("I trusted the green badge and shipped UU
-      // markers").
-      final resolvedLines = parseUnifiedDiff(r.data!.patch);
-      final resolvedPaths = <String>{
-        for (final l in resolvedLines)
-          if (l.filePath != null) l.filePath!,
-      };
-      final expectedPaths = snapshots.map((s) => s.path).toSet();
-      final intersect = expectedPaths.intersection(resolvedPaths);
-      await showPatchPreviewDialog(
-        context,
-        repoPath: repoPath,
-        rawPatch: r.data!.patch,
-        sourceLabel:
-            '◇ merge resolution · ${intersect.length}/${expectedPaths.length} files · ${aiSettings.labelForCategory(categoryId, categoryId)}',
-        expectedPaths: expectedPaths,
-        onApplied: () async {
-          // Only stage the files the patch ACTUALLY touched. Any UU
-          // file the AI skipped must stay UU so the user sees it on
-          // the next refresh and can resolve it manually. `git add`
-          // on a file with markers is the silent-drop footgun.
-          if (intersect.isNotEmpty) {
-            await stagePaths(repoPath, intersect.toList());
-          }
-          if (mounted) {
-            await context.read<RepositoryState>().refreshStatus();
-          }
-        },
-      );
+      await resolveConflictsWithAi(context, repoPath, categoryId, conflicted);
+      if (mounted) await _concludePausedRebase(repoPath);
     } finally {
       if (mounted) setState(() => _mergeResolving = false);
     }
   }
 
+  /// Concludes a paused REBASE once the current step's conflicts are gone.
+  /// merge/cherry-pick/revert are concluded by the normal commit button, but
+  /// a rebase needs `rebase --continue`; without this the Changes-page strip
+  /// could resolve the markers yet leave the rebase paused. Continuing may
+  /// surface the next step's conflicts, which the strip then re-shows.
+  Future<void> _concludePausedRebase(String repoPath) async {
+    if (!await isRebaseInProgress(repoPath)) return;
+    if (!mounted) return;
+    final hasUu = (context.read<RepositoryState>().status?.files ??
+            const <RepositoryStatusFile>[])
+        .any((f) => f.isConflicted);
+    if (hasUu) return; // still conflicts; leave the rebase paused for the strip
+    await continueRebase(repoPath);
+    if (mounted) await context.read<RepositoryState>().refreshStatus();
+  }
+
   Future<void> _openManualMergeEditor(
       String repoPath, Set<String> conflictedPaths) async {
-    final files = <ConflictFile>[];
-    for (final path in conflictedPaths) {
-      final absPath = '$repoPath/$path';
-      final f = File(absPath.replaceAll('/', Platform.pathSeparator));
-      if (!await f.exists()) continue;
-      final content = await f.readAsString();
-      if (!content.contains('<<<<<<<')) continue;
-      files.add(parseConflictFile(path, content));
-    }
-    if (files.isEmpty) return;
-    if (!mounted) return;
-
-    // Enrich with Logos coupling/community data when available
-    final logosState = context.read<LogosGitState>();
-    var engine = logosState.engineFor(repoPath);
-    if (engine == null) {
-      await logosState.loadForRepo(repoPath);
-      if (!mounted) return;
-      engine = logosState.engineFor(repoPath);
-    }
-    if (engine != null) {
-      final changedPaths = conflictedPaths;
-      for (final cf in files) {
-        enrichConflictFileWithLogos(cf, engine, changedPaths);
-      }
-    }
-
-    final result = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (_) => MergeEditorPage(files: files, repoPath: repoPath),
-      ),
-    );
-    if (result == null || !mounted) return;
-    await context.read<RepositoryState>().refreshStatus();
+    // Delegates to the shared conflict path (gather → enrich → editor →
+    // refresh) so the Changes-page landing zone, the patch preview, and the
+    // pull flow all resolve conflicts through one implementation.
+    final files = await gatherConflictFiles(repoPath, conflictedPaths);
+    if (files.isEmpty || !mounted) return;
+    final resolved = await openConflictEditor(context, repoPath, files);
+    if (resolved && mounted) await _concludePausedRebase(repoPath);
   }
 
   /// Natural-language partial staging. Takes the user's English
@@ -4520,102 +4407,6 @@ class _ChangesPageState extends State<ChangesPage> {
   /// the one-shot round-trip works: unified diff only, no prose, no
   /// fences. [_extractPatchFromModelOutput] in ai.dart also defends us
   /// if the model ignores the format instruction.
-  String _buildMergeResolutionPrompt(
-    List<({String path, String content})> files,
-  ) {
-    final buf = StringBuffer();
-    buf.writeln(
-        'You are resolving git merge conflicts in a working tree. For each file');
-    buf.writeln(
-        'below, the text contains unresolved conflict markers (<<<<<<<, =======, >>>>>>>).');
-    buf.writeln();
-    buf.writeln('Rules:');
-    buf.writeln(
-        '  1. Produce ONE unified diff that applies with `git apply` over the current tree.');
-    buf.writeln(
-        '  2. Every conflict marker must be removed — no <<<<<<<, =======, or >>>>>>> lines in the output.');
-    buf.writeln(
-        '  3. Preserve the MEANING of both sides. Rename/callsite changes on one side should propagate to the other side\'s callsites if both sides edit the same symbol.');
-    buf.writeln(
-        '  4. Do NOT introduce new functionality the conflict didn\'t already introduce.');
-    buf.writeln(
-        '  5. Output format: unified diff only. No code fences, no prose, no explanations.');
-    buf.writeln();
-    buf.writeln(
-        'Files (shown as current conflict excerpts with surrounding context, not full files):');
-    buf.writeln();
-    for (final f in files) {
-      buf.writeln('--- file: ${f.path} ---');
-      buf.writeln(f.content);
-      buf.writeln('--- end: ${f.path} ---');
-      buf.writeln();
-    }
-    buf.writeln(
-        'Output the unified diff that resolves every conflict across all files above.');
-    return buf.toString();
-  }
-
-  String _extractConflictExcerpts(String content) {
-    final normalized = content.replaceAll('\r\n', '\n');
-    final lines = normalized.split('\n');
-    final ranges = <({int start, int end})>[];
-    const contextLines = 28;
-    int? conflictStart;
-
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      if (line.startsWith('<<<<<<< ')) {
-        conflictStart ??= i;
-        continue;
-      }
-      if (conflictStart != null && line.startsWith('>>>>>>> ')) {
-        ranges.add((
-          start: math.max(0, conflictStart - contextLines),
-          end: math.min(lines.length, i + contextLines + 1),
-        ));
-        conflictStart = null;
-      }
-    }
-
-    if (conflictStart != null) {
-      ranges.add((
-        start: math.max(0, conflictStart - contextLines),
-        end: lines.length,
-      ));
-    }
-
-    if (ranges.isEmpty) {
-      return normalized;
-    }
-
-    ranges.sort((a, b) => a.start.compareTo(b.start));
-    final merged = <({int start, int end})>[];
-    for (final range in ranges) {
-      if (merged.isEmpty || range.start > merged.last.end) {
-        merged.add(range);
-        continue;
-      }
-      final last = merged.removeLast();
-      merged.add((start: last.start, end: math.max(last.end, range.end)));
-    }
-
-    final buf = StringBuffer();
-    var cursor = 0;
-    for (final range in merged) {
-      if (range.start > cursor) {
-        buf.writeln('... omitted lines ${cursor + 1}-${range.start} ...');
-      }
-      buf.writeln(
-          '@@ conflict excerpt lines ${range.start + 1}-${range.end} @@');
-      buf.writeln(lines.sublist(range.start, range.end).join('\n'));
-      cursor = range.end;
-    }
-    if (cursor < lines.length) {
-      buf.writeln('... omitted lines ${cursor + 1}-${lines.length} ...');
-    }
-    return buf.toString().trim();
-  }
-
   Future<void> _generateCommitMessage(
     String repoPath,
     RepositoryStatus status,
@@ -5399,16 +5190,29 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final refreshed = await _refreshAndReadStatus();
 
-    if (mode == _CommitRunMode.commitAndSync && refreshed != null) {
-      final syncResult = await syncRemote(repoPath, refreshed);
-      if (syncResult.ok) {
-        final operation = syncResult.data!.operation;
-        successMessage =
-            'Committed ${committed.summary} ($shortHash) and ran $operation.';
-      } else {
-        syncError = 'Commit succeeded, but sync failed: ${syncResult.error}';
+    if (mode == _CommitRunMode.commitAndSync && refreshed != null && mounted) {
+      final outcome = await resolveSync(context, repoPath, refreshed);
+      switch (outcome) {
+        case MergeClean(:final data):
+          successMessage = 'Committed ${committed.summary} ($shortHash) '
+              'and ran ${data.operation}.';
+        case MergeConflicted(:final paths, :final resolved):
+          if (resolved) {
+            successMessage = 'Committed ${committed.summary} ($shortHash); '
+                'resolved ${paths.length} '
+                'conflict${paths.length == 1 ? '' : 's'}.';
+          } else {
+            syncError = '${paths.length} '
+                'conflict${paths.length == 1 ? '' : 's'} left to resolve.';
+          }
+        case MergeBlockedByLocalChanges(:final paths):
+          syncError = 'Commit succeeded, but sync was blocked by '
+              '${paths.length} uncommitted '
+              'file${paths.length == 1 ? '' : 's'}.';
+        case MergeFailed(:final message):
+          syncError = 'Commit succeeded, but sync failed: $message';
       }
-      await _refreshAndReadStatus();
+      if (mounted) await _refreshAndReadStatus();
     }
 
     return _CommitOutcome.ok(committed, successMessage, syncError);
@@ -5507,10 +5311,50 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _pickUpStash(String repo, int index) async {
+    // Pin the entry by OID before the (potentially long) conflict editor runs
+    // — its positional index can shift if the stash list mutates meanwhile, so
+    // dropping by index afterwards could discard the wrong stash.
+    final stashHash = await stashHashAt(repo, index);
+    if (!mounted) return;
     final result = await stashPop(repo, index: index);
     if (!mounted) return;
     if (!result.ok) {
-      setState(() => _actionError = result.error);
+      // A stash pop that hits content conflicts leaves UU markers (pop keeps
+      // the entry). Route them into the unified editor, then drop the entry
+      // once resolved. A non-conflict failure leaves no UU → falls through.
+      final resolved =
+          await resolveSequencerConflicts(context, repo, SequencerKind.plain);
+      if (!mounted) return;
+      if (resolved) {
+        // Drop by identity (re-resolving the current index), not the stale
+        // one. If we couldn't pin the OID, LEAVE the entry rather than risk
+        // dropping the wrong stash by a now-stale index — the user can remove
+        // it by hand (safe over convenient).
+        if (stashHash != null) {
+          await stashDropByHash(repo, stashHash);
+        }
+        if (!mounted) return;
+        setState(() {
+          _stashPeekDiff = null;
+          _stashPeekIndex = null;
+        });
+        await _refreshAndReadStatus();
+        if (mounted) unawaited(_loadStashes(repo));
+        return;
+      }
+      // resolveSequencerConflicts returns false in TWO cases: the pop left
+      // conflicts the user deferred (UU present), OR the pop failed WITHOUT
+      // any conflict ("local changes would be overwritten", bad ref → no UU).
+      // Distinguish them like the cherry-pick/revert handlers do, so a real
+      // failure surfaces its actual reason instead of a phantom conflict.
+      if (!mounted) return;
+      final stillConflicted = (context.read<RepositoryState>().status?.files ??
+              const <RepositoryStatusFile>[])
+          .any((f) => f.isConflicted);
+      setState(() => _actionError = stillConflicted
+          ? 'Stash applied with conflicts — resolve them on the Changes page '
+              '(the stash entry was kept).'
+          : (result.error ?? 'Could not pop stash.'));
       return;
     }
     setState(() {
@@ -10013,8 +9857,11 @@ class _ReviewFindingCard extends StatelessWidget {
   final AppTokens tokens;
   final AiCommitReviewFindingData finding;
   final VoidCallback? onOpenDiff;
-  // Confirm/dismiss verdict on this finding → claim-outcome ratchet.
-  // Null when no grounding is attached (engine-cold review).
+  // Finding outcome → claim-outcome ratchet. The UI sends only
+  // `verified: false` (Dismiss); the `verified: true` path is intact but
+  // reserved for a future implicit "this was real" signal (see the Dismiss
+  // button in build()). Null when no grounding is attached (engine-cold
+  // review).
   final void Function(bool verified)? onOutcome;
   final bool actioned;
 
@@ -10148,20 +9995,19 @@ class _ReviewFindingCard extends StatelessWidget {
                           ),
                         )
                       else
-                        Row(
-                          children: [
-                            _InlineActionLink(
-                              tokens: tokens,
-                              label: 'Confirm',
-                              onTap: () => onOutcome!(true),
-                            ),
-                            const SizedBox(width: 14),
-                            _InlineActionLink(
-                              tokens: tokens,
-                              label: 'Dismiss',
-                              onTap: () => onOutcome!(false),
-                            ),
-                          ],
+                        // Dismiss-only. Muting a finding teaches the per-repo
+                        // ratchet that this claim-shape is noise here, so axis 5
+                        // suppresses it next time. There is deliberately no
+                        // Confirm: you fix a real finding, you don't click a
+                        // button, so an explicit confirm would only ever gather
+                        // dismissal-biased data and train the reviewer toward
+                        // silence. The "this was real" signal (onOutcome(true))
+                        // is reserved for a future implicit source — e.g. the
+                        // user editing the flagged hunk — so it stays unbiased.
+                        _InlineActionLink(
+                          tokens: tokens,
+                          label: 'Dismiss',
+                          onTap: () => onOutcome!(false),
                         ),
                     ],
                   ],
@@ -10335,7 +10181,14 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     if (_fetching) return;
     setState(() => _fetching = true);
     try {
-      await syncRemote(widget.repoPath, widget.status);
+      // Route through the unified resolver like every other sync/pull site —
+      // a clean-but-diverged tree does `pull --rebase`, which can leave
+      // conflicts that must open the editor instead of being discarded.
+      final outcome = await resolveSync(context, widget.repoPath, widget.status);
+      if (mounted && outcome is! MergeClean) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Sync'))));
+      }
       await widget.onRefresh();
     } finally {
       if (mounted) setState(() => _fetching = false);

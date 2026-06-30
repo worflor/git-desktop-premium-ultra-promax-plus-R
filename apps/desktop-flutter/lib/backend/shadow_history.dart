@@ -41,31 +41,40 @@ Future<ShadowHistoryResult> discoverShadowHistory(
   String repoPath, {
   int reflogLimit = 500,
 }) async {
-  final headResult = await runGitProbe(repoPath, ['rev-parse', '--short=7', 'HEAD']);
+  // The head probe and the three shadow scans are independent git calls —
+  // run them concurrently rather than serially threading a shrinking budget.
+  // Each scan fetches up to the full budget; the priority order (reverts →
+  // resets → abandoned) is preserved by the concat + trim below. In the
+  // common case (total shadow commits ≤ budget) this is identical to the
+  // serial version. In the saturation edge (reverts+resets+abandoned >
+  // budget) the parallel scans each see the full budget instead of a
+  // shrinking remainder, so they can surface a few more recent resets /
+  // abandoned commits than the serial caps would before the trim — a more
+  // complete result, still bounded by budget. The cost is one or two extra
+  // git scans whose tail is trimmed when earlier sources already fill it.
+  const budget = _kMaxTotalShadowCommits;
+  final headFuture =
+      runGitProbe(repoPath, ['rev-parse', '--short=7', 'HEAD']);
+  final revertsFuture = _discoverReverts(repoPath, budget);
+  final resetsFuture = _discoverResets(repoPath, budget, reflogLimit);
+  final abandonedFuture = _discoverAbandonedBranches(repoPath, budget);
+
+  final headResult = await headFuture;
   final headHash = headResult.exitCode == 0
       ? (headResult.stdout as String).trim()
       : '';
 
-  final commits = <ShadowCommit>[];
-  var budget = _kMaxTotalShadowCommits;
-
-  final reverts = await _discoverReverts(repoPath, budget);
-  commits.addAll(reverts);
-  budget -= reverts.length;
-
-  if (budget > 0) {
-    final resets = await _discoverResets(repoPath, budget, reflogLimit);
-    commits.addAll(resets);
-    budget -= resets.length;
-  }
-
-  if (budget > 0) {
-    final abandoned = await _discoverAbandonedBranches(repoPath, budget);
-    commits.addAll(abandoned);
-  }
+  final commits = <ShadowCommit>[
+    ...await revertsFuture,
+    ...await resetsFuture,
+    ...await abandonedFuture,
+  ];
+  final trimmed = commits.length > _kMaxTotalShadowCommits
+      ? commits.sublist(0, _kMaxTotalShadowCommits)
+      : commits;
 
   return ShadowHistoryResult(
-    commits: commits,
+    commits: trimmed,
     discoveredAt: DateTime.now(),
     headHash: headHash,
   );

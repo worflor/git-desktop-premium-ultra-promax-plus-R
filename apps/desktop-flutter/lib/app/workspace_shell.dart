@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
 import '../backend/git.dart';
+import '../backend/merge_session.dart';
+import '../features/changes/merge_conflict_flow.dart';
 import '../backend/gyat.dart' show warmGyatForRepo;
 import '../backend/release_state.dart' show warmReleaseState;
 import '../backend/spectral_trajectory_builder.dart'
@@ -3252,11 +3254,13 @@ class _BranchPillState extends State<_BranchPill> {
     if (_pulling || widget.repoPath == null) return;
     setState(() => _pulling = true);
     try {
-      final result = await pullRemote(widget.repoPath!);
+      final outcome = await resolvePull(context, widget.repoPath!);
       if (!mounted) return;
-      if (!result.ok) {
+      // Silent on a clean pull (matches the old success path); otherwise
+      // surface a one-line outcome. Real conflicts already opened the editor.
+      if (outcome is! MergeClean) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.error ?? 'Pull failed')),
+          SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Pull'))),
         );
       }
       await context.read<RepositoryState>().refreshStatus();
@@ -3409,8 +3413,29 @@ class _BranchPillState extends State<_BranchPill> {
     if (widget.repoPath == null) return;
     setState(() => _switching = true);
     _overlay?.markNeedsBuild();
-    await checkoutBranch(widget.repoPath!, name);
+    // Dirty-overlap switches carry edits across via `checkout -m` and route
+    // any markers into the shared editor (same path as pull conflicts).
+    final outcome = await resolveCheckout(context, widget.repoPath!, name);
     if (!mounted) return;
+    // Surface EVERY non-clean outcome through the shared formatter — failed,
+    // blocked-by-local-changes, or conflicts the user deferred — so no arm is
+    // silently swallowed (a clean switch / fully-resolved one stays quiet).
+    // Exhaustive (no `_`) so a future MergeOutcome variant is a COMPILE error
+    // here, not silently absorbed into the generic-message arm.
+    final msg = switch (outcome) {
+      MergeClean() => null,
+      MergeConflicted(:final resolved) =>
+        resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
+    };
+    if (msg != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+    // resolveCheckout may have opened the conflict editor for a long session;
+    // refresh so the pill, branch name, and ahead/behind counts reflect the
+    // post-switch state (branches_page._checkout does the same).
+    await context.read<RepositoryState>().refreshStatus();
     _close();
   }
 

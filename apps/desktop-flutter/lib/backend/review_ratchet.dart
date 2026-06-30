@@ -1,14 +1,24 @@
 // review_ratchet.dart — learned prior for claim-shape outcomes.
 //
-// Axis 5 of the emergent review pipeline. Every time the user
-// accepts or rejects a review finding, we record the observation
-// keyed by the claim's quantised shape hash. Future claims with the
-// same shape get the learned posterior as their prior.
+// Axis 5 of the emergent review pipeline. When the user actions a
+// review finding we record the observation keyed by the claim's
+// quantised shape hash, and future claims with the same shape get the
+// learned posterior as their prior.
+//
+// In the current product only DISMISS is surfaced (see the finding card),
+// so observations are reject-only and the posterior is one-sided: it
+// slides from 0.5 (unseen / neutral) toward 0 (repeatedly dismissed →
+// suppressed). This is intentional — a per-repo noise filter the user
+// trains by muting, with no boost direction to over-amplify. The accept
+// path below is kept intact for a future implicit "this was real" signal
+// (e.g. the user editing the flagged hunk), which would restore the
+// two-sided estimator without asking anyone to click a Confirm button.
 //
 // The prior is Laplace-smoothed (add-one) so unseen shapes return
-// exactly `0.5` — the codebase's maximum-uncertainty convention.
-// As observations accumulate, the prior converges to the observed
-// true-positive fraction for that shape bucket.
+// exactly `0.5` — the codebase's maximum-uncertainty convention. As
+// reject observations accumulate, the prior converges toward 0 for that
+// shape bucket (and would converge to the true accept fraction once the
+// accept signal is wired).
 //
 // In-memory for v1. The state is JSON-serialisable (see [toJson] /
 // [fromJson]) so a future persistence layer — SharedPreferences,

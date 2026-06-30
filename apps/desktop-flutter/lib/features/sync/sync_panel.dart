@@ -8,7 +8,9 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
+import '../../backend/merge_session.dart';
 import '../../app/repository_state.dart';
+import '../changes/merge_conflict_flow.dart';
 import '../../components/icons/app_icons.dart';
 
 
@@ -106,23 +108,81 @@ class _SyncPanelState extends State<SyncPanel> {
   bool _forceRunning = false;
   String? _actionError;
   SyncData? _lastResult;
+  // Conflicts the user left unresolved (cancelled the editor). Surfaced with
+  // a "Resolve conflicts" recovery that re-enters the unified merge flow.
+  List<String>? _pendingConflicts;
   String? _previousRepositoryPath;
   String? _statusRefreshQueuedFor;
+
+  void _applyOutcome(MergeOutcome outcome) {
+    switch (outcome) {
+      case MergeClean(:final data):
+        _lastResult = data;
+      case MergeConflicted(:final paths, :final resolved):
+        if (resolved) {
+          _lastResult = SyncData(
+            operation: 'merge',
+            remote: 'origin',
+            output: 'Resolved ${paths.length} '
+                'conflicted file${paths.length == 1 ? '' : 's'}.',
+          );
+        } else if (paths.isEmpty) {
+          // Cancelled / discarded dirty pull — nothing changed. Show a neutral
+          // confirmation instead of a phantom "N conflicts" recovery notice
+          // (which never renders for an empty list, so the op would vanish
+          // with no success, error, or retry affordance).
+          _lastResult = const SyncData(
+            operation: 'sync',
+            remote: 'origin',
+            output: 'Cancelled — working tree unchanged.',
+          );
+        } else {
+          _pendingConflicts = paths;
+        }
+      case MergeBlockedByLocalChanges(:final paths):
+        _actionError =
+            '${paths.length} file${paths.length == 1 ? '' : 's'} have '
+            'uncommitted edits — commit them first to rebase-sync '
+            '(${paths.take(3).join(', ')}${paths.length > 3 ? '…' : ''}).';
+      case MergeFailed(:final message):
+        _actionError = message;
+    }
+  }
 
   Future<void> _runSync(String repo, RepositoryStatus status) async {
     setState(() {
       _syncRunning = true;
       _actionError = null;
+      // Clear any stale conflict/notice from a previous run; _applyOutcome
+      // below re-sets it if THIS run ends unresolved.
+      _pendingConflicts = null;
     });
-    final r = await syncRemote(repo, status);
+    final outcome = await resolveSync(context, repo, status);
     if (!mounted) return;
     setState(() {
       _syncRunning = false;
-      if (r.ok) {
-        _lastResult = r.data;
-      } else {
-        _actionError = r.error;
-      }
+      _applyOutcome(outcome);
+    });
+    await context.read<RepositoryState>().refreshStatus();
+  }
+
+  /// Re-enters the unified flow to finish conflicts the user cancelled.
+  /// Uses [resumeConflicts] (not a fresh pull) so a paused REBASE is driven
+  /// with `rebase --continue` rather than mis-resolved as a new merge.
+  Future<void> _resolvePendingConflicts(String repo) async {
+    setState(() {
+      _syncRunning = true;
+      _actionError = null;
+    });
+    // The sync panel always means "sync", so a recovered rebase owes its
+    // push — opt in explicitly rather than baking the assumption into
+    // resumeConflicts.
+    final outcome = await resumeConflicts(context, repo, pushAfterRebase: true);
+    if (!mounted) return;
+    setState(() {
+      _syncRunning = false;
+      _pendingConflicts = null;
+      _applyOutcome(outcome);
     });
     await context.read<RepositoryState>().refreshStatus();
   }
@@ -426,6 +486,8 @@ class _SyncPanelState extends State<SyncPanel> {
       fetchStatusText: fetchStatusText,
       actionError: _actionError,
       lastResult: _lastResult,
+      pendingConflicts: _pendingConflicts,
+      onResolveConflicts: () => _resolvePendingConflicts(repoPath),
       onSync: () => _runSync(repoPath, status),
       onFetch: () => _runFetch(repoPath),
       onForcePushRecovery: () => _runForcePushRecovery(repoPath, status),
@@ -443,6 +505,7 @@ class _SyncPanelState extends State<SyncPanel> {
         _fetchRunning = false;
         _actionError = null;
         _lastResult = null;
+        _pendingConflicts = null;
       });
     });
   }
@@ -642,6 +705,10 @@ class _SyncBody extends StatelessWidget {
   final String fetchStatusText;
   final String? actionError;
   final SyncData? lastResult;
+  /// Conflicts left unresolved after the user cancelled the merge editor.
+  /// Rendered as a recovery notice that re-enters the unified flow.
+  final List<String>? pendingConflicts;
+  final VoidCallback? onResolveConflicts;
   final VoidCallback onSync;
   final VoidCallback onFetch;
   /// Force-push-with-lease recovery action — wired through from the
@@ -661,6 +728,8 @@ class _SyncBody extends StatelessWidget {
     required this.fetchStatusText,
     required this.actionError,
     required this.lastResult,
+    this.pendingConflicts,
+    this.onResolveConflicts,
     required this.onSync,
     required this.onFetch,
     this.onForcePushRecovery,
@@ -724,6 +793,24 @@ class _SyncBody extends StatelessWidget {
                 ? onForcePushRecovery
                 : null,
             recoveryRunning: forceRunning,
+          ),
+        ],
+
+        // Unresolved conflicts — the merge ran but the user left the editor
+        // without finishing. One click re-enters the same merge flow.
+        if (pendingConflicts != null && pendingConflicts!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _InlineSyncError(
+            t: t,
+            title: 'Conflicts to resolve',
+            body: '${pendingConflicts!.length} '
+                'file${pendingConflicts!.length == 1 ? '' : 's'} need '
+                'resolving: '
+                '${pendingConflicts!.take(3).join(', ')}'
+                '${pendingConflicts!.length > 3 ? '…' : ''}',
+            recoveryLabel: onResolveConflicts != null ? 'Resolve conflicts' : null,
+            onRecovery: onResolveConflicts,
+            recoveryRunning: syncRunning,
           ),
         ],
 
