@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io' show File, Process, pid;
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:path/path.dart' as p;
 
 import '../ai.dart';
+import '../dead_code_strainer.dart';
 import '../dtos.dart';
 import '../file_coupling.dart';
 import '../git.dart';
@@ -40,6 +42,7 @@ final Map<String, CommandHandler> commands = {
   'review': _review,
   'review-evidence': _reviewEvidence,
   'muse': _muse,
+  'deadcode': _deadCode,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -91,6 +94,112 @@ Future<LogosGit> _awaitEngine(String repo, ManifoldBridgeContext ctx) async {
     if (engine != null) return engine;
   }
   throw StateError('Logos engine did not load within 15s for $repo.');
+}
+
+final RegExp _pubspecName =
+    RegExp(r'''^name:\s*['"]?([A-Za-z_][A-Za-z0-9_]*)''', multiLine: true);
+
+/// Reachability-based dead-code map for a repo: files no live surface imports.
+/// Reads tracked Dart sources, derives each Dart package's name from its
+/// pubspec, and runs [DeadCodeStrainer] per package (a file is assigned to the
+/// package with the longest matching directory prefix, so nested packages don't
+/// bleed together). Engine-independent — pure import-closure over the tree.
+Future<Map<String, dynamic>> _deadCode(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final repo = _requireRepo(params, ctx);
+  final ls = await Process.run('git', ['ls-files'], workingDirectory: repo);
+  if (ls.exitCode != 0) {
+    // Throw, don't return {'error': …}: the server only lifts a *thrown* error
+    // to the JSON-RPC top level the CLI checks; a returned error map hides under
+    // `result` and would render as a cheerful "nothing dead".
+    throw StateError('git ls-files failed: ${(ls.stderr as String).trim()}');
+  }
+  final tracked = (ls.stdout as String)
+      .split('\n')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+
+  // package dir -> name, from each pubspec.yaml.
+  final packageDirs = <String, String>{};
+  for (final f in tracked.where((f) => f.endsWith('pubspec.yaml'))) {
+    try {
+      final text = await File(p.join(repo, f)).readAsString();
+      final m = _pubspecName.firstMatch(text);
+      if (m != null) {
+        final dir = f.contains('/') ? f.substring(0, f.lastIndexOf('/')) : '';
+        packageDirs[dir] = m.group(1)!;
+      }
+    } catch (_) {}
+  }
+  if (packageDirs.isEmpty) {
+    return {
+      'repo': repo,
+      'note': 'no Dart packages (pubspec.yaml) found',
+      'fullyDead': const <Map<String, dynamic>>[],
+      'testZombies': const <Map<String, dynamic>>[],
+    };
+  }
+
+  // Assign each Dart file to the package with the longest matching prefix.
+  final byPackage = <String, List<DeadCodeInput>>{};
+  for (final f in tracked.where((f) => f.endsWith('.dart'))) {
+    String? bestDir;
+    var bestLen = -1;
+    for (final dir in packageDirs.keys) {
+      final prefix = dir.isEmpty ? '' : '$dir/';
+      if (f.startsWith(prefix) && prefix.length > bestLen) {
+        bestDir = dir;
+        bestLen = prefix.length;
+      }
+    }
+    if (bestDir == null) continue;
+    String content;
+    try {
+      content = await File(p.join(repo, f)).readAsString();
+    } catch (_) {
+      continue;
+    }
+    (byPackage[bestDir] ??= <DeadCodeInput>[]).add(DeadCodeInput(f, content));
+  }
+
+  final fullyDead = <Map<String, dynamic>>[];
+  final zombies = <Map<String, dynamic>>[];
+  final joints = <Map<String, dynamic>>[];
+  final packages = <Map<String, dynamic>>[];
+  for (final entry in byPackage.entries) {
+    final name = packageDirs[entry.key]!;
+    final inputs = entry.value;
+    // Off-load the CPU pass (graph build + reachability + dominator tree) to a
+    // worker isolate: this handler runs on the GUI isolate that serves IPC, and
+    // the codebase has frozen before on synchronous work there.
+    final report = await Isolate.run(
+        () => DeadCodeStrainer(packageName: name).analyze(inputs));
+    fullyDead.addAll(report.fullyDead.map((r) => r.toJson()));
+    zombies.addAll(report.testZombies.map((r) => r.toJson()));
+    joints.addAll(report.joints.map((r) => r.toJson()));
+    packages.add({
+      'package': name,
+      'dir': entry.key,
+      'libFiles': report.totalLibFiles,
+      'alive': report.aliveLibFiles,
+      'dead': report.deadCount,
+      'joints': report.joints.length,
+      'hasAppEntry': report.hasAppEntry,
+    });
+  }
+  fullyDead.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+  zombies.sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+  joints.sort((a, b) => (b['load'] as int).compareTo(a['load'] as int));
+  return {
+    'repo': repo,
+    'packages': packages,
+    'fullyDead': fullyDead,
+    'testZombies': zombies,
+    'joints': joints,
+  };
 }
 
 class _WarmResult<T> {
@@ -245,6 +354,9 @@ Future<Map<String, dynamic>> _help(
       'impact': 'Predicted ripple of a diff. Params: diff.',
       'review': 'AI code review of current changes. Params: files (optional), model (optional).',
       'muse': 'AI brainstorm on current changes. Params: files (optional), model (optional).',
+      'deadcode':
+          'Files no live surface imports (fully-dead + test-zombies) plus '
+          'load-bearing joints (delete → N files orphaned).',
     },
     'notes':
         'All file params accept: --files, --file, --path, --paths, '

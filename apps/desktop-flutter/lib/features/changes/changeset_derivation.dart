@@ -11,10 +11,11 @@
 //   * [computeFileDimOpacity]      — the per-file dimming, a pure function of
 //                                    the changed paths + the engine's volatility
 //                                    / integrity stats + the coupling matrix.
-//   * [spectralCouplingIsolated]   — the eigenAddress-histogram coupling pass,
-//                                    moved off the UI isolate via `Isolate.run`
-//                                    (it reads every changed file from disk —
-//                                    the dominant freeze in the old path).
+//   * [spectralCouplingIsolated]   — the content-coupling pass (identifier bag
+//                                    + token charges), moved off the UI isolate
+//                                    via `Isolate.run` (it reads every changed
+//                                    file from disk — the dominant freeze in
+//                                    the old path).
 //   * [ChangesetSignature]         — a content key so the controller can skip a
 //                                    re-derivation when the *content* is
 //                                    unchanged, even when upstream mints fresh
@@ -30,9 +31,12 @@
 import 'dart:isolate';
 
 import '../../backend/file_coupling.dart'
-    show FileCouplingMatrix, combinedCouplingScore, computeSpectralCoupling;
-import '../../backend/logos_core.dart' show CharCoupling;
-import '../../backend/logos_flow.dart' show FlowAnalysisResult;
+    show
+        CouplingReceipt,
+        FileCouplingMatrix,
+        combinedCouplingScore,
+        computeSpectralCoupling;
+import '../../backend/repo_native_embedding.dart' show RepoNativeEmbedding;
 
 /// Per-file dim opacity for the changeset, in `[0.55, 1.0]` (1.0 = full
 /// presence; lower = dimmed). A pure re-expression of the old
@@ -109,26 +113,38 @@ Map<String, double> computeFileDimOpacity({
   return result;
 }
 
+/// The spectral overlay plus its receipts — why each charge-coupled pair
+/// couples, as exact shared-token evidence. Both cross the isolate boundary
+/// as plain data.
+class SpectralOverlayResult {
+  final Map<String, Map<String, double>> coupling;
+  final Map<String, Map<String, List<CouplingReceipt>>> receipts;
+  const SpectralOverlayResult(this.coupling, this.receipts);
+  static const empty = SpectralOverlayResult({}, {});
+}
+
 /// Run [computeSpectralCoupling] on a background isolate. The function reads
-/// every changed file from disk and tokenises every line (eigenAddress
-/// histograms) — on the UI isolate this was the dominant refresh freeze. All
-/// inputs cross the `Isolate.run` boundary cheaply: [paths]/[repoRoot] are
-/// strings, [coupling] is a 128×128 `Float64List`, and [FlowAnalysisResult] is
-/// plain data. Disk reads are safe inside the worker isolate.
-Future<Map<String, Map<String, double>>> spectralCouplingIsolated({
+/// every changed file from disk (identifier harvest for the bag + charge
+/// sub-signals) — on the UI isolate this was the dominant refresh freeze. All
+/// inputs cross the `Isolate.run` boundary cheaply as plain data, and disk
+/// reads are safe inside the worker isolate.
+Future<SpectralOverlayResult> spectralCouplingIsolated({
   required List<String> paths,
   required String repoRoot,
-  required CharCoupling coupling,
-  Map<String, FlowAnalysisResult>? flowResults,
+  RepoNativeEmbedding? embedding,
+  Map<String, double>? tokenCharges,
 }) {
-  if (paths.length < 2) return Future.value(const {});
-  return Isolate.run(
-    () => computeSpectralCoupling(
+  if (paths.length < 2) return Future.value(SpectralOverlayResult.empty);
+  return Isolate.run(() {
+    final receipts = <String, Map<String, List<CouplingReceipt>>>{};
+    final spec = computeSpectralCoupling(
       paths,
       repoRoot,
-      coupling,
-      flowResults: flowResults,
-    ),
-  );
+      embedding: embedding,
+      tokenCharges: tokenCharges,
+      receiptsOut: receipts,
+    );
+    return SpectralOverlayResult(spec, receipts);
+  });
 }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart' show immutable;
 import 'package:path/path.dart' as p;
 
 import 'correlatedness_hunk_sort.dart'
@@ -10,11 +11,10 @@ import 'correlatedness_hunk_sort.dart'
 import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
-import 'logos_flow.dart' show FlowAnalysisResult;
-import 'logos_core.dart'
-    show CharCoupling, CsrGraph, eigenAddress, flowPhaseCoherence;
+import 'logos_core.dart' show CsrGraph;
 import 'logos_git.dart' show LogosGit;
 import 'logos_git_integrity.dart';
+import 'repo_native_embedding.dart';
 
 // Re-export so callers that only import file_coupling.dart can still
 // construct the context — the changes panel and tests historically
@@ -34,8 +34,9 @@ const String _logMetaSep = '\u001f';
 /// to read it out and cluster the current change set by it.
 /// Built once per repo (keyed by HEAD hash) and reused across every render.
 /// The spectral axis is layered on top per change-set — same shape as the
-/// jaccard storage but computed from eigenAddress histogram cosine similarity
-/// and flow coherence rather than from git history. See [computeSpectralCoupling].
+/// jaccard storage but computed from repo-native content signals (identifier
+/// bag cosine, token coupling charges) and flow coherence rather than from git
+/// history. See [computeSpectralCoupling].
 /// ─── Storage geometry ──────────────────────────────────────────────────
 /// The matrix is a sparse symmetric `nFiles × nFiles` floating-point
 /// table. Two of them — historical jaccard and current spectral profile.
@@ -2589,122 +2590,195 @@ String _stripExt(String filename) {
 
 const int _spectralMaxBytes = 256 * 1024;
 
+/// Weak-coupling floor for the per-changeset spectral overlay. Shared by the
+/// eigenAddress-histogram cosine and the repo-native embedding cosine so both
+/// sub-signals gate identically; below it, a pair carries no overlay edge.
+const double _spectralCouplingFloor = 0.25;
+
+/// Identifier-run extractor for the embedding sub-signal. Whole runs (NOT
+/// camelCase-split) to match RepoNativeEmbedding's validated vocabulary.
+final RegExp _semanticIdentRun = RegExp(r'[A-Za-z_][A-Za-z0-9_]{2,40}');
+
+/// One line of evidence for why a pair of files couples semantically: a shared
+/// token, its measured coupling charge, and the 1-based line where it first
+/// appears in each file. The bilinear charge construction makes this EXACT —
+/// the pair's score literally decomposes over these tokens — so the UI can say
+/// "these files go together because `withSpectral` (charge 0.83) at L141↔L62"
+/// as algebra, not as a saliency guess.
+@immutable
+class CouplingReceipt {
+  final String token;
+  final double charge;
+
+  /// First-occurrence line of [token] in the lex-smaller file of the pair.
+  final int lineA;
+
+  /// First-occurrence line of [token] in the lex-greater file of the pair.
+  final int lineB;
+
+  const CouplingReceipt({
+    required this.token,
+    required this.charge,
+    required this.lineA,
+    required this.lineB,
+  });
+}
+
 Map<String, Map<String, double>> computeSpectralCoupling(
   List<String> paths,
-  String repoRoot,
-  CharCoupling coupling, {
-  Map<String, FlowAnalysisResult>? flowResults,
+  String repoRoot, {
+  RepoNativeEmbedding? embedding,
+  Map<String, double>? tokenCharges,
+  // When provided, filled with per-pair charge receipts (lo-path → hi-path →
+  // top shared charged tokens with first-occurrence lines) for every pair the
+  // charge signal scored above the floor. Same read pass, no extra I/O.
+  Map<String, Map<String, List<CouplingReceipt>>>? receiptsOut,
 }) {
   if (paths.length < 2) return const {};
 
-  final histograms = <String, Float64List>{};
-  for (final path in paths) {
-    try {
-      final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
-      if (!file.existsSync()) continue;
-      if (file.lengthSync() > _spectralMaxBytes) continue;
-      final content = file.readAsStringSync();
-      final lines = content.split('\n');
-      final hist = Float64List(256);
-      var total = 0;
-      for (final line in lines) {
-        final addr = eigenAddress(line, coupling);
-        if (addr >= 0) {
-          hist[addr] += 1.0;
-          total++;
+  // NOTE: this overlay used to carry a per-file eigenAddress-histogram cosine
+  // as its content signal. The axis audit killed it: scored against held-out
+  // FUTURE co-change on five repos (three languages) via the real engine's own
+  // histograms, it was at-chance alone (AUC 0.47–0.73) and strictly harmful in
+  // max-fusion (delta −0.09..−0.30 on every repo) — unrelated files share
+  // line-address distributions, so max-merge flooded the overlay with false
+  // coupling. Its one job (content coupling for history-less files) is done
+  // strictly better by the identifier bag and the token charges below.
+  final wantCharges = tokenCharges != null && tokenCharges.isNotEmpty;
+  final wantTokens = embedding != null || wantCharges;
+  // Identifier runs per readable file — one content read per file, shared by
+  // the bag and charge sub-signals.
+  final fileTokens = <String, List<String>>{};
+  // 1-based first-occurrence line per CHARGED token per file — the receipt
+  // anchor. Only charged tokens are recorded, so the map stays small.
+  final fileFirstLine = <String, Map<String, int>>{};
+  if (wantTokens) {
+    for (final path in paths) {
+      try {
+        final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
+        if (!file.existsSync()) continue;
+        if (file.lengthSync() > _spectralMaxBytes) continue;
+        final content = file.readAsStringSync();
+        final toks = <String>[];
+        final firstLine =
+            (wantCharges && receiptsOut != null) ? <String, int>{} : null;
+        var line = 1;
+        var scanned = 0;
+        for (final m in _semanticIdentRun.allMatches(content)) {
+          final tok = m.group(0)!;
+          toks.add(tok);
+          if (firstLine != null && !firstLine.containsKey(tok) &&
+              tokenCharges!.containsKey(tok)) {
+            // Count newlines in the gap since the previous match — one linear
+            // pass over the content across all matches combined.
+            for (var i = scanned; i < m.start; i++) {
+              if (content.codeUnitAt(i) == 0x0A) line++;
+            }
+            scanned = m.start;
+            firstLine[tok] = line;
+          }
+          if (toks.length >= 600) break;
         }
+        if (toks.length >= 3) {
+          fileTokens[path] = toks;
+          if (firstLine != null) fileFirstLine[path] = firstLine;
+        }
+      } catch (_) {
+        continue;
       }
-      if (total < 2) continue;
-      final invTotal = 1.0 / total;
-      for (var i = 0; i < 256; i++) {
-        hist[i] *= invTotal;
-      }
-      histograms[path] = hist;
-    } catch (_) {
-      continue;
     }
   }
 
   final result = <String, Map<String, double>>{};
 
-  if (histograms.length >= 2) {
-    final fileList = histograms.keys.toList();
-    for (var i = 0; i < fileList.length; i++) {
-      for (var j = i + 1; j < fileList.length; j++) {
-        final a = fileList[i];
-        final b = fileList[j];
-        final ha = histograms[a]!;
-        final hb = histograms[b]!;
-        var dot = 0.0, normA = 0.0, normB = 0.0;
-        for (var k = 0; k < 256; k++) {
-          dot += ha[k] * hb[k];
-          normA += ha[k] * ha[k];
-          normB += hb[k] * hb[k];
-        }
-        if (normA < 1e-15 || normB < 1e-15) continue;
-        final cosine = dot / (math.sqrt(normA) * math.sqrt(normB));
-        if (cosine < 0.25) continue;
+  // Repo-native content coupling: files whose IDF-weighted identifier bags
+  // overlap — a strong predictor of co-change, since files change together when
+  // they share specific identifiers (imports, constants, data contracts). On a
+  // temporal holdout this lifts co-change AUC from history-alone 0.695 to
+  // max(jac,bag) 0.769. Max-merged into the spectral overlay alongside the
+  // histogram cosine and flow coherence: the bag has high co-change precision,
+  // so raising a pair's coupling to its bag score only fires on pairs that tend
+  // to co-change. The model is trained repo-wide (cached by HEAD) and passed
+  // in; here we only score the changed-file pairs.
+  if (embedding != null && fileTokens.length >= 2) {
+    final vecs = <String, Float64List>{};
+    for (final entry in fileTokens.entries) {
+      final v = embedding.fileVector(entry.value);
+      if (v != null) vecs[entry.key] = v;
+    }
+    final vfiles = vecs.keys.toList();
+    for (var i = 0; i < vfiles.length; i++) {
+      for (var j = i + 1; j < vfiles.length; j++) {
+        final a = vfiles[i];
+        final b = vfiles[j];
+        final cos = RepoNativeEmbedding.cosine(vecs[a], vecs[b]);
+        if (cos < _spectralCouplingFloor) continue;
         final lo = a.compareTo(b) < 0 ? a : b;
         final hi = a.compareTo(b) < 0 ? b : a;
-        (result[lo] ??= {})[hi] = cosine;
+        final sub = result.putIfAbsent(lo, () => {});
+        sub[hi] = math.max(sub[hi] ?? 0, cos);
       }
     }
   }
 
-  if (flowResults != null && flowResults.length >= 2) {
-    final flowCoh = computeFlowCoherence(flowResults);
-    for (final entry in flowCoh.entries) {
-      final sub = result.putIfAbsent(entry.key, () => {});
-      for (final pair in entry.value.entries) {
-        sub[pair.key] = math.max(sub[pair.key] ?? 0, pair.value);
+  // Token coupling charges: the pair's score is the mean of its top shared
+  // token charges — each charge a measured probability that files sharing that
+  // token co-change (see RepoNativeEmbedding.computeTokenCharges). Strongest
+  // single co-change predictor on the temporal holdout (0.794 vs the bag's
+  // 0.758 on MANIFOLD); max-merged like every other overlay contribution.
+  if (tokenCharges != null &&
+      tokenCharges.isNotEmpty &&
+      fileTokens.length >= 2) {
+    final tokenSets = <String, Set<String>>{
+      for (final e in fileTokens.entries) e.key: e.value.toSet(),
+    };
+    final tfiles = tokenSets.keys.toList();
+    for (var i = 0; i < tfiles.length; i++) {
+      for (var j = i + 1; j < tfiles.length; j++) {
+        final a = tfiles[i];
+        final b = tfiles[j];
+        final s = RepoNativeEmbedding.chargeScore(
+          tokenCharges,
+          tokenSets[a]!,
+          tokenSets[b]!,
+        );
+        if (s < _spectralCouplingFloor) continue;
+        final lo = a.compareTo(b) < 0 ? a : b;
+        final hi = a.compareTo(b) < 0 ? b : a;
+        final sub = result.putIfAbsent(lo, () => {});
+        sub[hi] = math.max(sub[hi] ?? 0, s);
+        if (receiptsOut != null) {
+          final top = RepoNativeEmbedding.topCharges(
+            tokenCharges,
+            tokenSets[a]!,
+            tokenSets[b]!,
+          );
+          final loLines = fileFirstLine[lo] ?? const <String, int>{};
+          final hiLines = fileFirstLine[hi] ?? const <String, int>{};
+          (receiptsOut[lo] ??= {})[hi] = [
+            for (final (token, charge) in top)
+              CouplingReceipt(
+                token: token,
+                charge: charge,
+                lineA: loLines[token] ?? 0,
+                lineB: hiLines[token] ?? 0,
+              ),
+          ];
+        }
       }
     }
   }
 
-  return result;
-}
+  // NOTE: flow coherence was the third overlay sub-signal until the axis
+  // audit killed it — the deadliest verdict of the whole program. Scored via
+  // the real engine's own flow analyses (tool/flow_audit.dart) on the 5-repo
+  // temporal holdout, it was at/below chance alone (AUC 0.28–0.63; express
+  // ANTI-correlated at 0.281) and, because it fires densely on most pairs
+  // with high values, its max-merge DROWNED the whole overlay: the composite
+  // scored 0.34–0.63 with it vs 0.75–0.92 without. Flow analysis itself
+  // (fragility, filament, findings UI) is untouched — only its coupling-
+  // overlay merge died.
 
-Map<String, Map<String, double>> computeFlowCoherence(
-  Map<String, FlowAnalysisResult> flowResults,
-) {
-  if (flowResults.length < 2) return const {};
-
-  final byAddress = <int, List<(String, double, double)>>{};
-  for (final entry in flowResults.entries) {
-    for (final f in entry.value.findings) {
-      byAddress.putIfAbsent(f.address, () => [])
-          .add((entry.key, f.certainty, f.phase));
-    }
-  }
-
-  final pairScores = <(String, String), List<double>>{};
-  for (final entry in byAddress.entries) {
-    if (entry.value.length < 2) continue;
-    final byFile = <String, List<(double, double)>>{};
-    for (final (file, cert, phase) in entry.value) {
-      byFile.putIfAbsent(file, () => []).add((cert, phase));
-    }
-    final files = byFile.keys.toList();
-    if (files.length < 2) continue;
-    for (var i = 0; i < files.length; i++) {
-      for (var j = i + 1; j < files.length; j++) {
-        final merged = [...byFile[files[i]]!, ...byFile[files[j]]!];
-        final coh = flowPhaseCoherence(merged);
-        final lo = files[i].compareTo(files[j]) < 0 ? files[i] : files[j];
-        final hi = files[i].compareTo(files[j]) < 0 ? files[j] : files[i];
-        pairScores.putIfAbsent((lo, hi), () => []).add(coh);
-      }
-    }
-  }
-
-  final result = <String, Map<String, double>>{};
-  for (final entry in pairScores.entries) {
-    final (lo, hi) = entry.key;
-    final scores = entry.value;
-    final mean = scores.reduce((a, b) => a + b) / scores.length;
-    if (mean < 0.1) continue;
-    (result[lo] ??= {})[hi] = mean;
-  }
   return result;
 }
 

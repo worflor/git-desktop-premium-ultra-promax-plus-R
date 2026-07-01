@@ -1884,6 +1884,37 @@ void main() {
       }
     });
 
+    test('excitedHeatKernelProfileTable removes the degree-sequence baseline',
+        () {
+      // On a connected path graph kernelDim == 1, so the de-hubbed
+      // diagonal must equal the full diagonal minus the single ground
+      // mode's squared projection uⱼ[i]² (the deg(i)/vol popularity
+      // baseline). Verify term-for-term and that the result stays
+      // non-negative and strictly below the full diagonal.
+      final b = _pathBasis(14);
+      const times = [0.25, 1.0, 3.0];
+      final full = b.heatKernelProfileTable(times);
+      final excited = b.excitedHeatKernelProfileTable(times);
+      expect(excited, hasLength(b.n * times.length));
+      final kernel = b.kernelDim;
+      expect(kernel, equals(1)); // connected graph → one ground mode
+      for (var i = 0; i < b.n; i++) {
+        // Ground contribution at node i: Σ_{j<kernelDim} uⱼ[i]²
+        // (λ ≈ 0 so e^{−tλ} ≈ 1 at every t).
+        var ground = 0.0;
+        for (var j = 0; j < kernel; j++) {
+          final u = b.eigenvectors[j * b.n + i];
+          ground += u * u;
+        }
+        for (var m = 0; m < times.length; m++) {
+          final idx = i * times.length + m;
+          expect(excited[idx], closeTo(full[idx] - ground, 1e-9));
+          expect(excited[idx], greaterThanOrEqualTo(-1e-12));
+          expect(excited[idx], lessThan(full[idx] + 1e-12));
+        }
+      }
+    });
+
     test('out-of-range node returns 0', () {
       final b = _pathBasis(10);
       expect(b.heatKernelSignature(-1, 1.0), equals(0.0));

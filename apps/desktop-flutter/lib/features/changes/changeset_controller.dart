@@ -33,18 +33,18 @@ import '../../backend/dtos.dart' show FileChangeWeight;
 import '../../backend/file_coupling.dart'
     show
         ClusterEngineView,
+        CouplingReceipt,
         FileClusters,
         FileCouplingMatrix,
         FileImpactSignal,
         FileSortGuide,
-        clusterFiles,
-        computeFlowCoherence;
+        clusterFiles;
 import '../../backend/git.dart' show fileChangeWeights;
-import '../../backend/logos_core.dart' show CharCoupling;
 import '../../backend/logos_git.dart' show LogosGit;
 import '../../backend/logos_flow.dart'
     show FlowAnalysisResult, analyzeFlowCached;
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
+import '../../backend/repo_native_embedding.dart' show RepoNativeEmbedding;
 import 'changeset_derivation.dart';
 
 /// Above this many changed files, `clusterFiles` is run in an `Isolate.run`;
@@ -62,6 +62,18 @@ class ChangesetController extends ChangeNotifier {
   Map<String, double> dimOpacity = const {};
   FileCouplingMatrix? effectiveMatrix;
 
+  /// Per-pair charge receipts for the current spectral overlay: lo-path →
+  /// hi-path → the shared charged tokens (with first-occurrence lines) that
+  /// carried the coupling. Read via [receiptsFor].
+  Map<String, Map<String, List<CouplingReceipt>>> couplingReceipts = const {};
+
+  /// Receipts for an unordered pair, or const [] when the pair has none.
+  List<CouplingReceipt> receiptsFor(String a, String b) {
+    final lo = a.compareTo(b) < 0 ? a : b;
+    final hi = a.compareTo(b) < 0 ? b : a;
+    return couplingReceipts[lo]?[hi] ?? const [];
+  }
+
   /// The clustered file order + grouping. Produced by `clusterFiles` inside an
   /// `Isolate.run`, so the seriation (and its internal hunk-graph Lanczos) never
   /// blocks the UI isolate. Empty until the first derivation settles.
@@ -78,6 +90,12 @@ class ChangesetController extends ChangeNotifier {
   String? _sourcesKey;
   bool _fuseScheduled = false;
   bool _disposed = false;
+
+  /// Token coupling charges, measured once per (coupling-matrix, embedding)
+  /// pair and reused across changesets — the underlying facts (carrier files,
+  /// co-change history) only move when HEAD does.
+  Map<String, double> _tokenCharges = const {};
+  String? _tokenChargesKey;
 
   // Cluster inputs pushed from the page (gathered from context each build).
   // The engine is held as the LogosGit itself (memoised + stable, keyed on
@@ -99,19 +117,24 @@ class ChangesetController extends ChangeNotifier {
     required String repoPath,
     required List<String> paths,
     required FileCouplingMatrix? couplingMatrix,
-    required CharCoupling? gyatCoupling,
     required Map<String, double>? statsVolatility,
     required Map<String, double>? statsIntegrity,
+    RepoNativeEmbedding? embedding,
   }) {
     final prevMatrix = _inputs?.couplingMatrix;
-    _inputs = _Inputs(repoPath, paths, couplingMatrix, gyatCoupling,
-        statsVolatility, statsIntegrity);
+    _inputs = _Inputs(repoPath, paths, couplingMatrix,
+        statsVolatility, statsIntegrity, embedding);
 
     // The working-tree sources (weights/flow/spectral) re-run on a change of
-    // repo, the changed-path set, or gyat availability — matching (and refining)
-    // the old `files.length`-keyed trigger with a content hash of the paths.
+    // repo, the changed-path set, or embedding availability (the embedding
+    // loads async and per HEAD, so `emb=false→true` must re-run the spectral
+    // pass to fold it in) — the paths are content-hashed so the trigger fires
+    // on genuine change, not object churn. `chg` flips when BOTH the coupling
+    // matrix and the embedding are available, so the token-charge signal
+    // (which needs both) joins the spectral pass as soon as it can.
     final key = '$repoPath|${paths.length}|${Object.hashAll(paths)}'
-        '|gyat=${gyatCoupling != null}';
+        '|emb=${embedding != null}'
+        '|chg=${couplingMatrix != null && embedding != null}';
     final sourcesChanged = key != _sourcesKey;
     final couplingChanged = !identical(couplingMatrix, prevMatrix);
     if (sourcesChanged) {
@@ -148,22 +171,68 @@ class ChangesetController extends ChangeNotifier {
     flowResults = flow.results;
     flowFragility = flow.fragility;
 
-    // Spectral overlay — eigenAddress histograms over every changed file. The
-    // file reads run on a background isolate (the dominant old freeze).
-    final gyat = inputs.gyatCoupling;
+    // Token coupling charges — measured once per (matrix HEAD, embedding) and
+    // memoised; the enumeration over carrier-file pairs runs off-thread. The
+    // co-changed-pair set crosses the isolate as plain strings because the
+    // matrix itself (and its closures) can't.
+    final matrix = inputs.couplingMatrix;
+    final emb = inputs.embedding;
+    if (matrix == null || emb == null) {
+      // Charges are a pure function of (matrix, embedding). When the CURRENT
+      // inputs can't produce them, stale ones must not survive — a previous
+      // repo's (or previous HEAD's) charge map scoring this repo's files was
+      // a real cross-repo leak (caught by review). Cleared here so the
+      // overlay below only ever sees charges born from the current inputs.
+      _tokenCharges = const {};
+      _tokenChargesKey = null;
+    }
+    if (matrix != null && emb != null) {
+      final chargesKey = '${matrix.headHash}#${identityHashCode(matrix)}'
+          '#${identityHashCode(emb)}';
+      if (_tokenChargesKey != chargesKey) {
+        final coPairs = <String>{};
+        for (final path in matrix.paths) {
+          for (final e in matrix.jaccardEntriesOf(path)) {
+            if (e.value > 0) coPairs.add('$path\u0000${e.key}');
+          }
+        }
+        final charges = await Isolate.run(
+          () => emb.computeTokenCharges(
+            coChanged: (a, b) {
+              final swap = a.compareTo(b) > 0;
+              return coPairs.contains(
+                  swap ? '$b\u0000$a' : '$a\u0000$b');
+            },
+          ),
+        );
+        if (_disposed || key != _sourcesKey) return;
+        _tokenCharges = charges;
+        _tokenChargesKey = chargesKey;
+      }
+    }
+
+    // Spectral overlay — repo-native content coupling (identifier bag + token
+    // charges) over the changed files. The file reads run on a background
+    // isolate (the dominant old freeze). Flow coherence used to merge here and
+    // used to be the no-content fallback; the axis audit killed both (harmful
+    // on all five holdout repos — see computeSpectralCoupling's note).
     var spec = const <String, Map<String, double>>{};
-    if (gyat != null && paths.length >= 2) {
-      spec = await spectralCouplingIsolated(
+    var receipts = const <String, Map<String, List<CouplingReceipt>>>{};
+    final wantOverlay = paths.length >= 2 &&
+        (inputs.embedding != null || _tokenCharges.isNotEmpty);
+    if (wantOverlay) {
+      final overlay = await spectralCouplingIsolated(
         paths: paths,
         repoRoot: inputs.repoPath,
-        coupling: gyat,
-        flowResults: flowResults.isNotEmpty ? flowResults : null,
+        embedding: inputs.embedding,
+        tokenCharges: _tokenCharges.isNotEmpty ? _tokenCharges : null,
       );
-    } else if (flowResults.isNotEmpty) {
-      spec = computeFlowCoherence(flowResults);
+      spec = overlay.coupling;
+      receipts = overlay.receipts;
     }
     if (_disposed || key != _sourcesKey) return;
     spectralCoupling = spec;
+    couplingReceipts = receipts;
     spectralVersion++;
 
     _fuse();
@@ -331,11 +400,11 @@ class _Inputs {
   final String repoPath;
   final List<String> paths;
   final FileCouplingMatrix? couplingMatrix;
-  final CharCoupling? gyatCoupling;
   final Map<String, double>? statsVolatility;
   final Map<String, double>? statsIntegrity;
+  final RepoNativeEmbedding? embedding;
   const _Inputs(this.repoPath, this.paths, this.couplingMatrix,
-      this.gyatCoupling, this.statsVolatility, this.statsIntegrity);
+      this.statsVolatility, this.statsIntegrity, this.embedding);
 }
 
 class _FlowBundle {

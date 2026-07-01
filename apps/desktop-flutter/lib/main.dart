@@ -15,6 +15,7 @@ import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
 import 'app/file_coupling_state.dart';
+import 'app/repo_embedding_state.dart';
 import 'app/logos_git_state.dart';
 import 'app/worktree_state.dart';
 import 'app/desk_pr_state.dart';
@@ -212,6 +213,7 @@ void main() async {
   }
   final repoXrayState = RepositoryXrayState();
   final fileCouplingState = FileCouplingState();
+  final repoEmbeddingState = RepoEmbeddingState();
   final logosGitState = LogosGitState();
   final worktreeState = WorktreeState(repoState);
   final deskPrState = DeskPrState(repoState, appIdentityState);
@@ -282,6 +284,7 @@ void main() async {
             ChangeNotifierProvider.value(value: repoState),
             ChangeNotifierProvider.value(value: repoXrayState),
             ChangeNotifierProvider.value(value: fileCouplingState),
+            ChangeNotifierProvider.value(value: repoEmbeddingState),
             ChangeNotifierProvider.value(value: logosGitState),
             ChangeNotifierProvider.value(value: worktreeState),
             ChangeNotifierProvider.value(value: deskPrState),

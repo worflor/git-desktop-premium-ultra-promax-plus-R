@@ -8,6 +8,14 @@
 //   (f + g)(λ) = f(λ) + g(λ)
 //   (f · g)(λ) = f(λ) · g(λ)       ← composition = pointwise product
 //   (α · f)(λ) = α · f(λ)
+//
+// alpha-math proof: ../alpha-math/manifold-core-souls.ts (SOUL 2) — this ring,
+// fed through fromBilinear as the literal pointwise product, is RECOGNIZED as
+// semisimple commutative ≅ ⊕M[1]^k (radical 0, cross-checked over GF(p)), and
+// classified a WITNESS algebra (composition measures, forgetting off-diagonal
+// information). SOUL 3 certifies the Walsh/XOR bond algebra has the identical
+// soul — the graph-spectral and bit/Walsh sides of the engine are one algebra,
+// the abelian dual of logos_hypercomplex, by machine recognition not assertion.
 //   (1/f)(λ)   = 1/f(λ)            ← on non-vanishing modes
 //
 // Heat, wave, Schrödinger, resolvent, fractional Laplacian, and band

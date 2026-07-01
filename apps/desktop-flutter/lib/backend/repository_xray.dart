@@ -710,10 +710,14 @@ class _SpectralSummary {
   /// engine was resolvable.
   final SpectralBasis? basis;
 
-  /// path → `Σⱼ uⱼ[f]²·e^{−t·λⱼ}` at the canonical temperature. This is
-  /// the heat-kernel diagonal — "how much of the heat trace localises
-  /// at file f". The spectral analog of co-change pull and our keystone
-  /// signal when the engine is available. Empty when basis is null.
+  /// path → `Σ_{λⱼ>0} uⱼ[f]²·e^{−t·λⱼ}` at the canonical temperature.
+  /// The **de-hubbed** heat-kernel diagonal — heat that localises at
+  /// file f *beyond* the `deg(f)/vol` baseline the λ≈0 ground modes
+  /// force. Removing that ground term subtracts the degree-sequence
+  /// (configuration-model) expectation, so popular hubs no longer
+  /// dominate by raw degree. The spectral analog of co-change pull and
+  /// our keystone signal when the engine is available. Empty when basis
+  /// is null.
   final Map<String, double> centralityByPath;
 
   /// path → top-N coupled neighbours read directly from the engine's
@@ -791,12 +795,20 @@ _SpectralSummary? _buildSpectralSummary(LogosGit? engine) {
     );
   }
 
-  // Heat-kernel diagonal HKS(i, t) = Σⱼ uⱼ[i]²·e^{−t·λⱼ} via the
-  // bulk spectral primitive. One O(k·n) pass; this IS the keystone
-  // signal — per-file thermal retention at the chosen scale.
+  // De-hubbed heat-kernel diagonal HKS_exc(i, t) = Σ_{λⱼ>0} uⱼ[i]²·e^{−t·λⱼ}
+  // via the bulk spectral primitive. One O(k·n) pass; this IS the
+  // keystone signal — per-file thermal retention at the chosen scale.
+  //
+  // We use the EXCITED variant (ground modes removed) on purpose. The
+  // full diagonal carries a `deg(i)/vol` popularity baseline from the
+  // λ≈0 ground modes (uⱼ ∝ √deg), which lets barn-door hubs (main.dart,
+  // giant barrels) win the ranking on raw degree alone. Removing that
+  // ground term = subtracting the configuration-model / degree-sequence
+  // expectation, leaving only the structural excess that genuine bridge
+  // files earn. See [SpectralHeat.excitedHeatKernelProfileTable].
   final n = basis.n;
   final k = basis.k;
-  final centrality = basis.heatKernelProfileTable([_kXraySpectralT]);
+  final centrality = basis.excitedHeatKernelProfileTable([_kXraySpectralT]);
   final paths = engine.nodePaths;
   final centralityByPath = <String, double>{};
   for (var i = 0; i < n; i++) {

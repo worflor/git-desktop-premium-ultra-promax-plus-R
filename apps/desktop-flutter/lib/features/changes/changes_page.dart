@@ -41,11 +41,12 @@ import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/gyat.dart'
-    show gyatForRepo, peekGyatForRepo, warmGyatForRepo;
+    show warmGyatForRepo;
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/review_logos.dart' show ClaimShape;
 import '../../backend/review_ratchet_store.dart' show ReviewRatchetStore;
+import '../../backend/nudge_ledger.dart' show NudgeLedger;
 import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
 import '../../backend/system_paths.dart' show revealInFileManager;
@@ -55,6 +56,8 @@ import '../../app/ai_settings_state.dart';
 import '../../app/commit_mode_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
+import '../../app/repo_embedding_state.dart';
+import '../../backend/repo_native_embedding.dart' show RepoNativeEmbedding;
 import '../../app/preferences_state.dart';
 import 'changes_page_preferences.dart';
 import '../../app/window_activity.dart';
@@ -180,6 +183,22 @@ class _ChangesPageState extends State<ChangesPage> {
   }
   Set<String> get _includedPaths => _activeTab.includedPaths;
   bool _fileDragActive = false;
+
+  /// Append-only outcome ledger for coupling nudges, lazily bound to the
+  /// active repo. Records the engine's prediction (`shown`) alongside the
+  /// user's ground-truth response (`accepted`) so a future session can
+  /// jury the coupling engine against realized behaviour. See
+  /// [NudgeLedger].
+  NudgeLedger? _nudgeLedger;
+  String? _nudgeLedgerRepo;
+  NudgeLedger _nudgeLedgerFor(String repoPath) {
+    if (_nudgeLedger == null || _nudgeLedgerRepo != repoPath) {
+      _nudgeLedger = NudgeLedger(repoPath);
+      _nudgeLedgerRepo = repoPath;
+    }
+    return _nudgeLedger!;
+  }
+
   final _commitMsgCtrl = TextEditingController();
   final _commitMsgFocusNode = FocusNode();
   final List<String> _commitTags = [];
@@ -5487,9 +5506,14 @@ class _ChangesPageState extends State<ChangesPage> {
               (state) => state.matrixFor(repoPath),
             ) ??
             logosForDim?.stats.coupling);
-    final gyatCoupling = repoPath == null
+    // The repo-native semantic embedding (cached per HEAD). Selecting it here
+    // subscribes the page, so when the background build lands the page rebuilds
+    // and re-runs the spectral pass with the embedding folded in.
+    final repoEmbedding = repoPath == null
         ? null
-        : peekGyatForRepo(repoPath)?.globalCoupling;
+        : context.select<RepoEmbeddingState, RepoNativeEmbedding?>(
+            (state) => state.embeddingFor(repoPath),
+          );
     final status = context
         .select<RepositoryState, RepositoryStatus?>((state) => state.status);
     final statusError =
@@ -5547,13 +5571,17 @@ class _ChangesPageState extends State<ChangesPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         final couplingState = context.read<FileCouplingState>();
+        // Warm the gyat lattice for its remaining consumers (diff shell,
+        // filament, AI flows) — the changes-page coupling overlay no longer
+        // reads it (the eigenAddress-histogram sub-signal was retired by the
+        // holdout axis audit; the repo-native bag + charges carry content
+        // coupling now).
         warmGyatForRepo(repoPath);
+        // Repo-native embedding: fire-and-forget background build, cached per
+        // HEAD. When it lands, RepoEmbeddingState notifies → the page rebuilds
+        // → the spectral pass re-runs with the embedding.
+        unawaited(context.read<RepoEmbeddingState>().loadForRepo(repoPath));
         final couplingFuture = couplingState.loadForRepo(repoPath);
-        // Await GYAT in parallel — when it lands, trigger a rebuild so
-        // the spectral coupling key flips from gyat=false to gyat=true.
-        unawaited(gyatForRepo(repoPath).then((_) {
-          if (mounted) setState(() {});
-        }).catchError((_) {}));
         await couplingFuture;
         if (!mounted) return;
         // Chain: once the coupling matrix is warm, immediately warm the
@@ -5585,9 +5613,9 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         paths: status.files.map((f) => f.path).toList(),
         couplingMatrix: couplingMatrix,
-        gyatCoupling: gyatCoupling,
         statsVolatility: logosForDim?.stats.volatility,
         statsIntegrity: logosForDim?.stats.integrityByPath,
+        embedding: repoEmbedding,
       );
     }
     // Detect repo or branch switch — cancel any pending saves,
@@ -6213,6 +6241,14 @@ class _ChangesPageState extends State<ChangesPage> {
                                             : clusters.byPath[subjectPath];
                                         double? peerScore;
                                         bool isRailSubject = false;
+                                        // Charge receipts for the (this row,
+                                        // subject) pair — the shared tokens that
+                                        // made the two couple. Only populated for
+                                        // an active peer so the stripe tooltip
+                                        // explains the bulge exactly.
+                                        List<CouplingReceipt> peerReceipts =
+                                            const [];
+                                        bool peerIsLo = false;
                                         if (subjectPath != null &&
                                             subjectCid != null &&
                                             subjectCid ==
@@ -6230,6 +6266,12 @@ class _ChangesPageState extends State<ChangesPage> {
                                                 subjectPath,
                                                 file.path,
                                                 couplingMatrix);
+                                            peerReceipts = _changeset
+                                                .receiptsFor(
+                                                    file.path, subjectPath);
+                                            peerIsLo = file.path
+                                                    .compareTo(subjectPath) <
+                                                0;
                                           }
                                         }
                                         final row = _FileRow(
@@ -6246,6 +6288,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                           inRealCluster: inRealCluster,
                                           peerScore: peerScore,
                                           isRailSubject: isRailSubject,
+                                          peerReceipts: peerReceipts,
+                                          peerIsLo: peerIsLo,
                                           dimOpacity: _fileDimFor(file.path),
                                           flowFragility:
                                               _flowFragility[file.path] ?? 0.0,
@@ -6369,6 +6413,10 @@ class _ChangesPageState extends State<ChangesPage> {
                                             child: _CouplingNudgeBanner(
                                               tokens: t,
                                               nudges: nudges,
+                                              receiptsFor:
+                                                  _changeset.receiptsFor,
+                                              ledger:
+                                                  _nudgeLedgerFor(repoPath),
                                               onAdd: (path) =>
                                                   _toggleIncluded(path, true),
                                             ),
@@ -12078,6 +12126,15 @@ class _FileRow extends StatefulWidget {
   /// True iff the mouse is over this row's own stripe.
   final bool isRailSubject;
 
+  /// Charge receipts for the (this row, rail subject) pair — the shared tokens
+  /// that made them couple. Empty unless this row is an active peer. Surfaced
+  /// as a stripe tooltip so the coupling bulge explains itself.
+  final List<CouplingReceipt> peerReceipts;
+
+  /// True iff this row's path is the lex-smaller of the pair, so receipt
+  /// lineA/lineB reorient to show this row's line first.
+  final bool peerIsLo;
+
   /// Called when the mouse enters this row's stripe. Null for non-clustered
   /// rows (no meaningful hover target).
   final VoidCallback? onRailEnter;
@@ -12121,6 +12178,8 @@ class _FileRow extends StatefulWidget {
     this.inRealCluster = false,
     this.peerScore,
     this.isRailSubject = false,
+    this.peerReceipts = const [],
+    this.peerIsLo = false,
     this.onRailEnter,
     this.onRailExit,
     this.onSecondaryTap,
@@ -12208,6 +12267,8 @@ class _FileRowState extends State<_FileRow> {
                 inRealCluster: widget.inRealCluster,
                 peerScore: widget.peerScore,
                 isRailSubject: widget.isRailSubject,
+                peerReceipts: widget.peerReceipts,
+                peerIsLo: widget.peerIsLo,
                 connectTop: widget.stripeConnectTop,
                 connectBottom: widget.stripeConnectBottom,
               ),
@@ -12416,6 +12477,8 @@ class _RailStripe extends StatelessWidget {
   final bool inRealCluster;
   final double? peerScore;
   final bool isRailSubject;
+  final List<CouplingReceipt> peerReceipts;
+  final bool peerIsLo;
   final bool connectTop;
   final bool connectBottom;
 
@@ -12425,6 +12488,8 @@ class _RailStripe extends StatelessWidget {
     required this.inRealCluster,
     required this.peerScore,
     required this.isRailSubject,
+    required this.peerReceipts,
+    required this.peerIsLo,
     required this.connectTop,
     required this.connectBottom,
   });
@@ -12455,7 +12520,7 @@ class _RailStripe extends StatelessWidget {
     // Reserve the max rail width (5) so adjacent rows don't jitter when
     // one of them becomes the subject and widens. Stripe sizes inside
     // this slot; nothing in the row re-lays out.
-    return SizedBox(
+    Widget stripe = SizedBox(
       width: 5,
       child: Padding(
         padding: EdgeInsets.only(
@@ -12483,6 +12548,22 @@ class _RailStripe extends StatelessWidget {
         ),
       ),
     );
+    // Coupling receipts: the exact shared tokens (with charges + lines) behind
+    // this peer's bulge. Reorient lineA/lineB so this row's line comes first,
+    // matching the nudge chip's path-first idiom. Only for active peers.
+    if (peerReceipts.isNotEmpty && !isRailSubject) {
+      final receiptLines = [
+        for (final r in peerReceipts.take(2))
+          '${r.token} ⚡${(r.charge * 100).round()}%'
+              '${r.lineA > 0 && r.lineB > 0 ? ' · L${peerIsLo ? r.lineA : r.lineB}↔L${peerIsLo ? r.lineB : r.lineA}' : ''}',
+      ].join('\n');
+      stripe = Tooltip(
+        message: receiptLines,
+        waitDuration: const Duration(milliseconds: 400),
+        child: stripe,
+      );
+    }
+    return stripe;
   }
 }
 
@@ -14640,10 +14721,21 @@ class _CouplingNudgeBanner extends StatelessWidget {
   final List<CouplingNudge> nudges;
   final void Function(String path) onAdd;
 
+  /// Receipts lookup for a pair (unordered) — the shared charged tokens that
+  /// carried the coupling, surfaced in each chip's tooltip so the nudge can
+  /// say WHY, with line numbers. Empty list = no receipt evidence.
+  final List<CouplingReceipt> Function(String a, String b) receiptsFor;
+
+  /// Records shown/accepted outcomes so the engine's prediction can later be
+  /// juried against what the user actually did.
+  final NudgeLedger ledger;
+
   const _CouplingNudgeBanner({
     required this.tokens,
     required this.nudges,
     required this.onAdd,
+    required this.receiptsFor,
+    required this.ledger,
   });
 
   @override
@@ -14662,6 +14754,8 @@ class _CouplingNudgeBanner extends StatelessWidget {
                 _CouplingNudgeChip(
                   tokens: tokens,
                   nudge: nudges[i],
+                  receipts: receiptsFor(nudges[i].path, nudges[i].anchor),
+                  ledger: ledger,
                   onAdd: () => onAdd(nudges[i].path),
                 ),
               ],
@@ -14694,10 +14788,21 @@ class _CouplingNudgeChip extends StatefulWidget {
   final CouplingNudge nudge;
   final VoidCallback onAdd;
 
+  /// The pair's charge receipts — shared tokens with measured coupling
+  /// charges and first-occurrence lines. Rendered into the tooltip so the
+  /// nudge explains itself exactly; empty when the pair coupled via history
+  /// or flow rather than charges.
+  final List<CouplingReceipt> receipts;
+
+  /// Sink for the shown/accepted outcome of this nudge.
+  final NudgeLedger ledger;
+
   const _CouplingNudgeChip({
     required this.tokens,
     required this.nudge,
     required this.onAdd,
+    required this.ledger,
+    this.receipts = const [],
   });
 
   @override
@@ -14706,6 +14811,30 @@ class _CouplingNudgeChip extends StatefulWidget {
 
 class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
   bool _hovered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // The engine's prediction, surfaced. Debounced per (path, anchor) inside
+    // the ledger so scroll rebuilds don't spam it.
+    widget.ledger.recordShown(
+      path: widget.nudge.path,
+      anchor: widget.nudge.anchor,
+      score: widget.nudge.score,
+      receipts: widget.receipts.isNotEmpty,
+    );
+  }
+
+  void _accept() {
+    // Ground truth: the user acted on the nudge.
+    widget.ledger.recordAccepted(
+      path: widget.nudge.path,
+      anchor: widget.nudge.anchor,
+      score: widget.nudge.score,
+      receipts: widget.receipts.isNotEmpty,
+    );
+    widget.onAdd();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14717,16 +14846,28 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
       widget.nudge.anchor,
       score,
     ).toColor();
+    // Receipts line: the exact shared tokens that carried the coupling, with
+    // their measured charges and where they live. Bilinear decomposition means
+    // this IS the score, not a rationalization of it. Receipt lineA/lineB are
+    // keyed lex-smaller/greater; reorient so the nudged file's line comes
+    // first, matching the message's path-first orientation.
+    final nudgeIsLo = widget.nudge.path.compareTo(widget.nudge.anchor) < 0;
+    final receiptLines = [
+      for (final r in widget.receipts.take(2))
+        '${r.token} ⚡${(r.charge * 100).round()}%'
+            '${r.lineA > 0 && r.lineB > 0 ? ' · L${nudgeIsLo ? r.lineA : r.lineB}↔L${nudgeIsLo ? r.lineB : r.lineA}' : ''}',
+    ].join('\n');
     return Tooltip(
       message:
-          '${widget.nudge.path}\ncouples with ${pathBasename(widget.nudge.anchor)} · ${(score * 100).round()}%',
+          '${widget.nudge.path}\ncouples with ${pathBasename(widget.nudge.anchor)} · ${(score * 100).round()}%'
+          '${receiptLines.isEmpty ? '' : '\n$receiptLines'}',
       waitDuration: const Duration(milliseconds: 400),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
         child: GestureDetector(
-          onTap: widget.onAdd,
+          onTap: _accept,
           child: AnimatedContainer(
             duration: context.motion(const Duration(milliseconds: 150)),
             curve: Curves.easeOutCubic,

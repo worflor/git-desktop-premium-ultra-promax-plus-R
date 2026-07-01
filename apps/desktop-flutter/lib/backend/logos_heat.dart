@@ -281,4 +281,55 @@ extension SpectralHeat on SpectralBasis {
     }
     return out;
   }
+
+  /// De-hubbed companion to [heatKernelProfileTable]: the same per-node
+  /// heat-kernel diagonal with the **ground-state (λ ≈ 0) modes removed**.
+  ///
+  ///     HKS_exc(i, t) = Σ_{λⱼ > 0} uⱼ[i]²·e^{−t·λⱼ}
+  ///                   = HKS(i, t) − Σ_{λⱼ ≈ 0} uⱼ[i]²
+  ///
+  /// **Why this is the derived de-hubbing correction, not a tuning
+  /// knob.** The kernel of `L_sym` is spanned, per connected component,
+  /// by the vectors `uⱼ[i] ∝ √deg(i)`. Their squared projection at a
+  /// node therefore sums to `Σ_{λⱼ ≈ 0} uⱼ[i]² = deg(i)/vol(component)`
+  /// — *exactly* the heat localisation a node is owed under the
+  /// configuration (degree-sequence) null model. That ground term is
+  /// the popularity baseline: it grows with raw degree, so barn-door
+  /// hubs (main.dart, dtos.dart-style barrels) dominate the full
+  /// diagonal by degree alone. Subtracting it leaves the excited
+  /// remainder — the heat a node retains *beyond* what its degree
+  /// forces — which is what genuine bridging / cut-vertex structure
+  /// produces. This is the same DC/ground projection [projectOutGround]
+  /// applies to a density, specialised to the heat-kernel diagonal
+  /// (observed minus expected-under-degree-sequence).
+  ///
+  /// Every retained term is ≥ 0, so the result is a valid non-negative
+  /// centrality; it reads ≈ 0 for a node whose retention is fully
+  /// degree-explained, and stays high for a node that bridges clusters.
+  ///
+  /// alpha-math proof: ../alpha-math/manifold-charge-proofs.ts (COUNT 3) —
+  /// exact over Q: (D-A)*1 = 0 implies L_sym*(D^{1/2} 1) = 0 implies
+  /// L^k*Pi0 = 0 for all k>=1, so exp(-tL)*Pi0 = Pi0 term-by-term for EVERY
+  /// t, and diag(Pi0) = deg/vol exactly. The subtraction below removes
+  /// precisely the degree baseline — a theorem, not a calibration.
+  Float64List excitedHeatKernelProfileTable(List<double> times) {
+    final m = times.length;
+    final out = Float64List(n * m);
+    if (n == 0 || k == 0 || m == 0) return out;
+    // Ground modes are the leading (sorted-ascending) λ ≈ 0 block; the
+    // excited spectrum begins at [firstExcitedIndex]. Skipping that block
+    // is what removes the degree-sequence baseline.
+    for (var j = firstExcitedIndex; j < k; j++) {
+      final base = j * n;
+      final lambda = eigenvalues[j];
+      for (var tIdx = 0; tIdx < m; tIdx++) {
+        final decay = math.exp(-times[tIdx] * lambda);
+        for (var i = 0; i < n; i++) {
+          final u = eigenvectors[base + i];
+          out[i * m + tIdx] += decay * u * u;
+        }
+      }
+    }
+    return out;
+  }
 }

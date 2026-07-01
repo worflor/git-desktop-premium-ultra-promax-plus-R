@@ -28,8 +28,9 @@ void main(List<String> args) async {
       if (gitRoot != null) params['repo'] = gitRoot;
     }
 
-    final slow = const {'review', 'review-evidence', 'muse', 'impact', 'dream'}
-        .contains(method);
+    final slow =
+        const {'review', 'review-evidence', 'muse', 'impact', 'dream', 'deadcode'}
+            .contains(method);
     if (slow) {
       final repo = params['repo'] as String? ?? '.';
       final short = repo.split('/').last.split('\\').last;
@@ -242,6 +243,47 @@ String _timeFmt(int ms) {
 
 // ── Pretty printers ──────────────────────────────────────────────
 
+void _printDeadCode(Map<String, dynamic> result, int elapsedMs) {
+  if (result['note'] != null) {
+    stdout.writeln(_dim(result['note'].toString()));
+    return;
+  }
+  final packages = result['packages'] as List<dynamic>? ?? [];
+  final fullyDead = result['fullyDead'] as List<dynamic>? ?? [];
+  final zombies = result['testZombies'] as List<dynamic>? ?? [];
+  for (final pkg in packages) {
+    final pm = pkg as Map<String, dynamic>;
+    if (pm['hasAppEntry'] == false) {
+      stdout.writeln('${_bold(pm['package'].toString())} '
+          '${_dim('${pm['libFiles']} lib files · no app entry, reachability N/A')}');
+    } else {
+      stdout.writeln('${_bold(pm['package'].toString())} '
+          '${_dim('${pm['alive']}/${pm['libFiles']} reachable · ${pm['dead']} dead · ${pm['joints']} joints')}');
+    }
+  }
+  stdout.writeln('\n${_bold('Fully dead')} '
+      '${_dim('(referenced by nothing): ${fullyDead.length}')}');
+  for (final d in fullyDead) {
+    stdout.writeln('  ${(d as Map<String, dynamic>)['path']}');
+  }
+  stdout.writeln('\n${_bold('Test-zombies')} '
+      '${_dim('(only a test imports, dead in-app): ${zombies.length}')}');
+  for (final z in zombies) {
+    stdout.writeln('  ${(z as Map<String, dynamic>)['path']}');
+  }
+  final joints = result['joints'] as List<dynamic>? ?? [];
+  stdout.writeln('\n${_bold('Load-bearing joints')} '
+      '${_dim('(delete → N files orphaned): ${joints.length}')}');
+  for (final j in joints.take(15)) {
+    final jm = j as Map<String, dynamic>;
+    stdout.writeln('  ${jm['load'].toString().padLeft(4)}  ${jm['path']}');
+  }
+  if (joints.length > 15) {
+    stdout.writeln(_dim('  … ${joints.length - 15} more'));
+  }
+  stdout.writeln(_dim('\n${(elapsedMs / 1000).toStringAsFixed(1)}s'));
+}
+
 void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
   if (decoded is! Map) {
     stdout.writeln(decoded);
@@ -267,6 +309,9 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
       break;
     case 'muse':
       _printMuse(result, elapsedMs);
+      break;
+    case 'deadcode':
+      _printDeadCode(result, elapsedMs);
       break;
     case 'status':
       stdout.writeln('${result['branch']} '
@@ -590,6 +635,7 @@ Commands:
   status                        Branch, ahead/behind, dirty files
   review [--files <paths>]      AI code review (default: dirty files)
   review-evidence [--files ..]  Gathered review evidence + telemetry (no model call)
+  deadcode                      Files no live surface imports (dead + test-zombies)
   muse [--files <paths>]        AI brainstorm (default: dirty files)
   blast-radius --files <paths>  Co-change neighbors
   suggest --files <paths>       Coupled files you might have missed
