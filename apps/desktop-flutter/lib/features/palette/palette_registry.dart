@@ -1911,8 +1911,13 @@ class _Swatch extends StatelessWidget {
   const _Swatch(this.name, this.color, this.t, this.geo);
   @override
   Widget build(BuildContext context) {
+    // Contrast is against the SWATCH color (arbitrary), not the theme chrome,
+    // so black/white chosen by the swatch's own luminance is correct here.
+    // Theme ink (textStrong) can be dark on a dark swatch or light on a light
+    // one and go illegible — that's what the luminance branch exists to avoid.
     final textColor = color.computeLuminance() > 0.45
-        ? Colors.black54 : Colors.white60;
+        ? Colors.black54
+        : Colors.white60;
     return Padding(
       padding: const EdgeInsets.only(right: 2, bottom: 2),
       child: Container(

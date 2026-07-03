@@ -10,6 +10,7 @@ import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
+import '../../ui/material_surface.dart';
 import '../../ui/tokens.dart';
 import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_models.dart' show parseUnifiedDiff;
@@ -284,19 +285,12 @@ class _ConflictWindow extends StatelessWidget {
       elevation: 0,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
-        child: Container(
-          decoration: BoxDecoration(
-            color: t.bg1,
-            borderRadius: BorderRadius.circular(geo.cardRadius),
-            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.2)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
+        child: MaterialSurface(
+          tone: AppMaterialTone.surface1,
+          elevated: true,
+          radius: geo.cardRadius,
+          borderColor: t.chromeBorder,
+          borderAlpha: 0.2,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

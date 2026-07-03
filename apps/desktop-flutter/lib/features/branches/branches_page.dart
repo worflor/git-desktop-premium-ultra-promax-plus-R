@@ -4781,7 +4781,8 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(11),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.pillRadius),
             border: Border.all(color: border, width: 1),
           ),
           child: Row(
@@ -4862,23 +4863,16 @@ class _KeyboardHelpOverlay extends StatelessWidget {
         curve: shader.safeCurve,
         color: t.bg0.withValues(alpha: 0.78),
         child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 460),
-            margin: const EdgeInsets.all(32),
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
-            decoration: BoxDecoration(
-              color: t.surface1,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: t.chromeBorder),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.4),
-                  blurRadius: 30,
-                  offset: const Offset(0, 12),
-                ),
-              ],
-            ),
-            child: Column(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: MaterialSurface(
+              tone: AppMaterialTone.surface1,
+              elevated: true,
+              radius: context.surfaceShader.geometry.cardRadius,
+              borderColor: t.chromeBorder,
+              constraints: const BoxConstraints(maxWidth: 460),
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -4935,6 +4929,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
                 ),
               ],
             ),
+            ),
           ),
         ),
       ),
@@ -4981,7 +4976,7 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
         setState(() => _pressed = p);
       },
       child: AnimatedScale(
-        duration: AppMotion.snap,
+        duration: context.motion(AppMotion.snap),
         curve: AppMotion.snapCurve,
         scale: _pressed ? 0.97 : 1.0,
         child: Padding(
@@ -5130,7 +5125,7 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
           child: RotationTransition(
             turns: _spin,
             child: AnimatedDefaultTextStyle(
-              duration: AppMotion.snap,
+              duration: context.motion(AppMotion.snap),
               curve: AppMotion.snapCurve,
               style: TextStyle(
                 color: widget.active
@@ -5551,7 +5546,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                       setState(() => _pressed = p);
                     },
                     child: AnimatedScale(
-                      duration: AppMotion.snap,
+                      duration: context.motion(AppMotion.snap),
                       curve: AppMotion.snapCurve,
                       scale: _pressed ? 0.99 : 1.0,
                       child: Column(
@@ -8853,27 +8848,21 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
               ),
               child: Material(
                 color: Colors.transparent,
-                child: IntrinsicWidth(
-                  child: Container(
-                    constraints: const BoxConstraints(minWidth: 200),
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    decoration: BoxDecoration(
-                      color: t.surface1,
-                      borderRadius: BorderRadius.circular(
-                          ctx.surfaceShader.geometry.cardRadius),
-                      border: Border.all(
-                          color: t.chromeBorder.withValues(alpha: 0.45)),
-                      boxShadow: [
-                        BoxShadow(
-                          // Was hardcoded `Colors.black.withValues(0.35)`,
-                          // wrong-tinted on themes with non-black ambient
-                          // (Halo gold, Aether blue, Phosphor green).
-                          color: t.shadowElev.withValues(alpha: 0.4),
-                          blurRadius: 18,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
+                // IntrinsicWidth must live INSIDE MaterialSurface: the
+                // glass/phosphor shader path wraps a LayoutBuilder, which
+                // throws when an IntrinsicWidth ancestor queries its
+                // intrinsics. Wrapping the surface would crash this menu on
+                // Glass/Phosphor themes (same fix as context_menu.dart).
+                child: MaterialSurface(
+                  tone: AppMaterialTone.surface1,
+                  elevated: true,
+                  glaze: true,
+                  radius: ctx.surfaceShader.geometry.cardRadius,
+                  borderColor: t.chromeBorder,
+                  borderAlpha: 0.28,
+                  constraints: const BoxConstraints(minWidth: 200),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: IntrinsicWidth(
                     child: StatefulBuilder(
                       builder: (ctx, setLocal) => Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -13028,7 +13017,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.isBusy ? null : widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(AppMotion.snap),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           decoration: BoxDecoration(
             color: _hovered ? t.itemHoverBg : Colors.transparent,

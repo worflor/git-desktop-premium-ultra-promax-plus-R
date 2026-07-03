@@ -4869,7 +4869,7 @@ class _ProviderPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: t.accentBright.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
         border: Border.all(color: t.accentBright.withValues(alpha: 0.22)),
       ),
       child: Text(
@@ -5166,8 +5166,6 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final radius =
-        themeDefinitionFor(t.id).shader.geometry.radius.clamp(0, 18).toDouble();
     final filtered = _filtered;
     final providerIds = _activeProviderIds;
 
@@ -5178,21 +5176,16 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
 
     return Material(
       color: Colors.transparent,
-      child: Container(
-        decoration: BoxDecoration(
-          color: t.surface1,
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.25)),
-          boxShadow: [
-            BoxShadow(
-              color: t.shadowElev.withValues(alpha: 0.4),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
+      child: MaterialSurface(
+        tone: AppMaterialTone.surface1,
+        elevated: true,
+        glaze: true,
+        radius: context.surfaceShader.geometry.cardRadius,
+        borderColor: t.chromeBorder,
+        borderAlpha: 0.25,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
+          borderRadius:
+              BorderRadius.circular(context.surfaceShader.geometry.cardRadius),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 380),
             child: Column(
@@ -9507,7 +9500,7 @@ class _SortGuideBadge extends StatelessWidget {
         color: previewing
             ? tokens.textMuted.withValues(alpha: 0.10)
             : tokens.accentBright.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
       ),
       child: AnimatedDefaultTextStyle(
         duration: context.motion(const Duration(milliseconds: 140)),
@@ -10188,7 +10181,7 @@ class _HzBadge extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(999),
+            borderRadius: BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
           ),
           // Monospace with tabular figures so the digits don't shimmy as
           // they change — the badge reads as a steady readout, not a
@@ -10325,7 +10318,9 @@ class _CheckboxRow extends StatelessWidget {
                           ? (isBlackboard ? Colors.transparent : t.sliderThumb)
                           : t.inputBg,
                       borderRadius: BorderRadius.circular(
-                          isCrafty ? 0 : (isBlackboard ? 2 : 4)),
+                          context.surfaceShader.geometry.tinyRadius),
+                      // Blackboard's white border + Crafty's black etch-shadow
+                      // below are deliberate per-theme special-cases, not drift.
                       border: Border.all(
                         color: value
                             ? (isCrafty

@@ -51,7 +51,8 @@ class CommitTagPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         color: pillColor.withValues(alpha: emphasis.bgAlpha * cMul),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.badgeRadius),
         border: Border.all(
           color: pillColor.withValues(alpha: emphasis.borderAlpha * cMul),
           width: isBorrowed ? 0.6 : 0.8,

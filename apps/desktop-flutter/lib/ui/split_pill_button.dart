@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'animated_icons.dart';
-import 'design_primitives.dart';
 import 'mosaic_seam.dart';
 import 'tokens.dart';
 
@@ -130,11 +129,21 @@ class _SplitPillButtonState extends State<SplitPillButton> {
     final railH = maxH + _vPad * 2;
     final jitter = cellW * kMosaicJitterFrac;
 
+    // Theme-responsive corner: gently rounded on soft themes, square on
+    // sharp/pixelated ones (Crafty/Kirby resolve pillRadius to 0), matching
+    // every other button in the app rather than staying a fixed stadium.
+    final radius = context.surfaceShader.geometry.pillRadius;
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: t.surface2,
-        borderRadius: AppRadii.pillAll,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      // Border rides on TOP of the clipped cells (foreground, not part of the
+      // fill decoration) so a hovered half's wash meets the rounded edge with
+      // no background hairline showing through between the wash and the stroke.
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.16)),
       ),
       child: SizedBox(

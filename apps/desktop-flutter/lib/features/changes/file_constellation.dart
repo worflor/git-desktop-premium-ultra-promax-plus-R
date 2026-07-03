@@ -29,6 +29,8 @@ import 'package:flutter/material.dart';
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
+import '../../ui/design_primitives.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 
 // Candidate, a provisional commit the Atlas proposes
@@ -526,10 +528,10 @@ class _CandidateCardState extends State<_CandidateCard>
       onExit: (_) => _setHover(false),
       child: AnimatedOpacity(
         opacity: dimAlpha,
-        duration: const Duration(milliseconds: 160),
+        duration: context.motion(AppMotion.fade),
         curve: Curves.easeOut,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
+          duration: context.motion(AppMotion.fade),
           decoration: BoxDecoration(
             color: _hovered
                 ? t.surface1.withValues(alpha: 0.45)
@@ -564,7 +566,7 @@ class _CandidateCardState extends State<_CandidateCard>
                           onTap: _onGlyphTap,
                           child: AnimatedScale(
                             scale: _glyphHovered ? 1.06 : 1.0,
-                            duration: const Duration(milliseconds: 140),
+                            duration: context.motion(AppMotion.fade),
                             curve: Curves.easeOut,
                             child: _CandidateGlyph(
                               tokens: t,
@@ -825,7 +827,7 @@ class _FileChipState extends State<_FileChip> {
           onDoubleTap: widget.onOpen,
           onSecondaryTap: widget.onOpen,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
+            duration: context.motion(AppMotion.snap),
             padding:
                 const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
@@ -900,7 +902,7 @@ class _OrbitChipState extends State<_OrbitChip> {
         child: GestureDetector(
           onTap: widget.onAdd,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
+            duration: context.motion(AppMotion.snap),
             padding:
                 const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             decoration: BoxDecoration(
@@ -1251,7 +1253,7 @@ class _LeftoversBench extends StatelessWidget {
     final t = tokens;
     return AnimatedOpacity(
       opacity: dimmed ? 0.45 : 1.0,
-      duration: const Duration(milliseconds: 160),
+      duration: context.motion(AppMotion.fade),
       curve: Curves.easeOut,
       child: Wrap(
         spacing: 5,

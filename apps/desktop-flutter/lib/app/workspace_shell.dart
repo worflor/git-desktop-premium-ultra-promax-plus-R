@@ -3477,7 +3477,8 @@ class _BranchPillState extends State<_BranchPill> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: _hovered ? t.itemHoverBg : t.surface0,
-                borderRadius: BorderRadius.circular(999),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.pillRadius),
                 border: Border.all(color: borderColor),
               ),
               child: Row(
@@ -3517,7 +3518,8 @@ class _BranchPillState extends State<_BranchPill> {
                                 horizontal: 5, vertical: 1),
                             decoration: BoxDecoration(
                               color: t.stateModified.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(999),
+                              borderRadius: BorderRadius.circular(
+                                  context.surfaceShader.geometry.pillRadius),
                               border: Border.all(
                                   color:
                                       t.stateModified.withValues(alpha: 0.3)),

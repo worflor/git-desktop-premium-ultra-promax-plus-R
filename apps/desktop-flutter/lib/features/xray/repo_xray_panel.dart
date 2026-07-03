@@ -3654,7 +3654,8 @@ class _PivotList extends StatelessWidget {
       glaze: false,
       borderAlpha: 0.14,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.cardRadius),
         child: ListView.builder(
           padding: EdgeInsets.zero,
           shrinkWrap: shrinkWrap,
@@ -3669,7 +3670,7 @@ class _PivotList extends StatelessWidget {
               child: GestureDetector(
                 onTap: () => onPivotSelected(p.commitHash),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 80),
+                  duration: context.motion(AppMotion.snap),
                   height: 36,
                   decoration: BoxDecoration(
                     color: active
@@ -3798,7 +3799,7 @@ class _SignalRow extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(AppMotion.snap),
           decoration: BoxDecoration(
             color: active
                 ? t.itemActiveBg
@@ -4048,7 +4049,7 @@ class _MiniButtonState extends State<_MiniButton> {
         onPointerUp: (_) => setState(() => _pressed = false),
         onPointerCancel: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(AppMotion.snap),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
               color: chrome.background,
@@ -5270,7 +5271,7 @@ class _SummaryActionButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: radius,
       builder: (context, hovered) => AnimatedContainer(
-        duration: AppMotion.snap,
+        duration: context.motion(AppMotion.snap),
         curve: AppMotion.snapCurve,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(

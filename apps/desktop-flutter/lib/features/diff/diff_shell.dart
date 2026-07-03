@@ -6012,13 +6012,20 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final tone = c == null ? _PinnedPanelTone.stable : _toneFor(c, widget.past);
     final future =
         c == null ? const <(String, String)>[] : _futureDestinations(c);
-    return Container(
+    return MaterialSurface(
+      tone: AppMaterialTone.surface1,
+      // Docked, bottom-anchored panel: keep it flush + square + flat like the
+      // original Container. It still routes through the shader material (so
+      // glass/phosphor read as frosted), but must NOT float as a rounded,
+      // shadowed card — radius 0 and elevated:false, its only edge treatment
+      // being the top divider. Without these it inherits cardRadius + a drop
+      // shadow, and the straight top border cuts across the rounded corners.
+      radius: 0,
+      elevated: false,
+      innerHighlight: true,
       constraints: const BoxConstraints(maxHeight: 304),
-      decoration: BoxDecoration(
-        color: t.surface1,
-        border: Border(
-          top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.4)),
-        ),
+      border: Border(
+        top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.4)),
       ),
       child: Focus(
         focusNode: _focusNode,
@@ -7157,13 +7164,13 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   Color _toneColor(AppTokens t, _PinnedPanelTone tone) {
     switch (tone) {
       case _PinnedPanelTone.hot:
-        return const Color(0xFFE2A23B);
+        return AppSeverityPalette.caution;
       case _PinnedPanelTone.novel:
         return t.accentBright;
       case _PinnedPanelTone.contested:
-        return const Color(0xFFDD6B6B);
+        return AppSeverityPalette.risk;
       case _PinnedPanelTone.spreading:
-        return const Color(0xFF72C29A);
+        return AppSeverityPalette.safe;
       case _PinnedPanelTone.stable:
         return t.textMuted;
     }
@@ -7667,7 +7674,8 @@ class _HunkInlineHint extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: t.surface1.withValues(alpha: 0.55),
-              borderRadius: BorderRadius.circular(999),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.pillRadius),
               border: Border.all(
                 color: t.chromeBorder.withValues(alpha: 0.22),
               ),

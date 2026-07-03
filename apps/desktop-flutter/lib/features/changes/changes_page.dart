@@ -9217,12 +9217,10 @@ class _CommitReviewPane extends StatelessWidget {
                         ],
                       ),
                     ),
-                    _ReviewVerdictChip(tokens: tokens, verdict: review.verdict),
-                    const SizedBox(width: 6),
-                    _ReviewScorePill(
+                    _ReviewVerdictBadge(
                       tokens: tokens,
-                      score: review.score,
                       verdict: review.verdict,
+                      score: review.score,
                       guardrailStage: review.guardrailStage,
                     ),
                     if (review.hasVerificationTrace) ...[
@@ -9575,204 +9573,411 @@ class _StaleScopeBanner extends StatelessWidget {
   }
 }
 
-class _ReviewVerdictChip extends StatelessWidget {
+/// The review verdict and its score cast as ONE procedurally-built shape: a
+/// rounded-left label bar whose top and bottom edges swell — through tangent
+/// shoulders — into a guardrail-shaped node on the right that holds the score.
+/// It is a single continuous outline (no gap, no seam, no glued-on chip); the
+/// node takes the guardrail shape, generated per stage so the whole object
+/// hardens as the review gets stricter:
+///   0 loose    → circle
+///   1 balanced → rounded square
+///   2 strict   → shield
+///   3 paranoid → octagon with battlements
+/// The node's own perimeter doubles as the score ring.
+const double _vbH = 28; // total height
+const double _vbBodyHalf = 10; // body half-height
+const double _vbR = 14; // node radius (bulges past the body: 14 > 10)
+const double _vbOverlap = 8; // node's left flank overlaps the body by this
+const double _vbLabelPad = 12;
+const double _vbPhiTop = 232; // where the top shoulder meets the node
+const double _vbPhiBot = 128; // 360 - phiTop (mirror)
+
+double _vbRad(double deg) => deg * math.pi / 180.0;
+
+class _ReviewVerdictBadge extends StatelessWidget {
   final AppTokens tokens;
   final String verdict;
+  final int score;
+  final int guardrailStage; // 0=loose, 1=balanced, 2=strict, 3=paranoid
 
-  const _ReviewVerdictChip({
+  const _ReviewVerdictBadge({
     required this.tokens,
     required this.verdict,
+    required this.score,
+    required this.guardrailStage,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = _reviewVerdictColor(verdict);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.24)),
-      ),
-      child: Text(
-        verdict,
-        style: TextStyle(
+    final scaler = MediaQuery.textScalerOf(context);
+    // Merge onto the ambient default style so the raw TextPainters inherit the
+    // app font family (a bare TextStyle would fall to the platform default).
+    final base = DefaultTextStyle.of(context).style;
+
+    final labelPainter = TextPainter(
+      text: TextSpan(
+        text: verdict,
+        style: base.copyWith(
           color: color,
           fontSize: 10.5,
           fontWeight: FontWeight.w700,
         ),
       ),
-    );
-  }
-}
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
 
-Color _reviewVerdictColor(String verdict) =>
-    AppSeverityPalette.fromVerdict(verdict);
-
-class _ReviewScorePill extends StatelessWidget {
-  final AppTokens tokens;
-  final int score;
-  final String verdict;
-  final int guardrailStage; // 0=loose, 1=balanced, 2=strict, 3=paranoid
-
-  const _ReviewScorePill({
-    required this.tokens,
-    required this.score,
-    required this.verdict,
-    required this.guardrailStage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final verdictColor = _reviewVerdictColor(verdict);
-    const size = 32.0;
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _ScoreRingPainter(
-          score: score,
-          verdictColor: verdictColor,
-          guardrailStage: guardrailStage,
-          bgColor: tokens.chromeBorder.withValues(alpha: 0.1),
+    final scorePainter = TextPainter(
+      text: TextSpan(
+        text: '$score',
+        style: base.copyWith(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
         ),
-        child: Center(
-          child: Text(
-            '$score',
-            style: TextStyle(
-              color: verdictColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
+
+    final pillW = _vbLabelPad * 2 + labelPainter.width;
+    final nodeCx = pillW - _vbOverlap + _vbR;
+    // Only the shield (stage 2) protrudes past the node radius; the rest fit
+    // inside _vbR.
+    final rightExtent = guardrailStage.clamp(0, 3) == 2 ? _vbR * 1.08 : _vbR;
+
+    return SizedBox(
+      width: nodeCx + rightExtent + 1,
+      height: _vbH,
+      child: CustomPaint(
+        painter: _VerdictBadgePainter(
+          color: color,
+          score: score,
+          guardrailStage: guardrailStage,
+          pillW: pillW,
+          labelPainter: labelPainter,
+          scorePainter: scorePainter,
         ),
       ),
     );
   }
 }
 
-class _ScoreRingPainter extends CustomPainter {
+/// Preview/eyeball hook for the private [_ReviewVerdictBadge]. Not used by the
+/// app — lets the render harness pump the badge with real fonts.
+@visibleForTesting
+class ReviewVerdictBadgePreview extends StatelessWidget {
+  final AppTokens tokens;
+  final String verdict;
   final int score;
-  final Color verdictColor;
   final int guardrailStage;
-  final Color bgColor;
-
-  const _ScoreRingPainter({
+  const ReviewVerdictBadgePreview({
+    super.key,
+    required this.tokens,
+    required this.verdict,
     required this.score,
-    required this.verdictColor,
     required this.guardrailStage,
-    required this.bgColor,
   });
 
-  /// Build the outline path for the guardrail shape.
-  /// 0 = circle, 1 = squished diamond, 2 = shield, 3 = fortress.
-  Path _shapePath(Offset center, double r) {
-    final cx = center.dx;
-    final cy = center.dy;
-    switch (guardrailStage.clamp(0, 3)) {
-      case 0:
-        return Path()..addOval(Rect.fromCircle(center: center, radius: r));
+  @override
+  Widget build(BuildContext context) => _ReviewVerdictBadge(
+        tokens: tokens,
+        verdict: verdict,
+        score: score,
+        guardrailStage: guardrailStage,
+      );
+}
 
-      case 1:
-        final rect = Rect.fromCircle(center: center, radius: r);
-        final cornerR = r * 0.38;
-        return Path()
-          ..addRRect(RRect.fromRectAndRadius(rect, Radius.circular(cornerR)));
+Color _reviewVerdictColor(String verdict) =>
+    AppSeverityPalette.fromVerdict(verdict);
 
-      case 2:
-        final w = r * 0.92;
-        final top = cy - r;
-        return Path()
-          ..moveTo(cx, top) // crown
-          ..lineTo(cx + w, cy - r * 0.5) // right shoulder
-          ..lineTo(cx + w, cy + r * 0.15) // right waist
-          ..quadraticBezierTo(
-              cx, cy + r * 1.05, cx, cy + r) // right curve → bottom point
-          ..quadraticBezierTo(cx, cy + r * 1.05, cx - w,
-              cy + r * 0.15) // bottom point → left curve
-          ..lineTo(cx - w, cy - r * 0.5) // left shoulder
-          ..close();
+class _VerdictBadgePainter extends CustomPainter {
+  final Color color;
+  final int score;
+  final int guardrailStage;
+  final double pillW;
+  final TextPainter labelPainter;
+  final TextPainter scorePainter;
 
-      default:
-        // Octagon with notched battlements at the cardinal points.
-        final pts = <Offset>[];
-        final notchDepth = r * 0.15;
-        for (int i = 0; i < 8; i++) {
-          final angle = -math.pi / 2 + (i / 8) * 2 * math.pi;
-          final nextAngle = -math.pi / 2 + ((i + 1) / 8) * 2 * math.pi;
-          // Outer vertex
-          pts.add(Offset(
-            cx + r * math.cos(angle),
-            cy + r * math.sin(angle),
-          ));
-          // Battlement notch at midpoint of each edge (inward)
-          final midAngle = (angle + nextAngle) / 2;
-          final notchR = r - notchDepth;
-          pts.add(Offset(
-            cx + notchR * math.cos(midAngle - 0.08),
-            cy + notchR * math.sin(midAngle - 0.08),
-          ));
-          pts.add(Offset(
-            cx + notchR * math.cos(midAngle + 0.08),
-            cy + notchR * math.sin(midAngle + 0.08),
-          ));
-        }
-        final path = Path()..moveTo(pts[0].dx, pts[0].dy);
-        for (int i = 1; i < pts.length; i++) {
-          path.lineTo(pts[i].dx, pts[i].dy);
-        }
-        path.close();
-        return path;
+  const _VerdictBadgePainter({
+    required this.color,
+    required this.score,
+    required this.guardrailStage,
+    required this.pillW,
+    required this.labelPainter,
+    required this.scorePainter,
+  });
+
+  static const double _cy = _vbH / 2;
+
+  Offset _onNode(double nodeCx, double phiDeg, [double scale = 1.0]) {
+    final p = _vbRad(phiDeg);
+    return Offset(nodeCx + _vbR * scale * math.cos(p),
+        _cy + _vbR * scale * math.sin(p));
+  }
+
+  // G1 control point: horizontal at the body edge, tangent to the node at P.
+  Offset _shoulderCtrl(Offset p, double phiDeg, double edgeY) {
+    final phi = _vbRad(phiDeg);
+    final tx = -math.sin(phi), ty = math.cos(phi);
+    final s = (edgeY - p.dy) / ty;
+    return Offset(p.dx + s * tx, edgeY);
+  }
+
+  // Appends the node's right profile (from P_top, clockwise through top/right/
+  // bottom, to P_bot) to [path] and the score-ring [ring]. These are the
+  // guardrail shapes — circle / shield / octagon-with-battlements. (Stage 1's
+  // rounded square is built in [_build]: its flat top wants S-curve shoulders,
+  // not the circle-tangent ones the round shapes use.)
+  void _rightProfile(Path path, Path ring, int stage, double nodeCx) {
+    final pBot = _onNode(nodeCx, _vbPhiBot);
+    final rect = Rect.fromCircle(center: Offset(nodeCx, _cy), radius: _vbR);
+    ring.moveTo(_onNode(nodeCx, _vbPhiTop).dx, _onNode(nodeCx, _vbPhiTop).dy);
+
+    void line(Offset o) {
+      path.lineTo(o.dx, o.dy);
+      ring.lineTo(o.dx, o.dy);
     }
+
+    void arc(double fromDeg, double toDeg) {
+      path.arcTo(rect, _vbRad(fromDeg), _vbRad(toDeg - fromDeg), false);
+      ring.arcTo(rect, _vbRad(fromDeg), _vbRad(toDeg - fromDeg), false);
+    }
+
+    switch (stage.clamp(0, 3)) {
+      case 0: // loose — circle
+        arc(_vbPhiTop, _vbPhiBot + 360);
+        break;
+
+      case 2: // strict — heraldic shield: wide flat shoulders → short point
+        final tShoulder = Offset(nodeCx + _vbR * 0.55, _cy - _vbR * 0.82);
+        final bShoulder = Offset(nodeCx + _vbR * 0.55, _cy + _vbR * 0.82);
+        final tip = Offset(nodeCx + _vbR * 1.08, _cy);
+        arc(_vbPhiTop, 258); // round the top-left corner
+        line(tShoulder); // flat top edge
+        line(tip); // straight side down to the point
+        line(bShoulder); // straight side back up
+        line(_onNode(nodeCx, 102)); // flat bottom edge
+        arc(102, _vbPhiBot); // round the bottom-left corner
+        break;
+
+      default: // paranoid — octagon with subtle battlements at the cardinals
+        void facet(double a, bool notch) {
+          if (notch) {
+            line(_onNode(nodeCx, a - 6, 1.0));
+            line(_onNode(nodeCx, a - 3.5, 0.84));
+            line(_onNode(nodeCx, a + 3.5, 0.84));
+            line(_onNode(nodeCx, a + 6, 1.0));
+          } else {
+            line(_onNode(nodeCx, a));
+          }
+        }
+
+        facet(270, true); // top merlon
+        facet(315, false);
+        facet(0, true); // right merlon
+        facet(45, false);
+        facet(90, true); // bottom merlon
+        line(pBot);
+        break;
+    }
+  }
+
+  // Left cap that rhymes with the right node — the badge speaks one shape
+  // language at both ends. [inset] is where the flat top/bottom meet the cap
+  // (every cap still reaches x=0 so the left edge stays aligned).
+  double _leftInset(int stage) => switch (stage) {
+        0 => _vbBodyHalf, // full semicircle
+        1 => _vbBodyHalf * 0.6, // rounded corners
+        2 => _vbBodyHalf * 0.5, // shallow bevel
+        _ => _vbBodyHalf * 0.72, // deep 45° facet (octagon)
+      };
+
+  // Draws the left cap from the current point (inset, cy+bodyHalf) up to
+  // (inset, cy-bodyHalf); the outline then closes to the moveTo start.
+  void _leftCap(Path o, int stage, double inset) {
+    const top = _cy - _vbBodyHalf, bot = _cy + _vbBodyHalf;
+    switch (stage) {
+      case 0: // round — true semicircle
+        o.arcTo(
+            Rect.fromCircle(center: const Offset(_vbBodyHalf, _cy),
+                radius: _vbBodyHalf),
+            _vbRad(90), _vbRad(180), false);
+        break;
+      case 1: // rounded corners
+        o.quadraticBezierTo(0, bot, 0, bot - inset);
+        o.lineTo(0, top + inset);
+        o.quadraticBezierTo(0, top, inset, top);
+        break;
+      default: // chamfered facet (shield, octagon)
+        o.lineTo(0, bot - inset);
+        o.lineTo(0, top + inset);
+        o.lineTo(inset, top);
+        break;
+    }
+  }
+
+  /// Builds the single continuous outline + the node's ring path.
+  /// Returns (outline, ring, nodeCx, neckX).
+  (Path, Path, double, double) _build(int stage) {
+    final nodeCx = pillW - _vbOverlap + _vbR;
+    final inset = _leftInset(stage);
+    final outline = Path()..moveTo(inset, _cy - _vbBodyHalf);
+    final ring = Path();
+
+    if (stage == 1) {
+      // ROUNDED SQUARE — flat top/bottom, so the shoulders are S-curves (cubic)
+      // that leave the body horizontal and arrive at the square's face
+      // horizontal, instead of the round shapes' circle-tangent quadratics.
+      const half = 12.0;
+      final xR = nodeCx + _vbR * 0.95;
+      final xL = nodeCx - _vbR * 0.30;
+      const yT = _cy - half, yB = _cy + half;
+      const cr = _vbR * 0.42;
+      final sx = xL - 5;
+      final mx = (sx + xL) / 2;
+      void line(Offset o) {
+        outline.lineTo(o.dx, o.dy);
+        ring.lineTo(o.dx, o.dy);
+      }
+
+      void quad(Offset c, Offset e) {
+        outline.quadraticBezierTo(c.dx, c.dy, e.dx, e.dy);
+        ring.quadraticBezierTo(c.dx, c.dy, e.dx, e.dy);
+      }
+
+      outline
+        ..lineTo(sx, _cy - _vbBodyHalf)
+        ..cubicTo(mx, _cy - _vbBodyHalf, mx, yT, xL, yT);
+      ring.moveTo(xL, yT);
+      line(Offset(xR - cr, yT));
+      quad(Offset(xR, yT), Offset(xR, yT + cr));
+      line(Offset(xR, yB - cr));
+      quad(Offset(xR, yB), Offset(xR - cr, yB));
+      line(Offset(xL, yB));
+      ring.lineTo(xL, yT); // close the ring loop over the opening (neck)
+      outline
+        ..cubicTo(mx, yB, mx, _cy + _vbBodyHalf, sx, _cy + _vbBodyHalf)
+        ..lineTo(inset, _cy + _vbBodyHalf);
+    } else {
+      final pTop = _onNode(nodeCx, _vbPhiTop);
+      final pBot = _onNode(nodeCx, _vbPhiBot);
+      final qTop = _shoulderCtrl(pTop, _vbPhiTop, _cy - _vbBodyHalf);
+      final qBot = _shoulderCtrl(pBot, _vbPhiBot, _cy + _vbBodyHalf);
+      final shoulderX = math.min(qTop.dx, nodeCx - _vbR) - 3;
+      outline
+        ..lineTo(shoulderX, _cy - _vbBodyHalf)
+        ..quadraticBezierTo(qTop.dx, qTop.dy, pTop.dx, pTop.dy);
+      _rightProfile(outline, ring, stage, nodeCx);
+      // Close the ring loop over the opening (neck) so the score fills all the
+      // way round like a normal progress bar — the circle follows its own arc,
+      // the faceted shapes take a straight chord across the neck.
+      if (stage == 0) {
+        ring.arcTo(Rect.fromCircle(center: Offset(nodeCx, _cy), radius: _vbR),
+            _vbRad(_vbPhiBot), _vbRad(_vbPhiTop - _vbPhiBot), false);
+      } else {
+        ring.lineTo(pTop.dx, pTop.dy);
+      }
+      outline
+        ..quadraticBezierTo(qBot.dx, qBot.dy, shoulderX, _cy + _vbBodyHalf)
+        ..lineTo(inset, _cy + _vbBodyHalf);
+    }
+
+    _leftCap(outline, stage, inset);
+    outline.close();
+
+    return (outline, ring, nodeCx, nodeCx - _vbR);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = (size.shortestSide / 2) - 1.5;
-    const strokeWidth = 2.5;
+    final (outline, ring, nodeCx, neckX) = _build(guardrailStage);
 
-    final shape = _shapePath(center, radius);
-
-    // Background shape outline.
+    // One shape: a single fill and a single outer stroke.
     canvas.drawPath(
-      shape,
+      outline,
       Paint()
-        ..color = bgColor
+        ..color = color.withValues(alpha: 0.12)
+        ..style = PaintingStyle.fill,
+    );
+    // A soft core glow in the node gives the score end depth without a seam.
+    // Clipped to the silhouette so it can only brighten the shape's interior,
+    // never haze outside the outline.
+    canvas.save();
+    canvas.clipPath(outline);
+    canvas.drawCircle(
+      Offset(nodeCx, _cy),
+      _vbR * 1.15,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            color.withValues(alpha: 0.13),
+            color.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCircle(
+            center: Offset(nodeCx, _cy), radius: _vbR * 1.15)),
+    );
+    canvas.restore();
+    canvas.drawPath(
+      outline,
+      Paint()
+        ..color = color.withValues(alpha: 0.30)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
+        ..strokeWidth = 1.2
         ..strokeJoin = StrokeJoin.round,
     );
 
-    // Score progress — draw a portion of the shape's perimeter.
-    final scoreFraction = (score / 100).clamp(0.0, 1.0);
-    final metrics = shape.computeMetrics().toList();
+    // Score fill rides the node's own perimeter — a full closed loop (it runs
+    // over the neck opening) so it wraps all the way round like a normal radial
+    // progress bar, one continuous bright sweep of score % of it. No separate
+    // track: the node's outline already IS the empty track, so the fill just
+    // brightens it as the score climbs and flows over the opening only once it
+    // gets there — keeping the badge one clean shape at rest.
+    const ringWidth = 2.0;
+    final frac = (score / 100).clamp(0.0, 1.0);
+    final metrics = ring.computeMetrics().toList();
     if (metrics.isNotEmpty) {
-      final totalLength = metrics.fold<double>(0, (sum, m) => sum + m.length);
-      final drawLength = totalLength * scoreFraction;
-
-      final scorePaint = Paint()
-        ..color = verdictColor.withValues(alpha: 0.7)
+      final total = metrics.fold<double>(0, (sum, m) => sum + m.length);
+      final drawLength = total * frac;
+      final arc = Paint()
+        ..color = color.withValues(alpha: 0.95)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
+        ..strokeWidth = ringWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round;
-
-      double drawn = 0;
-      for (final metric in metrics) {
+      var drawn = 0.0;
+      for (final m in metrics) {
         if (drawn >= drawLength) break;
-        final segLen = (drawLength - drawn).clamp(0.0, metric.length);
-        canvas.drawPath(metric.extractPath(0, segLen), scorePaint);
-        drawn += metric.length;
+        final segLen = (drawLength - drawn).clamp(0.0, m.length);
+        canvas.drawPath(m.extractPath(0, segLen), arc);
+        drawn += m.length;
       }
     }
+
+    // Label centred in the body zone; score centred in the node.
+    labelPainter.paint(
+      canvas,
+      Offset((neckX - labelPainter.width) / 2 + 2, _cy - labelPainter.height / 2),
+    );
+    scorePainter.paint(
+      canvas,
+      Offset(nodeCx - scorePainter.width / 2, _cy - scorePainter.height / 2),
+    );
   }
 
   @override
-  bool shouldRepaint(_ScoreRingPainter old) =>
+  bool shouldRepaint(_VerdictBadgePainter old) =>
+      old.color != color ||
       old.score != score ||
-      old.verdictColor != verdictColor ||
-      old.guardrailStage != guardrailStage;
+      old.guardrailStage != guardrailStage ||
+      old.pillW != pillW ||
+      // Compare the rendered text, not just color: two unrecognized verdict
+      // strings both fall to the neutral fallback colour, so a label swap
+      // between them wouldn't otherwise repaint. TextPainter.text is a
+      // TextSpan with value equality, so this never causes a spurious repaint.
+      old.labelPainter.text != labelPainter.text ||
+      old.scorePainter.text != scorePainter.text;
 }
 
 class _ReviewMetaChip extends StatelessWidget {
@@ -10749,8 +10954,9 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                             color: widget.commitOnlyMode
                                 ? t.accentBright.withValues(
                                     alpha: _chevronHovered ? 0.18 : 0.10)
-                                : Colors.white.withValues(
-                                    alpha: _chevronHovered ? 0.10 : 0.0),
+                                : (_chevronHovered
+                                    ? t.itemHoverBg
+                                    : t.itemHoverBg.withValues(alpha: 0)),
                             child: Center(
                               child: AnimatedSwitcher(
                                 duration: context
@@ -10944,8 +11150,9 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                     width: 32,
                     child: AnimatedContainer(
                       duration: context.motion(const Duration(milliseconds: 80)),
-                      color: Colors.white
-                          .withValues(alpha: _chevronHovered ? 0.10 : 0.0),
+                      color: _chevronHovered
+                          ? t.itemHoverBg
+                          : t.itemHoverBg.withValues(alpha: 0),
                       child: Center(
                         child: Text(
                           '▾',
@@ -11092,15 +11299,7 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
               ),
               borderRadius: BorderRadius.circular(
                   context.surfaceShader.geometry.badgeRadius),
-              boxShadow: _hovered
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 4,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : null,
+              boxShadow: _hovered ? AppElev.row : null,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -11495,14 +11694,7 @@ class _ShelfControlState extends State<_ShelfControl> {
             border: Border.all(color: borderColor),
             borderRadius: BorderRadius.circular(
                 context.surfaceShader.geometry.badgeRadius),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black
-                    .withValues(alpha: _isHoveringWholePill ? 0.12 : 0.0),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
+            boxShadow: _isHoveringWholePill ? AppElev.row : null,
           ),
           child: child,
         ),
@@ -11658,13 +11850,7 @@ class _StashDragFeedback extends StatelessWidget {
               Border.all(color: borderColor.withValues(alpha: 0.75), width: 1),
           borderRadius: BorderRadius.circular(
               context.surfaceShader.geometry.cardRadius),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.22),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          boxShadow: AppElev.card,
         ),
         child: Text(
           label,
@@ -14321,14 +14507,15 @@ class _DiffTabStripState extends State<_DiffTabStrip>
       builder: (context, candidateData, _) {
         final hovering = candidateData.isNotEmpty;
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: context.motion(AppMotion.fade),
           height: 26,
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
           decoration: BoxDecoration(
             color: hovering
                 ? t.hyperChromatic1.withValues(alpha: 0.12)
                 : t.chromeBorder.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(5),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.tinyRadius),
             border: Border.all(
               color: hovering
                   ? t.hyperChromatic1.withValues(alpha: 0.3)
@@ -14383,14 +14570,15 @@ class _DiffTabStripState extends State<_DiffTabStrip>
                 builder: (context, candidateData, _) {
                   final hovering = candidateData.isNotEmpty;
                   return AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
+                    duration: context.motion(AppMotion.snap),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: hovering
                           ? t.hyperChromatic1.withValues(alpha: 0.12)
                           : t.chromeBorder.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(
+                          context.surfaceShader.geometry.tinyRadius),
                       border: Border.all(
                         color: hovering
                             ? t.hyperChromatic1.withValues(alpha: 0.3)
@@ -14453,7 +14641,7 @@ class _DiffTabPillState extends State<_DiffTabPill> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+          duration: context.motion(AppMotion.snap),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: widget.active
@@ -14461,7 +14649,8 @@ class _DiffTabPillState extends State<_DiffTabPill> {
                 : (_hovered
                     ? t.chromeBorder.withValues(alpha: 0.06)
                     : Colors.transparent),
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.tinyRadius),
             border: widget.active
                 ? Border(
                     bottom: BorderSide(
@@ -14517,7 +14706,8 @@ class _DiffTabPillState extends State<_DiffTabPill> {
           if (candidateData.isNotEmpty) {
             return DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.tinyRadius),
                 border: Border.all(
                   color: t.hyperChromatic1.withValues(alpha: 0.4),
                 ),
@@ -14961,14 +15151,7 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
                 color: t.chromeBorder.withValues(
                     alpha: _hovered ? 0.35 : 0.25),
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black
-                      .withValues(alpha: _hovered ? 0.12 : 0.0),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              boxShadow: _hovered ? AppElev.row : null,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -15981,7 +16164,7 @@ class _MinimapHoverLineState extends State<_MinimapHoverLine> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
+          duration: context.motion(AppMotion.snap),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           margin: const EdgeInsets.only(left: -4),
           decoration: BoxDecoration(

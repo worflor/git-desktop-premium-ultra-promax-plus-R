@@ -9,8 +9,10 @@ import 'package:flutter/widgets.dart';
 
 /// Fraction of a cell's nominal width a seam vertex may bleed into either
 /// neighbour. Shared by the painter, the clipper, and the positioning math.
-/// 0.10 = ±10 %.
-const double kMosaicJitterFrac = 0.10;
+/// 0.06 = ±6 %. Kept deliberately small: on a narrow two-cell pill a larger
+/// swing reads as a ragged gap rather than a crack, and the halves stop
+/// looking like one control.
+const double kMosaicJitterFrac = 0.06;
 
 /// One crack between two mosaic cells. Vertices in normalised space
 /// (dx [-1..1], dy [0..1]); painter + clipper scale identically.
@@ -37,12 +39,17 @@ MosaicSeam generateMosaicSeam(math.Random rng) {
   }
   ys.add(1.0);
   ys.sort();
+  // The top and bottom vertices are pinned to dx = 0 so adjacent cells meet
+  // the rail's top/bottom edges at exactly the same x — the crack only wanders
+  // in the interior, which is what keeps the cells reading as squarely shaped.
   final vertices = <Offset>[
-    for (final y in ys)
+    for (var i = 0; i < ys.length; i++)
       Offset(
-        (rng.nextDouble() * 2.0 - 1.0) *
-            (rng.nextDouble() < 0.25 ? 1.0 : 0.6),
-        y,
+        (i == 0 || i == ys.length - 1)
+            ? 0.0
+            : (rng.nextDouble() * 2.0 - 1.0) *
+                (rng.nextDouble() < 0.3 ? 0.9 : 0.5),
+        ys[i],
       ),
   ];
   return MosaicSeam(

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'material_surface.dart';
 import 'mosaic_seam.dart';
 import 'motion.dart';
 import 'tokens.dart';
@@ -167,28 +168,32 @@ class AppContextMenu extends StatelessWidget {
     // on first right-click.
     return Material(
       color: Colors.transparent,
-      child: IntrinsicWidth(
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 200),
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: tokens.surface1,
-            // Card-level radius: the menu IS a small popover surface,
-            // so it inherits the theme's full radius. Pixelated themes
-            // get sharp corners that match their grid; rounded themes
-            // get the gentle radius the rest of the chrome shares.
-            borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.cardRadius),
-            border:
-                Border.all(color: tokens.chromeBorder.withValues(alpha: 0.4)),
-            boxShadow: [
-              BoxShadow(
-                color: tokens.shadowElev.withValues(alpha: 0.4),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
+      // Route the popover body through the shader material pipeline so
+      // glass/phosphor themes get the frosted blur, glaze, and rim they
+      // otherwise render flat without. `elevated: true` supplies the
+      // per-theme overlay shadow that used to be a bespoke shadowElev
+      // BoxShadow.
+      child: MaterialSurface(
+        tone: AppMaterialTone.surface1,
+        elevated: true,
+        glaze: true,
+        // Card-level radius: the menu IS a small popover surface, so it
+        // inherits the theme's full radius. Pixelated themes get sharp
+        // corners that match their grid; rounded themes get the gentle
+        // radius the rest of the chrome shares.
+        radius: context.surfaceShader.geometry.cardRadius,
+        // Strong-tier border (~the old 0.4, pulled into the strong tier
+        // as an allowed exception for this material conversion).
+        borderColor: tokens.chromeBorder,
+        borderAlpha: 0.28,
+        constraints: const BoxConstraints(minWidth: 200),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        // IntrinsicWidth lives INSIDE the surface, wrapping only the
+        // Column, so the menu still sizes to its widest item. It must
+        // NOT wrap the MaterialSurface: the glass/phosphor shader path
+        // puts a LayoutBuilder in the tree, and LayoutBuilder throws
+        // when an IntrinsicWidth ancestor queries its intrinsics.
+        child: IntrinsicWidth(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
