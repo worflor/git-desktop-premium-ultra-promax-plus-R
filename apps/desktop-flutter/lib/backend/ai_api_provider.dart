@@ -62,7 +62,10 @@ class AiApiModel {
     this.supportedParameters = const {},
   });
 
-  bool get supportsReasoning => supportedParameters.contains('reasoning');
+  bool get supportsReasoning =>
+      supportedParameters.contains('reasoning') ||
+      supportedParameters.contains('reasoning_effort') ||
+      supportedParameters.contains('include_reasoning');
 }
 
 class AiApiKeyInfo {

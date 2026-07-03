@@ -7,6 +7,11 @@ import '../backend/ai_api_keys_store.dart';
 import '../backend/ai_settings_store.dart';
 import '../backend/dtos.dart';
 
+/// Lifecycle of opencode's background model-metadata enrichment, surfaced in the
+/// model picker so the reasoning-slider delay reads as intentional rather than
+/// broken.
+enum OpencodeEnrichState { none, warming, unavailable }
+
 class AiSettingsState extends ChangeNotifier {
   bool _loaded = false;
   AiApiKeysSnapshot _apiKeys = AiApiKeysSnapshot.empty();
@@ -450,6 +455,75 @@ class AiSettingsState extends ChangeNotifier {
     }
   }
 
+  Timer? _opencodeEnrichTimer;
+  int _opencodeEnrichAttempts = 0;
+  bool _disposed = false;
+
+  // Retries ~45s apart, so this covers ~6 min — comfortably past the cold
+  // worst case (a 90s verbose timeout followed by a faster re-kick). Combined
+  // with the warm overwriting the main discovery cache on completion, the
+  // enriched data can't get frozen behind a stale plain result.
+  static const _opencodeEnrichMaxAttempts = 8;
+
+  bool get _openCodeModelsHaveReasoning => _runtimeModelCategories.any((c) => c
+      .models
+      .any((m) => m.providerId == 'opencode' && m.supportsReasoning));
+
+  /// UI signal for the opencode enrichment lifecycle so the picker can show a
+  /// "warming…" (or "details unavailable") note on the opencode header instead
+  /// of the reasoning slider silently appearing late — or never — unexplained.
+  OpencodeEnrichState get opencodeEnrichState {
+    final hasOpenCode =
+        _runtimeProviders.any((p) => p.id == 'opencode' && p.available);
+    if (!hasOpenCode || _openCodeModelsHaveReasoning) {
+      return OpencodeEnrichState.none;
+    }
+    return _opencodeEnrichAttempts >= _opencodeEnrichMaxAttempts
+        ? OpencodeEnrichState.unavailable
+        : OpencodeEnrichState.warming;
+  }
+
+  /// opencode's reasoning/context/pricing is warmed in the background (slow,
+  /// network-bound), so the first category load intentionally lacks it and
+  /// never blocks. Because the warm's own timeout is the same order as this
+  /// delay, a single-shot timer would race it — so this RETRIES a forced
+  /// refresh a few times, ~45s apart. Each forceRefresh re-kicks the background
+  /// warm (which gets faster as opencode caches its model registry), so the
+  /// enrichment reliably lands within a couple of attempts. Stops immediately
+  /// once opencode models carry reasoning, when opencode isn't present, or
+  /// after a bounded number of attempts — this method is re-entered after every
+  /// category refresh (see _runModelCategoryRefresh).
+  void _maybeScheduleOpenCodeEnrichRefresh() {
+    if (_disposed) return;
+    final hasOpenCode =
+        _runtimeProviders.any((p) => p.id == 'opencode' && p.available);
+    if (!hasOpenCode || _openCodeModelsHaveReasoning) {
+      _opencodeEnrichTimer?.cancel();
+      return;
+    }
+    if (_opencodeEnrichAttempts >= _opencodeEnrichMaxAttempts) return;
+    if (_opencodeEnrichTimer?.isActive ?? false) return;
+    _opencodeEnrichAttempts++;
+    _opencodeEnrichTimer = Timer(const Duration(seconds: 45), () {
+      // Re-verify relevance at fire time — opencode may have gone away or the
+      // enrichment may already have landed while we waited, so don't force a
+      // stale refresh onto a provider set that has moved on.
+      if (_disposed ||
+          !_runtimeProviders.any((p) => p.id == 'opencode' && p.available) ||
+          _openCodeModelsHaveReasoning) {
+        return;
+      }
+      unawaited(refreshModelCategories(forceRefresh: true));
+    });
+  }
+
+  @override
+  void dispose() {
+    _opencodeEnrichTimer?.cancel();
+    _disposed = true;
+    super.dispose();
+  }
+
   Future<bool> refreshModelCategories({bool forceRefresh = false}) {
     if (!forceRefresh &&
         _runtimeModelCategories.isNotEmpty &&
@@ -479,6 +553,7 @@ class AiSettingsState extends ChangeNotifier {
             List<AiModelCategoryData>.unmodifiable(_runtimeModelCategories);
         _runtimeModelCategoriesError = null;
         await syncModelCategories(result.data!.categories);
+        _maybeScheduleOpenCodeEnrichRefresh();
       } else {
         _runtimeModelCategoriesError = result.error;
       }

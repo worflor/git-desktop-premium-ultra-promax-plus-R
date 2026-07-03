@@ -261,7 +261,10 @@ const _modelDiscoveryTimeout = Duration(seconds: 8);
 // headless `agy models`.
 const _antigravityLiveModelProbe =
     bool.fromEnvironment('MANIFOLD_ANTIGRAVITY_LIVE_MODELS');
-const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
+// Verbose opencode discovery (reasoning/context/pricing per model) is
+// network-bound and slow (60s+ cold). It runs in the BACKGROUND and never
+// gates the picker (see _discoverOpenCodeModels), so it gets a generous cap.
+const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 90);
 const _maxPromptChars = 260000;
 
 /// Single budget for the diff section of the prompt body. Replaces the
@@ -416,16 +419,9 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
 
     final modelDetailsByKey = <String, String>{};
     final modelPricingByKey = <String, (double?, double?)>{};
-    final directProviderModelKeys = <String>{};
     for (final provider in readyProviders) {
       modelDetailsByKey.addAll(provider.modelDetails);
       modelPricingByKey.addAll(provider.modelPricing);
-      if (provider.kind == _ProviderKind.openCode) {
-        continue;
-      }
-      for (final modelId in provider.models) {
-        directProviderModelKeys.add(_normalizeModelKey(modelId));
-      }
     }
 
     final categories = <AiModelCategoryData>[];
@@ -434,21 +430,19 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
       final seen = <String>{};
 
       for (final provider in readyProviders) {
-        final providerModels = provider.kind == _ProviderKind.openCode
-            ? provider.models
-                .where(
-                  (modelId) => !directProviderModelKeys
-                      .contains(_normalizeModelKey(modelId)),
-                )
-                .toList()
-            : provider.models;
-
         for (final modelId
-            in _rankModelsForCategory(providerModels, category.hintTokens)) {
-          final key = _normalizeModelKey(modelId);
-          if (!seen.add(key)) {
+            in _rankModelsForCategory(provider.models, category.hintTokens)) {
+          // Dedup by the full provider:model value, NOT the bare model key. The
+          // same model routed through different providers (claude Max vs
+          // opencode → github-copilot vs codex) is a distinct billing pool the
+          // user may want to choose between — and the provider-group headers in
+          // the picker keep it organised. Only a provider listing the same id
+          // twice is collapsed.
+          final value = '${provider.providerId}:$modelId';
+          if (!seen.add(value)) {
             continue;
           }
+          final key = _normalizeModelKey(modelId);
 
           final isApiProvider = provider.kind == _ProviderKind.apiProvider;
           final price = isApiProvider
@@ -5043,10 +5037,21 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeModels(
   _ProviderResolution? resolution,
 ) async {
   final command = resolution?.command ?? 'opencode';
-  final verbose = await _discoverOpenCodeVerboseModels(command);
-  if (verbose != null) {
-    return verbose;
+
+  // Verbose discovery carries reasoning capability (→ the effort slider),
+  // context and pricing — but it's slow (60s+ cold), so it must never gate the
+  // picker. Serve the fast plain list now; once a fresh verbose result has been
+  // warmed in the background, return THAT instead. A single delayed re-refresh
+  // (ai_settings_state) surfaces the warmed data with no blocking wait, so the
+  // fast providers are never held hostage by opencode's slow metadata fetch.
+  final warmed = _openCodeVerboseCache;
+  if (warmed != null &&
+      warmed.value != null &&
+      DateTime.now().difference(warmed.checkedAt) <
+          _providerModelDiscoveryCacheTtl) {
+    return warmed.value;
   }
+  _warmOpenCodeVerbose(command);
 
   final result = await _runCommandWithTimeout(
     command,
@@ -5074,6 +5079,42 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeModels(
   return _ProviderModelDiscovery(models: models, modelDetails: const {});
 }
 
+// Background-warm cache for the slow verbose opencode discovery, plus a guard
+// so only one warm runs at a time.
+_TimedValue<_ProviderModelDiscovery?>? _openCodeVerboseCache;
+bool _openCodeVerboseWarming = false;
+
+void _warmOpenCodeVerbose(String command) {
+  if (_openCodeVerboseWarming) return;
+  final warmed = _openCodeVerboseCache;
+  if (warmed != null &&
+      warmed.value != null &&
+      DateTime.now().difference(warmed.checkedAt) <
+          _providerModelDiscoveryCacheTtl) {
+    return;
+  }
+  _openCodeVerboseWarming = true;
+  Future(() async {
+    try {
+      final verbose = await _discoverOpenCodeVerboseModels(command);
+      if (verbose != null) {
+        final stamp = DateTime.now();
+        _openCodeVerboseCache = _TimedValue(checkedAt: stamp, value: verbose);
+        // Overwrite the MAIN discovery cache too: a plain (un-enriched) result
+        // cached before the warm finished would otherwise sit there for the
+        // full TTL. Writing the enriched result here means it's the one served
+        // on the very next refresh — no dependence on the retry budget landing
+        // before this warm does. ('opencode' is the cache key from
+        // _discoverProviderModelsCached: provider.id.toLowerCase().)
+        _providerModelDiscoveryCache['opencode'] =
+            _TimedValue(checkedAt: stamp, value: verbose);
+      }
+    } finally {
+      _openCodeVerboseWarming = false;
+    }
+  });
+}
+
 Future<_ProviderModelDiscovery?> _discoverOpenCodeVerboseModels(
   String command,
 ) async {
@@ -5089,6 +5130,7 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeVerboseModels(
   final lines = result.stdout.split('\n');
   final models = <String>[];
   final modelDetails = <String, String>{};
+  final reasoningModels = <String>{};
   final seen = <String>{};
   var index = 0;
   while (index < lines.length) {
@@ -5116,6 +5158,12 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeVerboseModels(
       index += 1;
       try {
         final decoded = jsonDecode(buffer.toString());
+        if (decoded is Map) {
+          final caps = decoded['capabilities'];
+          if (caps is Map && caps['reasoning'] == true) {
+            reasoningModels.add(modelKey);
+          }
+        }
         final detail = _extractOpenCodeModelDetail(decoded);
         if (detail != null) {
           modelDetails[modelKey] = detail;
@@ -5128,7 +5176,11 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeVerboseModels(
   if (models.isEmpty) {
     return null;
   }
-  return _ProviderModelDiscovery(models: models, modelDetails: modelDetails);
+  return _ProviderModelDiscovery(
+    models: models,
+    modelDetails: modelDetails,
+    reasoningModels: reasoningModels,
+  );
 }
 
 String? _extractOpenCodeModelDetail(dynamic value) {
@@ -11568,27 +11620,6 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
   }
 }
 
-/// Extract the `email` claim from a JWT (e.g. codex's id_token) without
-/// verifying the signature — display-only identity telemetry, never used for
-/// auth. Returns null on any malformed input.
-String? _jwtEmail(String? jwt) {
-  if (jwt == null) return null;
-  final parts = jwt.split('.');
-  if (parts.length < 2) return null;
-  try {
-    var payload = parts[1];
-    payload =
-        payload.padRight(payload.length + (4 - payload.length % 4) % 4, '=');
-    final decoded = utf8.decode(base64Url.decode(payload));
-    final json = jsonDecode(decoded);
-    if (json is Map) {
-      final email = json['email'];
-      if (email is String && email.contains('@')) return email.trim();
-    }
-  } catch (_) {}
-  return null;
-}
-
 _ProviderAuthStatus _codexAuthStatus() {
   final value = _readJsonFile(_codexAuthPath());
   if (value == null) {
@@ -11628,18 +11659,13 @@ _ProviderAuthStatus _codexAuthStatus() {
   final planName =
       modelCount != null ? '$modelCount model${modelCount == 1 ? '' : 's'}' : null;
 
-  // The signed-in account (from the id_token) is stable identity telemetry —
-  // unlike the JWT plan claim, which goes stale — so surface it in the detail.
-  final email = _jwtEmail(idToken);
-  final bits = <String>[
-    if (planName != null) planName,
-    if (email != null) email,
-  ];
-  final suffix = bits.isEmpty ? '' : ' (${bits.join(' · ')})';
-
   return _ProviderAuthStatus(
     ok: hasToken,
-    detail: hasToken ? 'codex auth ok$suffix' : 'codex token missing',
+    detail: hasToken
+        ? planName != null
+            ? 'codex auth ok ($planName)'
+            : 'codex auth ok'
+        : 'codex token missing',
     planName: planName,
   );
 }
@@ -11687,42 +11713,11 @@ _ProviderAuthStatus _claudeAuthStatus() {
 // refreshes it. Reported CLI-managed; a not-signed-in call surfaces a sign-in
 // message via _normalizeCopilotError rather than us probing the keychain.
 _ProviderAuthStatus _copilotAuthStatus() {
-  // Copilot stores no identity on disk (keychain / fetched from the API), but
-  // it authenticates THROUGH GitHub — so `gh`'s signed-in handle is the
-  // relevant "who". Read-only, display-only.
-  final ghUser = _githubCliUser();
-  return _ProviderAuthStatus(
+  return const _ProviderAuthStatus(
     ok: true,
-    detail: ghUser != null
-        ? 'managed by GitHub Copilot CLI · @$ghUser'
-        : 'managed by GitHub Copilot CLI',
+    detail: 'managed by GitHub Copilot CLI',
     planName: 'CLI-managed',
   );
-}
-
-/// The GitHub handle `gh` is signed in as (scraped from its hosts.yml). Copilot
-/// auths through GitHub, so this is the relevant identity when the CLI itself
-/// persists none on disk. Display-only; a tiny YAML scrape, no token read.
-String? _githubCliUser() {
-  final candidates = <String>[];
-  final appData = Platform.environment['APPDATA'];
-  if (appData != null && appData.trim().isNotEmpty) {
-    candidates.add(p.join(appData, 'GitHub CLI', 'hosts.yml'));
-  }
-  final home = _userHomeDir();
-  if (home != null) {
-    candidates.add(p.join(home, '.config', 'gh', 'hosts.yml'));
-  }
-  for (final path in candidates) {
-    try {
-      final f = File(path);
-      if (!f.existsSync()) continue;
-      final m = RegExp(r'^\s*user:\s*(\S+)', multiLine: true)
-          .firstMatch(f.readAsStringSync());
-      if (m != null) return m.group(1);
-    } catch (_) {}
-  }
-  return null;
 }
 
 // Antigravity's `agy` CLI owns its auth entirely (Google OAuth held in the OS
@@ -11737,27 +11732,11 @@ _ProviderAuthStatus _antigravityAuthStatus() {
   // deliberately "CLI-managed" rather than "Connected": we don't actually know
   // the CLI is signed in, and a hung/unauthed call surfaces a fast sign-in
   // message via _normalizeAntigravityError + the tight _antigravityRuntimeTimeout.
-  // Surface the Google account configured under ~/.gemini (shared by
-  // Antigravity) as identity telemetry — a plaintext email the CLI wrote, not
-  // a token, and we never use it to authenticate.
-  final account = _geminiActiveAccount();
-  return _ProviderAuthStatus(
+  return const _ProviderAuthStatus(
     ok: true,
-    detail: account != null
-        ? 'managed by Antigravity CLI · $account'
-        : 'managed by Antigravity CLI',
+    detail: 'managed by Antigravity CLI',
     planName: 'CLI-managed',
   );
-}
-
-/// The active Google account under ~/.gemini (shared by Antigravity). Display
-/// only — a plaintext email the CLI persisted, never a credential we act on.
-String? _geminiActiveAccount() {
-  final home = _userHomeDir();
-  if (home == null) return null;
-  final v = _readJsonFile(p.join(home, '.gemini', 'google_accounts.json'));
-  final active = v?['active'];
-  return (active is String && active.contains('@')) ? active.trim() : null;
 }
 
 _ProviderAuthStatus _openCodeAuthStatus() {

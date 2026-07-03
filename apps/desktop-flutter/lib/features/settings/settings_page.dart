@@ -5051,8 +5051,11 @@ class _ModelPickerOverlay extends StatefulWidget {
 class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
   final _filterCtrl = TextEditingController();
   final _filterFocus = FocusNode();
+  final _scrollController = ScrollController();
   String _query = '';
   String? _providerFilter;
+  bool _scrollScheduled = false;
+  double? _pendingSelectedOffset;
 
   @override
   void initState() {
@@ -5068,6 +5071,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
     _filterCtrl.removeListener(_onQueryChanged);
     _filterCtrl.dispose();
     _filterFocus.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -5118,20 +5122,45 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
     }
     final showHeaders = order.length > 1;
     final rows = <Widget>[];
+    // Track the estimated pixel offset of the selected row so the list can open
+    // scrolled to it (see _scrollToSelected). Item ≈ 31px, header ≈ 25px, on
+    // top of the ListView's 4px top padding.
+    const itemHeight = 31.0;
+    const headerHeight = 25.0;
+    var offset = 4.0;
+    double? selectedOffset;
     for (final providerId in order) {
       final group = byProvider[providerId]!;
       if (showHeaders) {
-        rows.add(_ModelProviderHeader(label: group.first.providerLabel));
+        rows.add(_ModelProviderHeader(
+          label: group.first.providerLabel,
+          providerId: providerId,
+        ));
+        offset += headerHeight;
       }
       for (final model in group) {
+        final selected = model.value == widget.selectedValue;
+        if (selected) selectedOffset = offset;
         rows.add(_ModelPickerItem(
           model: model,
-          selected: model.value == widget.selectedValue,
+          selected: selected,
           onTap: () => widget.onSelect(model.value),
         ));
+        offset += itemHeight;
       }
     }
+    _pendingSelectedOffset = selectedOffset;
     return rows;
+  }
+
+  /// Open the picker scrolled to the currently-selected model, landed a little
+  /// below the top so its group header and a couple of neighbours stay visible.
+  void _scrollToSelected() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final target = _pendingSelectedOffset;
+    if (target == null) return;
+    final max = _scrollController.position.maxScrollExtent;
+    _scrollController.jumpTo((target - 70).clamp(0.0, max));
   }
 
   @override
@@ -5141,6 +5170,11 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
         themeDefinitionFor(t.id).shader.geometry.radius.clamp(0, 18).toDouble();
     final filtered = _filtered;
     final providerIds = _activeProviderIds;
+
+    if (!_scrollScheduled) {
+      _scrollScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+    }
 
     return Material(
       color: Colors.transparent,
@@ -5188,6 +5222,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
                           ),
                         )
                       : ListView(
+                          controller: _scrollController,
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           shrinkWrap: true,
                           children: _buildGroupedRows(filtered),
@@ -5358,26 +5393,53 @@ class _FilterChip extends StatelessWidget {
 }
 
 /// Inline section header in the model dropdown that labels which provider the
-/// following models belong to. Deliberately quiet — small muted mono caps, no
-/// rules or decoration — so it groups without shouting.
+/// following models belong to. Deliberately quiet — small muted mono caps — so
+/// it groups without shouting. For opencode it also shows a live "warming…"
+/// (or "details unavailable") note while its background metadata enrichment is
+/// in flight, so the reasoning slider appearing a beat late reads as expected.
 class _ModelProviderHeader extends StatelessWidget {
   final String label;
-  const _ModelProviderHeader({required this.label});
+  final String providerId;
+  const _ModelProviderHeader({required this.label, required this.providerId});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    String? note;
+    if (providerId == 'opencode') {
+      note = switch (context.watch<AiSettingsState>().opencodeEnrichState) {
+        OpencodeEnrichState.warming => 'warming…',
+        OpencodeEnrichState.unavailable => 'details unavailable',
+        OpencodeEnrichState.none => null,
+      };
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 9, 10, 3),
-      child: Text(
-        label.toUpperCase(),
-        style: TextStyle(
-          color: t.textFaint.withValues(alpha: 0.55),
-          fontSize: 9,
-          fontFamily: AppFonts.mono,
-          letterSpacing: 0.8,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: t.textFaint.withValues(alpha: 0.55),
+              fontSize: 9,
+              fontFamily: AppFonts.mono,
+              letterSpacing: 0.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (note != null) ...[
+            const SizedBox(width: 6),
+            Text(
+              note,
+              style: TextStyle(
+                color: t.textFaint.withValues(alpha: 0.4),
+                fontSize: 8,
+                fontFamily: AppFonts.mono,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
