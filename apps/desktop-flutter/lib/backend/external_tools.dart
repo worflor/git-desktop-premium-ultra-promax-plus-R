@@ -282,10 +282,12 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
-  /// Google Gemini CLI.
-  static ExternalTool gemini() => ExternalTool.create(
-        label: 'Gemini',
-        executable: 'gemini',
+  /// Antigravity CLI (`agy`) — Google's agentic coding CLI, the successor to
+  /// the deprecated Gemini CLI. Interactive REPL → newTerminal keeps the
+  /// console open. Runs in the project directory the launcher sets.
+  static ExternalTool agy() => ExternalTool.create(
+        label: 'Antigravity CLI',
+        executable: 'agy',
         args: const [],
         mode: ToolLaunchMode.newTerminal,
       );
@@ -598,11 +600,13 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
-  /// Antigravity — the real one. Opens xkcd 353.
+  /// Antigravity — Google's agentic IDE (a VS Code fork). Its CLI launcher
+  /// forks the editor window and exits, so detached mode is correct (no
+  /// terminal flash) — same launch shape as VS Code / Cursor / Windsurf.
   static ExternalTool antigravity() => ExternalTool.create(
         label: 'Antigravity',
-        executable: 'python',
-        args: const ['-m', 'antigravity'],
+        executable: 'antigravity',
+        args: const ['{path}'],
         mode: ToolLaunchMode.detached,
       );
 
@@ -916,7 +920,7 @@ class ExternalToolPresets {
         // AI assistants
         const ExternalToolPreset(label: '+ Claude', executable: 'claude', category: ExternalToolCategory.ai, build: claude),
         const ExternalToolPreset(label: '+ Codex', executable: 'codex', category: ExternalToolCategory.ai, build: codex),
-        const ExternalToolPreset(label: '+ Gemini', executable: 'gemini', category: ExternalToolCategory.ai, build: gemini),
+        const ExternalToolPreset(label: '+ Antigravity CLI', executable: 'agy', category: ExternalToolCategory.ai, build: agy),
         const ExternalToolPreset(label: '+ OpenCode', executable: 'opencode', category: ExternalToolCategory.ai, build: opencode),
         const ExternalToolPreset(label: '+ Aider', executable: 'aider', category: ExternalToolCategory.ai, build: aider),
         const ExternalToolPreset(label: '+ Amp', executable: 'amp', category: ExternalToolCategory.ai, build: amp),
@@ -967,7 +971,7 @@ class ExternalToolPresets {
         const ExternalToolPreset(label: '+ serpl', executable: 'serpl', category: ExternalToolCategory.explore, build: serpl),
         const ExternalToolPreset(label: '+ D2', executable: 'd2', category: ExternalToolCategory.explore, build: d2),
         const ExternalToolPreset(label: '+ Hyperfine', executable: 'hyperfine', category: ExternalToolCategory.explore, build: hyperfine),
-        const ExternalToolPreset(label: '+ Antigravity', executable: 'python', category: ExternalToolCategory.explore, build: antigravity),
+        const ExternalToolPreset(label: '+ Antigravity', executable: 'antigravity', category: ExternalToolCategory.editors, build: antigravity),
         const ExternalToolPreset(label: '+ Jujutsu', executable: 'jj', category: ExternalToolCategory.explore, build: jujutsu),
         // Ops — build, CI, infra, security, API, DB
         const ExternalToolPreset(label: '+ Just', executable: 'just', category: ExternalToolCategory.ops, build: just),

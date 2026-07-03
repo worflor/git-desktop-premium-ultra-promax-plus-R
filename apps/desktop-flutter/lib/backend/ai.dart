@@ -69,7 +69,7 @@ import 'semantic_manifest.dart' show buildSemanticManifest;
 const _cliProviderSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
   _ProviderSpec(id: 'claude', binary: 'claude', kind: _ProviderKind.claude),
-  _ProviderSpec(id: 'gemini', binary: '', kind: _ProviderKind.geminiApi),
+  _ProviderSpec(id: 'antigravity', binary: 'agy', kind: _ProviderKind.antigravity),
   _ProviderSpec(
     id: 'opencode',
     binary: 'opencode',
@@ -182,8 +182,25 @@ const _windowsScriptHealthCheckTimeout = Duration(seconds: 5);
 // thinking on large prompts can need 10–15 minutes. 20 min per
 // attempt covers the slow tail while still bounding hangs.
 const _providerRuntimeTimeout = Duration(minutes: 20);
+// Tighter cap for the Antigravity CLI (`agy`). Its `--print` is a single-shot
+// prompt (not a long agentic session), so it never needs the 20-minute tail —
+// and while upstream #508/#258 keep headless `agy` hanging, a tight cap turns
+// an unusable 20-minute UI block into a fast, clear "not signed in" failure.
+// A real one-shot print returns in seconds, well inside this bound.
+const _antigravityRuntimeTimeout = Duration(minutes: 3);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
+// Hard toggle for the live `agy models` probe during provider discovery.
+// OFF by default because headless `agy models` currently HANGS (#508/#258),
+// and discovery runs as a Future.wait batch across all providers — so this one
+// broken probe would make Antigravity the long pole and stall every Settings
+// load for the full [_modelDiscoveryTimeout]. While off, Antigravity resolves
+// its model list from the built-in fallback instantly. Flip on by editing the
+// default here, or at build time with
+// `--dart-define=MANIFOLD_ANTIGRAVITY_LIVE_MODELS=true`, once upstream restores
+// headless `agy models`.
+const _antigravityLiveModelProbe =
+    bool.fromEnvironment('MANIFOLD_ANTIGRAVITY_LIVE_MODELS');
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
 const _maxPromptChars = 260000;
 
@@ -579,30 +596,6 @@ Future<GitResult<AiPatchData>> generatePatch({
       );
     }
 
-    if (provider.kind == _ProviderKind.geminiApi) {
-      final geminiModel = modelId.startsWith('gemini ')
-          ? modelId.substring('gemini '.length)
-          : modelId;
-      final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
-      if (apiResult.text == null) {
-        return GitResult.err(
-            apiResult.error ?? 'Gemini API returned no response.');
-      }
-      final patch = _extractPatchFromModelOutput(apiResult.text!);
-      if (patch.isEmpty) {
-        return const GitResult.err('Model returned no usable patch.');
-      }
-      return GitResult.ok(AiPatchData(
-        providerId: provider.id,
-        modelId: modelId,
-        patch: patch,
-        promptCharacters: prompt.length,
-        patchCharacters: patch.length,
-        inputTokens: apiResult.inputTokens,
-        outputTokens: apiResult.outputTokens,
-      ));
-    }
-
     final attempts = _buildProviderAttempts(
       provider.kind,
       modelId,
@@ -620,7 +613,7 @@ Future<GitResult<AiPatchData>> generatePatch({
         scope: 'ai',
         command: availability.resolution!.command,
         args: effectiveArgs,
-        timeout: _providerRuntimeTimeout,
+        timeout: _runtimeTimeoutFor(provider.kind),
         workingDirectory: repositoryPath,
         stdinPayload: effectiveStdin,
         environment: _providerEnvironment(provider.kind),
@@ -4210,27 +4203,6 @@ Future<_ProviderAvailability> _inspectProvider(_ProviderSpec provider) async {
     );
   }
 
-  // Gemini API: no binary needed, just check for oauth creds.
-  if (provider.kind == _ProviderKind.geminiApi) {
-    final hasRefresh = _geminiApiRefreshToken() != null;
-    return _ProviderAvailability(
-      ready: hasRefresh,
-      resolution: hasRefresh
-          ? const _ProviderResolution(
-              command: 'http-api',
-              source: 'gemini-api-direct',
-              healthCheck: 'oauth',
-            )
-          : null,
-      auth: _ProviderAuthStatus(
-        ok: hasRefresh,
-        detail: hasRefresh
-            ? 'gemini oauth creds found'
-            : 'no ~/.gemini/oauth_creds.json',
-      ),
-    );
-  }
-
   _ProviderResolution? resolution =
       await _resolveProviderCommand(provider.binary);
   final auth = _providerAuthStatus(provider.kind);
@@ -4415,8 +4387,8 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
       return _discoverCodexModels(resolution);
     case _ProviderKind.claude:
       return _discoverClaudeModels(resolution);
-    case _ProviderKind.geminiApi:
-      return _discoverGeminiModels(resolution);
+    case _ProviderKind.antigravity:
+      return _discoverAntigravityModels(resolution);
     case _ProviderKind.openCode:
       return _discoverOpenCodeModels(resolution);
     case _ProviderKind.apiProvider:
@@ -4832,93 +4804,70 @@ String? _findModelValueInJson(dynamic value) {
   return null;
 }
 
-_ProviderModelDiscovery? _discoverGeminiModels(
+/// Discover the models the Antigravity CLI (`agy`) exposes.
+///
+/// Source of truth is `agy models`, which prints the live per-account model
+/// list. That call needs an authenticated `agy` session and — until upstream
+/// #508/#258 are fixed — hangs headless; when it does, the timed-out call
+/// yields nothing and we fall back to the documented Antigravity model set so
+/// the picker still shows sensible options. The live list replaces the
+/// fallback the moment `agy models` succeeds.
+Future<_ProviderModelDiscovery?> _discoverAntigravityModels(
   _ProviderResolution? resolution,
-) {
-  // Surface the local Gemini aliases we support plus the concrete preview
-  // model ids that this endpoint accepts today.
-  final models = <String>{
-    'gemini auto',
-    'gemini pro',
-    'gemini flash',
-    'gemini flash-lite',
-    _geminiApiPreviewProModel,
-    _geminiApiPreviewFlashModel,
-    _geminiApiPreview31ProModel,
-    _geminiApiPreview31FlashLiteModel,
-  };
-  final details = <String, String>{
-    _normalizeModelKey('gemini auto'):
-        'Local alias -> Gemini 3 auto family (routes to $_geminiApiPreviewProModel by default).',
-    _normalizeModelKey('gemini pro'):
-        'Local alias -> $_geminiApiPreviewProModel',
-    _normalizeModelKey('gemini flash'):
-        'Local alias -> $_geminiApiPreviewFlashModel',
-    _normalizeModelKey('gemini flash-lite'):
-        'Local alias -> $_geminiApiPreview31FlashLiteModel',
-    _normalizeModelKey(_geminiApiPreviewProModel):
-        'Accepted preview model on the Gemini Code Assist API.',
-    _normalizeModelKey(_geminiApiPreviewFlashModel):
-        'Accepted preview model on the Gemini Code Assist API.',
-    _normalizeModelKey(_geminiApiPreview31ProModel):
-        'Accepted preview model on the Gemini Code Assist API.',
-    _normalizeModelKey(_geminiApiPreview31FlashLiteModel):
-        'Accepted preview model on the Gemini Code Assist API.',
-  };
+) async {
+  final models = <String>[];
 
-  final configured = _discoverGeminiConfiguredModel();
-  if (configured != null) {
-    models.add(configured);
-    details.putIfAbsent(
-      _normalizeModelKey(configured),
-      () => 'Configured from GEMINI_MODEL or .gemini/settings.json.',
+  // Live probe is gated behind [_antigravityLiveModelProbe] (OFF by default):
+  // headless `agy models` currently hangs (#508/#258), and discovery runs
+  // inside a Future.wait batch, so probing this one broken provider would
+  // stall every Settings load for the full _modelDiscoveryTimeout. While
+  // gated we skip the round-trip and use the fallback instantly, so
+  // Antigravity never becomes the long pole.
+  if (_antigravityLiveModelProbe) {
+    final command = resolution?.command ?? 'agy';
+    final result = await _runCommandWithTimeout(
+      command,
+      const ['models'],
+      _modelDiscoveryTimeout,
     );
+    if (result != null && result.exitCode == 0) {
+      // The exact `agy models` output shape is unverified against a live run
+      // (headless `agy` hangs today, #508), so parse defensively: tolerate
+      // section headers, table borders, list bullets, and "id  description"
+      // rows rather than only bare id lines — otherwise a formatted list
+      // would be silently rejected and mask a never-working live path.
+      for (final raw in result.stdout.split('\n')) {
+        var line = _stripAnsi(raw).trim();
+        if (line.isEmpty) continue;
+        if (line.endsWith(':')) continue; // "Available models:" header
+        if (RegExp(r'^[-=+|_*•\s]+$').hasMatch(line)) continue; // border
+        line = line.replaceFirst(RegExp(r'^[-*•>]\s+'), ''); // list marker
+        final token = line.split(RegExp(r'\s+')).first; // id from "id desc"
+        if (!RegExp(r'^[A-Za-z][A-Za-z0-9._/:-]+$').hasMatch(token)) continue;
+        if (!models.contains(token)) models.add(token);
+      }
+    }
   }
 
+  if (models.isNotEmpty) {
+    return _ProviderModelDiscovery(models: models, modelDetails: const {});
+  }
+
+  // Fallback: the model ids Antigravity is documented to surface. Kept small
+  // and honestly labelled — `agy models` overrides these once signed in.
+  const fallback = <String>[
+    'gemini-3-pro-high',
+    'gemini-3-pro-low',
+    'gemini-3-flash',
+  ];
   return _ProviderModelDiscovery(
-    models: models.toList(),
-    modelDetails: details,
+    models: fallback,
+    modelDetails: {
+      for (final m in fallback)
+        _normalizeModelKey(m):
+            'Antigravity model. Live list comes from `agy models` once signed in.',
+    },
   );
-}
-
-String? _discoverGeminiConfiguredModel() {
-  // Env var is highest priority (overrides all config files).
-  final envModel = Platform.environment['GEMINI_MODEL'];
-  if (envModel != null && envModel.trim().isNotEmpty) {
-    return envModel.trim();
-  }
-
-  // Project-level settings (.gemini/settings.json in cwd).
-  final projectModel = _extractGeminiModelFromJson(
-    _readJsonFile(p.join(Directory.current.path, '.gemini', 'settings.json')),
-  );
-  if (projectModel != null) return projectModel;
-
-  // User-level settings (~/.gemini/settings.json).
-  final homeDir = _userHomeDir();
-  if (homeDir != null) {
-    final userModel = _extractGeminiModelFromJson(
-      _readJsonFile(p.join(homeDir, '.gemini', 'settings.json')),
-    );
-    if (userModel != null) return userModel;
-  }
-
-  return null;
-}
-
-String? _extractGeminiModelFromJson(dynamic value) {
-  if (value is! Map) return null;
-  // Structured format: {"model": {"name": "gemini-2.5-pro"}}
-  final modelField = value['model'];
-  if (modelField is Map) {
-    final name = modelField['name'];
-    if (name is String && name.trim().isNotEmpty) return name.trim();
-  }
-  // Flat format: {"model": "gemini-2.5-pro"}
-  if (modelField is String && modelField.trim().isNotEmpty) {
-    return modelField.trim();
-  }
-  return null;
 }
 
 Future<_ProviderModelDiscovery?> _discoverApiProviderModels(
@@ -5192,6 +5141,14 @@ List<_BinaryCandidate> _knownBinaryCandidates(String binary) {
       pushCandidate(
         p.join(localAppData, 'Programs', binary, '$binary.exe'),
         'LOCALAPPDATA/Programs',
+      );
+      // Antigravity's `agy` (and any tool using the same curl-installer
+      // layout) lands at %LOCALAPPDATA%\<binary>\bin\<binary>.exe. Probe it
+      // directly so the tool resolves even before a freshly-updated PATH
+      // reaches an already-running app.
+      pushCandidate(
+        p.join(localAppData, binary, 'bin', '$binary.exe'),
+        'LOCALAPPDATA/bin',
       );
     }
 
@@ -9704,30 +9661,6 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     );
   }
 
-  if (provider.kind == _ProviderKind.geminiApi) {
-    final geminiModel = modelId.startsWith('gemini ')
-        ? modelId.substring('gemini '.length)
-        : modelId;
-    final apiResult = await _runGeminiApiRequest(prompt, geminiModel,
-        maxTokens: maxTokens);
-    if (apiResult.text == null) {
-      return _ProviderPromptResult(
-        ok: false,
-        error: apiResult.error ?? 'Gemini API returned no response.',
-        outputPreview: _scrubSecrets(apiResult.error ?? ''),
-      );
-    }
-    return _ProviderPromptResult(
-      ok: true,
-      output: apiResult.text,
-      outputPreview: apiResult.text!.length > 200
-          ? '${apiResult.text!.substring(0, 200)}...'
-          : apiResult.text!,
-      inputTokens: apiResult.inputTokens,
-      outputTokens: apiResult.outputTokens,
-    );
-  }
-
   final attempts = _buildProviderAttempts(provider.kind, modelId,
       readOnly: readOnly,
       resolvedCommand: resolution.command,
@@ -9744,7 +9677,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       scope: 'ai',
       command: resolution.command,
       args: effectiveArgs,
-      timeout: _providerRuntimeTimeout,
+      timeout: _runtimeTimeoutFor(provider.kind),
       workingDirectory: repositoryPath,
       stdinPayload: effectiveStdin,
       environment: _providerEnvironment(provider.kind),
@@ -10269,10 +10202,38 @@ List<_ProviderAttempt> _buildProviderAttempts(
           useStdinForPrompt: true,
         ),
       ];
-    case _ProviderKind.geminiApi:
     case _ProviderKind.apiProvider:
       // API providers — no CLI attempts.
       return [];
+    case _ProviderKind.antigravity:
+      // Antigravity CLI (`agy`) — one non-interactive print call. The
+      // documented one-shot contract is `agy --print --model <id> "<prompt>"`
+      // (verified against `agy --help`, 1.0.16). The prompt is a positional
+      // arg: `agy` has no stdin/`--prompt-file` input, and per upstream bug
+      // #508 an inherited stdin on Windows triggers a headless hang, so we
+      // deliberately never wire stdin. Output is plain assistant text — no
+      // JSON/stream mode exists yet (#119). Auth lives entirely in the CLI's
+      // own keyring session; Manifold never reads or refreshes a token.
+      //
+      // NOTE (2026-07): headless `agy` is currently blocked upstream by #508
+      // (console-init hang with no TTY) and #258 (Windows credential
+      // read-back re-auths every launch). This attempt encodes the correct
+      // contract so the provider lights up the moment those land; until then
+      // the run simply times out via _providerRuntimeTimeout and the provider
+      // reports "not ready" rather than hanging the UI.
+      return [
+        _ProviderAttempt(
+          name: 'print',
+          args: [
+            '--print',
+            '--model',
+            modelId,
+            '--dangerously-skip-permissions',
+          ],
+          outputMode: _ProviderOutputMode.plainText,
+          useStdinForPrompt: false,
+        ),
+      ];
     case _ProviderKind.openCode:
       final variantArgs = reasoningEffort != null
           ? ['--variant', reasoningEffort]
@@ -10299,11 +10260,27 @@ List<_ProviderAttempt> _buildProviderAttempts(
   }
 }
 
+/// Per-provider wall-clock cap on a single generation. Agentic CLIs run long
+/// and get the full [_providerRuntimeTimeout]; `agy --print` is single-shot and
+/// is capped tight so a hung/unauthed call fails fast instead of blocking the
+/// UI for 20 minutes (see [_antigravityRuntimeTimeout]).
+Duration _runtimeTimeoutFor(_ProviderKind kind) {
+  switch (kind) {
+    case _ProviderKind.antigravity:
+      return _antigravityRuntimeTimeout;
+    case _ProviderKind.codex:
+    case _ProviderKind.claude:
+    case _ProviderKind.openCode:
+    case _ProviderKind.apiProvider:
+      return _providerRuntimeTimeout;
+  }
+}
+
 Map<String, String> _providerEnvironment(_ProviderKind kind) {
   switch (kind) {
     case _ProviderKind.claude:
       return const {'CLAUDE_CODE_ENTRYPOINT': 'cli'};
-    case _ProviderKind.geminiApi:
+    case _ProviderKind.antigravity:
     case _ProviderKind.apiProvider:
       return const {};
     case _ProviderKind.codex:
@@ -10329,10 +10306,6 @@ String? _formatProviderOutput(
       return _parseCodexJsonl(stdout) ?? _fallbackOutput(stderr);
     case _ProviderOutputMode.claudeJson:
       return _parseClaudeJson(stdout) ??
-          _fallbackOutput(stdout) ??
-          _fallbackOutput(stderr);
-    case _ProviderOutputMode.geminiJson:
-      return _parseGeminiJson(stdout) ??
           _fallbackOutput(stdout) ??
           _fallbackOutput(stderr);
     case _ProviderOutputMode.openCodeJsonl:
@@ -10461,28 +10434,6 @@ String? _parseClaudeJson(String stdout) {
   return null;
 }
 
-String? _parseGeminiJson(String stdout) {
-  // Gemini CLI prints lines like "Loaded cached credentials." before the JSON.
-  // Scan for the first '{' to skip any prefix output.
-  final jsonStart = stdout.indexOf('{');
-  if (jsonStart == -1) return null;
-  try {
-    final value = jsonDecode(stdout.substring(jsonStart));
-    if (value is! Map) {
-      return null;
-    }
-    final error = value['error'];
-    if (error is Map && error['message'] is String) {
-      return 'Gemini error: ${_stripAnsi((error['message'] as String).trim())}';
-    }
-    final response = value['response'];
-    if (response is String && response.trim().isNotEmpty) {
-      return response.trim();
-    }
-  } catch (_) {}
-  return null;
-}
-
 String? _parseOpenCodeJsonl(String stdout) {
   final buffer = StringBuffer();
   String? errorMessage;
@@ -10562,8 +10513,11 @@ bool _looksLikeProviderError(_ProviderKind kind, String raw) {
       return lower.startsWith('codex error:');
     case _ProviderKind.claude:
       return lower.startsWith('claude error:');
-    case _ProviderKind.geminiApi:
-      return lower.startsWith('gemini error:');
+    case _ProviderKind.antigravity:
+      return lower.startsWith('antigravity error:') ||
+          lower.contains('not logged into antigravity') ||
+          lower.contains('authentication required') ||
+          lower.contains('authentication timed out');
     case _ProviderKind.apiProvider:
       // Dead path — API providers return structured AiApiResponse before
       // reaching the CLI output classifier. Kept narrow to avoid false
@@ -10586,7 +10540,7 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
     _ProviderKind.openCode => _normalizeOpenCodeError(normalized),
     _ProviderKind.codex => _normalizeCodexError(normalized),
     _ProviderKind.claude => normalized,
-    _ProviderKind.geminiApi => _normalizeGeminiError(normalized),
+    _ProviderKind.antigravity => _normalizeAntigravityError(normalized),
     _ProviderKind.apiProvider => normalized,
   };
   // Never let a provider echo a bearer token, API key, or session cred
@@ -10738,21 +10692,23 @@ String _normalizeCodexError(String raw) {
   return 'Codex exited with an error. Check the Codex log for details.';
 }
 
-// Gemini CLI (Node.js) can dump a full V8 GC trace and stack on OOM.
-// Detect that pattern and return a clean user-facing message.
-String _normalizeGeminiError(String raw) {
+// The Antigravity CLI (`agy`) surfaces its own auth/headless failure modes as
+// plain text. Translate the known ones into a clean, actionable message and
+// cap the rest so a stack/log dump can't overflow the UI.
+String _normalizeAntigravityError(String raw) {
   final lower = raw.toLowerCase();
-  if (lower.contains('javascript heap out of memory') ||
-      lower.contains('allocation failed') ||
-      lower.contains('fatal error') && lower.contains('mark-compact')) {
-    return 'Gemini CLI ran out of memory processing this request. '
-        'Try a smaller diff or fewer files.';
+  if (lower.contains('not logged into antigravity') ||
+      lower.contains('authentication required') ||
+      lower.contains('authentication timed out') ||
+      lower.contains('token source')) {
+    return 'Antigravity CLI needs a sign-in. Run `agy` once in a terminal '
+        'and complete the Google login, then try again.';
   }
   if (lower.contains('rate limit') || lower.contains('429')) {
-    return 'Gemini API rate limit reached. Wait a moment and try again.';
+    return 'Antigravity rate limit reached. Wait a moment and try again.';
   }
   if (lower.contains('quota') || lower.contains('exceeded')) {
-    return 'Gemini API quota exceeded. Check your Google AI usage.';
+    return 'Antigravity quota exceeded. Check your Google AI usage.';
   }
   // For other errors, cap the length to avoid overflowing the UI.
   if (raw.length > 500) {
@@ -11054,308 +11010,6 @@ Future<_CommandResult?> _runObservedProcess({
   }
 }
 
-// =========================================================================
-// Gemini API — direct HTTP provider (no CLI, no Node.js)
-//
-// Uses the same Cloud Code API and OAuth credentials as the official
-// Gemini CLI (@google/gemini-cli). The client ID and secret below are
-// the same public values embedded in the CLI's npm bundle — they are not
-// application secrets (Google's OAuth for native/desktop apps treats
-// client_secret as non-confidential, per RFC 8252 §8.5).
-// =========================================================================
-
-const _geminiApiEndpoint = 'https://cloudcode-pa.googleapis.com/v1internal';
-const _geminiApiClientId =
-    '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
-const _geminiApiClientSecret = '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';
-
-// Shared HTTP client for all Gemini API calls. Short idle timeout
-// prevents stale keep-alive connections — the server may close its
-// end before Dart's default 15s timeout, causing "Connection closed
-// before full header was received" on the next reuse attempt.
-final HttpClient _geminiApiHttpClient = HttpClient()
-  ..idleTimeout = const Duration(seconds: 5);
-
-// Cached state for the Gemini API session.
-String? _geminiApiAccessToken;
-DateTime? _geminiApiTokenExpiry;
-String? _geminiApiProjectId;
-
-const _geminiApiPreviewProModel = 'gemini-3-pro-preview';
-const _geminiApiPreviewFlashModel = 'gemini-3-flash-preview';
-const _geminiApiPreview31ProModel = 'gemini-3.1-pro-preview';
-const _geminiApiPreview31FlashLiteModel = 'gemini-3.1-flash-lite-preview';
-const _geminiApiStableProModel = 'gemini-2.5-pro';
-
-/// Map local Gemini aliases to concrete model ids accepted by the Code Assist
-/// API. The official Gemini CLI supports auto/pro/flash aliases client-side;
-/// this endpoint expects concrete model ids.
-String _geminiApiModelName(String alias) {
-  switch (alias.trim().toLowerCase()) {
-    case 'pro':
-      return _geminiApiPreviewProModel;
-    case 'flash':
-      return _geminiApiPreviewFlashModel;
-    case 'flash-lite':
-      return _geminiApiPreview31FlashLiteModel;
-    case 'auto':
-    case 'auto-gemini-3':
-      return _geminiApiPreviewProModel;
-    case 'auto-gemini-2.5':
-      return _geminiApiStableProModel;
-    case 'gemini-3.1-pro-preview-customtools':
-      // The public Gemini CLI may surface this internal variant, but the
-      // Code Assist endpoint this app calls accepts the plain 3.1 pro preview
-      // model id instead.
-      return _geminiApiPreview31ProModel;
-    default:
-      // Already a full model name (e.g. 'gemini-3-pro-preview').
-      return alias;
-  }
-}
-
-/// Read the refresh token from ~/.gemini/oauth_creds.json.
-String? _geminiApiRefreshToken() {
-  final homeDir = _userHomeDir();
-  if (homeDir == null) return null;
-  final raw = _readJsonFile(p.join(homeDir, '.gemini', 'oauth_creds.json'));
-  if (raw is! Map<String, dynamic>) return null;
-  final token = raw['refresh_token'];
-  return (token is String && token.isNotEmpty) ? token : null;
-}
-
-/// Ensure we have a valid access token, refreshing if needed.
-Future<String?> _geminiApiEnsureToken() async {
-  if (_geminiApiAccessToken != null &&
-      _geminiApiTokenExpiry != null &&
-      DateTime.now().isBefore(
-          _geminiApiTokenExpiry!.subtract(const Duration(seconds: 30)))) {
-    return _geminiApiAccessToken;
-  }
-
-  final refreshToken = _geminiApiRefreshToken();
-  if (refreshToken == null) return null;
-
-  try {
-    final request = await _geminiApiHttpClient.postUrl(
-      Uri.parse('https://oauth2.googleapis.com/token'),
-    );
-    request.headers.contentType =
-        ContentType('application', 'x-www-form-urlencoded');
-    request.write(
-      'client_id=${Uri.encodeComponent(_geminiApiClientId)}'
-      '&client_secret=${Uri.encodeComponent(_geminiApiClientSecret)}'
-      '&refresh_token=${Uri.encodeComponent(refreshToken)}'
-      '&grant_type=refresh_token',
-    );
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
-
-    if (response.statusCode != 200) return null;
-    final json = jsonDecode(body);
-    if (json is! Map || json['access_token'] is! String) return null;
-
-    _geminiApiAccessToken = json['access_token'] as String;
-    final expiresIn =
-        json['expires_in'] is int ? json['expires_in'] as int : 3599;
-    _geminiApiTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
-    return _geminiApiAccessToken;
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Get the project ID from the Gemini Code Assist API (cached).
-Future<String?> _geminiApiEnsureProject() async {
-  if (_geminiApiProjectId != null) return _geminiApiProjectId;
-
-  final token = await _geminiApiEnsureToken();
-  if (token == null) return null;
-
-  try {
-    final request = await _geminiApiHttpClient.postUrl(
-      Uri.parse('$_geminiApiEndpoint:loadCodeAssist'),
-    );
-    request.headers.set('Authorization', 'Bearer $token');
-    request.headers.contentType = ContentType.json;
-    request.write(jsonEncode({
-      'metadata': {
-        'ideType': 'IDE_UNSPECIFIED',
-        'platform': 'PLATFORM_UNSPECIFIED',
-        'pluginType': 'GEMINI',
-      },
-    }));
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
-
-    if (response.statusCode != 200) return null;
-    final json = jsonDecode(body);
-    if (json is! Map) return null;
-
-    _geminiApiProjectId = json['cloudaicompanionProject'] as String?;
-    return _geminiApiProjectId;
-  } catch (_) {
-    return null;
-  }
-}
-
-/// Call the Gemini Code Assist generateContent API directly.
-/// Returns the model's text response, or null on failure.
-Future<({String? text, String? error, int inputTokens, int outputTokens})>
-    _runGeminiApiRequest(String prompt, String modelAlias,
-        {int? maxTokens}) async {
-  final token = await _geminiApiEnsureToken();
-  if (token == null) {
-    return (
-      text: null,
-      error: 'Gemini API token refresh failed.',
-      inputTokens: 0,
-      outputTokens: 0
-    );
-  }
-
-  final project = await _geminiApiEnsureProject();
-  if (project == null) {
-    return (
-      text: null,
-      error: 'Gemini API project setup failed.',
-      inputTokens: 0,
-      outputTokens: 0
-    );
-  }
-
-  final model = _geminiApiModelName(modelAlias);
-
-  final payload = jsonEncode({
-    'model': model,
-    'project': project,
-    'user_prompt_id': 'desktop-${DateTime.now().millisecondsSinceEpoch}',
-    'request': {
-      'contents': [
-        {
-          'role': 'user',
-          'parts': [
-            {'text': prompt},
-          ],
-        },
-      ],
-      'generationConfig': {
-        'temperature': 0.3,
-        if (maxTokens != null) 'maxOutputTokens': maxTokens,
-      },
-    },
-  });
-
-  // Retry twice on transient connection errors. Dart's HttpClient
-  // can reuse a connection the server already closed, producing
-  // "Connection closed before full header was received." Also
-  // catches SocketException for network blips.
-  HttpClientResponse? response;
-  String? body;
-  for (var attempt = 0; attempt < 3; attempt++) {
-    try {
-      final request = await _geminiApiHttpClient.postUrl(
-        Uri.parse('$_geminiApiEndpoint:generateContent'),
-      );
-      request.headers.set('Authorization', 'Bearer $token');
-      request.headers.contentType = ContentType.json;
-      request.persistentConnection = false;
-      request.write(payload);
-      response = await request.close();
-      body = await response.transform(utf8.decoder).join();
-      break;
-    } on HttpException {
-      if (attempt == 2) rethrow;
-      await Future<void>.delayed(
-          Duration(milliseconds: 300 * (attempt + 1)));
-    } on SocketException {
-      if (attempt == 2) rethrow;
-      await Future<void>.delayed(
-          Duration(milliseconds: 300 * (attempt + 1)));
-    }
-  }
-
-  try {
-    if (response == null || body == null) {
-      return (
-        text: null,
-        error: 'Gemini API connection failed.',
-        inputTokens: 0,
-        outputTokens: 0
-      );
-    }
-
-    if (response.statusCode != 200) {
-      // Try to extract a meaningful error message.
-      try {
-        final errJson = jsonDecode(body);
-        final errObj = errJson is Map ? errJson['error'] : null;
-        final message = (errObj is Map ? errObj['message'] : null) ??
-            'HTTP ${response.statusCode}';
-        return (
-          text: null,
-          error: 'Gemini API: $message',
-          inputTokens: 0,
-          outputTokens: 0
-        );
-      } catch (_) {
-        return (
-          text: null,
-          error: 'Gemini API error: HTTP ${response.statusCode}',
-          inputTokens: 0,
-          outputTokens: 0
-        );
-      }
-    }
-
-    final json = jsonDecode(body);
-    if (json is! Map) {
-      return (
-        text: null,
-        error: 'Gemini API returned invalid JSON.',
-        inputTokens: 0,
-        outputTokens: 0
-      );
-    }
-
-    // Extract text from response.candidates[0].content.parts[0].text
-    final candidates = (json['response'] as Map?)?['candidates'] as List?;
-    final content = (candidates?.firstOrNull as Map?)?['content'] as Map?;
-    final parts = content?['parts'] as List?;
-    final partWithText = parts?.firstWhere(
-      (Object? p) => p is Map && p['text'] != null,
-      orElse: () => null,
-    );
-    final text = (partWithText as Map?)?['text'] as String?;
-
-    final usage = (json['response'] as Map?)?['usageMetadata'] as Map?;
-    final inputTokens = (usage?['promptTokenCount'] as int?) ?? 0;
-    final outputTokens = (usage?['candidatesTokenCount'] as int?) ?? 0;
-
-    if (text == null || text.trim().isEmpty) {
-      return (
-        text: null,
-        error: 'Gemini API returned no content.',
-        inputTokens: inputTokens,
-        outputTokens: outputTokens
-      );
-    }
-
-    return (
-      text: text,
-      error: null,
-      inputTokens: inputTokens,
-      outputTokens: outputTokens
-    );
-  } catch (e) {
-    return (
-      text: null,
-      error: 'Gemini API request failed: $e',
-      inputTokens: 0,
-      outputTokens: 0
-    );
-  }
-}
 
 _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
   if (Platform.isWindows) {
@@ -11585,8 +11239,8 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
       return _codexAuthStatus();
     case _ProviderKind.claude:
       return _claudeAuthStatus();
-    case _ProviderKind.geminiApi:
-      return _geminiAuthStatus();
+    case _ProviderKind.antigravity:
+      return _antigravityAuthStatus();
     case _ProviderKind.openCode:
       return _openCodeAuthStatus();
     case _ProviderKind.apiProvider:
@@ -11677,32 +11331,22 @@ _ProviderAuthStatus _claudeAuthStatus() {
   );
 }
 
-_ProviderAuthStatus _geminiAuthStatus() {
-  final homeDir = _userHomeDir();
-  if (homeDir == null) {
-    return const _ProviderAuthStatus(
-      ok: false,
-      detail: 'home directory unavailable',
-    );
-  }
-
-  final value = _readJsonFile(p.join(homeDir, '.gemini', 'oauth_creds.json'));
-  if (value == null) {
-    return const _ProviderAuthStatus(
-      ok: false,
-      detail: 'missing ~/.gemini/oauth_creds.json',
-    );
-  }
-
-  final accessToken = value['access_token'] as String?;
-  final hasToken = accessToken != null && accessToken.trim().isNotEmpty;
-  final planName =
-      hasToken ? _geminiAccountLabel(homeDir) ?? 'Google AI' : null;
-  return _ProviderAuthStatus(
-    ok: hasToken,
-    detail:
-        hasToken ? 'gemini oauth token found' : 'gemini oauth token missing',
-    planName: planName,
+// Antigravity's `agy` CLI owns its auth entirely (Google OAuth held in the OS
+// keyring). Manifold never reads or refreshes a token — same stance we take
+// with opencode. Auth is therefore reported as CLI-managed and availability is
+// driven purely by whether the `agy` binary resolves. If `agy` isn't actually
+// signed in, the print call surfaces a sign-in message via
+// _normalizeAntigravityError rather than us second-guessing the keyring.
+_ProviderAuthStatus _antigravityAuthStatus() {
+  // `ok: true` keeps the provider selectable whenever `agy` resolves (we can't
+  // — and by design won't — inspect its keyring session). The label is
+  // deliberately "CLI-managed" rather than "Connected": we don't actually know
+  // the CLI is signed in, and a hung/unauthed call surfaces a fast sign-in
+  // message via _normalizeAntigravityError + the tight _antigravityRuntimeTimeout.
+  return const _ProviderAuthStatus(
+    ok: true,
+    detail: 'managed by Antigravity CLI',
+    planName: 'CLI-managed',
   );
 }
 
@@ -11764,27 +11408,6 @@ _ClaudeOAuthCredentials? _readClaudeOAuthCredentials(String path) {
     hasInferenceScope: scopes is List &&
         scopes.any((scope) => scope is String && scope == 'user:inference'),
   );
-}
-
-String? _geminiAccountLabel(String homeDir) {
-  final settings = _readJsonFile(p.join(homeDir, '.gemini', 'settings.json'));
-  final security = settings?['security'];
-  final auth = security is Map ? security['auth'] : null;
-  final selectedType = auth is Map ? auth['selectedType'] as String? : null;
-  switch (selectedType) {
-    case 'oauth-personal':
-      return 'Google AI';
-    case 'oauth-adc':
-      return 'Cloud ADC';
-    case 'service-account':
-      return 'Service Account';
-    case 'api-key':
-      return 'API Key';
-    case null:
-      return null;
-    default:
-      return 'Connected';
-  }
 }
 
 String _buildModelDescription({
@@ -12236,13 +11859,12 @@ class _MergedReviewResult {
   });
 }
 
-enum _ProviderKind { codex, claude, geminiApi, openCode, apiProvider }
+enum _ProviderKind { codex, claude, antigravity, openCode, apiProvider }
 
 enum _ProviderOutputMode {
   plainText,
   codexJsonl,
   claudeJson,
-  geminiJson,
   openCodeJsonl,
 }
 

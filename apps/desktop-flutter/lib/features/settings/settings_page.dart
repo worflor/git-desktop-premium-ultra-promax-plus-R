@@ -848,8 +848,8 @@ class _SettingsPageState extends State<SettingsPage>
           placeholder: true,
         ),
         _ProviderCard(
-          id: 'gemini',
-          binaryLabel: 'npx',
+          id: 'antigravity',
+          binaryLabel: 'agy',
           status: 'Detecting...',
           placeholder: true,
         ),
@@ -865,7 +865,12 @@ class _SettingsPageState extends State<SettingsPage>
         if (cliIds.contains(provider.id)) {
           cards.add(_ProviderCard(
             id: provider.id,
-            binaryLabel: provider.resolvedBinary ?? provider.binary,
+            // Show a bare `name.ext` (e.g. agy.exe) to match the other cards,
+            // even when the binary resolved via an absolute path candidate
+            // rather than PATH — the full path blows out the card layout.
+            binaryLabel: (provider.resolvedBinary ?? provider.binary)
+                .split(RegExp(r'[\\/]'))
+                .last,
             status: provider.available
                 ? provider.planName ?? 'Ready'
                 : 'Not detected',
@@ -5211,7 +5216,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
     const shorts = {
       'codex': 'cdx',
       'claude': 'cld',
-      'gemini': 'gem',
+      'antigravity': 'agy',
       'opencode': 'oc',
       'openrouter': 'or',
       'openai': 'oai',
