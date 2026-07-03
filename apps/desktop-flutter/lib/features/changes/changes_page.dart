@@ -23,6 +23,7 @@ import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
+import '../../ui/split_pill_button.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
@@ -10205,6 +10206,11 @@ class _TracePanel extends StatelessWidget {
   }
 }
 
+/// Which half of the check/sync split pill is currently in flight (or
+/// the whole single-chip fallback when there's no upstream). Only one
+/// runs at a time; the other half is disabled while it does.
+enum _CleanTreeBusy { none, check, sync, refresh }
+
 class _CleanTreeDashboard extends StatefulWidget {
   final AppTokens tokens;
   final RepositoryStatus status;
@@ -10223,15 +10229,37 @@ class _CleanTreeDashboard extends StatefulWidget {
 }
 
 class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
-  bool _fetching = false;
+  _CleanTreeBusy _busy = _CleanTreeBusy.none;
 
-  Future<void> _fetch() async {
-    if (_fetching) return;
-    setState(() => _fetching = true);
+  bool get _running => _busy != _CleanTreeBusy.none;
+
+  /// "check" — fetch the remote and refresh so ahead/behind reflect what's
+  /// actually upstream, WITHOUT pushing any local commits. This is the read-
+  /// only half of the split: a stray click on the clean-tree screen learns
+  /// about new commits instead of silently publishing yours.
+  Future<void> _check() async {
+    if (_running) return;
+    setState(() => _busy = _CleanTreeBusy.check);
     try {
-      // Route through the unified resolver like every other sync/pull site —
-      // a clean-but-diverged tree does `pull --rebase`, which can leave
-      // conflicts that must open the editor instead of being discarded.
+      final r = await fetchRemote(widget.repoPath, prune: true);
+      if (mounted && !r.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Fetch failed: ${r.error}')));
+      }
+      await widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _busy = _CleanTreeBusy.none);
+    }
+  }
+
+  /// "& sync" — the full reconcile. Routes through the unified resolver like
+  /// every other sync/pull site: a clean-but-diverged tree does `pull
+  /// --rebase` (which can leave conflicts that open the editor instead of
+  /// being discarded), then pushes what's ahead.
+  Future<void> _sync() async {
+    if (_running) return;
+    setState(() => _busy = _CleanTreeBusy.sync);
+    try {
       final outcome = await resolveSync(context, widget.repoPath, widget.status);
       if (mounted && outcome is! MergeClean) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -10239,17 +10267,23 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
       }
       await widget.onRefresh();
     } finally {
-      if (mounted) setState(() => _fetching = false);
+      if (mounted) setState(() => _busy = _CleanTreeBusy.none);
     }
   }
 
+  /// No upstream — nothing to fetch or push against. The single-chip
+  /// fallback just refreshes local status.
   Future<void> _refreshOnly() async {
-    if (_fetching) return;
-    setState(() => _fetching = true);
+    if (_running) return;
+    // Its own busy value — this path only refreshes local status (no fetch, no
+    // push), so it must not read as a `sync`. The Refresh chip keys its spinner
+    // off `_running` (any non-none), so behaviour is unchanged; this just keeps
+    // the state honest if a future branch ever inspects `_busy == sync`.
+    setState(() => _busy = _CleanTreeBusy.refresh);
     try {
       await widget.onRefresh();
     } finally {
-      if (mounted) setState(() => _fetching = false);
+      if (mounted) setState(() => _busy = _CleanTreeBusy.none);
     }
   }
 
@@ -10262,13 +10296,6 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     final behindColor =
         s.behind > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
     final hasUpstream = s.upstream != null;
-    final actionLabel = _fetching
-        ? hasUpstream
-            ? 'Syncing...'
-            : 'Refreshing...'
-        : hasUpstream
-            ? 'Sync'
-            : 'Refresh';
 
     return Center(
       child: Padding(
@@ -10357,15 +10384,69 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
               ],
             ),
             const SizedBox(height: 16),
-            _GhostActionChip(
-              tokens: t,
-              label: actionLabel,
-              fetching: _fetching,
-              onTap: hasUpstream ? _fetch : _refreshOnly,
-            ),
+            if (hasUpstream)
+              _CheckSyncSplitButton(
+                tokens: t,
+                busy: _busy,
+                onCheck: _check,
+                onSync: _sync,
+              )
+            else
+              _GhostActionChip(
+                tokens: t,
+                label: _running ? 'Refreshing...' : 'Refresh',
+                fetching: _running,
+                onTap: _refreshOnly,
+              ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The check/sync split pill shown on the clean-tree screen when the branch
+/// has an upstream. Left half "check" fetches + refreshes (no push); right
+/// half "& sync" runs the full reconcile. Read together the halves spell
+/// "check & sync" — and splitting them means the clean-tree screen can no
+/// longer push unpushed commits from a single stray tap.
+class _CheckSyncSplitButton extends StatelessWidget {
+  final AppTokens tokens;
+  final _CleanTreeBusy busy;
+  final VoidCallback onCheck;
+  final VoidCallback onSync;
+
+  const _CheckSyncSplitButton({
+    required this.tokens,
+    required this.busy,
+    required this.onCheck,
+    required this.onSync,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return SplitPillButton(
+      enabled: busy == _CleanTreeBusy.none,
+      segments: [
+        SplitPillSegment(
+          label: 'check',
+          tooltip: 'Fetch and refresh. Never pushes.',
+          restColor: t.textMuted,
+          hoverColor: t.textNormal,
+          loading: busy == _CleanTreeBusy.check,
+          onTap: onCheck,
+        ),
+        SplitPillSegment(
+          label: '& sync',
+          tooltip: 'Pull, then push your commits.',
+          restColor: t.textNormal,
+          hoverColor: t.accentBright,
+          bold: true,
+          loading: busy == _CleanTreeBusy.sync,
+          onTap: onSync,
+        ),
+      ],
     );
   }
 }

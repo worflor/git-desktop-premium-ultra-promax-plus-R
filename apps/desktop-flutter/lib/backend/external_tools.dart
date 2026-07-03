@@ -316,10 +316,12 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
-  /// GitHub Copilot CLI.
+  /// GitHub Copilot CLI — Microsoft's agentic coding CLI (`@github/copilot`).
+  /// Interactive REPL → newTerminal keeps the console open. Runs in the project
+  /// directory the launcher sets.
   static ExternalTool copilot() => ExternalTool.create(
         label: 'Copilot',
-        executable: 'github-copilot-cli',
+        executable: 'copilot',
         args: const [],
         mode: ToolLaunchMode.newTerminal,
       );
@@ -925,7 +927,7 @@ class ExternalToolPresets {
         const ExternalToolPreset(label: '+ Aider', executable: 'aider', category: ExternalToolCategory.ai, build: aider),
         const ExternalToolPreset(label: '+ Amp', executable: 'amp', category: ExternalToolCategory.ai, build: amp),
         const ExternalToolPreset(label: '+ Cline', executable: 'cline', category: ExternalToolCategory.ai, build: cline),
-        const ExternalToolPreset(label: '+ Copilot', executable: 'github-copilot-cli', category: ExternalToolCategory.ai, build: copilot),
+        const ExternalToolPreset(label: '+ Copilot', executable: 'copilot', category: ExternalToolCategory.ai, build: copilot),
         const ExternalToolPreset(label: '+ Goose', executable: 'goose', category: ExternalToolCategory.ai, build: goose),
         const ExternalToolPreset(label: '+ Amazon Q', executable: 'q', category: ExternalToolCategory.ai, build: amazonQ),
         const ExternalToolPreset(label: '+ Warp', executable: 'warp', category: ExternalToolCategory.ai, build: warp),

@@ -70,6 +70,7 @@ const _cliProviderSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
   _ProviderSpec(id: 'claude', binary: 'claude', kind: _ProviderKind.claude),
   _ProviderSpec(id: 'antigravity', binary: 'agy', kind: _ProviderKind.antigravity),
+  _ProviderSpec(id: 'copilot', binary: 'copilot', kind: _ProviderKind.copilot),
   _ProviderSpec(
     id: 'opencode',
     binary: 'opencode',
@@ -77,13 +78,43 @@ const _cliProviderSpecs = <_ProviderSpec>[
   ),
 ];
 
-final Set<String> cliProviderIds =
-    Set.unmodifiable(_cliProviderSpecs.map((s) => s.id));
+// Hard on/off toggles for CLI providers whose headless subprocess mode is
+// currently BROKEN on Windows — Antigravity (`agy`, #508/#258) and GitHub
+// Copilot (`copilot`, #2525/#550 + the ~32K argv limit). Both are verified
+// non-functional headless: they hang or fail at spawn. While off (default) each
+// is hidden EVERYWHERE — no provider card, no models in the picker, not
+// selectable — because [_isCliProviderEnabled] gates the single [_providerSpecs]
+// source every downstream path reads from. Flip on here, or with
+// `--dart-define=MANIFOLD_ENABLE_ANTIGRAVITY=true` / `..._COPILOT=true`, once
+// upstream fixes land. Their "Open with" launchers are unaffected (those run
+// interactively, where the CLIs work) — this only gates in-app inference.
+const _antigravityEnabled = bool.fromEnvironment('MANIFOLD_ENABLE_ANTIGRAVITY');
+const _copilotEnabled = bool.fromEnvironment('MANIFOLD_ENABLE_COPILOT');
+
+bool _isCliProviderEnabled(String id) {
+  switch (id) {
+    case 'antigravity':
+      return _antigravityEnabled;
+    case 'copilot':
+      return _copilotEnabled;
+    default:
+      return true;
+  }
+}
+
+final Set<String> cliProviderIds = Set.unmodifiable(
+    _cliProviderSpecs.where((s) => _isCliProviderEnabled(s.id)).map((s) => s.id));
 
 List<_ProviderSpec> _allProviderSpecs = List.unmodifiable(_cliProviderSpecs);
 AiApiKeysSnapshot _apiKeysSnapshot = AiApiKeysSnapshot.empty();
 
-List<_ProviderSpec> get _providerSpecs => _allProviderSpecs;
+// Disabled CLI providers (see [_isCliProviderEnabled]) are filtered out of the
+// single source every path reads — availability, model discovery, dispatch,
+// and the settings cards — so a broken-headless provider vanishes entirely
+// until its toggle is flipped on. API providers always pass (id not gated).
+List<_ProviderSpec> get _providerSpecs => _allProviderSpecs
+    .where((s) => _isCliProviderEnabled(s.id))
+    .toList(growable: false);
 
 Future<void> loadApiProviderKeys() async {
   _apiKeysSnapshot = await AiApiKeysStore.load();
@@ -119,6 +150,27 @@ void _deleteApiModelCacheFromDisk(String providerId) {
       if (await file.exists()) await file.delete();
     } catch (_) {}
   });
+}
+
+/// Wipe every cached model list — the in-memory availability + discovery
+/// caches and the whole persisted `model_cache` directory.
+///
+/// CLI providers expose no live model-list endpoint we can diff against, so
+/// a model a provider quietly retired can linger in our cache indefinitely
+/// (served from disk for 24h, from memory for its TTL). This drops the slate
+/// entirely so the next discovery repopulates from whatever each CLI reports
+/// today. Provider *resolution* (binary paths) is intentionally left intact —
+/// it holds no model data and re-resolving it buys nothing. User model-slot
+/// assignments live in the settings snapshot, not here, so they survive.
+Future<void> clearAiModelCache() async {
+  _providerAvailabilityCache.clear();
+  _providerModelDiscoveryCache.clear();
+  try {
+    final dir = await _apiModelCacheDir();
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  } catch (_) {}
 }
 
 AiApiKeysSnapshot get currentApiKeys => _apiKeysSnapshot;
@@ -188,6 +240,14 @@ const _providerRuntimeTimeout = Duration(minutes: 20);
 // an unusable 20-minute UI block into a fast, clear "not signed in" failure.
 // A real one-shot print returns in seconds, well inside this bound.
 const _antigravityRuntimeTimeout = Duration(minutes: 3);
+// Same tight cap for GitHub Copilot (`copilot`). Verified on this box: headless
+// `-p` hangs when spawned as a child process with redirected pipes on Windows
+// (upstream #2525/#550 — a bare `-p "say PONG"` never returns, even with
+// --allow-all-tools), and there's no working large-prompt path (stdin hangs
+// interactively, `--attachment` rejects text, and `-p` hits the ~32K Windows
+// argv limit → "filename or extension is too long" at spawn). So cap it tight
+// to fail fast instead of a 20-minute UI block; it self-heals if upstream fixes.
+const _copilotRuntimeTimeout = Duration(minutes: 3);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 // Hard toggle for the live `agy models` probe during provider discovery.
@@ -4389,6 +4449,8 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
       return _discoverClaudeModels(resolution);
     case _ProviderKind.antigravity:
       return _discoverAntigravityModels(resolution);
+    case _ProviderKind.copilot:
+      return _discoverCopilotModels(resolution);
     case _ProviderKind.openCode:
       return _discoverOpenCodeModels(resolution);
     case _ProviderKind.apiProvider:
@@ -4802,6 +4864,64 @@ String? _findModelValueInJson(dynamic value) {
     }
   }
   return null;
+}
+
+/// Discover Copilot models from `copilot help config`, which statically lists
+/// the model catalog under the `model` setting — no auth, no inference, no
+/// credits (unlike a live models API, which would also mean touching auth).
+/// Parses the quoted ids between the `model` section header and the next
+/// setting. Falls back to a tiny known set only if the help format changes.
+Future<_ProviderModelDiscovery?> _discoverCopilotModels(
+  _ProviderResolution? resolution,
+) async {
+  final command = resolution?.command ?? 'copilot';
+  final result = await _runCommandWithTimeout(
+    command,
+    const ['help', 'config'],
+    _modelDiscoveryTimeout,
+  );
+
+  final models = <String>[];
+  if (result != null && result.exitCode == 0) {
+    var inModelSection = false;
+    for (final raw in result.stdout.split('\n')) {
+      final trimmed = _stripAnsi(raw).trim();
+      // The catalog lives under a `` `model`: … `` header, listed as
+      // `- "id"` bullet lines, until the next `` `key`: `` config setting.
+      if (RegExp(r'^`model`\s*:').hasMatch(trimmed)) {
+        inModelSection = true;
+        continue;
+      }
+      if (!inModelSection) continue;
+      final m = RegExp(r'^-\s*"([^"]+)"').firstMatch(trimmed);
+      if (m != null) {
+        final id = m.group(1)!;
+        if (!models.contains(id)) models.add(id);
+        continue;
+      }
+      // A new backtick-quoted `` `key`: `` line ends the model list.
+      if (trimmed.startsWith('`') && trimmed.contains('`:')) break;
+    }
+  }
+
+  if (models.isNotEmpty) {
+    return _ProviderModelDiscovery(models: models, modelDetails: const {});
+  }
+
+  // Fallback: a minimal known set if `copilot help config` parsing ever breaks.
+  const fallback = <String>[
+    'claude-sonnet-4.5',
+    'gpt-5.4',
+    'gemini-3.1-pro-preview',
+  ];
+  return _ProviderModelDiscovery(
+    models: fallback,
+    modelDetails: {
+      for (final m in fallback)
+        _normalizeModelKey(m):
+            'Copilot model. Full list comes from `copilot help config`.',
+    },
+  );
 }
 
 /// Discover the models the Antigravity CLI (`agy`) exposes.
@@ -10144,6 +10264,24 @@ String? _claudeEffort(String? effort) {
   return best;
 }
 
+String? _copilotEffort(String? effort) {
+  // Copilot CLI accepts: none, low, medium, high, xhigh, max.
+  const levels = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+  const thresholds = [0.0, 0.236, 0.382, 0.618, 0.85, 1.0];
+  if (effort == null) return null;
+  if (levels.contains(effort)) return effort;
+  final f = effortFraction(effort);
+  if (f == null) return null;
+  var best = levels.last;
+  for (var i = 0; i < thresholds.length; i++) {
+    if (f <= thresholds[i] + 0.01) {
+      best = levels[i];
+      break;
+    }
+  }
+  return best;
+}
+
 List<_ProviderAttempt> _buildProviderAttempts(
   _ProviderKind kind,
   String modelId, {
@@ -10234,6 +10372,46 @@ List<_ProviderAttempt> _buildProviderAttempts(
           useStdinForPrompt: false,
         ),
       ];
+    case _ProviderKind.copilot:
+      // GitHub Copilot CLI — one non-interactive prompt. Contract verified
+      // against `copilot --help` 1.0.68: `copilot -p "<prompt>"` runs it and
+      // exits. We deliberately do NOT pass --allow-all-tools: our prompts are
+      // self-contained text generation, so the agent never needs to run shell
+      // or write files — omitting it means Copilot can't mutate the repo
+      // unattended (same safe-default stance codex/claude rely on). `-p` takes
+      // the prompt as its value, so it is the LAST arg and the dispatch appends
+      // the prompt after it. We use --output-format json (JSONL) because plain
+      // `-p`/`-s` stdout is empty when spawned on Windows (upstream #3544) and
+      // parse the assistant message from the stream; --no-ask-user stops the
+      // agent stalling on a clarifying question. Auth is owned by the CLI and
+      // persists across launches (unlike agy); Manifold never touches it.
+      //
+      // NOTE (2026-07): headless `-p` is currently BROKEN when spawned as a
+      // child process on Windows — it hangs with redirected pipes (upstream
+      // #2525/#550, verified here even with --allow-all-tools) and can't take a
+      // review-sized prompt at all (no stdin, no text --attachment, `-p` hits
+      // the ~32K argv limit → "filename or extension is too long" at spawn).
+      // Encoded per the correct contract so it self-heals when upstream fixes
+      // land; until then _copilotRuntimeTimeout fails it fast, not a 20-min hang.
+      final copilotEffort = _copilotEffort(reasoningEffort);
+      final copilotEffortArgs = copilotEffort != null
+          ? ['--effort', copilotEffort]
+          : const <String>[];
+      return [
+        _ProviderAttempt(
+          name: 'prompt-json',
+          args: [
+            '--output-format', 'json',
+            '--no-color',
+            '--no-ask-user',
+            '--model', modelId,
+            ...copilotEffortArgs,
+            '-p',
+          ],
+          outputMode: _ProviderOutputMode.copilotJsonl,
+          useStdinForPrompt: false,
+        ),
+      ];
     case _ProviderKind.openCode:
       final variantArgs = reasoningEffort != null
           ? ['--variant', reasoningEffort]
@@ -10268,6 +10446,8 @@ Duration _runtimeTimeoutFor(_ProviderKind kind) {
   switch (kind) {
     case _ProviderKind.antigravity:
       return _antigravityRuntimeTimeout;
+    case _ProviderKind.copilot:
+      return _copilotRuntimeTimeout;
     case _ProviderKind.codex:
     case _ProviderKind.claude:
     case _ProviderKind.openCode:
@@ -10284,6 +10464,7 @@ Map<String, String> _providerEnvironment(_ProviderKind kind) {
     case _ProviderKind.apiProvider:
       return const {};
     case _ProviderKind.codex:
+    case _ProviderKind.copilot:
     case _ProviderKind.openCode:
       return const {};
   }
@@ -10306,6 +10487,10 @@ String? _formatProviderOutput(
       return _parseCodexJsonl(stdout) ?? _fallbackOutput(stderr);
     case _ProviderOutputMode.claudeJson:
       return _parseClaudeJson(stdout) ??
+          _fallbackOutput(stdout) ??
+          _fallbackOutput(stderr);
+    case _ProviderOutputMode.copilotJsonl:
+      return _parseCopilotJsonl(stdout) ??
           _fallbackOutput(stdout) ??
           _fallbackOutput(stderr);
     case _ProviderOutputMode.openCodeJsonl:
@@ -10434,6 +10619,88 @@ String? _parseClaudeJson(String stdout) {
   return null;
 }
 
+/// Parse the JSONL from `copilot -p --output-format json` (one JSON object per
+/// line: tool calls, assistant messages, usage). Accumulate assistant message
+/// text and surface errors. Parsed defensively — the exact event schema is
+/// unverified against a live run (Windows headless copilot has open output
+/// bugs #2525/#3544), so several plausible shapes for the assistant text are
+/// accepted rather than pinning one.
+String? _parseCopilotJsonl(String stdout) {
+  final buffer = StringBuffer();
+  String? errorMessage;
+  for (final line in stdout.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('{')) continue;
+    try {
+      final value = jsonDecode(trimmed);
+      if (value is! Map) continue;
+      final type =
+          (value['type'] ?? value['event'] ?? '').toString().toLowerCase();
+      if (type.contains('error')) {
+        final extracted = _extractDeepestErrorMessage(value);
+        if (extracted != null && extracted.isNotEmpty) errorMessage = extracted;
+        continue;
+      }
+      final message = value['message'];
+      final role =
+          (value['role'] ?? (message is Map ? message['role'] : null) ?? '')
+              .toString()
+              .toLowerCase();
+      if (!type.contains('assistant') && role != 'assistant') continue;
+      final text = _extractCopilotText(value);
+      if (text != null && text.isNotEmpty) buffer.write(text);
+    } catch (_) {}
+  }
+  final response = buffer.toString().trim();
+  if (response.isNotEmpty) return response;
+  if (errorMessage != null && errorMessage.trim().isNotEmpty) {
+    return 'Copilot error: ${_stripAnsi(errorMessage.trim())}';
+  }
+  return null;
+}
+
+/// Pull assistant text out of a copilot JSONL event, checking the locations the
+/// CLI is known/likely to use, innermost-first.
+String? _extractCopilotText(Map<dynamic, dynamic> value) {
+  final message = value['message'];
+  final candidates = <dynamic>[
+    value['text'],
+    value['delta'],
+    value['content'],
+    message is Map ? message['content'] : null,
+    message is Map ? message['text'] : null,
+  ];
+  for (final c in candidates) {
+    final t = _copilotContentToText(c);
+    if (t != null && t.isNotEmpty) return t;
+  }
+  return null;
+}
+
+/// Copilot content can be a bare string or an array of parts
+/// (`[{type:'text', text:'…'}]`); flatten either to plain text.
+String? _copilotContentToText(dynamic content) {
+  if (content is String) return content;
+  if (content is List) {
+    final buf = StringBuffer();
+    for (final part in content) {
+      if (part is String) {
+        buf.write(part);
+      } else if (part is Map) {
+        final txt = part['text'] ?? part['content'];
+        if (txt is String) buf.write(txt);
+      }
+    }
+    final s = buf.toString();
+    return s.isEmpty ? null : s;
+  }
+  if (content is Map) {
+    final txt = content['text'] ?? content['content'];
+    return txt is String ? txt : null;
+  }
+  return null;
+}
+
 String? _parseOpenCodeJsonl(String stdout) {
   final buffer = StringBuffer();
   String? errorMessage;
@@ -10518,6 +10785,13 @@ bool _looksLikeProviderError(_ProviderKind kind, String raw) {
           lower.contains('not logged into antigravity') ||
           lower.contains('authentication required') ||
           lower.contains('authentication timed out');
+    case _ProviderKind.copilot:
+      return lower.startsWith('copilot error:') ||
+          lower.contains('not logged in') ||
+          lower.contains('unauthorized') ||
+          lower.contains('no copilot') ||
+          lower.contains('credit') ||
+          lower.contains('quota');
     case _ProviderKind.apiProvider:
       // Dead path — API providers return structured AiApiResponse before
       // reaching the CLI output classifier. Kept narrow to avoid false
@@ -10541,6 +10815,7 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
     _ProviderKind.codex => _normalizeCodexError(normalized),
     _ProviderKind.claude => normalized,
     _ProviderKind.antigravity => _normalizeAntigravityError(normalized),
+    _ProviderKind.copilot => _normalizeCopilotError(normalized),
     _ProviderKind.apiProvider => normalized,
   };
   // Never let a provider echo a bearer token, API key, or session cred
@@ -10690,6 +10965,44 @@ String _normalizeCodexError(String raw) {
   }
 
   return 'Codex exited with an error. Check the Codex log for details.';
+}
+
+// Translate the GitHub Copilot CLI's auth/limit failures into clean, actionable
+// messages and cap the rest so a stack/log dump can't overflow the UI.
+String _normalizeCopilotError(String raw) {
+  final lower = raw.toLowerCase();
+  if (lower.contains('too long') || lower.contains('filename or extension')) {
+    return 'Prompt too large for the Copilot CLI — it has no stdin or '
+        'file-prompt input, so the whole prompt must fit the command line '
+        '(~32K on Windows). Use another provider for large diffs.';
+  }
+  if (lower.contains('not logged in') ||
+      lower.contains('unauthorized') ||
+      lower.contains('authenticat') ||
+      lower.contains('sign in') ||
+      lower.contains('no copilot') ||
+      lower.contains('401')) {
+    return 'GitHub Copilot CLI needs a sign-in. Run `copilot` once and use '
+        '`/login` (or set GH_TOKEN), then try again.';
+  }
+  if (lower.contains('rate limit') || lower.contains('429')) {
+    return 'Copilot rate limit reached. Wait a moment and try again.';
+  }
+  if (lower.contains('quota') ||
+      lower.contains('credit') ||
+      lower.contains('exceeded')) {
+    return 'Copilot AI credit/quota exceeded. Check your GitHub Copilot billing.';
+  }
+  if (raw.length > 500) {
+    final firstMeaningful = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('[') && !l.startsWith('<'))
+        .take(3)
+        .join('\n');
+    return firstMeaningful.isNotEmpty ? firstMeaningful : raw.substring(0, 500);
+  }
+  return raw;
 }
 
 // The Antigravity CLI (`agy`) surfaces its own auth/headless failure modes as
@@ -11241,6 +11554,8 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
       return _claudeAuthStatus();
     case _ProviderKind.antigravity:
       return _antigravityAuthStatus();
+    case _ProviderKind.copilot:
+      return _copilotAuthStatus();
     case _ProviderKind.openCode:
       return _openCodeAuthStatus();
     case _ProviderKind.apiProvider:
@@ -11251,6 +11566,27 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
         detail: 'api provider auth requires provider id',
       );
   }
+}
+
+/// Extract the `email` claim from a JWT (e.g. codex's id_token) without
+/// verifying the signature — display-only identity telemetry, never used for
+/// auth. Returns null on any malformed input.
+String? _jwtEmail(String? jwt) {
+  if (jwt == null) return null;
+  final parts = jwt.split('.');
+  if (parts.length < 2) return null;
+  try {
+    var payload = parts[1];
+    payload =
+        payload.padRight(payload.length + (4 - payload.length % 4) % 4, '=');
+    final decoded = utf8.decode(base64Url.decode(payload));
+    final json = jsonDecode(decoded);
+    if (json is Map) {
+      final email = json['email'];
+      if (email is String && email.contains('@')) return email.trim();
+    }
+  } catch (_) {}
+  return null;
 }
 
 _ProviderAuthStatus _codexAuthStatus() {
@@ -11292,13 +11628,18 @@ _ProviderAuthStatus _codexAuthStatus() {
   final planName =
       modelCount != null ? '$modelCount model${modelCount == 1 ? '' : 's'}' : null;
 
+  // The signed-in account (from the id_token) is stable identity telemetry —
+  // unlike the JWT plan claim, which goes stale — so surface it in the detail.
+  final email = _jwtEmail(idToken);
+  final bits = <String>[
+    if (planName != null) planName,
+    if (email != null) email,
+  ];
+  final suffix = bits.isEmpty ? '' : ' (${bits.join(' · ')})';
+
   return _ProviderAuthStatus(
     ok: hasToken,
-    detail: hasToken
-        ? planName != null
-            ? 'codex auth ok ($planName)'
-            : 'codex auth ok'
-        : 'codex token missing',
+    detail: hasToken ? 'codex auth ok$suffix' : 'codex token missing',
     planName: planName,
   );
 }
@@ -11321,14 +11662,67 @@ _ProviderAuthStatus _claudeAuthStatus() {
   }
 
   final ok = credentials.hasAccessToken && credentials.hasInferenceScope;
-  final planName = ok ? _humanizeLabel(credentials.subscriptionType) : null;
+  // rateLimitTier looks like `default_claude_max_20x`; surface just the usage
+  // multiplier (e.g. "20x") — the part a user actually cares about.
+  final mult = credentials.rateLimitTier == null
+      ? null
+      : RegExp(r'(\d+x)').firstMatch(credentials.rateLimitTier!)?.group(1);
+  final basePlan = ok ? _humanizeLabel(credentials.subscriptionType) : null;
+  final planName = basePlan == null
+      ? null
+      : (mult != null ? '$basePlan $mult' : basePlan);
   return _ProviderAuthStatus(
     ok: ok,
     detail: ok
-        ? 'claude oauth ready (${credentials.subscriptionType})'
+        ? 'claude oauth ready (${credentials.subscriptionType}'
+            '${mult != null ? ' · $mult' : ''})'
         : 'claude oauth missing token or user:inference scope',
     planName: planName,
   );
+}
+
+// GitHub Copilot CLI owns its auth (OS keychain `copilot-cli`, ~/.copilot, or a
+// GH_TOKEN/`gh` fallback) and — unlike agy — persists it across spawned
+// invocations, so a login done once keeps working. Manifold never reads or
+// refreshes it. Reported CLI-managed; a not-signed-in call surfaces a sign-in
+// message via _normalizeCopilotError rather than us probing the keychain.
+_ProviderAuthStatus _copilotAuthStatus() {
+  // Copilot stores no identity on disk (keychain / fetched from the API), but
+  // it authenticates THROUGH GitHub — so `gh`'s signed-in handle is the
+  // relevant "who". Read-only, display-only.
+  final ghUser = _githubCliUser();
+  return _ProviderAuthStatus(
+    ok: true,
+    detail: ghUser != null
+        ? 'managed by GitHub Copilot CLI · @$ghUser'
+        : 'managed by GitHub Copilot CLI',
+    planName: 'CLI-managed',
+  );
+}
+
+/// The GitHub handle `gh` is signed in as (scraped from its hosts.yml). Copilot
+/// auths through GitHub, so this is the relevant identity when the CLI itself
+/// persists none on disk. Display-only; a tiny YAML scrape, no token read.
+String? _githubCliUser() {
+  final candidates = <String>[];
+  final appData = Platform.environment['APPDATA'];
+  if (appData != null && appData.trim().isNotEmpty) {
+    candidates.add(p.join(appData, 'GitHub CLI', 'hosts.yml'));
+  }
+  final home = _userHomeDir();
+  if (home != null) {
+    candidates.add(p.join(home, '.config', 'gh', 'hosts.yml'));
+  }
+  for (final path in candidates) {
+    try {
+      final f = File(path);
+      if (!f.existsSync()) continue;
+      final m = RegExp(r'^\s*user:\s*(\S+)', multiLine: true)
+          .firstMatch(f.readAsStringSync());
+      if (m != null) return m.group(1);
+    } catch (_) {}
+  }
+  return null;
 }
 
 // Antigravity's `agy` CLI owns its auth entirely (Google OAuth held in the OS
@@ -11343,11 +11737,27 @@ _ProviderAuthStatus _antigravityAuthStatus() {
   // deliberately "CLI-managed" rather than "Connected": we don't actually know
   // the CLI is signed in, and a hung/unauthed call surfaces a fast sign-in
   // message via _normalizeAntigravityError + the tight _antigravityRuntimeTimeout.
-  return const _ProviderAuthStatus(
+  // Surface the Google account configured under ~/.gemini (shared by
+  // Antigravity) as identity telemetry — a plaintext email the CLI wrote, not
+  // a token, and we never use it to authenticate.
+  final account = _geminiActiveAccount();
+  return _ProviderAuthStatus(
     ok: true,
-    detail: 'managed by Antigravity CLI',
+    detail: account != null
+        ? 'managed by Antigravity CLI · $account'
+        : 'managed by Antigravity CLI',
     planName: 'CLI-managed',
   );
+}
+
+/// The active Google account under ~/.gemini (shared by Antigravity). Display
+/// only — a plaintext email the CLI persisted, never a credential we act on.
+String? _geminiActiveAccount() {
+  final home = _userHomeDir();
+  if (home == null) return null;
+  final v = _readJsonFile(p.join(home, '.gemini', 'google_accounts.json'));
+  final active = v?['active'];
+  return (active is String && active.contains('@')) ? active.trim() : null;
 }
 
 _ProviderAuthStatus _openCodeAuthStatus() {
@@ -11358,10 +11768,13 @@ _ProviderAuthStatus _openCodeAuthStatus() {
     }
 
     if (value.isNotEmpty) {
-      final count = value.length;
+      // The auth file's keys ARE the connected provider ids — surface the
+      // names (openai, anthropic, github-copilot, …), not just a bare count.
+      final names = value.keys.toList()..sort();
+      final count = names.length;
       return _ProviderAuthStatus(
         ok: true,
-        detail: 'opencode connected providers=$count',
+        detail: 'opencode connected: ${names.join(', ')}',
         planName: '$count provider${count == 1 ? '' : 's'}',
       );
     }
@@ -11407,6 +11820,7 @@ _ClaudeOAuthCredentials? _readClaudeOAuthCredentials(String path) {
     subscriptionType: (oauth['subscriptionType'] as String?) ?? 'unknown',
     hasInferenceScope: scopes is List &&
         scopes.any((scope) => scope is String && scope == 'user:inference'),
+    rateLimitTier: oauth['rateLimitTier'] as String?,
   );
 }
 
@@ -11727,10 +12141,12 @@ class _ClaudeOAuthCredentials {
   final bool hasAccessToken;
   final String subscriptionType;
   final bool hasInferenceScope;
+  final String? rateLimitTier;
   const _ClaudeOAuthCredentials({
     required this.hasAccessToken,
     required this.subscriptionType,
     required this.hasInferenceScope,
+    this.rateLimitTier,
   });
 }
 
@@ -11859,12 +12275,13 @@ class _MergedReviewResult {
   });
 }
 
-enum _ProviderKind { codex, claude, antigravity, openCode, apiProvider }
+enum _ProviderKind { codex, claude, antigravity, copilot, openCode, apiProvider }
 
 enum _ProviderOutputMode {
   plainText,
   codexJsonl,
   claudeJson,
+  copilotJsonl,
   openCodeJsonl,
 }
 

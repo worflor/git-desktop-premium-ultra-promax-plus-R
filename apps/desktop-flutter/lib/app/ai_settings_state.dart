@@ -407,6 +407,12 @@ class AiSettingsState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Drop the persisted + in-memory model cache so stale entries (models a
+  /// CLI no longer exposes) can't be served again. Callers should follow with
+  /// a forced [refreshProviders] / [refreshModelCategories] to repopulate from
+  /// live discovery — this only clears; it doesn't re-fetch.
+  Future<void> clearModelCache() => clearAiModelCache();
+
   Future<bool> refreshProviders({bool forceRefresh = false}) {
     if (!forceRefresh && _runtimeProviders.isNotEmpty) {
       return SynchronousFuture(true);

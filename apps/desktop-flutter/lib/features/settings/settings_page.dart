@@ -50,12 +50,18 @@ import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/motion.dart';
+import '../../ui/split_pill_button.dart';
 import '../../ui/tokens.dart';
 
 const _guardrailStageLabels = ['Loose', 'Balanced', 'Strict', 'Paranoid'];
 const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 
 enum _PromptSaveState { idle, typing, saving, saved, error }
+
+/// Which half of the CLI-Piggybacking split pill is in flight. Both routes
+/// end in a forced provider refresh, so this is only about *which* label
+/// animates — the whole pill disables until it settles.
+enum _AiRefreshAction { none, clearCache, refresh }
 
 class SettingsPage extends StatefulWidget {
   final SettingsSection? focusSection;
@@ -119,6 +125,7 @@ class _SettingsPageState extends State<SettingsPage>
   ReleaseCheckResult? _releaseCheck;
   bool _dataMaintenanceBusy = false;
   bool _aiProvidersLoading = false;
+  _AiRefreshAction _aiRefreshAction = _AiRefreshAction.none;
   bool _aiModelOptionsLoading = false;
   String? _aiProvidersError;
   String? _aiModelOptionsError;
@@ -333,6 +340,32 @@ class _SettingsPageState extends State<SettingsPage>
           _syncCategoryControllers();
         }
       });
+    }
+  }
+
+  /// Right half of the CLI-Piggybacking pill — re-probe every provider now.
+  Future<void> _refreshProviders() async {
+    if (_aiRefreshAction != _AiRefreshAction.none) return;
+    setState(() => _aiRefreshAction = _AiRefreshAction.refresh);
+    try {
+      await _refreshAiDiagnostics(forceRefresh: true);
+    } finally {
+      if (mounted) setState(() => _aiRefreshAction = _AiRefreshAction.none);
+    }
+  }
+
+  /// Left half — drop the persisted + in-memory model cache, then repopulate
+  /// from live discovery. This is the escape hatch for models a CLI quietly
+  /// retired: forceRefresh alone re-reads live, but the disk cache can still
+  /// serve a stale list on the next cold start, so we wipe it first.
+  Future<void> _clearModelCache() async {
+    if (_aiRefreshAction != _AiRefreshAction.none) return;
+    setState(() => _aiRefreshAction = _AiRefreshAction.clearCache);
+    try {
+      await context.read<AiSettingsState>().clearModelCache();
+      await _refreshAiDiagnostics(forceRefresh: true);
+    } finally {
+      if (mounted) setState(() => _aiRefreshAction = _AiRefreshAction.none);
     }
   }
 
@@ -848,12 +881,6 @@ class _SettingsPageState extends State<SettingsPage>
           placeholder: true,
         ),
         _ProviderCard(
-          id: 'antigravity',
-          binaryLabel: 'agy',
-          status: 'Detecting...',
-          placeholder: true,
-        ),
-        _ProviderCard(
           id: 'opencode',
           binaryLabel: 'opencode',
           status: 'Detecting...',
@@ -874,7 +901,7 @@ class _SettingsPageState extends State<SettingsPage>
             status: provider.available
                 ? provider.planName ?? 'Ready'
                 : 'Not detected',
-            detail: provider.healthCheck,
+            detail: _providerCardDetail(provider.healthCheck),
             ready: provider.available,
           ));
         }
@@ -1358,13 +1385,29 @@ class _SettingsPageState extends State<SettingsPage>
                 children: [
                   const _SettingsSubtitle('CLI Piggybacking'),
                   const Spacer(),
-                  _GhostMiniButton(
-                    label: _aiProvidersLoading ? 'Refreshing...' : 'Refresh AI',
-                    onTap: _aiProvidersLoading
-                        ? null
-                        : () {
-                            _refreshAiDiagnostics(forceRefresh: true);
-                          },
+                  SplitPillButton(
+                    enabled: _aiRefreshAction == _AiRefreshAction.none,
+                    segments: [
+                      SplitPillSegment(
+                        label: 'Clear cache',
+                        tooltip: 'Wipe cached models and re-probe. '
+                            'Clears out ones a provider dropped.',
+                        restColor: t.textMuted,
+                        hoverColor: t.stateModified,
+                        loading:
+                            _aiRefreshAction == _AiRefreshAction.clearCache,
+                        onTap: _clearModelCache,
+                      ),
+                      SplitPillSegment(
+                        label: 'Refresh providers',
+                        tooltip: 'Re-probe every provider now.',
+                        restColor: t.textNormal,
+                        hoverColor: t.accentBright,
+                        bold: true,
+                        loading: _aiRefreshAction == _AiRefreshAction.refresh,
+                        onTap: _refreshProviders,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -5058,6 +5101,39 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
     return ids;
   }
 
+  /// Group the filtered models under one inline header per provider, preserving
+  /// the first-appearance order of providers so each provider's models sit
+  /// together. Headers are shown only when more than one provider is present —
+  /// a single-provider view (e.g. when the provider filter is active) needs no
+  /// separator.
+  List<Widget> _buildGroupedRows(List<AiModelOptionData> filtered) {
+    final order = <String>[];
+    final byProvider = <String, List<AiModelOptionData>>{};
+    for (final m in filtered) {
+      final list = byProvider.putIfAbsent(m.providerId, () {
+        order.add(m.providerId);
+        return <AiModelOptionData>[];
+      });
+      list.add(m);
+    }
+    final showHeaders = order.length > 1;
+    final rows = <Widget>[];
+    for (final providerId in order) {
+      final group = byProvider[providerId]!;
+      if (showHeaders) {
+        rows.add(_ModelProviderHeader(label: group.first.providerLabel));
+      }
+      for (final model in group) {
+        rows.add(_ModelPickerItem(
+          model: model,
+          selected: model.value == widget.selectedValue,
+          onTap: () => widget.onSelect(model.value),
+        ));
+      }
+    }
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -5114,16 +5190,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
                       : ListView(
                           padding: const EdgeInsets.symmetric(vertical: 4),
                           shrinkWrap: true,
-                          children: [
-                            for (final model in filtered)
-                              _ModelPickerItem(
-                                model: model,
-                                selected:
-                                    model.value == widget.selectedValue,
-                                onTap: () =>
-                                    widget.onSelect(model.value),
-                              ),
-                          ],
+                          children: _buildGroupedRows(filtered),
                         ),
                 ),
                 if (widget.providers.isNotEmpty) ...[
@@ -5217,6 +5284,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
       'codex': 'cdx',
       'claude': 'cld',
       'antigravity': 'agy',
+      'copilot': 'cop',
       'opencode': 'oc',
       'openrouter': 'or',
       'openai': 'oai',
@@ -5225,6 +5293,17 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
     };
     return shorts[id] ?? id.substring(0, id.length.clamp(0, 3));
   }
+}
+
+/// The provider status string is `<binary-health>; auth=<detail>`. For the
+/// card we drop the redundant `ok(--version); auth=` prefix — the pill and the
+/// binary label already convey health — so the auth telemetry (account, plan,
+/// connected providers) gets the full width before truncating.
+String? _providerCardDetail(String? healthCheck) {
+  if (healthCheck == null) return null;
+  const marker = '; auth=';
+  final i = healthCheck.indexOf(marker);
+  return i >= 0 ? healthCheck.substring(i + marker.length) : healthCheck;
 }
 
 class _FilterChip extends StatelessWidget {
@@ -5272,6 +5351,32 @@ class _FilterChip extends StatelessWidget {
               letterSpacing: 0.3,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline section header in the model dropdown that labels which provider the
+/// following models belong to. Deliberately quiet — small muted mono caps, no
+/// rules or decoration — so it groups without shouting.
+class _ModelProviderHeader extends StatelessWidget {
+  final String label;
+  const _ModelProviderHeader({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 3),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          color: t.textFaint.withValues(alpha: 0.55),
+          fontSize: 9,
+          fontFamily: AppFonts.mono,
+          letterSpacing: 0.8,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
