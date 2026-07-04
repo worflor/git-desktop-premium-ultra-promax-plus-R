@@ -326,6 +326,16 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
+  /// Cursor CLI (`cursor-agent`) — Cursor's agentic coding CLI (distinct from
+  /// the `cursor` IDE launcher above). Interactive REPL → newTerminal keeps the
+  /// console open. Runs in the project directory the launcher sets.
+  static ExternalTool cursorAgent() => ExternalTool.create(
+        label: 'Cursor CLI',
+        executable: 'cursor-agent',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
   /// Goose — Block's AI coding agent.
   static ExternalTool goose() => ExternalTool.create(
         label: 'Goose',
@@ -928,6 +938,7 @@ class ExternalToolPresets {
         const ExternalToolPreset(label: '+ Amp', executable: 'amp', category: ExternalToolCategory.ai, build: amp),
         const ExternalToolPreset(label: '+ Cline', executable: 'cline', category: ExternalToolCategory.ai, build: cline),
         const ExternalToolPreset(label: '+ Copilot', executable: 'copilot', category: ExternalToolCategory.ai, build: copilot),
+        const ExternalToolPreset(label: '+ Cursor CLI', executable: 'cursor-agent', category: ExternalToolCategory.ai, build: cursorAgent),
         const ExternalToolPreset(label: '+ Goose', executable: 'goose', category: ExternalToolCategory.ai, build: goose),
         const ExternalToolPreset(label: '+ Amazon Q', executable: 'q', category: ExternalToolCategory.ai, build: amazonQ),
         const ExternalToolPreset(label: '+ Warp', executable: 'warp', category: ExternalToolCategory.ai, build: warp),

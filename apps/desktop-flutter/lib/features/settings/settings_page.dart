@@ -886,6 +886,12 @@ class _SettingsPageState extends State<SettingsPage>
           status: 'Detecting...',
           placeholder: true,
         ),
+        _ProviderCard(
+          id: 'cursor',
+          binaryLabel: 'cursor-agent',
+          status: 'Detecting...',
+          placeholder: true,
+        ),
       ]);
     } else {
       for (final provider in _aiProviders) {
@@ -5313,6 +5319,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
       'claude': 'cld',
       'antigravity': 'agy',
       'copilot': 'cop',
+      'cursor': 'cur',
       'opencode': 'oc',
       'openrouter': 'or',
       'openai': 'oai',

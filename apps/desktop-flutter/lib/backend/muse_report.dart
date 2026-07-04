@@ -1,4 +1,5 @@
 import 'dtos.dart';
+import 'report_attribution.dart';
 
 /// One renderable block of muse output.
 ///
@@ -85,10 +86,10 @@ String renderMuseReport(
   // Two-model pipeline: name the brainstorm and synthesis models
   // separately. Collapse to one line when both phases ran the same
   // model (or when brainstorm identity wasn't recorded).
-  final synth = '${data.providerId} / ${data.modelId}';
+  final synth = modelDescriptor(data.providerId, data.modelId);
   final brain = data.brainstormModelId.isEmpty
       ? ''
-      : '${data.brainstormProviderId} / ${data.brainstormModelId}';
+      : modelDescriptor(data.brainstormProviderId, data.brainstormModelId);
   if (brain.isEmpty || brain == synth) {
     buf.writeln('Model: $synth');
   } else {

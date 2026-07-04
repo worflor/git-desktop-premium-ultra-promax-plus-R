@@ -1446,6 +1446,84 @@ class AiMuseData {
       proposalsForStrand(tier);
 }
 
+/// Per-transaction usage/telemetry a provider reports about ONE completed
+/// request. Input/output tokens come from most providers; the rest are
+/// best-effort extras a given provider may or may not surface. NOTHING here
+/// ever triggers an extra call — it is all parsed from the response we already
+/// received — and the UI shows only the fields that are present. The type is
+/// deliberately a superset: a future CLI that reports more just fills more
+/// fields, and nothing downstream needs to change.
+class AiUsage {
+  final int inputTokens;
+  final int outputTokens;
+  final int? cacheReadTokens;
+  final int? cacheWriteTokens;
+
+  /// Reasoning/thinking output tokens, when the provider reports them as a
+  /// distinct dimension (codex, opencode). Null when unreported.
+  final int? reasoningTokens;
+  final Duration? duration;
+  final String? requestId;
+
+  /// The concrete model a routing alias resolved to, when the provider reveals
+  /// it. Cursor's `auto` deliberately does not, so this stays null there.
+  final String? resolvedModel;
+
+  /// Provider-reported cost in USD, when available (most CLIs: null).
+  final double? costUsd;
+
+  const AiUsage({
+    this.inputTokens = 0,
+    this.outputTokens = 0,
+    this.cacheReadTokens,
+    this.cacheWriteTokens,
+    this.reasoningTokens,
+    this.duration,
+    this.requestId,
+    this.resolvedModel,
+    this.costUsd,
+  });
+
+  static const AiUsage empty = AiUsage();
+
+  bool get hasTokens => inputTokens > 0 || outputTokens > 0;
+
+  /// True when there is detail beyond the plain in/out counts worth surfacing —
+  /// drives whether the UI bothers rendering a hover breakdown at all.
+  bool get hasExtras =>
+      (cacheReadTokens ?? 0) > 0 ||
+      (cacheWriteTokens ?? 0) > 0 ||
+      (reasoningTokens ?? 0) > 0 ||
+      duration != null ||
+      requestId != null ||
+      resolvedModel != null ||
+      costUsd != null;
+
+  bool get isEmpty => !hasTokens && !hasExtras;
+
+  /// Combine two usages for multi-call flows (e.g. review draft + verify).
+  /// Counts and duration add; identity extras (requestId, resolvedModel) don't
+  /// combine, so the later non-null one wins.
+  AiUsage operator +(AiUsage o) => AiUsage(
+        inputTokens: inputTokens + o.inputTokens,
+        outputTokens: outputTokens + o.outputTokens,
+        cacheReadTokens: _sumInt(cacheReadTokens, o.cacheReadTokens),
+        cacheWriteTokens: _sumInt(cacheWriteTokens, o.cacheWriteTokens),
+        reasoningTokens: _sumInt(reasoningTokens, o.reasoningTokens),
+        duration: (duration == null && o.duration == null)
+            ? null
+            : (duration ?? Duration.zero) + (o.duration ?? Duration.zero),
+        requestId: o.requestId ?? requestId,
+        resolvedModel: o.resolvedModel ?? resolvedModel,
+        costUsd: _sumDouble(costUsd, o.costUsd),
+      );
+
+  static int? _sumInt(int? a, int? b) =>
+      (a == null && b == null) ? null : (a ?? 0) + (b ?? 0);
+  static double? _sumDouble(double? a, double? b) =>
+      (a == null && b == null) ? null : (a ?? 0) + (b ?? 0);
+}
+
 class AiCommitMessageData {
   final String providerId;
   final String modelId;
@@ -1453,8 +1531,7 @@ class AiCommitMessageData {
   final String scopeLabel;
   final int promptCharacters;
   final int diffCharacters;
-  final int inputTokens;
-  final int outputTokens;
+  final AiUsage usage;
 
   const AiCommitMessageData({
     required this.providerId,
@@ -1463,9 +1540,13 @@ class AiCommitMessageData {
     required this.scopeLabel,
     required this.promptCharacters,
     required this.diffCharacters,
-    this.inputTokens = 0,
-    this.outputTokens = 0,
+    this.usage = AiUsage.empty,
   });
+
+  // Single source of truth is [usage]; these delegate so a reader can never
+  // see a count that diverges from it.
+  int get inputTokens => usage.inputTokens;
+  int get outputTokens => usage.outputTokens;
 }
 
 /// Result of a one-shot AI call that expects a unified diff back.
@@ -1479,8 +1560,7 @@ class AiPatchData {
   final String patch;
   final int promptCharacters;
   final int patchCharacters;
-  final int inputTokens;
-  final int outputTokens;
+  final AiUsage usage;
 
   const AiPatchData({
     required this.providerId,
@@ -1488,9 +1568,11 @@ class AiPatchData {
     required this.patch,
     required this.promptCharacters,
     required this.patchCharacters,
-    this.inputTokens = 0,
-    this.outputTokens = 0,
+    this.usage = AiUsage.empty,
   });
+
+  int get inputTokens => usage.inputTokens;
+  int get outputTokens => usage.outputTokens;
 }
 
 /// Lightweight, engine-free projection of a finding's 5-axis claim
@@ -1610,8 +1692,7 @@ class AiCommitReviewData {
   final String scopeLabel;
   final int promptCharacters;
   final int diffCharacters;
-  final int inputTokens;
-  final int outputTokens;
+  final AiUsage usage;
   final String verdict;
   final int score;
   final String summary;
@@ -1635,8 +1716,7 @@ class AiCommitReviewData {
     required this.scopeLabel,
     required this.promptCharacters,
     required this.diffCharacters,
-    this.inputTokens = 0,
-    this.outputTokens = 0,
+    this.usage = AiUsage.empty,
     required this.verdict,
     required this.score,
     required this.summary,
@@ -1652,6 +1732,11 @@ class AiCommitReviewData {
     this.draftReasoningReport,
     this.verificationNotes,
   });
+
+  // Single source of truth is [usage]; these delegate so a reader can never
+  // see a count that diverges from it.
+  int get inputTokens => usage.inputTokens;
+  int get outputTokens => usage.outputTokens;
 }
 
 class DebugEvidenceSource {
@@ -1710,8 +1795,7 @@ class AiDebugData {
   final int round;
   final List<AiDebugHypothesis> hypotheses;
   final int promptCharacters;
-  final int inputTokens;
-  final int outputTokens;
+  final AiUsage usage;
   final int candidatesConsidered;
   final int filesRead;
   final List<String> parseWarnings;
@@ -1724,13 +1808,15 @@ class AiDebugData {
     required this.round,
     required this.hypotheses,
     this.promptCharacters = 0,
-    this.inputTokens = 0,
-    this.outputTokens = 0,
+    this.usage = AiUsage.empty,
     this.candidatesConsidered = 0,
     this.filesRead = 0,
     this.parseWarnings = const [],
     this.roundHistory = const [],
   });
+
+  int get inputTokens => usage.inputTokens;
+  int get outputTokens => usage.outputTokens;
 }
 
 class StashEntryData {

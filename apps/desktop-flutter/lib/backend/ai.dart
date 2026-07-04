@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'ai_api_keys_store.dart';
 import 'ai_api_provider.dart';
+import 'cursor_effort.dart';
 import 'ai_audit_store.dart';
 import 'storage_paths.dart';
 import '../diagnostics/diagnostics_state.dart';
@@ -71,6 +72,7 @@ const _cliProviderSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'claude', binary: 'claude', kind: _ProviderKind.claude),
   _ProviderSpec(id: 'antigravity', binary: 'agy', kind: _ProviderKind.antigravity),
   _ProviderSpec(id: 'copilot', binary: 'copilot', kind: _ProviderKind.copilot),
+  _ProviderSpec(id: 'cursor', binary: 'cursor-agent', kind: _ProviderKind.cursor),
   _ProviderSpec(
     id: 'opencode',
     binary: 'opencode',
@@ -599,13 +601,12 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
     return GitResult.ok(
       AiCommitMessageData(
         providerId: provider.id,
-        modelId: modelId,
+        modelId: providerResult.effectiveModelId,
         message: message,
         scopeLabel: scopeLabel,
         promptCharacters: prompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
-        inputTokens: providerResult.inputTokens,
-        outputTokens: providerResult.outputTokens,
+        usage: providerResult.usage,
       ),
     );
   } catch (error) {
@@ -650,65 +651,35 @@ Future<GitResult<AiPatchData>> generatePatch({
       );
     }
 
-    final attempts = _buildProviderAttempts(
-      provider.kind,
-      modelId,
+    // Delegate to the shared dispatch loop rather than hand-rolling a second
+    // copy: attempt ordering, output formatting, error classification, usage
+    // capture, and Cursor effort-resolution all live in one place, so a fix
+    // to any of them reaches patch generation for free. Patch flow is
+    // read-only text-in/text-out (no effort/fast routing), so effectiveModelId
+    // equals the picked id here.
+    final result = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: prompt,
+      repositoryPath: repositoryPath,
       readOnly: readOnly,
-      resolvedCommand: availability.resolution!.command,
+      commandLabelPrefix: commandLabelPrefix,
     );
-    String? providerOutput;
-    String? lastError;
-    for (final attempt in attempts) {
-      final effectiveArgs =
-          attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
-      final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
-      final result = await _runObservedProcess(
-        commandLabel: '$commandLabelPrefix.${provider.id}.${attempt.name}',
-        scope: 'ai',
-        command: availability.resolution!.command,
-        args: effectiveArgs,
-        timeout: _runtimeTimeoutFor(provider.kind),
-        workingDirectory: repositoryPath,
-        stdinPayload: effectiveStdin,
-        environment: _providerEnvironment(provider.kind),
-      );
-
-      if (result == null) {
-        lastError = 'Provider command timed out.';
-        continue;
-      }
-      final formatted = _formatProviderOutput(
-        attempt.outputMode,
-        result.stdout,
-        result.stderr,
-      );
-      if (result.exitCode == 0 &&
-          formatted != null &&
-          formatted.trim().isNotEmpty &&
-          !_looksLikeProviderError(provider.kind, formatted)) {
-        providerOutput = formatted;
-        break;
-      }
-      lastError = formatted?.trim().isNotEmpty == true
-          ? _normalizeProviderError(provider.kind, formatted!)
-          : result.stderr.trim().isNotEmpty
-              ? _normalizeProviderError(provider.kind, result.stderr.trim())
-              : 'Provider exited with code ${result.exitCode}.';
+    if (!result.ok || result.output == null) {
+      return GitResult.err(result.error ?? 'Provider did not return a patch.');
     }
-
-    if (providerOutput == null) {
-      return GitResult.err(lastError ?? 'Provider did not return a patch.');
-    }
-    final patch = _extractPatchFromModelOutput(providerOutput);
+    final patch = _extractPatchFromModelOutput(result.output!);
     if (patch.isEmpty) {
       return const GitResult.err('Model returned no usable patch.');
     }
     return GitResult.ok(AiPatchData(
       providerId: provider.id,
-      modelId: modelId,
+      modelId: result.effectiveModelId,
       patch: patch,
       promptCharacters: prompt.length,
       patchCharacters: patch.length,
+      usage: result.usage,
     ));
   } catch (error) {
     return GitResult.err('Patch generation failed: $error');
@@ -756,6 +727,7 @@ Future<GitResult<String>> runAsk({
       modelId: modelId,
       prompt: prompt,
       repositoryPath: repositoryPath,
+      commandLabelPrefix: commandLabelPrefix,
       reasoningEffort: reasoningEffort,
       fastMode: fastMode,
       supportsReasoning: supportsReasoning,
@@ -976,12 +948,11 @@ Future<GitResult<AiDebugData>> runDebug({
     final parsed = _parseDebugOutput(
       result.output!,
       providerId: provider.id,
-      modelId: modelId,
+      modelId: result.effectiveModelId,
       symptom: symptom,
       round: round,
       promptChars: prompt.length,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
+      usage: result.usage,
       candidates: response.candidates,
       fileContents: fileContents,
       priorRounds: priorRounds,
@@ -994,7 +965,7 @@ Future<GitResult<AiDebugData>> runDebug({
     // Fallback: wrap raw output as degraded hypothesis.
     return GitResult.ok(AiDebugData(
       providerId: provider.id,
-      modelId: modelId,
+      modelId: result.effectiveModelId,
       symptom: symptom,
       round: round,
       hypotheses: [
@@ -1004,8 +975,7 @@ Future<GitResult<AiDebugData>> runDebug({
         ),
       ],
       promptCharacters: prompt.length,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
+      usage: result.usage,
       candidatesConsidered: response.candidates.length,
       filesRead: fileContents.length,
       parseWarnings: const ['Could not parse structured output.'],
@@ -1131,8 +1101,7 @@ AiDebugData? _parseDebugOutput(
   required String symptom,
   required int round,
   required int promptChars,
-  int inputTokens = 0,
-  int outputTokens = 0,
+  AiUsage usage = AiUsage.empty,
   required List<MindCandidate> candidates,
   required Map<String, String> fileContents,
   required List<DebugRound> priorRounds,
@@ -1248,8 +1217,7 @@ AiDebugData? _parseDebugOutput(
     round: round,
     hypotheses: hypotheses,
     promptCharacters: promptChars,
-    inputTokens: inputTokens,
-    outputTokens: outputTokens,
+    usage: usage,
     candidatesConsidered: candidates.length,
     filesRead: fileContents.length,
     parseWarnings: warnings,
@@ -1456,11 +1424,38 @@ String? extractDeepestErrorMessageForTesting(dynamic node) =>
     _extractDeepestErrorMessage(node);
 
 @visibleForTesting
-String? parseCodexJsonlForTesting(String stdout) => _parseCodexJsonl(stdout);
+String? parseCodexJsonlForTesting(String stdout) =>
+    _parseCodexJsonl(stdout)?.text;
 
 @visibleForTesting
 String? parseOpenCodeJsonlForTesting(String stdout) =>
-    _parseOpenCodeJsonl(stdout);
+    _parseOpenCodeJsonl(stdout)?.text;
+
+// Usage-extraction seams: verify each provider's per-transaction telemetry is
+// pulled from the same response we already parsed (no extra call).
+@visibleForTesting
+AiUsage codexUsageForTesting(String stdout) =>
+    _parseCodexJsonl(stdout)?.usage ?? AiUsage.empty;
+
+@visibleForTesting
+AiUsage claudeUsageForTesting(String stdout) =>
+    _parseClaudeJson(stdout)?.usage ?? AiUsage.empty;
+
+@visibleForTesting
+AiUsage openCodeUsageForTesting(String stdout) =>
+    _parseOpenCodeJsonl(stdout)?.usage ?? AiUsage.empty;
+
+@visibleForTesting
+AiUsage cursorUsageForTesting(String stdout) =>
+    _parseCursorOutput(stdout)?.usage ?? AiUsage.empty;
+
+/// Test seam for the cursor-agent usage parser: pins that token/cache/duration
+/// fields are read whether the nested `usage` object arrives snake_case or
+/// camelCase (the envelope casing we've observed vs. the sub-object casing we
+/// haven't), so surfaced telemetry can't silently zero out.
+@visibleForTesting
+AiUsage parseCursorUsageForTesting(Map<dynamic, dynamic> envelope) =>
+    _parseCursorUsage(envelope);
 
 /// Test seam pinning [_runObservedProcess]'s launch-vs-timeout contract:
 /// returns `null` only on a genuine timeout; otherwise a record whose
@@ -1687,14 +1682,13 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       return GitResult.ok(
         AiCommitReviewData(
           providerId: provider.id,
-          modelId: modelId,
+          modelId: providerOutput.effectiveModelId,
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
           promptCharacters: draftPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
-          inputTokens: providerOutput.inputTokens,
-          outputTokens: providerOutput.outputTokens,
+          usage: providerOutput.usage,
           verdict: draftReview.verdict,
           score: draftReview.score,
           summary: draftReview.summary,
@@ -1745,20 +1739,20 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       errorCode: verifyOutput.ok ? null : verifyOutput.error,
     );
 
-    final totalIn = providerOutput.inputTokens + verifyOutput.inputTokens;
-    final totalOut = providerOutput.outputTokens + verifyOutput.outputTokens;
+    // Draft + verify are two real calls; sum their usage so the surfaced
+    // telemetry reflects the whole review, not just the last leg.
+    final totalUsage = providerOutput.usage + verifyOutput.usage;
 
     if (!verifyOutput.ok || verifyOutput.output == null) {
       final fallback = AiCommitReviewData(
         providerId: provider.id,
-        modelId: modelId,
+        modelId: providerOutput.effectiveModelId,
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
-        inputTokens: totalIn,
-        outputTokens: totalOut,
+        usage: totalUsage,
         verdict: draftReview.verdict,
         score: draftReview.score,
         summary: draftReview.summary,
@@ -1782,14 +1776,13 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       return GitResult.ok(
         AiCommitReviewData(
           providerId: provider.id,
-          modelId: modelId,
+          modelId: providerOutput.effectiveModelId,
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
           promptCharacters: draftPrompt.length + verifyPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
-          inputTokens: totalIn,
-          outputTokens: totalOut,
+          usage: totalUsage,
           verdict: draftReview.verdict,
           score: draftReview.score,
           summary: draftReview.summary,
@@ -1837,14 +1830,13 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
     return GitResult.ok(
       AiCommitReviewData(
         providerId: provider.id,
-        modelId: modelId,
+        modelId: providerOutput.effectiveModelId,
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
-        inputTokens: totalIn,
-        outputTokens: totalOut,
+        usage: totalUsage,
         verdict: merged.verdict,
         score: merged.score,
         summary: merged.summary,
@@ -2233,7 +2225,13 @@ class _BrainstormIdea {
 }
 
 /// Phase 1 — cheap divergent spew. Returns parsed brainstorm ideas.
-Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runBrainstormPhase({
+Future<
+    ({
+      List<_BrainstormIdea> ideas,
+      int inputTokens,
+      int outputTokens,
+      String effectiveModelId,
+    })> _runBrainstormPhase({
   required _ProviderSpec provider,
   required _ProviderResolution resolution,
   required String modelId,
@@ -2402,7 +2400,12 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
     supportsReasoning: supportsReasoning,
   );
   if (!result.ok || result.output == null) {
-    return (ideas: const <_BrainstormIdea>[], inputTokens: 0, outputTokens: 0);
+    return (
+      ideas: const <_BrainstormIdea>[],
+      inputTokens: 0,
+      outputTokens: 0,
+      effectiveModelId: result.effectiveModelId,
+    );
   }
 
   final ideas = <_BrainstormIdea>[];
@@ -2441,7 +2444,12 @@ Future<({List<_BrainstormIdea> ideas, int inputTokens, int outputTokens})> _runB
     idx++;
     if (idx >= profile.suggestedIdeaCount + 12) break;
   }
-  return (ideas: ideas, inputTokens: result.inputTokens, outputTokens: result.outputTokens);
+  return (
+    ideas: ideas,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    effectiveModelId: result.effectiveModelId,
+  );
 }
 
 _IdeaKind _parseIdeaKind(String raw) {
@@ -4193,9 +4201,9 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
 
     return GitResult.ok(AiMuseData(
       providerId: synthProvider.id,
-      modelId: synthModelId,
+      modelId: providerOutput.effectiveModelId,
       brainstormProviderId: brainProvider.id,
-      brainstormModelId: brainModelId,
+      brainstormModelId: brainstormResult.effectiveModelId,
       scopeLabel: scopeLabel,
       proposals: parsed.proposals,
       brainstormIdeas: [
@@ -4445,6 +4453,8 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
       return _discoverAntigravityModels(resolution);
     case _ProviderKind.copilot:
       return _discoverCopilotModels(resolution);
+    case _ProviderKind.cursor:
+      return _discoverCursorModels(resolution);
     case _ProviderKind.openCode:
       return _discoverOpenCodeModels(resolution);
     case _ProviderKind.apiProvider:
@@ -4858,6 +4868,92 @@ String? _findModelValueInJson(dynamic value) {
     }
   }
   return null;
+}
+
+/// Discover models from `cursor-agent models`: a header line ("Available
+/// models") followed by one `<id> - <label>` row per model
+/// (e.g. `claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking`). No auth
+/// call beyond the CLI's own session; the call runs cleanly headless, so the
+/// live list is the only source of truth — nothing discovered returns null
+/// rather than a hardcoded set that would rot as Cursor's catalog moves.
+Future<_ProviderModelDiscovery?> _discoverCursorModels(
+  _ProviderResolution? resolution,
+) async {
+  final command = resolution?.command ?? 'cursor-agent';
+  final result = await _runCommandWithTimeout(
+    command,
+    const ['models'],
+    _modelDiscoveryTimeout,
+  );
+  if (result == null || result.exitCode != 0) return null;
+  final models = <String>[];
+  final details = <String, String>{};
+  for (final raw in result.stdout.split('\n')) {
+    final line = _stripAnsi(raw).trim();
+    // Model rows are `<id> - <label>`; the id is a single bare token.
+    // The "Available models" header has no ` - `, so it's skipped.
+    final sep = line.indexOf(' - ');
+    if (sep <= 0) continue;
+    final id = line.substring(0, sep).trim();
+    if (id.isEmpty || id.contains(' ')) continue;
+    if (!models.contains(id)) {
+      models.add(id);
+      details[_normalizeModelKey(id)] = line.substring(sep + 3).trim();
+    }
+  }
+  if (models.isEmpty) return null;
+
+  // Light up the effort slider / fast toggle only where a real sibling exists
+  // to route to (see cursor_effort.dart). This metadata rides WITH the cached
+  // discovery, so it can never drift from the model list it describes.
+  final families = buildCursorFamilies(models);
+  final reasoning =
+      cursorEffortCapableIds(models, families).map(_normalizeModelKey).toSet();
+  final fast =
+      cursorFastCapableIds(models, families).map(_normalizeModelKey).toSet();
+  return _ProviderModelDiscovery(
+    models: models,
+    modelDetails: details,
+    reasoningModels: reasoning,
+    fastModels: fast,
+  );
+}
+
+// Resolve a Cursor effort/fast selection to the sibling id to actually run.
+// The routing index is rebuilt on demand from the SAME cached discovery every
+// other path reads (keyed 'cursor'), so it always matches the current model
+// list and needs no separate lifecycle: a cache miss (pre-discovery, or right
+// after clearAiModelCache) simply yields the selected id verbatim -- which is
+// also the state in which no slider is shown. See resolveCursorModel in
+// cursor_effort.dart.
+String _resolveCursorModel(String modelId,
+    {String? effort, bool fast = false}) {
+  final models = _providerModelDiscoveryCache['cursor']?.value?.models;
+  if (models == null || models.isEmpty) return modelId;
+  return resolveCursorModel(modelId, buildCursorFamilies(models),
+      effort: effort, fast: fast);
+}
+
+/// The model id actually dispatched for a call, given the picked [modelId]
+/// and the requested effort/fast.
+///
+/// Every provider except Cursor runs the picked id verbatim — effort/fast
+/// ride as flags (`--effort`, `--variant`, `-c model_reasoning_effort=…`),
+/// leaving the id untouched. Cursor has no effort flag, so its slider/toggle
+/// resolve to a sibling id that already exists in the catalog
+/// (`gpt-5.5-medium` → `gpt-5.5-high`; see [_resolveCursorModel]). This is
+/// the id that runs, and therefore the id attribution must report — the
+/// single mapping [_runProviderPrompt] uses both to build the `--model` arg
+/// and to fill the returned [_ProviderPromptResult.effectiveModelId], so the
+/// two can never disagree.
+String _effectiveModelId(
+  _ProviderKind kind,
+  String modelId, {
+  String? reasoningEffort,
+  bool fastMode = false,
+}) {
+  if (kind != _ProviderKind.cursor) return modelId;
+  return _resolveCursorModel(modelId, effort: reasoningEffort, fast: fastMode);
 }
 
 /// Discover Copilot models from `copilot help config`, which statically lists
@@ -5322,6 +5418,16 @@ List<_BinaryCandidate> _knownBinaryCandidates(String binary) {
         p.join(localAppData, binary, 'bin', '$binary.exe'),
         'LOCALAPPDATA/bin',
       );
+      // Cursor's `cursor-agent` (and any installer using the flat
+      // %LOCALAPPDATA%\<binary>\<binary>.<ext> layout — no bin subdir) lands
+      // here, shipped as a .cmd shim. Probe it directly so the tool resolves
+      // even before a freshly-updated PATH reaches an already-running app.
+      for (final suffix in ['.cmd', '.exe', '']) {
+        pushCandidate(
+          p.join(localAppData, binary, '$binary$suffix'),
+          'LOCALAPPDATA',
+        );
+      }
     }
 
     final userProfile = Platform.environment['USERPROFILE'];
@@ -9786,11 +9892,24 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String prompt,
   required String repositoryPath,
   bool readOnly = true,
+  String commandLabelPrefix = 'ai',
   String? reasoningEffort,
   bool fastMode = false,
   bool supportsReasoning = true,
   int? maxTokens,
 }) async {
+  // Resolve the id that will actually run ONCE, up front: it feeds both the
+  // `--model` arg (via _buildProviderAttempts below) and the effectiveModelId
+  // we hand back for attribution, so the sent and reported ids are the same
+  // value. Only Cursor's effort/fast router changes it; everyone else runs
+  // the picked id verbatim.
+  final effectiveModelId = _effectiveModelId(
+    provider.kind,
+    modelId,
+    reasoningEffort: reasoningEffort,
+    fastMode: fastMode,
+  );
+
   if (provider.kind == _ProviderKind.apiProvider && provider.apiProvider != null) {
     final entry = _apiKeysSnapshot[provider.id];
     if (entry == null || entry.apiKey.trim().isEmpty) {
@@ -9798,6 +9917,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
         ok: false,
         error: '${provider.apiProvider!.displayName}: no API key configured.',
         outputPreview: '',
+        effectiveModelId: effectiveModelId,
       );
     }
     final creds = AiApiCredentials(
@@ -9820,6 +9940,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
           apiResult.error ?? '${provider.apiProvider!.displayName} returned no response.',
         ),
         outputPreview: _scrubSecrets(apiResult.error ?? ''),
+        effectiveModelId: effectiveModelId,
       );
     }
     return _ProviderPromptResult(
@@ -9828,24 +9949,28 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       outputPreview: apiResult.text!.length > 200
           ? '${apiResult.text!.substring(0, 200)}...'
           : apiResult.text!,
-      inputTokens: apiResult.inputTokens,
-      outputTokens: apiResult.outputTokens,
+      usage: AiUsage(
+        inputTokens: apiResult.inputTokens,
+        outputTokens: apiResult.outputTokens,
+      ),
+      effectiveModelId: effectiveModelId,
     );
   }
 
-  final attempts = _buildProviderAttempts(provider.kind, modelId,
+  final attempts = _buildProviderAttempts(provider.kind, effectiveModelId,
       readOnly: readOnly,
       resolvedCommand: resolution.command,
       reasoningEffort: reasoningEffort,
       fastMode: fastMode);
   String? providerOutput;
+  AiUsage providerUsage = AiUsage.empty;
   String? lastError;
   for (final attempt in attempts) {
     final effectiveArgs =
         attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
     final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
     final result = await _runObservedProcess(
-      commandLabel: 'ai.${provider.id}.${attempt.name}',
+      commandLabel: '$commandLabelPrefix.${provider.id}.${attempt.name}',
       scope: 'ai',
       command: resolution.command,
       args: effectiveArgs,
@@ -9865,16 +9990,18 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       result.stdout,
       result.stderr,
     );
+    final formattedText = formatted.text;
     if (result.exitCode == 0 &&
-        formatted != null &&
-        formatted.trim().isNotEmpty &&
-        !_looksLikeProviderError(provider.kind, formatted)) {
-      providerOutput = formatted;
+        formattedText != null &&
+        formattedText.trim().isNotEmpty &&
+        !_looksLikeProviderError(provider.kind, formattedText)) {
+      providerOutput = formattedText;
+      providerUsage = formatted.usage;
       break;
     }
 
-    lastError = formatted?.trim().isNotEmpty == true
-        ? formatted
+    lastError = formattedText?.trim().isNotEmpty == true
+        ? formattedText
         : result.stderr.trim().isNotEmpty
             ? result.stderr.trim()
             : 'Provider exited with code ${result.exitCode}.';
@@ -9888,6 +10015,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
         lastError ?? 'Provider did not return output.',
       ),
       outputPreview: lastError ?? '',
+      effectiveModelId: effectiveModelId,
     );
   }
 
@@ -9895,6 +10023,8 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     ok: true,
     output: providerOutput,
     outputPreview: providerOutput,
+    usage: providerUsage,
+    effectiveModelId: effectiveModelId,
   );
 }
 
@@ -10464,6 +10594,43 @@ List<_ProviderAttempt> _buildProviderAttempts(
           useStdinForPrompt: false,
         ),
       ];
+    case _ProviderKind.cursor:
+      // Cursor CLI (`cursor-agent`) — one non-interactive prompt via stdin.
+      // Contract verified 2026-07 against a live authed run on Windows:
+      // `cursor-agent --trust -p --output-format json --mode ask --model <id>`
+      // with the prompt piped to stdin returns ONE clean JSON object
+      // ({result, is_error, usage}). `--trust` MUST come first to clear the
+      // workspace-trust gate non-interactively; effort is baked into the model
+      // ids (`-high`/`-thinking`/`-xhigh`), so there's no separate effort flag.
+      // stdin (unlike copilot) dodges the Windows argv limit, and it returns
+      // through redirected pipes cleanly (unlike agy/copilot's hang).
+      //
+      // Structurally read-only: `--mode` only offers `plan`/`ask` (both
+      // read-only per `--help`) and we never pass `--force`/`--yolo`, so cursor
+      // CANNOT mutate the repo here. That's why the shared `readOnly` flag is
+      // intentionally not branched on — there is no write path to gate.
+      //
+      // Effort/fast can't be passed as a flag (cursor has none, and its
+      // interactive `[effort=…]` override is rejected under `-p`), so the
+      // slider/toggle resolve to a sibling id cursor already enumerates
+      // (e.g. gpt-5.5-medium → gpt-5.5-high). That resolution happens once in
+      // the caller ([_runProviderPrompt] via [_effectiveModelId]) so the id
+      // sent here is the same one reported for attribution; [modelId] is
+      // therefore already effort-resolved and used verbatim.
+      return [
+        _ProviderAttempt(
+          name: 'print-json',
+          args: [
+            '--trust',
+            '-p',
+            '--output-format', 'json',
+            '--mode', 'ask',
+            '--model', modelId,
+          ],
+          outputMode: _ProviderOutputMode.cursorJson,
+          useStdinForPrompt: true,
+        ),
+      ];
     case _ProviderKind.openCode:
       final variantArgs = reasoningEffort != null
           ? ['--variant', reasoningEffort]
@@ -10502,6 +10669,7 @@ Duration _runtimeTimeoutFor(_ProviderKind kind) {
       return _copilotRuntimeTimeout;
     case _ProviderKind.codex:
     case _ProviderKind.claude:
+    case _ProviderKind.cursor:
     case _ProviderKind.openCode:
     case _ProviderKind.apiProvider:
       return _providerRuntimeTimeout;
@@ -10517,12 +10685,23 @@ Map<String, String> _providerEnvironment(_ProviderKind kind) {
       return const {};
     case _ProviderKind.codex:
     case _ProviderKind.copilot:
+    case _ProviderKind.cursor:
     case _ProviderKind.openCode:
       return const {};
   }
 }
 
-String? _formatProviderOutput(
+// Text + optional per-transaction usage parsed from ONE provider call. Carries
+// whatever the provider already volunteered in its response — never a second
+// probe. Providers that report no usage just carry [AiUsage.empty]; adding
+// usage for another provider is a one-line change in its parser.
+class _ProviderOutput {
+  final String? text;
+  final AiUsage usage;
+  const _ProviderOutput(this.text, {this.usage = AiUsage.empty});
+}
+
+_ProviderOutput _formatProviderOutput(
   _ProviderOutputMode mode,
   String stdout,
   String stderr,
@@ -10531,24 +10710,26 @@ String? _formatProviderOutput(
     case _ProviderOutputMode.plainText:
       final cleanStdout = _stripAnsi(stdout.trim());
       if (cleanStdout.isNotEmpty) {
-        return cleanStdout;
+        return _ProviderOutput(cleanStdout);
       }
       final cleanStderr = _stripAnsi(stderr.trim());
-      return cleanStderr.isEmpty ? null : cleanStderr;
+      return _ProviderOutput(cleanStderr.isEmpty ? null : cleanStderr);
     case _ProviderOutputMode.codexJsonl:
-      return _parseCodexJsonl(stdout) ?? _fallbackOutput(stderr);
+      return _parseCodexJsonl(stdout) ??
+          _ProviderOutput(_fallbackOutput(stderr));
     case _ProviderOutputMode.claudeJson:
       return _parseClaudeJson(stdout) ??
-          _fallbackOutput(stdout) ??
-          _fallbackOutput(stderr);
+          _ProviderOutput(_fallbackOutput(stdout) ?? _fallbackOutput(stderr));
     case _ProviderOutputMode.copilotJsonl:
-      return _parseCopilotJsonl(stdout) ??
+      return _ProviderOutput(_parseCopilotJsonl(stdout) ??
           _fallbackOutput(stdout) ??
-          _fallbackOutput(stderr);
+          _fallbackOutput(stderr));
+    case _ProviderOutputMode.cursorJson:
+      return _parseCursorOutput(stdout) ??
+          _ProviderOutput(_fallbackOutput(stdout) ?? _fallbackOutput(stderr));
     case _ProviderOutputMode.openCodeJsonl:
       return _parseOpenCodeJsonl(stdout) ??
-          _fallbackOutput(stdout) ??
-          _fallbackOutput(stderr);
+          _ProviderOutput(_fallbackOutput(stdout) ?? _fallbackOutput(stderr));
   }
 }
 
@@ -10613,9 +10794,10 @@ String? _extractDeepestErrorMessage(dynamic node, {int maxDepth = 6}) {
   return walk(node, 0);
 }
 
-String? _parseCodexJsonl(String stdout) {
+_ProviderOutput? _parseCodexJsonl(String stdout) {
   var response = '';
   var errorMessage = '';
+  var usage = AiUsage.empty;
   for (final line in stdout.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) {
@@ -10633,6 +10815,10 @@ String? _parseCodexJsonl(String stdout) {
           response = item['text'] as String;
         }
       }
+      if (type == 'turn.completed') {
+        final u = value['usage'];
+        if (u is Map) usage = usage + _codexUsage(u);
+      }
       if (type == 'error' || type == 'turn.failed') {
         // Codex nests the human-readable text behind a JSON-encoded
         // string field (and sometimes again behind an `error.message`)
@@ -10646,29 +10832,144 @@ String? _parseCodexJsonl(String stdout) {
     } catch (_) {}
   }
   if (response.trim().isNotEmpty) {
-    return response.trim();
+    return _ProviderOutput(response.trim(), usage: usage);
   }
   if (errorMessage.trim().isNotEmpty) {
-    return 'Codex error: ${_stripAnsi(errorMessage.trim())}';
+    return _ProviderOutput('Codex error: ${_stripAnsi(errorMessage.trim())}');
   }
-  return _fallbackOutput(stdout);
+  final fallback = _fallbackOutput(stdout);
+  return fallback == null ? null : _ProviderOutput(fallback);
 }
 
-String? _parseClaudeJson(String stdout) {
+_ProviderOutput? _parseClaudeJson(String stdout) {
   try {
     final value = jsonDecode(stdout);
     if (value is! Map) {
       return null;
     }
     if (value['is_error'] == true && value['result'] is String) {
-      return 'Claude error: ${_stripAnsi((value['result'] as String).trim())}';
+      return _ProviderOutput(
+          'Claude error: ${_stripAnsi((value['result'] as String).trim())}');
     }
     final result = value['result'];
     if (result is String && result.trim().isNotEmpty) {
-      return result.trim();
+      return _ProviderOutput(result.trim(), usage: _claudeUsage(value));
     }
   } catch (_) {}
   return null;
+}
+
+/// Parse the single JSON object from `cursor-agent -p --output-format json`:
+/// {"type":"result","is_error":bool,"result":"<text>","usage":{...}}. Verified
+/// against a live authed Windows run — one clean object, no streaming. Tolerate
+/// an optional log prefix before the `{`. Returns the result text, a
+/// "Cursor error:" message on is_error, or null to fall through to the raw
+/// stdout/stderr fallback.
+_ProviderOutput? _parseCursorOutput(String stdout) {
+  final trimmed = stdout.trim();
+  dynamic value;
+  try {
+    value = jsonDecode(trimmed);
+  } catch (_) {
+    final start = trimmed.indexOf('{');
+    if (start <= 0) return null;
+    try {
+      value = jsonDecode(trimmed.substring(start));
+    } catch (_) {
+      return null;
+    }
+  }
+  if (value is! Map) return null;
+  final result = value['result'];
+  if (value['is_error'] == true) {
+    final msg = (result is String && result.trim().isNotEmpty)
+        ? result.trim()
+        : (value['subtype']?.toString() ?? 'request failed');
+    return _ProviderOutput('Cursor error: ${_stripAnsi(msg)}');
+  }
+  if (result is! String || result.trim().isEmpty) return null;
+  return _ProviderOutput(result.trim(), usage: _parseCursorUsage(value));
+}
+
+// Cursor reports clean per-request usage in the SAME JSON we already parsed for
+// the answer — token counts (incl. cache read/write), wall-clock duration, and
+// a request id. No cost and no resolved model for `auto` (cursor keeps that
+// opaque), so those stay null. Zero extra calls: pure garnish on a response we
+// already have.
+AiUsage _parseCursorUsage(Map<dynamic, dynamic> value) {
+  int? asInt(dynamic v) => v is int ? v : (v is num ? v.toInt() : null);
+  final usage = value['usage'];
+  final u = usage is Map<dynamic, dynamic> ? usage : const <dynamic, dynamic>{};
+  // The cursor-agent envelope is snake_case (is_error, duration_ms,
+  // request_id) but we have no fixture pinning the nested usage object's
+  // casing. Read each field under BOTH snake_case and camelCase so a casing
+  // we didn't observe degrades to the right number instead of silently zero —
+  // whichever cursor emits, telemetry stays honest.
+  int? tokens(String snake, String camel) => asInt(u[snake]) ?? asInt(u[camel]);
+  final durMs = asInt(value['duration_ms']) ?? asInt(value['durationMs']);
+  return AiUsage(
+    inputTokens: tokens('input_tokens', 'inputTokens') ?? 0,
+    outputTokens: tokens('output_tokens', 'outputTokens') ?? 0,
+    cacheReadTokens: tokens('cache_read_tokens', 'cacheReadTokens'),
+    cacheWriteTokens: tokens('cache_write_tokens', 'cacheWriteTokens'),
+    duration: durMs != null ? Duration(milliseconds: durMs) : null,
+    requestId:
+        value['request_id']?.toString() ?? value['requestId']?.toString(),
+  );
+}
+
+// Coerce a JSON number (int or double) to int; null otherwise. Shared by the
+// provider usage builders below.
+int? _asInt(dynamic v) => v is int ? v : (v is num ? v.toInt() : null);
+
+// Codex `turn.completed` usage: {input_tokens, output_tokens,
+// cached_input_tokens, reasoning_output_tokens} — verified against a live run.
+// Pure garnish on the stream we already parsed for the answer; no extra call.
+AiUsage _codexUsage(Map<dynamic, dynamic> u) => AiUsage(
+      inputTokens: _asInt(u['input_tokens']) ?? 0,
+      outputTokens: _asInt(u['output_tokens']) ?? 0,
+      cacheReadTokens: _asInt(u['cached_input_tokens']),
+      reasoningTokens: _asInt(u['reasoning_output_tokens']),
+    );
+
+// Claude Code result object — the richest CLI envelope: usage{input_tokens,
+// output_tokens, cache_read_input_tokens, cache_creation_input_tokens} plus
+// top-level total_cost_usd, duration_ms and session_id (verified live).
+AiUsage _claudeUsage(Map<dynamic, dynamic> value) {
+  final usage = value['usage'];
+  final u = usage is Map<dynamic, dynamic> ? usage : const <dynamic, dynamic>{};
+  final durMs = _asInt(value['duration_ms']);
+  final cost = value['total_cost_usd'];
+  return AiUsage(
+    inputTokens: _asInt(u['input_tokens']) ?? 0,
+    outputTokens: _asInt(u['output_tokens']) ?? 0,
+    cacheReadTokens: _asInt(u['cache_read_input_tokens']),
+    cacheWriteTokens: _asInt(u['cache_creation_input_tokens']),
+    duration: durMs != null ? Duration(milliseconds: durMs) : null,
+    requestId: value['session_id']?.toString(),
+    costUsd: cost is num ? cost.toDouble() : null,
+  );
+}
+
+// OpenCode `step_finish` part: tokens{input, output, reasoning, cache{read,
+// write}} and a cost (0 on a free pool). Verified live. Summed across steps by
+// the caller.
+AiUsage _openCodeUsage(Map<dynamic, dynamic> part) {
+  final tokens = part['tokens'];
+  final t =
+      tokens is Map<dynamic, dynamic> ? tokens : const <dynamic, dynamic>{};
+  final cacheV = t['cache'];
+  final cache =
+      cacheV is Map<dynamic, dynamic> ? cacheV : const <dynamic, dynamic>{};
+  final cost = part['cost'];
+  return AiUsage(
+    inputTokens: _asInt(t['input']) ?? 0,
+    outputTokens: _asInt(t['output']) ?? 0,
+    reasoningTokens: _asInt(t['reasoning']),
+    cacheReadTokens: _asInt(cache['read']),
+    cacheWriteTokens: _asInt(cache['write']),
+    costUsd: (cost is num && cost > 0) ? cost.toDouble() : null,
+  );
 }
 
 /// Parse the JSONL from `copilot -p --output-format json` (one JSON object per
@@ -10753,9 +11054,10 @@ String? _copilotContentToText(dynamic content) {
   return null;
 }
 
-String? _parseOpenCodeJsonl(String stdout) {
+_ProviderOutput? _parseOpenCodeJsonl(String stdout) {
   final buffer = StringBuffer();
   String? errorMessage;
+  var usage = AiUsage.empty;
   for (final line in stdout.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.isEmpty) {
@@ -10774,6 +11076,13 @@ String? _parseOpenCodeJsonl(String stdout) {
         if (extracted != null && extracted.isNotEmpty) {
           errorMessage = extracted;
         }
+        continue;
+      }
+      // A `step_finish` event carries the per-step token/cost accounting in its
+      // `part`. Sum across steps so a multi-step run reports the whole cost.
+      if (value['type'] == 'step_finish' || value['type'] == 'step-finish') {
+        final part = value['part'];
+        if (part is Map) usage = usage + _openCodeUsage(part);
         continue;
       }
       if (value['type'] != 'text' &&
@@ -10803,10 +11112,10 @@ String? _parseOpenCodeJsonl(String stdout) {
   }
   final response = buffer.toString().trim();
   if (response.isNotEmpty) {
-    return response;
+    return _ProviderOutput(response, usage: usage);
   }
   if (errorMessage != null && errorMessage.trim().isNotEmpty) {
-    return 'OpenCode error: ${_stripAnsi(errorMessage.trim())}';
+    return _ProviderOutput('OpenCode error: ${_stripAnsi(errorMessage.trim())}');
   }
   return null;
 }
@@ -10844,6 +11153,13 @@ bool _looksLikeProviderError(_ProviderKind kind, String raw) {
           lower.contains('no copilot') ||
           lower.contains('credit') ||
           lower.contains('quota');
+    case _ProviderKind.cursor:
+      return lower.startsWith('cursor error:') ||
+          lower.contains('authentication required') ||
+          lower.contains('not logged in') ||
+          lower.contains('workspace trust') ||
+          lower.contains('rate limit') ||
+          lower.contains('quota');
     case _ProviderKind.apiProvider:
       // Dead path — API providers return structured AiApiResponse before
       // reaching the CLI output classifier. Kept narrow to avoid false
@@ -10868,6 +11184,7 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
     _ProviderKind.claude => normalized,
     _ProviderKind.antigravity => _normalizeAntigravityError(normalized),
     _ProviderKind.copilot => _normalizeCopilotError(normalized),
+    _ProviderKind.cursor => _normalizeCursorError(normalized),
     _ProviderKind.apiProvider => normalized,
   };
   // Never let a provider echo a bearer token, API key, or session cred
@@ -11017,6 +11334,44 @@ String _normalizeCodexError(String raw) {
   }
 
   return 'Codex exited with an error. Check the Codex log for details.';
+}
+
+// Translate Cursor CLI failures into clean, actionable messages and cap the
+// rest so a stack/log dump can't overflow the UI.
+String _normalizeCursorError(String raw) {
+  final lower = raw.toLowerCase();
+  if (lower.contains('authentication required') ||
+      lower.contains('not logged in') ||
+      lower.contains('cursor_api_key') ||
+      lower.contains('unauthorized')) {
+    return 'Cursor CLI needs a sign-in. Run `cursor-agent login` once (free '
+        'Hobby tier works) or set CURSOR_API_KEY, then try again.';
+  }
+  if (lower.contains('workspace trust')) {
+    return 'Cursor CLI blocked on workspace trust — unexpected, since Manifold '
+        'passes --trust. Check the repo path.';
+  }
+  if (lower.contains('rate limit') || lower.contains('429')) {
+    return 'Cursor rate limit reached. Wait a moment and try again.';
+  }
+  if (lower.contains('quota') ||
+      lower.contains('credit') ||
+      lower.contains('usage limit')) {
+    return 'Cursor usage/quota exceeded. Check your Cursor plan (the free '
+        'Hobby tier has a monthly cap).';
+  }
+  if (raw.length > 500) {
+    final firstMeaningful = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty && !l.startsWith('[') && !l.startsWith('<'))
+        .take(3)
+        .join('\n');
+    return firstMeaningful.isNotEmpty
+        ? firstMeaningful
+        : raw.substring(0, 500);
+  }
+  return raw;
 }
 
 // Translate the GitHub Copilot CLI's auth/limit failures into clean, actionable
@@ -11608,6 +11963,8 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
       return _antigravityAuthStatus();
     case _ProviderKind.copilot:
       return _copilotAuthStatus();
+    case _ProviderKind.cursor:
+      return _cursorAuthStatus();
     case _ProviderKind.openCode:
       return _openCodeAuthStatus();
     case _ProviderKind.apiProvider:
@@ -11704,6 +12061,19 @@ _ProviderAuthStatus _claudeAuthStatus() {
             '${mult != null ? ' · $mult' : ''})'
         : 'claude oauth missing token or user:inference scope',
     planName: planName,
+  );
+}
+
+// Cursor CLI (`cursor-agent`) owns its auth (browser OAuth via
+// `cursor-agent login`, or CURSOR_API_KEY) and persists it across spawned
+// invocations, so a login done once keeps working. Manifold never reads or
+// refreshes it. Reported CLI-managed; a not-signed-in call surfaces a sign-in
+// message via _normalizeCursorError rather than us probing its session store.
+_ProviderAuthStatus _cursorAuthStatus() {
+  return const _ProviderAuthStatus(
+    ok: true,
+    detail: 'managed by Cursor CLI',
+    planName: 'CLI-managed',
   );
 }
 
@@ -12103,17 +12473,32 @@ class _ProviderPromptResult {
   final String? output;
   final String? error;
   final String outputPreview;
-  final int inputTokens;
-  final int outputTokens;
+
+  /// Per-transaction usage/telemetry the provider reported for this call
+  /// (tokens, cache read/write, duration, request id, ...). [AiUsage.empty]
+  /// when the provider hands us nothing. Never the product of an extra probe —
+  /// it's parsed from the response we already received. [inputTokens] /
+  /// [outputTokens] delegate here so existing call sites keep working.
+  final AiUsage usage;
+
+  /// The model id actually sent to the provider — equal to the picked id for
+  /// every provider except Cursor, whose effort/fast slider resolves to a
+  /// sibling id (see [_effectiveModelId]). DTO builders record THIS so a
+  /// copied report names the model that truly produced the output, not the
+  /// picker value the effort router may have swapped away from.
+  final String effectiveModelId;
 
   const _ProviderPromptResult({
     required this.ok,
     this.output,
     this.error,
     required this.outputPreview,
-    this.inputTokens = 0,
-    this.outputTokens = 0,
+    this.usage = AiUsage.empty,
+    this.effectiveModelId = '',
   });
+
+  int get inputTokens => usage.inputTokens;
+  int get outputTokens => usage.outputTokens;
 }
 
 class _ClaudeOAuthCredentials {
@@ -12254,13 +12639,22 @@ class _MergedReviewResult {
   });
 }
 
-enum _ProviderKind { codex, claude, antigravity, copilot, openCode, apiProvider }
+enum _ProviderKind {
+  codex,
+  claude,
+  antigravity,
+  copilot,
+  cursor,
+  openCode,
+  apiProvider
+}
 
 enum _ProviderOutputMode {
   plainText,
   codexJsonl,
   claudeJson,
   copilotJsonl,
+  cursorJson,
   openCodeJsonl,
 }
 

@@ -27,6 +27,7 @@ import '../../backend/git_result.dart';
 import '../../backend/remote_types.dart';
 import '../../backend/remote_pr_provider.dart';
 import '../../backend/remote_issue_provider.dart';
+import '../../backend/commit_review_report.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_dream.dart';
@@ -267,9 +268,8 @@ class _PrAiReviewDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () {
-            Clipboard.setData(ClipboardData(
-                text:
-                    '${review.verdict} · ${review.score}\n\n${review.summary}'));
+            Clipboard.setData(
+                ClipboardData(text: renderCommitReviewReport(review)));
           },
           child: Text('Copy', style: TextStyle(color: t.textMuted)),
         ),

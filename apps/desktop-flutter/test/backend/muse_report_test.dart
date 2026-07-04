@@ -260,5 +260,20 @@ NOTES
       );
       expect(text, isNot(endsWith('\n')));
     });
+
+    test('synth line drops the dangling slash when a half is blank', () {
+      // The switch to modelDescriptor() only changes behavior when one half
+      // is missing: the old inline `provider / model` rendered `Model:  / X`.
+      final text = renderMuseReport(
+        _data(
+          proposals: [_prop(MuseStrandKind.spark, 'S')],
+          providerId: '',
+          modelId: 'claude-opus-4-8',
+        ),
+        const [MuseStrandKind.spark],
+      );
+      expect(text, contains('Model: claude-opus-4-8'));
+      expect(text.contains(' / '), isFalse);
+    });
   });
 }
