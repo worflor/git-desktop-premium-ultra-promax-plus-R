@@ -3513,9 +3513,15 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         Positioned(
           left: left,
           top: top,
-          child: SizedBox(
-            width: 340,
-            child: SyncPanel(onClose: _closeFlyout),
+          // OverlayEntry subtrees have NO Material ancestor — without this,
+          // every Text in the flyout renders in Flutter's yellow-underline
+          // debug style. Transparency type: the panel paints its own surface.
+          child: Material(
+            type: MaterialType.transparency,
+            child: SizedBox(
+              width: 340,
+              child: SyncPanel(onClose: _closeFlyout),
+            ),
           ),
         ),
       ]),

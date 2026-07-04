@@ -342,18 +342,25 @@ class _SyncBody extends StatelessWidget {
                       fontWeight: FontWeight.w500)),
             ]),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 7),
+          Text('⇢',
+              style: TextStyle(
+                  color: t.textFaint,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono)),
+          const SizedBox(width: 7),
           Expanded(
             child: Text(
-              status.upstream ?? 'No upstream',
+              status.upstream ?? 'no upstream',
               style: TextStyle(
-                  color: status.upstream != null ? t.textNormal : t.textMuted,
-                  fontSize: 11),
+                  color: status.upstream != null ? t.textMuted : t.textFaint,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: 8),
-          _GhostBtn(label: 'Close', t: t, onTap: onClose),
+          _CloseGlyph(t: t, onTap: onClose),
         ]),
         const SizedBox(height: 12),
 
@@ -379,17 +386,13 @@ class _SyncBody extends StatelessWidget {
         ]),
         const SizedBox(height: 14),
 
-        // Action block: canonical label + detail (spells out the rebase when
-        // the branch has diverged) + primary sync / fetch-only.
-        Text(action.label,
-            style: TextStyle(
-                color: t.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
+        // Action block: the detail sentence (spells out the rebase when the
+        // branch has diverged) + primary sync / fetch-only. No heading — the
+        // button already carries the verb; saying "Sync" twice was noise.
         Text(action.detail,
-            style: TextStyle(color: t.textNormal, fontSize: 12, height: 1.4)),
-        const SizedBox(height: 12),
+            style:
+                TextStyle(color: t.textMuted, fontSize: 11.5, height: 1.45)),
+        const SizedBox(height: 10),
         Row(children: [
           Expanded(
             child: _PrimaryBtn(
@@ -405,7 +408,6 @@ class _SyncBody extends StatelessWidget {
             t: t,
             enabled: !busy,
             onTap: onFetch,
-            note: 'Utility',
           ),
         ]),
 
@@ -470,23 +472,63 @@ class _SummaryPill extends StatelessWidget {
     return Expanded(
       child: MaterialSurface(
         tone: AppMaterialTone.surface0,
-        radius: 6,
+        radius: context.surfaceShader.geometry.badgeRadius,
         elevated: false,
-        borderColor: color.withValues(alpha: 0.2),
+        borderColor: color.withValues(alpha: 0.14),
         borderAlpha: 1,
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 7),
         child: Column(children: [
-          Text(label,
+          Text(label.toLowerCase(),
               style: TextStyle(
-                  color: color.withValues(alpha: 0.7),
-                  fontSize: 9,
+                  color: color.withValues(alpha: 0.65),
+                  fontSize: 8.5,
                   fontWeight: FontWeight.w600,
-                  letterSpacing: 0.04)),
-          const SizedBox(height: 2),
+                  letterSpacing: 0.6)),
+          const SizedBox(height: 3),
           Text(value,
               style: TextStyle(
-                  color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+                  color: color,
+                  fontSize: 15,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w600)),
         ]),
+      ),
+    );
+  }
+}
+
+/// Quiet ✕ in the panel corner — glyph, not a labeled button; brightens
+/// on hover like every dismiss affordance in the app's overlays.
+class _CloseGlyph extends StatefulWidget {
+  final AppTokens t;
+  final VoidCallback onTap;
+  const _CloseGlyph({required this.t, required this.onTap});
+
+  @override
+  State<_CloseGlyph> createState() => _CloseGlyphState();
+}
+
+class _CloseGlyphState extends State<_CloseGlyph> {
+  bool _hov = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hov = true),
+      onExit: (_) => setState(() => _hov = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: AppIcon(
+            name: 'x',
+            size: 12,
+            color: _hov ? t.textNormal : t.textMuted,
+          ),
+        ),
       ),
     );
   }
@@ -693,7 +735,8 @@ class _PrimaryBtnState extends State<_PrimaryBtn> {
             decoration: BoxDecoration(
               color: chrome.background,
               gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.radius),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
@@ -728,13 +771,11 @@ class _GhostBtn extends StatefulWidget {
   final AppTokens t;
   final bool enabled;
   final VoidCallback onTap;
-  final String? note;
   const _GhostBtn(
       {required this.label,
       required this.t,
       this.enabled = true,
-      required this.onTap,
-      this.note});
+      required this.onTap});
   @override
   State<_GhostBtn> createState() => _GhostBtnState();
 }
@@ -745,7 +786,6 @@ class _GhostBtnState extends State<_GhostBtn> {
   @override
   Widget build(BuildContext context) {
     final t = widget.t;
-    final compact = widget.note == null;
     final chrome = ghostButtonChrome(
       t,
       hovered: _hov,
@@ -766,41 +806,26 @@ class _GhostBtnState extends State<_GhostBtn> {
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
           duration: context.motion(const Duration(milliseconds: 100)),
-          height: compact ? 28 : 36,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          // Matches the primary button's height so the action row reads as
+          // one register, not a big button with a satellite.
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: chrome.background,
-            borderRadius: BorderRadius.circular(compact ? 6 : 8),
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius),
             border: Border.all(color: chrome.borderColor),
             boxShadow: chrome.shadows,
           ),
           child: Transform.translate(
             offset: chrome.offset,
-            child: compact
-                ? Center(
-                    child: Text(widget.label,
-                        style: TextStyle(
-                            color: widget.enabled ? t.textNormal : t.textMuted,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500)),
-                  )
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(widget.note!,
-                          style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0)),
-                      Text(widget.label,
-                          style: TextStyle(
-                              color:
-                                  widget.enabled ? t.textNormal : t.textMuted,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500)),
-                    ],
-                  ),
+            child: Center(
+              child: Text(widget.label,
+                  style: TextStyle(
+                      color: widget.enabled ? t.textNormal : t.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500)),
+            ),
           ),
         ),
       ),
