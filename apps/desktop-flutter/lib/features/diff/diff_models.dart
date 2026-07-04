@@ -268,6 +268,12 @@ class ParsedLine {
 /// place that reads a diff sees the exact same model.
 List<ParsedLine> parseUnifiedDiff(String diff) {
   final rawLines = diff.split('\n');
+  // Every git diff ends with '\n', so split() leaves one trailing ''.
+  // Left in, the display-fidelity else-branch below turns it into a
+  // phantom empty CONTEXT row carrying the LAST hunk's index — PatchEngine
+  // then counts an extra line the file doesn't have and every per-line
+  // stage in a diff's final hunk dies with "patch does not apply".
+  if (rawLines.isNotEmpty && rawLines.last.isEmpty) rawLines.removeLast();
   final result = <ParsedLine>[];
   int oldLine = 0, newLine = 0, hunkIdx = -1;
   String? currentFile;
@@ -362,11 +368,18 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
           hunkIndex: hunkIdx,
           filePath: currentFile));
     } else {
+      // Display-only blank row (commit-message preambles in `git show` /
+      // `log -p` payloads). A truly empty line can NEVER be hunk body —
+      // every hunk line carries a marker char, even blank context (' ') —
+      // so this row claims NO hunk membership. hunkIndex -1 makes that
+      // structural: every hunk consumer (PatchEngine grouping, edit
+      // units) skips negative indices, so a stray blank can't inflate a
+      // hunk's line accounting no matter which payload it arrived in.
       result.add(ParsedLine(
           text: line,
           lowerText: '',
           kind: LineKind.context,
-          hunkIndex: hunkIdx));
+          hunkIndex: -1));
     }
   }
 

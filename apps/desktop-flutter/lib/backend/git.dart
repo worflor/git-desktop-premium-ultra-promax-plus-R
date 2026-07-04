@@ -2803,8 +2803,11 @@ Future<GitResult<void>> applyPatch(
     if (threeWay) args.add('--3way');
     args.addAll(['--whitespace=nowarn', '-']);
     final process = await Process.start('git', args, workingDirectory: repo);
-    process.stdin.write(patch);
-    if (!patch.endsWith('\n')) process.stdin.writeln();
+    // Raw UTF-8 bytes, never IOSink.write: process stdin defaults to the
+    // SYSTEM encoding (cp1252 on Windows), which lossily mangles any
+    // non-ASCII patch content and makes git reject or corrupt the hunk.
+    process.stdin.add(utf8.encode(patch));
+    if (!patch.endsWith('\n')) process.stdin.add(const [0x0A]);
     await process.stdin.flush();
     await process.stdin.close();
     final stderrFuture = process.stderr.transform(utf8.decoder).join();

@@ -45,6 +45,16 @@ class PatchEngine {
       final activeLines = lines.where((l) {
         if (l.kind == LineKind.meta) return false;
         if (l.kind == LineKind.hunk) return false;
+        // Patch material must be NUMBERED hunk body. The parser keeps
+        // unnumbered context rows for display fidelity (blank lines in
+        // `git show` preambles and similar); a patch that counts or
+        // prints one desynchronizes the @@ header from the file and
+        // git rejects the whole hunk.
+        if (l.kind == LineKind.context &&
+            l.lineNumOld == null &&
+            l.lineNumNew == null) {
+          return false;
+        }
         if (l.isStaged == false && l.kind == LineKind.context) return true;
         if (l.isStaged == false && l.kind == LineKind.deleted) return true;
         if (l.isStaged == true) return true;

@@ -1377,7 +1377,7 @@ class _SettingsPageState extends State<SettingsPage>
                 label: 'I hate AI',
                 description:
                     "Banish all LLM-backed features. Logos keeps running "
-                    "because it's spectral math, not a model.",
+                    "because it's just spectral math.",
                 value: preferences.hideAiFeatures,
                 trailing: _AiHiddenMiniIndicator(
                   hidden: preferences.hideAiFeatures,
