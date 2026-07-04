@@ -5147,8 +5147,21 @@ Widget _buildInlineWordDiffText(
   }
 
   final termLower = searchTerm.toLowerCase();
-  final spans = <TextSpan>[];
+  final spans = <InlineSpan>[];
+  WordDiffRole? prevRole;
   for (final seg in segments) {
+    // A removed run directly abutting an added run visually fuses into one
+    // fake token ("hunkIdx" struck + "-1" added reads as `hunkIdx-1`, an
+    // expression that never existed). A hair of physical separation keeps
+    // the two chips distinct — WidgetSpan contributes no characters, so
+    // copied text stays byte-faithful.
+    if (prevRole != null &&
+        prevRole != WordDiffRole.common &&
+        seg.role != WordDiffRole.common &&
+        prevRole != seg.role) {
+      spans.add(const WidgetSpan(child: SizedBox(width: 4)));
+    }
+    prevRole = seg.role;
     final base = styleFor(seg.role);
     if (termLower.isEmpty) {
       spans.add(TextSpan(text: seg.text, style: base));

@@ -1896,6 +1896,97 @@ Future<GitResult<void>> deleteBranch(String repo, String name,
   return const GitResult.ok(null);
 }
 
+/// The exact author identity the NEXT commit in [repo] would stamp.
+/// Resolved by git itself via `git var GIT_AUTHOR_IDENT` — env overrides,
+/// local config, includeIf, global, in git's own precedence order — so the
+/// UI can never disagree with what a commit would actually record. Forge-
+/// agnostic by construction: authoring identity is pure git, identical
+/// across GitHub/GitLab/Gitea/anything. Null when git cannot synthesize
+/// an identity at all (nothing configured), which IS the warning state.
+Future<({String name, String email})?> getCommitIdentity(String repo) async {
+  final r = await _git(repo, ['var', 'GIT_AUTHOR_IDENT']);
+  if (r.exitCode != 0) return null;
+  // "Name <email> 1783178174 -0400"
+  final m = RegExp(r'^(.*) <([^>]*)> \d+ [+-]\d{4}$')
+      .firstMatch(r.stdout.toString().trim());
+  if (m == null) return null;
+  return (name: m.group(1)!.trim(), email: m.group(2)!.trim());
+}
+
+/// How the configured commit identity relates to THIS repo's own history —
+/// the one oracle a git client honestly has. Email is the strong key
+/// (names collide freely); a repo with no history grades everyone
+/// [resident] because there is nothing to compare against and a fresh
+/// `git init` first commit deserves no scolding.
+enum IdentityFamiliarity {
+  /// Probes still resolving — render nothing judgmental.
+  unknown,
+
+  /// This email has authored commits here before. Calm minimum.
+  resident,
+
+  /// Not in THIS repo's history, but an author in other repos of the
+  /// user's workspace — the first-commit-in-a-new-project shape. A
+  /// greeting, never a warning: without this tier, cloning any project
+  /// you've never contributed to would caution-flag your own identity.
+  knownElsewhere,
+
+  /// Known author NAME (here or anywhere in the workspace), never-seen
+  /// email: new machine, fresh noreply, or a typo'd config. Worth an
+  /// eyebrow, not an alarm.
+  newEmail,
+
+  /// Unseen across the ENTIRE workspace — the planted-config incident
+  /// shape, and a much stronger claim than "new to one repo". Quiet,
+  /// unmistakable caution.
+  stranger,
+}
+
+/// Author sets from the repo's recent history (bounded walk), the raw
+/// material for [gradeIdentity]. Lowercased for comparison.
+Future<({Set<String> emails, Set<String> names})> getHistoricalAuthors(
+  String repo, {
+  int limit = 2000,
+}) async {
+  final r = await _git(
+      repo, ['log', '--format=%aN%x09%aE', '-n', '$limit']);
+  final emails = <String>{};
+  final names = <String>{};
+  if (r.exitCode == 0) {
+    for (final line in r.stdout.toString().split('\n')) {
+      final tab = line.indexOf('\t');
+      if (tab <= 0) continue;
+      names.add(line.substring(0, tab).trim().toLowerCase());
+      emails.add(line.substring(tab + 1).trim().toLowerCase());
+    }
+  }
+  return (emails: emails, names: names);
+}
+
+/// Pure grading of a configured identity: [local] is this repo's author
+/// history, [workspace] the union across the user's other open repos
+/// (pass empty sets when unavailable — grading degrades to local-only).
+IdentityFamiliarity gradeIdentity(
+  ({String name, String email}) identity,
+  ({Set<String> emails, Set<String> names}) local, {
+  ({Set<String> emails, Set<String> names}) workspace = const (
+    emails: <String>{},
+    names: <String>{},
+  ),
+}) {
+  final email = identity.email.toLowerCase();
+  final name = identity.name.toLowerCase();
+  if (local.emails.isEmpty) return IdentityFamiliarity.resident;
+  if (local.emails.contains(email)) return IdentityFamiliarity.resident;
+  if (workspace.emails.contains(email)) {
+    return IdentityFamiliarity.knownElsewhere;
+  }
+  if (local.names.contains(name) || workspace.names.contains(name)) {
+    return IdentityFamiliarity.newEmail;
+  }
+  return IdentityFamiliarity.stranger;
+}
+
 /// Current OID of [ref] (full ref name, e.g. `refs/heads/foo`), or null
 /// when it doesn't resolve. The identity-capture half of the delayed-
 /// destruction contract: UI flows that arm a safety window snapshot the

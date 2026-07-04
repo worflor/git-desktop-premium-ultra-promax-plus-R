@@ -225,6 +225,89 @@ void main() {
     });
   });
 
+  group('getCommitIdentity', () {
+    test('resolves the configured identity git will actually stamp',
+        () async {
+      await commitFile('f.txt', 'v1\n', 'base');
+      final id = await getCommitIdentity(repo);
+      expect(id, isNotNull);
+      expect(id!.name, 'test');
+      expect(id.email, 'a@b.c');
+    });
+
+    test('local config override wins — the incident scenario is visible',
+        () async {
+      // The planted-identity attack: a tool writes user.* into LOCAL
+      // config, silently outranking the user's global identity. The
+      // probe must surface the local value, because that IS what the
+      // next commit would stamp.
+      await commitFile('f.txt', 'v1\n', 'base');
+      await git(['config', 'user.name', 'hijacked']);
+      await git(['config', 'user.email', 'evil@example.com']);
+      final id = await getCommitIdentity(repo);
+      expect(id, isNotNull);
+      expect(id!.name, 'hijacked');
+      expect(id.email, 'evil@example.com');
+    });
+  });
+
+  group('identity familiarity grading', () {
+    test('probe collects historical authors; grader ranks against them',
+        () async {
+      await commitFile('f.txt', 'v1\n', 'base');
+      final authors = await getHistoricalAuthors(repo);
+      expect(authors.emails, contains('a@b.c'));
+      expect(authors.names, contains('test'));
+
+      // Resident: the email that already authored here.
+      expect(gradeIdentity((name: 'test', email: 'a@b.c'), authors),
+          IdentityFamiliarity.resident);
+      // Email is the strong key — case-insensitive.
+      expect(gradeIdentity((name: 'Whoever', email: 'A@B.C'), authors),
+          IdentityFamiliarity.resident);
+      // Known name, never-seen email: the new-machine shape.
+      expect(gradeIdentity((name: 'Test', email: 'new@laptop.dev'), authors),
+          IdentityFamiliarity.newEmail);
+      // Neither: the planted-config incident shape.
+      expect(
+          gradeIdentity(
+              (name: 'hijacked', email: 'evil@example.com'), authors),
+          IdentityFamiliarity.stranger);
+    });
+
+    test('workspace authors soften a local stranger into a greeting', () {
+      final local = (emails: {'other@dev.io'}, names: {'other'});
+      final workspace = (emails: {'me@home.dev'}, names: {'worflor'});
+      // First commit in a freshly-cloned repo: unseen locally, but an
+      // author of the user's other open repos — greeting, not caution.
+      expect(
+          gradeIdentity((name: 'worflor', email: 'me@home.dev'), local,
+              workspace: workspace),
+          IdentityFamiliarity.knownElsewhere);
+      // Name known only in the workspace, email known nowhere.
+      expect(
+          gradeIdentity((name: 'worflor', email: 'typo@wrong.dev'), local,
+              workspace: workspace),
+          IdentityFamiliarity.newEmail);
+      // Unseen across the entire workspace: the full stranger claim.
+      expect(
+          gradeIdentity(
+              (name: 'hijacked', email: 'evil@example.com'), local,
+              workspace: workspace),
+          IdentityFamiliarity.stranger);
+    });
+
+    test('empty history grades everyone resident — fresh repos scold no one',
+        () async {
+      // No commits at all: nothing to compare against.
+      final authors = await getHistoricalAuthors(repo);
+      expect(authors.emails, isEmpty);
+      expect(
+          gradeIdentity((name: 'anyone', email: 'any@where.io'), authors),
+          IdentityFamiliarity.resident);
+    });
+  });
+
   group('prepareCommitStaging with unmerged paths', () {
     test('conflicted files are left alone by the staging walk', () async {
       // Real UU conflict: two branches editing the same line.

@@ -502,6 +502,78 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _lastDraftRepoPath;
   String? _lastDraftBranch;
 
+  // The identity the next commit will stamp, resolved by git itself per
+  // repo (git var GIT_AUTHOR_IDENT). Surfaced on the commit-mode toggle
+  // tooltip so a planted/hijacked local user.* config is visible BEFORE
+  // it authors commits — the "why am I 'test'" incident, made impossible
+  // to miss. Null = still loading or genuinely unconfigured.
+  ({String name, String email})? _commitIdentity;
+  bool _commitIdentityLoaded = false;
+
+  /// How the identity relates to this repo's own history — the graded
+  /// signal behind the tooltip's tone and the button's caution edge.
+  IdentityFamiliarity _identityGrade = IdentityFamiliarity.unknown;
+
+  /// Historical author sets, cached per repo path for the session —
+  /// serves both "this repo" grading and the workspace union, and makes
+  /// branch switches / repeat consultations free.
+  final Map<String, ({Set<String> emails, Set<String> names})>
+      _authorSetsCache = {};
+
+  /// How many workspace repos the cross-repo consultation may walk.
+  /// Bounds first-consultation cost; each repo is cached afterward.
+  static const int _kWorkspaceIdentityRepoCap = 12;
+
+  Future<({Set<String> emails, Set<String> names})> _authorsFor(
+      String repo) async {
+    final cached = _authorSetsCache[repo];
+    if (cached != null) return cached;
+    final sets = await getHistoricalAuthors(repo);
+    _authorSetsCache[repo] = sets;
+    return sets;
+  }
+
+  Future<void> _loadCommitIdentity(String repo) async {
+    // Workspace roster captured BEFORE any await (context discipline).
+    final workspacePaths = context
+        .read<RepositoryState>()
+        .recentPaths
+        .where((p) => p != repo)
+        .take(_kWorkspaceIdentityRepoCap)
+        .toList();
+    final id = await getCommitIdentity(repo);
+    final local = await _authorsFor(repo);
+    // Only a non-calm local grade consults the rest of the workspace —
+    // residents never pay the cross-repo cost. And the grade is HELD at
+    // unknown until the verdict is final: caution may arrive a beat
+    // late, but it never shows and then retracts.
+    var grade = id == null
+        ? IdentityFamiliarity.unknown
+        : gradeIdentity(id, local);
+    if (id != null && grade != IdentityFamiliarity.resident) {
+      final emails = <String>{};
+      final names = <String>{};
+      for (final p in workspacePaths) {
+        final sets = await _authorsFor(p);
+        emails.addAll(sets.emails);
+        names.addAll(sets.names);
+      }
+      grade = gradeIdentity(id, local,
+          workspace: (emails: emails, names: names));
+    }
+    if (!mounted) return;
+    // Stale guard — same race as _loadCommitDraftForRepo: the subprocess
+    // spans an await, and a fast repo switch can land B's scope before
+    // A's probe resolves. A stale write here would show the WRONG repo's
+    // identity — the exact failure this feature exists to surface.
+    if (_lastDraftRepoPath != repo) return;
+    setState(() {
+      _commitIdentity = id;
+      _commitIdentityLoaded = true;
+      _identityGrade = grade;
+    });
+  }
+
   // In-page undo for single-file discards. Replaces the OS-level
   // SnackBar (which a) layered a full-width banner across the workspace
   // and b) sometimes lingered when a follow-up snackbar got queued
@@ -5880,6 +5952,19 @@ class _ChangesPageState extends State<ChangesPage> {
       final oldBranch = _lastDraftBranch;
       final textToSave = _commitMsgCtrl.text;
       _commitMsgCtrl.clear();
+      // Identity lifecycle, split by what actually changed:
+      //   REPO switch — reset SYNCHRONOUSLY to loading ('…'). The probe
+      //   takes arbitrarily long under load, and repo A's identity must
+      //   never render wearing repo B's clothes, not for one frame.
+      //   BRANCH switch — identity is repo-scoped in all but the exotic
+      //   includeIf-onbranch config, so keep showing the current value
+      //   (no '…' flash) while the reload below re-verifies it; a
+      //   differing result swaps in when it lands.
+      if (_lastDraftRepoPath != repoPath) {
+        _commitIdentity = null;
+        _commitIdentityLoaded = false;
+        _identityGrade = IdentityFamiliarity.unknown;
+      }
       _lastDraftRepoPath = repoPath;
       _lastDraftBranch = currentBranch;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -5891,6 +5976,7 @@ class _ChangesPageState extends State<ChangesPage> {
         unawaited(
             _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true));
         unawaited(_loadStashes(repoPath));
+        unawaited(_loadCommitIdentity(repoPath));
       });
     }
     if (statusError != null) {
@@ -7082,6 +7168,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                       onToggleMode: () => context
                                           .read<CommitModeState>()
                                           .toggle(repoPath),
+                                      identity: _commitIdentity,
+                                      identityLoaded: _commitIdentityLoaded,
+                                      identityGrade: _identityGrade,
                                     ),
                                   );
                                 },
@@ -10924,6 +11013,13 @@ class _SplitCommitBtn extends StatefulWidget {
   final VoidCallback onCommit;
   final VoidCallback onToggleMode;
 
+  /// The identity the next commit will stamp (git-resolved) and how it
+  /// relates to this repo's history. [identityLoaded] false = probes in
+  /// flight; loaded with null identity = git has nothing configured.
+  final ({String name, String email})? identity;
+  final bool identityLoaded;
+  final IdentityFamiliarity identityGrade;
+
   const _SplitCommitBtn({
     required this.label,
     required this.alternateLabel,
@@ -10934,6 +11030,9 @@ class _SplitCommitBtn extends StatefulWidget {
     this.actionRunning = false,
     required this.onCommit,
     required this.onToggleMode,
+    this.identity,
+    this.identityLoaded = false,
+    this.identityGrade = IdentityFamiliarity.unknown,
   });
 
   @override
@@ -10946,8 +11045,111 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
   bool _chevronHovered = false;
   bool _chevronPressed = false;
 
+  // The identity/mode tooltip is ANCHORED to the chevron (its historical
+  // home) but summoned from either half: the chevron natively, the main
+  // half programmatically after the same wait — so the bubble always
+  // appears in the one spot, whichever half the pointer is on.
+  final GlobalKey<TooltipState> _chevTipKey = GlobalKey<TooltipState>();
+  Timer? _mainTipTimer;
+
+  /// True only while WE have programmatically summoned the chevron's
+  /// tooltip from the main half. Scopes the (API-global) dismissal to
+  /// exactly that case — natively hover-shown tooltips dismiss themselves,
+  /// so no other tooltip in the app can ever be collateral.
+  bool _tipSummoned = false;
+
   bool get _anyHovered => _mainHovered || _chevronHovered;
   bool get _anyPressed => _mainPressed && !_chevronPressed;
+
+  @override
+  void dispose() {
+    _mainTipTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Identity rows for the tooltip, graded. The base style is muted+small
+  /// when riding under the chevron's mode row, default when standing alone.
+  List<TextSpan> _identitySpans(AppTokens t) {
+    final dim = _chevronHovered
+        ? TextStyle(color: t.textMuted, fontSize: 10)
+        : const TextStyle();
+    if (!widget.identityLoaded) return [TextSpan(text: '…', style: dim)];
+    final id = widget.identity;
+    if (id == null) {
+      return [
+        TextSpan(
+            text: 'no commit identity configured',
+            style: TextStyle(
+                color: t.stateDeleted,
+                fontSize: _chevronHovered ? 10 : null)),
+      ];
+    }
+    final caution = TextStyle(
+        color: t.stateModified, fontSize: _chevronHovered ? 10 : null);
+    switch (widget.identityGrade) {
+      case IdentityFamiliarity.resident:
+        // Known-here email: the calm minimum. Name only, no email noise.
+        return [TextSpan(text: 'as ${id.name}', style: dim)];
+      case IdentityFamiliarity.knownElsewhere:
+        // An author from the user's OWN workspace, first time in this
+        // repo — a greeting in the normal tone, never caution.
+        return [
+          TextSpan(text: 'as ${id.name} <${id.email}>', style: dim),
+          TextSpan(
+            text: '\nfirst commit in this repo',
+            style: TextStyle(color: t.textMuted, fontSize: 10),
+          ),
+        ];
+      case IdentityFamiliarity.newEmail:
+        // Familiar name, never-seen email — the email is the news.
+        return [
+          TextSpan(text: 'as ${id.name} ', style: dim),
+          TextSpan(text: '<${id.email}>', style: caution),
+        ];
+      case IdentityFamiliarity.stranger:
+        return [
+          TextSpan(text: 'as ${id.name} <${id.email}>', style: caution),
+          TextSpan(
+            text: '\nnew to this repo',
+            style: TextStyle(
+                color: t.stateModified.withValues(alpha: 0.75),
+                fontSize: 10),
+          ),
+        ];
+      case IdentityFamiliarity.unknown:
+        return [
+          TextSpan(text: 'as ${id.name} <${id.email}>', style: dim),
+        ];
+    }
+  }
+
+  void _onMainEnter() {
+    setState(() => _mainHovered = true);
+    _tipSummoned = false; // fresh hover session; stale flags never dismiss
+    _mainTipTimer?.cancel();
+    _mainTipTimer = Timer(const Duration(milliseconds: 600), () {
+      if (mounted && _mainHovered && !_chevronHovered) {
+        _tipSummoned =
+            _chevTipKey.currentState?.ensureTooltipVisible() ?? false;
+      }
+    });
+  }
+
+  void _onMainExit() {
+    setState(() => _mainHovered = false);
+    _mainTipTimer?.cancel();
+    // Grace beat: sliding onto the chevron keeps the bubble; leaving the
+    // pill dismisses it. The dismissal API is app-global, so it fires
+    // ONLY when we were the summoner — natively-shown tooltips dismiss
+    // themselves, making collateral dismissal structurally impossible
+    // however many tooltips the app grows.
+    Future<void>.delayed(const Duration(milliseconds: 60), () {
+      if (mounted && _tipSummoned && !_mainHovered && !_chevronHovered) {
+        _tipSummoned = false;
+        Tooltip.dismissAllToolTips();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -10975,7 +11177,16 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                 gradient: chrome.gradient,
                 borderRadius: BorderRadius.circular(
                     context.surfaceShader.geometry.radius),
-                border: Border.all(color: chrome.borderColor),
+                // The button is the stage: a stranger identity (never
+                // authored in this repo) tints the edge toward the
+                // attention tone. Still, quiet, peripheral — and it
+                // animates in via the container's own motion, no loops.
+                border: Border.all(
+                    color: widget.identityGrade ==
+                            IdentityFamiliarity.stranger
+                        ? Color.lerp(
+                            chrome.borderColor, t.stateModified, 0.55)!
+                        : chrome.borderColor),
                 boxShadow: chrome.shadows,
               ),
               child: ClipRRect(
@@ -10989,8 +11200,8 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                         cursor: widget.enabled
                             ? SystemMouseCursors.click
                             : SystemMouseCursors.basic,
-                        onEnter: (_) => setState(() => _mainHovered = true),
-                        onExit: (_) => setState(() => _mainHovered = false),
+                        onEnter: (_) => _onMainEnter(),
+                        onExit: (_) => _onMainExit(),
                         child: GestureDetector(
                           onTap: widget.enabled ? widget.onCommit : null,
                           onTapDown: widget.enabled
@@ -11037,7 +11248,24 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                           .withValues(alpha: _anyHovered ? 0.35 : 0.22),
                     ),
                     Tooltip(
-                      message: 'Switch to: ${widget.alternateLabel}',
+                      key: _chevTipKey,
+                      // Content keyed to the summoning half: identity alone
+                      // from the main button, mode-switch + identity from
+                      // the chevron itself. One anchor, two disclosures.
+                      // Identity disclosure is GRADED against repo history:
+                      // resident shows the calm minimum (name only), a
+                      // never-seen email surfaces itself, and a stranger
+                      // identity wears the attention tone plus one terse
+                      // fact — quiet, but never mistakable for normal.
+                      richMessage: TextSpan(
+                        children: [
+                          if (_chevronHovered)
+                            TextSpan(
+                                text:
+                                    'Switch to: ${widget.alternateLabel}\n'),
+                          ..._identitySpans(t),
+                        ],
+                      ),
                       waitDuration: const Duration(milliseconds: 600),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,

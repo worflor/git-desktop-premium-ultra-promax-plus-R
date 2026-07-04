@@ -250,18 +250,33 @@ List<EditUnit> buildEditUnits(
         i++;
         break;
       case LineKind.deleted:
-        // Fuse into a replace pair only when BOTH sides carry substance.
-        // A content line "replaced" by a blank (or a blank by content) is
-        // not a replacement — one fused row would have to lie in one
-        // direction (show removed text on a blank post-state, or vanish
-        // the removed text entirely). Blank-sided pairs stay as separate
-        // delete + insert rows: the grammar that renders both truths.
+        // Fuse into a replace pair only when the pair tells ONE coherent
+        // story. Two gates:
+        //   1. Substance — a content line "replaced" by a blank (or vice
+        //      versa) is not a replacement; one fused row would have to
+        //      lie in one direction.
+        //   2. Coherence — when the two lines are mostly DIFFERENT, the
+        //      token LCS finds scattered accidental anchors and the fused
+        //      row interleaves removed/added fragments into a sentence
+        //      that is neither the old line nor the new one (word salad).
+        // Failed gates fall back to separate delete + insert rows: the
+        // grammar that renders both truths whole. Guard-nulls (very long
+        // lines) still fuse with the plain post-state fallback.
+        ParsedLine? fuseWith;
+        List<WordDiffSpan>? fuseWordDiff;
         if (i + 1 < n &&
             lines[i + 1].kind == LineKind.added &&
             lines[i + 1].hunkIndex == l.hunkIndex &&
             stripDiffLineSign(l.text).trim().isNotEmpty &&
             stripDiffLineSign(lines[i + 1].text).trim().isNotEmpty) {
-          final a = lines[i + 1];
+          final wd = computeInlineWordDiff(l.text, lines[i + 1].text);
+          if (wd == null || wordDiffIsCoherent(wd)) {
+            fuseWith = lines[i + 1];
+            fuseWordDiff = wd;
+          }
+        }
+        if (fuseWith != null) {
+          final a = fuseWith;
           units.add(EditUnit(
             id: _idForPair(_tagReplace, l, a),
             kind: EditKind.replace,
@@ -276,10 +291,10 @@ List<EditUnit> buildEditUnits(
             // "from" fingerprint so a replace-in-place and a relocated
             // rename land comparably.
             simHash: l.simHash,
-            // Intra-line word diff, computed once here (guarded for long /
+            // Intra-line word diff, computed once above (guarded for long /
             // pathological lines) so the fused row highlights just the tokens
             // that actually changed instead of tinting the whole line.
-            wordDiff: computeInlineWordDiff(l.text, a.text),
+            wordDiff: fuseWordDiff,
           ));
           i += 2;
         } else {
@@ -660,6 +675,39 @@ List<String> _tokenizeForWordDiff(String text) {
     }
   }
   return tokens;
+}
+
+/// Whether a computed word diff reads as ONE line with edits, rather than
+/// two unrelated lines shredded together. The token LCS is only as honest
+/// as its anchors: when the lines are mostly different, small accidental
+/// common tokens stitch removed/added fragments into an interleave that is
+/// neither the old text nor the new (the fused row becomes work to read —
+/// the opposite of its job). Coherent = common ≥ 35% of common+max(removed,
+/// added) — the DOMINANT side of the change, deliberately, so a small edit
+/// plus a large insertion isn't double-penalized — AND the changes cluster
+/// into ≤3 runs per side instead of confetti. Hand-tuned thresholds,
+/// pinned against real field specimens in the word-diff test suite.
+/// Pairing uses this to decide fuse vs honest separate delete/insert rows.
+bool wordDiffIsCoherent(List<WordDiffSpan> spans) {
+  int mass(String s) => s.replaceAll(RegExp(r'\s'), '').length;
+  var common = 0, removed = 0, added = 0;
+  var removedRuns = 0, addedRuns = 0;
+  for (final s in spans) {
+    switch (s.role) {
+      case WordDiffRole.common:
+        common += mass(s.text);
+      case WordDiffRole.removed:
+        removed += mass(s.text);
+        removedRuns++;
+      case WordDiffRole.added:
+        added += mass(s.text);
+        addedRuns++;
+    }
+  }
+  final changed = removed > added ? removed : added;
+  if (changed == 0) return true;
+  final ratio = common / (common + changed);
+  return ratio >= 0.35 && removedRuns <= 3 && addedRuns <= 3;
 }
 
 /// Diff [oldRaw] against [newRaw] at token granularity, returning the combined
