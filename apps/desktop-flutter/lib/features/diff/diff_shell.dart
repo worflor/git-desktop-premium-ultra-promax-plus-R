@@ -4299,14 +4299,13 @@ class _DiffLineState extends State<DiffLineView> {
         break;
     }
 
-    // Pair overrides — tint blends the two states, text settles on the add
-    // color so the final reading of the row is the post-state.
+    // Pair overrides — the row resolves to the post-state (new) line, so the
+    // base wash is a faint add-tier tint. The intra-line word diff paints the
+    // actually-changed tokens ON TOP (removed struck on the delete tier, added
+    // emphasised on the add tier), so the whole-line 50/50 blend that used to
+    // muddy every replacement is gone.
     if (isPair) {
-      lineBg = Color.lerp(
-        t.stateDeleted.withValues(alpha: tintAlpha),
-        t.stateAdded.withValues(alpha: tintAlpha),
-        0.5,
-      );
+      lineBg = t.stateAdded.withValues(alpha: tintAlpha * 0.6);
       textColor = t.stateAdded;
       sigilColor = t.accentBright;
     }
@@ -4446,7 +4445,6 @@ class _DiffLineState extends State<DiffLineView> {
     // layers cannot drift on what "pure content" means.
     final String displayText =
         (isAdded || isDeleted) ? stripDiffLineSign(l.text) : l.text;
-    final String? pairFromText = isPair ? stripDiffLineSign(l.text) : null;
     final String? pairToText = isPair ? stripDiffLineSign(addPart!.text) : null;
 
     final useAnimatedText = widget.useAnimatedTextMode &&
@@ -4455,21 +4453,35 @@ class _DiffLineState extends State<DiffLineView> {
         (isAdded || isDeleted || isHunk);
     final Widget textChild;
     if (isPair) {
-      // Melting-glass pair: the row boots showing the old text in the delete
-      // color, then morphs into the new text in the add color. This is a
-      // LINEAGE animation — plays ONCE per unit id in the session (gated
-      // by firstAppearance), never on scroll-recycle. Also suppressed under
-      // reduce-motion / scroll stress via motionPolicy. When any gate is
-      // open, seedFrom=null renders the post-state directly.
-      final allowMelt = widget.firstAppearance &&
-          widget.motionPolicy.allow(MotionIntent.transition);
-      textChild = _DiffMeltText(
-        text: pairToText!.isEmpty ? ' ' : pairToText,
-        color: t.stateAdded,
-        seedFrom:
-            allowMelt ? (pairFromText!.isEmpty ? ' ' : pairFromText) : null,
-        seedFromColor: allowMelt ? t.stateDeleted : null,
-      );
+      // Intra-line word diff: the fused replace row shows the post-state line
+      // with the tokens that actually changed emphasised — removed runs struck
+      // on the delete tier, added runs on the add tier — instead of melting the
+      // whole line. Spans are pre-computed on the unit (see
+      // [computeInlineWordDiff]); search highlighting composes on top. When the
+      // pair tripped a guard (very long / pathological line) wordDiff is null
+      // and we fall back to a plain post-state render.
+      final wordDiff = unit!.wordDiff;
+      if (wordDiff != null && wordDiff.isNotEmpty) {
+        textChild = _buildInlineWordDiffText(
+          wordDiff,
+          t,
+          widget.searchTerm,
+          tintAlpha: tintAlpha,
+          fontSize: 12,
+          height: 1.5,
+        );
+      } else {
+        textChild = _buildPlainDiffText(
+          pairToText!.isEmpty ? ' ' : pairToText,
+          t.stateAdded,
+          t,
+          widget.searchTerm,
+          semanticTint: semanticColor,
+          semanticSignal: semanticSignal,
+          fontSize: 12,
+          height: 1.5,
+        );
+      }
     } else if (useAnimatedText) {
       textChild = _DiffMeltText(
         text: displayText,
@@ -4882,17 +4894,9 @@ class _DiffMeltText extends StatefulWidget {
   final String text;
   final Color color;
 
-  /// Optional seed: when non-null, the widget boots with `seedFrom` on screen
-  /// and immediately animates to `text`. Used by replacement pairs so the
-  /// delete→add transition plays once on first appearance.
-  final String? seedFrom;
-  final Color? seedFromColor;
-
   const _DiffMeltText({
     required this.text,
     required this.color,
-    this.seedFrom,
-    this.seedFromColor,
   });
 
   @override
@@ -4912,19 +4916,18 @@ class _DiffMeltTextState extends State<_DiffMeltText>
   @override
   void initState() {
     super.initState();
-    final seeded = widget.seedFrom != null;
-    _fromText = seeded
-        ? (widget.seedFrom!.isEmpty ? ' ' : widget.seedFrom!)
-        : _displayText;
+    // Boots at rest on the current text; the morph only runs when the text or
+    // color later changes (see didUpdateWidget). Replacement pairs no longer
+    // seed a delete→add melt here — they render the intra-line word diff.
+    _fromText = _displayText;
     _toText = _displayText;
-    _fromColor = widget.seedFromColor ?? widget.color;
+    _fromColor = widget.color;
     _toColor = widget.color;
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 260),
-      value: seeded ? 0 : 1,
+      value: 1,
     );
-    if (seeded) _controller.forward();
   }
 
   @override
@@ -5097,6 +5100,91 @@ Widget _buildSearchText(
         height: height,
         fontWeight: fontWeight,
         fontStyle: fontStyle,
+      ),
+      children: spans,
+    ),
+    overflow: TextOverflow.clip,
+    maxLines: 1,
+  );
+}
+
+/// Render a fused replace pair's pre-computed intra-line word diff as a
+/// multi-span line: removed runs struck on the delete tier, added runs
+/// emphasised on the add tier, common runs in the normal text color. The
+/// emphasis alpha rides above the row's own [tintAlpha] so changed tokens
+/// read as *stronger* than the line wash. Follows the [_buildSearchText] span
+/// structure so an active search term still highlights on top of every run.
+Widget _buildInlineWordDiffText(
+  List<WordDiffSpan> segments,
+  AppTokens t,
+  String searchTerm, {
+  double tintAlpha = 0.10,
+  double fontSize = 12,
+  double height = 1.5,
+}) {
+  // Sits deliberately above the line's own wash so a changed token is never
+  // dimmer than its background.
+  final double emphAlpha = (tintAlpha + 0.12).clamp(0.0, 0.32).toDouble();
+
+  TextStyle styleFor(WordDiffRole role) {
+    switch (role) {
+      case WordDiffRole.common:
+        return TextStyle(color: t.textNormal);
+      case WordDiffRole.added:
+        return TextStyle(
+          color: t.stateAdded,
+          backgroundColor: t.stateAdded.withValues(alpha: emphAlpha),
+          fontWeight: FontWeight.w600,
+        );
+      case WordDiffRole.removed:
+        return TextStyle(
+          color: t.stateDeleted,
+          backgroundColor: t.stateDeleted.withValues(alpha: emphAlpha),
+          decoration: TextDecoration.lineThrough,
+          decorationColor: t.stateDeleted.withValues(alpha: 0.8),
+        );
+    }
+  }
+
+  final termLower = searchTerm.toLowerCase();
+  final spans = <TextSpan>[];
+  for (final seg in segments) {
+    final base = styleFor(seg.role);
+    if (termLower.isEmpty) {
+      spans.add(TextSpan(text: seg.text, style: base));
+      continue;
+    }
+    // Compose the search highlight WITHIN each run so word-diff emphasis and
+    // search emphasis coexist (search wins the background where they overlap).
+    final lower = seg.text.toLowerCase();
+    int start = 0;
+    int idx = lower.indexOf(termLower);
+    while (idx != -1) {
+      if (idx > start) {
+        spans.add(TextSpan(text: seg.text.substring(start, idx), style: base));
+      }
+      spans.add(TextSpan(
+        text: seg.text.substring(idx, idx + termLower.length),
+        style: base.copyWith(
+          color: t.bg0,
+          backgroundColor: t.accentBright.withValues(alpha: 0.8),
+        ),
+      ));
+      start = idx + termLower.length;
+      idx = lower.indexOf(termLower, start);
+    }
+    if (start < seg.text.length) {
+      spans.add(TextSpan(text: seg.text.substring(start), style: base));
+    }
+  }
+
+  return RichText(
+    text: TextSpan(
+      style: TextStyle(
+        fontSize: fontSize,
+        fontFamily: AppFonts.mono,
+        fontFamilyFallback: AppFonts.monoFallback,
+        height: height,
       ),
       children: spans,
     ),

@@ -40,6 +40,34 @@ class PendingUndoAction {
         _onCancel = onCancel;
 }
 
+/// A completed action the user can still take back: the pill shows
+/// [label] with an Undo affordance until [expiresAt]. Complements the
+/// pre-execution safety window — cancel-before for destructive ops,
+/// undo-after for ops whose inverse is cheap and safe (soft-reset of
+/// an unpushed commit). A null [undo] renders as a plain confirmation
+/// notice, which doubles as the app's success feedback surface.
+class CompletedUndoAction {
+  final UndoActionKind kind;
+  final String label;
+  final DateTime expiresAt;
+  final Future<void> Function()? undo;
+
+  /// True when this notice reports a FAILURE (an undo that couldn't run,
+  /// a post-action error). The pill renders it in the destructive tier so
+  /// it can't be mistaken for the green success notice.
+  final bool isError;
+
+  CompletedUndoAction._({
+    required this.kind,
+    required this.label,
+    required this.expiresAt,
+    required this.undo,
+    required this.isError,
+  });
+
+  bool get canUndo => undo != null;
+}
+
 /// Global "safety-window" coordinator.
 ///
 /// Every destructive action that wants an undo pill calls [schedule]
@@ -60,10 +88,65 @@ class PendingUndoAction {
 class UndoCoordinator extends ChangeNotifier {
   PendingUndoAction? _pending;
   Timer? _timer;
+  CompletedUndoAction? _completed;
+  Timer? _completedTimer;
 
   /// The currently-pending action, or null if none.
   PendingUndoAction? get pending => _pending;
   bool get hasPending => _pending != null;
+
+  /// The most recent completed-but-undoable action (or plain success
+  /// notice), or null. Cleared on expiry, on undo, and whenever a new
+  /// pending action arms — you moved on.
+  CompletedUndoAction? get completed => _completed;
+  bool get hasCompleted => _completed != null;
+
+  /// Announce a completed action. Shows the pill in its settled state:
+  /// [label] plus an Undo affordance when [undo] is provided. Replaces
+  /// any prior notice — one at a time, same as pending actions.
+  void announce({
+    required UndoActionKind kind,
+    required String label,
+    Duration window = const Duration(seconds: 10),
+    Future<void> Function()? undo,
+    bool isError = false,
+  }) {
+    _completedTimer?.cancel();
+    _completed = CompletedUndoAction._(
+      kind: kind,
+      label: label,
+      expiresAt: DateTime.now().add(window),
+      undo: undo,
+      isError: isError,
+    );
+    _completedTimer = Timer(window, () {
+      _completed = null;
+      _completedTimer = null;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  /// Run the completed action's undo and clear the notice. No-op when
+  /// nothing undoable is showing. The pill clears immediately; the
+  /// undo work itself is awaited by the caller if it cares.
+  Future<void> undoCompleted() async {
+    final c = _completed;
+    if (c == null || c.undo == null) return;
+    _completedTimer?.cancel();
+    _completedTimer = null;
+    _completed = null;
+    notifyListeners();
+    await c.undo!();
+  }
+
+  void _clearCompleted() {
+    if (_completed == null) return;
+    _completedTimer?.cancel();
+    _completedTimer = null;
+    _completed = null;
+    notifyListeners();
+  }
 
   /// Milliseconds remaining until the pending action fires. 0 if no
   /// action is pending. Used by the pill to render the countdown.
@@ -87,15 +170,18 @@ class UndoCoordinator extends ChangeNotifier {
     required Future<T> Function() run,
     required Duration window,
   }) async {
+    _clearCompleted();
+    // Flush any prior pending action FIRST — before the zero-window fast
+    // path, not after it. The one-at-a-time invariant is really an
+    // ORDERING invariant: "discard file, then commit" requires the commit's
+    // view of the tree to reflect the discard having completed. A caller
+    // whose window is configured to zero must not leapfrog a still-armed
+    // destructive action and leave it to fire afterward on its old timer.
+    // No-op when nothing is pending, so the fast path stays fast.
+    await flushNow();
     if (window <= Duration.zero) {
       return await run();
     }
-    // Flush any prior pending action to maintain the one-at-a-time
-    // invariant. Awaiting here lets the prior action's result settle
-    // before the new one starts waiting — critical for e.g. "discard
-    // file, then commit" where the commit's view of the tree must
-    // reflect the discard having completed.
-    await flushNow();
 
     final completer = Completer<T?>();
     final action = PendingUndoAction._(
@@ -158,6 +244,9 @@ class UndoCoordinator extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _pending = null;
+    _completedTimer?.cancel();
+    _completedTimer = null;
+    _completed = null;
     if (p != null) {
       unawaited(p._onFire());
     }

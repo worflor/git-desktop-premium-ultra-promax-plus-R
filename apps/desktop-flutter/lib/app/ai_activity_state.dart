@@ -232,6 +232,31 @@ class AiActivityState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Pending "bring the workspace to the Changes page of [repoPath]" intent.
+  /// The sidebar's AI badges queue this alongside their drawer request: the
+  /// drawer queue is drained by the (keep-alive, possibly hidden) Changes
+  /// page, so without a workspace-level signal a badge click from another
+  /// tab opened the drawer invisibly and appeared to do nothing.
+  String? _pendingWorkspaceFocus;
+
+  void requestWorkspaceFocus(String repoPath) {
+    _pendingWorkspaceFocus = repoPath;
+    notifyListeners();
+  }
+
+  /// True when a workspace-focus request targets [activePath]; consumes the
+  /// request. Single-fire, no notify — the shell calls this from build and
+  /// reacts this frame (same drain idiom as the drawer queue). A request for
+  /// a repo that never becomes active is overwritten by the next request.
+  bool takeWorkspaceFocus(String? activePath) {
+    if (_pendingWorkspaceFocus == null ||
+        _pendingWorkspaceFocus != activePath) {
+      return false;
+    }
+    _pendingWorkspaceFocus = null;
+    return true;
+  }
+
   /// Drain the pending drawer-open intent for [repoPath], if any.
   /// Returns the kind to open (or null when nothing's queued) and
   /// clears the entry as a side effect — single-fire semantics,

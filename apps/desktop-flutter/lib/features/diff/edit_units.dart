@@ -55,6 +55,15 @@ class EditUnit {
   /// with no applicable source (hunk/meta headers).
   final int simHash;
 
+  /// Pre-computed intra-line word diff for [EditKind.replace] pairs — the
+  /// combined old→new token sequence with each run tagged
+  /// common / removed / added (see [computeInlineWordDiff]). Null for every
+  /// other kind, and for replace pairs whose lines tripped the length /
+  /// token-count guards (the view falls back to a plain post-state render).
+  /// Computed ONCE here at unit-build time so the diff view never
+  /// re-tokenizes per frame — it caches naturally on the immutable unit.
+  final List<WordDiffSpan>? wordDiff;
+
   const EditUnit({
     required this.id,
     required this.kind,
@@ -66,6 +75,7 @@ class EditUnit {
     this.charBits = 0,
     this.bigramBits = 0,
     this.simHash = 0,
+    this.wordDiff,
   });
 
   bool get isStageable =>
@@ -240,9 +250,17 @@ List<EditUnit> buildEditUnits(
         i++;
         break;
       case LineKind.deleted:
+        // Fuse into a replace pair only when BOTH sides carry substance.
+        // A content line "replaced" by a blank (or a blank by content) is
+        // not a replacement — one fused row would have to lie in one
+        // direction (show removed text on a blank post-state, or vanish
+        // the removed text entirely). Blank-sided pairs stay as separate
+        // delete + insert rows: the grammar that renders both truths.
         if (i + 1 < n &&
             lines[i + 1].kind == LineKind.added &&
-            lines[i + 1].hunkIndex == l.hunkIndex) {
+            lines[i + 1].hunkIndex == l.hunkIndex &&
+            stripDiffLineSign(l.text).trim().isNotEmpty &&
+            stripDiffLineSign(lines[i + 1].text).trim().isNotEmpty) {
           final a = lines[i + 1];
           units.add(EditUnit(
             id: _idForPair(_tagReplace, l, a),
@@ -258,6 +276,10 @@ List<EditUnit> buildEditUnits(
             // "from" fingerprint so a replace-in-place and a relocated
             // rename land comparably.
             simHash: l.simHash,
+            // Intra-line word diff, computed once here (guarded for long /
+            // pathological lines) so the fused row highlights just the tokens
+            // that actually changed instead of tinting the whole line.
+            wordDiff: computeInlineWordDiff(l.text, a.text),
           ));
           i += 2;
         } else {
@@ -551,5 +573,237 @@ void _detectFuzzyMoves(List<EditUnit> units, List<bool> claimed) {
       bigramBits: insU2.bigramBits,
       simHash: insU2.simHash,
     );
+  }
+}
+
+// ─── Intra-line word diff ────────────────────────────────────────────────
+//
+// A single-character edit used to render as a whole line deleted + re-added.
+// For a fused replace pair we instead diff the two lines at TOKEN granularity
+// (identifier / number runs, whitespace runs, single punctuation chars — never
+// per-character, which reads as noise) and hand the view a run-length-encoded
+// old→new sequence. The view paints removed runs on the delete tier and added
+// runs on the add tier over the line's existing tint, so the reader's eye lands
+// exactly on what moved. Computed here (once per unit build), never per frame.
+
+/// Which side of a replace pair a run of characters belongs to.
+enum WordDiffRole {
+  /// Present, unchanged, on both the old and new line.
+  common,
+
+  /// Present only on the old line — the reader sees it struck through.
+  removed,
+
+  /// Present only on the new line — the reader sees it emphasised.
+  added,
+}
+
+/// One contiguous run in the combined inline word diff of a replace pair.
+/// The full `List<WordDiffSpan>` reads left to right as the merged old→new
+/// line. Flutter-free by design so it can live on [EditUnit] (a pure model)
+/// and be cached across rebuilds.
+class WordDiffSpan {
+  final String text;
+  final WordDiffRole role;
+  const WordDiffSpan(this.text, this.role);
+}
+
+/// Lines at or above this length skip intra-line diffing entirely — the
+/// tokenizer + LCS aren't worth running on a minified blob, and the fused
+/// row falls back to a plain post-state render.
+const int _kWordDiffMaxLineLen = 2000;
+
+/// Ceiling on tokens PER SIDE before bailing to the plain fallback. Keeps the
+/// worst case bounded independent of [_kWordDiffLcsBudget]'s product guard.
+const int _kWordDiffMaxTokens = 400;
+
+/// Product ceiling (|old middle| × |new middle|) above which we skip the LCS
+/// and degenerate to "whole middle removed, whole middle added" — O(n) instead
+/// of O(n·m), so a fully-rewritten line can never stall the build.
+const int _kWordDiffLcsBudget = 40000;
+
+bool _isWordChar(int c) =>
+    c == 0x5F /* _ */ ||
+    (c >= 0x30 && c <= 0x39) /* 0-9 */ ||
+    (c >= 0x41 && c <= 0x5A) /* A-Z */ ||
+    (c >= 0x61 && c <= 0x7A) /* a-z */ ||
+    c > 0x7F /* keep unicode letters/marks in one run */;
+
+bool _isSpace(int c) => c == 0x20 || c == 0x09;
+
+/// Split [text] into word runs, whitespace runs, and single punctuation
+/// characters. Word/whitespace runs coalesce; every other char is its own
+/// token so operators diff crisply (`==` vs `!=`).
+List<String> _tokenizeForWordDiff(String text) {
+  final tokens = <String>[];
+  final n = text.length;
+  int i = 0;
+  while (i < n) {
+    final c = text.codeUnitAt(i);
+    if (_isWordChar(c)) {
+      int j = i + 1;
+      while (j < n && _isWordChar(text.codeUnitAt(j))) {
+        j++;
+      }
+      tokens.add(text.substring(i, j));
+      i = j;
+    } else if (_isSpace(c)) {
+      int j = i + 1;
+      while (j < n && _isSpace(text.codeUnitAt(j))) {
+        j++;
+      }
+      tokens.add(text.substring(i, j));
+      i = j;
+    } else {
+      tokens.add(text.substring(i, i + 1));
+      i++;
+    }
+  }
+  return tokens;
+}
+
+/// Diff [oldRaw] against [newRaw] at token granularity, returning the combined
+/// inline run sequence — or null when the pair is unchanged after sign-strip
+/// or trips a guard (caller then renders the plain post-state).
+List<WordDiffSpan>? computeInlineWordDiff(String oldRaw, String newRaw) {
+  final oldText = stripDiffLineSign(oldRaw);
+  final newText = stripDiffLineSign(newRaw);
+  if (oldText == newText) return null;
+  if (oldText.length > _kWordDiffMaxLineLen ||
+      newText.length > _kWordDiffMaxLineLen) {
+    return null;
+  }
+
+  // A one-sided pair (either line blank / whitespace-only) has no
+  // intra-line story to tell — emphasis needs content on both sides.
+  // Refuse, so no caller can render an all-removed span set as if it
+  // were the post-state line. (Pairing upstream already declines to
+  // fuse blank-sided pairs; this pins the same truth at the algorithm.
+  // Trimmed-text check, not token count: whitespace runs tokenize.)
+  if (oldText.trim().isEmpty || newText.trim().isEmpty) return null;
+
+  final oldTok = _tokenizeForWordDiff(oldText);
+  final newTok = _tokenizeForWordDiff(newText);
+  if (oldTok.length > _kWordDiffMaxTokens ||
+      newTok.length > _kWordDiffMaxTokens) {
+    return null;
+  }
+
+  final spans = <WordDiffSpan>[];
+  void emit(WordDiffRole role, String text) {
+    if (text.isEmpty) return;
+    if (spans.isNotEmpty && spans.last.role == role) {
+      spans[spans.length - 1] = WordDiffSpan(spans.last.text + text, role);
+    } else {
+      spans.add(WordDiffSpan(text, role));
+    }
+  }
+
+  // Trim the common prefix / suffix so the (quadratic) LCS only runs on the
+  // divergent middle — a one-token change collapses the middle to ~1 token.
+  final minLen = oldTok.length < newTok.length ? oldTok.length : newTok.length;
+  int pre = 0;
+  while (pre < minLen && oldTok[pre] == newTok[pre]) {
+    pre++;
+  }
+  int sufO = oldTok.length;
+  int sufN = newTok.length;
+  while (sufO > pre && sufN > pre && oldTok[sufO - 1] == newTok[sufN - 1]) {
+    sufO--;
+    sufN--;
+  }
+
+  for (int i = 0; i < pre; i++) {
+    emit(WordDiffRole.common, oldTok[i]);
+  }
+  _emitWordDiffMiddle(
+    oldTok.sublist(pre, sufO),
+    newTok.sublist(pre, sufN),
+    emit,
+  );
+  for (int i = sufO; i < oldTok.length; i++) {
+    emit(WordDiffRole.common, oldTok[i]);
+  }
+
+  // Defensive: if nothing actually diverged (e.g. only trailing-whitespace
+  // token equality quirks), let the caller fall back rather than paint a diff
+  // with no highlight.
+  for (final s in spans) {
+    if (s.role != WordDiffRole.common) return spans;
+  }
+  return null;
+}
+
+/// LCS backtrack over the divergent middle, emitting removed / common / added
+/// runs in reading order. Degenerates to remove-all-then-add-all when the
+/// product of the two lengths blows the budget.
+void _emitWordDiffMiddle(
+  List<String> a,
+  List<String> b,
+  void Function(WordDiffRole, String) emit,
+) {
+  final n = a.length;
+  final m = b.length;
+  if (n == 0 && m == 0) return;
+  if (n == 0) {
+    for (final t in b) {
+      emit(WordDiffRole.added, t);
+    }
+    return;
+  }
+  if (m == 0) {
+    for (final t in a) {
+      emit(WordDiffRole.removed, t);
+    }
+    return;
+  }
+  if (n * m > _kWordDiffLcsBudget) {
+    for (final t in a) {
+      emit(WordDiffRole.removed, t);
+    }
+    for (final t in b) {
+      emit(WordDiffRole.added, t);
+    }
+    return;
+  }
+
+  // dp[i*(m+1)+j] = LCS length of a[i..] and b[j..]. Flat list avoids a
+  // typed_data import while staying cache-friendly at this size.
+  final w = m + 1;
+  final dp = List<int>.filled((n + 1) * w, 0);
+  for (int i = n - 1; i >= 0; i--) {
+    for (int j = m - 1; j >= 0; j--) {
+      if (a[i] == b[j]) {
+        dp[i * w + j] = dp[(i + 1) * w + (j + 1)] + 1;
+      } else {
+        final down = dp[(i + 1) * w + j];
+        final right = dp[i * w + (j + 1)];
+        dp[i * w + j] = down >= right ? down : right;
+      }
+    }
+  }
+
+  int i = 0;
+  int j = 0;
+  while (i < n && j < m) {
+    if (a[i] == b[j]) {
+      emit(WordDiffRole.common, a[i]);
+      i++;
+      j++;
+    } else if (dp[(i + 1) * w + j] >= dp[i * w + (j + 1)]) {
+      emit(WordDiffRole.removed, a[i]);
+      i++;
+    } else {
+      emit(WordDiffRole.added, b[j]);
+      j++;
+    }
+  }
+  while (i < n) {
+    emit(WordDiffRole.removed, a[i]);
+    i++;
+  }
+  while (j < m) {
+    emit(WordDiffRole.added, b[j]);
+    j++;
   }
 }

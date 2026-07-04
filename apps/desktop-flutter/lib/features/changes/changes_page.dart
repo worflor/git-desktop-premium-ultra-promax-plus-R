@@ -21,6 +21,7 @@ import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/mosaic_shard_bar.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
 import '../../ui/split_pill_button.dart';
@@ -28,11 +29,13 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
 import 'merge_conflict_flow.dart';
+import '../sync/sync_actions.dart' show describeSyncAction;
 import 'verdict_badge.dart';
 import 'conflict_resolution.dart' show resolveConflictsWithAi;
 import '../../backend/merge_session.dart';
 import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
 import '../../backend/git.dart';
+import '../../backend/git_result.dart';
 import '../../backend/commit_review_report.dart';
 import '../../backend/dtos.dart';
 import '../../backend/muse_report.dart';
@@ -159,27 +162,58 @@ String _tokensLabel(int chars) {
 
 String _realTokens(int tokens) {
   if (tokens <= 0) return '?';
+  // Millions tier: "2127.7k" reads as noise where "2.13m" reads as a
+  // number — cached-context totals on agentic CLIs get there fast.
+  if (tokens >= 1000000) {
+    return '${(tokens / 1000000).toStringAsFixed(2)}m';
+  }
   return tokens >= 1000 ? '${(tokens / 1000).toStringAsFixed(1)}k' : '$tokens';
 }
 
-// A multi-line usage breakdown for hover — only the fields the provider
-// actually reported (cache tokens, wall-clock, cost, request id). Null when
-// there's nothing beyond the in/out counts already shown inline, so callers
-// skip the tooltip entirely. Grows for free as more providers report usage.
+// Inline caption for provider-reported usage. When cache reads are present
+// the headline splits fresh from cached input — an agentic CLI resubmits its
+// whole context every turn, so the raw input total balloons ("1071.8k in")
+// while nearly all of it is cache hits; "88.7k in · 983.2k cached · 5.4k out"
+// is the honest read. Null when the provider reported no token counts, so
+// callers fall back to their char-estimate captions.
+String? _usageCaption(AiUsage u) {
+  if (!u.hasTokens) return null;
+  final cr = u.cacheReadTokens ?? 0;
+  if (cr > 0 && cr <= u.inputTokens) {
+    final fresh = u.inputTokens - cr;
+    final freshLabel = fresh == 0 ? '0' : _realTokens(fresh);
+    return '$freshLabel in · ${_realTokens(cr)} cached · '
+        '${_realTokens(u.outputTokens)} out';
+  }
+  return '${_realTokens(u.inputTokens)} in · ${_realTokens(u.outputTokens)} out';
+}
+
+// A multi-line usage breakdown for hover — ONLY what the provider reported
+// for THIS run, one number per line, k/m-formatted like the caption. Every
+// line is `value  label`; nothing cumulative, no ids, and no cost: the
+// harness-reported `total_cost_usd` is an API-rate price-out, not a real
+// charge on subscription auth, and an estimate dressed as money reads as a
+// bill. It stays in AiUsage (parsed, retained) — just not displayed.
+// Null when there's nothing beyond the in/out counts already shown inline,
+// so callers skip the tooltip entirely.
 String? _usageTooltip(AiUsage u) {
   if (!u.hasExtras) return null;
-  final lines = <String>['${u.inputTokens} in · ${u.outputTokens} out'];
+  final lines = <String>[];
+  if (u.resolvedModel != null) lines.add(u.resolvedModel!);
   final cr = u.cacheReadTokens ?? 0;
   final cw = u.cacheWriteTokens ?? 0;
-  if (cr > 0) lines.add('$cr cached in');
-  if (cw > 0) lines.add('$cw cached out');
+  final fresh =
+      (cr > 0 && cr <= u.inputTokens) ? u.inputTokens - cr : u.inputTokens;
+  lines.add('${_realTokens(fresh)}  in');
+  if (cr > 0) lines.add('${_realTokens(cr)}  cache read');
+  if (cw > 0) lines.add('${_realTokens(cw)}  cache write');
+  lines.add('${_realTokens(u.outputTokens)}  out');
   final rt = u.reasoningTokens ?? 0;
-  if (rt > 0) lines.add('$rt reasoning');
+  if (rt > 0) lines.add('${_realTokens(rt)}  reasoning');
   final d = u.duration;
-  if (d != null) lines.add('${(d.inMilliseconds / 1000).toStringAsFixed(1)}s');
-  if (u.resolvedModel != null) lines.add('model ${u.resolvedModel}');
-  if (u.costUsd != null) lines.add('\$${u.costUsd!.toStringAsFixed(4)}');
-  if (u.requestId != null) lines.add('req ${u.requestId}');
+  if (d != null) {
+    lines.add('${(d.inMilliseconds / 1000).toStringAsFixed(1)}s  wall clock');
+  }
   return lines.join('\n');
 }
 
@@ -189,6 +223,56 @@ Widget _withUsageTip(AiUsage usage, Widget child) {
   final tip = _usageTooltip(usage);
   return tip == null ? child : Tooltip(message: tip, child: child);
 }
+
+/// Tri-tone usage caption: the three numbers cost three different
+/// amounts, so they get three different weights of presence — fresh
+/// input at base, cached input FAINTER (it's the cheap bulk; the big
+/// number shouldn't read as the big cost), output slightly brighter
+/// (the expensive tokens on reasoning models). Same mono 9px voice as
+/// the plain string it replaces; falls back to a single-tone span for
+/// providers that report nothing.
+Text _usageCaptionRich(
+  AppTokens tokens,
+  Color base, {
+  AiUsage? usage,
+  required String fallback,
+}) {
+  final style = TextStyle(
+    fontFamily: AppFonts.mono,
+    fontSize: 9,
+    color: base,
+  );
+  final u = usage;
+  if (u == null || !u.hasTokens) {
+    return Text(fallback, style: style);
+  }
+  final faint = base.withValues(alpha: base.a * 0.55);
+  final out = tokens.accentBright.withValues(alpha: 0.75);
+  final cr = u.cacheReadTokens ?? 0;
+  final spans = <TextSpan>[];
+  if (cr > 0 && cr <= u.inputTokens) {
+    final fresh = u.inputTokens - cr;
+    spans.add(TextSpan(text: '${fresh == 0 ? '0' : _realTokens(fresh)} in'));
+    spans.add(TextSpan(
+        text: ' · ${_realTokens(cr)} cached', style: style.copyWith(color: faint)));
+  } else {
+    spans.add(TextSpan(text: '${_realTokens(u.inputTokens)} in'));
+  }
+  spans.add(TextSpan(
+      text: ' · ${_realTokens(u.outputTokens)} out',
+      style: style.copyWith(color: out, fontWeight: FontWeight.w600)));
+  return Text.rich(TextSpan(children: spans, style: style));
+}
+
+/// Severity → accent color, shared by the finding cards and the
+/// findings-header tally so the two can never disagree.
+Color _severityAccent(String severity) => switch (severity) {
+      'block' => AppSeverityPalette.critical,
+      'risk' => AppSeverityPalette.risk,
+      'warn' => AppSeverityPalette.caution,
+      'note' => AppSeverityPalette.info,
+      _ => AppSeverityPalette.neutral,
+    };
 
 class ChangesPage extends StatefulWidget {
   const ChangesPage({super.key});
@@ -1772,6 +1856,40 @@ class _ChangesPageState extends State<ChangesPage> {
     return File(p.join(gitDir, 'MANIFOLD_COMMIT_MSG_$safe'));
   }
 
+  /// Sidecar for composer tag chips parked by an off-scope commit undo.
+  /// A separate file — one tag per line — so app metadata NEVER shares a
+  /// channel with user-authored message text: a draft whose body happens
+  /// to end in "Tags: release, api" is a message, not our serialization,
+  /// and no parser has to guess. Consumed (deleted) on restore.
+  File _draftTagsFile(String gitDir, [String? branch]) {
+    final msg = _draftFile(gitDir, branch);
+    return File('${msg.path}.tags');
+  }
+
+  /// Park the COMPLETE composer snapshot for (repo, branch): message into
+  /// the draft file, tags into their sidecar — and an empty tag set DELETES
+  /// any older sidecar rather than skipping it. Parking is total-state
+  /// semantics on purpose: a partial write ("only what I have") would let a
+  /// stale sidecar from an earlier park leak into a later restore.
+  Future<void> _parkComposerState(
+    String repoPath,
+    String? branch,
+    String message,
+    List<String> tags,
+  ) async {
+    try {
+      final gitDir = await _resolveGitDir(repoPath);
+      if (gitDir == null) return;
+      await _draftFile(gitDir, branch).writeAsString(message);
+      final tagsFile = _draftTagsFile(gitDir, branch);
+      if (tags.isEmpty) {
+        if (await tagsFile.exists()) await tagsFile.delete();
+      } else {
+        await tagsFile.writeAsString(tags.join('\n'));
+      }
+    } catch (_) {}
+  }
+
   Future<void> _loadCommitDraftForRepo(String repoPath,
       {String? branch, bool force = false}) async {
     try {
@@ -1794,6 +1912,8 @@ class _ChangesPageState extends State<ChangesPage> {
           : _lastRememberWip;
       if (!remember) {
         if (await file.exists()) await file.delete();
+        final tagsFile = _draftTagsFile(gitDir, branch);
+        if (await tagsFile.exists()) await tagsFile.delete();
         if (force && mounted) _commitMsgCtrl.clear();
         return;
       }
@@ -1806,6 +1926,27 @@ class _ChangesPageState extends State<ChangesPage> {
         }
         if (force || _commitMsgCtrl.text.isEmpty) {
           _commitMsgCtrl.text = draft;
+          // Tags parked by an off-scope commit undo live in their own
+          // sidecar (never inside the message text). Consume it exactly
+          // when the draft itself is applied.
+          final tagsFile = _draftTagsFile(gitDir, branch);
+          if (await tagsFile.exists()) {
+            final parked = (await tagsFile.readAsLines())
+                .map((t) => t.trim())
+                .where((t) => t.isNotEmpty)
+                .toList();
+            await tagsFile.delete();
+            if (mounted &&
+                _lastDraftRepoPath == repoPath &&
+                _lastDraftBranch == branch &&
+                parked.isNotEmpty) {
+              setState(() {
+                _commitTags
+                  ..clear()
+                  ..addAll(parked);
+              });
+            }
+          }
         }
       } else if (force && mounted) {
         if (_lastDraftRepoPath != repoPath || _lastDraftBranch != branch) {
@@ -1852,6 +1993,8 @@ class _ChangesPageState extends State<ChangesPage> {
       if (gitDir == null) return;
       final file = _draftFile(gitDir, _lastDraftBranch);
       if (await file.exists()) await file.delete();
+      final tagsFile = _draftTagsFile(gitDir, _lastDraftBranch);
+      if (await tagsFile.exists()) await tagsFile.delete();
     } catch (_) {}
   }
 
@@ -2182,15 +2325,6 @@ class _ChangesPageState extends State<ChangesPage> {
     return status.files
         .where((file) => _includedPaths.contains(file.path))
         .length;
-  }
-
-  List<String> _stagedExcludedPaths(RepositoryStatus status) {
-    return status.files
-        .where(
-          (file) => !_includedPaths.contains(file.path) && file.hasStagedChange,
-        )
-        .map((file) => file.path)
-        .toList();
   }
 
   _PrimaryCommitAction _primaryActionFor(RepositoryStatus status) {
@@ -4272,8 +4406,16 @@ class _ChangesPageState extends State<ChangesPage> {
             const <RepositoryStatusFile>[])
         .any((f) => f.isConflicted);
     if (hasUu) return; // still conflicts; leave the rebase paused for the strip
-    await continueRebase(repoPath);
-    if (mounted) await context.read<RepositoryState>().refreshStatus();
+    final r = await continueRebase(repoPath);
+    if (!mounted) return;
+    if (!r.ok) {
+      // `rebase --continue` can still fail (an empty commit needing --skip, a
+      // hook rejecting, etc.). Surface it instead of silently leaving the
+      // rebase paused behind a clean-looking tree.
+      setState(() => _actionError = r.error ?? 'Could not continue the rebase.');
+      return;
+    }
+    await context.read<RepositoryState>().refreshStatus();
   }
 
   Future<void> _openManualMergeEditor(
@@ -5096,6 +5238,12 @@ class _ChangesPageState extends State<ChangesPage> {
       setState(() => _actionError = 'Write a commit message first.');
       return;
     }
+    // Captured before the tags suffix so an undone commit restores the
+    // composer exactly as the user wrote it. Branch rides along so an
+    // off-scope undo can park the message in the right draft file.
+    final baseMessage = message;
+    final baseTags = List<String>.from(_commitTags);
+    final baseBranch = status.branch;
     if (_commitTags.isNotEmpty && message.isNotEmpty) {
       message = '$message\n\nTags: ${_commitTags.join(', ')}';
     }
@@ -5141,6 +5289,71 @@ class _ChangesPageState extends State<ChangesPage> {
     });
 
     if (!outcome.ok) return;
+
+    // Settled notice: commits used to complete in total silence — the
+    // success message was built and never read. The pill confirms the
+    // commit and, while nothing was pushed and HEAD still matches,
+    // offers a soft-reset undo that puts the message back in the
+    // composer and leaves the staged set intact in the index.
+    final committedData = outcome.committed;
+    if (committedData != null) {
+      final hash = committedData.commitHash;
+      final canUndo = !isSync && !amend && hash.isNotEmpty;
+      // Captured while mounted: the pill is GLOBAL, so the user can fire this
+      // undo after leaving the Changes page. Refresh through the shared
+      // RepositoryState bound to the repo we ACTUALLY undid — refreshStatus is
+      // keyed to activePath, so an unguarded refresh after a repo switch would
+      // reload the wrong repo. If the undone repo is no longer active it
+      // re-reads its status on switch-back, so skipping is correct, not stale.
+      final repoState = context.read<RepositoryState>();
+      coord.announce(
+        kind: kind,
+        label: outcome.successMessage ?? 'Committed.',
+        undo: !canUndo
+            ? null
+            : () async {
+                final r = await undoLastCommit(repoPath, expectHead: hash);
+                if (!r.ok) {
+                  // The pill is the only surface guaranteed to still exist
+                  // (undoCompleted clears it before running this closure), so
+                  // report the failure back through it — a failed undo must
+                  // never just vanish. Page-local error rides along if the
+                  // Changes page happens to still be mounted.
+                  coord.announce(
+                    kind: kind,
+                    label: r.error ?? 'Undo failed.',
+                    isError: true,
+                  );
+                  if (mounted) setState(() => _actionError = r.error);
+                  return;
+                }
+                await repoState.refreshStatusIfActive(repoPath);
+                // Restore the draft live only when the composer is showing
+                // the same repo+branch scope it was captured from — writing
+                // into the shared controller under another repo would plant
+                // repo A's message in repo B's composer.
+                final sameScope = mounted &&
+                    _lastDraftRepoPath == repoPath &&
+                    _lastDraftBranch == baseBranch;
+                if (sameScope) {
+                  _commitMsgCtrl.text = baseMessage;
+                  setState(() {
+                    _commitTags
+                      ..clear()
+                      ..addAll(baseTags);
+                  });
+                  return;
+                }
+                // Off-scope (other repo, other branch, page gone): park the
+                // complete composer snapshot so it restores when the scope
+                // next loads. Undo keeps its "resume composing" promise no
+                // matter where it fired.
+                if (baseMessage.trim().isEmpty) return;
+                await _parkComposerState(
+                    repoPath, baseBranch, baseMessage, baseTags);
+              },
+      );
+    }
     // Bridge to Branches: if the current branch has a desk PR, refresh
     // its persisted diff stats so the row metrics (+N -M, K files) are
     // accurate the moment the user switches to Branches. Without this
@@ -5166,19 +5379,16 @@ class _ChangesPageState extends State<ChangesPage> {
     String message, {
     bool amend = false,
   }) async {
-    final stageResult = await stagePaths(repoPath, included);
-    if (!stageResult.ok) {
-      return _CommitOutcome.err(stageResult.error ?? 'Failed to stage files.');
+    // Index-respecting staging: a file the user hunk-staged keeps its
+    // hand-built index entry — the blanket `git add` that used to run
+    // here re-staged whole files and silently erased per-line
+    // selections at the exact moment they mattered. Excluded staged
+    // selections are captured and restored after the commit.
+    final planResult = await prepareCommitStaging(repoPath, included);
+    if (!planResult.ok) {
+      return _CommitOutcome.err(planResult.error ?? 'Failed to stage files.');
     }
-
-    final stagedExcluded = _stagedExcludedPaths(status);
-    if (stagedExcluded.isNotEmpty) {
-      final unstageResult = await unstagePaths(repoPath, stagedExcluded);
-      if (!unstageResult.ok) {
-        return _CommitOutcome.err(
-            unstageResult.error ?? 'Failed to unstage excluded files.');
-      }
-    }
+    final plan = planResult.data!;
 
     final commitResult = await createCommit(
       repoPath,
@@ -5186,8 +5396,21 @@ class _ChangesPageState extends State<ChangesPage> {
       amend: amend,
     );
     if (!commitResult.ok) {
+      // The commit didn't happen. Put captured selections back so the index
+      // reads exactly as the user left it; if that restore ALSO fails the
+      // curated staging is genuinely gone, so say so rather than reporting
+      // only the commit error and letting the user assume their index is
+      // intact.
+      final restore =
+          await restoreStagedSelections(repoPath, plan.excludedEntries);
       await _refreshAndReadStatus();
-      return _CommitOutcome.err(commitResult.error ?? 'Commit failed.');
+      final commitErr = commitResult.error ?? 'Commit failed.';
+      if (!restore.ok) {
+        return _CommitOutcome.err(
+            '$commitErr\nCould not restore the staging of excluded files; '
+            'check the index before retrying.');
+      }
+      return _CommitOutcome.err(commitErr);
     }
 
     final committed = commitResult.data!;
@@ -5196,6 +5419,22 @@ class _ChangesPageState extends State<ChangesPage> {
         : committed.commitHash;
     var successMessage = 'Committed ${committed.summary} ($shortHash).';
     String? syncError;
+
+    final restore =
+        await restoreStagedSelections(repoPath, plan.excludedEntries);
+    if (!restore.ok) {
+      // A failed restore is a state-integrity event: the user's hand-built
+      // staging of excluded files is gone. Halt here — running the sync leg
+      // on top of a known-broken index would compound local damage with a
+      // published remote state. The commit itself succeeded and stays.
+      await _refreshAndReadStatus();
+      return _CommitOutcome.ok(
+        committed,
+        successMessage,
+        'Could not re-stage the selections of excluded files; '
+        'sync skipped. Check the index before syncing.',
+      );
+    }
 
     final refreshed = await _refreshAndReadStatus();
 
@@ -5375,7 +5614,30 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _tossStash(String repo, int index) async {
-    final result = await stashDrop(repo, index: index);
+    final coord = context.read<UndoCoordinator>();
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.stashDrop);
+    // Pin identity now — the list can shift while the safety window
+    // counts down, and stash@{index} must not resolve to a different
+    // entry by the time the drop fires. Fail CLOSED when the pin fails:
+    // an unpinnable stash means the list already moved under us, and a
+    // positional fallback would arm the exact index-shift hazard this
+    // capture exists to remove.
+    final hash = await stashHashAt(repo, index);
+    if (!mounted) return;
+    if (hash == null) {
+      setState(() => _actionError =
+          'The stash list changed; drop skipped. Try again.');
+      return;
+    }
+    final result = await coord.schedule<GitResult<void>>(
+      kind: UndoActionKind.stashDrop,
+      label: 'Dropping stash',
+      window: Duration(seconds: windowSec),
+      run: () => stashDropByHash(repo, hash),
+    );
+    if (result == null) return; // Cancelled — the stash stays.
     if (!mounted) return;
     if (!result.ok) {
       setState(() => _actionError = result.error);
@@ -7829,16 +8091,37 @@ class _MusePaneState extends State<_MusePane> {
                   )),
               if (widget.result != null) ...[
                 const SizedBox(width: 8),
-                Text(
-                  widget.result!.totalInputTokens > 0
-                      ? '${_realTokens(widget.result!.totalInputTokens)} in · ${_realTokens(widget.result!.totalOutputTokens)} out'
-                      : '${_tokensLabel(widget.result!.promptCharacters)} → ${_tokensLabel(widget.result!.diffCharacters)}',
-                  style: TextStyle(
+                Builder(builder: (context) {
+                  final base = AppTokens.contrastGlyph(t.surface0)
+                      .withValues(alpha: 0.5);
+                  final style = TextStyle(
                     fontFamily: AppFonts.mono,
                     fontSize: 9,
-                    color: AppTokens.contrastGlyph(t.surface0).withValues(alpha: 0.5),
-                  ),
-                ),
+                    color: base,
+                  );
+                  final r = widget.result!;
+                  if (r.totalInputTokens <= 0) {
+                    return Text(
+                      '${_tokensLabel(r.promptCharacters)} → ${_tokensLabel(r.diffCharacters)}',
+                      style: style,
+                    );
+                  }
+                  // Same tri-tone voice as the review caption: output
+                  // tokens are the expensive ones, they get the ink.
+                  return Text.rich(TextSpan(style: style, children: [
+                    TextSpan(
+                        text: '${_realTokens(r.totalInputTokens)} in'),
+                    TextSpan(
+                      text:
+                          ' · ${_realTokens(r.totalOutputTokens)} out',
+                      style: style.copyWith(
+                        color:
+                            t.accentBright.withValues(alpha: 0.75),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ]));
+                }),
               ],
             ],
           ),
@@ -7928,38 +8211,32 @@ class _MusePaneState extends State<_MusePane> {
                 ),
               ),
               const SizedBox(width: 10),
-              _GhostActionChip(
-                  tokens: t, label: 'Back to diff', onTap: widget.onBack),
-              if (widget.onCopy != null) ...[
-                const SizedBox(width: 8),
-                _GhostActionChip(
-                  tokens: t,
-                  label: _selected.isEmpty
-                      ? 'Copy'
-                      : 'Copy ${_selected.length}',
-                  onTap: () {
-                    if (_selected.isEmpty) {
-                      widget.onCopy!(null);
-                      return;
-                    }
-                    // The composer derives strand grouping and emission
-                    // order; we only hand it which proposals are chosen.
-                    widget.onCopy!(Set.of(_selected));
-                    setState(() => _selected.clear());
-                  },
-                ),
-                if (_selected.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  _GhostActionChip(
-                    tokens: t,
-                    label: 'Clear',
-                    onTap: () => setState(() => _selected.clear()),
-                  ),
+              _GhostActionBar(
+                tokens: t,
+                actions: [
+                  _GhostAction('Back to diff', widget.onBack),
+                  if (widget.onCopy != null)
+                    _GhostAction(
+                      _selected.isEmpty ? 'Copy' : 'Copy ${_selected.length}',
+                      () {
+                        if (_selected.isEmpty) {
+                          widget.onCopy!(null);
+                          return;
+                        }
+                        // The composer derives strand grouping and emission
+                        // order; we only hand it which proposals are chosen.
+                        widget.onCopy!(Set.of(_selected));
+                        setState(() => _selected.clear());
+                      },
+                    ),
+                  if (widget.onCopy != null && _selected.isNotEmpty)
+                    _GhostAction(
+                      'Clear',
+                      () => setState(() => _selected.clear()),
+                    ),
+                  _GhostAction('Run again', widget.onRerun),
                 ],
-              ],
-              const SizedBox(width: 8),
-              _GhostActionChip(
-                  tokens: t, label: 'Run again', onTap: widget.onRerun),
+              ),
             ],
           ),
         ],
@@ -8509,9 +8786,10 @@ class _DebugPane extends StatelessWidget {
                   _withUsageTip(
                     result!.usage,
                     Text(
-                      result!.inputTokens > 0
-                          ? '${_realTokens(result!.inputTokens)} in · ${_realTokens(result!.outputTokens)} out'
-                          : '${_tokensLabel(result!.promptCharacters)} →',
+                      _usageCaption(result!.usage) ??
+                          (result!.inputTokens > 0
+                              ? '${_realTokens(result!.inputTokens)} in · ${_realTokens(result!.outputTokens)} out'
+                              : '${_tokensLabel(result!.promptCharacters)} →'),
                       style: TextStyle(
                         fontFamily: AppFonts.mono,
                         fontSize: 9,
@@ -9160,15 +9438,14 @@ class _CommitReviewPane extends StatelessWidget {
                               const SizedBox(width: 8),
                               _withUsageTip(
                                 review.usage,
-                                Text(
-                                  review.inputTokens > 0
+                                _usageCaptionRich(
+                                  tokens,
+                                  AppTokens.contrastGlyph(tokens.surface0)
+                                      .withValues(alpha: 0.5),
+                                  usage: review.usage,
+                                  fallback: review.inputTokens > 0
                                       ? '${_realTokens(review.inputTokens)} in · ${_realTokens(review.outputTokens)} out'
                                       : '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
-                                  style: TextStyle(
-                                    fontFamily: AppFonts.mono,
-                                    fontSize: 9,
-                                    color: AppTokens.contrastGlyph(tokens.surface0).withValues(alpha: 0.5),
-                                  ),
                                 ),
                               ),
                             ],
@@ -9264,24 +9541,13 @@ class _CommitReviewPane extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    _GhostActionChip(
+                    _GhostActionBar(
                       tokens: tokens,
-                      label: 'Back to diff',
-                      onTap: onBack,
-                    ),
-                    if (onCopy != null) ...[
-                      const SizedBox(width: 8),
-                      _GhostActionChip(
-                        tokens: tokens,
-                        label: 'Copy',
-                        onTap: onCopy!,
-                      ),
-                    ],
-                    const SizedBox(width: 8),
-                    _GhostActionChip(
-                      tokens: tokens,
-                      label: 'Run again',
-                      onTap: onRerun,
+                      actions: [
+                        _GhostAction('Back to diff', onBack),
+                        if (onCopy != null) _GhostAction('Copy', onCopy!),
+                        _GhostAction('Run again', onRerun),
+                      ],
                     ),
                   ],
                 ),
@@ -9374,13 +9640,24 @@ class _CommitReviewPane extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 12),
-                Text(
-                  review.findings.isEmpty ? 'No findings' : 'Findings',
-                  style: TextStyle(
-                    color: tokens.textStrong,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      review.findings.isEmpty ? 'No findings' : 'Findings',
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (review.findings.length > 1) ...[
+                      const SizedBox(width: 10),
+                      _SeverityTally(
+                        tokens: tokens,
+                        findings: review.findings,
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 8),
                 if (review.findings.isEmpty)
@@ -9640,13 +9917,19 @@ class _ReviewDisclosureCard extends StatelessWidget {
               onTap: onToggle,
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Row(
+                // Label + chevron share their OWN row so the chevron
+                // always aligns to the label's baseline band — the
+                // collapsed preview lives BELOW this row, never inside
+                // the box the chevron centers against, so the glyph no
+                // longer drops into the gap between label and preview
+                // when collapsed.
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
                             label,
                             style: TextStyle(
                               color: tokens.textMuted,
@@ -9654,38 +9937,49 @@ class _ReviewDisclosureCard extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          if (!expanded) ...[
-                            const SizedBox(height: 5),
-                            Text(
-                              _oneLinePreview(preview),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: tokens.textNormal,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ],
+                        ),
+                        AnimatedRotation(
+                          turns: expanded ? 0.5 : 0,
+                          duration: context.motion(AppMotion.snap),
+                          curve: AppMotion.snapCurve,
+                          child: Icon(
+                            Icons.expand_more_rounded,
+                            color: tokens.textMuted,
+                            size: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!expanded) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        _oneLinePreview(preview),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: tokens.textNormal,
+                          fontSize: 11,
+                        ),
                       ),
-                    ),
-                    Icon(
-                      expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: tokens.textMuted,
-                      size: 16,
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
           ),
-          if (expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              child: child,
-            ),
+          // AnimatedSize turns the reveal into a settle instead of a
+          // snap-open; collapse is symmetric.
+          AnimatedSize(
+            duration: context.motion(AppMotion.snap),
+            curve: AppMotion.snapCurve,
+            alignment: Alignment.topCenter,
+            child: expanded
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                    child: child,
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
         ],
       ),
     );
@@ -9718,79 +10012,90 @@ class _ReviewFindingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = switch (finding.severity) {
-      'block' => AppSeverityPalette.critical,
-      'risk' => AppSeverityPalette.risk,
-      'warn' => AppSeverityPalette.caution,
-      'note' => AppSeverityPalette.info,
-      _ => AppSeverityPalette.neutral,
-    };
-    final meta = [
-      if (finding.filePath != null) finding.filePath!,
-      if (finding.hunkLabel != null) finding.hunkLabel!,
-    ].join(' | ');
-    return IntrinsicHeight(
-      child: Container(
-        decoration: BoxDecoration(
-          color: tokens.rowBg,
-          borderRadius:
-              BorderRadius.circular(context.surfaceShader.geometry.radius),
-          border: Border.all(color: tokens.chromeBorderSubtle),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Accent left edge — communicates severity at a glance.
-            Container(
-              width: 3,
-              decoration: BoxDecoration(
-                color: accent,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(8),
-                  bottomLeft: Radius.circular(8),
+    final accent = _severityAccent(finding.severity);
+    return HoverableTap(
+      // The whole card is the "Open diff" hit target when a diff
+      // exists — the link stays as the labelled affordance, the card
+      // is the generous one. Inner links (Dismiss) win the gesture
+      // arena as usual.
+      onTap: onOpenDiff,
+      cursor: onOpenDiff != null
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
+      // A dismissed finding recedes instead of merely captioning
+      // itself — the list reads as "handled" at a glance.
+      builder: (context, hovered) => AnimatedOpacity(
+        opacity: actioned ? 0.55 : 1.0,
+        duration: context.motion(AppMotion.snap),
+        curve: AppMotion.snapCurve,
+        child: IntrinsicHeight(
+        child: AnimatedContainer(
+          duration: context.motion(AppMotion.snap),
+          curve: AppMotion.snapCurve,
+          decoration: BoxDecoration(
+            color: tokens.rowBg,
+            borderRadius:
+                BorderRadius.circular(context.surfaceShader.geometry.radius),
+            border: Border.all(
+              // Hover answers with the finding's own severity tint —
+              // the card lights in its own color, not generic chrome.
+              color: hovered && onOpenDiff != null
+                  ? accent.withValues(alpha: 0.38)
+                  : tokens.chromeBorderSubtle,
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Accent left edge — communicates severity at a glance.
+              Container(
+                width: 3,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    bottomLeft: Radius.circular(8),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            finding.title,
-                            style: TextStyle(
-                              color: tokens.textStrong,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w700,
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              finding.title,
+                              style: TextStyle(
+                                color: tokens.textStrong,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                        ),
-                        if (onOpenDiff != null) ...[
-                          const SizedBox(width: 8),
-                          _InlineActionLink(
-                            tokens: tokens,
-                            label: 'Open diff',
-                            onTap: onOpenDiff!,
-                          ),
+                          if (onOpenDiff != null) ...[
+                            const SizedBox(width: 8),
+                            _InlineActionLink(
+                              tokens: tokens,
+                              label: 'Open diff',
+                              onTap: onOpenDiff!,
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                    if (meta.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        meta,
-                        style: TextStyle(
-                          color: tokens.textMuted,
-                          fontSize: 10.5,
-                          fontFamily: AppFonts.mono,
-                        ),
                       ),
-                    ],
+                      if (finding.filePath != null ||
+                          finding.hunkLabel != null) ...[
+                        const SizedBox(height: 5),
+                        _FindingLocusLine(
+                          tokens: tokens,
+                          filePath: finding.filePath,
+                          hunkLabel: finding.hunkLabel,
+                        ),
+                      ],
                     if (finding.evidence.trim().isNotEmpty) ...[
                       const SizedBox(height: 8),
                       resonanceText(
@@ -9858,8 +10163,138 @@ class _ReviewFindingCard extends StatelessWidget {
               ),
             ),
           ],
+          ),
+        ),
         ),
       ),
+    );
+  }
+}
+
+/// Compact per-severity census beside the Findings heading: a colored
+/// dot and count for each severity present, in descending-severity
+/// order. Same palette as the cards' left rails, so scanning the
+/// tally then the list is one uninterrupted color read.
+class _SeverityTally extends StatelessWidget {
+  final AppTokens tokens;
+  final List<AiCommitReviewFindingData> findings;
+
+  const _SeverityTally({required this.tokens, required this.findings});
+
+  static const List<String> _order = ['block', 'risk', 'warn', 'note'];
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = <String, int>{};
+    for (final f in findings) {
+      final key = _order.contains(f.severity) ? f.severity : 'note';
+      counts.update(key, (v) => v + 1, ifAbsent: () => 1);
+    }
+    final children = <Widget>[];
+    for (final sev in _order) {
+      final n = counts[sev];
+      if (n == null) continue;
+      final color = _severityAccent(sev);
+      if (children.isNotEmpty) children.add(const SizedBox(width: 8));
+      children.add(Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.9),
+          shape: BoxShape.circle,
+        ),
+      ));
+      children.add(const SizedBox(width: 3));
+      children.add(Text(
+        '$n',
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+          fontFamily: AppFonts.mono,
+          fontFamilyFallback: AppFonts.monoFallback,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ));
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+}
+
+/// One-line "where" for a finding: directory (collapsible, muted) +
+/// filename (kept whole, brighter) + hunk chip (kept whole, right).
+/// Long paths give up their middle, never the parts you actually
+/// aim with — the old single Text wrapped the hunk header onto a
+/// second line on every long path.
+class _FindingLocusLine extends StatelessWidget {
+  final AppTokens tokens;
+  final String? filePath;
+  final String? hunkLabel;
+
+  const _FindingLocusLine({
+    required this.tokens,
+    required this.filePath,
+    required this.hunkLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final path = filePath ?? '';
+    final slash = path.lastIndexOf('/');
+    final dir = slash > 0 ? path.substring(0, slash + 1) : '';
+    final name = slash > 0 ? path.substring(slash + 1) : path;
+    const monoStyle = TextStyle(
+      fontSize: 10.5,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
+    );
+    return Row(
+      children: [
+        if (dir.isNotEmpty)
+          Flexible(
+            child: Text(
+              dir,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: monoStyle.copyWith(
+                color: tokens.textMuted.withValues(alpha: 0.75),
+              ),
+            ),
+          ),
+        if (name.isNotEmpty)
+          Flexible(
+            fit: FlexFit.loose,
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: monoStyle.copyWith(
+                color: tokens.textNormal,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        if (hunkLabel != null && hunkLabel!.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: tokens.chromeAccent.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
+            ),
+            child: Text(
+              hunkLabel!,
+              maxLines: 1,
+              style: monoStyle.copyWith(
+                fontSize: 9.5,
+                color: tokens.textMuted,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -9915,20 +10350,28 @@ class _TracePanel extends StatelessWidget {
                         ),
                       ),
                     ),
-                    Icon(
-                      expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: tokens.textMuted,
-                      size: 16,
+                    AnimatedRotation(
+                      turns: expanded ? 0.5 : 0,
+                      duration: context.motion(AppMotion.snap),
+                      curve: AppMotion.snapCurve,
+                      child: Icon(
+                        Icons.expand_more_rounded,
+                        color: tokens.textMuted,
+                        size: 16,
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
           ),
-          if (expanded)
-            Padding(
+          AnimatedSize(
+            duration: context.motion(AppMotion.snap),
+            curve: AppMotion.snapCurve,
+            alignment: Alignment.topCenter,
+            child: !expanded
+                ? const SizedBox(width: double.infinity)
+                : Padding(
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -9994,6 +10437,7 @@ class _TracePanel extends StatelessWidget {
                 ],
               ),
             ),
+          ),
         ],
       ),
     );
@@ -10055,9 +10499,17 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     setState(() => _busy = _CleanTreeBusy.sync);
     try {
       final outcome = await resolveSync(context, widget.repoPath, widget.status);
-      if (mounted && outcome is! MergeClean) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Sync'))));
+      if (mounted) {
+        // A clean sync used to be silent — confirm it too, terse and quick
+        // ("Already up to date." / "Rebased and pushed."), so a no-op click
+        // still reads as "done" instead of nothing.
+        final clean = outcome is MergeClean;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(mergeOutcomeMessage(outcome, op: 'Sync')),
+          duration: clean
+              ? const Duration(milliseconds: 1600)
+              : const Duration(seconds: 4),
+        ));
       }
       await widget.onRefresh();
     } finally {
@@ -10085,10 +10537,11 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final s = widget.status;
-    final aheadColor =
-        s.ahead > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
-    final behindColor =
-        s.behind > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
+    // Git-status coloring, not severity: your unpushed commits are added-green
+    // (not an amber warning), incoming commits are modified-amber, zero is
+    // neutral. Matches how ahead/behind reads everywhere else sync renders.
+    final aheadColor = s.ahead > 0 ? t.stateAdded : t.textMuted;
+    final behindColor = s.behind > 0 ? t.stateModified : t.textMuted;
     final hasUpstream = s.upstream != null;
 
     return Center(
@@ -10181,6 +10634,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
             if (hasUpstream)
               _CheckSyncSplitButton(
                 tokens: t,
+                status: s,
                 busy: _busy,
                 onCheck: _check,
                 onSync: _sync,
@@ -10206,12 +10660,14 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
 /// longer push unpushed commits from a single stray tap.
 class _CheckSyncSplitButton extends StatelessWidget {
   final AppTokens tokens;
+  final RepositoryStatus status;
   final _CleanTreeBusy busy;
   final VoidCallback onCheck;
   final VoidCallback onSync;
 
   const _CheckSyncSplitButton({
     required this.tokens,
+    required this.status,
     required this.busy,
     required this.onCheck,
     required this.onSync,
@@ -10220,6 +10676,11 @@ class _CheckSyncSplitButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = tokens;
+    // The sync tooltip spells out what will actually run BEFORE it runs — a
+    // diverged branch says "Pull ... with rebase, then push ..." so the rebase
+    // is never a silent surprise. Shared describe-action so it can't drift
+    // from the topbar control or the flyout.
+    final action = describeSyncAction(status);
     return SplitPillButton(
       enabled: busy == _CleanTreeBusy.none,
       segments: [
@@ -10233,13 +10694,66 @@ class _CheckSyncSplitButton extends StatelessWidget {
         ),
         SplitPillSegment(
           label: '& sync',
-          tooltip: 'Pull, then push your commits.',
+          tooltip: action.detail,
           restColor: t.textNormal,
           hoverColor: t.accentBright,
           bold: true,
           loading: busy == _CleanTreeBusy.sync,
           onTap: onSync,
         ),
+      ],
+    );
+  }
+}
+
+/// One action in a [_GhostActionBar].
+class _GhostAction {
+  final String label;
+  final VoidCallback onTap;
+
+  const _GhostAction(this.label, this.onTap);
+}
+
+/// A cluster of secondary ("ghost") actions fused into ONE shattered-mosaic
+/// control — the same seam language as the topbar branch pill — so a row of
+/// Back / Copy / Run again reads as a single themed segmented control rather
+/// than three loose pills. Falls back to a plain rounded button when given a
+/// single action (no seams).
+class _GhostActionBar extends StatelessWidget {
+  final AppTokens tokens;
+  final List<_GhostAction> actions;
+
+  const _GhostActionBar({required this.tokens, required this.actions});
+
+  @override
+  Widget build(BuildContext context) {
+    // Measure in the ambient font (serif on some themes) so no segment clips.
+    final base = DefaultTextStyle.of(context).style.merge(
+          const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600),
+        );
+    final labelStyle = base.copyWith(color: tokens.textMuted);
+    return MosaicShardBar(
+      surfaceColor: tokens.surface0,
+      borderColor: tokens.chromeBorder.withValues(alpha: 0.16),
+      seamColor: tokens.chromeBorder,
+      borderRadius: context.surfaceShader.geometry.pillRadius,
+      verticalPadding: 5,
+      shards: [
+        for (final a in actions)
+          MosaicShard.text(
+            text: a.label,
+            style: base,
+            chrome: 20,
+            onTap: a.onTap,
+            hoverFill: tokens.itemHoverBg,
+            // The shard sizes its child to the segment's full width, so a bare
+            // Text would left-align; centre it within the segment.
+            child: Text(
+              a.label,
+              textAlign: TextAlign.center,
+              style: labelStyle,
+            ),
+          ),
       ],
     );
   }
@@ -10937,8 +11451,16 @@ class _ModelGlyphStrip extends StatefulWidget {
 }
 
 class _ModelGlyphStripState extends State<_ModelGlyphStrip>
-    with SingleTickerProviderStateMixin, MotionLoopSync {
+    with TickerProviderStateMixin, MotionLoopSync {
   late final AnimationController _ctrl;
+
+  /// One-shot hover ping: the reasoning glyph emits an immediate
+  /// wavefront and the bolt strikes. Value 0 (never fired) and 1
+  /// (finished) both read as inactive in the painters, so no state
+  /// flag is needed. Not a motion loop — fires once per hover-enter,
+  /// and inherits reduce-motion by having its duration zeroed.
+  late final AnimationController _ping;
+  static const Duration _pingAuthored = Duration(milliseconds: 700);
 
   @override
   List<AnimationController> get motionLoops => [_ctrl];
@@ -10950,45 +11472,66 @@ class _ModelGlyphStripState extends State<_ModelGlyphStrip>
       vsync: this,
       duration: const Duration(milliseconds: 3000),
     );
+    _ping = AnimationController(vsync: this, duration: _pingAuthored)
+      ..value = 1.0;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scaled = context.motionRead(_pingAuthored);
+    _ping.duration = scaled == Duration.zero ? Duration.zero : scaled;
   }
 
   @override
   void dispose() {
     _ctrl.dispose();
+    _ping.dispose();
     super.dispose();
+  }
+
+  void _firePing() {
+    if (_ping.duration == Duration.zero) return;
+    _ping.forward(from: 0);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (widget.effort != null)
-          AnimatedBuilder(
-            animation: _ctrl,
-            builder: (_, __) => CustomPaint(
-              size: const Size(20, 16),
-              painter: _ReasoningGlyphPainter(
-                color: widget.color,
-                effort: widget.effort!,
-                t: _ctrl.value,
+    final repaint = Listenable.merge([_ctrl, _ping]);
+    return MouseRegion(
+      onEnter: (_) => _firePing(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.effort != null)
+            AnimatedBuilder(
+              animation: repaint,
+              builder: (_, __) => CustomPaint(
+                size: const Size(20, 16),
+                painter: _ReasoningGlyphPainter(
+                  color: widget.color,
+                  effort: widget.effort!,
+                  t: _ctrl.value,
+                  ping: _ping.value,
+                ),
               ),
             ),
-          ),
-        if (widget.effort != null && widget.fast)
-          const SizedBox(width: 2),
-        if (widget.fast)
-          AnimatedBuilder(
-            animation: _ctrl,
-            builder: (_, __) => CustomPaint(
-              size: const Size(11, 14),
-              painter: _FastGlyphPainter(
-                color: widget.accent,
-                t: _ctrl.value,
+          if (widget.effort != null && widget.fast)
+            const SizedBox(width: 2),
+          if (widget.fast)
+            AnimatedBuilder(
+              animation: repaint,
+              builder: (_, __) => CustomPaint(
+                size: const Size(11, 14),
+                painter: _FastGlyphPainter(
+                  color: widget.accent,
+                  t: _ctrl.value,
+                  ping: _ping.value,
+                ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -10997,11 +11540,15 @@ class _ReasoningGlyphPainter extends CustomPainter {
   final Color color;
   final String effort;
   final double t;
+  /// Hover ping progress. 0 and 1 are inactive; in between, an extra
+  /// (stronger) wavefront travels the rings.
+  final double ping;
 
   _ReasoningGlyphPainter({
     required this.color,
     required this.effort,
     required this.t,
+    this.ping = 1.0,
   });
 
   @override
@@ -11019,6 +11566,37 @@ class _ReasoningGlyphPainter extends CustomPainter {
     };
     final intense = effort == 'xhigh' || effort == 'max';
     final pulse = 0.5 + 0.5 * math.sin(t * math.pi * 2);
+
+    // ---- Emission model -------------------------------------------------
+    // The glyph doesn't breathe in place — it EMITS. A wavefront leaves
+    // the nucleus and travels out along the rings, lighting each arc as
+    // it passes. Emission rate is the generative knob that scales with
+    // effort: low thinks in slow single pulses, max fires three per loop.
+    // Integer rates keep the 0→1 loop seamless.
+    final int emitRate = switch (effort) {
+      'low' => 1,
+      'medium' => 1,
+      'high' => 2,
+      _ => 3,
+    };
+    final outerR = 3.6 + (rings - 1) * 2.8;
+    // Boost an arc at radius r when a front (loop-driven or ping) is
+    // crossing it. Gaussian falloff ≈1.5px so exactly one ring lights
+    // at a time — the count stays readable mid-animation.
+    double frontBoost(double r) {
+      var boost = 0.0;
+      final phase = (t * emitRate) % 1.0;
+      final frontR = 1.0 + (outerR + 2.2 - 1.0) * phase;
+      final envelope = math.sin(math.pi * phase);
+      final d = r - frontR;
+      boost += 0.30 * envelope * math.exp(-d * d / 4.5);
+      if (ping > 0 && ping < 1) {
+        final pr = 1.0 + (outerR + 2.2 - 1.0) * ping;
+        final pd = r - pr;
+        boost += 0.50 * math.sin(math.pi * ping) * math.exp(-pd * pd / 4.5);
+      }
+      return boost;
+    }
 
     // Outer halo bloom for xhigh/max — a wide soft glow that frames
     // the whole glyph and makes the intense levels pop at a glance.
@@ -11079,34 +11657,42 @@ class _ReasoningGlyphPainter extends CustomPainter {
       'high' => 0.70,
       _ => 0.80 + 0.12 * pulse,
     };
+    // Organic luminance: two incommensurate-feeling harmonics (integer
+    // multiples of the loop so it never seams) — candle, not strobe.
+    // The nucleus also flashes at the instant a wavefront is born.
+    final flick = 0.04 * math.sin(4 * math.pi * t) +
+        0.03 * math.sin(10 * math.pi * t + 1.3);
     canvas.drawCircle(
       center,
       nucR,
-      Paint()..color = color.withValues(alpha: nucAlpha),
+      Paint()
+        ..color = color.withValues(
+            alpha: (nucAlpha + flick + frontBoost(1.0) * 0.5)
+                .clamp(0.0, 1.0)),
     );
 
     // Ripple rings — clipped to the right hemisphere.
     // Inner rings are more opaque, outer rings fade — creates depth
-    // and makes the count instantly readable.
+    // and makes the count instantly readable. Motion comes ONLY from
+    // the wavefront passing through: each arc brightens and swells a
+    // sub-pixel as the emission crosses its radius, then settles.
     canvas.save();
     canvas.clipRect(
         Rect.fromLTWH(cx - 1, 0, size.width - cx + 1, size.height));
 
     for (var i = 0; i < rings; i++) {
       final r = 3.6 + i * 2.8;
-      final isOuter = i == rings - 1;
       final sweepAngle = math.pi * (0.72 + 0.06 * i);
-      final breatheR = isOuter ? r + 0.7 * pulse : r;
+      final boost = frontBoost(r);
+      final ringR = r + 1.1 * boost;
 
-      // Opacity: inner rings are solid anchors, outer ring breathes.
       final depthFade = 1.0 - (i / (rings + 1)) * 0.35;
-      final baseAlpha = intense ? 0.55 * depthFade : 0.40 * depthFade;
-      final ringAlpha =
-          isOuter ? baseAlpha * (0.55 + 0.45 * pulse) : baseAlpha;
+      final baseAlpha = intense ? 0.50 * depthFade : 0.36 * depthFade;
+      final ringAlpha = (baseAlpha + boost).clamp(0.0, 1.0);
 
       // Glow halo.
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: breatheR),
+        Rect.fromCircle(center: center, radius: ringR),
         -sweepAngle * 0.5,
         sweepAngle,
         false,
@@ -11120,7 +11706,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
 
       // Crisp stroke.
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: breatheR),
+        Rect.fromCircle(center: center, radius: ringR),
         -sweepAngle * 0.5,
         sweepAngle,
         false,
@@ -11138,14 +11724,17 @@ class _ReasoningGlyphPainter extends CustomPainter {
   bool shouldRepaint(_ReasoningGlyphPainter old) =>
       old.effort != effort ||
       old.color != color ||
-      (old.t - t).abs() > 0.015;
+      (old.t - t).abs() > 0.015 ||
+      (old.ping - ping).abs() > 0.015;
 }
 
 class _FastGlyphPainter extends CustomPainter {
   final Color color;
   final double t;
+  /// Hover ping progress — an immediate strike. 0 and 1 are inactive.
+  final double ping;
 
-  _FastGlyphPainter({required this.color, required this.t});
+  _FastGlyphPainter({required this.color, required this.t, this.ping = 1.0});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -11162,20 +11751,46 @@ class _FastGlyphPainter extends CustomPainter {
       ..quadraticBezierTo(w * 0.62, h * 0.22, w * 0.52, h * 0.0)
       ..close();
 
-    // Sharper shimmer curve — spends more time bright, snaps dim.
-    final raw = math.sin(t * math.pi * 2);
-    final shimmer = 0.40 + 0.35 * (raw > 0 ? math.sqrt(raw) : -math.sqrt(-raw));
+    // Charge/discharge instead of a whole-shape shimmer: the bolt
+    // rests calm, then once per loop a glint RUNS DOWN the blade —
+    // current flowing, not a lamp blinking. Offset half a loop from
+    // the reasoning glyph's emission so the pair trades motion
+    // instead of blinking in unison. A hover ping strikes NOW.
+    final loopPhase = (t + 0.5) % 1.0;
+    const window = 0.26;
+    double discharge = 0.0; // 0..1 sweep position of the glint
+    double energy = 0.0; // glint brightness envelope
+    if (loopPhase < window) {
+      discharge = loopPhase / window;
+      energy = math.sin(math.pi * discharge);
+    }
+    if (ping > 0 && ping < 1) {
+      final pingEnergy = math.sin(math.pi * ping);
+      if (pingEnergy > energy) {
+        energy = pingEnergy;
+        discharge = ping;
+      }
+    }
 
-    // Tight glow.
+    // Rest luminance breathes barely (integer harmonics — seamless).
+    final rest = 0.44 +
+        0.04 * math.sin(2 * math.pi * t) +
+        0.02 * math.sin(6 * math.pi * t + 0.7);
+
+    // Glow swells only while current flows.
     canvas.drawPath(
       bolt,
       Paint()
         ..style = PaintingStyle.fill
-        ..color = color.withValues(alpha: shimmer * 0.3)
+        ..color = color.withValues(alpha: 0.12 + 0.30 * energy)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5),
     );
 
-    // Crisp fill with gradient top-to-bottom for taper feel.
+    // Fill with a traveling bright band: gradient stops track the
+    // discharge position top→bottom over a calm tapered base.
+    final bandC = -0.25 + 1.5 * discharge;
+    double stop(double v) => v.clamp(0.0, 1.0);
+    final bright = (rest + 0.42 * energy).clamp(0.0, 1.0);
     canvas.drawPath(
       bolt,
       Paint()
@@ -11183,9 +11798,11 @@ class _FastGlyphPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
+          stops: [stop(bandC - 0.35), stop(bandC), stop(bandC + 0.35)],
           colors: [
-            color.withValues(alpha: shimmer),
-            color.withValues(alpha: shimmer * 0.6),
+            color.withValues(alpha: rest),
+            color.withValues(alpha: energy > 0 ? bright : rest),
+            color.withValues(alpha: rest * 0.62),
           ],
         ).createShader(Rect.fromLTWH(0, 0, w, h)),
     );
@@ -11193,7 +11810,9 @@ class _FastGlyphPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_FastGlyphPainter old) =>
-      old.color != color || (old.t - t).abs() > 0.015;
+      old.color != color ||
+      (old.t - t).abs() > 0.015 ||
+      (old.ping - ping).abs() > 0.015;
 }
 
 class _ShelfControl extends StatefulWidget {
@@ -11959,6 +12578,11 @@ class _FileRow extends StatefulWidget {
   final VoidCallback onTap;
   final ValueChanged<bool> onIncludeChanged;
 
+  /// The index and worktree both carry changes for this path — only
+  /// the staged portion will commit. The checkbox renders a dash so a
+  /// hand-built hunk selection is visible at the row level.
+  bool get partialStaged => file.hasStagedChange && file.hasUnstagedChange;
+
   /// Cluster stripe color. Null = no coupling signal / matrix not ready.
   final Color? clusterColor;
 
@@ -12164,14 +12788,18 @@ class _FileRowState extends State<_FileRow> {
                   child: Row(
                     children: [
                       Tooltip(
-                        message: widget.onClusterToggle != null
-                            ? 'double-click: toggle whole group'
-                            : '',
+                        message: [
+                          if (widget.included && widget.partialStaged)
+                            'commits staged lines only',
+                          if (widget.onClusterToggle != null)
+                            'double-click: toggle whole group',
+                        ].join('\n'),
                         waitDuration: const Duration(milliseconds: 550),
                         child: GestureDetector(
                           onDoubleTap: widget.onClusterToggle,
                           child: AppCheckbox(
                             value: widget.included,
+                            partial: widget.partialStaged,
                             size: 16,
                             onChanged: widget.onIncludeChanged,
                           ),
@@ -12697,7 +13325,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     'name this moment',
     'yap on',
     'speak!',
-    'your mother was a hamster and your father smelt of semicolons',
+    'your mother was a dangling reference and your father smelt of semicolons',
   ];
   static const _titlesShort = <String>[
     'oh?',

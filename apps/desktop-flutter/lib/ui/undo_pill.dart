@@ -98,23 +98,31 @@ class _UndoPillState extends State<UndoPill>
   Widget build(BuildContext context) {
     final coord = context.watch<UndoCoordinator>();
     final pending = coord.pending;
+    final completed = coord.completed;
     final hasPending = pending != null;
-    if (hasPending != _hasPending) {
-      _hasPending = hasPending;
+    // Settled notices ("Committed abc1234 · Undo") reuse the pill so
+    // success confirmation and take-it-back live in the one place the
+    // user already watches for safety windows.
+    final settled = !hasPending && completed != null;
+    final visible = hasPending || settled;
+    if (visible != _hasPending) {
+      _hasPending = visible;
       _goHovered = false;
       _goPressed = false;
       _applyMotionDuration();
-      if (hasPending) {
+      if (visible) {
         _intro.forward(from: 0);
       } else {
         _intro.reverse();
       }
     }
     _syncTick(hasPending);
-    if (!hasPending && _intro.value == 0) return const SizedBox.shrink();
+    if (!visible && _intro.value == 0) return const SizedBox.shrink();
 
     final tokens = context.tokens;
     final remainingSec = (coord.remainingMs / 1000).ceil();
+    final kind = pending?.kind ?? completed?.kind ?? UndoActionKind.other;
+    final label = pending?.label ?? completed?.label ?? '';
     return FadeTransition(
       opacity: CurvedAnimation(parent: _intro, curve: Curves.easeOut),
       child: Material(
@@ -139,15 +147,23 @@ class _UndoPillState extends State<UndoPill>
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                _iconFor(pending?.kind ?? UndoActionKind.other),
+                settled
+                    ? (completed.isError
+                        ? Icons.error_outline
+                        : Icons.check_circle)
+                    : _iconFor(kind),
                 size: 14,
-                color: tokens.textMuted,
+                color: settled
+                    ? (completed.isError
+                        ? tokens.stateDeleted
+                        : tokens.stateAdded)
+                    : tokens.textMuted,
               ),
               const SizedBox(width: 8),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 220),
                 child: Text(
-                  pending?.label ?? '',
+                  label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: tokens.textNormal,
@@ -207,22 +223,25 @@ class _UndoPillState extends State<UndoPill>
                 ),
               ],
               const SizedBox(width: 6),
-              TextButton(
-                onPressed: hasPending ? coord.cancel : null,
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(0, 28),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: tokens.accentBright,
-                ),
-                child: const Text(
-                  'Cancel',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+              if (hasPending || (settled && completed.canUndo))
+                TextButton(
+                  onPressed: hasPending
+                      ? coord.cancel
+                      : () => unawaited(coord.undoCompleted()),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: tokens.accentBright,
+                  ),
+                  child: Text(
+                    hasPending ? 'Cancel' : 'Undo',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

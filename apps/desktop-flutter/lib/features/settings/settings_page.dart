@@ -710,19 +710,25 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<bool> _confirmLocalDataAction(String message) async {
+    final t = context.tokens;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Confirm'),
+        // Every caller clears/wipes local data — name that and dress it in the
+        // delete tier instead of the old vague 'Confirm'/'Continue' pair.
+        title: Text(
+          'Clear local data',
+          style: TextStyle(color: t.danger, fontWeight: FontWeight.w600),
+        ),
         content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Continue'),
+            child: Text('Clear', style: TextStyle(color: t.danger)),
           ),
         ],
       ),

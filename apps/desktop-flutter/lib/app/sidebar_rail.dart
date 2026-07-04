@@ -1992,6 +1992,11 @@ class _ProjectAiStatusOverlay extends StatelessWidget {
     } else {
       activity.requestDrawerOpen(repoPath, record.kind);
     }
+    // Always steer the workspace to Changes — the drawer lives there. The
+    // drawer queue alone isn't enough: the keep-alive Changes page drains
+    // it even while hidden, so a same-repo click from another tab opened
+    // the drawer invisibly and read as a dead button.
+    activity.requestWorkspaceFocus(repoPath);
     if (repoState.activePath != repoPath) {
       // Async, but we don't await it — the user wants the click to
       // feel instant and the changes page reads its own active path

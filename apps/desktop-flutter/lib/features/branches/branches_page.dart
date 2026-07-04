@@ -37,6 +37,7 @@ import '../../backend/logos_git_diagnostics.dart';
 import '../../backend/pr_shape.dart';
 import '../../backend/desk_pr.dart';
 import '../../backend/desk_pr_diff.dart';
+import '../../backend/undo_controller.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/window_activity.dart';
@@ -920,10 +921,33 @@ class _BranchesPageState extends State<BranchesPage> {
     String name, {
     bool force = false,
   }) async {
+    // Branch deletes run through the global safety window — the
+    // UndoActionKind.branchDelete slot existed since day one but was
+    // never scheduled, so deletes fired instantly with no way back.
+    final coord = context.read<UndoCoordinator>();
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.branchDelete);
+    // Identity capture at ARM time: the delete fires seconds from now and
+    // a branch name is a mutable pointer — pin the tip the user is looking
+    // at, and fail closed if it can't be pinned. The delayed delete then
+    // refuses if the ref moved in the window.
+    final expectTip = await refTip(repo, 'refs/heads/$name');
+    if (!mounted) return const _DeleteBranchOutcome.error('cancelled');
+    if (expectTip == null) {
+      return const _DeleteBranchOutcome.error(
+          'could not pin the branch tip; delete skipped');
+    }
     setState(() => _actionRunning = true);
-    final r = await deleteBranch(repo, name, force: force);
+    final r = await coord.schedule<GitResult<void>>(
+      kind: UndoActionKind.branchDelete,
+      label: 'Deleting $name',
+      window: Duration(seconds: windowSec),
+      run: () => deleteBranchIfAt(repo, name, expectTip, force: force),
+    );
     if (!mounted) return const _DeleteBranchOutcome.error('cancelled');
     setState(() => _actionRunning = false);
+    if (r == null) return const _DeleteBranchOutcome.cancelled();
     if (!r.ok) {
       final raw = r.error ?? '';
       // First-tap safe delete bounced because git considers the branch
@@ -948,13 +972,32 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _deleteTag(String repo, String name) async {
+    final coord = context.read<UndoCoordinator>();
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.tagDelete);
+    // Same identity-pinned contract as branch delete: capture at arm time,
+    // fail closed when uncapturable, verify at fire time.
+    final expectTip = await refTip(repo, 'refs/tags/$name');
+    if (!mounted) return;
+    if (expectTip == null) {
+      setState(
+          () => _actionError = 'could not pin the tag; delete skipped');
+      return;
+    }
     setState(() {
       _actionRunning = true;
       _actionError = null;
     });
-    final r = await deleteTag(repo, name);
+    final r = await coord.schedule<GitResult<void>>(
+      kind: UndoActionKind.tagDelete,
+      label: 'Deleting tag $name',
+      window: Duration(seconds: windowSec),
+      run: () => deleteTagIfAt(repo, name, expectTip),
+    );
     if (!mounted) return;
     setState(() => _actionRunning = false);
+    if (r == null) return; // Cancelled — the tag stays.
     if (!r.ok) {
       setState(() => _actionError = r.error);
       return;
@@ -1271,7 +1314,11 @@ class _BranchesPageState extends State<BranchesPage> {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-              content: Text(
+          title: Text(
+            'Replace local commits?',
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
+          content: Text(
             '$localRef already exists locally. Updating it will replace any '
             'local commits on that branch with the latest from the remote.',
             style: TextStyle(color: t.textNormal, fontSize: 12),
@@ -1283,7 +1330,10 @@ class _BranchesPageState extends State<BranchesPage> {
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Update'),
+              // Overwrites unreachable local commits — destructive.
+              child: Text('Update',
+                  style:
+                      TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -4234,7 +4284,10 @@ class _BranchesPageState extends State<BranchesPage> {
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Merge anyway'),
+              // Proceeding writes conflict markers into the worktree — destructive.
+              child: Text('Merge anyway',
+                  style:
+                      TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -5339,8 +5392,11 @@ class _PullRequestRowState extends State<_PullRequestRow> {
     switch (widget.pr.state) {
       case 'OPEN':
         return widget.pr.isDraft ? t.textMuted : t.accentBright;
+      // Merged is terminal success, not a live collision — use the add/done
+      // tier so it reads distinct from OPEN (accent), CLOSED (delete), and the
+      // stateConflicted "WILL FIGHT" collision warning.
       case 'MERGED':
-        return t.stateConflicted;
+        return t.stateAdded;
       case 'CLOSED':
         return t.stateDeleted;
       default:
@@ -7621,8 +7677,11 @@ class _PrLinkChipState extends State<_PrLinkChip> {
     switch (widget.pr.state) {
       case 'OPEN':
         return widget.pr.isDraft ? t.textMuted : t.accentBright;
+      // Merged is terminal success, not a live collision — use the add/done
+      // tier so it reads distinct from OPEN (accent), CLOSED (delete), and the
+      // stateConflicted "WILL FIGHT" collision warning.
       case 'MERGED':
-        return t.stateConflicted;
+        return t.stateAdded;
       case 'CLOSED':
         return t.stateDeleted;
       default:
@@ -9820,10 +9879,16 @@ sealed class _DeleteBranchOutcome {
   const factory _DeleteBranchOutcome.ok() = _DeleteOk;
   const factory _DeleteBranchOutcome.needsForce() = _DeleteNeedsForce;
   const factory _DeleteBranchOutcome.error(String message) = _DeleteError;
+  const factory _DeleteBranchOutcome.cancelled() = _DeleteCancelled;
 }
 
 class _DeleteOk extends _DeleteBranchOutcome {
   const _DeleteOk();
+}
+
+/// The user cancelled the safety window — nothing was deleted.
+class _DeleteCancelled extends _DeleteBranchOutcome {
+  const _DeleteCancelled();
 }
 
 class _DeleteNeedsForce extends _DeleteBranchOutcome {
@@ -9909,15 +9974,20 @@ class _BranchCardState extends State<_BranchCard> {
     switch (result) {
       case _DeleteOk():
         // The list refreshes via the parent; this card unmounts.
-        break;
+        return;
+      case _DeleteCancelled():
+        _disarm();
+        return;
       case _DeleteNeedsForce():
         _arm();
+        return;
       case _DeleteError(message: final msg):
         _disarmTimer?.cancel();
         setState(() {
           _armedForForce = false;
           _inlineError = msg;
         });
+        return;
     }
   }
 

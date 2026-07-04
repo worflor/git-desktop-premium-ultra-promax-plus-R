@@ -12,86 +12,16 @@ import '../../backend/merge_session.dart';
 import '../../app/repository_state.dart';
 import '../changes/merge_conflict_flow.dart';
 import '../../components/icons/app_icons.dart';
+import 'force_push_guard.dart';
+import 'sync_actions.dart';
 
-
-String _pluralize(int n, String noun) => '$n $noun${n == 1 ? "" : "s"}';
-
-class _ActionDescriptor {
-  final String label;
-  final String detail;
-  final String buttonLabel;
-  final bool disabled;
-  const _ActionDescriptor({
-    required this.label,
-    required this.detail,
-    required this.buttonLabel,
-    this.disabled = false,
-  });
-}
-
-_ActionDescriptor _describeAction(RepositoryStatus? status) {
-  if (status == null) {
-    return const _ActionDescriptor(
-      label: 'Sync',
-      detail: 'Open a repository to manage push and pull operations.',
-      buttonLabel: 'Sync',
-      disabled: true,
-    );
-  }
-
-  final branch = status.branch;
-  if (branch == 'HEAD' || branch.startsWith('(')) {
-    return const _ActionDescriptor(
-      label: 'Detached HEAD',
-      detail: 'Check out a branch before pushing or pulling.',
-      buttonLabel: 'Detached HEAD',
-      disabled: true,
-    );
-  }
-
-  if (status.upstream == null) {
-    return _ActionDescriptor(
-      label: 'Publish branch',
-      detail: 'Push $branch and set its upstream tracking branch.',
-      buttonLabel: 'Publish branch',
-    );
-  }
-
-  if (status.ahead > 0 && status.behind > 0) {
-    return _ActionDescriptor(
-      label: 'Sync branch',
-      detail:
-          'Pull ${_pluralize(status.behind, "commit")} with rebase, then push ${_pluralize(status.ahead, "commit")}.',
-      buttonLabel: 'Pull then push',
-    );
-  }
-
-  if (status.ahead > 0) {
-    return _ActionDescriptor(
-      label: 'Push branch',
-      detail:
-          'Push ${_pluralize(status.ahead, "local commit")} to ${status.upstream}.',
-      buttonLabel: 'Push commits',
-    );
-  }
-
-  if (status.behind > 0) {
-    return _ActionDescriptor(
-      label: 'Pull updates',
-      detail:
-          'Pull ${_pluralize(status.behind, "remote commit")} from ${status.upstream}.',
-      buttonLabel: 'Pull updates',
-    );
-  }
-
-  return _ActionDescriptor(
-    label: 'Sync',
-    detail: 'Fetch from ${status.upstream} and refresh upstream status.',
-    buttonLabel: 'Sync',
-  );
-}
-
-
+/// The sync flyout — the detail surface the topbar sync control opens. Slimmed
+/// from the original standalone panel into an anchored overlay body: a counts
+/// hero, the canonical describe-action label, a one-click sync + fetch-only,
+/// and the recent-activity log. Every sync/pull it fires routes through the
+/// one shared path ([resolveSync] / [resumeConflicts] / [pushRemote]) so it and
+/// the clean-tree pill can't diverge, and its force-push recovery goes through
+/// the shared [confirmForcePush] guard (lease-only).
 class SyncPanel extends StatefulWidget {
   final VoidCallback onClose;
   const SyncPanel({super.key, required this.onClose});
@@ -102,17 +32,20 @@ class SyncPanel extends StatefulWidget {
 class _SyncPanelState extends State<SyncPanel> {
   bool _syncRunning = false;
   bool _fetchRunning = false;
-  // True while the force-push-with-lease recovery is in flight. Used
-  // to disable the recovery button + show "Working…" so a double-tap
-  // can't fire the destructive op twice.
+  // True while the force-push-with-lease recovery is in flight. Used to
+  // disable the recovery button + show "Working…" so a double-tap can't fire
+  // the destructive op twice.
   bool _forceRunning = false;
   String? _actionError;
   SyncData? _lastResult;
-  // Conflicts the user left unresolved (cancelled the editor). Surfaced with
-  // a "Resolve conflicts" recovery that re-enters the unified merge flow.
+  // Conflicts the user left unresolved (cancelled the editor). Surfaced with a
+  // "Resolve conflicts" recovery that re-enters the unified merge flow.
   List<String>? _pendingConflicts;
-  String? _previousRepositoryPath;
-  String? _statusRefreshQueuedFor;
+
+  // Force-push counts: while the destructive recovery is mutating the
+  // remote, the primary sync/fetch buttons must not launch a concurrent
+  // pull/push against the same branch.
+  bool get _busy => _syncRunning || _fetchRunning || _forceRunning;
 
   void _applyOutcome(MergeOutcome outcome) {
     switch (outcome) {
@@ -123,26 +56,23 @@ class _SyncPanelState extends State<SyncPanel> {
           _lastResult = SyncData(
             operation: 'merge',
             remote: 'origin',
-            output: 'Resolved ${paths.length} '
-                'conflicted file${paths.length == 1 ? '' : 's'}.',
+            output: 'Resolved ${pluralize(paths.length, 'conflicted file')}.',
           );
         } else if (paths.isEmpty) {
-          // Cancelled / discarded dirty pull — nothing changed. Show a neutral
-          // confirmation instead of a phantom "N conflicts" recovery notice
-          // (which never renders for an empty list, so the op would vanish
-          // with no success, error, or retry affordance).
+          // Cancelled / discarded dirty pull — nothing changed. Neutral
+          // confirmation instead of a phantom "N conflicts" recovery.
           _lastResult = const SyncData(
             operation: 'sync',
             remote: 'origin',
-            output: 'Cancelled — working tree unchanged.',
+            output: 'Cancelled, working tree unchanged.',
           );
         } else {
           _pendingConflicts = paths;
         }
       case MergeBlockedByLocalChanges(:final paths):
         _actionError =
-            '${paths.length} file${paths.length == 1 ? '' : 's'} have '
-            'uncommitted edits — commit them first to rebase-sync '
+            '${pluralize(paths.length, 'file')} have uncommitted edits, '
+            'commit them first to rebase-sync '
             '(${paths.take(3).join(', ')}${paths.length > 3 ? '…' : ''}).';
       case MergeFailed(:final message):
         _actionError = message;
@@ -153,8 +83,6 @@ class _SyncPanelState extends State<SyncPanel> {
     setState(() {
       _syncRunning = true;
       _actionError = null;
-      // Clear any stale conflict/notice from a previous run; _applyOutcome
-      // below re-sets it if THIS run ends unresolved.
       _pendingConflicts = null;
     });
     final outcome = await resolveSync(context, repo, status);
@@ -163,20 +91,21 @@ class _SyncPanelState extends State<SyncPanel> {
       _syncRunning = false;
       _applyOutcome(outcome);
     });
-    await context.read<RepositoryState>().refreshStatus();
+    // Keyed to the repo this flow actually mutated — a bare refreshStatus()
+    // follows activePath, so a repo switch while the dialog/git op was in
+    // flight would refresh the wrong repo and leave this one stale.
+    await context.read<RepositoryState>().refreshStatusIfActive(repo);
   }
 
-  /// Re-enters the unified flow to finish conflicts the user cancelled.
-  /// Uses [resumeConflicts] (not a fresh pull) so a paused REBASE is driven
-  /// with `rebase --continue` rather than mis-resolved as a new merge.
+  /// Re-enters the unified flow to finish conflicts the user cancelled. Uses
+  /// [resumeConflicts] (not a fresh pull) so a paused REBASE is driven with
+  /// `rebase --continue` rather than mis-resolved as a new merge.
   Future<void> _resolvePendingConflicts(String repo) async {
     setState(() {
       _syncRunning = true;
       _actionError = null;
     });
-    // The sync panel always means "sync", so a recovered rebase owes its
-    // push — opt in explicitly rather than baking the assumption into
-    // resumeConflicts.
+    // The sync flyout always means "sync", so a recovered rebase owes its push.
     final outcome = await resumeConflicts(context, repo, pushAfterRebase: true);
     if (!mounted) return;
     setState(() {
@@ -184,27 +113,21 @@ class _SyncPanelState extends State<SyncPanel> {
       _pendingConflicts = null;
       _applyOutcome(outcome);
     });
-    await context.read<RepositoryState>().refreshStatus();
+    // Keyed to the repo this flow actually mutated — a bare refreshStatus()
+    // follows activePath, so a repo switch while the dialog/git op was in
+    // flight would refresh the wrong repo and leave this one stale.
+    await context.read<RepositoryState>().refreshStatusIfActive(repo);
   }
 
-  /// Force-push-with-lease recovery. Surfaced as a button inside
-  /// `_InlineSyncError` only when the prior sync failed with a
-  /// non-fast-forward error. `--force-with-lease` is the safe form:
-  /// the push fails (instead of overwriting) if the remote has new
-  /// commits since our last fetch.
-  ///
-  /// Targets the *current branch's actual upstream remote*, not
-  /// blindly `origin`. Repos where the active branch tracks a non-
-  /// origin remote (a fork's `upstream`, a personal mirror, etc.)
-  /// would otherwise have their force-push fired at the wrong host
-  /// — a destructive surprise. Bails with a clear error when no
-  /// upstream is configured (the non-FF error path itself implies
-  /// one exists, so this is defensive).
+  /// Force-push-with-lease recovery. Surfaced only when the prior sync failed
+  /// non-fast-forward. Targets the branch's ACTUAL upstream remote (not blindly
+  /// `origin`) and routes the confirm through the shared [confirmForcePush]
+  /// guard — lease-only, never bare force.
   Future<void> _runForcePushRecovery(
     String repo,
     RepositoryStatus status,
   ) async {
-    final target = _resolveUpstream(status);
+    final target = resolveUpstream(status);
     if (target == null) {
       setState(() {
         _actionError =
@@ -212,9 +135,12 @@ class _SyncPanelState extends State<SyncPanel> {
       });
       return;
     }
-    final confirmed = await _confirmForcePush(target);
-    if (!confirmed) return;
-    if (!mounted) return;
+    final confirmed = await confirmForcePush(
+      context,
+      remote: target.remote,
+      branch: target.branch,
+    );
+    if (!confirmed || !mounted) return;
     setState(() {
       _forceRunning = true;
       _actionError = null;
@@ -222,90 +148,21 @@ class _SyncPanelState extends State<SyncPanel> {
     final r = await pushRemote(
       repo,
       remote: target.remote,
-      branch: status.branch,
+      // Explicit local:upstream refspec so the force-push lands on the ref
+      // the confirm named, not a remote branch matching the local name
+      // (they differ when the branch tracks a differently-named upstream).
+      branch: '${status.branch}:${target.branch}',
       forceWithLease: true,
     );
     if (!mounted) return;
     setState(() {
       _forceRunning = false;
-      if (!r.ok) {
-        _actionError = r.error;
-      } else {
-        _actionError = null;
-      }
+      _actionError = r.ok ? null : r.error;
     });
-    await context.read<RepositoryState>().refreshStatus();
-  }
-
-  /// Confirm dialog for force-push. Force-with-lease is safe relative
-  /// to bare `--force` (won't overwrite commits the user hasn't
-  /// fetched), but it still rewrites remote history — worth a
-  /// deliberate confirm. Surfaces the resolved remote + branch ref
-  /// so the user can verify the target before authorising; this is
-  /// the only place where the actual push destination is shown.
-  Future<bool> _confirmForcePush(_UpstreamTarget target) async {
-    final t = context.tokens;
-    final res = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          'Force push (with lease)?',
-          style: TextStyle(color: t.textStrong, fontSize: 14),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Target: ${target.remote}/${target.branch}',
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 11.5,
-                fontFamily: AppFonts.mono,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This rewrites the remote branch with your local history. '
-              '“With lease” aborts if someone pushed to the remote after '
-              'your last fetch — but already-fetched changes will still '
-              'be overwritten. Use only when you intended a rebase or '
-              'amend that diverged the branch.',
-              style:
-                  TextStyle(color: t.textNormal, fontSize: 12, height: 1.45),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Force push'),
-          ),
-        ],
-      ),
-    );
-    return res == true;
-  }
-
-  /// Parse `status.upstream` (shape: `<remote>/<remote-branch-ref>`,
-  /// where `<remote-branch-ref>` may itself contain slashes for
-  /// nested branch names like `feature/foo`) into its components.
-  /// Returns null when no upstream is configured or the value is
-  /// malformed. The `remote` is everything before the FIRST slash;
-  /// the rest is the remote ref.
-  _UpstreamTarget? _resolveUpstream(RepositoryStatus status) {
-    final upstream = status.upstream;
-    if (upstream == null || upstream.isEmpty) return null;
-    final slash = upstream.indexOf('/');
-    if (slash <= 0 || slash >= upstream.length - 1) return null;
-    return _UpstreamTarget(
-      remote: upstream.substring(0, slash),
-      branch: upstream.substring(slash + 1),
-    );
+    // Keyed to the repo this flow actually mutated — a bare refreshStatus()
+    // follows activePath, so a repo switch while the dialog/git op was in
+    // flight would refresh the wrong repo and leave this one stale.
+    await context.read<RepositoryState>().refreshStatusIfActive(repo);
   }
 
   Future<void> _runFetch(String repo) async {
@@ -323,25 +180,20 @@ class _SyncPanelState extends State<SyncPanel> {
         _actionError = r.error;
       }
     });
-    await context.read<RepositoryState>().refreshStatus();
+    // Keyed to the repo this flow actually mutated — a bare refreshStatus()
+    // follows activePath, so a repo switch while the dialog/git op was in
+    // flight would refresh the wrong repo and leave this one stale.
+    await context.read<RepositoryState>().refreshStatusIfActive(repo);
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    // Narrow the RepositoryState subscription to the four fields the
-    // sync panel actually rebuilds against. `repo` below is the
-    // `context.read` view used for mutating methods and passed into
-    // helpers that expect the full instance — `read` doesn't
-    // subscribe, so it doesn't reintroduce a whole-notifier rebuild.
+    // Narrow the RepositoryState subscription to the fields the flyout rebuilds
+    // against. `repo` below is a `context.read` view for mutating methods.
     final repoSnapshot = context.select<
         RepositoryState,
-        ({
-          String? path,
-          RepositoryStatus? status,
-          bool loading,
-          String? error,
-        })>(
+        ({String? path, RepositoryStatus? status, bool loading, String? error})>(
       (s) => (
         path: s.activePath,
         status: s.status,
@@ -351,26 +203,7 @@ class _SyncPanelState extends State<SyncPanel> {
     );
     final repoPath = repoSnapshot.path;
     final status = repoSnapshot.status;
-    final repo = context.read<RepositoryState>();
-    final action = _describeAction(status);
-    final busy = _syncRunning || _fetchRunning;
-
-    _resetWhenRepositoryChanges(repoPath);
-    _ensureStatusLoaded(repoPath, status, repo);
-
-    String fetchStatusText;
-    if (_fetchRunning) {
-      fetchStatusText = 'Checking remote for new commits...';
-    } else if (_lastResult?.operation == 'fetch') {
-      fetchStatusText = 'Remote status refreshed';
-    } else if (status != null) {
-      final changed = status.files.length;
-      fetchStatusText = changed == 0
-          ? 'Clean working tree'
-          : '${_pluralize(changed, "changed file")} ready to review';
-    } else {
-      fetchStatusText = '';
-    }
+    final action = describeSyncAction(status);
 
     return MaterialSurface(
       tone: AppMaterialTone.panelStrong,
@@ -378,62 +211,15 @@ class _SyncPanelState extends State<SyncPanel> {
       elevated: true,
       innerHighlight: true,
       glaze: true,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              t.chromeAccent.withValues(alpha: 0.08),
-              Colors.transparent,
-            ],
-            stops: const [0, 0.28],
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
-              decoration: BoxDecoration(
-                border: Border(
-                    bottom: BorderSide(
-                        color: t.chromeBorder.withValues(alpha: 0.12))),
-              ),
-              child: Row(children: [
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Remote',
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0)),
-                  const SizedBox(height: 2),
-                  Text('Sync',
-                      style: TextStyle(
-                          color: t.textStrong,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700)),
-                ]),
-                const Spacer(),
-                _GhostBtn(label: 'Close', t: t, onTap: widget.onClose),
-              ]),
-            ),
-
-            Flexible(
-              fit: FlexFit.loose,
-              child: _buildBody(
-                t: t,
-                repoPath: repoPath,
-                repo: repo,
-                status: status,
-                action: action,
-                busy: busy,
-                fetchStatusText: fetchStatusText,
-              ),
-            ),
-          ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 460),
+        child: _buildBody(
+          t: t,
+          repoPath: repoPath,
+          status: status,
+          loading: repoSnapshot.loading,
+          error: repoSnapshot.error,
+          action: action,
         ),
       ),
     );
@@ -442,32 +228,28 @@ class _SyncPanelState extends State<SyncPanel> {
   Widget _buildBody({
     required AppTokens t,
     required String? repoPath,
-    required RepositoryState repo,
     required RepositoryStatus? status,
-    required _ActionDescriptor action,
-    required bool busy,
-    required String fetchStatusText,
+    required bool loading,
+    required String? error,
+    required SyncActionDescriptor action,
   }) {
     if (repoPath == null) {
       return const AppStatusView.noRepository(compact: true);
     }
-
-    if (status == null && repo.statusLoading) {
+    if (status == null && loading) {
       return const AppStatusView.loading(
         title: 'Loading remote status',
         message: 'Checking branch tracking information.',
         compact: true,
       );
     }
-
-    if (status == null && repo.statusError != null) {
+    if (status == null && error != null) {
       return AppStatusView.error(
         title: 'Remote status unavailable',
-        message: repo.statusError!,
+        message: error,
         compact: true,
       );
     }
-
     if (status == null) {
       return const AppStatusView.loading(
         title: 'Loading remote status',
@@ -480,243 +262,38 @@ class _SyncPanelState extends State<SyncPanel> {
       t: t,
       status: status,
       action: action,
-      busy: busy,
+      busy: _busy,
       syncRunning: _syncRunning,
       fetchRunning: _fetchRunning,
-      fetchStatusText: fetchStatusText,
       actionError: _actionError,
       lastResult: _lastResult,
       pendingConflicts: _pendingConflicts,
+      forceRunning: _forceRunning,
+      onClose: widget.onClose,
       onResolveConflicts: () => _resolvePendingConflicts(repoPath),
       onSync: () => _runSync(repoPath, status),
       onFetch: () => _runFetch(repoPath),
       onForcePushRecovery: () => _runForcePushRecovery(repoPath, status),
-      forceRunning: _forceRunning,
     );
   }
-
-  void _resetWhenRepositoryChanges(String? repoPath) {
-    if (_previousRepositoryPath == repoPath) return;
-    _previousRepositoryPath = repoPath;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() {
-        _syncRunning = false;
-        _fetchRunning = false;
-        _actionError = null;
-        _lastResult = null;
-        _pendingConflicts = null;
-      });
-    });
-  }
-
-  void _ensureStatusLoaded(
-    String? repoPath,
-    RepositoryStatus? status,
-    RepositoryState repo,
-  ) {
-    if (repoPath == null ||
-        status != null ||
-        repo.statusLoading ||
-        repo.statusError != null ||
-        _statusRefreshQueuedFor == repoPath) {
-      return;
-    }
-
-    _statusRefreshQueuedFor = repoPath;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || context.read<RepositoryState>().activePath != repoPath) {
-        return;
-      }
-      await context.read<RepositoryState>().refreshStatus();
-      if (mounted && _statusRefreshQueuedFor == repoPath) {
-        _statusRefreshQueuedFor = null;
-      }
-    });
-  }
-}
-
-
-class _InlineSyncError extends StatelessWidget {
-  final AppTokens t;
-  final String title;
-  final String body;
-  /// Optional contextual recovery action. When the sync error has a
-  /// well-known recovery (e.g., non-fast-forward → force-with-lease),
-  /// the parent threads it here so the action is one click away
-  /// instead of buried in another panel. Null when no recovery is
-  /// available — the row stays a passive error display.
-  final String? recoveryLabel;
-  final VoidCallback? onRecovery;
-  final bool recoveryRunning;
-
-  const _InlineSyncError({
-    required this.t,
-    required this.title,
-    required this.body,
-    this.recoveryLabel,
-    this.onRecovery,
-    this.recoveryRunning = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: t.stateConflicted.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: t.stateConflicted.withValues(alpha: 0.24)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: t.stateConflicted,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            body,
-            style: TextStyle(
-              color: t.stateConflicted,
-              fontSize: 12,
-              height: 1.45,
-            ),
-          ),
-          if (recoveryLabel != null && onRecovery != null) ...[
-            const SizedBox(height: 10),
-            _RecoveryButton(
-              tokens: t,
-              label: recoveryLabel!,
-              running: recoveryRunning,
-              onTap: onRecovery!,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// Thin recovery-action button that lives inside [_InlineSyncError].
-/// Visually distinct from the primary sync button — same chrome
-/// register but a smaller, error-tinted variant. Used today only
-/// for force-push-with-lease; reusable for any future recovery
-/// surface bound to a sync error.
-class _RecoveryButton extends StatefulWidget {
-  final AppTokens tokens;
-  final String label;
-  final VoidCallback onTap;
-  final bool running;
-  const _RecoveryButton({
-    required this.tokens,
-    required this.label,
-    required this.onTap,
-    required this.running,
-  });
-
-  @override
-  State<_RecoveryButton> createState() => _RecoveryButtonState();
-}
-
-class _RecoveryButtonState extends State<_RecoveryButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = widget.tokens;
-    return MouseRegion(
-      cursor: widget.running
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.running ? null : widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: AppMotion.snap,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: _hovered
-                ? t.stateConflicted.withValues(alpha: 0.16)
-                : t.stateConflicted.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.pillRadius,
-            ),
-            border: Border.all(
-              color: t.stateConflicted.withValues(alpha: 0.45),
-              width: 0.8,
-            ),
-          ),
-          child: Text(
-            widget.running ? 'Working…' : widget.label,
-            style: TextStyle(
-              color: t.stateConflicted,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Resolved push target — the remote name plus the remote-branch
-/// ref the user's local branch tracks. Threaded through the confirm
-/// dialog so the user sees exactly which destination is about to
-/// be force-pushed.
-class _UpstreamTarget {
-  final String remote;
-  final String branch;
-  const _UpstreamTarget({required this.remote, required this.branch});
-}
-
-/// True when [stderr] looks like git rejected the push for being
-/// non-fast-forward. Matches the canonical phrases git emits across
-/// its localised messages and the older "Updates were rejected"
-/// form. Conservative: false negatives are fine (no recovery offered),
-/// false positives would be worse (offering force-push for non-FF
-/// errors is the wrong fix).
-bool _isNonFastForwardError(String? stderr) {
-  if (stderr == null) return false;
-  final s = stderr.toLowerCase();
-  return s.contains('non-fast-forward') ||
-      (s.contains('rejected') && s.contains('fetch first')) ||
-      (s.contains('rejected') && s.contains('non-fast'));
 }
 
 class _SyncBody extends StatelessWidget {
   final AppTokens t;
   final RepositoryStatus status;
-  final _ActionDescriptor action;
+  final SyncActionDescriptor action;
   final bool busy;
   final bool syncRunning;
   final bool fetchRunning;
-  final String fetchStatusText;
   final String? actionError;
   final SyncData? lastResult;
-  /// Conflicts left unresolved after the user cancelled the merge editor.
-  /// Rendered as a recovery notice that re-enters the unified flow.
   final List<String>? pendingConflicts;
+  final bool forceRunning;
+  final VoidCallback onClose;
   final VoidCallback? onResolveConflicts;
   final VoidCallback onSync;
   final VoidCallback onFetch;
-  /// Force-push-with-lease recovery action — wired through from the
-  /// parent state. Null when there's no active recovery available
-  /// for the current error (the inline error block falls through to
-  /// the no-recovery branch).
   final VoidCallback? onForcePushRecovery;
-  final bool forceRunning;
 
   const _SyncBody({
     required this.t,
@@ -725,15 +302,15 @@ class _SyncBody extends StatelessWidget {
     required this.busy,
     required this.syncRunning,
     required this.fetchRunning,
-    required this.fetchStatusText,
     required this.actionError,
     required this.lastResult,
-    this.pendingConflicts,
-    this.onResolveConflicts,
+    required this.pendingConflicts,
+    required this.forceRunning,
+    required this.onClose,
+    required this.onResolveConflicts,
     required this.onSync,
     required this.onFetch,
-    this.onForcePushRecovery,
-    this.forceRunning = false,
+    required this.onForcePushRecovery,
   });
 
   @override
@@ -744,128 +321,29 @@ class _SyncBody extends StatelessWidget {
 
     return ListView(
       shrinkWrap: true,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       children: [
-        MaterialSurface(
-          tone: AppMaterialTone.surface1,
-          borderAlpha: 0.12,
-          elevated: false,
-          innerHighlight: true,
-          glaze: true,
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-          child: Column(
-            children: [
-              _HeroSection(t: t, status: status),
-              const SizedBox(height: 14),
-              _ActionBlock(
-                t: t,
-                action: action,
-                fetchStatusText: fetchStatusText,
-                busy: busy,
-                syncRunning: syncRunning,
-                fetchRunning: fetchRunning,
-                onSync: onSync,
-                onFetch: onFetch,
-              ),
-              const SizedBox(height: 10),
-              _MetricsSection(t: t, status: status),
-            ],
-          ),
-        ),
-
-        // Error — with optional force-push-with-lease recovery when
-        // the failure looks like a non-fast-forward (the canonical
-        // "you rebased / amended; remote diverged" case). The
-        // recovery action is the only way to surface force-push in
-        // the UI, and it only appears in the exact context where
-        // it's the right answer.
-        if (actionError != null) ...[
-          const SizedBox(height: 12),
-          _InlineSyncError(
-            t: t,
-            title: 'Sync failed',
-            body: actionError!,
-            recoveryLabel: _isNonFastForwardError(actionError) &&
-                    onForcePushRecovery != null
-                ? 'Force push (with lease)'
-                : null,
-            onRecovery: _isNonFastForwardError(actionError)
-                ? onForcePushRecovery
-                : null,
-            recoveryRunning: forceRunning,
-          ),
-        ],
-
-        // Unresolved conflicts — the merge ran but the user left the editor
-        // without finishing. One click re-enters the same merge flow.
-        if (pendingConflicts != null && pendingConflicts!.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _InlineSyncError(
-            t: t,
-            title: 'Conflicts to resolve',
-            body: '${pendingConflicts!.length} '
-                'file${pendingConflicts!.length == 1 ? '' : 's'} need '
-                'resolving: '
-                '${pendingConflicts!.take(3).join(', ')}'
-                '${pendingConflicts!.length > 3 ? '…' : ''}',
-            recoveryLabel: onResolveConflicts != null ? 'Resolve conflicts' : null,
-            onRecovery: onResolveConflicts,
-            recoveryRunning: syncRunning,
-          ),
-        ],
-
-        // Activity log
-        if (showLog) ...[
-          const SizedBox(height: 12),
-          _ActivityLog(t: t, result: lastResult!),
-        ],
-      ],
-    );
-  }
-}
-
-
-class _HeroSection extends StatelessWidget {
-  final AppTokens t;
-  final RepositoryStatus status;
-  const _HeroSection({required this.t, required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Current branch',
-          style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.06)),
-      const SizedBox(height: 6),
-      Row(children: [
-        MaterialSurface(
-          tone: AppMaterialTone.surface0,
-          radius: 6,
-          elevated: false,
-          borderColor: t.itemActiveBorder,
-          borderAlpha: 1,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            AppIcon(name: 'git-branch', size: 12, color: t.accentBright),
-            const SizedBox(width: 5),
-            Text(status.branch,
-                style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500)),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: MaterialSurface(
-            tone: AppMaterialTone.surface2,
+        // Compact header: branch → upstream, close.
+        Row(children: [
+          MaterialSurface(
+            tone: AppMaterialTone.surface0,
             radius: 6,
             elevated: false,
-            borderAlpha: 0.2,
+            borderColor: t.itemActiveBorder,
+            borderAlpha: 1,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              AppIcon(name: 'git-branch', size: 12, color: t.accentBright),
+              const SizedBox(width: 5),
+              Text(status.branch,
+                  style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
             child: Text(
               status.upstream ?? 'No upstream',
               style: TextStyle(
@@ -874,29 +352,105 @@ class _HeroSection extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-        ),
-      ]),
-      const SizedBox(height: 12),
-      Row(children: [
-        _SummaryPill(
-            label: 'Ahead',
-            value: '${status.ahead}',
-            color: t.stateAdded,
-            t: t),
-        const SizedBox(width: 6),
-        _SummaryPill(
-            label: 'Behind',
-            value: '${status.behind}',
-            color: t.stateModified,
-            t: t),
-        const SizedBox(width: 6),
-        _SummaryPill(
-            label: 'Tree',
-            value: '${status.files.length}',
-            color: t.textMuted,
-            t: t),
-      ]),
-    ]);
+          const SizedBox(width: 8),
+          _GhostBtn(label: 'Close', t: t, onTap: onClose),
+        ]),
+        const SizedBox(height: 12),
+
+        // Counts hero — git-status coloured (ahead = added, behind = modified).
+        Row(children: [
+          _SummaryPill(
+              label: 'Ahead',
+              value: '${status.ahead}',
+              color: status.ahead > 0 ? t.stateAdded : t.textMuted,
+              t: t),
+          const SizedBox(width: 6),
+          _SummaryPill(
+              label: 'Behind',
+              value: '${status.behind}',
+              color: status.behind > 0 ? t.stateModified : t.textMuted,
+              t: t),
+          const SizedBox(width: 6),
+          _SummaryPill(
+              label: 'Tree',
+              value: '${status.files.length}',
+              color: t.textMuted,
+              t: t),
+        ]),
+        const SizedBox(height: 14),
+
+        // Action block: canonical label + detail (spells out the rebase when
+        // the branch has diverged) + primary sync / fetch-only.
+        Text(action.label,
+            style: TextStyle(
+                color: t.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w600)),
+        const SizedBox(height: 4),
+        Text(action.detail,
+            style: TextStyle(color: t.textNormal, fontSize: 12, height: 1.4)),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: _PrimaryBtn(
+              label: syncRunning ? 'Running sync…' : action.buttonLabel,
+              t: t,
+              enabled: !busy && !action.disabled,
+              onTap: onSync,
+            ),
+          ),
+          const SizedBox(width: 8),
+          _GhostBtn(
+            label: fetchRunning ? 'Fetching…' : 'Fetch only',
+            t: t,
+            enabled: !busy,
+            onTap: onFetch,
+            note: 'Utility',
+          ),
+        ]),
+
+        // Error — with force-push-with-lease recovery when the failure looks
+        // like a non-fast-forward. The recovery is the only place force-push is
+        // surfaced, and only in the exact context where it's the right answer.
+        if (actionError != null) ...[
+          const SizedBox(height: 12),
+          _InlineSyncError(
+            t: t,
+            title: 'Sync failed',
+            body: actionError!,
+            recoveryLabel:
+                isNonFastForwardError(actionError) && onForcePushRecovery != null
+                    ? 'Force push (with lease)'
+                    : null,
+            onRecovery:
+                isNonFastForwardError(actionError) ? onForcePushRecovery : null,
+            recoveryRunning: forceRunning,
+          ),
+        ],
+
+        // Unresolved conflicts — one click re-enters the same merge flow.
+        if (pendingConflicts != null && pendingConflicts!.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _InlineSyncError(
+            t: t,
+            title: 'Conflicts to resolve',
+            body: '${pluralize(pendingConflicts!.length, 'file')} need '
+                'resolving: ${pendingConflicts!.take(3).join(', ')}'
+                '${pendingConflicts!.length > 3 ? '…' : ''}',
+            recoveryLabel:
+                onResolveConflicts != null ? 'Resolve conflicts' : null,
+            onRecovery: onResolveConflicts,
+            recoveryRunning: syncRunning,
+          ),
+        ],
+
+        // Activity log.
+        if (showLog) ...[
+          const SizedBox(height: 12),
+          _ActivityLog(t: t, result: lastResult!),
+        ],
+      ],
+    );
   }
 }
 
@@ -938,222 +492,122 @@ class _SummaryPill extends StatelessWidget {
   }
 }
 
-
-class _ActionBlock extends StatelessWidget {
+class _InlineSyncError extends StatelessWidget {
   final AppTokens t;
-  final _ActionDescriptor action;
-  final String fetchStatusText;
-  final bool busy;
-  final bool syncRunning;
-  final bool fetchRunning;
-  final VoidCallback onSync;
-  final VoidCallback onFetch;
+  final String title;
+  final String body;
+  final String? recoveryLabel;
+  final VoidCallback? onRecovery;
+  final bool recoveryRunning;
 
-  const _ActionBlock({
+  const _InlineSyncError({
     required this.t,
-    required this.action,
-    required this.fetchStatusText,
-    required this.busy,
-    required this.syncRunning,
-    required this.fetchRunning,
-    required this.onSync,
-    required this.onFetch,
+    required this.title,
+    required this.body,
+    this.recoveryLabel,
+    this.onRecovery,
+    this.recoveryRunning = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(action.label,
-                style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 2),
-            Text(fetchStatusText,
-                style: TextStyle(color: t.textMuted, fontSize: 11)),
-          ]),
-        ),
-      ]),
-      const SizedBox(height: 6),
-      Text(action.detail, style: TextStyle(color: t.textNormal, fontSize: 12)),
-      const SizedBox(height: 12),
-      Row(children: [
-        Expanded(
-          child: _PrimaryBtn(
-            label: syncRunning ? 'Running sync...' : action.buttonLabel,
-            t: t,
-            enabled: !busy && !action.disabled,
-            onTap: onSync,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: t.stateConflicted.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: t.stateConflicted.withValues(alpha: 0.24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(title,
+              style: TextStyle(
+                  color: t.stateConflicted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(body,
+              style: TextStyle(
+                  color: t.stateConflicted, fontSize: 12, height: 1.45)),
+          if (recoveryLabel != null && onRecovery != null) ...[
+            const SizedBox(height: 10),
+            _RecoveryButton(
+              tokens: t,
+              label: recoveryLabel!,
+              running: recoveryRunning,
+              onTap: onRecovery!,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin recovery-action button that lives inside [_InlineSyncError] — same
+/// chrome register as the primary sync button but smaller and error-tinted.
+class _RecoveryButton extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final VoidCallback onTap;
+  final bool running;
+  const _RecoveryButton({
+    required this.tokens,
+    required this.label,
+    required this.onTap,
+    required this.running,
+  });
+
+  @override
+  State<_RecoveryButton> createState() => _RecoveryButtonState();
+}
+
+class _RecoveryButtonState extends State<_RecoveryButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    return MouseRegion(
+      cursor:
+          widget.running ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.running ? null : widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: AppMotion.snap,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.stateConflicted.withValues(alpha: 0.16)
+                : t.stateConflicted.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius,
+            ),
+            border: Border.all(
+              color: t.stateConflicted.withValues(alpha: 0.45),
+              width: 0.8,
+            ),
+          ),
+          child: Text(
+            widget.running ? 'Working…' : widget.label,
+            style: TextStyle(
+              color: t.stateConflicted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
           ),
         ),
-        const SizedBox(width: 8),
-        _GhostBtn(
-          label: fetchRunning ? 'Fetching...' : 'Fetch only',
-          t: t,
-          enabled: !busy,
-          onTap: onFetch,
-          note: 'Utility',
-        ),
-      ]),
-    ]);
-  }
-}
-
-
-class _MetricsSection extends StatelessWidget {
-  final AppTokens t;
-  final RepositoryStatus status;
-  const _MetricsSection({required this.t, required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final metrics = [
-      _MetricRow(
-        symbol: 'push',
-        label: 'Ahead',
-        shortLabel: 'Push',
-        value: status.ahead == 0
-            ? 'Nothing to push'
-            : _pluralize(status.ahead, 'commit'),
-        tone: status.ahead > 0 ? t.stateAdded : null,
-        t: t,
       ),
-      _MetricRow(
-        symbol: 'pull',
-        label: 'Behind',
-        shortLabel: 'Pull',
-        value: status.behind == 0
-            ? 'Already caught up'
-            : _pluralize(status.behind, 'commit'),
-        tone: status.behind > 0 ? t.stateModified : null,
-        t: t,
-      ),
-      _MetricRow(
-        symbol: 'tree',
-        label: 'Working tree',
-        shortLabel: 'Files',
-        value: status.files.isEmpty
-            ? 'Clean working tree'
-            : _pluralize(status.files.length, 'changed file'),
-        tone: null,
-        t: t,
-      ),
-    ];
-
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-            top: BorderSide(color: t.chromeBorderFaint)),
-      ),
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-          children: metrics.asMap().entries.map((e) {
-        return Column(children: [
-          e.value,
-          if (e.key < metrics.length - 1)
-            Divider(height: 1, color: t.chromeBorder.withValues(alpha: 0.1)),
-        ]);
-      }).toList()),
     );
   }
 }
-
-class _MetricRow extends StatelessWidget {
-  final String symbol;
-  final String label;
-  final String shortLabel;
-  final String value;
-  final Color? tone;
-  final AppTokens t;
-  const _MetricRow({
-    required this.symbol,
-    required this.label,
-    required this.shortLabel,
-    required this.value,
-    required this.tone,
-    required this.t,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final valueColor = tone ?? t.textNormal;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-      child: Row(children: [
-        _MetricSymbol(symbol: symbol, color: tone ?? t.textMuted),
-        const SizedBox(width: 10),
-        Text(label, style: TextStyle(color: t.textNormal, fontSize: 12)),
-        const SizedBox(width: 6),
-        Text(shortLabel, style: TextStyle(color: t.textMuted, fontSize: 10)),
-        const Spacer(),
-        Text(value,
-            style: TextStyle(
-                color: valueColor, fontSize: 12, fontWeight: FontWeight.w600)),
-      ]),
-    );
-  }
-}
-
-class _MetricSymbol extends StatelessWidget {
-  final String symbol;
-  final Color color;
-  const _MetricSymbol({required this.symbol, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(14, 14),
-      painter: _MetricSymbolPainter(symbol: symbol, color: color),
-    );
-  }
-}
-
-class _MetricSymbolPainter extends CustomPainter {
-  final String symbol;
-  final Color color;
-  const _MetricSymbolPainter({required this.symbol, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    final w = size.width;
-    final h = size.height;
-
-    if (symbol == 'push') {
-      // Vertical line up + arrowhead up
-      canvas.drawLine(Offset(w / 2, h * 0.8), Offset(w / 2, h * 0.2), paint);
-      canvas.drawLine(Offset(w / 2, h * 0.2), Offset(w * 0.3, h * 0.45), paint);
-      canvas.drawLine(Offset(w / 2, h * 0.2), Offset(w * 0.7, h * 0.45), paint);
-    } else if (symbol == 'pull') {
-      // Vertical line down + arrowhead down
-      canvas.drawLine(Offset(w / 2, h * 0.2), Offset(w / 2, h * 0.8), paint);
-      canvas.drawLine(Offset(w / 2, h * 0.8), Offset(w * 0.3, h * 0.55), paint);
-      canvas.drawLine(Offset(w / 2, h * 0.8), Offset(w * 0.7, h * 0.55), paint);
-    } else {
-      // Tree: 3 horizontal lines
-      canvas.drawLine(
-          Offset(w * 0.2, h * 0.25), Offset(w * 0.8, h * 0.25), paint);
-      canvas.drawLine(
-          Offset(w * 0.2, h * 0.5), Offset(w * 0.8, h * 0.5), paint);
-      canvas.drawLine(
-          Offset(w * 0.2, h * 0.75), Offset(w * 0.8, h * 0.75), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MetricSymbolPainter old) =>
-      old.symbol != symbol || old.color != color;
-}
-
 
 class _ActivityLog extends StatelessWidget {
   final AppTokens t;
@@ -1170,7 +624,7 @@ class _ActivityLog extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Text(
-            'Last sync activity: ${result.operation}',
+            'Last activity: ${result.operation}',
             style: TextStyle(
                 color: t.textMuted, fontSize: 11, fontWeight: FontWeight.w600),
           ),
@@ -1191,8 +645,6 @@ class _ActivityLog extends StatelessWidget {
     );
   }
 }
-
-
 
 class _PrimaryBtn extends StatefulWidget {
   final String label;
@@ -1242,25 +694,26 @@ class _PrimaryBtnState extends State<_PrimaryBtn> {
               color: chrome.background,
               gradient: chrome.gradient,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: chrome.borderColor,
-              ),
+              border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
             child: Transform.translate(
               offset: chrome.offset,
-              child:
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 AppIcon(
                     name: 'sync',
                     size: 13,
                     color: widget.enabled ? t.accentBright : t.textMuted),
                 const SizedBox(width: 6),
-                Text(widget.label,
-                    style: TextStyle(
-                        color: widget.enabled ? t.btnText : t.textMuted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
+                Flexible(
+                  child: Text(widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: widget.enabled ? t.btnText : t.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                ),
               ]),
             ),
           ),

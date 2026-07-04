@@ -219,6 +219,23 @@ class RepositoryState extends ChangeNotifier {
     return refreshStatus();
   }
 
+  /// True iff [path] is the active repo — so [status] currently reflects it.
+  /// Async flows that mutate a SPECIFIC repo use this to decide whether the
+  /// active [status]/[refreshStatus] is even about the repo they touched.
+  bool isActive(String path) => !_disposed && _activePath == path;
+
+  /// Refresh status only when [path] is still active. [refreshStatus] and
+  /// [status] are single-slot, keyed to [activePath]; a long async flow
+  /// (palette mutation, force-push confirm, stash conflict editor, the global
+  /// undo pill) can mutate repo A while the user switches to repo B, and an
+  /// unguarded refresh would then reload B — leaving A stale and masking B's
+  /// real state. Skipping is safe: a switched-away repo re-reads its status
+  /// when it becomes active again (setActivePath calls refreshStatus).
+  Future<void> refreshStatusIfActive(String path) {
+    if (!isActive(path)) return Future.value();
+    return refreshStatus();
+  }
+
   Future<void> refreshStatus() async {
     if (_disposed) return;
     final path = _activePath;

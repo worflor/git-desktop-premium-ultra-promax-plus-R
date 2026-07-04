@@ -19,8 +19,11 @@ import '../../app/worktree_state.dart';
 import '../../backend/dtos.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
+import '../../backend/git_result.dart';
 import '../changes/merge_conflict_editor.dart';
 import '../changes/merge_conflict_flow.dart' as merge_flow;
+import '../sync/force_push_guard.dart';
+import '../sync/sync_actions.dart';
 import '../../backend/merge_session.dart' show MergeClean, mergeOutcomeMessage;
 import '../history_surgery/history_surgery_page.dart';
 import '../orrery/orrery_page.dart';
@@ -1068,6 +1071,34 @@ List<PaletteEntry> _externalToolEntries(
 
 // ── Git Commands ───────────────────────────────────────────────────
 
+/// Surface a bespoke palette mutation's outcome exactly as the centralized
+/// [PaletteEntry.onMutate] path does: a terse success toast, or a friendly
+/// failure toast (classified from stderr) with the raw output one tap away.
+/// Used by the entries that run a custom flow — force-push confirm, stash-pop
+/// conflict routing — which can't hand a bare executor to `onMutate`.
+void _surfaceGitOutcome(
+  BuildContext context, {
+  required bool ok,
+  String? error,
+  required String label,
+}) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (ok) {
+    messenger?.showSnackBar(SnackBar(content: Text('$label complete')));
+    return;
+  }
+  final f = git.classifyGitError(error ?? '');
+  messenger?.showSnackBar(SnackBar(
+    content: Text('$label failed: ${f.message}'),
+    action: f.detail.isNotEmpty && f.detail != f.message
+        ? SnackBarAction(
+            label: 'Copy',
+            onPressed: () => Clipboard.setData(ClipboardData(text: f.detail)),
+          )
+        : null,
+  ));
+}
+
 List<PaletteEntry> _gitCommandEntries(
   BuildContext context,
   String repoPath,
@@ -1091,7 +1122,8 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncFetch},
-      onExecute: () => git.fetchRemote(repoPath),
+      onMutate: () => git.fetchRemote(repoPath),
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.pull',
@@ -1109,11 +1141,17 @@ List<PaletteEntry> _gitCommandEntries(
         // of the old silent fire-and-forget. The opener (shell) context
         // outlives the palette; the mounted guard fails closed if not.
         final outcome = await merge_flow.resolvePull(context, repoPath);
-        if (context.mounted && outcome is! MergeClean) {
+        if (!context.mounted) return;
+        if (outcome is! MergeClean) {
           ScaffoldMessenger.maybeOf(context)?.showSnackBar(
             SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Pull'))),
           );
         }
+        // Clean or not, git moved — refresh the repo this pull actually
+        // targeted (same repo-keyed guard as every other sync flow).
+        await context
+            .read<RepositoryState>()
+            .refreshStatusIfActive(repoPath);
       },
     ),
     PaletteEntry(
@@ -1127,7 +1165,8 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncPush},
-      onExecute: () => git.pushRemote(repoPath),
+      onMutate: () => git.pushRemote(repoPath),
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.force-push',
@@ -1138,7 +1177,42 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncForcePush},
-      onExecute: () => git.pushRemote(repoPath, forceWithLease: true),
+      onExecute: () async {
+        // Force-push confirms, always, through the one shared guard. Resolve
+        // the ACTUAL upstream target (not a blind `origin`) so the confirm
+        // names the real destination and the push can't rewrite a fork's
+        // `upstream` on the wrong host. Lease-only, never bare force.
+        final st = status;
+        if (st == null) return;
+        final target = resolveUpstream(st);
+        if (target == null) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text('Cannot force-push: no upstream set for ${st.branch}.'),
+          ));
+          return;
+        }
+        final ok = await confirmForcePush(
+          context,
+          remote: target.remote,
+          branch: target.branch,
+        );
+        if (!ok || !context.mounted) return;
+        final r = await git.pushRemote(
+          repoPath,
+          remote: target.remote,
+          // Push with an explicit local:upstream refspec so the destination
+          // is the SAME ref the confirm named. A bare local branch name
+          // would push to a remote branch matching the LOCAL name, which
+          // diverges when the branch tracks a differently-named upstream.
+          branch: '${st.branch}:${target.branch}',
+          forceWithLease: true,
+        );
+        if (!context.mounted) return;
+        _surfaceGitOutcome(context, ok: r.ok, error: r.error, label: 'Force Push');
+        // Refresh only if the pushed repo is still active — the confirm dialog
+        // may have sat open while the user switched repos.
+        await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
+      },
     ),
     PaletteEntry(
       id: 'cmd.commit',
@@ -1157,7 +1231,8 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stageAll},
-      onExecute: () => git.stagePaths(repoPath, allPaths),
+      onMutate: () => git.stagePaths(repoPath, allPaths),
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.unstage-all',
@@ -1166,7 +1241,8 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.unstageAll},
-      onExecute: () => git.unstagePaths(repoPath, stagedPaths),
+      onMutate: () => git.unstagePaths(repoPath, stagedPaths),
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.discard-all',
@@ -1210,7 +1286,8 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashPush},
-      onExecute: () => git.stashPush(repoPath, includeUntracked: true),
+      onMutate: () => git.stashPush(repoPath, includeUntracked: true),
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.stash-pop',
@@ -1219,7 +1296,57 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashPop},
-      onExecute: () => git.stashPop(repoPath),
+      onExecute: () async {
+        // Pin the top stash by OID before the (possibly long) conflict editor
+        // runs, so the right entry gets dropped even if the list shifts.
+        final stashHash = await git.stashHashAt(repoPath, 0);
+        final r = await git.stashPop(repoPath);
+        if (!context.mounted) return;
+        if (r.ok) {
+          _surfaceGitOutcome(context, ok: true, label: 'Stash Pop');
+          await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
+          return;
+        }
+        // A pop that hit content conflicts leaves UU markers (and keeps the
+        // entry). Route them into the one shared conflict editor, then drop the
+        // entry once resolved — exactly the Changes-page `_pickUpStash` path.
+        final resolved = await merge_flow.resolveSequencerConflicts(
+            context, repoPath, merge_flow.SequencerKind.plain);
+        if (!context.mounted) return;
+        if (resolved) {
+          if (stashHash != null) {
+            await git.stashDropByHash(repoPath, stashHash);
+          }
+          if (context.mounted) {
+            await context
+                .read<RepositoryState>()
+                .refreshStatusIfActive(repoPath);
+          }
+          return;
+        }
+        // `false` means either deferred conflicts (UU still present) or a
+        // genuine non-conflict failure — distinguish so a real error shows its
+        // reason instead of a phantom conflict. Ask git about THIS repo
+        // directly; the active-repo status snapshot may describe another repo
+        // if the user switched while the conflict editor was open.
+        final stillConflicted = await git.hasUnmergedPaths(repoPath);
+        if (!context.mounted) return;
+        if (stillConflicted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+            content: Text(
+                'Stash applied with conflicts. Resolve them on the Changes page.'),
+          ));
+          // The worktree/index DID mutate (UU entries) — refresh so the
+          // Changes page the user was just sent to shows the conflicts,
+          // not the pre-stash state.
+          await context
+              .read<RepositoryState>()
+              .refreshStatusIfActive(repoPath);
+        } else {
+          _surfaceGitOutcome(context,
+              ok: false, error: r.error, label: 'Stash Pop');
+        }
+      },
     ),
     PaletteEntry(
       id: 'cmd.stash-apply',
@@ -1228,7 +1355,40 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashApply},
-      onExecute: () => git.stashApply(repoPath),
+      onExecute: () async {
+        final r = await git.stashApply(repoPath);
+        if (!context.mounted) return;
+        if (r.ok) {
+          _surfaceGitOutcome(context, ok: true, label: 'Stash Apply');
+          await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
+          return;
+        }
+        // Apply keeps the stash by design (no drop) — just route any conflicts
+        // into the shared editor like the Changes page does.
+        final resolved = await merge_flow.resolveSequencerConflicts(
+            context, repoPath, merge_flow.SequencerKind.plain);
+        if (!context.mounted) return;
+        if (resolved) {
+          await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
+          return;
+        }
+        // Path-accurate conflict probe (see stash-pop above).
+        final stillConflicted = await git.hasUnmergedPaths(repoPath);
+        if (!context.mounted) return;
+        if (stillConflicted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+            content: Text(
+                'Stash applied with conflicts. Resolve them on the Changes page.'),
+          ));
+          // Mutated worktree — refresh so Changes shows the conflicts.
+          await context
+              .read<RepositoryState>()
+              .refreshStatusIfActive(repoPath);
+        } else {
+          _surfaceGitOutcome(context,
+              ok: false, error: r.error, label: 'Stash Apply');
+        }
+      },
     ),
     PaletteEntry(
       id: 'cmd.stash-drop',
@@ -1238,7 +1398,18 @@ List<PaletteEntry> _gitCommandEntries(
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashDrop},
-      onExecute: () => git.stashDrop(repoPath),
+      // Identity-pinned like every other stash mutation: resolve the top
+      // entry's OID first and drop THAT, so a list that shifts between the
+      // palette opening and the action firing can't drop the wrong stash.
+      // Fail closed when the pin fails — no positional fallback, ever.
+      onMutate: () async {
+        final hash = await git.stashHashAt(repoPath, 0);
+        if (hash == null) {
+          return const GitResult<void>.err('No stash to drop.');
+        }
+        return git.stashDropByHash(repoPath, hash);
+      },
+      mutatesRepoPath: repoPath,
     ),
     PaletteEntry(
       id: 'cmd.create-tag',

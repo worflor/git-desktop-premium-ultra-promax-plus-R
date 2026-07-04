@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/repository_state.dart';
+import '../../backend/git.dart' as git;
 import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/motion.dart';
@@ -63,8 +64,17 @@ class _CommandPaletteState extends State<CommandPalette> {
     super.initState();
     _palette = context.read<PaletteState>();
     _palette.elevated = widget.elevated;
+    // Palette actions run AFTER the palette closes itself, and the hosting
+    // AnimatedSwitcher tears this element down once the exit transition
+    // ends. Bind the registry to the root-navigator context: it outlives
+    // the panel and sits below every app-level provider, so the async
+    // interactive flows (pull / force-push / stash conflict editors) keep a
+    // mounted context across their awaits instead of no-opping — or, worse,
+    // throwing from Navigator.of — on a torn-down one. Synchronous provider
+    // reads at build time see identical values (all providers are global).
+    final rootContext = Navigator.of(context, rootNavigator: true).context;
     _palette.open(
-      context,
+      rootContext,
       (
         onModeChanged: widget.onModeChanged,
         onOpenXray: widget.onOpenXray,
@@ -140,6 +150,47 @@ class _CommandPaletteState extends State<CommandPalette> {
     if (entry.category == PaletteCategory.file) {
       final path = entry.refPath ?? entry.id.split('.').last;
       _closeAndRun(() => widget.onFileSelected(path));
+      return;
+    }
+
+    final mutate = entry.onMutate;
+    if (mutate != null) {
+      // Capture the ancestors that outlive the palette's own element (its
+      // context is torn down on close), then close and run the mutation:
+      // await the GitResult, surface success/failure through the app's toast
+      // idiom, and refresh status — the same post-action refresh Pull already
+      // gets, now automatic for every mutating entry.
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      final repoState = context.read<RepositoryState>();
+      // The repo this entry declares it mutates (constructor-asserted for
+      // every onMutate entry). Bind the post-op refresh to IT, not to
+      // whatever's active when the Future settles — otherwise switching
+      // repos mid-op refreshes the wrong one.
+      final mutatedPath = entry.mutatesRepoPath ?? repoState.activePath;
+      final label = entry.label;
+      _closeAndRun(() async {
+        final result = await mutate();
+        if (result.ok) {
+          messenger?.showSnackBar(SnackBar(content: Text('$label complete')));
+        } else {
+          final f = git.classifyGitError(result.error ?? '');
+          messenger?.showSnackBar(SnackBar(
+            content: Text('$label failed: ${f.message}'),
+            action: f.detail.isNotEmpty && f.detail != f.message
+                ? SnackBarAction(
+                    label: 'Copy',
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: f.detail)),
+                  )
+                : null,
+          ));
+        }
+        // Refresh only the repo this action mutated, never whatever became
+        // active mid-flight (refreshStatus is keyed to activePath).
+        if (mutatedPath != null) {
+          await repoState.refreshStatusIfActive(mutatedPath);
+        }
+      });
       return;
     }
 
@@ -241,7 +292,14 @@ class _CommandPaletteState extends State<CommandPalette> {
                 : 'search everything...',
           ),
           Expanded(
-            child: palette.results.isEmpty && !palette.wickActive
+            // Show the empty state on genuine emptiness — no command results,
+            // no file (wick) results, and not mid-search — not merely because
+            // the wick binary happens to be installed. Gating on `!wickActive`
+            // meant an installed wick turned every zero-match query into a
+            // blank list instead of an honest "no results".
+            child: palette.results.isEmpty &&
+                    !palette.wickSearching &&
+                    !palette.hasWickResults
                 ? _EmptyState(query: palette.query)
                 : _buildResultList(palette),
           ),

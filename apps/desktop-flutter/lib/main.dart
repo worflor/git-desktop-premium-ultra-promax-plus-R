@@ -2227,63 +2227,36 @@ class _ParticleBackdropPainter extends CustomPainter {
   }
 
   void _drawChalkTile(Canvas canvas, double scale) {
-    final colors = [
-      (tokens.themeAmbient ?? Colors.white).withValues(alpha: 0.1),
-      (tokens.themeAmbient ?? Colors.white).withValues(alpha: 0.1),
-      const Color(0xFFFF828C).withValues(alpha: 0.6),
-      const Color(0xFF96D2FF).withValues(alpha: 0.6),
-      const Color(0xFFFFDC78).withValues(alpha: 0.6),
-    ];
-    for (var i = 1; i <= 5; i++) {
-      final rng = _SourceRandom(i * 9173);
-      final col = (i - 1) % 3;
-      final row = (i - 1) ~/ 3;
-      final cx = col * 300 + 200 + (rng.next() - 0.5) * 150;
-      final cy = row * 300 + 200 + (rng.next() - 0.5) * 150;
-      final a = (rng.next() * 4 + 2).floor();
-      final b = (rng.next() * 4 + 2).floor();
-      final absA = a == b ? a + 1 : a;
-      final delta = rng.next() * math.pi * 2;
-      final radius = rng.next() * 80 + 60;
-      final rotation = rng.next() * math.pi * 2;
-      final strokeWidth = rng.next() * 0.4 + 0.15;
-      final reveal = _chalkReveal(progress, i);
-
-      final points = <Offset>[];
-      const steps = 140;
-      for (var step = 0; step <= steps; step++) {
-        final t = step * (math.pi * 2.1 / steps);
-        final jitter = math.sin(t * 30 + i) * 0.7;
-        final x = math.sin(absA * t + delta) * (radius + jitter);
-        final y = math.sin(b * t) * (radius + jitter);
-        final rotated = Offset(
-          x * math.cos(rotation) - y * math.sin(rotation) + cx,
-          x * math.sin(rotation) + y * math.cos(rotation) + cy,
-        );
-        points.add(rotated);
-      }
-
-      final path = Path()..moveTo(points.first.dx, points.first.dy);
-      final visible = (points.length * reveal).floor().clamp(1, points.length);
-      for (var p = 1; p < visible; p++) {
-        path.lineTo(points[p].dx, points[p].dy);
-      }
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = strokeWidth
-        ..color = colors[i % colors.length].withValues(alpha: 0.34 * reveal);
-      canvas.drawPath(path, paint);
+    final white = tokens.themeAmbient ?? Colors.white;
+    // The professor's board: five staggered doodles about the repo's own
+    // physics — a commit DAG whose merge edge gets the colored chalk, an
+    // eigenvalue ladder with the ground level double-struck, a damped
+    // wave with its dashed decay envelope, a game of tic-tac-toe (or a
+    // starred note), and a connecting arrow. Each spot writes on, holds,
+    // and fades on its own schedule; underneath sits a faint ghost of a
+    // DIFFERENT drawing — the previous lesson a real eraser never quite
+    // removes.
+    for (var i = 0; i < 5; i++) {
+      _paintChalkDrawing(
+        canvas,
+        _chalkDrawingFor(i, ghost: true),
+        reveal: 1,
+        alpha: 0.1,
+        white: white,
+        dust: false,
+      );
+      final t = (progress + i * 0.19) % 1.0;
+      final (reveal, alpha) = _chalkPhase(t);
+      if (reveal <= 0 || alpha <= 0) continue;
+      _paintChalkDrawing(
+        canvas,
+        _chalkDrawingFor(i, ghost: false),
+        reveal: reveal,
+        alpha: alpha,
+        white: white,
+        dust: reveal < 1,
+      );
     }
-  }
-
-  double _chalkReveal(double value, int index) {
-    final shifted = (value + index * 0.01) % 1;
-    if (shifted < 0.12) return shifted / 0.12;
-    if (shifted < 0.34) return 1;
-    if (shifted < 0.88) return 1;
-    return (1 - shifted) / 0.12;
   }
 
   void _drawVoidTile(Canvas canvas, double scale) {
@@ -2400,6 +2373,400 @@ class _SourceRandom {
   double next() {
     _state = (1664525 * _state + 1013904223) & 0xffffffff;
     return _state / 0xffffffff;
+  }
+}
+
+// ── Blackboard chalk drawings ───────────────────────────────────────────
+// A tiny hand-drawn-diagram system for the blackboard theme's ambient
+// layer. Geometry (resampled points with hand tremor baked in) is
+// deterministic per seed and cached — chalk lines wobble while being
+// drawn, then hold still forever. Only the reveal cutoff and fade change
+// per frame.
+
+const List<Color> _chalkPastels = [
+  Color(0xFFFF828C),
+  Color(0xFF96D2FF),
+  Color(0xFFFFDC78),
+];
+
+class _ChalkStroke {
+  final List<Offset> pts;
+  final double width;
+
+  /// 0 = white chalk, 1..3 = pastel accent from [_chalkPastels].
+  final int colorIx;
+  final int seed;
+  const _ChalkStroke(this.pts, this.width, this.colorIx, this.seed);
+}
+
+final Map<int, List<_ChalkStroke>> _chalkGeometryCache = {};
+
+/// Write → hold → erase envelope for one board spot. Writing takes ~5.5%
+/// of the 200s cycle (about 11 seconds of visible chalk work), the erase
+/// is a fade rather than an un-draw — nobody rewinds chalk.
+(double, double) _chalkPhase(double t) {
+  if (t < 0.055) return (t / 0.055, 1.0);
+  if (t < 0.80) return (1.0, 1.0);
+  if (t < 0.90) return (1.0, 1.0 - (t - 0.80) / 0.10);
+  return (0.0, 0.0);
+}
+
+List<_ChalkStroke> _chalkDrawingFor(int spot, {required bool ghost}) {
+  const centers = [
+    Offset(265, 225),
+    Offset(715, 175),
+    Offset(205, 660),
+    Offset(680, 620),
+    Offset(470, 420),
+  ];
+  final key = ghost ? spot + 100 : spot;
+  return _chalkGeometryCache.putIfAbsent(key, () {
+    final rng = _SourceRandom((spot + (ghost ? 5 : 0)) * 7919 + 31);
+    // Ghosts render a different archetype at the same board spot — what
+    // was drawn there last lesson.
+    final kind = ghost ? (spot + 2) % 5 : spot;
+    final c = centers[spot];
+    switch (kind) {
+      case 0:
+        return _chalkDag(rng, c);
+      case 1:
+        return _chalkSpectrum(rng, c);
+      case 2:
+        return _chalkWave(rng, c);
+      case 3:
+        return rng.next() < 0.5
+            ? _chalkTicTacToe(rng, c)
+            : _chalkStarNote(rng, c);
+      default:
+        return _chalkArrow(rng, c);
+    }
+  });
+}
+
+/// Resample a raw polyline to ~7-unit segments and bake in hand tremor:
+/// two low-frequency sine octaves along the arc, offset perpendicular to
+/// travel. Baked once — the line does not shimmer after it's drawn.
+_ChalkStroke _bakeChalk(
+  List<Offset> raw,
+  _SourceRandom rng, {
+  double width = 3.0,
+  int colorIx = 0,
+}) {
+  final seed = (rng.next() * 0xffffff).floor();
+  final p1 = rng.next() * math.pi * 2;
+  final p2 = rng.next() * math.pi * 2;
+  final pts = <Offset>[];
+  var arc = 0.0;
+  for (var k = 0; k < raw.length - 1; k++) {
+    final a = raw[k];
+    final b = raw[k + 1];
+    final segLen = (b - a).distance;
+    if (segLen == 0) continue;
+    final steps = math.max(1, (segLen / 7).round());
+    final n = Offset(-(b.dy - a.dy) / segLen, (b.dx - a.dx) / segLen);
+    for (var s = 0; s < steps; s++) {
+      final f = s / steps;
+      final along = arc + segLen * f;
+      final wob =
+          math.sin(along * 0.13 + p1) * 1.1 + math.sin(along * 0.041 + p2) * 1.7;
+      pts.add(Offset.lerp(a, b, f)! + n * wob);
+    }
+    arc += segLen;
+  }
+  if (raw.isNotEmpty) pts.add(raw.last);
+  return _ChalkStroke(pts, width, colorIx, seed);
+}
+
+/// A hand-drawn circle: starts at a random angle, overshoots closure a
+/// little, and carries a gentle low-frequency radius wobble.
+List<Offset> _handCircle(Offset c, double r, _SourceRandom rng) {
+  final start = rng.next() * math.pi * 2;
+  final over = 0.3 + rng.next() * 0.35;
+  final ph = rng.next() * math.pi * 2;
+  final pts = <Offset>[];
+  const n = 30;
+  for (var k = 0; k <= n; k++) {
+    final t = start + (math.pi * 2 + over) * k / n;
+    final rr = r * (1 + 0.05 * math.sin(3 * t + ph));
+    pts.add(c + Offset(math.cos(t) * rr, math.sin(t) * rr));
+  }
+  return pts;
+}
+
+/// A hand-drawn line: a shallow quadratic bow instead of a ruler line.
+List<Offset> _handLine(Offset a, Offset b, double bow) {
+  final d = b - a;
+  final len = d.distance == 0 ? 1.0 : d.distance;
+  final ctrl = Offset.lerp(a, b, 0.5)! + Offset(-d.dy / len, d.dx / len) * bow;
+  final pts = <Offset>[];
+  for (var k = 0; k <= 8; k++) {
+    final t = k / 8;
+    pts.add(Offset.lerp(
+        Offset.lerp(a, ctrl, t)!, Offset.lerp(ctrl, b, t)!, t)!);
+  }
+  return pts;
+}
+
+/// A small commit DAG: a three-node main line, a two-node branch, and a
+/// merge edge that gets the one colored stroke plus an arrowhead.
+List<_ChalkStroke> _chalkDag(_SourceRandom rng, Offset c) {
+  const r = 14.0;
+  final n0 = c + const Offset(-125, 14);
+  final n1 = c + const Offset(-4, 26);
+  final n2 = c + const Offset(120, 6);
+  final b0 = c + const Offset(-58, -64);
+  final b1 = c + const Offset(42, -78);
+  final accent = 1 + (rng.next() * 3).floor().clamp(0, 2);
+  final s = <_ChalkStroke>[];
+  Offset rim(Offset from, Offset to) {
+    final d = to - from;
+    return from + d / d.distance * r;
+  }
+
+  void node(Offset p) => s.add(_bakeChalk(_handCircle(p, r, rng), rng));
+  void edge(Offset a, Offset b) => s.add(_bakeChalk(
+      _handLine(rim(a, b), rim(b, a), (rng.next() - 0.5) * 14), rng));
+
+  node(n0);
+  edge(n0, n1);
+  node(n1);
+  edge(n1, n2);
+  node(n2);
+  edge(n0, b0);
+  node(b0);
+  edge(b0, b1);
+  node(b1);
+  final mA = rim(b1, n2);
+  final mB = rim(n2, b1);
+  s.add(_bakeChalk(
+      _handLine(mA, mB, (rng.next() - 0.5) * 10), rng,
+      width: 3.2, colorIx: accent));
+  final d = mB - mA;
+  final u = d / d.distance;
+  final nrm = Offset(-u.dy, u.dx);
+  s.add(_bakeChalk([mB - u * 15 + nrm * 8, mB], rng,
+      width: 2.8, colorIx: accent));
+  s.add(_bakeChalk([mB - u * 15 - nrm * 8, mB], rng,
+      width: 2.8, colorIx: accent));
+  return s;
+}
+
+/// An eigenvalue ladder: a capped vertical axis, the ground level double-
+/// struck (and allowed the accent chalk), then rising levels with a
+/// widening spectral gap.
+List<_ChalkStroke> _chalkSpectrum(_SourceRandom rng, Offset c) {
+  final s = <_ChalkStroke>[];
+  final base = c + const Offset(-10, 105);
+  final top = c + const Offset(2, -95);
+  s.add(_bakeChalk(_handLine(base, top, 4), rng));
+  s.add(_bakeChalk([top + const Offset(-7, 12), top], rng, width: 2.6));
+  s.add(_bakeChalk([top + const Offset(8, 11), top], rng, width: 2.6));
+  final accent = 1 + (rng.next() * 3).floor().clamp(0, 2);
+  final g = base + const Offset(6, -12);
+  s.add(_bakeChalk(_handLine(g, g + const Offset(52, -2), 2), rng,
+      width: 3.2, colorIx: accent));
+  s.add(_bakeChalk(
+      _handLine(g + const Offset(2, 5), g + const Offset(50, 3), 2), rng,
+      width: 2.4, colorIx: accent));
+  var y = -12.0;
+  var gap = 24.0;
+  for (var k = 0; k < 4; k++) {
+    y -= gap;
+    gap *= 1.28;
+    final p = base + Offset(8 + (rng.next() - 0.5) * 10, y);
+    s.add(_bakeChalk(
+        _handLine(p, p + Offset(46 + (rng.next() - 0.5) * 8,
+            (rng.next() - 0.5) * 4), 2),
+        rng,
+        width: 2.8));
+  }
+  return s;
+}
+
+/// A damped wave on hand-drawn axes, with the decay envelope dashed in
+/// above it the way it always is.
+List<_ChalkStroke> _chalkWave(_SourceRandom rng, Offset c) {
+  final s = <_ChalkStroke>[];
+  final o = c + const Offset(-115, 40);
+  s.add(_bakeChalk(
+      _handLine(o + const Offset(-8, 0), o + const Offset(245, -4), 3), rng,
+      width: 2.8));
+  s.add(_bakeChalk(
+      _handLine(o + const Offset(0, 12), o + const Offset(4, -95), 3), rng,
+      width: 2.8));
+  final phase = rng.next() * math.pi * 2;
+  final wave = <Offset>[];
+  for (var x = 0.0; x <= 225; x += 6) {
+    wave.add(o +
+        Offset(x + 6, -math.sin(x / 21 + phase) * 42 * math.exp(-x / 160)));
+  }
+  s.add(_bakeChalk(wave, rng, width: 3.4));
+  for (var x = 6.0; x < 200; x += 42) {
+    final y0 = -44 * math.exp(-x / 160);
+    final y1 = -44 * math.exp(-(x + 20) / 160);
+    s.add(_bakeChalk(
+        [o + Offset(x, y0 - 4), o + Offset(x + 20, y1 - 4)], rng,
+        width: 2.0));
+  }
+  return s;
+}
+
+/// Tic-tac-toe. X opens center, O plays corners badly, X runs the
+/// diagonal and strikes it through in colored chalk.
+List<_ChalkStroke> _chalkTicTacToe(_SourceRandom rng, Offset c) {
+  const cell = 36.0;
+  final s = <_ChalkStroke>[];
+  for (var k = 0; k < 2; k++) {
+    final x = c.dx - cell / 2 + k * cell;
+    s.add(_bakeChalk(
+        _handLine(Offset(x, c.dy - cell * 1.6), Offset(x, c.dy + cell * 1.6),
+            4),
+        rng,
+        width: 2.8));
+    final y = c.dy - cell / 2 + k * cell;
+    s.add(_bakeChalk(
+        _handLine(Offset(c.dx - cell * 1.6, y), Offset(c.dx + cell * 1.6, y),
+            4),
+        rng,
+        width: 2.8));
+  }
+  Offset cc(int gx, int gy) =>
+      Offset(c.dx + (gx - 1) * cell, c.dy + (gy - 1) * cell);
+  void drawX(Offset p) {
+    s.add(_bakeChalk(
+        _handLine(p + const Offset(-11, -11), p + const Offset(11, 11), 2),
+        rng));
+    s.add(_bakeChalk(
+        _handLine(p + const Offset(11, -11), p + const Offset(-11, 11), 2),
+        rng));
+  }
+
+  drawX(cc(1, 1));
+  s.add(_bakeChalk(_handCircle(cc(0, 2), 12, rng), rng));
+  drawX(cc(0, 0));
+  s.add(_bakeChalk(_handCircle(cc(2, 0), 12, rng), rng));
+  drawX(cc(2, 2));
+  final accent = 1 + (rng.next() * 3).floor().clamp(0, 2);
+  s.add(_bakeChalk(
+      _handLine(cc(0, 0) + const Offset(-16, -16),
+          cc(2, 2) + const Offset(16, 16), 6),
+      rng,
+      width: 3.4,
+      colorIx: accent));
+  return s;
+}
+
+/// A three-stroke asterisk circled for emphasis, with the professor's
+/// emphatic double underline.
+List<_ChalkStroke> _chalkStarNote(_SourceRandom rng, Offset c) {
+  final s = <_ChalkStroke>[];
+  for (var k = 0; k < 3; k++) {
+    final ang = math.pi * k / 3 + (rng.next() - 0.5) * 0.2;
+    final d = Offset(math.cos(ang), math.sin(ang)) * 22;
+    s.add(_bakeChalk(_handLine(c - d, c + d, 2), rng));
+  }
+  final accent = 1 + (rng.next() * 3).floor().clamp(0, 2);
+  s.add(_bakeChalk(_handCircle(c, 36, rng), rng,
+      width: 2.8, colorIx: rng.next() < 0.5 ? accent : 0));
+  s.add(_bakeChalk(
+      _handLine(c + const Offset(-30, 48), c + const Offset(30, 44), 3),
+      rng));
+  s.add(_bakeChalk(
+      _handLine(c + const Offset(-24, 56), c + const Offset(26, 53), 3), rng,
+      width: 2.4));
+  return s;
+}
+
+/// A curved arrow between board regions — the "and THIS connects to
+/// that" flourish.
+List<_ChalkStroke> _chalkArrow(_SourceRandom rng, Offset c) {
+  final s = <_ChalkStroke>[];
+  final a = c + const Offset(-95, 55);
+  final b = c + const Offset(95, -45);
+  final pts = _handLine(a, b, 34 + rng.next() * 18);
+  s.add(_bakeChalk(pts, rng));
+  final tip = pts.last;
+  final d = tip - pts[pts.length - 2];
+  final len = d.distance == 0 ? 1.0 : d.distance;
+  final u = d / len;
+  final n = Offset(-u.dy, u.dx);
+  s.add(_bakeChalk([tip - u * 16 + n * 9, tip], rng, width: 2.8));
+  s.add(_bakeChalk([tip - u * 16 - n * 9, tip], rng, width: 2.8));
+  return s;
+}
+
+/// Renders a drawing's strokes with chalk texture: a wide faint halo
+/// pass (the dusty edge), three width/alpha buckets for pressure
+/// variation, ~6% skipped segments where the chalk lifts off, and — only
+/// while writing — a few specks of dust falling from the tip. [reveal]
+/// advances segment-by-segment across strokes in authored order, so the
+/// drawing appears in the order a hand would make it.
+void _paintChalkDrawing(
+  Canvas canvas,
+  List<_ChalkStroke> strokes, {
+  required double reveal,
+  required double alpha,
+  required Color white,
+  required bool dust,
+}) {
+  var remaining = 0;
+  for (final s in strokes) {
+    remaining += s.pts.length - 1;
+  }
+  remaining = (remaining * reveal).ceil();
+  final paint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round;
+  const mult = [0.78, 1.0, 1.28];
+  const bAlpha = [0.5, 0.68, 0.85];
+  for (final stroke in strokes) {
+    if (remaining <= 0) break;
+    final segs = stroke.pts.length - 1;
+    if (segs <= 0) continue;
+    final take = math.min(segs, remaining);
+    remaining -= take;
+    final color = stroke.colorIx == 0
+        ? white
+        : _chalkPastels[stroke.colorIx - 1];
+    final halo = Path();
+    final buckets = [Path(), Path(), Path()];
+    var h = stroke.seed;
+    for (var k = 0; k < take; k++) {
+      h = (1664525 * h + 1013904223) & 0xffffffff;
+      final r = h / 0xffffffff;
+      final a = stroke.pts[k];
+      final b = stroke.pts[k + 1];
+      halo.moveTo(a.dx, a.dy);
+      halo.lineTo(b.dx, b.dy);
+      if (r < 0.06) continue;
+      final bx = (r * 16).floor() % 3;
+      buckets[bx].moveTo(a.dx, a.dy);
+      buckets[bx].lineTo(b.dx, b.dy);
+    }
+    paint
+      ..color = color.withValues(alpha: 0.14 * alpha)
+      ..strokeWidth = stroke.width * 2.1;
+    canvas.drawPath(halo, paint);
+    for (var bx = 0; bx < 3; bx++) {
+      paint
+        ..color = color.withValues(alpha: bAlpha[bx] * alpha)
+        ..strokeWidth = stroke.width * mult[bx];
+      canvas.drawPath(buckets[bx], paint);
+    }
+    if (dust && take < segs) {
+      final tip = stroke.pts[take];
+      var d = stroke.seed ^ take;
+      final dp = Paint()..color = white.withValues(alpha: 0.3 * alpha);
+      for (var m = 0; m < 3; m++) {
+        d = (1664525 * d + 1013904223) & 0xffffffff;
+        final rx = d / 0xffffffff - 0.5;
+        d = (1664525 * d + 1013904223) & 0xffffffff;
+        final ry = d / 0xffffffff;
+        canvas.drawCircle(
+            tip + Offset(rx * 14, 4 + ry * 16), 0.9 + rx.abs() * 1.2, dp);
+      }
+    }
   }
 }
 

@@ -386,10 +386,14 @@ class _ConflictWindow extends StatelessWidget {
                           fontFamilyFallback: AppFonts.monoFallback,
                         )),
                   const Spacer(),
+                  // Same slot, but the two variants must not read alike: 'later'
+                  // is harmless (defer the resolution) while 'discard' throws
+                  // the merge away. Give discard the delete tier so its danger
+                  // is legible; keep later muted.
                   _WindowButton(
                     label: canDefer ? 'later' : 'discard',
-                    accent: t.textMuted,
-                    subdued: true,
+                    accent: canDefer ? t.textMuted : t.stateDeleted,
+                    subdued: canDefer,
                     onTap: () => Navigator.of(context)
                         .pop(const ConflictChoice(ConflictAction.defer)),
                   ),

@@ -10476,6 +10476,17 @@ List<_ProviderAttempt> _buildProviderAttempts(
     case _ProviderKind.codex:
       final mapped = _codexEffort(reasoningEffort);
       final configArgs = <String>[
+        // Pin the sandbox EVERY call. `codex exec` is an agent, and without
+        // this it inherits the user's ~/.codex/config.toml — where a repo
+        // marked `trust_level = "trusted"` (set for the user's own terminal
+        // sessions) grants workspace WRITE. A Manifold "review" then runs
+        // model-generated shell in the live repo; observed 2026-07-04: a
+        // codex review repro committed as test@example.com and deleted the
+        // checked-out branch ref. Our prompts are self-contained text
+        // generation — reading is all they ever need. The per-invocation
+        // flag beats any config/trust level (verified: `codex exec --help`,
+        // `-s, --sandbox <read-only|workspace-write|danger-full-access>`).
+        ...['--sandbox', 'read-only'],
         if (mapped != null)
           ...['-c', 'model_reasoning_effort="$mapped"'],
         if (fastMode)

@@ -51,6 +51,131 @@ String? diffHeaderPath(String line) {
   return null;
 }
 
+// ── Error classification ───────────────────────────────────────────────
+// Raw git stderr is precise but user-hostile. Every mutating command fails
+// for a small set of recurring reasons; naming them lets the UI lead with a
+// short, honest line while keeping the raw output one tap away. We never hide
+// what git actually said (command transparency is what earns trust) — we just
+// stop making a wall of porcelain the headline.
+
+/// The kind of failure a git command hit, inferred from exit code + stderr.
+enum GitErrorCategory {
+  /// Credentials rejected or missing — HTTP 401/403, ssh publickey, or a
+  /// non-interactive session with prompts disabled.
+  auth,
+
+  /// A server-side hook (pre-receive / update) declined the push.
+  hookRejected,
+
+  /// The remote moved on: push rejected as non-fast-forward, including a
+  /// stale `--force-with-lease`.
+  nonFastForward,
+
+  /// Couldn't reach the remote at all — DNS, TLS, connection, or timeout.
+  network,
+
+  /// The working tree or index has conflicts, or the op would overwrite
+  /// local changes.
+  conflict,
+
+  /// Anything else. [GitFailure.message] carries the first stderr line.
+  other,
+}
+
+/// A classified git failure: a [category], a short human [message] safe to
+/// headline in a toast, and the raw [detail] (trimmed stderr) preserved for
+/// the secondary "show me exactly what git said" affordance.
+class GitFailure {
+  final GitErrorCategory category;
+  final String message;
+  final String detail;
+  const GitFailure(this.category, this.message, this.detail);
+}
+
+/// Classify [stderr] (optionally with the process [exitCode]) into a
+/// [GitFailure]. Match order is specificity-first: auth failures and hook
+/// rejections both surface as generic "failed to push", so they are tested
+/// before the non-fast-forward catch, and conflict last so a push rejection
+/// mentioning nothing about merges doesn't get miscoded.
+GitFailure classifyGitError(String stderr, {int? exitCode}) {
+  final raw = stderr.trim();
+  final s = raw.toLowerCase();
+  bool has(String needle) => s.contains(needle);
+
+  if (has('authentication failed') ||
+      has('could not read username') ||
+      has('could not read password') ||
+      has('invalid username or password') ||
+      has('permission denied (publickey') ||
+      has('access denied') ||
+      has('terminal prompts disabled') ||
+      has('error: 403') ||
+      has('http basic: access denied') ||
+      (has('permission to') && has('denied'))) {
+    return GitFailure(GitErrorCategory.auth, 'Authentication failed.', raw);
+  }
+
+  if (has('hook declined') ||
+      has('pre-receive hook') ||
+      has('push declined') ||
+      (has('[remote rejected]') && has('hook'))) {
+    return GitFailure(
+        GitErrorCategory.hookRejected, 'Remote rejected the push (hook).', raw);
+  }
+
+  if (has('could not resolve host') ||
+      has('could not resolve proxy') ||
+      has('connection timed out') ||
+      has('operation timed out') ||
+      has('network is unreachable') ||
+      has('connection refused') ||
+      has('failed to connect') ||
+      has("couldn't connect to server") ||
+      has('temporary failure in name resolution') ||
+      has('ssl certificate problem') ||
+      has('unable to access')) {
+    return GitFailure(GitErrorCategory.network, "Can't reach the remote.", raw);
+  }
+
+  if (has('non-fast-forward') ||
+      has('fetch first') ||
+      has('failed to push some refs') ||
+      has('tip of your current branch is behind') ||
+      has('updates were rejected') ||
+      has('stale info') ||
+      has('! [rejected]')) {
+    return GitFailure(GitErrorCategory.nonFastForward,
+        'Remote has newer commits. Pull first.', raw);
+  }
+
+  if (has('conflict') ||
+      has('needs merge') ||
+      has('unmerged') ||
+      has('would be overwritten') ||
+      has('overwritten by') ||
+      has('your local changes') ||
+      has('fix conflicts') ||
+      has('automatic merge failed') ||
+      has('patch does not apply')) {
+    return GitFailure(
+        GitErrorCategory.conflict, 'Conflicts need resolving.', raw);
+  }
+
+  final firstLine = raw.isEmpty
+      ? 'Command failed.'
+      : raw
+          .split('\n')
+          .firstWhere((l) => l.trim().isNotEmpty, orElse: () => 'Command failed.')
+          .trim();
+  return GitFailure(GitErrorCategory.other, firstLine, raw);
+}
+
+/// Classification of a failed [GitResult]. Null for successes, so callers can
+/// write `result.failure?.message` and fall through to the ok path.
+extension GitResultClassification<T> on GitResult<T> {
+  GitFailure? get failure => ok ? null : classifyGitError(error ?? '');
+}
+
 /// Decode outcome: the decoded text, plus whether strict UTF-8 failed
 /// (bytes contained invalid sequences) and the byte offset of the first
 /// malformed sequence. The flag lets callers emit a lifecycle event so
@@ -1771,6 +1896,58 @@ Future<GitResult<void>> deleteBranch(String repo, String name,
   return const GitResult.ok(null);
 }
 
+/// Current OID of [ref] (full ref name, e.g. `refs/heads/foo`), or null
+/// when it doesn't resolve. The identity-capture half of the delayed-
+/// destruction contract: UI flows that arm a safety window snapshot the
+/// tip NOW so the delete can verify it later.
+Future<String?> refTip(String repo, String ref) async {
+  final r = await _git(repo, ['rev-parse', '--verify', '--quiet', ref]);
+  if (r.exitCode != 0) return null;
+  final s = r.stdout.toString().trim();
+  return s.isEmpty ? null : s;
+}
+
+/// Identity-pinned branch delete for safety-window delays: a branch NAME
+/// is a mutable pointer, and in the seconds between arming and firing it
+/// can be deleted, recreated, or retargeted — `git branch -d name` would
+/// then destroy a ref the user never saw. Verifies the tip still equals
+/// [expectTip] at fire time; a moved tip refuses, an already-gone ref is
+/// success (the user's intent — name absent — already holds). The safe
+/// (non-force) path keeps `git branch -d`'s merged-check, re-evaluated at
+/// fire time where it belongs.
+Future<GitResult<void>> deleteBranchIfAt(
+  String repo,
+  String name,
+  String expectTip, {
+  bool force = false,
+}) async {
+  final tip = await refTip(repo, 'refs/heads/$name');
+  if (tip == null) return const GitResult.ok(null);
+  if (tip != expectTip) {
+    return GitResult.err(
+        "'$name' moved since the delete was armed; nothing was deleted.");
+  }
+  return deleteBranch(repo, name, force: force);
+}
+
+/// Identity-pinned tag delete — same delayed-destruction contract as
+/// [deleteBranchIfAt]. [expectTip] is whatever `refs/tags/<name>` resolved
+/// to at arm time (the tag object for annotated tags, the commit for
+/// lightweight ones — compared like-for-like against the same probe).
+Future<GitResult<void>> deleteTagIfAt(
+  String repo,
+  String name,
+  String expectTip,
+) async {
+  final tip = await refTip(repo, 'refs/tags/$name');
+  if (tip == null) return const GitResult.ok(null);
+  if (tip != expectTip) {
+    return GitResult.err(
+        "'$name' moved since the delete was armed; nothing was deleted.");
+  }
+  return deleteTag(repo, name);
+}
+
 /// Rename a local branch. `-M` to force-replace if [newName] already
 /// exists (git rejects otherwise). Returns the git stderr on failure
 /// so callers can surface the actual reason (ref collision, dirty
@@ -2285,6 +2462,14 @@ Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
   // matching paths; exit 1 = no matches; exit 128 = fatal. We fail
   // open on errors (treat as "nothing to filter") so a broken
   // check-ignore never blocks a legitimate stage.
+  // check-ignore takes PATHNAMES (no pathspec globbing surface) and
+  // rejects --literal-pathspecs outright ("pathspec magic not supported",
+  // verified live) — so it runs bare. Every true pathspec-taking call in
+  // the staging chain runs --literal-pathspecs: UI paths are file names,
+  // not patterns. Without it, git treats `[b].txt` as a character-class
+  // glob that can silently match and stage a DIFFERENT modified file
+  // (verified live: `git add -- '[bracket].txt'` also staged `a.txt`) —
+  // a direct violation of commit-exactly-the-included-paths.
   final ignoreCheck = await _git(repo, ['check-ignore', '--', ...paths]);
   final ignored = <String>{};
   if (ignoreCheck.exitCode == 0) {
@@ -2308,27 +2493,216 @@ Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
   }
   if (toAdd.isEmpty) return const GitResult.ok(null);
 
-  final r = await _git(repo, ['add', '--', ...toAdd]);
+  final r = await _git(repo, ['--literal-pathspecs', 'add', '--', ...toAdd]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
   if (paths.isEmpty) return const GitResult.ok(null);
-  final stagedProbe = await _git(
-      repo, ['diff', '--cached', '--name-only', '-z', '--', ...paths]);
+  // Literal pathspecs — see stagePaths: names are names, never globs.
+  // --no-renames matters as much as the flag: rename detection collapses
+  // a staged D+A pair into one R whose --name-only lists only the
+  // DESTINATION, silently dropping the deletion half from the unstage —
+  // the old name then stays staged-deleted and leaks into the commit
+  // (caught by the exact-staging witness suite).
+  final stagedProbe = await _git(repo, [
+    '--literal-pathspecs',
+    'diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...paths,
+  ]);
   if (stagedProbe.exitCode != 0) {
     return GitResult.err(stagedProbe.stderr.toString().trim());
   }
+  // NUL-delimited output is exact by design — never trim entries. Git
+  // permits filenames with leading/trailing whitespace, and trimming here
+  // would unstage the wrong path (or pathspec-error) for ` file.txt`,
+  // breaking the commit-exactly-the-included-paths contract upstream.
   final stagedPaths = stagedProbe.stdout
       .toString()
       .split('\x00')
-      .map((path) => path.trim())
       .where((path) => path.isNotEmpty)
       .toList();
   if (stagedPaths.isEmpty) return const GitResult.ok(null);
 
-  final r = await _git(repo, ['restore', '--staged', '--', ...stagedPaths]);
+  final r = await _git(repo,
+      ['--literal-pathspecs', 'restore', '--staged', '--', ...stagedPaths]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// One captured index entry (mode, blob OID, path), enough to rebuild
+/// the exact staged state of a path with `git update-index`. A staged
+/// deletion has no blob to point at, so it's flagged instead.
+class StagedIndexEntry {
+  final String mode;
+  final String oid;
+  final String path;
+  final bool isDeletion;
+
+  const StagedIndexEntry({
+    required this.mode,
+    required this.oid,
+    required this.path,
+    this.isDeletion = false,
+  });
+}
+
+/// Output of [prepareCommitStaging]: the index entries of excluded
+/// paths that were unstaged to keep them out of the commit, so the
+/// caller can hand them to [restoreStagedSelections] afterward.
+class CommitStagingPlan {
+  final List<StagedIndexEntry> excludedEntries;
+  const CommitStagingPlan(this.excludedEntries);
+}
+
+/// Prepare the index so the next commit contains exactly [included].
+///
+/// Invariant: the commit only touches the index entries of included
+/// paths, and an index entry the user built by hand survives. A path
+/// with staged content — whether hunk-staged in the diff view or fully
+/// staged — keeps its index entry untouched; the blanket `git add`
+/// that used to run here re-staged the whole working file and silently
+/// erased per-line selections. Only included paths with NO staged
+/// content get a `git add`. Excluded paths with staged content are
+/// unstaged for this commit, with their exact index entries captured
+/// first so [restoreStagedSelections] can put the selection back.
+/// Conflicted paths are left alone entirely.
+Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
+  String repo,
+  List<String> included,
+) async {
+  final st = await _git(repo, ['status', '--porcelain', '-z', '--no-renames']);
+  if (st.exitCode != 0) return GitResult.err(st.stderr.toString().trim());
+
+  final includedSet = included.toSet();
+  final toAdd = <String>[];
+  final excludedStaged = <String>[];
+  final excludedDeletions = <String>[];
+  for (final rec in st.stdout.toString().split('\x00')) {
+    if (rec.length < 4) continue;
+    final x = rec[0];
+    final y = rec[1];
+    final path = rec.substring(3);
+    final conflicted =
+        x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D');
+    if (conflicted) continue;
+    final staged = x != ' ' && x != '?';
+    if (includedSet.contains(path)) {
+      if (!staged) toAdd.add(path);
+    } else if (staged) {
+      (x == 'D' ? excludedDeletions : excludedStaged).add(path);
+    }
+  }
+
+  // Capture excluded entries BEFORE unstaging — `git ls-files -s` reads
+  // the very index state we're about to reset.
+  final entries = <StagedIndexEntry>[];
+  if (excludedStaged.isNotEmpty) {
+    final ls = await _git(repo, [
+      '--literal-pathspecs',
+      'ls-files', '-s', '-z', '--', ...excludedStaged,
+    ]);
+    if (ls.exitCode != 0) return GitResult.err(ls.stderr.toString().trim());
+    for (final rec in ls.stdout.toString().split('\x00')) {
+      if (rec.isEmpty) continue;
+      // "<mode> <oid> <stage>\t<path>"
+      final tab = rec.indexOf('\t');
+      if (tab < 0) continue;
+      final meta = rec.substring(0, tab).split(' ');
+      if (meta.length < 3 || meta[2] != '0') continue;
+      entries.add(StagedIndexEntry(
+        mode: meta[0],
+        oid: meta[1],
+        path: rec.substring(tab + 1),
+      ));
+    }
+  }
+  for (final path in excludedDeletions) {
+    entries.add(StagedIndexEntry(
+      mode: '',
+      oid: '',
+      path: path,
+      isDeletion: true,
+    ));
+  }
+
+  final addResult = await stagePaths(repo, toAdd);
+  if (!addResult.ok) {
+    return GitResult.err(addResult.error ?? 'Failed to stage files.');
+  }
+  final excluded = [...excludedStaged, ...excludedDeletions];
+  if (excluded.isNotEmpty) {
+    final unstage = await unstagePaths(repo, excluded);
+    if (!unstage.ok) {
+      return GitResult.err(unstage.error ?? 'Failed to unstage excluded files.');
+    }
+  }
+  return GitResult.ok(CommitStagingPlan(entries));
+}
+
+/// Re-stage the captured selections of paths that were excluded from a
+/// commit, restoring the index byte-for-byte to what the user had
+/// built: `--cacheinfo` re-points the entry at the original blob, and
+/// staged deletions are re-recorded with `--force-remove`.
+Future<GitResult<void>> restoreStagedSelections(
+  String repo,
+  List<StagedIndexEntry> entries,
+) async {
+  if (entries.isEmpty) return const GitResult.ok(null);
+  final cacheArgs = <String>[];
+  final removals = <String>[];
+  for (final e in entries) {
+    if (e.isDeletion) {
+      removals.add(e.path);
+    } else {
+      cacheArgs
+        ..add('--cacheinfo')
+        ..add('${e.mode},${e.oid},${e.path}');
+    }
+  }
+  final errs = <String>[];
+  if (cacheArgs.isNotEmpty) {
+    final r = await _git(repo, ['update-index', '--add', ...cacheArgs]);
+    if (r.exitCode != 0) errs.add(r.stderr.toString().trim());
+  }
+  if (removals.isNotEmpty) {
+    final r = await _git(repo, ['update-index', '--force-remove', '--', ...removals]);
+    if (r.exitCode != 0) errs.add(r.stderr.toString().trim());
+  }
+  if (errs.isNotEmpty) return GitResult.err(errs.join('\n'));
+  return const GitResult.ok(null);
+}
+
+/// Soft-undo the most recent commit: move the branch pointer back one
+/// commit while keeping the working tree AND the index exactly as the
+/// commit left them — the staged set survives, ready to re-commit.
+/// Refuses when HEAD no longer starts with [expectHead] (short hashes
+/// welcome): if the repo moved on — new commit, pull, checkout — the
+/// undo target is gone and resetting would eat someone else's work.
+/// Refuses on a root commit: undoing it would mean deleting the
+/// checked-out branch ref, an operation whose blast radius (the branch
+/// vanishes; every tracked file reads as newly added) dwarfs the value
+/// of soft-undoing a brand-new repo's first commit. `reset --soft` is
+/// the ONLY mutation this function is allowed to perform.
+Future<GitResult<void>> undoLastCommit(
+  String repo, {
+  required String expectHead,
+}) async {
+  if (expectHead.isEmpty) {
+    return const GitResult.err('No commit hash to verify; undo skipped.');
+  }
+  final head = await _revParse(repo, 'HEAD');
+  if (head.isEmpty || !head.startsWith(expectHead)) {
+    return const GitResult.err('The repository moved on; undo skipped.');
+  }
+  final parent =
+      await _git(repo, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
+  if (parent.exitCode != 0) {
+    return const GitResult.err(
+        'This is the first commit on the branch; undo it with an amend '
+        'instead.');
+  }
+  final r = await _git(repo, ['reset', '--soft', 'HEAD~1']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }

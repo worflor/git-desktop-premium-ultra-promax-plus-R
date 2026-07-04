@@ -402,12 +402,18 @@ class AppCheckbox extends StatelessWidget {
   final double size;
   final bool enabled;
 
+  /// Visual-only third state: checked but only part of the underlying
+  /// content is selected (a partially staged file). Renders a dash in
+  /// place of the check; tap semantics are unchanged.
+  final bool partial;
+
   const AppCheckbox({
     super.key,
     required this.value,
     required this.onChanged,
     this.size = 14,
     this.enabled = true,
+    this.partial = false,
   });
 
   @override
@@ -436,7 +442,7 @@ class AppCheckbox extends StatelessWidget {
       ),
       child: value
           ? Icon(
-              Icons.check,
+              partial ? Icons.remove : Icons.check,
               size: size * 0.64,
               color: t.accentBright.withValues(alpha: iconAlpha),
             )

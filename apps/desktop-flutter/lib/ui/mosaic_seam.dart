@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/widgets.dart';
 
 /// Shared geometry for the "shattered mosaic" look: a solid surface split
@@ -149,25 +150,47 @@ class ShatteredSeamPainter extends CustomPainter {
   final double baseAlpha;
   final double baseWidth;
 
+  /// Normalised x (0..1) of each interior seam, length `cellCount - 1`, so a
+  /// bar can carry cells of *unequal* width. When null the seams fall on the
+  /// equal-cell grid (`size.width / cellCount`) — byte-identical to the
+  /// original behaviour, which the two equal-cell callers rely on.
+  final List<double>? seamFractions;
+
   ShatteredSeamPainter({
     required this.cellCount,
     required this.seams,
     required this.baseColor,
     required this.baseAlpha,
     required this.baseWidth,
+    this.seamFractions,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (cellCount < 2 || seams.isEmpty) return;
-    final cellWidth = size.width / cellCount;
-    final jitterCeiling = cellWidth * kMosaicJitterFrac;
+    final fractions = seamFractions;
+    final equalCellWidth = size.width / cellCount;
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     for (var i = 0; i < seams.length && i < cellCount - 1; i++) {
-      final nominalX = cellWidth * (i + 1);
+      final double nominalX;
+      final double jitterCeiling;
+      if (fractions == null) {
+        nominalX = equalCellWidth * (i + 1);
+        jitterCeiling = equalCellWidth * kMosaicJitterFrac;
+      } else {
+        // Weighted cells: the seam sits at its fraction and its crack may only
+        // bleed as far as the NARROWER of its two adjacent cells — so a wide
+        // neighbour never lets a crack wander across a small cell.
+        nominalX = fractions[i] * size.width;
+        final leftX = i == 0 ? 0.0 : fractions[i - 1] * size.width;
+        final rightX =
+            i == fractions.length - 1 ? size.width : fractions[i + 1] * size.width;
+        jitterCeiling =
+            math.min(nominalX - leftX, rightX - nominalX) * kMosaicJitterFrac;
+      }
       final seam = seams[i];
       paint.color = baseColor.withValues(
         alpha: (baseAlpha * seam.alphaScale).clamp(0.0, 1.0),
@@ -190,5 +213,6 @@ class ShatteredSeamPainter extends CustomPainter {
       old.baseColor != baseColor ||
       old.baseAlpha != baseAlpha ||
       old.baseWidth != baseWidth ||
-      !identical(old.seams, seams);
+      !identical(old.seams, seams) ||
+      !listEquals(old.seamFractions, seamFractions);
 }

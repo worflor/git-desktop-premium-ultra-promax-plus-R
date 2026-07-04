@@ -396,7 +396,7 @@ const _aboutDevelopment = <_AboutEntry>[
         'The math behind the spectral engine was prototyped in Rust first, '
         'so that work carried over fine.\n\n'
         'Flutter is cross-platform by default, which is great, but it\'s '
-        'Googley in nature so there are quirks. I think I\'ll make do tho.',
+        'Googley in nature so there are a few quirks.',
   ),
   _AboutEntry(
     question: 'WHAT IS THE SPECTRAL ENGINE?',
@@ -433,13 +433,18 @@ const _changelog = <_ReleaseNote>[
     date: '2026-07-04',
     bullets: [
       'happy late Canada Day!',
-      'Another theme pass. A pile of hardcoded corners around the app finally route through the theme engine.',
-      'Check (now exists) and got married to sync. When you have local commits waiting to push, the two sit side by side as separate one-tap options instead of one button pulling double duty.',
+      'Staging by line no longer silently merges into the greater file when commiting... kind of like it shouldn\'t have from the start.',
+      'Check (now exists) and got platonically entangled with Sync. When you have local commits waiting to push, the two sit side by side as separate one-tap options instead of one button pulling double duty.',
+      'History DAG got a minor upgrade.',
+      'wait. undo that, it\'s actually major overhaul. (undo got upgraded too)',
+      'Most to, if not all destructive git operations can also be undone now and use the same undo stack.',
       'Cursor CLI is fully integrated now.',
-      'Dropped the old Google CLI for Antigravity, shipped off by default. Its headless mode makes you sign in through a window first, a bold interpretation of the word, so it stays disabled until Google fixes their known bug.',
-      'GitHub\'s CLI is wired in too, though it\'s also mostly vibe slop. And due to enegineering outside of my own, its disabled by default.',
-      'More under-the-hood math. The engine keeps getting quietly sharper.',
-      'The review verdict looks cooler now. No deeper meaning, just, \"fable make it pretty.\" and a few (too many) back and fourths',
+      'Dropped the old Google CLI for Antigravity, and its off by default. It\'s headless mode requires a sign in through a window first, a bold interpretation of the word \"Headless\", so it\'s off until Google fixes their known bug.',
+      'GitHub Copilot\'s CLI is wired in too, though it\'s also mostly vibe slop. And due to enegineering outside of my own, its disabled by default.',
+      'As a remedy, Opencode integration got upgraded. But it also lies about what Github Copilot models it serves so we literally can\'t have nice things.',
+      'The review verdict looks cooler now. No deeper meaning, just, \"fable make it pretty,\" and a few (too many) back and fourths',
+      'More under-the-hood math work. The engine keeps getting quietly sharper.',
+      'Another theme pass. A pile of hardcoded corners around the app finally route through the theme engine.',
     ],
   ),
   _ReleaseNote(

@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
 import '../backend/git.dart';
+import '../backend/file_picker.dart';
+import 'ai_activity_state.dart';
 import '../backend/merge_session.dart';
 import '../features/changes/merge_conflict_flow.dart';
 import '../backend/gyat.dart' show warmGyatForRepo;
@@ -30,6 +32,8 @@ import '../features/palette/command_palette.dart';
 import '../features/filament/filament_findings_panel.dart';
 import '../features/release_notes/release_notes_panel.dart';
 import '../features/settings/settings_page.dart';
+import '../features/sync/sync_actions.dart' show describeSyncAction;
+import '../features/sync/sync_panel.dart' show SyncPanel;
 import 'settings_navigation_state.dart';
 import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
@@ -42,6 +46,7 @@ import 'thermal_accumulator.dart';
 import '../ui/hyperhealth_text.dart';
 import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
+import '../ui/mosaic_shard_bar.dart';
 import '../ui/context_menu.dart';
 import '../ui/morph_text.dart';
 import '../ui/motion.dart';
@@ -64,6 +69,12 @@ import 'theme_state.dart';
 import 'wick_state.dart';
 import 'worktree_state.dart';
 import '../backend/undo_controller.dart';
+
+// Temporary feature flag: hides the command-palette icon from the top
+// icon bar while evaluating whether it's wanted there. Off = not
+// rendered, not tappable. Flip to true to restore.
+// ignore: constant_identifier_names
+const bool testing_cmd_pallette_icon_in_top_icons = false;
 
 enum _WorkspaceMode { changes, history, branches }
 
@@ -192,6 +203,17 @@ class _WorkspaceShellState extends State<WorkspaceShell>
     final activeRepoPath = context.select<RepositoryState, String?>(
       (s) => s.activePath,
     );
+    // Sidebar AI badges (and any future caller) can ask the workspace to
+    // land on the Changes page — the drawer they open lives there, and the
+    // keep-alive page would otherwise open it invisibly behind another tab.
+    // Same drain-in-build idiom as the drawer queue itself; watch() makes a
+    // queued request re-enter this build when it's posted, and the
+    // activePath match makes a cross-repo request wait for the switch.
+    if (context
+        .watch<AiActivityState>()
+        .takeWorkspaceFocus(activeRepoPath)) {
+      _mode = _WorkspaceMode.changes;
+    }
     if (_lastRepoPathForXray != activeRepoPath) {
       _lastRepoPathForXray = activeRepoPath;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -925,6 +947,18 @@ class _TopbarState extends State<_Topbar> {
                 active: widget.mode == _WorkspaceMode.branches,
                 onTap: () => widget.onModeChanged(_WorkspaceMode.branches),
               ),
+              // Command palette entry point for mouse users — the palette is
+              // the app's only global search and `/` isn't discoverable.
+              // ignore: dead_code
+              if (testing_cmd_pallette_icon_in_top_icons)
+                Tooltip(
+                  message: 'Command palette   /',
+                  child: _ModeBtn(
+                    icon: 'search',
+                    active: widget.panel == _Panel.palette,
+                    onTap: () => widget.onTogglePanel(_Panel.palette),
+                  ),
+                ),
               const SizedBox(width: 4),
               _XrayModeBtn(
                 active: widget.panel == _Panel.xray,
@@ -1162,8 +1196,8 @@ String _normalizeDeskPath(String path) {
 }
 
 /// The desk row lives in the second line of the topbar. The first position
-/// is the active desk (rendered as `_BranchPill` — keeps the dropdown
-/// affordance). Subsequent positions are other open worktrees as smaller
+/// is the active desk (rendered as `_FusedRepoPill` — branch + sync shards).
+/// Subsequent positions are other open worktrees as smaller
 /// tabs. Single-desk state looks identical to pre-worktree chrome.
 class _DeskRow extends StatelessWidget {
   final String activeBranch;
@@ -1249,7 +1283,10 @@ class _DeskRow extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _BranchPill(
+              // One fused control: branch shard + ahead/behind shard (or a
+              // publish shard when there's no upstream). The counts shard opens
+              // the sync flyout, which owns the sync/fetch actions in this zone.
+              _FusedRepoPill(
                 branch: activeBranch,
                 repoPath: activeRepoPath,
                 onNavigate: onNavigateBranches,
@@ -3225,49 +3262,44 @@ class _CloseDeskTimelinePainter extends CustomPainter {
 }
 
 
-class _BranchPill extends StatefulWidget {
+/// The desk row's single repo control: one shattered-mosaic pill whose shards
+/// are `[ branch ▾ ]` and `[ ↑ahead ↓behind ]` (or a `[ publish ]` shard when
+/// the branch has no upstream). Shard 1 opens the branch panel; shard 2 opens
+/// the sync flyout — now the only home of the sync/fetch actions in this zone
+/// (the repo title fetches, the flyout syncs). One status source feeds the
+/// counts, the publish action, and the shard tooltip so nothing can drift.
+class _FusedRepoPill extends StatefulWidget {
   final String branch;
   final String? repoPath;
   final VoidCallback onNavigate;
 
-  const _BranchPill({
+  const _FusedRepoPill({
     required this.branch,
     required this.repoPath,
     required this.onNavigate,
   });
 
   @override
-  State<_BranchPill> createState() => _BranchPillState();
+  State<_FusedRepoPill> createState() => _FusedRepoPillState();
 }
 
-class _BranchPillState extends State<_BranchPill> {
-  bool _hovered = false;
+class _FusedRepoPillState extends State<_FusedRepoPill> {
   bool _open = false;
   bool _loading = false;
   bool _switching = false;
-  bool _pulling = false;
   List<BranchInfo> _branches = const [];
   OverlayEntry? _overlay;
-  final _pillKey = GlobalKey();
 
-  Future<void> _pull() async {
-    if (_pulling || widget.repoPath == null) return;
-    setState(() => _pulling = true);
-    try {
-      final outcome = await resolvePull(context, widget.repoPath!);
-      if (!mounted) return;
-      // Silent on a clean pull (matches the old success path); otherwise
-      // surface a one-line outcome. Real conflicts already opened the editor.
-      if (outcome is! MergeClean) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Pull'))),
-        );
-      }
-      await context.read<RepositoryState>().refreshStatus();
-    } finally {
-      if (mounted) setState(() => _pulling = false);
-    }
-  }
+  // Anchors: whole-pill box drives the overlays' top/left/height; the per-shard
+  // content boxes let each dropdown open under its OWN shard, not the whole pill.
+  final _pillKey = GlobalKey();
+  final _branchKey = GlobalKey();
+  final _countsKey = GlobalKey();
+
+  // Sync surface, folded in from the old _SyncControl: one status source, the
+  // flyout for detail/activity, and the publish action for an unset upstream.
+  OverlayEntry? _flyout;
+  bool _publishing = false;
 
   Future<void> _toggle() async {
     if (_open) {
@@ -3304,6 +3336,11 @@ class _BranchPillState extends State<_BranchPill> {
     final box = _pillKey.currentContext!.findRenderObject()! as RenderBox;
     final origin = box.localToGlobal(Offset.zero);
     final pillSize = box.size;
+    // Panel width tracks the BRANCH shard (shard 0 shares the pill's left edge),
+    // not the whole fused pill, so it opens under its own shard.
+    final branchBox =
+        _branchKey.currentContext?.findRenderObject() as RenderBox?;
+    final branchWidth = branchBox?.size.width ?? pillSize.width;
     // Snapshot the worktree state at overlay-open time so the "+ desk" /
     // "→ open" affordances know which branches are already open elsewhere.
     final worktreeState = context.read<WorktreeState>();
@@ -3341,7 +3378,7 @@ class _BranchPillState extends State<_BranchPill> {
         top: origin.dy,
         left: origin.dx,
         pillHeight: pillSize.height,
-        minWidth: pillSize.width.clamp(240.0, _kBranchPillMaxWidth),
+        minWidth: branchWidth.clamp(240.0, _kBranchPillMaxWidth),
         branches: _branches,
         loading: _loading,
         switching: _switching,
@@ -3434,8 +3471,12 @@ class _BranchPillState extends State<_BranchPill> {
     }
     // resolveCheckout may have opened the conflict editor for a long session;
     // refresh so the pill, branch name, and ahead/behind counts reflect the
-    // post-switch state (branches_page._checkout does the same).
-    await context.read<RepositoryState>().refreshStatus();
+    // post-switch state (branches_page._checkout does the same). Keyed to
+    // the repo this checkout ran in — the editor session is exactly the
+    // kind of long await a repo/desk switch can slip past.
+    await context
+        .read<RepositoryState>()
+        .refreshStatusIfActive(widget.repoPath!);
     _close();
   }
 
@@ -3443,106 +3484,233 @@ class _BranchPillState extends State<_BranchPill> {
   void dispose() {
     _overlay?.remove();
     _overlay = null;
+    _flyout?.remove();
+    _flyout = null;
     super.dispose();
+  }
+
+  // ---- sync flyout (counts shard) -----------------------------------------
+
+  void _toggleFlyout() {
+    if (_flyout != null) {
+      _closeFlyout();
+      return;
+    }
+    final anchor = _countsKey.currentContext?.findRenderObject() as RenderBox?;
+    final pill = _pillKey.currentContext?.findRenderObject() as RenderBox?;
+    if (anchor == null || pill == null) return;
+    final left = anchor.localToGlobal(Offset.zero).dx;
+    final pillOrigin = pill.localToGlobal(Offset.zero);
+    final top = pillOrigin.dy + pill.size.height + 6;
+    _flyout = OverlayEntry(
+      builder: (_) => Stack(children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _closeFlyout,
+          ),
+        ),
+        Positioned(
+          left: left,
+          top: top,
+          child: SizedBox(
+            width: 340,
+            child: SyncPanel(onClose: _closeFlyout),
+          ),
+        ),
+      ]),
+    );
+    Overlay.of(context).insert(_flyout!);
+    setState(() {});
+  }
+
+  void _closeFlyout() {
+    _flyout?.remove();
+    _flyout = null;
+    if (mounted) setState(() {});
+  }
+
+  // ---- publish action (upstream-less second shard) ------------------------
+
+  Future<void> _publish(RepositoryStatus status) async {
+    if (_publishing) return;
+    setState(() => _publishing = true);
+    try {
+      // Publish routes through the SAME resolver the sync flyout / clean-tree
+      // pill use (setUpstream push), so the surfaces can't diverge.
+      final outcome = await resolveSync(context, widget.repoPath!, status);
+      if (!mounted) return;
+      final clean = outcome is MergeClean;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(mergeOutcomeMessage(outcome, op: 'Sync')),
+        duration: clean
+            ? const Duration(milliseconds: 1600)
+            : const Duration(seconds: 4),
+      ));
+      // Keyed to the published repo — publish is a long async flow and a
+      // desk/repo switch mid-flight must not refresh the wrong one.
+      await context
+          .read<RepositoryState>()
+          .refreshStatusIfActive(widget.repoPath!);
+    } finally {
+      if (mounted) setState(() => _publishing = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final borderColor = _open
+    final radius = context.surfaceShader.geometry.pillRadius;
+    final status = widget.repoPath == null
+        ? null
+        : context.select<RepositoryState, RepositoryStatus?>((s) => s.status);
+
+    // Focus-tinted border while either dropdown is open, matching the old pills.
+    final borderColor = (_open || _flyout != null)
         ? t.inputFocusBorder.withValues(alpha: 0.45)
         : t.secondaryBtnBorder;
 
-    // Fade out when open — panel takes over, morphing from this exact position
+    // Measure in the SAME font the label renders in. The branch Text sets
+    // only size/weight and inherits the theme's ambient family (serif on
+    // Blackboard/Halo, mono elsewhere); measuring in the bare framework
+    // default underestimates a wider face and clips "main" to "ma…".
+    final branchMeasureStyle = DefaultTextStyle.of(context).style.merge(
+          const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600),
+        );
+    final shards = <MosaicShard>[
+      MosaicShard.text(
+        text: widget.branch,
+        style: branchMeasureStyle,
+        chrome: _kBranchShardChrome,
+        maxWidth: _kBranchPillMaxWidth,
+        onTap: _toggle,
+        hoverFill: t.itemHoverBg,
+        active: _open,
+        child: _branchShardContent(t),
+      ),
+    ];
+    final keys = <Key>[_branchKey];
+
+    // describeSyncAction is the single source of truth for whether a second
+    // shard shows (disabled = no status / detached HEAD) and what it says.
+    final action = status == null ? null : describeSyncAction(status);
+    if (action != null && !action.disabled) {
+      if (status!.upstream != null) {
+        shards.add(MosaicShard.text(
+          text: '↑${status.ahead}↓${status.behind}',
+          style: _countsStyle(t.textMuted),
+          chrome: _kCountsShardChrome,
+          onTap: _toggleFlyout,
+          // detail spells out the pull-with-rebase BEFORE the user opens the
+          // flyout — the transparency the terse label can't carry.
+          tooltip: action.detail,
+          hoverFill: t.itemHoverBg,
+          active: _flyout != null,
+          child: _countsShardContent(t, status.ahead, status.behind),
+        ));
+        keys.add(_countsKey);
+      } else {
+        // No upstream yet: shard 2 collapses to a single publish affordance.
+        shards.add(MosaicShard.text(
+          text: _publishing ? 'Publishing…' : 'Publish',
+          style: _publishStyle(t),
+          chrome: _kPublishShardChrome,
+          onTap: _publishing ? null : () => _publish(status),
+          tooltip: action.detail,
+          hoverFill: t.accentBright.withValues(alpha: 0.14),
+          active: _publishing,
+          child: _publishShardContent(t),
+        ));
+        keys.add(_countsKey);
+      }
+    }
+
+    // Fade the whole pill out while the branch panel is open — the panel morphs
+    // in from the branch shard's position and takes over the region.
     return AnimatedOpacity(
       opacity: _open ? 0.0 : 1.0,
       duration: context.motion(const Duration(milliseconds: 100)),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: _toggle,
-          child: ConstrainedBox(
-            // Cap the pill's width so long branch names can't balloon
-            // the pill wider than the popup that overlays it. Without
-            // this cap, a long branch name pushed the next desk tab
-            // rightward, leaving visible dead space between the popup
-            // (fixed-width) and the next tab when the popup was open.
-            constraints: const BoxConstraints(maxWidth: _kBranchPillMaxWidth),
-            child: AnimatedContainer(
-              key: _pillKey,
-              duration: context.motion(const Duration(milliseconds: 150)),
-              curve: Curves.easeOut,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: _hovered ? t.itemHoverBg : t.surface0,
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.pillRadius),
-                border: Border.all(color: borderColor),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
-                  const SizedBox(width: 5),
-                  Flexible(
-                    child: Text(
-                      widget.branch,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: TextStyle(
-                        color: t.textNormal,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
-                  Builder(builder: (context) {
-                    final behind = context.select<RepositoryState, int>(
-                        (s) => s.status?.behind ?? 0);
-                    if (behind <= 0) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 5),
-                      child: GestureDetector(
-                        onTap: _pulling ? null : _pull,
-                        child: MouseRegion(
-                          cursor: _pulling
-                              ? SystemMouseCursors.basic
-                              : SystemMouseCursors.click,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: t.stateModified.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(
-                                  context.surfaceShader.geometry.pillRadius),
-                              border: Border.all(
-                                  color:
-                                      t.stateModified.withValues(alpha: 0.3)),
-                            ),
-                            child: Text(
-                              _pulling ? '…' : '↓$behind',
-                              style: TextStyle(
-                                color: t.stateModified,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w700,
-                                fontFamily: AppFonts.mono,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
-                ],
+      child: MosaicShardBar(
+        key: _pillKey,
+        shards: shards,
+        shardKeys: keys,
+        surfaceColor: t.surface0,
+        borderColor: borderColor,
+        seamColor: t.chromeBorder,
+        borderRadius: radius,
+      ),
+    );
+  }
+
+  Widget _branchShardContent(AppTokens t) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              widget.branch,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-        ),
+          const SizedBox(width: 4),
+          AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
+        ],
+      ),
+    );
+  }
+
+  TextStyle _countsStyle(Color color) => TextStyle(
+        color: color,
+        fontSize: 9.5,
+        fontWeight: FontWeight.w700,
+        fontFamily: AppFonts.mono,
+      );
+
+  Widget _countsShardContent(AppTokens t, int ahead, int behind) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text('↑$ahead',
+              style: _countsStyle(ahead > 0 ? t.stateAdded : t.textMuted)),
+          const SizedBox(width: 5),
+          Text('↓$behind',
+              style: _countsStyle(behind > 0 ? t.stateModified : t.textMuted)),
+        ],
+      ),
+    );
+  }
+
+  TextStyle _publishStyle(AppTokens t) => TextStyle(
+        color: t.accentBright,
+        fontSize: 9.5,
+        fontWeight: FontWeight.w700,
+      );
+
+  Widget _publishShardContent(AppTokens t) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AppIcon(name: 'sync', size: 10, color: t.accentBright),
+          const SizedBox(width: 5),
+          Text(_publishing ? 'Publishing…' : 'Publish', style: _publishStyle(t)),
+        ],
       ),
     );
   }
@@ -3554,6 +3722,16 @@ class _BranchPillState extends State<_BranchPill> {
 /// Pill and panel share this so the panel visually replaces the pill
 /// without leaving a gap against the next desk tab.
 const double _kBranchPillMaxWidth = 280;
+
+// Fixed chrome each fused-pill shard draws around its measured text, so the
+// mosaic bar can size the cell before paint. Branch: hpad(16) + icon(11) +
+// gap(5) + gap(4) + chevron(10). Counts: hpad(14) + inter-gap(5). Publish:
+// hpad(16) + icon(10) + gap(5).
+// icon(11) + gaps(9) + chevron(10) + h-padding(16) = 46, plus 4px slack so
+// hinting/sub-pixel rounding never nudges the last glyph into an ellipsis.
+const double _kBranchShardChrome = 50;
+const double _kCountsShardChrome = 19;
+const double _kPublishShardChrome = 31;
 
 class _BranchPanelOverlay extends StatefulWidget {
   final double top;
@@ -4938,6 +5116,109 @@ class _SidePanelIssueRow extends StatelessWidget {
 /// review) survives page switches, while cross-fading + sliding the new
 /// page in so rail navigation reads as motion, not a teleport. Direction
 /// of the slide follows rail order (downward rail step = incoming rises
+/// The blank no-repo canvas. Empty on purpose — the affordance is one
+/// hairline strip at the bottom of the viewport with two quiet actions.
+class _NoRepoSurface extends StatefulWidget {
+  const _NoRepoSurface();
+
+  @override
+  State<_NoRepoSurface> createState() => _NoRepoSurfaceState();
+}
+
+class _NoRepoSurfaceState extends State<_NoRepoSurface> {
+  bool _busy = false;
+
+  Future<void> _activate(String path) async {
+    final err = await context.read<RepositoryState>().setActivePath(path);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    }
+  }
+
+  Future<void> _open() async {
+    if (_busy) return;
+    final picked = await pickDirectory('Open Repository');
+    if (picked == null || !mounted) return;
+    setState(() => _busy = true);
+    await _activate(picked);
+  }
+
+  Future<void> _create() async {
+    if (_busy) return;
+    final picked = await pickDirectory('Create Repository');
+    if (picked == null || !mounted) return;
+    setState(() => _busy = true);
+    final r = await initRepository(picked);
+    if (!mounted) return;
+    if (!r.ok || r.data == null) {
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(r.error ?? 'Failed to create repository.')),
+      );
+      return;
+    }
+    await _activate(r.data!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Column(
+      children: [
+        const Expanded(child: SizedBox.expand()),
+        Container(
+          height: 30,
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(
+                color: t.chromeBorder.withValues(alpha: 0.25),
+              ),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _QuietAction(label: 'open repository', onTap: _open),
+              const SizedBox(width: 26),
+              _QuietAction(label: 'new repository', onTap: _create),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuietAction extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _QuietAction({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return HoverableTap(
+      onTap: onTap,
+      builder: (context, hovered) => AnimatedDefaultTextStyle(
+        duration: context.motion(AppMotion.snap),
+        curve: AppMotion.snapCurve,
+        style: TextStyle(
+          color: hovered ? t.textNormal : t.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Text(label),
+        ),
+      ),
+    );
+  }
+}
+
 /// from below). Duration + curve come from `context.surfaceShader` so
 /// each theme asserts its own nav cadence. Reduce-motion short-circuits
 /// the animation entirely — state is preserved, visual is instant.
@@ -5011,6 +5292,16 @@ class _KeepAlivePagesState extends State<_KeepAlivePages>
 
   @override
   Widget build(BuildContext context) {
+    // No repo active → don't instantiate the page stack at all (ChangesPage
+    // would spin forever on null status). The canvas stays deliberately
+    // blank — the only affordance is a thin strip of quiet actions at the
+    // bottom; clone keeps living in the sidebar's + entry. Opening a repo
+    // flips activePath and this rebuilds into the pages.
+    final hasRepo =
+        context.select<RepositoryState, bool>((s) => s.activePath != null);
+    if (!hasRepo) {
+      return const _NoRepoSurface();
+    }
     final toPage = _pageAt(_to);
     final fromPage = _from != _to ? _pageAt(_from) : null;
     return ClipRect(

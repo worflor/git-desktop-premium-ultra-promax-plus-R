@@ -333,7 +333,10 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
     if (outcome is! MergeConflicted) return outcome;
     if (!context.mounted) return outcome;
     if (prep.topology == MergeTopology.rebase) {
-      return _resolveRebaseLoop(context, repoPath, outcome.paths);
+      // oursLabel = local branch, theirsLabel = upstream ref — the exact
+      // "replay <local> onto <upstream>" the header needs.
+      return _resolveRebaseLoop(context, repoPath, outcome.paths,
+          replayLabel: 'rebase ${prep.oursLabel} onto ${prep.theirsLabel}');
     }
     final files = await gatherConflictFiles(repoPath, outcome.paths);
     if (!context.mounted) return outcome;
@@ -406,8 +409,12 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
 
 /// Drives a paused `pull --rebase` to completion: resolve each conflicting
 /// step in the editor, `git rebase --continue`, repeat until the rebase ends.
+/// [replayLabel] names the operation in the conflict window's header so the
+/// user sees WHAT is being replayed ONTO WHAT mid-rebase (e.g.
+/// `rebase main onto origin/main`) instead of a bare "rebase".
 Future<MergeOutcome> _resolveRebaseLoop(
-    BuildContext context, String repoPath, List<String> firstPaths) async {
+    BuildContext context, String repoPath, List<String> firstPaths,
+    {String replayLabel = 'rebase'}) async {
   // Accumulate every path resolved across all rebase steps so the reported
   // count reflects reality — the resume entry point hands in an empty
   // firstPaths, so without this the UI would always say "0 conflicts".
@@ -448,7 +455,7 @@ Future<MergeOutcome> _resolveRebaseLoop(
     // leaves the rebase cleanly paused. (Was openConflictEditor directly,
     // which marched the user straight into the editor.)
     final resolved = await presentConflicts(context, repoPath,
-        files: files, opLabel: 'rebase');
+        files: files, opLabel: replayLabel);
     if (!resolved) return MergeConflicted(touched.toList());
     if (!context.mounted) return MergeConflicted(touched.toList());
     // Same gate the sequencer/checkout paths use: gatherConflictFiles skips
