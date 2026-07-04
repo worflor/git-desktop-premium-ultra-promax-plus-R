@@ -429,6 +429,20 @@ const _aboutDevelopment = <_AboutEntry>[
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.1.5',
+    date: '2026-07-04',
+    bullets: [
+      'happy late Canada Day!',
+      'Another theme pass. A pile of hardcoded corners around the app finally route through the theme engine.',
+      'Check (now exists) and got married to sync. When you have local commits waiting to push, the two sit side by side as separate one-tap options instead of one button pulling double duty.',
+      'Cursor CLI is fully integrated now.',
+      'Dropped the old Google CLI for Antigravity, shipped off by default. Its headless mode makes you sign in through a window first, a bold interpretation of the word, so it stays disabled until Google fixes their known bug.',
+      'GitHub\'s CLI is wired in too, though it\'s also mostly vibe slop. And due to enegineering outside of my own, its disabled by default.',
+      'More under-the-hood math. The engine keeps getting quietly sharper.',
+      'The review verdict looks cooler now. No deeper meaning, just, \"fable make it pretty.\" and a few (too many) back and fourths',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.4',
     date: '2026-06-30',
     bullets: [
