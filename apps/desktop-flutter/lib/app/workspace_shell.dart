@@ -3301,6 +3301,44 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
   OverlayEntry? _flyout;
   bool _publishing = false;
 
+  // Whether the repo has ANY remote — a Publish affordance on a remote-less
+  // repo (fresh `git init`) is a button that can only ever fail; it renders
+  // inert with a truthful tooltip instead. Null = genuinely unknown: the
+  // shard renders NEUTRAL (muted, inert) until the probe lands, because a
+  // bright button that dims a beat later is a promise being retracted.
+  // The session cache makes revisits render correct on the first frame.
+  bool? _hasRemote;
+  String? _remoteProbeRepo;
+  static final Map<String, bool> _remoteCache = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _probeRemote();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FusedRepoPill old) {
+    super.didUpdateWidget(old);
+    if (old.repoPath != widget.repoPath) {
+      _probeRemote();
+    }
+  }
+
+  void _probeRemote() {
+    final repo = widget.repoPath;
+    if (repo == null) return;
+    _hasRemote = _remoteCache[repo]; // instant when known this session
+    _remoteProbeRepo = repo;
+    unawaited(() async {
+      final r = await primaryRemoteName(repo);
+      if (!mounted || _remoteProbeRepo != repo) return; // stale guard
+      final has = r.ok ? r.data != null : true;
+      _remoteCache[repo] = has;
+      setState(() => _hasRemote = has);
+    }());
+  }
+
   Future<void> _toggle() async {
     if (_open) {
       _close();
@@ -3543,12 +3581,19 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
     setState(() => _publishing = true);
     try {
       // Publish routes through the SAME resolver the sync flyout / clean-tree
-      // pill use (setUpstream push), so the surfaces can't diverge.
+      // pill use (setUpstream push through the resolved remote), so the
+      // surfaces can't diverge. Feedback is publish-specific: success names
+      // the branch, failure speaks classified English instead of raw stderr.
       final outcome = await resolveSync(context, widget.repoPath!, status);
       if (!mounted) return;
       final clean = outcome is MergeClean;
+      final message = switch (outcome) {
+        MergeClean() => 'Published ${widget.branch}.',
+        MergeFailed(:final message) => classifyGitError(message).message,
+        _ => mergeOutcomeMessage(outcome, op: 'Sync'),
+      };
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(mergeOutcomeMessage(outcome, op: 'Sync')),
+        content: Text(message),
         duration: clean
             ? const Duration(milliseconds: 1600)
             : const Duration(seconds: 4),
@@ -3617,15 +3662,25 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         keys.add(_countsKey);
       } else {
         // No upstream yet: shard 2 collapses to a single publish affordance.
+        // Remote-less repos (fresh `git init`) get the inert variant — a
+        // Publish button that can only fail is worse than none; the tooltip
+        // says why and the shard wakes the moment a remote appears. While
+        // the probe is unresolved the shard is neutral too: it BRIGHTENS
+        // into an invitation when confirmed, never dims out of one.
+        final canPublish = _hasRemote == true;
         shards.add(MosaicShard.text(
           text: _publishing ? 'Publishing…' : 'Publish',
-          style: _publishStyle(t),
+          // Measure in the ambient family (serif on some themes) — a bare
+          // style under-measures and crowds the label against the edge.
+          style: DefaultTextStyle.of(context).style.merge(_publishStyle(t)),
           chrome: _kPublishShardChrome,
-          onTap: _publishing ? null : () => _publish(status),
-          tooltip: action.detail,
+          onTap: !canPublish || _publishing ? null : () => _publish(status),
+          tooltip: _hasRemote == false
+              ? 'No remote configured for this repository.'
+              : action.detail,
           hoverFill: t.accentBright.withValues(alpha: 0.14),
           active: _publishing,
-          child: _publishShardContent(t),
+          child: _publishShardContent(t, enabled: canPublish),
         ));
         keys.add(_countsKey);
       }
@@ -3706,16 +3761,18 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         fontWeight: FontWeight.w700,
       );
 
-  Widget _publishShardContent(AppTokens t) {
+  Widget _publishShardContent(AppTokens t, {bool enabled = true}) {
+    final color = enabled ? t.accentBright : t.textMuted;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 9),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          AppIcon(name: 'sync', size: 10, color: t.accentBright),
+          AppIcon(name: 'sync', size: 10, color: color),
           const SizedBox(width: 5),
-          Text(_publishing ? 'Publishing…' : 'Publish', style: _publishStyle(t)),
+          Text(_publishing ? 'Publishing…' : 'Publish',
+              style: _publishStyle(t).copyWith(color: color)),
         ],
       ),
     );
@@ -3736,8 +3793,10 @@ const double _kBranchPillMaxWidth = 280;
 // icon(11) + gaps(9) + chevron(10) + h-padding(16) = 46, plus 4px slack so
 // hinting/sub-pixel rounding never nudges the last glyph into an ellipsis.
 const double _kBranchShardChrome = 50;
+// publish: icon(10) + gap(5) + h-padding(18) = 33, plus 4px slack — the
+// label was riding the seam at the old 31.
 const double _kCountsShardChrome = 19;
-const double _kPublishShardChrome = 31;
+const double _kPublishShardChrome = 37;
 
 class _BranchPanelOverlay extends StatefulWidget {
   final double top;

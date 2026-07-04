@@ -1200,6 +1200,12 @@ Future<GitResult<String>> getFileDiffAtRevision(
   String filePath,
   String commitHash,
 ) async {
+  final stub = await _oversizedDiffStub(
+    repo,
+    ['diff', '--numstat', '$commitHash~1..$commitHash', '--', filePath],
+    filePath,
+  );
+  if (stub != null) return GitResult.ok(stub);
   final r = await _git(repo, [
     'diff',
     '--full-index',
@@ -1352,6 +1358,12 @@ Future<GitResult<void>> applyBranchToBase({
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
 /// there's no parent → fall back to `git show`).
 Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
+  final stub = await _oversizedDiffStub(
+    repo,
+    ['diff', '--numstat', '$commitHash~1..$commitHash'],
+    'commit $commitHash',
+  );
+  if (stub != null) return GitResult.ok(stub);
   final r = await _git(repo, ['diff', '--full-index', '$commitHash~1..$commitHash']);
   if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
   final primaryErr = r.stderr.toString();
@@ -1455,8 +1467,51 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
   ));
 }
 
+/// Hard ceiling on changed lines a diff may carry before the app refuses
+/// to MATERIALIZE it. Field-proven necessity: a repo vendoring multi-GB
+/// text datasets (DIMACS road graphs) produced a gigabyte-class diff whose
+/// string + per-line parse objects ballooned to ~20GB on the UI isolate and
+/// froze the app for minutes. The guard costs one `--numstat` (no content)
+/// before any content is generated. 100k changed lines is far beyond
+/// anything a human reviews inline; the file still stages/commits whole.
+const int kMaxRenderableDiffLines = 100000;
+
+/// Cheap pre-flight: total changed lines per `--numstat` for [diffArgs]
+/// (same revision/path args as the real diff, WITHOUT -U/--full-index).
+/// Returns null when under the ceiling (caller proceeds), else a tiny
+/// synthetic diff that renders as an honest placeholder row. Binary
+/// entries report `-` in numstat and count zero — the binary path owns
+/// those.
+Future<String?> _oversizedDiffStub(
+  String repo,
+  List<String> numstatArgs,
+  String headerPath,
+) async {
+  final probe = await _git(repo, numstatArgs);
+  if (probe.exitCode != 0) return null; // let the real call surface errors
+  var total = 0;
+  for (final line in probe.stdout.toString().split('\n')) {
+    final parts = line.split('\t');
+    if (parts.length < 3) continue;
+    total += (int.tryParse(parts[0]) ?? 0) + (int.tryParse(parts[1]) ?? 0);
+  }
+  if (total <= kMaxRenderableDiffLines) return null;
+  final thousands = (total / 1000).round();
+  return 'diff --git a/$headerPath b/$headerPath\n'
+      '--- a/$headerPath\n'
+      '+++ b/$headerPath\n'
+      ' Diff too large to render: ~${thousands}k changed lines. '
+      'The change itself is intact and stages/commits normally.\n';
+}
+
 Future<GitResult<String>> getFileDiff(String repo, String path,
     {bool staged = false, int contextLines = 3}) async {
+  final stub = await _oversizedDiffStub(
+    repo,
+    ['diff', '--numstat', if (staged) '--cached', '--', path],
+    path,
+  );
+  if (stub != null) return GitResult.ok(stub);
   final args = staged
       ? ['diff', '--full-index', '--cached', '-U$contextLines', '--', path]
       : ['diff', '--full-index', '-U$contextLines', '--', path];

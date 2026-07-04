@@ -503,7 +503,19 @@ Future<MergeOutcome> resolveSync(
         'Cannot sync: detached HEAD state. Check out a branch first.');
   }
   if (status.upstream == null) {
-    return _wrapPush(await pushRemote(repoPath, setUpstream: true));
+    // Publish leg: resolve the ACTUAL remote first. A bare pushRemote
+    // defaults to 'origin', which errors on a repo whose only remote has
+    // another name and produces a raw fatal on a repo with none — the
+    // fresh-`git init` case deserves a sentence, not a stack of git noise.
+    final remote = await primaryRemoteName(repoPath);
+    if (!remote.ok) return MergeFailed(remote.error ?? 'Publish failed.');
+    final remoteName = remote.data;
+    if (remoteName == null) {
+      return const MergeFailed(
+          'No remote configured. Add one to publish this branch.');
+    }
+    return _wrapPush(
+        await pushRemote(repoPath, remote: remoteName, setUpstream: true));
   }
   if (status.ahead > 0 && status.behind > 0) {
     final pull = await resolvePull(context, repoPath, rebase: true);

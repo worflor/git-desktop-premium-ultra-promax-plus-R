@@ -251,6 +251,45 @@ void main() {
     });
   });
 
+  group('oversized diff guard', () {
+    test('gigantic text diffs return the placeholder, never the content',
+        () async {
+      // The marble incident: a vendored-dataset repo produced a GB-class
+      // text diff that ballooned to ~20GB of parse objects on the UI
+      // isolate. The numstat preflight must stub it before any content
+      // materializes.
+      final big = StringBuffer();
+      for (var i = 0; i < 120000; i++) {
+        big.writeln('data row $i');
+      }
+      await wf('data.txt').writeAsString(big.toString());
+      await git(['add', '-A']);
+      await git(['commit', '-qm', 'base']);
+      // Rewrite every line → numstat ≈ 240k changed lines, over the cap.
+      final changed = StringBuffer();
+      for (var i = 0; i < 120000; i++) {
+        changed.writeln('data row $i CHANGED');
+      }
+      await wf('data.txt').writeAsString(changed.toString());
+
+      final r = await getFileDiff(repo, 'data.txt');
+      expect(r.ok, isTrue);
+      expect(r.data, contains('Diff too large to render'));
+      expect(r.data!.length, lessThan(1000),
+          reason: 'placeholder, not materialized content');
+
+      // Small diffs are untouched by the guard.
+      await wf('small.txt').writeAsString('one\n');
+      await git(['add', '-A']);
+      await git(['commit', '-qm', 'small']);
+      await wf('small.txt').writeAsString('two\n');
+      final small = await getFileDiff(repo, 'small.txt');
+      expect(small.ok, isTrue);
+      expect(small.data, contains('-one'));
+      expect(small.data, contains('+two'));
+    });
+  });
+
   group('identity familiarity grading', () {
     test('probe collects historical authors; grader ranks against them',
         () async {
