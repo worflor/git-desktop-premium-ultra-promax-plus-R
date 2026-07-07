@@ -1915,6 +1915,40 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
   return GitResult.ok(branches);
 }
 
+/// Commit timestamps (UNIX seconds) on [branch] over the last 90 days,
+/// walking first-parent only, newest-first, capped at 300 rows. Feeds
+/// the branches lens churn sparkline — a per-branch histogram of recent
+/// activity so a hot branch reads dense at a glance.
+///
+/// `%ct` already emits the committer date as a UNIX timestamp; the
+/// redundant `--date=unix` is harmless and pins the intent. Returns an
+/// empty list on any failure (bad ref, huge repo, spawn error) so the
+/// caller renders the row identically minus the spark — never an error
+/// surface.
+Future<List<int>> branchChurnTimestamps(String repo, String branch) async {
+  try {
+    final r = await _git(repo, [
+      'log',
+      branch,
+      '--since=90.days',
+      '--date=unix',
+      '--format=%ct',
+      '--first-parent',
+      '-n',
+      '300',
+    ]);
+    if (r.exitCode != 0) return const [];
+    final out = <int>[];
+    for (final line in r.stdout.toString().split('\n')) {
+      final v = int.tryParse(line.trim());
+      if (v != null) out.add(v);
+    }
+    return out;
+  } catch (_) {
+    return const [];
+  }
+}
+
 /// For each branch in [branches], determine whether all of its
 /// commits have a patch-id-equivalent commit on [baseRef]. The killer
 /// detection that `git branch --merged` misses: a PR merged via
@@ -2301,32 +2335,36 @@ Future<GitResult<Set<String>>> ancestorHashes(
 }
 
 Future<GitResult<List<TagEntryData>>> listTags(String repo) async {
+  // `%(*objectname)` is the DEREFERENCED target — populated only for
+  // annotated tags (which wrap a tag object around the commit). A
+  // lightweight tag is a bare ref straight at the commit, so its
+  // `*objectname` is empty; the commit hash lives in `%(objectname)`.
+  // Emit both and prefer the deref, falling back to the own name, so
+  // every tag surfaces a short hash regardless of type.
   final r = await _git(repo, [
     'tag',
     '-l',
-    '--format=%(refname:short)%09%(objecttype)%09%(*objectname)%09%(creatordate:iso)%09%(taggername)%09%(subject)'
+    '--format=%(refname:short)%09%(objecttype)%09%(*objectname)%09%(objectname)%09%(creatordate:iso)%09%(taggername)%09%(subject)'
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+
+  String? field(List<String> parts, int i) =>
+      parts.length > i && parts[i].trim().isNotEmpty ? parts[i].trim() : null;
 
   final tags = <TagEntryData>[];
   for (final line in r.stdout.toString().split('\n')) {
     if (line.trim().isEmpty) continue;
     final parts = line.split('\t');
+    final hashFull = field(parts, 2) ?? field(parts, 3);
     tags.add(TagEntryData(
       name: parts[0].trim(),
       tagType: parts.length > 1 ? parts[1].trim() : 'lightweight',
-      targetHash: parts.length > 2 && parts[2].trim().isNotEmpty
-          ? parts[2].trim().substring(0, 8.clamp(0, parts[2].trim().length))
-          : null,
-      createdAt: parts.length > 3 && parts[3].trim().isNotEmpty
-          ? parts[3].trim()
-          : null,
-      creatorName: parts.length > 4 && parts[4].trim().isNotEmpty
-          ? parts[4].trim()
-          : null,
-      subject: parts.length > 5 && parts[5].trim().isNotEmpty
-          ? parts[5].trim()
-          : null,
+      targetHash: hashFull != null && hashFull.length > 8
+          ? hashFull.substring(0, 8)
+          : hashFull,
+      createdAt: field(parts, 4),
+      creatorName: field(parts, 5),
+      subject: field(parts, 6),
     ));
   }
   return GitResult.ok(tags);

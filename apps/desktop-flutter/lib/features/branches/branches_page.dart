@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -296,6 +297,13 @@ class _BranchesPageState extends State<BranchesPage> {
   final DreamHintController<String> _branchNameDream = DreamHintController();
   bool _actionRunning = false;
   String? _actionError;
+
+  // Ghost branch-creator state (replaces the permanent right rail). The
+  // pill sits collapsed at the tail of the branch list and morphs in
+  // place into a naming input. Esc collapse rides on its own focus node.
+  bool _branchCreatorExpanded = false;
+  final FocusNode _branchCreatorEscapeFocus =
+      FocusNode(debugLabel: 'BranchCreator.escape');
 
   // Lens state ------------------------------------------------------------
   _BranchesLens _lens = _BranchesLens.branches;
@@ -601,6 +609,7 @@ class _BranchesPageState extends State<BranchesPage> {
     _branchNameDream.removeListener(_onBranchNameDreamChanged);
     _branchNameDream.dispose();
     _newBranchCtrl.dispose();
+    _branchCreatorEscapeFocus.dispose();
     _prSearchCtrl.dispose();
     _issueSearchCtrl.dispose();
     _lensFocusNode.dispose();
@@ -2872,10 +2881,17 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     setState(() => _actionRunning = false);
     if (!r.ok) {
+      // Keep the ghost creator open with a conflicted border + reason so
+      // the failure lands on the input, not in a distant panel.
       setState(() => _actionError = r.error);
       return;
     }
     _newBranchCtrl.clear();
+    // Success collapses the ghost back to its resting glyph.
+    setState(() {
+      _branchCreatorExpanded = false;
+      _actionError = null;
+    });
     await _load(repo);
   }
 
@@ -3072,199 +3088,136 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Widget _buildBranchesBody(AppTokens t, String repoPath) {
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Left: branch list + tags
-      Expanded(
-          child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Branch list (the lens ribbon already says "BRANCHES" —
-          // a second "Repository Branches" header here was redundant
-          // chrome).
-          ...(_branches.map((b) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: _BranchCard(
-                  branch: b,
-                  tokens: t,
-                  actionRunning: _actionRunning,
-                  onCheckout:
-                      b.current ? null : () => _checkout(repoPath, b.name),
-                  onDelete: b.current
-                      ? null
-                      : ({bool force = false}) =>
-                          _deleteBranch(repoPath, b.name, force: force),
-                  onSecondaryTap: (pos) =>
-                      _showBranchContextMenu(context, pos, b, repoPath),
-                ),
-              ))),
+    // Worktree presence = lease. A branch with an open worktree is the
+    // most present kind of ref regardless of commit age — it can't be
+    // idle or a corpse while its room stands. Consumed straight from
+    // WorktreeState (identity select: `desks` is replaced per refresh),
+    // so lease data rides the same cache/refresh cycle as the desk strip.
+    final desks = context.select<WorktreeState, List<WorktreeData>>(
+      (s) => s.desks,
+    );
+    final leases = <String, String>{
+      for (final d in desks)
+        if (d.branch != null && d.branch!.isNotEmpty) d.branch!: d.path,
+    };
 
-          // Tags section
-          if (_tags.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(0, 20, 0, 12),
-              child: Row(children: [
-                Expanded(
-                    child: Divider(
-                        color: t.chromeBorder.withValues(alpha: 0.15),
-                        height: 1,
-                        thickness: 1)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(children: [
-                    AppIcon(name: 'tag', size: 12, color: t.textMuted),
-                    const SizedBox(width: 6),
-                    Text('Tags',
-                        style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.08)),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: t.chromeBorder.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text('${_tags.length}',
-                          style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600)),
-                    ),
-                  ]),
-                ),
-                Expanded(
-                    child: Divider(
-                        color: t.chromeBorder.withValues(alpha: 0.15),
-                        height: 1,
-                        thickness: 1)),
-              ]),
-            ),
-            ...(_tags.map((tag) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _TagCard(
-                    tag: tag,
-                    tokens: t,
-                    hovered: _hoveredTag == tag.name,
-                    actionRunning: _actionRunning,
-                    onHoverChange: (v) =>
-                        setState(() => _hoveredTag = v ? tag.name : null),
-                    onDelete: () => _deleteTag(repoPath, tag.name),
-                  ),
-                ))),
-          ],
-          if (_tags.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Center(
-                  child: Text('No tags yet',
-                      style: TextStyle(color: t.textMuted, fontSize: 11))),
-            ),
-        ]),
-      )),
+    // Evidence sort: HEAD, then leased, then live/idle/corpse by recency.
+    // The order and the per-row material are the only signals — no
+    // headings.
+    final sorted = _evidenceSorted(_branches, leases.keys.toSet());
 
-      // Right: Create Branch sidebar (240px)
-      MaterialSurface(
-        tone: AppMaterialTone.surface1,
-        radius: 0,
-        border: Border(
-          left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
+    // Dream a branch name from the working-tree diff while the ghost
+    // creator is open and empty — same engine the commit composer uses,
+    // output slugged into the field's hint.
+    if (_branchCreatorExpanded && _newBranchCtrl.text.trim().isEmpty) {
+      final engineReady = context.select<LogosGitState, bool>(
+        (s) => s.engineFor(repoPath) != null,
+      );
+      final sig = '$repoPath|${engineReady ? 'rdy' : 'wait'}';
+      _branchNameDream.schedule(sig, () => _computeBranchNameDream(repoPath));
+    }
+
+    final rows = <Widget>[];
+    _BranchStratum? prev;
+    for (final b in sorted) {
+      // The current branch's own room is where the user is sitting —
+      // HEAD material already says "you are here", so only non-current
+      // branches read as leased.
+      final leased = !b.current && leases.containsKey(b.name);
+      final stratum = _classifyBranch(b, leased: leased);
+      // Stratum boundary: a slightly larger gap + a faint hairline do the
+      // dividing. The material shift itself already reads as a new band,
+      // so no labels are needed (and none are allowed).
+      if (prev != null && stratum != prev) {
+        rows.add(Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Container(height: 1, color: t.chromeBorderFaint),
+        ));
+      }
+      rows.add(Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: _BranchCard(
+          key: ValueKey(b.name),
+          branch: b,
+          tokens: t,
+          actionRunning: _actionRunning,
+          stratum: stratum,
+          leased: leased,
+          worktreePath: leased ? leases[b.name] : null,
+          repoPath: repoPath,
+          onCheckout: b.current ? null : () => _checkout(repoPath, b.name),
+          onDelete: b.current
+              ? null
+              : ({bool force = false}) =>
+                  _deleteBranch(repoPath, b.name, force: force),
+          onSecondaryTap: (pos) =>
+              _showBranchContextMenu(context, pos, b, repoPath),
         ),
-        elevated: false,
-        width: 240,
-        child:
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('Create New Branch',
-                      style: TextStyle(
-                          color: t.textStrong,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  // Branch name input. Placeholder is dreamed from the
-                  // current working-tree diff when available — same
-                  // engine the commit composer uses, output slugged.
-                  Builder(builder: (context) {
-                    if (_newBranchCtrl.text.trim().isEmpty) {
-                      final engineReady = context.select<
-                          LogosGitState, bool>(
-                        (s) => s.engineFor(repoPath) != null,
-                      );
-                      final sig =
-                          '$repoPath|${engineReady ? 'rdy' : 'wait'}';
-                      _branchNameDream.schedule(
-                        sig,
-                        () => _computeBranchNameDream(repoPath),
-                      );
-                    }
-                    return Focus(
-                      onKeyEvent: (node, event) {
-                        if (event is KeyDownEvent &&
-                            event.logicalKey ==
-                                LogicalKeyboardKey.enter) {
-                          _createBranch(repoPath);
-                          return KeyEventResult.handled;
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      child: AppTextField(
-                        controller: _newBranchCtrl,
-                        fontSize: 12,
-                        // Lock the input while the create call is in
-                        // flight so a second keystroke doesn't queue
-                        // a name that no longer matches the visible
-                        // button label or get processed as part of a
-                        // re-fired action.
-                        enabled: !_actionRunning,
-                        hintText: _branchNameDream.value ??
-                            'branch name (e.g. feature/auth)',
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 8),
-                  // Create button
-                  SizedBox(
-                    height: 26,
-                    child: _ChromeButton(
-                      label: 'Create branch from HEAD',
-                      enabled: !(_newBranchCtrl.text.trim().isEmpty ||
-                          _actionRunning),
-                      onPressed:
-                          (_newBranchCtrl.text.trim().isEmpty || _actionRunning)
-                              ? null
-                              : () => _createBranch(repoPath),
-                    ),
-                  ),
-                  // Action error
-                  if (_actionError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: t.stateConflicted.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(
-                              context.surfaceShader.geometry.pillRadius),
-                          border: Border.all(
-                              color: t.stateConflicted.withValues(alpha: 0.2)),
-                        ),
-                        child: Text(_actionError!,
-                            style: TextStyle(
-                                color: t.stateConflicted, fontSize: 11)),
-                      ),
-                    ),
-                ]),
+      ));
+      prev = stratum;
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ...rows,
+
+        // Ghost creator ROW — the permanent rail is gone. A full-width
+        // dashed row at the end of the branch strata (one stratum gap
+        // above) morphs in place into a naming input (Enter creates,
+        // Esc/blur collapses). One stratum gap, no mystery void.
+        Padding(
+          padding: const EdgeInsets.only(top: 6, bottom: 6),
+          child: _BranchCreator(
+            tokens: t,
+            expanded: _branchCreatorExpanded,
+            error: _actionError,
+            enabled: !_actionRunning,
+            controller: _newBranchCtrl,
+            escapeFocus: _branchCreatorEscapeFocus,
+            hintText: _branchNameDream.value ?? 'branch name',
+            onToggle: () => setState(() {
+              _branchCreatorExpanded = !_branchCreatorExpanded;
+              if (!_branchCreatorExpanded) {
+                _newBranchCtrl.clear();
+                _actionError = null;
+              }
+            }),
+            onChanged: (_) => setState(() {}),
+            onCreate: () => _createBranch(repoPath),
           ),
-        ]),
-      ),
-    ]);
+        ),
+
+        // Tags — the quiet terminal register. One stratum gap, then a
+        // perceptible hairline with the tag glyph engraved at its left
+        // end — glyph and line compose one divider; no loud "Tags"
+        // heading. textMuted glyph + subtle-tier line so the pair reads
+        // together instead of a floating orphan over an invisible rule.
+        if (_tags.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(0, 6, 0, 10),
+            child: Row(children: [
+              AppIcon(name: 'tag', size: 11, color: t.textMuted),
+              const SizedBox(width: 6),
+              Expanded(
+                  child: Container(height: 1, color: t.chromeBorderSubtle)),
+            ]),
+          ),
+          ..._tags.map((tag) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: _TagCard(
+                  tag: tag,
+                  tokens: t,
+                  hovered: _hoveredTag == tag.name,
+                  actionRunning: _actionRunning,
+                  onHoverChange: (v) =>
+                      setState(() => _hoveredTag = v ? tag.name : null),
+                  onDelete: () => _deleteTag(repoPath, tag.name),
+                ),
+              )),
+        ],
+      ]),
+    );
   }
 
   Widget _buildPullRequestsBody(AppTokens t, String repoPath) {
@@ -9900,10 +9853,91 @@ class _DeleteError extends _DeleteBranchOutcome {
   const _DeleteError(this.message);
 }
 
+/// Lifecycle band a branch falls into. Drives BOTH the evidence sort
+/// order and the material/geometry each row is rendered with — the
+/// stratum IS the spatial encoding (compression + alpha), no headings.
+enum _BranchStratum { head, live, idle, corpse }
+
+/// Classify a branch into its lifecycle band. `current` always wins so
+/// the active branch is HEAD even if its upstream is gone. A [leased]
+/// branch — one with an open worktree — classifies live no matter its
+/// commit age or merge state: it can't be a corpse while its room
+/// stands. Then corpses (upstream deleted or squash-merged), then idle
+/// (>30d or dateless), then live.
+_BranchStratum _classifyBranch(BranchInfo b, {bool leased = false}) {
+  if (b.current) return _BranchStratum.head;
+  if (leased) return _BranchStratum.live;
+  if (b.gone || b.squashMerged == true) return _BranchStratum.corpse;
+  final last = b.lastCommitAt;
+  if (last == null) return _BranchStratum.idle;
+  if (DateTime.now().difference(last).inDays >= 30) return _BranchStratum.idle;
+  return _BranchStratum.live;
+}
+
+/// One continuous list, no group headers: HEAD first, then leased
+/// branches (open worktree — the most present refs after HEAD), then
+/// live by recency (newest commit first), then idle by recency, then
+/// corpses last. Within a band the most recently touched branch sits
+/// highest; dateless branches sink to the bottom of their band
+/// (name-tiebroken).
+List<BranchInfo> _evidenceSorted(
+    List<BranchInfo> branches, Set<String> leasedNames) {
+  int rank(BranchInfo b) {
+    final leased = !b.current && leasedNames.contains(b.name);
+    return switch (_classifyBranch(b, leased: leased)) {
+      _BranchStratum.head => 0,
+      _BranchStratum.live => leased ? 1 : 2,
+      _BranchStratum.idle => 3,
+      _BranchStratum.corpse => 4,
+    };
+  }
+
+  final list = [...branches];
+  list.sort((a, b) {
+    final ra = rank(a);
+    final rb = rank(b);
+    if (ra != rb) return ra - rb;
+    final da = a.lastCommitAt;
+    final db = b.lastCommitAt;
+    if (da == null && db == null) return a.name.compareTo(b.name);
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return db.compareTo(da);
+  });
+  return list;
+}
+
+/// Idle/corpse age phrasing for Semantics — the state word the eye
+/// infers from the compression, narrated for readers. Never rendered.
+String _idlePhrase(DateTime? last) {
+  if (last == null) return 'idle';
+  final d = DateTime.now().difference(last).inDays;
+  if (d < 365) return 'idle $d days';
+  final y = (d / 365).floor();
+  return 'idle $y year${y == 1 ? '' : 's'}';
+}
+
 class _BranchCard extends StatefulWidget {
   final BranchInfo branch;
   final AppTokens tokens;
   final bool actionRunning;
+
+  /// Lifecycle band — controls compression, text tier, alpha, and
+  /// whether a churn spark is fetched at all.
+  final _BranchStratum stratum;
+
+  /// True when this branch has an open worktree (a lease). Leased rows
+  /// carry a room glyph in the data zone and never read idle/corpse —
+  /// the caller has already folded the lease into [stratum].
+  final bool leased;
+
+  /// The leased worktree's path — surfaced on the room glyph's hover
+  /// (a path is data). Null when not leased.
+  final String? worktreePath;
+
+  /// Repo the branch lives in, for the lazy churn fetch. Empty disables
+  /// the spark (renders identically minus it).
+  final String repoPath;
   final VoidCallback? onCheckout;
 
   /// Returns the outcome so the card can morph its trash button into
@@ -9916,9 +9950,14 @@ class _BranchCard extends StatefulWidget {
   /// while the menu is open and clear the highlight on dismiss.
   final Future<void> Function(Offset)? onSecondaryTap;
   const _BranchCard(
-      {required this.branch,
+      {super.key,
+      required this.branch,
       required this.tokens,
       required this.actionRunning,
+      required this.stratum,
+      this.leased = false,
+      this.worktreePath,
+      required this.repoPath,
       this.onCheckout,
       this.onDelete,
       this.onSecondaryTap});
@@ -9928,6 +9967,26 @@ class _BranchCard extends StatefulWidget {
 
 class _BranchCardState extends State<_BranchCard> {
   bool _hovered = false;
+  // True while the row owns keyboard focus. Focus traversal (Tab) or
+  // the future arrow-nav lands here; it reveals the verbs exactly like
+  // hover does, so keyboard users get the same affordances by construction.
+  bool _focused = false;
+  late final FocusNode _focusNode =
+      FocusNode(debugLabel: 'BranchCard.${widget.branch.name}');
+
+  // Churn sparkline data (UNIX-second commit timestamps, newest-first)
+  // for this branch's last 90 days. Fetched lazily off the build path
+  // and only for LIVE rows — idle/corpse rows never spark (absence IS
+  // the signal). Bounded LRU shared across every card so a long session
+  // scrolling many repos' branches can't grow it without limit. Capacity
+  // 64 ≈ a few repos' worth of live branches; each entry is a short int
+  // list, so the ceiling is trivial memory while re-render stays instant.
+  // Keyed by repo + branch + tip-timestamp so a new commit (which moves
+  // the tip) misses the stale entry instead of showing outdated bars.
+  static const int _churnCacheCapacity = 64;
+  static final LinkedHashMap<String, List<int>> _churnCache = LinkedHashMap();
+  List<int>? _churn;
+
   // True while a context menu opened from this row is on screen. The
   // row paints itself in the hover state for the duration so the user
   // sees which row "owns" the menu — matches the changes panel.
@@ -9943,9 +10002,199 @@ class _BranchCardState extends State<_BranchCard> {
   static const _disarmAfter = Duration(seconds: 5);
 
   @override
+  void initState() {
+    super.initState();
+    _maybeLoadChurn();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BranchCard old) {
+    super.didUpdateWidget(old);
+    // Reload the spark when the row is reused for a different branch,
+    // when the tip moves (new commit), or when it changes band (a live
+    // row demoted to idle must drop its spark).
+    if (old.branch.name != widget.branch.name ||
+        old.branch.lastCommitAt != widget.branch.lastCommitAt ||
+        old.stratum != widget.stratum ||
+        old.repoPath != widget.repoPath) {
+      _churn = null;
+      _maybeLoadChurn();
+    }
+  }
+
+  String get _churnKey {
+    final ts = widget.branch.lastCommitAt?.millisecondsSinceEpoch ?? 0;
+    return '${widget.repoPath} ${widget.branch.name} $ts';
+  }
+
+  // Bands that carry a churn spark: the two most-alive refs. HEAD is the
+  // most alive of all, so it earns a rhythm too — not just live branches.
+  bool get _sparkBand =>
+      widget.stratum == _BranchStratum.live ||
+      widget.stratum == _BranchStratum.head;
+
+  // Compact, wordless idle age for the data zone — the number + `d`/`y`
+  // IS the datum. Semantics (`_idlePhrase`) narrates the sentence.
+  String? _idleAgeShort(DateTime? last) {
+    if (last == null) return null;
+    final d = DateTime.now().difference(last).inDays;
+    if (d < 365) return '${d}d';
+    return '${(d / 365).floor()}y';
+  }
+
+  /// The one right-anchored data column. Every row gets exactly one; it
+  /// sits flush right and writes leftward, vertically centered. Living
+  /// bands show ahead/behind then the spark (spark flush-right so every
+  /// live row's rhythm sits in one true column); idle shows a quiet mono
+  /// age; corpses show their reason as whisper mono text that wakes with
+  /// the row's hover opacity (the whole row is inside one AnimatedOpacity).
+  Widget _buildDataZone(BuildContext context, AppTokens t) {
+    final b = widget.branch;
+    final children = <Widget>[];
+    switch (widget.stratum) {
+      case _BranchStratum.head:
+      case _BranchStratum.live:
+        // Lease marks first (leftmost): a would-be corpse kept alive by
+        // its room whispers the reason, then the room glyph itself. The
+        // glyph's hover carries the worktree path — a path is data.
+        if (widget.leased) {
+          if (b.gone || b.squashMerged == true) {
+            children.add(Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Text(b.gone ? 'gone' : 'squashed',
+                    style: TextStyle(
+                        color: t.textFaint,
+                        fontSize: 10.5,
+                        fontFamily: AppFonts.mono))));
+          }
+          children.add(Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Tooltip(
+                message: widget.worktreePath ?? '',
+                waitDuration: const Duration(milliseconds: 400),
+                child:
+                    AppIcon(name: 'app-logo', size: 11, color: t.textMuted),
+              )));
+        }
+        // Arrows sit LEFT of the spark, so the spark's right edge is the
+        // shared column line across every living row.
+        if (b.ahead > 0) {
+          children.add(Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text('${b.ahead}↑',
+                  style: TextStyle(color: t.stateAdded, fontSize: 10))));
+        }
+        if (b.behind > 0) {
+          children.add(Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text('${b.behind}↓',
+                  style: TextStyle(color: t.stateModified, fontSize: 10))));
+        }
+        if (_churn != null && _churn!.isNotEmpty) {
+          children.add(Padding(
+              padding: EdgeInsets.only(left: children.isEmpty ? 0 : 2),
+              child: _ChurnSpark(timestamps: _churn!, color: t.textNormal)));
+        }
+      case _BranchStratum.idle:
+        final age = _idleAgeShort(b.lastCommitAt);
+        if (age != null) {
+          children.add(Text(age,
+              style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono)));
+        }
+      case _BranchStratum.corpse:
+        // The quietest stratum whispers its reason — plain faint mono,
+        // no pill, no border, no color. The row's hover wake (0.45 →
+        // 0.72 on the enclosing AnimatedOpacity) is the only brightening.
+        children.add(Text(b.gone ? 'gone' : 'squashed',
+            style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10.5,
+                fontFamily: AppFonts.mono)));
+    }
+    if (children.isEmpty) return const SizedBox.shrink();
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+
+  /// Lazily fetch the churn histogram for a live row. Skipped entirely
+  /// for idle/corpse rows and when we have no repo path. A failed fetch
+  /// yields an empty list — the row simply renders without a spark, no
+  /// error surface.
+  void _maybeLoadChurn() {
+    if (!_sparkBand || widget.repoPath.isEmpty) {
+      _churn = null;
+      return;
+    }
+    final key = _churnKey;
+    final cached = _churnCache.remove(key);
+    if (cached != null) {
+      _churnCache[key] = cached; // move-to-end (most-recently-used)
+      _churn = cached;
+      return;
+    }
+    _churn = null;
+    final repo = widget.repoPath;
+    final name = widget.branch.name;
+    branchChurnTimestamps(repo, name).then((ts) {
+      if (!mounted) return;
+      // Guard against the row having been recycled for another branch.
+      if (widget.branch.name != name || !_sparkBand) {
+        return;
+      }
+      _churnCache[key] = ts;
+      if (_churnCache.length > _churnCacheCapacity) {
+        _churnCache.remove(_churnCache.keys.first);
+      }
+      setState(() => _churn = ts);
+    });
+  }
+
+  @override
   void dispose() {
     _disarmTimer?.cancel();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  KeyEventResult _onCardKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    // Enter on a focused non-current row is Checkout — the row's verb,
+    // now keyboard-reachable. Everything else bubbles to the lens.
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        !widget.branch.current &&
+        !widget.actionRunning &&
+        widget.onCheckout != null) {
+      widget.onCheckout!();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  String _semanticsLabel() {
+    final b = widget.branch;
+    switch (widget.stratum) {
+      case _BranchStratum.head:
+        return '${b.name}, current branch';
+      case _BranchStratum.live:
+        var label = b.upstream != null
+            ? '${b.name}, tracking ${b.upstream}'
+            : b.name;
+        if (widget.leased) {
+          // The lease keeps a would-be corpse in the live band, but its
+          // reason is still narrated alongside the open room.
+          if (b.gone) label = '$label, upstream gone';
+          if (b.squashMerged == true) label = '$label, squashed and merged';
+          label = '$label, worktree open';
+        }
+        return label;
+      case _BranchStratum.idle:
+        return '${b.name}, ${_idlePhrase(b.lastCommitAt)}';
+      case _BranchStratum.corpse:
+        final tag = b.gone ? 'upstream gone' : 'squashed and merged';
+        return '${b.name}, $tag, ${_idlePhrase(b.lastCommitAt)}';
+    }
   }
 
   void _arm() {
@@ -9995,293 +10244,614 @@ class _BranchCardState extends State<_BranchCard> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final b = widget.branch;
+    final shader = context.surfaceShader;
+    final stratum = widget.stratum;
+    final isHead = stratum == _BranchStratum.head;
+    final isLive = stratum == _BranchStratum.live;
+    final isIdle = stratum == _BranchStratum.idle;
+    final isCorpse = stratum == _BranchStratum.corpse;
+
+    // Verbs quiet down: the trash + Checkout are revealed by hover OR
+    // keyboard focus (and while a menu/force-arm is live) instead of
+    // sitting always-on. Space is reserved so the reveal never reflows.
+    final reveal = _hovered || _menuOpen || _focused || _armedForForce;
+
+    // Material by band. HEAD is a place: strongest wash + accent border,
+    // and it never compresses. Corpses whisper (~0.45), legible on touch.
+    final fill = isHead
+        ? t.accentBright.withValues(alpha: 0.10)
+        : (reveal ? t.itemHoverBg : t.surface1);
+    final borderColor = isHead
+        ? t.accentBright.withValues(alpha: 0.30)
+        : (_focused
+            ? t.accentBright.withValues(alpha: 0.22)
+            : t.chromeBorderFaint);
+    // Live rows breathe wider than idle so the compression down the bands
+    // is *felt*, not just tinted. HEAD and live sit tall; idle compresses
+    // hard; corpses compress hardest.
+    final vpad = (isHead || isLive) ? 8.0 : (isIdle ? 4.0 : 3.0);
+    final nameColor = switch (stratum) {
+      _BranchStratum.head => t.textStrong,
+      // A live name brightens to textStrong under hover/focus — the
+      // aliveness is felt in the tint response, not spelled out.
+      _BranchStratum.live => reveal ? t.textStrong : t.textNormal,
+      _BranchStratum.idle => t.textMuted,
+      _BranchStratum.corpse => t.textFaint,
+    };
+    final nameSize = (isHead || isLive) ? 13.0 : (isIdle ? 12.5 : 12.0);
+    final overallOpacity = isCorpse ? (reveal ? 0.72 : 0.45) : 1.0;
+
     // Wrap the row in a Draggable so the user can drag it onto the
     // desk strip in the topbar to materialize a new worktree. Uses
     // LongPressDraggable to avoid fighting the list's scroll gesture
     // on touch; on desktop mouse drag works identically.
-    return LongPressDraggable<DeskDropPayload>(
-      data: DeskDropPayload.branch(b.name),
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      feedback: _DeskDragFeedback(label: b.name, tokens: t),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onSecondaryTapDown: widget.onSecondaryTap == null
-            ? null
-            : (d) async {
-                setState(() => _menuOpen = true);
-                try {
-                  await widget.onSecondaryTap!(d.globalPosition);
-                } finally {
-                  if (mounted) setState(() => _menuOpen = false);
-                }
+    return Semantics(
+      // The state words the eye infers from compression/alpha, narrated
+      // for readers — 'idle 84 days', 'upstream gone', 'current branch'.
+      label: _semanticsLabel(),
+      button: !b.current,
+      selected: b.current,
+      child: Focus(
+        focusNode: _focusNode,
+        onKeyEvent: _onCardKey,
+        onFocusChange: (f) => setState(() => _focused = f),
+        child: LongPressDraggable<DeskDropPayload>(
+          data: DeskDropPayload.branch(b.name),
+          dragAnchorStrategy: pointerDragAnchorStrategy,
+          feedback: _DeskDragFeedback(label: b.name, tokens: t),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: widget.onSecondaryTap == null
+                ? null
+                : (d) async {
+                    setState(() => _menuOpen = true);
+                    try {
+                      await widget.onSecondaryTap!(d.globalPosition);
+                    } finally {
+                      if (mounted) setState(() => _menuOpen = false);
+                    }
+                  },
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) {
+                setState(() => _hovered = false);
+                // Pointer leaving the row resets the armed state — prevents
+                // a stray "force-armed" trash button from sitting around for
+                // the user to re-trigger by accident.
+                _disarm();
               },
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) {
-            setState(() => _hovered = false);
-            // Pointer leaving the row resets the armed state — prevents
-            // a stray "force-armed" trash button from sitting around for
-            // the user to re-trigger by accident.
-            _disarm();
-          },
-          child: AnimatedContainer(
-            duration: context.motion(context.surfaceShader.duration),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: b.current
-                  ? t.accentBright.withValues(alpha: 0.06)
-                  : ((_hovered || _menuOpen) ? t.itemHoverBg : t.surface1),
-              borderRadius:
-                  BorderRadius.circular(context.surfaceShader.geometry.radius),
-              border: Border.all(
-                color: b.current
-                    ? t.accentBright.withValues(alpha: 0.2)
-                    : t.chromeBorder.withValues(alpha: 0.08),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                  // Branch icon or checkmark
-                  b.current
-                      ? AppIcon(name: 'check', size: 12, color: t.accentBright)
-                      : AppIcon(
-                          name: 'git-branch', size: 12, color: t.textMuted),
-                  const SizedBox(width: 8),
-                  // Name + tracking
-                  Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
+              child: AnimatedOpacity(
+                duration: context.motion(shader.duration),
+                opacity: overallOpacity,
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: vpad),
+                  decoration: BoxDecoration(
+                    color: fill,
+                    borderRadius:
+                        BorderRadius.circular(shader.geometry.radius),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                        Row(children: [
-                          Flexible(
-                            child: Text(
-                              b.name,
-                              style: TextStyle(
-                                // `current` always wins styling —
-                                // even a (rare) "current and gone"
-                                // state should keep the active
-                                // branch visually prominent. `gone`
-                                // demotion only applies to non-
-                                // current branches.
-                                color: b.current
-                                    ? t.textStrong
-                                    : (b.gone ? t.textFaint : t.textNormal),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (b.current) ...[
+                            // Branch icon or checkmark
+                            b.current
+                                ? AppIcon(
+                                    name: 'check',
+                                    size: 12,
+                                    color: t.accentBright)
+                                : AppIcon(
+                                    name: 'git-branch',
+                                    size: 12,
+                                    color: t.textMuted),
                             const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: t.accentBright,
-                                borderRadius: BorderRadius.circular(
-                                    context.surfaceShader.geometry.pillRadius),
-                              ),
-                              child: Text('HEAD',
-                                  style: TextStyle(
-                                      color: t.surface0,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 0.02)),
-                            ),
-                          ],
-                          // Health pills — visual signal only, no
-                          // action attached. Each conveys a state the
-                          // user benefits from seeing at a glance:
-                          //   `gone`     — upstream tracking branch
-                          //                was deleted on the remote;
-                          //                local copy is orphaned.
-                          //   `squashed` — every commit on the branch
-                          //                has a patch-id-equivalent
-                          //                on the default branch (PR
-                          //                merged via squash-merge,
-                          //                which `--merged` misses).
-                          if (b.gone) ...[
-                            const SizedBox(width: 6),
-                            _BranchStatePill(
-                              tokens: t,
-                              label: 'gone',
-                              color: t.textMuted,
-                            ),
-                          ],
-                          if (b.squashMerged == true) ...[
-                            const SizedBox(width: 6),
-                            _BranchStatePill(
-                              tokens: t,
-                              label: 'squashed',
-                              color: t.stateAdded,
-                            ),
-                          ],
-                        ]),
-                        if (b.upstream != null) ...[
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 20),
-                            child: Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    '→ tracking: ${b.upstream}',
-                                    style: TextStyle(
+                            // Name + tracking
+                            Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                  Row(children: [
+                                    Flexible(
+                                      child: Text(
+                                        b.name,
+                                        style: TextStyle(
+                                          color: nameColor,
+                                          fontSize: nameSize,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (b.current) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: t.accentBright,
+                                          borderRadius: BorderRadius.circular(
+                                              shader.geometry.pillRadius),
+                                        ),
+                                        child: Text('HEAD',
+                                            style: TextStyle(
+                                                color: t.surface0,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.02)),
+                                      ),
+                                    ],
+                                    // Health pills — visual signal only.
+                                    // Dissolved on corpse rows (whisper
+                                    // alpha + terminal position already say
+                                    // "dead") AND on leased rows (the data
+                                    // zone whispers the reason next to the
+                                    // room glyph); Semantics narrates.
+                                    if (!isCorpse &&
+                                        !widget.leased &&
+                                        b.gone) ...[
+                                      const SizedBox(width: 6),
+                                      _BranchStatePill(
+                                        tokens: t,
+                                        label: 'gone',
                                         color: t.textMuted,
-                                        fontSize: 11,
-                                        fontFamily: AppFonts.mono),
-                                    overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                    if (!isCorpse &&
+                                        !widget.leased &&
+                                        b.squashMerged == true) ...[
+                                      const SizedBox(width: 6),
+                                      _BranchStatePill(
+                                        tokens: t,
+                                        label: 'squashed',
+                                        color: t.stateAdded,
+                                      ),
+                                    ],
+                                  ]),
+                                  // Tracking sub-line survives only on HEAD.
+                                  // Live rows carry the living detail in the
+                                  // right data zone (ahead/behind); everyone
+                                  // else drops it — compression carries the
+                                  // age, Semantics carries the words.
+                                  if (isHead && b.upstream != null) ...[
+                                    const SizedBox(height: 4),
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(left: 20),
+                                      child: Text(
+                                        '→ tracking: ${b.upstream}',
+                                        style: TextStyle(
+                                            color: t.textMuted,
+                                            fontSize: 11,
+                                            fontFamily: AppFonts.mono),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ])),
+                            // Verbs — reserved space, revealed on hover/focus
+                            // to the LEFT of the data zone so ten always-on
+                            // bordered buttons don't shout. The slot always
+                            // reserves its width (opacity, not visibility),
+                            // so revealing it never reflows the data zone.
+                            if (!b.current)
+                              AnimatedOpacity(
+                                duration: context.motion(shader.duration),
+                                opacity: reveal ? 1 : 0,
+                                child: IgnorePointer(
+                                  ignoring: !reveal,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (widget.onDelete != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                              right: 6),
+                                          child: _armedForForce
+                                              ? _ForceDeletePill(
+                                                  tokens: t,
+                                                  enabled:
+                                                      !widget.actionRunning,
+                                                  onTap: () => _handleDelete(
+                                                      force: true),
+                                                )
+                                              : _BranchIconAction(
+                                                  icon: 'trash',
+                                                  enabled:
+                                                      !widget.actionRunning,
+                                                  onTap: () =>
+                                                      _handleDelete(),
+                                                ),
+                                        ),
+                                      SizedBox(
+                                        width: 80,
+                                        height: 24,
+                                        child: _ChromeButton(
+                                          label: 'Checkout',
+                                          compact: true,
+                                          enabled: !widget.actionRunning,
+                                          onPressed: widget.actionRunning
+                                              ? null
+                                              : widget.onCheckout,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                // Stale-age tag, surfaced only when
-                                // >30 days. The tracking row already
-                                // exists — appending here costs no new
-                                // visual surface.
-                                if (_staleLabel(b.lastCommitAt) != null) ...[
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    _staleLabel(b.lastCommitAt)!,
-                                    style: TextStyle(
-                                      color: t.textFaint,
-                                      fontSize: 10.5,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ] else if (_staleLabel(b.lastCommitAt) != null) ...[
-                          // Branch with no upstream but still stale —
-                          // surface the age as a single muted line so
-                          // local-only branches don't escape attention.
-                          const SizedBox(height: 4),
-                          Padding(
-                            padding: const EdgeInsets.only(left: 20),
-                            child: Text(
-                              _staleLabel(b.lastCommitAt)!,
-                              style: TextStyle(
-                                color: t.textFaint,
-                                fontSize: 10.5,
                               ),
-                            ),
-                          ),
-                        ],
-                      ])),
-                  // Ahead/behind indicators
-                  if (b.ahead > 0)
-                    Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Text('${b.ahead}↑',
-                            style:
-                                TextStyle(color: t.stateAdded, fontSize: 10))),
-                  if (b.behind > 0)
-                    Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Text('${b.behind}↓',
-                            style: TextStyle(
-                                color: t.stateModified, fontSize: 10))),
-                  // Checkout button (invisible but present for current branch — keeps layout stable)
-                  const SizedBox(width: 8),
-                  if (!b.current) ...[
-                    if (widget.onDelete != null)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: _armedForForce
-                            // Armed: trash morphed into "Force?" pill — the
-                            // destructive escalation is visible and on-row,
-                            // not hidden in an error popup elsewhere.
-                            ? _ForceDeletePill(
-                                tokens: t,
-                                enabled: !widget.actionRunning,
-                                onTap: () => _handleDelete(force: true),
-                              )
-                            : _BranchIconAction(
-                                icon: 'trash',
-                                enabled: !widget.actionRunning,
-                                onTap: () => _handleDelete(),
-                              ),
-                      ),
-                    SizedBox(
-                      width: 80,
-                      height: 24,
-                      child: _ChromeButton(
-                        label: 'Checkout',
-                        compact: true,
-                        enabled: !widget.actionRunning,
-                        onPressed:
-                            widget.actionRunning ? null : widget.onCheckout,
-                      ),
-                    ),
-                  ],
-                ]),
-                // Inline error / status under the row instead of in the
-                // far-away create-branch panel. Concise — git's hint lines
-                // and stderr noise are stripped upstream. Wrapped in a
-                // themed danger-tinted container that matches the rest of
-                // the app's inline-error pattern.
-                //
-                // AnimatedSize tweens the row's height when the error
-                // appears or disappears, so the row doesn't snap-jump —
-                // matches the surrounding hover/state animations and
-                // respects the theme's motion tier.
-                AnimatedSize(
-                  duration: context.motion(context.surfaceShader.duration),
-                  curve: context.surfaceShader.safeCurve,
-                  alignment: Alignment.topCenter,
-                  child: _inlineError == null
-                      ? const SizedBox(width: double.infinity)
-                      : Padding(
-                          padding: const EdgeInsets.only(top: 6, left: 20),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: t.stateConflicted.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(
-                                  context.surfaceShader.geometry.badgeRadius),
-                              border: Border.all(
-                                color:
-                                    t.stateConflicted.withValues(alpha: 0.25),
-                              ),
-                            ),
-                            child: Text(
-                              _inlineError!,
-                              style: TextStyle(
-                                color: t.stateConflicted,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ),
+                            // Right-anchored data zone — one consistent
+                            // rhythm column per row: churn spark + ahead/
+                            // behind for the living bands, a quiet mono age
+                            // for idle, a whisper reason for corpses. Sits
+                            // flush to the right edge, writes leftward, and
+                            // never reflows when the verbs reveal to its left.
+                            const SizedBox(width: 8),
+                            _buildDataZone(context, t),
+                          ]),
+                      _buildInlineError(context, t),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+
+  // Inline error / status under the row instead of in the far-away
+  // create-branch panel. Concise — git's hint lines and stderr noise are
+  // stripped upstream. AnimatedSize tweens the row height so it doesn't
+  // snap-jump, matching the surrounding hover/state motion.
+  Widget _buildInlineError(BuildContext context, AppTokens t) {
+    return AnimatedSize(
+      duration: context.motion(context.surfaceShader.duration),
+      curve: context.surfaceShader.safeCurve,
+      alignment: Alignment.topCenter,
+      child: _inlineError == null
+          ? const SizedBox(width: double.infinity)
+          : Padding(
+              padding: const EdgeInsets.only(top: 6, left: 20),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  color: t.stateConflicted.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(
+                      context.surfaceShader.geometry.badgeRadius),
+                  border: Border.all(
+                    color: t.stateConflicted.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Text(
+                  _inlineError!,
+                  style: TextStyle(
+                    color: t.stateConflicted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
 }
 
-/// Trash icon morphed into a destructive "Force?" pill while the row
-/// is armed for force-delete. Reads as a clear escalation, not as the
-/// safe action the trash icon implies.
-/// Convert a branch's last-commit timestamp to a short age string,
-/// only when the branch is "stale" (>30 days idle). Returns null
-/// otherwise so callers can `if (label != null)` and render nothing
-/// for fresh branches without crowding the row.
-String? _staleLabel(DateTime? lastCommitAt) {
-  if (lastCommitAt == null) return null;
-  final age = DateTime.now().difference(lastCommitAt);
-  if (age.inDays < 30) return null;
-  if (age.inDays < 365) return '${age.inDays}d idle';
-  final years = (age.inDays / 365).floor();
-  return '${years}y idle';
+/// Churn sparkline for a live branch row — a 90-day histogram of commit
+/// activity bucketed by ~3 days, bar heights normalized per-branch so a
+/// densely-worked branch reads hot at a glance. Quiet by construction:
+/// low-alpha, no axis, no numbers. Modeled on [_DiffSparkPainter]'s idiom.
+class _ChurnSpark extends StatelessWidget {
+  final List<int> timestamps; // UNIX seconds, newest-first
+  final Color color;
+  const _ChurnSpark({required this.timestamps, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 96,
+      height: 16,
+      child: CustomPaint(
+        painter: _ChurnSparkPainter(
+          timestamps: timestamps,
+          // Half-alpha — present enough to be the row's rhythm, still
+          // textNormal-derived so it never out-shouts the branch name.
+          color: color.withValues(alpha: 0.5),
+          nowSec: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+    );
+  }
+}
+
+class _ChurnSparkPainter extends CustomPainter {
+  final List<int> timestamps;
+  final Color color;
+  final int nowSec;
+  _ChurnSparkPainter({
+    required this.timestamps,
+    required this.color,
+    required this.nowSec,
+  });
+
+  static const int _buckets = 30; // ~3-day bins across 90 days
+  static const int _windowSec = 90 * 86400;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (timestamps.isEmpty) return;
+    final counts = List<int>.filled(_buckets, 0);
+    for (final ts in timestamps) {
+      final age = nowSec - ts;
+      if (age < 0 || age >= _windowSec) continue;
+      // Oldest at the left edge, newest at the right — time flows into
+      // the present, so a branch worked-on lately lights up its right side.
+      var idx = (_buckets - 1) - (age * _buckets ~/ _windowSec);
+      if (idx < 0) idx = 0;
+      if (idx >= _buckets) idx = _buckets - 1;
+      counts[idx]++;
+    }
+    var maxC = 0;
+    for (final c in counts) {
+      if (c > maxC) maxC = c;
+    }
+    // Whisper baseline across the FULL spark width at the bars' bottom
+    // edge — the instrument's string. Empty bins now read as silence ON
+    // an instrument instead of absence of one, so a bimodal history
+    // stops looking like two floating debris clusters.
+    canvas.drawRect(
+      Rect.fromLTWH(0, size.height - 1, size.width, 1),
+      Paint()..color = color.withValues(alpha: color.a * 0.35),
+    );
+    if (maxC == 0) return;
+    final paint = Paint()..color = color;
+    const gap = 1.0;
+    final bw = ((size.width - gap * (_buckets - 1)) / _buckets)
+        .clamp(0.5, size.width);
+    for (var i = 0; i < _buckets; i++) {
+      if (counts[i] == 0) continue;
+      // Floor a hair of height so a single-commit bucket still reads.
+      final h = (counts[i] / maxC * size.height).clamp(1.5, size.height);
+      final x = i * (bw + gap);
+      canvas.drawRect(Rect.fromLTWH(x, size.height - h, bw, h), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ChurnSparkPainter old) =>
+      !listEquals(old.timestamps, timestamps) ||
+      old.color != color ||
+      old.nowSec != nowSec;
+}
+
+/// Ghost branch-creator — replaces the permanent right rail. At rest a
+/// quiet glyph-only pill (branch icon + compact '+'), textFaint until
+/// hover paints a breath of accent. Tapping morphs it IN PLACE into a
+/// naming input (AnimatedSize, autofocus, Enter=create, Esc/blur=collapse,
+/// submit-guard so an empty field dismisses instead of latching, error =
+/// conflicted border + Semantics reason). Mirrors history_page's
+/// _TagCreator so the two inline creators feel identical.
+class _BranchCreator extends StatefulWidget {
+  final AppTokens tokens;
+  final bool expanded;
+  final bool enabled;
+  final String? error;
+  final String hintText;
+  final TextEditingController controller;
+  final FocusNode escapeFocus;
+  final VoidCallback onToggle;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onCreate;
+  const _BranchCreator({
+    required this.tokens,
+    required this.expanded,
+    required this.enabled,
+    required this.error,
+    required this.hintText,
+    required this.controller,
+    required this.escapeFocus,
+    required this.onToggle,
+    required this.onChanged,
+    required this.onCreate,
+  });
+  @override
+  State<_BranchCreator> createState() => _BranchCreatorState();
+}
+
+class _BranchCreatorState extends State<_BranchCreator> {
+  bool _hovered = false;
+  // Guards the submit round-trip (see _TagCreator): on success the parent
+  // collapses us and the field blurs — without this flag that blur would
+  // fire the focus-out collapse and toggle us straight back open.
+  bool _submitting = false;
+  final _fieldFocus = FocusNode(debugLabel: 'BranchCreator.field');
+
+  @override
+  void initState() {
+    super.initState();
+    _fieldFocus.addListener(_handleFocus);
+  }
+
+  @override
+  void didUpdateWidget(covariant _BranchCreator old) {
+    super.didUpdateWidget(old);
+    final hasError = widget.error != null && widget.error!.isNotEmpty;
+    // Release the guard once the parent has responded either way —
+    // collapse (expanded → false) or an error while the field stays open.
+    if (_submitting && (!widget.expanded || hasError)) {
+      _submitting = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _fieldFocus.removeListener(_handleFocus);
+    _fieldFocus.dispose();
+    super.dispose();
+  }
+
+  void _handleFocus() {
+    if (!_fieldFocus.hasFocus && widget.expanded && !_submitting && mounted) {
+      widget.onToggle();
+    }
+  }
+
+  void _submit() {
+    // Enter on nothing is a dismiss, not a create — never latch or submit
+    // an unsendable value (the parent's empty-guard would produce no state
+    // change and wedge the field open).
+    if (widget.controller.text.trim().isEmpty) {
+      if (widget.expanded) widget.onToggle();
+      return;
+    }
+    _submitting = true;
+    widget.onCreate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      // Snappy morph out of the ghost coin, capped well under the ceiling.
+      duration: context.motion(const Duration(milliseconds: 140)),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.centerLeft,
+      child: widget.expanded ? _buildField(context) : _buildGhost(context),
+    );
+  }
+
+  Widget _buildGhost(BuildContext context) {
+    final t = widget.tokens;
+    final shader = context.surfaceShader;
+    final color = _hovered ? t.accentBright : t.textFaint;
+    // A full-width ghost ROW, not a floating glyph: same inset and
+    // compressed rhythm as an idle branch row, a faint dashed hairline
+    // for its outline, glyph + '+' where names sit. It reads as one more
+    // row in the list — the one waiting to exist.
+    return Tooltip(
+      message: 'Create branch',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Semantics(
+        button: true,
+        label: 'Create branch',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: widget.onToggle,
+            child: CustomPaint(
+              painter: _DashedBorderPainter(
+                // Perceptible at rest — chromeBorderFaint sinks below
+                // perception on dark themes; a doubled-subtle tier keeps
+                // it a whisper the eye can still find without hunting.
+                color: _hovered
+                    ? t.accentBright.withValues(alpha: 0.45)
+                    : t.chromeBorder.withValues(alpha: 0.28),
+                radius: shader.geometry.radius,
+              ),
+              child: AnimatedContainer(
+                duration: context.motion(shader.duration),
+                curve: shader.safeCurve,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  // Barely-there surface wash at rest so the row-shape
+                  // exists as material, not just an outline.
+                  color: _hovered
+                      ? t.accentBright.withValues(alpha: 0.05)
+                      : t.surface1.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(shader.geometry.radius),
+                ),
+                child: Row(children: [
+                  AppIcon(name: 'git-branch', size: 12, color: color),
+                  const SizedBox(width: 8),
+                  Text('+',
+                      style: TextStyle(
+                          color: color,
+                          fontSize: 13,
+                          height: 1.0,
+                          fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildField(BuildContext context) {
+    final t = widget.tokens;
+    final shader = context.surfaceShader;
+    final hasError = widget.error != null && widget.error!.isNotEmpty;
+    final accent = hasError ? t.stateConflicted : t.accentBright;
+    return KeyboardListener(
+      focusNode: widget.escapeFocus,
+      onKeyEvent: (e) {
+        if (e is KeyDownEvent &&
+            e.logicalKey == LogicalKeyboardKey.escape) {
+          widget.onToggle();
+        }
+      },
+      child: Semantics(
+        textField: true,
+        label: hasError ? 'New branch name — ${widget.error}' : 'New branch name',
+        child: Container(
+          height: 24,
+          constraints: const BoxConstraints(minWidth: 140, maxWidth: 260),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: t.accentBright.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
+            border: Border.all(
+                color: hasError ? t.stateConflicted : t.itemActiveBorder),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            AppIcon(name: 'git-branch', size: 11, color: accent),
+            const SizedBox(width: 6),
+            Flexible(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: _fieldFocus,
+                autofocus: true,
+                enabled: widget.enabled,
+                cursorColor: accent,
+                cursorHeight: 13,
+                cursorWidth: 1.5,
+                style: TextStyle(
+                    color: accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback),
+                decoration: InputDecoration(
+                  isDense: true,
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(
+                      color: t.textFaint,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      fontFamily: AppFonts.mono,
+                      fontFamilyFallback: AppFonts.monoFallback),
+                ),
+                onChanged: widget.onChanged,
+                onSubmitted: (_) => _submit(),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 /// Tiny pill for branch-state signals (gone, squashed). Visual-only:
@@ -10391,7 +10961,9 @@ class _TagCard extends StatelessWidget {
       onExit: (_) => onHoverChange(false),
       child: AnimatedContainer(
         duration: context.motion(context.surfaceShader.duration),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        // Denser than an idle branch row — the register reads engraved,
+        // not like another live band.
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
           color: t.surface1,
           borderRadius:
@@ -10401,41 +10973,40 @@ class _TagCard extends StatelessWidget {
         child: Row(children: [
           AppIcon(name: 'tag', size: 12, color: t.textMuted),
           const SizedBox(width: 8),
+          // Name eats the slack so the short-hash + annotated marker
+          // right-anchor into one aligned column across every tag row.
           Expanded(
-              child: Row(children: [
-            Flexible(
-              child: Text(
-                tag.name,
-                style: TextStyle(color: t.textNormal, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
+            child: Text(
+              tag.name,
+              style: TextStyle(color: t.textNormal, fontSize: 12.5),
+              overflow: TextOverflow.ellipsis,
             ),
-            if (tag.targetHash != null) ...[
-              const SizedBox(width: 8),
-              Text(
-                tag.targetHash!,
-                style: TextStyle(
-                    color: t.textMuted.withValues(alpha: 0.7),
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono),
+          ),
+          if (tag.targetHash != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              tag.targetHash!,
+              style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.7),
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono),
+            ),
+          ],
+          if (tag.tagType == 'annotated') ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: t.accentBright.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(3),
               ),
-            ],
-            if (tag.tagType == 'annotated') ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: t.accentBright.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: Text('annotated',
-                    style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ])),
+              child: Text('annotated',
+                  style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ],
           if (hovered)
             GestureDetector(
               onTap: actionRunning ? null : onDelete,
