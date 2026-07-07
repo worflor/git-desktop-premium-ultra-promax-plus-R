@@ -1,9 +1,12 @@
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../backend/dtos.dart';
 import '../../backend/file_lifecycle.dart';
+import '../../backend/git.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -72,6 +75,11 @@ class _HoverInfo {
   final int fileCount;
   final bool isDrillable;
   final bool isLeaf;
+  // Leaf narrative extras (item 7). Null / empty for containers and
+  // folds, which have no single-file story to tell.
+  final String? changeType;
+  final FileLifecycle? lifecycle;
+  final int hunkCount;
   const _HoverInfo({
     required this.label,
     required this.additions,
@@ -79,16 +87,60 @@ class _HoverInfo {
     required this.fileCount,
     required this.isDrillable,
     required this.isLeaf,
+    this.changeType,
+    this.lifecycle,
+    this.hunkCount = 0,
   });
+}
+
+/// A single visible segment in a flattened, top-to-bottom / left-to-right
+/// traversal of the laid-out tracks. Drives keyboard drilling — Left/Right
+/// walk this order; Up/Down hop tracks by nearest x-centre.
+class _NavItem {
+  final int trackIndex;
+  final int segIndex;
+  final SeismographSegment seg;
+  const _NavItem(this.trackIndex, this.segIndex, this.seg);
+
+  double get xCenter => seg.left + seg.width / 2;
 }
 
 class _CommitSeismographState extends State<CommitSeismograph>
     with SingleTickerProviderStateMixin {
-  static const Duration _wakeAuthored = Duration(milliseconds: 360);
+  static const Duration _wakeAuthored = Duration(milliseconds: 240);
   List<String> _focus = const [];
   late SeismographNode _root;
   late FocusNode _focusNode;
   _HoverInfo? _hover;
+
+  // Per-file hunk headers for the current commit, fetched lazily off the
+  // build path and cached by hash. When present, large leaf bars paint
+  // real hunk bands ("the deletions live HERE") instead of one flat
+  // add-over-del slab. Null while loading or when skipped.
+  // Bounded LRU shared across every seismograph instance. A long
+  // history-browsing session would otherwise grow this without limit.
+  // Capacity 48 ≈ two deep scrollbacks of commit detail; each entry is a
+  // handful of int-triples per file, so the ceiling is trivial memory
+  // while re-selecting any recent commit stays instant. LinkedHashMap is
+  // insertion-ordered — we re-insert on hit (move-to-end) and evict the
+  // eldest key past capacity.
+  static const int _hunkCacheCapacity = 48;
+  static final LinkedHashMap<String, Map<String, List<CommitHunk>>>
+      _hunkCache = LinkedHashMap();
+  Map<String, List<CommitHunk>>? _hunks;
+
+  // Keyboard drilling: index into [_nav], the flattened traversal of the
+  // currently visible segments. Rebuilt every layout in build(). Mouse
+  // hover clears it so the two focus channels never fight.
+  List<_NavItem> _nav = const [];
+  int? _kbIndex;
+
+  // Interaction mode. The bright focus ring is *keyboard-earned*: it only
+  // lights once the user actually drives the panel from the keyboard.
+  // Any mouse hover / drill resets it, so the click-to-focus that
+  // onDrillTo performs never flashes a loud cyan frame during pure-mouse
+  // use. Keyboard users keep full focus visibility (accessible path).
+  bool _kbActive = false;
 
   // Wake-up animation: bars rise from baseline, staggered left-to-right.
   // Restarts on hash change and on focus drill so each "view" wakes.
@@ -112,6 +164,38 @@ class _CommitSeismographState extends State<CommitSeismograph>
     );
     _filterCtrl = TextEditingController();
     _filterFocus = FocusNode(debugLabel: 'CommitSeismographFilter');
+    _loadHunks();
+  }
+
+  /// Fetch hunk headers for the current commit, once. Cheap header-only
+  /// git call ([getCommitHunks]) kicked off the frame after mount so it
+  /// never blocks the first paint; result cached by hash so re-selecting
+  /// a commit is instant. Skipped for zero-churn commits (nothing to
+  /// place) and for pathological ones past the diff-render ceiling (bands
+  /// would be unreadable and the fetch large).
+  void _loadHunks() {
+    final hash = widget.detail.commitHash;
+    // Hit: re-insert to mark most-recently-used (move-to-end).
+    final cached = _hunkCache.remove(hash);
+    if (cached != null) {
+      _hunkCache[hash] = cached;
+      _hunks = cached;
+      return;
+    }
+    _hunks = null;
+    final churn = widget.detail.additions + widget.detail.deletions;
+    if (hash.isEmpty || churn <= 0 || churn > kMaxRenderableDiffLines) return;
+    getCommitHunks(widget.repoPath, hash).then((res) {
+      if (!mounted || widget.detail.commitHash != hash) return;
+      final map = res.ok
+          ? (res.data ?? const <String, List<CommitHunk>>{})
+          : const <String, List<CommitHunk>>{};
+      _hunkCache[hash] = map;
+      if (_hunkCache.length > _hunkCacheCapacity) {
+        _hunkCache.remove(_hunkCache.keys.first);
+      }
+      setState(() => _hunks = map);
+    });
   }
 
   @override
@@ -157,6 +241,8 @@ class _CommitSeismographState extends State<CommitSeismograph>
     if (hashChanged) {
       _root = buildSeismographTree(widget.detail.files);
       _focus = const [];
+      _kbIndex = null;
+      _loadHunks();
       _filterText = '';
       _filterCtrl.clear();
       _filterVisible = false;
@@ -180,13 +266,105 @@ class _CommitSeismographState extends State<CommitSeismograph>
     setState(() {
       _focus = List.unmodifiable(path);
       _hover = null;
+      _kbIndex = null;
     });
     _wakeForward();
   }
 
-  void _setHover(_HoverInfo? info) {
-    if (info == null && _hover == null) return;
-    setState(() => _hover = info);
+  /// Build the enriched inspector snapshot for a segment. Lives here (not
+  /// in [_Track]) because the lifecycle map and the lazily-fetched hunks
+  /// are held by the state — so both the mouse-hover channel and the
+  /// keyboard-focus channel narrate identically.
+  _HoverInfo _infoFor(SeismographSegment seg) {
+    final lifecycle =
+        (seg.isLeaf && widget.lifecycles != null) ? widget.lifecycles![seg.pathKey] : null;
+    final hunks =
+        (seg.isLeaf && _hunks != null) ? _hunks![seg.pathKey] : null;
+    return _HoverInfo(
+      label: seg.isLeaf
+          ? seg.pathKey
+          : (seg.isDrillable
+              ? '${seg.containedFileCount} files in ${seg.pathKey}/'
+              : '${seg.containedFileCount} more files'),
+      additions: seg.additions,
+      deletions: seg.deletions,
+      fileCount: seg.containedFileCount,
+      isDrillable: seg.isDrillable,
+      isLeaf: seg.isLeaf,
+      changeType: seg.file?.changeType,
+      lifecycle: lifecycle,
+      hunkCount: hunks?.length ?? 0,
+    );
+  }
+
+  // Mouse hover. A non-null segment takes over the inspector and clears
+  // any keyboard focus so the two channels don't contradict each other.
+  void _onSegHover(SeismographSegment? seg) {
+    if (seg == null) {
+      if (_hover == null && _kbIndex == null) return;
+      setState(() => _hover = null);
+      return;
+    }
+    setState(() {
+      _hover = _infoFor(seg);
+      _kbIndex = null;
+      // A real mouse hover means the user is on the pointer, not the
+      // keyboard — drop the earned focus ring back to the quiet border.
+      _kbActive = false;
+    });
+  }
+
+  // ── Keyboard drilling ───────────────────────────────────────────
+  //
+  // Left/Right walk [_nav] (track-by-track, left-to-right). Up/Down hop
+  // to the vertically-adjacent track, landing on the segment whose centre
+  // is nearest the current x. Enter opens a focused leaf or drills a
+  // focused container. Focus renders like hover and drives the inspector.
+  void _kbMove(int delta) {
+    if (_nav.isEmpty) return;
+    final next = (_kbIndex == null)
+        ? (delta > 0 ? 0 : _nav.length - 1)
+        : (_kbIndex! + delta).clamp(0, _nav.length - 1);
+    _setKbFocus(next);
+  }
+
+  void _kbVertical(int dir) {
+    if (_nav.isEmpty) return;
+    if (_kbIndex == null) {
+      _setKbFocus(0);
+      return;
+    }
+    final cur = _nav[_kbIndex!];
+    final targetTrack = cur.trackIndex + dir;
+    // Nearest-x segment in the destination track.
+    int? best;
+    double bestDx = double.infinity;
+    for (var i = 0; i < _nav.length; i++) {
+      if (_nav[i].trackIndex != targetTrack) continue;
+      final dx = (_nav[i].xCenter - cur.xCenter).abs();
+      if (dx < bestDx) {
+        bestDx = dx;
+        best = i;
+      }
+    }
+    if (best != null) _setKbFocus(best);
+  }
+
+  void _setKbFocus(int index) {
+    setState(() {
+      _kbIndex = index;
+      _hover = _infoFor(_nav[index].seg);
+    });
+  }
+
+  void _kbActivate() {
+    if (_kbIndex == null || _kbIndex! >= _nav.length) return;
+    final seg = _nav[_kbIndex!].seg;
+    if (seg.isLeaf) {
+      _openLeaf(seg.path);
+    } else if (seg.isDrillable) {
+      _setFocus(seg.path);
+    }
   }
 
   void _drillUp() {
@@ -215,7 +393,17 @@ class _CommitSeismographState extends State<CommitSeismograph>
     widget.onOpenFile(path.join('/'));
   }
 
-  KeyEventResult _onKey(FocusNode _, KeyEvent e) {
+  KeyEventResult _onKey(FocusNode node, KeyEvent e) {
+    final r = _handleKey(node, e);
+    if (r == KeyEventResult.handled && !_kbActive) {
+      // First handled keystroke earns the focus ring for this session of
+      // keyboard use; a later mouse hover/drill resets it.
+      setState(() => _kbActive = true);
+    }
+    return r;
+  }
+
+  KeyEventResult _handleKey(FocusNode _, KeyEvent e) {
     if (e is! KeyDownEvent) return KeyEventResult.ignored;
     if (e.logicalKey == LogicalKeyboardKey.escape ||
         e.logicalKey == LogicalKeyboardKey.backspace) {
@@ -228,6 +416,26 @@ class _CommitSeismographState extends State<CommitSeismograph>
     if (e.logicalKey == LogicalKeyboardKey.slash && !_filterVisible) {
       _toggleFilter(true);
       return KeyEventResult.handled;
+    }
+    // Keyboard drilling is inert while the filter field owns the keys.
+    if (_filterVisible) return KeyEventResult.ignored;
+    switch (e.logicalKey) {
+      case LogicalKeyboardKey.arrowRight:
+        _kbMove(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowLeft:
+        _kbMove(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowDown:
+        _kbVertical(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _kbVertical(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        _kbActivate();
+        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -287,6 +495,20 @@ class _CommitSeismographState extends State<CommitSeismograph>
         }
       }
 
+      // Flatten the visible segments for keyboard drilling. Track order is
+      // top-to-bottom; within a track, layout order is left-to-right.
+      final nav = <_NavItem>[];
+      for (var ti = 0; ti < layout.tracks.length; ti++) {
+        final segs = layout.tracks[ti].segments;
+        for (var si = 0; si < segs.length; si++) {
+          nav.add(_NavItem(ti, si, segs[si]));
+        }
+      }
+      _nav = nav;
+      if (_kbIndex != null && _kbIndex! >= nav.length) _kbIndex = null;
+      final kbTrackIndex = _kbIndex == null ? null : nav[_kbIndex!].trackIndex;
+      final kbSegIndex = _kbIndex == null ? null : nav[_kbIndex!].segIndex;
+
       // Idle inspector content — what the focus subtree looks like as a
       // whole, so the strip is informative when nothing's hovered.
       final focusNode = _resolveFocusNode(_root, _focus);
@@ -305,17 +527,46 @@ class _CommitSeismographState extends State<CommitSeismograph>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _Breadcrumb(
-              focusPath: layout.focusPath,
-              tokens: t,
-              onTap: _setFocus,
-            ),
-            const SizedBox(height: 6),
-            _InspectorStrip(
-              tokens: t,
-              hover: _hover,
-              style: segLabelStyle,
-              idleSummary: focusSummary,
+            // Breadcrumb and inspector share one line: crumbs are the
+            // clickable path, then a faint dot, then the subtree summary
+            // (which morphs into the hover readout). Fusing them kills
+            // the duplicated stat row that used to sit between the
+            // breadcrumb and the strip, reclaiming a full line.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Natural width, capped — NOT Flexible. A loose flex
+                // child splits the row's allocation with the Expanded
+                // inspector 50/50 and its unused share is dead space
+                // the inspector can't reach, truncating hover paths
+                // while half the row sits empty. Capping instead lets
+                // the inspector claim everything the crumbs don't use;
+                // past the cap the Wrap folds to a second line.
+                ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: width * 0.55),
+                  child: _Breadcrumb(
+                    focusPath: layout.focusPath,
+                    tokens: t,
+                    onTap: _setFocus,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // Inspector anchors to the RIGHT edge and grows leftward
+                // toward the crumbs — the empty middle is the separator,
+                // and long hover paths consume the gap instead of
+                // pushing anything around.
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: _InspectorStrip(
+                      tokens: t,
+                      hover: _hover,
+                      style: segLabelStyle,
+                      idleSummary: focusSummary,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 6),
             if (_filterVisible)
@@ -334,24 +585,30 @@ class _CommitSeismographState extends State<CommitSeismograph>
                 tokens: t,
                 isDirty: widget.dirtyPaths.contains(
                     layout.singleFile!.path.join('/')),
+                hunks: _hunks?[layout.singleFile!.path.join('/')],
                 onTap: () => _openLeaf(layout.singleFile!.path),
               )
             else
               AnimatedBuilder(
                 animation: _focusNode,
-                builder: (context, child) => DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: t.chromeAccent.withValues(alpha: 0.025),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: _focusNode.hasFocus
-                          ? t.focusRing
-                          : t.chromeBorder.withValues(alpha: 0.35),
-                      width: _focusNode.hasFocus ? 1 : 0.5,
+                builder: (context, child) {
+                  // Ring only when focus was keyboard-earned; a mouse
+                  // click-to-focus keeps the quiet chrome border.
+                  final ring = _focusNode.hasFocus && _kbActive;
+                  return DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: t.chromeAccent.withValues(alpha: 0.025),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: ring
+                            ? t.focusRing
+                            : t.chromeBorder.withValues(alpha: 0.35),
+                        width: ring ? 1 : 0.5,
+                      ),
                     ),
-                  ),
-                  child: child,
-                ),
+                    child: child,
+                  );
+                },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 6),
@@ -381,15 +638,22 @@ class _CommitSeismographState extends State<CommitSeismograph>
                           minLabelSegmentPx: minLabelSegmentPx,
                           dirtyPaths: widget.dirtyPaths,
                           lifecycles: widget.lifecycles,
+                          hunks: _hunks,
+                          kbTrackIndex: kbTrackIndex,
+                          kbSegIndex: kbSegIndex,
                           wake: _wakeCtrl,
                           filterText: _filterText.toLowerCase(),
                           onDrillTo: (p) {
+                            // Mouse drill: focus the panel for keyboard
+                            // continuity but keep the ring quiet — this
+                            // is a pointer gesture, not keyboard use.
+                            _kbActive = false;
                             _focusNode.requestFocus();
                             _setFocus(p);
                           },
                           onOpenLeaf: _openLeaf,
                           onOpenDirectory: widget.onOpenDirectory,
-                          onHover: _setHover,
+                          onHover: _onSegHover,
                         ),
                       ),
                     ),
@@ -548,10 +812,13 @@ class _SeismographBody extends StatelessWidget {
   final double minLabelSegmentPx;
   final Set<String> dirtyPaths;
   final Map<String, FileLifecycle>? lifecycles;
+  final Map<String, List<CommitHunk>>? hunks;
+  final int? kbTrackIndex;
+  final int? kbSegIndex;
   final ValueChanged<List<String>> onDrillTo;
   final ValueChanged<List<String>> onOpenLeaf;
   final ValueChanged<String>? onOpenDirectory;
-  final ValueChanged<_HoverInfo?> onHover;
+  final ValueChanged<SeismographSegment?> onHover;
   final Animation<double> wake;
   final String filterText;
 
@@ -567,6 +834,9 @@ class _SeismographBody extends StatelessWidget {
     required this.minLabelSegmentPx,
     required this.dirtyPaths,
     required this.lifecycles,
+    required this.hunks,
+    required this.kbTrackIndex,
+    required this.kbSegIndex,
     required this.onDrillTo,
     required this.onOpenLeaf,
     this.onOpenDirectory,
@@ -617,6 +887,8 @@ class _SeismographBody extends StatelessWidget {
             heroPath: heroPath,
             dirtyPaths: dirtyPaths,
             lifecycles: lifecycles,
+            hunks: hunks,
+            focusedSegIndex: kbTrackIndex == i ? kbSegIndex : null,
             onDrillTo: onDrillTo,
             onOpenLeaf: onOpenLeaf,
             onHover: onHover,
@@ -815,9 +1087,11 @@ class _Track extends StatelessWidget {
   final List<String>? heroPath;
   final Set<String> dirtyPaths;
   final Map<String, FileLifecycle>? lifecycles;
+  final Map<String, List<CommitHunk>>? hunks;
+  final int? focusedSegIndex;
   final ValueChanged<List<String>> onDrillTo;
   final ValueChanged<List<String>> onOpenLeaf;
-  final ValueChanged<_HoverInfo?> onHover;
+  final ValueChanged<SeismographSegment?> onHover;
   final Animation<double> wake;
   final String filterText;
 
@@ -832,6 +1106,8 @@ class _Track extends StatelessWidget {
     required this.heroPath,
     required this.dirtyPaths,
     required this.lifecycles,
+    required this.hunks,
+    required this.focusedSegIndex,
     required this.onDrillTo,
     required this.onOpenLeaf,
     required this.onHover,
@@ -854,9 +1130,17 @@ class _Track extends StatelessWidget {
     // loop stays within SMI integer range for realistic churn
     // values, so the whole thing runs without heap traffic.
     var maxChurn = 1;
+    var maxLeafChurn = 0;
     for (final s in track.segments) {
       if (s.churn > maxChurn) maxChurn = s.churn;
+      if (s.isLeaf && s.churn > maxLeafChurn) maxLeafChurn = s.churn;
     }
+    // Fold segments carry the *summed* churn of every file they collapse.
+    // Letting that define the track's max crushes each real leaf into a
+    // sliver and hands the fold a full-height hatched wall. Normalise bar
+    // heights against the tallest actual leaf when the track has one;
+    // fall back to the raw max only for the degenerate all-fold track.
+    if (maxLeafChurn > 0) maxChurn = maxLeafChurn;
     if (maxChurn > 1 << 30) maxChurn = 1 << 30;
 
     final labelBandPx = segLabelHeight + 2;
@@ -880,52 +1164,43 @@ class _Track extends StatelessWidget {
             ),
           ),
         ),
-        for (final seg in track.segments)
+        for (var si = 0; si < track.segments.length; si++)
           Positioned(
-            left: seg.left, top: 0,
-            width: seg.width, height: track.height,
+            left: track.segments[si].left, top: 0,
+            width: track.segments[si].width, height: track.height,
             child: _Segment(
               track: track,
-              segment: seg,
+              segment: track.segments[si],
               tokens: tokens,
               labelStyle: segLabelStyle,
               labelBandPx: labelBandPx,
-              showLabel: seg.width >= minLabelSegmentPx,
+              showLabel: track.segments[si].width >= minLabelSegmentPx,
+              minLabelSegmentPx: minLabelSegmentPx,
               maxChurn: maxChurn,
-              isDirty: seg.isLeaf && dirtyPaths.contains(seg.pathKey),
-              isHero: seg.isLeaf &&
+              isDirty: track.segments[si].isLeaf &&
+                  dirtyPaths.contains(track.segments[si].pathKey),
+              isHero: track.segments[si].isLeaf &&
                   heroPath != null &&
-                  listEquals(seg.path, heroPath),
-              lifecycle: (seg.isLeaf && lifecycles != null)
-                  ? lifecycles![seg.pathKey]
+                  listEquals(track.segments[si].path, heroPath),
+              isKbFocused: focusedSegIndex == si,
+              lifecycle: (track.segments[si].isLeaf && lifecycles != null)
+                  ? lifecycles![track.segments[si].pathKey]
                   : null,
-              dimmed: !_matchesFilter(seg),
+              hunks: (track.segments[si].isLeaf && hunks != null)
+                  ? hunks![track.segments[si].pathKey]
+                  : null,
+              dimmed: !_matchesFilter(track.segments[si]),
               wake: wake,
               wakeProgressFor: _trackWakeProgress,
-              onTap: seg.isLeaf
+              onTap: track.segments[si].isLeaf
                   // Click a leaf → open its diff inline.
-                  ? () => onOpenLeaf(seg.path)
+                  ? () => onOpenLeaf(track.segments[si].path)
                   // Non-leaf, drillable → drill in.
-                  : (seg.isDrillable ? () => onDrillTo(seg.path) : null),
-              onHover: (entered) {
-                if (!entered) {
-                  onHover(null);
-                  return;
-                }
-                onHover(_HoverInfo(
-                  label: seg.isLeaf
-                      ? seg.pathKey
-                      : (seg.isDrillable
-                          ? '${seg.containedFileCount} files in '
-                              '${seg.pathKey}/'
-                          : '${seg.containedFileCount} more files'),
-                  additions: seg.additions,
-                  deletions: seg.deletions,
-                  fileCount: seg.containedFileCount,
-                  isDrillable: seg.isDrillable,
-                  isLeaf: seg.isLeaf,
-                ));
-              },
+                  : (track.segments[si].isDrillable
+                      ? () => onDrillTo(track.segments[si].path)
+                      : null),
+              onHover: (entered) =>
+                  onHover(entered ? track.segments[si] : null),
             ),
           ),
       ]),
@@ -966,24 +1241,50 @@ class _RidgelinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (segments.length < 2 || wakeProgress <= 0.001) return;
-    final ridgeArea = (size.height - labelBandPx).clamp(0.0, double.infinity);
-    final pts = <Offset>[];
+    if (segments.length < 3 || wakeProgress <= 0.001) return;
+    // One dominant slab + a trace across it is noise — the trace adds no
+    // information a single bar doesn't already carry. If any segment eats
+    // more than ~70% of the strip, skip the ridgeline for this track.
     for (final s in segments) {
-      final ratio = s.churn / maxChurn;
-      final barH = ridgeArea * ratio * wakeProgress;
-      final y = (size.height - barH).clamp(0.0, size.height);
-      final x = s.left + s.width / 2;
-      pts.add(Offset(x, y));
+      if (s.width > size.width * 0.70) return;
     }
-    final path = _catmullRom(pts);
+    final ridgeArea = (size.height - labelBandPx).clamp(0.0, double.infinity);
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
-      ..color = color.withValues(alpha: 0.35 * wakeProgress);
-    canvas.drawPath(path, paint);
+      // Raised a touch (0.35 → 0.5) now that it only draws over real
+      // bars — with the empty-space arcs gone it can read a little more
+      // present without becoming loud.
+      ..color = color.withValues(alpha: 0.5 * wakeProgress);
+
+    // The line only makes sense across bars that actually exist. Break
+    // the trace into runs of consecutive segments that both have a
+    // present bar (churn > 0); a zero-churn segment ends the current run
+    // so the Catmull-Rom never bows across the dead baseline it used to
+    // float over.
+    var run = <Offset>[];
+    void flush() {
+      // A run needs at least three points to read as a "trace" rather
+      // than a stray diagonal; anything shorter is dropped. A run broken
+      // by a fold/overflow segment does NOT reconnect across it.
+      if (run.length >= 3) canvas.drawPath(_catmullRom(run), paint);
+      run = <Offset>[];
+    }
+    for (final s in segments) {
+      // Fold / overflow segments aren't files; peaking a trace over them
+      // draws a line climbing into "+22 more". Break the run there.
+      if (!s.isLeaf || s.churn <= 0) {
+        flush();
+        continue;
+      }
+      final ratio = s.churn / maxChurn;
+      final barH = ridgeArea * ratio * wakeProgress;
+      final y = (size.height - barH).clamp(0.0, size.height);
+      run.add(Offset(s.left + s.width / 2, y));
+    }
+    flush();
   }
 
   /// Centripetal Catmull-Rom approximated as a sequence of cubic
@@ -1026,11 +1327,14 @@ class _Segment extends StatefulWidget {
   final TextStyle labelStyle;
   final double labelBandPx;
   final bool showLabel;
+  final double minLabelSegmentPx;
   final int maxChurn;
   final bool isDirty;
   final bool isHero;
+  final bool isKbFocused;
   final bool dimmed;
   final FileLifecycle? lifecycle;
+  final List<CommitHunk>? hunks;
   final VoidCallback? onTap;
   final ValueChanged<bool> onHover;
   final Animation<double> wake;
@@ -1043,11 +1347,14 @@ class _Segment extends StatefulWidget {
     required this.labelStyle,
     required this.labelBandPx,
     required this.showLabel,
+    required this.minLabelSegmentPx,
     required this.maxChurn,
     required this.isDirty,
     required this.isHero,
+    required this.isKbFocused,
     required this.dimmed,
     required this.lifecycle,
+    required this.hunks,
     required this.onTap,
     required this.onHover,
     required this.wake,
@@ -1112,7 +1419,15 @@ class _SegmentState extends State<_Segment> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final seg = widget.segment;
-    final ratio = seg.churn / widget.maxChurn;
+    // A fold stands for N collapsed files; sizing its bar by the SUM of
+    // their churn makes one hatched slab that dominates the track. Size it
+    // by its average member instead, so a "+N more" group reads as an
+    // ordinary bar among its neighbours — its stripes then occupy only
+    // that modest churn-proportional region, not a wall.
+    final ratio = ((!seg.isLeaf && seg.containedFileCount > 1)
+            ? (seg.churn / seg.containedFileCount) / widget.maxChurn
+            : seg.churn / widget.maxChurn)
+        .clamp(0.0, 1.0);
     final labelBandPx = widget.showLabel ? widget.labelBandPx : 0.0;
     final shares = _splitShares();
     final notch = _typeNotch();
@@ -1125,10 +1440,21 @@ class _SegmentState extends State<_Segment> {
 
     final dimAlpha = widget.dimmed ? 0.18 : 1.0;
 
+    // Keyboard focus reuses the hover visuals so the two channels look
+    // identical; `active` is "the cursor OR the keyboard is on me".
+    final active = _hovered || widget.isKbFocused;
+
+    // A drillable container gets a distinct active treatment: the wash
+    // PLUS a thin inset ring, so "a folder you can enter" feels different
+    // under the cursor from "a file you can open" (which has no ring).
+    final drillContainer = !seg.isLeaf && seg.isDrillable;
+    final hunkCount = widget.hunks?.length ?? 0;
+
     // Build a screen-reader narration that doesn't rely on color.
     final semanticLabel = seg.isLeaf
         ? '${seg.pathKey}, '
             '${seg.additions} added, ${seg.deletions} deleted'
+            '${hunkCount > 0 ? ', $hunkCount hunk${hunkCount == 1 ? '' : 's'}' : ''}'
             '${widget.isHero ? ', largest change in this view' : ''}'
             '${notch?.label == 'U' ? ', conflicted' : ''}'
             '${widget.isDirty ? ', dirty' : ''}'
@@ -1156,9 +1482,18 @@ class _SegmentState extends State<_Segment> {
           // flagged the per-segment 120ms duration as a flicker source
           // when the mouse scans laterally across many segments.
           decoration: BoxDecoration(
-            color: _hovered
+            color: active
                 ? hoverWash.withValues(alpha: 0.12)
                 : Colors.transparent,
+            // Inset ring only for drillable containers (item 5). Leaves
+            // get the wash alone, so container-vs-file reads differently
+            // the instant either is active.
+            border: (active && drillContainer)
+                ? Border.all(
+                    color: t.accentBright.withValues(alpha: 0.5),
+                    width: 1,
+                  )
+                : null,
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 1),
@@ -1178,7 +1513,14 @@ class _SegmentState extends State<_Segment> {
                   Positioned(
                     left: 0, right: 0, top: 0, height: labelBandPx,
                     child: ClipRect(
-                      child: Row(
+                      child: Padding(
+                        // Reserve ~1 mono glyph of trailing room so a
+                        // fade-overflowing label never kisses the next
+                        // segment's label ("backend/commi backend/git_s").
+                        // Mono advance ≈ 0.6em; derived from fontSize.
+                        padding: EdgeInsets.only(
+                            right: widget.labelStyle.fontSize! * 0.6),
+                        child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           if (widget.isDirty)
@@ -1199,7 +1541,7 @@ class _SegmentState extends State<_Segment> {
                               overflow: TextOverflow.fade,
                               softWrap: false,
                               style: widget.labelStyle.copyWith(
-                                color: _hovered
+                                color: active
                                     ? t.textStrong
                                     : (seg.isLeaf
                                         ? t.textNormal
@@ -1208,6 +1550,7 @@ class _SegmentState extends State<_Segment> {
                             ),
                           ),
                         ],
+                      ),
                       ),
                     ),
                   ),
@@ -1226,7 +1569,15 @@ class _SegmentState extends State<_Segment> {
                       neutralColor: t.textFaint,
                       bg: t.bg0,
                       isLeaf: seg.isLeaf,
-                      hovered: _hovered,
+                      hovered: active,
+                      // Hunk bands only for leaves wide enough to read
+                      // one; below that a leaf keeps the flat split. The
+                      // width gate mirrors the label gate — same measured
+                      // basename idiom, doubled so a band has real room.
+                      hunks: seg.isLeaf &&
+                              seg.width >= widget.minLabelSegmentPx * 2
+                          ? widget.hunks
+                          : null,
                     ),
                   )
                 else
@@ -1236,7 +1587,7 @@ class _SegmentState extends State<_Segment> {
                     left: 0, right: 1, bottom: 0, height: 1.5,
                     child: ColoredBox(
                       color: t.textFaint.withValues(
-                          alpha: _hovered ? 0.7 : 0.5),
+                          alpha: active ? 0.7 : 0.5),
                     ),
                   ),
                 // Hero rim — sharp accent at bar top, the panel's one
@@ -1355,6 +1706,41 @@ class _InspectorStrip extends StatelessWidget {
     required this.idleSummary,
   });
 
+  /// Plain-word extras appended to a leaf's inspector line. Order:
+  /// change-type story (renames etc. — the bar can't narrate those),
+  /// lifecycle standing, hunk count. Containers/folds contribute none.
+  List<String> _leafExtras() {
+    final h = hover;
+    if (h == null || !h.isLeaf) return const [];
+    final out = <String>[];
+    switch (h.changeType) {
+      case 'R':
+        out.add('renamed');
+      case 'C':
+        out.add('copied');
+      case 'T':
+        out.add('typechange');
+      case 'U':
+        out.add('conflict');
+    }
+    // Lifecycle standing, translated to plain speech. "canonical" is
+    // engine jargon for "top decile of touch counts" — in a one-word
+    // slot it reads as noise, so it speaks as "core file". The middle
+    // tier (reinforced) says nothing worth a word and stays visual-only
+    // (its rim still paints); stale is already English.
+    final lc = h.lifecycle;
+    if (lc != null) {
+      if (lc.promotion == FilePromotion.canonical) {
+        out.add('core file');
+      }
+      if (lc.decay == FileDecay.stale) out.add('stale');
+    }
+    if (h.hunkCount > 0) {
+      out.add('${h.hunkCount} hunk${h.hunkCount == 1 ? '' : 's'}');
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = tokens;
@@ -1388,6 +1774,13 @@ class _InspectorStrip extends StatelessWidget {
                 const SizedBox(width: 6),
                 Text('-${hover!.deletions}',
                     style: style.copyWith(color: t.stateDeleted)),
+                // Leaf narrative extras — data, not microcopy. Each is a
+                // plain mono word after the ` · ` idiom: the change-type
+                // story (only when the bar can't say it), lifecycle
+                // standing, and hunk count.
+                for (final extra in _leafExtras())
+                  Text(' · $extra',
+                      style: style.copyWith(color: t.textFaint)),
               ],
             )
           // Idle: show what the focused subtree looks like as a whole.
@@ -1423,6 +1816,11 @@ class _InspectorStrip extends StatelessWidget {
   }
 }
 
+/// Minimum bar height (px) at which hunk bands are allowed. Below this a
+/// leaf keeps the flat add/del split — a band field packed into a short
+/// bar just reproduces the barcode the calm-field law removes.
+const double _hunkBandMinPx = 64;
+
 /// Two flat regions stacked to encode additions (top) over deletions
 /// (bottom), each proportional to its share of churn. All colors are
 /// theme tokens passed in by the caller — this widget owns no palette.
@@ -1435,6 +1833,9 @@ class _SplitBar extends StatelessWidget {
   final Color bg;
   final bool isLeaf;
   final bool hovered;
+  // Real hunk headers for this leaf, when known and the bar is wide
+  // enough to be worth the detail. Null → keep the flat add/del split.
+  final List<CommitHunk>? hunks;
 
   const _SplitBar({
     required this.addShare,
@@ -1445,16 +1846,21 @@ class _SplitBar extends StatelessWidget {
     required this.bg,
     required this.isLeaf,
     required this.hovered,
+    this.hunks,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Container/fold segments aren't files — render as one neutral
-    // block so they read as "more content here" rather than mimicking
-    // a real file's add/del story.
+    // Container/fold segments aren't files — paint faint 45° hairline
+    // stripes so a fold ("N more files") stops impersonating a file's
+    // solid add/del bar. The stripe field reads as "collapsed group".
     if (!isLeaf) {
-      return ColoredBox(
-        color: neutralColor.withValues(alpha: hovered ? 0.55 : 0.32),
+      return CustomPaint(
+        painter: _FoldStripePainter(
+          color: neutralColor,
+          alpha: hovered ? 0.5 : 0.3,
+        ),
+        child: const SizedBox.expand(),
       );
     }
     final addAlpha = hovered ? 0.92 : 0.78;
@@ -1462,6 +1868,66 @@ class _SplitBar extends StatelessWidget {
     return LayoutBuilder(builder: (context, cons) {
       final h = cons.maxHeight;
       final w = cons.maxWidth;
+
+      // Hunk-band mode: when we have real hunks AND the bar can give them
+      // room to breathe, paint each hunk as a calm field / bright tick at
+      // its relative line-offset over one quiet base tint. The story
+      // becomes "the deletions live HERE" instead of a doom slab.
+      //
+      //  · Height floor (_hunkBandMinPx): below this a band field is just
+      //    the barcode we're trying to kill. Raised from the old 33 to 64
+      //    so the ~40px mini-strips keep the flat split.
+      //  · Density gate: a track can only hold so many bands before the
+      //    1px gaps vanish. Each band needs ≥ 3× the tick minimum of
+      //    vertical room (tick + gap + air); past h/(3·tick) hunks the
+      //    field can't breathe, so fall back to the flat split entirely.
+      final localHunks = hunks;
+      const tickPx = _HunkBandPainter.tickPx;
+      final canBand = localHunks != null &&
+          localHunks.isNotEmpty &&
+          h >= _hunkBandMinPx &&
+          localHunks.length <= h / (3 * tickPx);
+      if (canBand) {
+        // Band mode keeps the same non-color +/− channel as the flat
+        // split: `+` pinned top-left, `−` bottom-left, present whenever
+        // the file has that side at all. The glyph SHAPE is the
+        // accessibility signal, so here it may wear the state color —
+        // the base tint is near-bg quiet, which keeps it legible where
+        // the flat mode needed contrastGlyph over saturated fill.
+        const glyphBudget = 11.0;
+        final canShowGlyph =
+            w >= glyphBudget * 1.4 && h >= glyphBudget * 2;
+        TextStyle bandGlyph(Color c) => TextStyle(
+          color: c,
+          fontSize: 9,
+          fontFamily: AppFonts.mono,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+        );
+        return Stack(children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _HunkBandPainter(
+                hunks: localHunks,
+                addColor: addColor,
+                delColor: delColor,
+                hovered: hovered,
+              ),
+            ),
+          ),
+          if (canShowGlyph && addShare > 0)
+            Positioned(
+              left: 2, top: 1,
+              child: Text('+', style: bandGlyph(addColor)),
+            ),
+          if (canShowGlyph && delShare > 0)
+            Positioned(
+              left: 2, bottom: 1,
+              child: Text('−', style: bandGlyph(delColor)),
+            ),
+        ]);
+      }
+
       final delH = h * delShare;
       final addH = h * addShare;
       // Sign glyphs (`+` / `−`) inside each region — non-color
@@ -1509,22 +1975,202 @@ class _SplitBar extends StatelessWidget {
 }
 
 
+/// A merged hunk band — a vertical span in the bar plus its summed add/del
+/// composition. Mutable so the merge pass can extend one in place.
+class _HunkBand {
+  double top;
+  double bottom;
+  int add;
+  int del;
+  _HunkBand(this.top, this.bottom, this.add, this.del);
+}
+
+/// Paints the file's hunks as a calm field of horizontal marks inside a
+/// leaf bar. The bar reads top-to-bottom as line 1 → last touched line;
+/// each hunk sits at its real new-file offset, so a cluster of deletions
+/// near the top paints there and nowhere else.
+///
+/// The calming law (this pass) has three parts:
+///   1. ONE quiet base tint for the whole bar — the file's *dominant*
+///      side at chrome-wash alpha. No add/del split behind the bands;
+///      double-encoding the character AND the placement was the chaos.
+///   2. Band alpha eases DOWN with span: a hunk spanning a large slice of
+///      the file is a barely-raised field, a 3-line hunk is a bright tick.
+///   3. Adjacent bands keep a 1px base gap; bands closer than 2px merge
+///      (composition summed) so a dense file can't become a barcode.
+class _HunkBandPainter extends CustomPainter {
+  final List<CommitHunk> hunks;
+  final Color addColor;
+  final Color delColor;
+  final bool hovered;
+
+  /// Minimum band height in px — a single-line hunk still paints a mark.
+  /// Also the unit the density gate reserves 3× of per hunk.
+  static const double tickPx = 2.0;
+
+  _HunkBandPainter({
+    required this.hunks,
+    required this.addColor,
+    required this.delColor,
+    required this.hovered,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Placement is normalised against the touched new-file extent by
+    // [computeHunkBands], which owns the one-based → zero-based conversion
+    // so a hunk at `+1` sits at the top. We don't have (or need) the file's
+    // absolute length; the extent is honest about where the hunks sit
+    // relative to each other and to the change's own reach.
+    final bands = computeHunkBands(hunks);
+    var totalAdd = 0;
+    var totalDel = 0;
+    for (final b in bands) {
+      totalAdd += b.additions;
+      totalDel += b.deletions;
+    }
+
+    // (1) ONE quiet base tint — the dominant side at chrome-wash alpha
+    // (~0.08, the level the panel uses for its washes), covering the whole
+    // bar. The bands carry the "where"; the base carries the character.
+    final baseColor = totalDel > totalAdd ? delColor : addColor;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = baseColor.withValues(alpha: hovered ? 0.10 : 0.08),
+    );
+
+    // (3) Build raw bands at real offsets, then merge any pair whose
+    // painted rects would sit < 2px apart — below that the 1px base gap
+    // can't render, so they'd read as one slab regardless. Merging sums
+    // the composition so the merged band's colour still tells the truth.
+    final raw = <_HunkBand>[
+      for (final b in bands)
+        _HunkBand(
+          b.topFraction * size.height,
+          b.bottomFraction * size.height,
+          b.additions,
+          b.deletions,
+        ),
+    ]..sort((a, b) => a.top.compareTo(b.top));
+    final merged = <_HunkBand>[];
+    for (final b in raw) {
+      if (merged.isNotEmpty && b.top - merged.last.bottom < 2.0) {
+        final m = merged.last;
+        if (b.bottom > m.bottom) m.bottom = b.bottom;
+        m.add += b.add;
+        m.del += b.del;
+      } else {
+        merged.add(b);
+      }
+    }
+
+    // (2) Band-alpha law (committed). Let f = band span / bar height (the
+    // fraction of the file this band covers). alpha eases from bright
+    // (0.80) at f→0 down to calm (0.14) once f ≥ 0.25, via smoothstep:
+    // beyond a quarter of the file a band carries no "where" and should
+    // barely rise above the base tint; a thin tick stays a bright needle.
+    const bright = 0.80;
+    const calm = 0.14;
+    const knee = 0.25;
+    for (final b in merged) {
+      final f = ((b.bottom - b.top) / size.height).clamp(0.0, 1.0);
+      final e = (f / knee).clamp(0.0, 1.0);
+      final smooth = e * e * (3 - 2 * e);
+      var a = bright + (calm - bright) * smooth;
+      if (hovered) a = (a + 0.06).clamp(0.0, 1.0);
+
+      final Color c;
+      if (b.del > b.add) {
+        c = delColor;
+      } else if (b.add > b.del) {
+        c = addColor;
+      } else {
+        c = Color.alphaBlend(delColor.withValues(alpha: 0.5), addColor);
+      }
+
+      final top = b.top.clamp(0.0, size.height);
+      // Reserve a 1px base-fill gap below each band; keep at least one
+      // tick so a lone single-line hunk still shows.
+      var bandH = b.bottom - b.top;
+      if (bandH < tickPx) bandH = tickPx;
+      bandH -= 1.0;
+      if (bandH < tickPx) bandH = tickPx;
+      canvas.drawRect(
+        Rect.fromLTWH(0, top, size.width, bandH.clamp(0.0, size.height - top)),
+        Paint()..color = c.withValues(alpha: a),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HunkBandPainter old) =>
+      old.hunks != hunks ||
+      old.addColor != addColor ||
+      old.delColor != delColor ||
+      old.hovered != hovered;
+}
+
+/// Faint 45° hairline stripes for fold ("N more files") segments, so a
+/// collapsed group never impersonates a solid file bar.
+class _FoldStripePainter extends CustomPainter {
+  final Color color;
+  final double alpha;
+
+  _FoldStripePainter({required this.color, required this.alpha});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // A quiet ground so the block still has presence where stripes gap.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = color.withValues(alpha: alpha * 0.35),
+    );
+    final stripe = Paint()
+      ..color = color.withValues(alpha: alpha)
+      ..strokeWidth = 1;
+    const gap = 6.0;
+    // Diagonals sweep across the box; extend the loop by height so the
+    // lower-left corner is covered too.
+    for (var x = -size.height; x < size.width; x += gap) {
+      canvas.drawLine(
+        Offset(x, size.height),
+        Offset(x + size.height, 0),
+        stripe,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_FoldStripePainter old) =>
+      old.color != color || old.alpha != alpha;
+}
+
+
 class _SingleFileRow extends StatelessWidget {
   final SeismographSegment segment;
   final AppTokens tokens;
   final bool isDirty;
+  final List<CommitHunk>? hunks;
   final VoidCallback onTap;
 
   const _SingleFileRow({
     required this.segment,
     required this.tokens,
     required this.isDirty,
+    required this.hunks,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = tokens;
+    // A one-file commit is still a shape, not a list row: give it the
+    // same modest bar a large leaf segment gets — hunk bands when we know
+    // them, the flat add/del split otherwise — so even the degenerate
+    // case reads as the file's character at a glance.
+    final total = segment.additions + segment.deletions;
+    final addShare = total == 0 ? 0.0 : segment.additions / total;
+    final delShare = total == 0 ? 0.0 : segment.deletions / total;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -1536,35 +2182,57 @@ class _SingleFileRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.4)),
       ),
-      child: Row(children: [
-        if (isDirty)
-          Padding(
-            padding: const EdgeInsets.only(right: 6),
-            child: Container(
-              width: 5, height: 5,
-              decoration: BoxDecoration(
-                color: t.accentBright,
-                shape: BoxShape.circle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            if (isDirty)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Container(
+                  width: 5, height: 5,
+                  decoration: BoxDecoration(
+                    color: t.accentBright,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            Expanded(
+              child: Text(
+                segment.label,
+                style: TextStyle(
+                  color: t.textStrong, fontSize: 12,
+                  fontFamily: AppFonts.mono,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-        Expanded(
-          child: Text(
-            segment.label,
-            style: TextStyle(
-              color: t.textStrong, fontSize: 12,
-              fontFamily: AppFonts.mono,
+            const SizedBox(width: 8),
+            Text('+${segment.additions}',
+                style: TextStyle(color: t.stateAdded, fontSize: 11)),
+            const SizedBox(width: 6),
+            Text('-${segment.deletions}',
+                style: TextStyle(color: t.stateDeleted, fontSize: 11)),
+          ]),
+          if (total > 0) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 44,
+              child: _SplitBar(
+                addShare: addShare,
+                delShare: delShare,
+                addColor: t.stateAdded,
+                delColor: t.stateDeleted,
+                neutralColor: t.textFaint,
+                bg: t.bg0,
+                isLeaf: true,
+                hovered: false,
+                hunks: hunks,
+              ),
             ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text('+${segment.additions}',
-            style: TextStyle(color: t.stateAdded, fontSize: 11)),
-        const SizedBox(width: 6),
-        Text('-${segment.deletions}',
-            style: TextStyle(color: t.stateDeleted, fontSize: 11)),
-      ]),
+          ],
+        ],
+      ),
         ),
       ),
     );
@@ -1603,7 +2271,7 @@ class CommitSeismographRail extends StatefulWidget {
 
 class _CommitSeismographRailState extends State<CommitSeismographRail>
     with SingleTickerProviderStateMixin {
-  static const Duration _wakeAuthored = Duration(milliseconds: 280);
+  static const Duration _wakeAuthored = Duration(milliseconds: 240);
   late AnimationController _wake;
   // Index of the bar the user is hovering with a drag (scrub gesture).
   // Distinct from the per-bar mouse hover so bars far from the cursor

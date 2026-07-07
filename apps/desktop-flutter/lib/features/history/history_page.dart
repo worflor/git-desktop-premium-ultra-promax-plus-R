@@ -3777,6 +3777,217 @@ class _DetailTagPillState extends State<_DetailTagPill> {
   }
 }
 
+/// The tag-creation affordance, deliberately subordinate to the real tags
+/// it sits beside. At rest it's a ghost coin — a faint tag glyph + '+' that
+/// reads as "a tag waiting to exist": transparent, borderless, textFaint.
+/// Clicking morphs it IN PLACE (same Wrap slot) into a pill-shaped inline
+/// field styled like a nascent _DetailTagPill, so you are literally typing
+/// inside the tag it will become. No row drops below, no hint sentence — the
+/// pill's own border + icon carry every state: accent while typing,
+/// stateConflicted the instant a name collides.
+class _TagCreator extends StatefulWidget {
+  final AppTokens tokens;
+  final bool expanded;
+  final String? error;
+  final TextEditingController controller;
+  final FocusNode escapeFocus;
+  final VoidCallback onToggle;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onCreate;
+  const _TagCreator({
+    required this.tokens,
+    required this.expanded,
+    required this.error,
+    required this.controller,
+    required this.escapeFocus,
+    required this.onToggle,
+    required this.onChanged,
+    required this.onCreate,
+  });
+  @override
+  State<_TagCreator> createState() => _TagCreatorState();
+}
+
+class _TagCreatorState extends State<_TagCreator> {
+  bool _hovered = false;
+  // Guards the submit round-trip. onCreate is async: on success the parent
+  // collapses us (expanded → false, field disposed → blur), on failure it
+  // keeps us open with an error. Without this flag the success-path blur
+  // would fire the focus-out collapse and toggle us straight back open.
+  bool _submitting = false;
+  final _fieldFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _fieldFocus.addListener(_handleFocus);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TagCreator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The submit round-trip is over the moment the parent responds, and it
+    // can respond two ways: success collapses us (expanded → false), failure
+    // hands back an error while the field stays open. Release the guard on
+    // *either* — otherwise a success leaves the latch stuck true and the next
+    // blur can never collapse the field again.
+    final hasError = widget.error != null && widget.error!.isNotEmpty;
+    if (_submitting && (!widget.expanded || hasError)) {
+      _submitting = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _fieldFocus.removeListener(_handleFocus);
+    _fieldFocus.dispose();
+    super.dispose();
+  }
+
+  void _handleFocus() {
+    // Losing focus collapses the nascent pill — but never mid-submit, and
+    // never once the parent has already begun collapsing us.
+    if (!_fieldFocus.hasFocus && widget.expanded && !_submitting && mounted) {
+      widget.onToggle();
+    }
+  }
+
+  void _submit() {
+    // Enter on nothing is a dismiss, not a create — the same contract every
+    // inline input in the app honours. Sending an empty value would hit the
+    // parent's silent empty-guard, which produces no state change, so neither
+    // the collapse nor the error path would ever fire and the latch would
+    // wedge the field open. Never latch or submit an unsendable value.
+    if (widget.controller.text.trim().isEmpty) {
+      if (widget.expanded) widget.onToggle();
+      return;
+    }
+    _submitting = true;
+    widget.onCreate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      // Snappy morph: grows out of the ghost coin, capped well under the
+      // house 160ms ceiling.
+      duration: context.motion(const Duration(milliseconds: 140)),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.centerLeft,
+      child: widget.expanded ? _buildField(context) : _buildGhost(context),
+    );
+  }
+
+  Widget _buildGhost(BuildContext context) {
+    final t = widget.tokens;
+    final shader = context.surfaceShader;
+    final color = _hovered ? t.accentBright : t.textFaint;
+    return Tooltip(
+      message: 'Create tag',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Semantics(
+        button: true,
+        label: 'Create tag',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: GestureDetector(
+            onTap: widget.onToggle,
+            child: AnimatedContainer(
+              duration: context.motion(shader.duration),
+              curve: shader.safeCurve,
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+              decoration: BoxDecoration(
+                // Transparent/borderless at rest; a breath of accent wash on
+                // hover so it lifts without competing with the real pills.
+                color: _hovered
+                    ? t.accentBright.withValues(alpha: 0.06)
+                    : Colors.transparent,
+                borderRadius:
+                    BorderRadius.circular(shader.geometry.pillRadius),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                AppIcon(name: 'tag', size: 10, color: color),
+                const SizedBox(width: 1),
+                Text('+',
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 11,
+                        height: 1.0,
+                        fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildField(BuildContext context) {
+    final t = widget.tokens;
+    final shader = context.surfaceShader;
+    final hasError = widget.error != null && widget.error!.isNotEmpty;
+    // On collision the pill's border + icon flip to the conflict tone while
+    // the input stays open; the reason rides along in Semantics for readers.
+    final accent = hasError ? t.stateConflicted : t.accentBright;
+    return KeyboardListener(
+      focusNode: widget.escapeFocus,
+      onKeyEvent: (e) {
+        if (e is KeyDownEvent &&
+            e.logicalKey == LogicalKeyboardKey.escape) {
+          widget.onToggle();
+        }
+      },
+      child: Semantics(
+        textField: true,
+        label: hasError ? 'New tag name — ${widget.error}' : 'New tag name',
+        child: Container(
+          height: 22,
+          constraints: const BoxConstraints(minWidth: 84, maxWidth: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          decoration: BoxDecoration(
+            color: t.accentBright.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
+            border: Border.all(
+                color: hasError ? t.stateConflicted : t.itemActiveBorder),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            AppIcon(name: 'tag', size: 10, color: accent),
+            const SizedBox(width: 4),
+            Flexible(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: _fieldFocus,
+                autofocus: true,
+                cursorColor: accent,
+                cursorHeight: 12,
+                cursorWidth: 1.5,
+                // Text styled exactly like a _DetailTagPill's label — you are
+                // editing the tag, not filling a form field.
+                style: TextStyle(
+                    color: accent,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: widget.onChanged,
+                onSubmitted: (_) => _submit(),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
 class _ReflogRow extends StatefulWidget {
   final ReflogEntryData entry;
   final AppTokens tokens;
@@ -3903,10 +4114,43 @@ class _CommitDetail extends StatelessWidget {
     }
   }
 
+  /// Terse relative age ("3d ago", "2mo ago") in the app's mono voice.
+  /// The absolute date rides along in a tooltip so precision is one hover
+  /// away without spending a whole metadata slot on a raw ISO date.
+  static String _relativeDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      final diff = DateTime.now().difference(dt);
+      final s = diff.inSeconds;
+      if (s < 45) return 'just now';
+      final m = diff.inMinutes;
+      if (m < 60) return '${m}m ago';
+      final h = diff.inHours;
+      if (h < 24) return '${h}h ago';
+      final days = diff.inDays;
+      if (days < 7) return '${days}d ago';
+      if (days < 30) return '${(days / 7).floor()}w ago';
+      if (days < 365) return '${(days / 30).floor()}mo ago';
+      return '${(days / 365).floor()}y ago';
+    } catch (_) {
+      return _formatDate(iso);
+    }
+  }
+
+  /// GitHub's noreply identity is `<numeric-id>+<username>`; when a commit
+  /// carries it as the *name* (web/co-authored commits), the raw digits
+  /// read as a meaningless token in the leading avatar+name slot. Show the
+  /// human-readable username instead. Plain names pass through untouched.
+  static String _displayAuthor(String name) {
+    final m = RegExp(r'^\d+\+(.+)$').firstMatch(name);
+    return m != null ? m.group(1)! : name;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = tokens;
     final d = detail;
+    final authorName = _displayAuthor(d.authorName);
     final dirtyPaths = context
             .watch<RepositoryState>()
             .status
@@ -3934,25 +4178,34 @@ class _CommitDetail extends StatelessWidget {
 
       const SizedBox(height: 14),
 
-      // Metadata row: avatar | name | · | date | · | hash | · | tag
+      // Metadata row: avatar | name | · | date | · | hash | · tag* | ⊕
+      // Tags lead the affordance; the ghost coin (⊕) whispers at the tail.
       Wrap(
         spacing: 6,
         runSpacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           // Author avatar + name
-          if (d.authorName.isNotEmpty)
+          if (authorName.isNotEmpty)
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(
+              // Avatar coin. Routed through MaterialSurface so it wears
+              // the theme's actual material (glass glaze, block bevel,
+              // ink line) instead of a flat wash. Shape follows the
+              // theme's geometry: a full circle wherever corners are
+              // soft, snapping square only when the theme itself is
+              // sharp — a rounded-rect avatar is neither coin nor tile.
+              MaterialSurface(
                 width: 22,
                 height: 22,
-                decoration: BoxDecoration(
-                  color: t.chromeAccent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(11),
-                ),
+                tone: t.innerPanelTone,
+                radius: context.surfaceShader.geometry.radius <= 0
+                    ? 0.0
+                    : 11.0,
+                borderAlpha: 0.22,
+                innerHighlight: true,
                 child: Center(
                     child: Text(
-                  d.authorName[0].toUpperCase(),
+                  authorName[0].toUpperCase(),
                   style: TextStyle(
                       color: t.textStrong,
                       fontSize: 10,
@@ -3960,7 +4213,7 @@ class _CommitDetail extends StatelessWidget {
                 )),
               ),
               const SizedBox(width: 6),
-              Text(d.authorName,
+              Text(authorName,
                   style: TextStyle(
                       color: t.textNormal,
                       fontSize: 12,
@@ -3969,9 +4222,13 @@ class _CommitDetail extends StatelessWidget {
           Text('·',
               style: TextStyle(
                   color: t.textFaint, fontSize: 12)),
-          // Date
-          Text(_formatDate(d.authoredAt),
-              style: TextStyle(color: t.textMuted, fontSize: 11)),
+          // Date — relative in the row, absolute on hover.
+          Tooltip(
+            message: _formatDate(d.authoredAt),
+            waitDuration: const Duration(milliseconds: 300),
+            child: Text(_relativeDate(d.authoredAt),
+                style: TextStyle(color: t.textMuted, fontSize: 11)),
+          ),
           Text('·',
               style: TextStyle(
                   color: t.textFaint, fontSize: 12)),
@@ -3988,51 +4245,9 @@ class _CommitDetail extends StatelessWidget {
                     fontSize: 11,
                     fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
           ),
-          Text('·',
-              style: TextStyle(
-                  color: t.textFaint, fontSize: 12)),
-          // Tag affordance
-          GestureDetector(
-            onTap: onToggleTag,
-            child: AnimatedContainer(
-              duration: context.motion(context.surfaceShader.duration),
-              curve: context.surfaceShader.safeCurve,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: tagInputVisible
-                    ? t.itemActiveBg
-                    : t.chromeAccent.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.pillRadius),
-                border: Border.all(
-                  color: tagInputVisible
-                      ? t.itemActiveBorder
-                      : t.chromeAccent.withValues(alpha: 0.12),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AppIcon(
-                    name: 'tag',
-                    size: 12,
-                    color: tagInputVisible
-                        ? t.accentBright
-                        : t.textMuted.withValues(alpha: 0.8),
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    tagInputVisible ? 'Close tag' : 'Create tag',
-                    style: TextStyle(
-                      color: tagInputVisible ? t.accentBright : t.textNormal,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          // Tags lead. Real tags sit immediately after the hash, each
+          // introduced by its own separator dot — so zero tags means zero
+          // trailing dots, no orphaned punctuation.
           for (final name in gitTags) ...[
             Text('·',
                 style: TextStyle(
@@ -4043,43 +4258,21 @@ class _CommitDetail extends StatelessWidget {
               onDelete: () => onDeleteTag(name),
             ),
           ],
+          // The creation affordance is last and dotless: a ghost coin that
+          // morphs in place into the tag it will become. It's an affordance
+          // waiting to be a datum, not a datum — so it earns no separator.
+          _TagCreator(
+            tokens: t,
+            expanded: tagInputVisible,
+            error: tagError,
+            controller: tagController,
+            escapeFocus: tagEscapeFocus,
+            onToggle: onToggleTag,
+            onChanged: onTagChanged,
+            onCreate: onCreateTag,
+          ),
         ],
       ),
-
-      // Inline tag input (expands below metadata when visible)
-      if (tagInputVisible) ...[
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(
-            child: KeyboardListener(
-              focusNode: tagEscapeFocus,
-              onKeyEvent: (e) {
-                if (e is KeyDownEvent &&
-                    e.logicalKey == LogicalKeyboardKey.escape) {
-                  onToggleTag();
-                }
-              },
-              child: AppTextField(
-                controller: tagController,
-                autofocus: true,
-                height: 28,
-                fontSize: 12,
-                hintText: 'tag name...',
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                onChanged: onTagChanged,
-                onSubmitted: (_) => onCreateTag(),
-              ),
-            ),
-          ),
-        ]),
-      ],
-
-      if (tagError != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(tagError!,
-              style: TextStyle(color: t.stateConflicted, fontSize: 10)),
-        ),
 
       if (d.body.isNotEmpty) ...[
         const SizedBox(height: 16),

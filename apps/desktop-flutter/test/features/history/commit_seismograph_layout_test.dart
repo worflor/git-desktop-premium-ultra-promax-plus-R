@@ -73,9 +73,11 @@ void main() {
     });
 
     test('sub-min leaves fold into one tail segment, drill-disabled in here', () {
+      // Count chosen so the tinies still fall below minSegmentPx AFTER the
+      // sqrt area transform compresses the dominant file's share.
       final r = buildSeismographTree([
         _f('m/big.dart', add: 1000),
-        for (var i = 0; i < 30; i++) _f('m/t$i.dart', add: 1),
+        for (var i = 0; i < 60; i++) _f('m/t$i.dart', add: 1),
       ]);
       final l = layoutSeismograph(root: r, c: c);
       final track = l.tracks.first;
@@ -191,7 +193,8 @@ void main() {
       // under sub/. Subdir track's fold target = sub/ → drillable.
       final r = buildSeismographTree([
         _f('sub/big.dart', add: 1000),
-        for (var i = 0; i < 30; i++) _f('sub/t$i.dart', add: 1),
+        // 60 tinies so the fold still triggers under the sqrt area weight.
+        for (var i = 0; i < 60; i++) _f('sub/t$i.dart', add: 1),
         // Loose root files create a here-track whose fold isn't drillable.
         _f('loose1.dart', add: 1),
         for (var i = 0; i < 40; i++) _f('loose$i.dart', add: 1),
@@ -272,6 +275,56 @@ void main() {
       expect(inside.tracks, hasLength(1));
       final segLabels = inside.tracks.first.segments.map((s) => s.label).toSet();
       expect(segLabels, {'x.dart', 'y.dart'});
+    });
+  });
+
+  group('computeHunkBands — line-space to fraction-space', () {
+    CommitHunk hk(int newStart, {int add = 0, int del = 0}) =>
+        CommitHunk(newStart: newStart, additions: add, deletions: del);
+
+    test('a hunk at +1 paints at the top (fraction 0.0)', () {
+      // git headers are one-based; a single-line change at +1 must land at
+      // the very top of the bar, not halfway down.
+      final bands = computeHunkBands([hk(1, add: 1)]);
+      expect(bands, hasLength(1));
+      expect(bands.first.topFraction, 0.0);
+    });
+
+    test('pure-deletion +c,0 hunk gets a non-degenerate band at its offset',
+        () {
+      // @@ -10,3 +5,0 @@ — deletion, so additions(d)=0. Placed at the
+      // zero-based offset (4) with a floored-≥1 span so it still shows.
+      final bands = computeHunkBands([hk(5, add: 0, del: 3)]);
+      expect(bands, hasLength(1));
+      final b = bands.first;
+      expect(b.bottomFraction, greaterThan(b.topFraction));
+      // Offset is honoured: top sits below zero (there is earlier extent).
+      expect(b.topFraction, greaterThan(0.0));
+    });
+
+    test('whole-file deletion (+0,0) clamps to a valid top-anchored band',
+        () {
+      final bands = computeHunkBands([hk(0, add: 0, del: 40)]);
+      expect(bands, hasLength(1));
+      expect(bands.first.topFraction, 0.0);
+      expect(bands.first.bottomFraction, greaterThan(0.0));
+    });
+
+    test('no band ever exceeds fraction 1.0; last reaches exactly 1.0', () {
+      final bands = computeHunkBands([
+        hk(1, add: 3),
+        hk(50, add: 2),
+        hk(120, add: 10),
+      ]);
+      for (final b in bands) {
+        expect(b.topFraction, inInclusiveRange(0.0, 1.0));
+        expect(b.bottomFraction, inInclusiveRange(0.0, 1.0));
+        expect(b.bottomFraction, greaterThanOrEqualTo(b.topFraction));
+      }
+      // The furthest-reaching hunk defines the extent, so it bottoms at 1.0.
+      final maxBottom =
+          bands.map((b) => b.bottomFraction).reduce((a, b) => a > b ? a : b);
+      expect(maxBottom, 1.0);
     });
   });
 }

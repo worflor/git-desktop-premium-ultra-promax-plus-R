@@ -234,6 +234,32 @@ class CommitFileStatData {
           changeType: j['changeType'] as String? ?? 'M');
 }
 
+/// One hunk header from a commit's diff, parsed straight from the
+/// `@@ -a,b +c,d @@` line. Carries only what the seismograph needs to
+/// place a band inside a large leaf bar: where the hunk lands in the
+/// new file (`newStart`) and its add/del composition. The header counts
+/// already encode that composition — `additions` is the new-line count
+/// (d), `deletions` is the old-line count (b) — so parsing never has to
+/// read a single body line.
+class CommitHunk {
+  final int newStart;
+  final int additions;
+  final int deletions;
+  const CommitHunk({
+    required this.newStart,
+    required this.additions,
+    required this.deletions,
+  });
+
+  /// Vertical extent this hunk occupies in the new file — the larger of
+  /// its add/del counts, floored at 1 so a pure single-line change still
+  /// paints a visible band.
+  int get span {
+    final m = additions > deletions ? additions : deletions;
+    return m < 1 ? 1 : m;
+  }
+}
+
 class CommitDetailData {
   final String commitHash;
   final String shortHash;

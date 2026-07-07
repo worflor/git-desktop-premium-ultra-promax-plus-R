@@ -121,6 +121,53 @@ class SeismographConstraints {
   });
 }
 
+/// One hunk's vertical placement inside a leaf bar, expressed as [0,1]
+/// fractions of the touched new-file extent. Pure geometry: the painter
+/// scales these by the bar height, then merges near-neighbours and picks
+/// colour/alpha. Kept out of the painter so the boundary where line-space
+/// meets paint-space is unit-testable.
+class HunkBandGeometry {
+  final double topFraction;
+  final double bottomFraction;
+  final int additions;
+  final int deletions;
+  const HunkBandGeometry({
+    required this.topFraction,
+    required this.bottomFraction,
+    required this.additions,
+    required this.deletions,
+  });
+}
+
+/// Place hunks in fraction-space against the touched new-file extent.
+///
+/// git's `@@ -a,b +c,d @@` header is ONE-based ([CommitHunk.newStart] = c),
+/// so the conversion to a zero-based paint offset happens here exactly once:
+/// `zeroBasedStart = max(0, newStart - 1)`. The clamp also absorbs the
+/// `+0,0` header git emits for a whole-file deletion (empty new file).
+///
+/// Invariant: band top fraction = zeroBasedStart / totalNewFileExtent.
+/// A hunk at `+1` therefore lands at fraction 0.0 (the top). The extent is
+/// floored at 1 so a lone single-line change can't divide by zero, and
+/// [CommitHunk.span] is itself floored at 1 so a pure-deletion band keeps a
+/// non-degenerate height at its real offset instead of collapsing to a hair.
+List<HunkBandGeometry> computeHunkBands(List<CommitHunk> hunks) {
+  var extent = 1;
+  for (final hk in hunks) {
+    final end = math.max(0, hk.newStart - 1) + hk.span;
+    if (end > extent) extent = end;
+  }
+  return [
+    for (final hk in hunks)
+      HunkBandGeometry(
+        topFraction: math.max(0, hk.newStart - 1) / extent,
+        bottomFraction: (math.max(0, hk.newStart - 1) + hk.span) / extent,
+        additions: hk.additions,
+        deletions: hk.deletions,
+      ),
+  ];
+}
+
 /// Build a directory tree from a commit's file list. Aggregates additions,
 /// deletions, and leaf counts at every ancestor.
 SeismographNode buildSeismographTree(List<CommitFileStatData> files) {
@@ -185,21 +232,32 @@ SeismographNode buildSeismographTree(List<CommitFileStatData> files) {
   );
 }
 
-/// Allocate vertical space across tracks: share-based by churn, clamped
-/// to `minTrackPx`. Reclaims slack from over-min tracks to satisfy the
-/// floor. If even the floors don't fit, height is divided equally.
+/// Sublinear transform applied to churn wherever it drives AREA
+/// allocation (track heights, segment widths) — NOT displayed counts,
+/// hover numbers, hero selection, or bar-height ratios, which all stay
+/// raw. sqrt is the committed law: when one file dominates a commit it
+/// otherwise eats the whole panel as a flat slab, leaving every other
+/// file a sliver. The hero rim already marks "the largest", so raw
+/// linear dominance in area is redundant. Ordering is preserved (sqrt is
+/// monotonic), so selection/sorting are unaffected.
+double _areaWeight(int churn) => math.sqrt(churn <= 0 ? 0.0 : churn.toDouble());
+
+/// Allocate vertical space across tracks: share-based by area weight,
+/// clamped to `minTrackPx`. Reclaims slack from over-min tracks to
+/// satisfy the floor. If even the floors don't fit, height is divided
+/// equally.
 List<double> _allocateHeights(
-    List<int> churns, double height, double minTrackPx) {
-  final n = churns.length;
+    List<double> weights, double height, double minTrackPx) {
+  final n = weights.length;
   if (n == 0) return const [];
   final floorTotal = n * minTrackPx;
   if (floorTotal >= height) {
     return List.filled(n, height / n);
   }
-  final total = churns.fold<int>(0, (a, c) => a + c);
+  final total = weights.fold<double>(0, (a, c) => a + c);
   final ideal = total == 0
       ? List.filled(n, height / n)
-      : churns.map((c) => (c / total) * height).toList();
+      : weights.map((c) => (c / total) * height).toList();
   // Clamp up to the floor; debt is the extra we owe.
   final clamped = ideal.map((h) => math.max(h, minTrackPx)).toList();
   final overshoot = clamped.fold<double>(0, (a, h) => a + h) - height;
@@ -293,7 +351,7 @@ SeismographLayout layoutSeismograph({
   ];
 
   final heights = _allocateHeights(
-    laidOut.map((t) => t.churn).toList(),
+    laidOut.map((t) => _areaWeight(t.churn)).toList(),
     c.height,
     c.minTrackPx,
   );
@@ -491,13 +549,17 @@ List<SeismographSegment> _layoutLeafSegments({
 }) {
   if (leaves.isEmpty) return const [];
   final sorted = [...leaves]..sort((a, b) => b.churn.compareTo(a.churn));
-  final total = sorted.fold<int>(0, (a, n) => a + n.churn);
+  // Widths use the same sqrt area weight as track heights — a single
+  // dominant file no longer starves the rest into slivers. Ordering is
+  // unchanged (sqrt is monotonic); the leaf's own additions/deletions
+  // stay raw for display and hover.
+  final total = sorted.fold<double>(0, (a, n) => a + _areaWeight(n.churn));
   // Pure-rename / pure-mode-only commits have all-zero churn. Fall back
   // to equal-share segments so the track is still legible (otherwise it
   // renders as an empty band — bug surfaced by reviewer).
   final shareOf = total == 0
       ? (SeismographNode _) => 1.0 / sorted.length
-      : (SeismographNode n) => n.churn / total;
+      : (SeismographNode n) => _areaWeight(n.churn) / total;
 
   final segments = <SeismographSegment>[];
   double x = 0;

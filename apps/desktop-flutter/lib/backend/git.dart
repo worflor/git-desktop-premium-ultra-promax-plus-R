@@ -1430,15 +1430,20 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
     mi++;
   }
 
+  // The format string emits `%n` right after the sentinel, so the first
+  // split element is the empty tail of the sentinel's own line — the
+  // identity fields start at index 1. (Indexing from 0 here shipped the
+  // avatar-less metadata row for months: name read as '', email as the
+  // name, and the noreply email landed in the date slot.)
   final afterMeta =
       output.substring(metaEnd + '---END-META---'.length).split('\n');
-  final authorName = afterMeta.isNotEmpty ? afterMeta[0].trim() : '';
-  final authorEmail = afterMeta.length > 1 ? afterMeta[1].trim() : '';
-  final authoredAt = afterMeta.length > 2 ? afterMeta[2].trim() : '';
+  final authorName = afterMeta.length > 1 ? afterMeta[1].trim() : '';
+  final authorEmail = afterMeta.length > 2 ? afterMeta[2].trim() : '';
+  final authoredAt = afterMeta.length > 3 ? afterMeta[3].trim() : '';
 
   // Parse numstat lines: additions<tab>deletions<tab>path
   final files = <CommitFileStatData>[];
-  for (final line in afterMeta.skip(3)) {
+  for (final line in afterMeta.skip(4)) {
     final parts = line.trim().split('\t');
     if (parts.length < 3) continue;
     final adds = int.tryParse(parts[0]) ?? 0; // '-' for binaries → 0
@@ -1465,6 +1470,65 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
     deletions: files.fold(0, (s, f) => s + f.deletions),
     files: files,
   ));
+}
+
+/// Lazily fetch per-file hunk headers for a commit. Header-only parse:
+/// `git show --unified=0` emits one `@@ -a,b +c,d @@` per hunk, whose
+/// counts already carry the composition (d added, b deleted) and the
+/// new-file start line (c) — so we never touch a body line, and the
+/// output we scan is ~one line per hunk, not one per changed line.
+/// Keyed by new-file path (from the `+++ b/…` header; deletions key on
+/// the `--- a/…` old path). Meant to be called once per commit-detail
+/// open and cached by hash on the caller side.
+Future<GitResult<Map<String, List<CommitHunk>>>> getCommitHunks(
+    String repo, String hash) async {
+  final r = await _git(repo, [
+    'show', '--unified=0', '--no-color', '--format=', '-M', hash,
+  ]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+
+  final out = <String, List<CommitHunk>>{};
+  // `@@ -oldStart[,oldCount] +newStart[,newCount] @@` — counts default to
+  // 1 when omitted (git elides `,1`).
+  final hunkRe = RegExp(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@');
+  String? curNew; // path from +++ b/…
+  String? curOld; // path from --- a/… (for deletions / dev-null new side)
+  for (final line in r.stdout.toString().split('\n')) {
+    if (line.startsWith('+++ ')) {
+      final p = line.substring(4).trim();
+      curNew = (p == '/dev/null') ? null : _stripDiffPrefix(p);
+      continue;
+    }
+    if (line.startsWith('--- ')) {
+      final p = line.substring(4).trim();
+      curOld = (p == '/dev/null') ? null : _stripDiffPrefix(p);
+      continue;
+    }
+    if (line.startsWith('@@')) {
+      final m = hunkRe.firstMatch(line);
+      if (m == null) continue;
+      final del = int.tryParse(m.group(1) ?? '') ?? 1;
+      final newStart = int.tryParse(m.group(2) ?? '') ?? 0;
+      final add = int.tryParse(m.group(3) ?? '') ?? 1;
+      final key = curNew ?? curOld;
+      if (key == null) continue;
+      (out[key] ??= <CommitHunk>[]).add(CommitHunk(
+        newStart: newStart, additions: add, deletions: del,
+      ));
+    }
+  }
+  return GitResult.ok(out);
+}
+
+/// Strip the leading `a/` or `b/` git adds to diff header paths. Quoted
+/// paths (non-ASCII / spaces) come wrapped in double quotes — leave those
+/// alone; the seismograph keys on the numstat path and a mismatch just
+/// means no bands for that one file (graceful).
+String _stripDiffPrefix(String p) {
+  if (p.length >= 2 && (p.startsWith('a/') || p.startsWith('b/'))) {
+    return p.substring(2);
+  }
+  return p;
 }
 
 /// Hard ceiling on changed lines a diff may carry before the app refuses
