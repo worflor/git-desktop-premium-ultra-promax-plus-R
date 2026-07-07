@@ -4,16 +4,16 @@
 //
 // Before this existed, FileCouplingState, WickState, LogosGitResolver,
 // and a handful of other call sites each
-// hand-rolled their own `runGitProbe(repoPath, ['rev-parse', 'HEAD'])`
+// hand-rolled their own `runGit(repoPath, ['rev-parse', 'HEAD'])`
 // staleness check. On any repo switch, half a dozen subprocess calls
-// fired in parallel for the same answer. `runGitProbe`'s built-in
+// fired in parallel for the same answer. `runGit`'s built-in
 // dedup catches concurrent calls but doesn't help the case where five
 // caches each check HEAD a few ms apart.
 //
 // One call site, one TTL. Every staleness check becomes a memory
 // lookup that occasionally falls back to a real subprocess.
 
-import 'git.dart' show runGitProbe;
+import 'git.dart' show runGit;
 
 /// Default freshness window. Long enough that a wave of post-repo-switch
 /// staleness checks across N state classes collapses to one subprocess;
@@ -94,7 +94,7 @@ class RepoHeadCache {
 
   Future<String?> _fetch(String repoPath, int myGen) async {
     try {
-      final probe = await runGitProbe(repoPath, ['rev-parse', 'HEAD']);
+      final probe = await runGit(repoPath, ['rev-parse', 'HEAD']);
       if (probe.exitCode != 0) return null;
       final hash = probe.stdout.toString().trim();
       if (hash.isEmpty) return null;

@@ -14,8 +14,9 @@
 //   3. Done — nothing else changes.
 //
 // Implementations today:
-//   GhIssueProvider   — GitHub  via `gh` CLI
-//   GlabIssueProvider — GitLab  via `glab` CLI
+//   GhIssueProvider    — GitHub          via `gh` CLI
+//   GlabIssueProvider  — GitLab          via `glab` CLI
+//   GiteaIssueProvider — Gitea / Forgejo via the REST API (no CLI)
 //   _NullIssueProvider — local / unknown remotes — read-only no-op
 
 import 'gh.dart' as gh;
@@ -263,6 +264,29 @@ class GiteaIssueProvider extends RemoteIssueProvider {
     if (!s.reachable) {
       return RemoteProviderStatus(available: false, reason: s.reason);
     }
+    // Anonymous reads hold only for *public* repos, so a reachable host
+    // can't by itself promise the repo is browsable — a private repo answers
+    // 404 to a tokenless caller. Probe the repo itself first; when readable,
+    // issue lists work tokenless while writes still need the validated token.
+    // Splitting the two keeps public-repo issue lists working without
+    // surfacing write affordances that are guaranteed to 401.
+    if (!s.authenticated) {
+      final readable = await gitea.giteaRepoReadable(coords);
+      if (readable) {
+        return RemoteProviderStatus(
+          available: true,
+          canWrite: false,
+          reason: s.reason ?? 'token not validated for ${coords.apiBase}',
+        );
+      }
+      final auth = s.reason;
+      return RemoteProviderStatus(
+        available: false,
+        reason: auth == null
+            ? 'repo not readable without a valid token (private or missing)'
+            : 'repo not readable without a valid token (private or missing); $auth',
+      );
+    }
     return RemoteProviderStatus.yes;
   }
 
@@ -304,8 +328,20 @@ class GiteaIssueProvider extends RemoteIssueProvider {
   }) async {
     final r = await gitea.editGiteaIssue(repoPath, number, title: title, body: body);
     if (!r.ok) return r;
+    // Label mutations are separate API calls; a partial failure must
+    // surface, not be swallowed into a blanket ok.
+    final failures = <String>[];
     for (final label in addLabels) {
-      await gitea.addGiteaIssueLabel(repoPath, number, label);
+      final a = await gitea.addGiteaIssueLabel(repoPath, number, label);
+      if (!a.ok) failures.add('+$label: ${a.error}');
+    }
+    for (final label in removeLabels) {
+      final d = await gitea.removeGiteaIssueLabel(repoPath, number, label);
+      if (!d.ok) failures.add('-$label: ${d.error}');
+    }
+    if (failures.isNotEmpty) {
+      return GitResult.err(
+          'issue updated but labels failed (${failures.join('; ')})');
     }
     return const GitResult.ok(null);
   }

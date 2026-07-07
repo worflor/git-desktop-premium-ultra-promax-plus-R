@@ -31,7 +31,7 @@ import '../engram_bootstrap.dart';
 import '../engram_file_index.dart';
 import '../engram_hunk_encoder.dart';
 import '../file_coupling.dart';
-import '../git.dart' show runGitProbe;
+import '../git.dart' show runGit;
 import '../logos_git.dart';
 import '../logos_git_integrity.dart' show TransportRoles;
 import '../logos_git_stats.dart';
@@ -395,7 +395,7 @@ String repoDocToMarkdown(RepoDoc doc) => renderMarkdown(doc);
 /// when git isn't available or the path isn't inside a repository.
 Future<String> _resolveRepoRoot(String input) async {
   try {
-    final probe = await runGitProbe(
+    final probe = await runGit(
       input, const ['rev-parse', '--show-toplevel'],
     );
     if (probe.exitCode == 0) {

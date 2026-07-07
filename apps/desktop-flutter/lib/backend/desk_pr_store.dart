@@ -157,8 +157,19 @@ class DeskPrStore {
     }
   }
 
-  /// Internal: write [pr] as a new commit on its ref. [message]
-  /// becomes the commit subject (the audit-trail entry).
+  /// Internal: write [pr] as the FIRST commit on a fresh ref with a
+  /// single no-retry CAS. Only the `create` path uses this — the ref
+  /// can't already exist (create pre-checks via [read]), so there is no
+  /// prior state to preserve and nothing to retry.
+  ///
+  /// Deliberately NOT a retry loop. The old version built blob+tree ONCE
+  /// outside a CAS-retry loop, so a retry after losing a race committed
+  /// the STALE full record on top of the winner and erased the winner's
+  /// change (verified data loss). Read-modify-write callers now go
+  /// through [_mutate], which re-reads and re-applies per attempt; the
+  /// create path, having no prior state, needs no retry at all. If the
+  /// CAS is lost here (a genuine create-vs-create race), we surface the
+  /// error rather than clobbering the other create.
   Future<GitResult<void>> _commit(DeskPr pr, {required String message}) async {
     final ref = refFor(pr.headRef);
     final blobR = await refs.writeBlob(pr.toBlob());
@@ -182,6 +193,66 @@ class DeskPrStore {
     );
     if (!updR.ok) return GitResult.err(updR.error ?? 'updateRef failed');
     return const GitResult.ok(null);
+  }
+
+  /// Read-transform-commit with CAS retry. Every attempt re-resolves the
+  /// ref tip and reads meta.json AT THAT EXACT TIP (`<sha>:meta.json`),
+  /// so [transform] runs over a self-consistent snapshot and the
+  /// three-arg update-ref CAS-commits against the same revision. On a
+  /// lost race update-ref rejects and we loop — re-reading the winner's
+  /// state and re-applying [transform] — so two conflicting comments (or
+  /// a comment racing a state change) both survive instead of the loser
+  /// being dropped. [transform] may be async: [refreshDiffStats] probes
+  /// mergeability inside it against the freshly-read baseRef. [message]
+  /// is computed from the transformed record so outcome-dependent
+  /// subjects (link vs unlink) stay honest across retries.
+  Future<GitResult<DeskPr>> _mutate(
+    String branch, {
+    required FutureOr<DeskPr> Function(DeskPr current) transform,
+    required String Function(DeskPr next) message,
+    int maxAttempts = 5,
+  }) async {
+    final ref = refFor(branch);
+    var attempt = 0;
+    String? lastError;
+    while (attempt < maxAttempts) {
+      attempt++;
+      final tip = await refs.resolveRef(ref);
+      if (!tip.ok) return GitResult.err(tip.error ?? 'resolveRef failed');
+      if (tip.data == null) return GitResult.err('no desk PR for $branch');
+      final blob = await refs.readRefBlob(tip.data!, _metaFilename);
+      if (!blob.ok) return GitResult.err(blob.error ?? 'readRefBlob failed');
+      if (blob.data == null) return GitResult.err('no desk PR for $branch');
+      final DeskPr current;
+      try {
+        current = DeskPr.fromBlob(blob.data!);
+      } catch (e) {
+        return GitResult.err('corrupt meta.json: $e');
+      }
+      final next = await transform(current);
+      final blobR = await refs.writeBlob(next.toBlob());
+      if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
+      final treeR = await refs.mkTree({_metaFilename: blobR.data!});
+      if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
+      final commitR = await refs.commitTree(
+        treeSha: treeR.data!,
+        parentSha: tip.data,
+        message: message(next),
+      );
+      if (!commitR.ok) {
+        return GitResult.err(commitR.error ?? 'commitTree failed');
+      }
+      final updR = await refs.updateRef(
+        ref: ref,
+        newSha: commitR.data!,
+        oldSha: tip.data,
+      );
+      if (updR.ok) return GitResult.ok(next);
+      lastError = updR.error;
+      await Future<void>.delayed(Duration(milliseconds: 5 + (attempt * 5)));
+    }
+    return GitResult.err(
+        lastError ?? 'updateRef failed after $maxAttempts attempts');
   }
 
   /// Allocate the next sequential desk-id from the shared
@@ -238,26 +309,8 @@ class DeskPrStore {
     // git-config call when origin exists; no-op when it doesn't). The
     // user can also configure this manually:
     //   git config --add remote.origin.fetch +refs/manifold/*:refs/manifold/*
-    await _ensureFetchRefspec();
+    await refs.ensureFetchRefspec();
     return GitResult.ok(pr);
-  }
-
-  /// Add `+refs/manifold/*:refs/manifold/*` to `origin`'s fetch
-  /// refspec when origin exists and the refspec isn't already there.
-  /// Idempotent and safe: respects existing user refspecs; skips
-  /// silently when no `origin` is configured (a brand-new repo or a
-  /// test fixture is a valid state). Awaits the underlying git
-  /// config call so callers (typically `create()`) finish their
-  /// promotion deterministically.
-  Future<void> _ensureFetchRefspec() async {
-    const refspec = '+refs/manifold/*:refs/manifold/*';
-    // Skip when there's no `origin` to attach to. Without this guard,
-    // `git config --add` would still succeed (writing the key with no
-    // matching remote section) but the resulting config is misleading
-    // and the fire-and-forget would race with test teardown.
-    final originUrl = await refs.readConfig('remote.origin.url');
-    if (originUrl == null) return;
-    await refs.addConfigOnce('remote.origin.fetch', refspec);
   }
 
   Future<GitResult<DeskPr>> addComment({
@@ -265,19 +318,20 @@ class DeskPrStore {
     required String author,
     required String body,
   }) async {
-    final cur = await read(branch);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk PR for $branch');
-    final next = cur.data!.copyWith(
-      thread: [
-        ...cur.data!.thread,
-        DeskThreadEntry(author: author, body: body, at: DateTime.now()),
-      ],
-      updatedAt: DateTime.now(),
+    // Append as a transform over the freshly-read thread so a concurrent
+    // comment or review that wins the CAS isn't overwritten — we re-read
+    // and append onto the winner's thread.
+    return _mutate(
+      branch,
+      transform: (current) => current.copyWith(
+        thread: [
+          ...current.thread,
+          DeskThreadEntry(author: author, body: body, at: DateTime.now()),
+        ],
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'comment by $author',
     );
-    final w = await _commit(next, message: 'comment by $author');
-    if (!w.ok) return GitResult.err(w.error ?? 'addComment commit failed');
-    return GitResult.ok(next);
   }
 
   Future<GitResult<DeskPr>> addReview({
@@ -286,25 +340,22 @@ class DeskPrStore {
     required String verdict,
     required String body,
   }) async {
-    final cur = await read(branch);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk PR for $branch');
-    final next = cur.data!.copyWith(
-      thread: [
-        ...cur.data!.thread,
-        DeskThreadEntry(
-          author: author,
-          body: body,
-          at: DateTime.now(),
-          verdict: verdict.toUpperCase(),
-        ),
-      ],
-      updatedAt: DateTime.now(),
+    return _mutate(
+      branch,
+      transform: (current) => current.copyWith(
+        thread: [
+          ...current.thread,
+          DeskThreadEntry(
+            author: author,
+            body: body,
+            at: DateTime.now(),
+            verdict: verdict.toUpperCase(),
+          ),
+        ],
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => '${verdict.toLowerCase()} by $author',
     );
-    final w = await _commit(next,
-        message: '${verdict.toLowerCase()} by $author');
-    if (!w.ok) return GitResult.err(w.error ?? 'addReview commit failed');
-    return GitResult.ok(next);
   }
 
   /// Mutate state ('OPEN' / 'MERGED' / 'CLOSED'). The actual git
@@ -314,16 +365,14 @@ class DeskPrStore {
     required String branch,
     required String state,
   }) async {
-    final cur = await read(branch);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk PR for $branch');
-    final next = cur.data!.copyWith(
-      state: state.toUpperCase(),
-      updatedAt: DateTime.now(),
+    return _mutate(
+      branch,
+      transform: (current) => current.copyWith(
+        state: state.toUpperCase(),
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'state -> ${state.toLowerCase()}',
     );
-    final w = await _commit(next, message: 'state -> ${state.toLowerCase()}');
-    if (!w.ok) return GitResult.err(w.error ?? 'setState commit failed');
-    return GitResult.ok(next);
   }
 
   Future<GitResult<DeskPr>> editMeta({
@@ -333,19 +382,17 @@ class DeskPrStore {
     bool? isDraft,
     List<String>? labels,
   }) async {
-    final cur = await read(branch);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk PR for $branch');
-    final next = cur.data!.copyWith(
-      title: title,
-      body: body,
-      isDraft: isDraft,
-      labels: labels,
-      updatedAt: DateTime.now(),
+    return _mutate(
+      branch,
+      transform: (current) => current.copyWith(
+        title: title,
+        body: body,
+        isDraft: isDraft,
+        labels: labels,
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'edit pr meta',
     );
-    final w = await _commit(next, message: 'edit pr meta');
-    if (!w.ok) return GitResult.err(w.error ?? 'editMeta commit failed');
-    return GitResult.ok(next);
   }
 
   /// Refresh the persisted diff metrics + mergeable flag for [branch]
@@ -368,33 +415,74 @@ class DeskPrStore {
         cur.data!.deletions == deletions &&
         cur.data!.changedFiles == changedFiles &&
         cur.data!.mergeable == mergeable;
+    // Quiet — skip the commit entirely when nothing moved, so a refresh
+    // doesn't spam the audit history with identical-value commits.
     if (unchanged) return GitResult.ok(cur.data);
-    final next = cur.data!.copyWith(
-      additions: additions,
-      deletions: deletions,
-      changedFiles: changedFiles,
-      mergeable: mergeable,
-      // Don't bump updatedAt — diff stats aren't user activity.
+    // Re-probe inside the transform so a retry against a concurrently
+    // updated tip reflects that tip's baseRef, not the stale snapshot.
+    final r = await _mutate(
+      branch,
+      transform: (current) async {
+        final m = await refs.probeMergeable(current.baseRef, branch);
+        return current.copyWith(
+          additions: additions,
+          deletions: deletions,
+          changedFiles: changedFiles,
+          mergeable: m,
+          // Don't bump updatedAt — diff stats aren't user activity.
+        );
+      },
+      message: (_) => 'refresh diff stats',
     );
-    final w = await _commit(next, message: 'refresh diff stats');
-    if (!w.ok) return GitResult.err(w.error ?? 'refresh commit failed');
-    return GitResult.ok(next);
+    if (!r.ok) return GitResult.err(r.error ?? 'refresh commit failed');
+    return GitResult.ok(r.data);
   }
 
   Future<GitResult<DeskPr>> setRemoteNumber(
       String branch, int remoteNumber) async {
-    final current = await read(branch);
-    if (!current.ok || current.data == null) {
-      return GitResult.err(current.error ?? 'desk PR not found');
-    }
-    final updated = current.data!.copyWith(remoteNumber: remoteNumber);
-    final r = await _commit(updated, message: 'link remote #$remoteNumber');
-    if (!r.ok) return GitResult.err(r.error ?? 'failed to write meta');
-    return GitResult.ok(updated);
+    return _mutate(
+      branch,
+      transform: (current) => current.copyWith(remoteNumber: remoteNumber),
+      message: (_) => 'link remote #$remoteNumber',
+    );
   }
 
+  /// Overwrite the remote-authoritative fields of an existing desk PR from
+  /// freshly-fetched values in [pr], WITHOUT clobbering locally-accruing
+  /// state. Routed through [_mutate] so every attempt re-reads the current
+  /// tip and applies the remote fields onto THAT record: the local thread
+  /// (comments/reviews), local issue links, timestamps, and identity are
+  /// preserved from the fresh read, never from the possibly-stale [pr]
+  /// snapshot the caller assembled. This is the Defect-2 fix — the old
+  /// wholesale `_commit(pr)` could, on a lost race, resurrect the stale
+  /// snapshot on top of the winner and erase a comment that landed
+  /// meanwhile.
   Future<GitResult<void>> updateFull(DeskPr pr, {String? message}) async {
-    return _commit(pr, message: message ?? 'update from remote');
+    final r = await _mutate(
+      pr.headRef,
+      transform: (current) => current.copyWith(
+        // Remote-authoritative fields, taken from the incoming snapshot.
+        title: pr.title,
+        body: pr.body,
+        state: pr.state,
+        isDraft: pr.isDraft,
+        labels: pr.labels,
+        assignees: pr.assignees,
+        reviewers: pr.reviewers,
+        linkedRemoteIssues: pr.linkedRemoteIssues,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changedFiles: pr.changedFiles,
+        mergeable: pr.mergeable,
+        remoteNumber: pr.remoteNumber,
+        // Intentionally NOT copied from `pr` (preserved from the fresh
+        // read): thread, linkedIssues, updatedAt, createdAt, deskId,
+        // headRef, baseRef, authorIdentity.
+      ),
+      message: (_) => message ?? 'update from remote',
+    );
+    if (!r.ok) return GitResult.err(r.error ?? 'updateFull failed');
+    return const GitResult.ok(null);
   }
 
   Future<GitResult<void>> abandon(String branch) async {
@@ -412,33 +500,52 @@ class DeskPrStore {
     required int issueId,
     required bool isRemote,
   }) async {
-    final cur = await read(branch);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk PR for $branch');
-    final list = isRemote ? cur.data!.linkedRemoteIssues : cur.data!.linkedIssues;
-    final next = [...list];
-    final added = !next.contains(issueId);
-    if (added) {
-      next.add(issueId);
-    } else {
-      next.remove(issueId);
-    }
-    final updated = isRemote
-        ? cur.data!.copyWith(
-            linkedRemoteIssues: next,
-            updatedAt: DateTime.now(),
-          )
-        : cur.data!.copyWith(
-            linkedIssues: next,
-            updatedAt: DateTime.now(),
-          );
-    final w = await _commit(updated,
-        message: added
-            ? 'link ${isRemote ? 'remote ' : ''}issue #$issueId'
-            : 'unlink ${isRemote ? 'remote ' : ''}issue #$issueId');
-    if (!w.ok) {
-      return GitResult.err(w.error ?? 'toggleLinkedIssue commit failed');
-    }
-    return GitResult.ok(updated);
+    return _mutate(
+      branch,
+      transform: (current) {
+        final list =
+            isRemote ? current.linkedRemoteIssues : current.linkedIssues;
+        final updatedList = [...list];
+        if (updatedList.contains(issueId)) {
+          updatedList.remove(issueId);
+        } else {
+          updatedList.add(issueId);
+        }
+        return isRemote
+            ? current.copyWith(
+                linkedRemoteIssues: updatedList,
+                updatedAt: DateTime.now(),
+              )
+            : current.copyWith(
+                linkedIssues: updatedList,
+                updatedAt: DateTime.now(),
+              );
+      },
+      // Subject reflects the resulting membership, computed from the
+      // transformed record so it survives a retry onto fresh state.
+      message: (next) {
+        final present = isRemote
+            ? next.linkedRemoteIssues.contains(issueId)
+            : next.linkedIssues.contains(issueId);
+        final kind = isRemote ? 'remote ' : '';
+        return present
+            ? 'link ${kind}issue #$issueId'
+            : 'unlink ${kind}issue #$issueId';
+      },
+    );
+  }
+
+  /// Share desk PRs over [remote]: fetch peers' Manifold refs into
+  /// staging, reconcile them into the live refs WITHOUT dropping any
+  /// unpushed local mutation, then push back with per-ref
+  /// force-with-lease. All the data-loss-safe logic lives in
+  /// [ManifoldRefs.syncWithRemote]; it operates over the whole
+  /// `refs/manifold/*` namespace, so a desks sync also carries issues and
+  /// the shared counter in one round-trip. Also ensures (and migrates)
+  /// the persistent staging fetch refspec so ordinary `git fetch` stays
+  /// safe afterwards.
+  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
+    await refs.ensureFetchRefspec(remote: remote);
+    return refs.syncWithRemote(remote: remote);
   }
 }

@@ -925,7 +925,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   // production default; tests and regression-pinning pass a number.
   double? halfLifeCommits,
 }) async {
-  final logProbe = await runGitProbe(repo, [
+  final logProbe = await runGit(repo, [
     'log',
     '-n', '$commitLimit',
     '--no-merges',

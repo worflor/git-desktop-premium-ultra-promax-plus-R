@@ -3,7 +3,29 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/repository_state.dart';
 import 'package:git_desktop/backend/dtos.dart';
+import 'package:git_desktop/backend/git_dir_watcher.dart';
 import 'package:git_desktop/backend/git_result.dart';
+
+/// A [GitDirWatcher] whose [start] does no real filesystem work, so the
+/// wiring can be exercised without a live watch. The coalesced callback
+/// is captured by the injected factory and fired by hand.
+class _FakeGitDirWatcher extends GitDirWatcher {
+  _FakeGitDirWatcher(super.repoPath, super.onRepoChanged);
+
+  bool disposed = false;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}
+
+const _okStatus = GitResult<RepositoryStatus>.ok(
+  RepositoryStatus(branch: 'main', ahead: 0, behind: 0, files: []),
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -120,5 +142,102 @@ void main() {
     allowStatus.complete();
 
     expect(await pending, isNull);
+  });
+
+  test('a coalesced git-dir change refreshes status without a user epoch',
+      () async {
+    var statusLoads = 0;
+    void Function()? onRepoChanged;
+    final state = RepositoryState(
+      switchDebounce: Duration.zero,
+      externalRefreshThrottle: const Duration(milliseconds: 20),
+      openRepositoryFn: (path) async => GitResult.ok(path),
+      statusLoader: (path) async {
+        statusLoads++;
+        return _okStatus;
+      },
+      gitWatcherFactory: (path, cb) {
+        onRepoChanged = cb;
+        return _FakeGitDirWatcher(path, cb);
+      },
+    );
+    addTearDown(state.dispose);
+
+    await state.setActivePath('repo-a', addToRecents: false);
+    await Future<void>.delayed(Duration.zero);
+    final loadsAfterOpen = statusLoads;
+    expect(loadsAfterOpen, greaterThanOrEqualTo(1));
+    expect(onRepoChanged, isNotNull);
+    final epochBefore = state.userRefreshEpoch;
+
+    // Simulate the watcher's coalesced "repo changed" signal.
+    onRepoChanged!();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(statusLoads, greaterThan(loadsAfterOpen),
+        reason: 'external change runs the status refresh path');
+    expect(state.userRefreshEpoch, epochBefore,
+        reason: 'external churn is not a user-attention event');
+  });
+
+  test('external-change refreshes are throttled', () async {
+    var statusLoads = 0;
+    void Function()? onRepoChanged;
+    final state = RepositoryState(
+      switchDebounce: Duration.zero,
+      externalRefreshThrottle: const Duration(milliseconds: 200),
+      openRepositoryFn: (path) async => GitResult.ok(path),
+      statusLoader: (path) async {
+        statusLoads++;
+        return _okStatus;
+      },
+      gitWatcherFactory: (path, cb) {
+        onRepoChanged = cb;
+        return _FakeGitDirWatcher(path, cb);
+      },
+    );
+    addTearDown(state.dispose);
+
+    await state.setActivePath('repo-a', addToRecents: false);
+    await Future<void>.delayed(Duration.zero);
+    final baseline = statusLoads;
+
+    // Ten rapid external signals inside one throttle window: one runs on
+    // the leading edge, the rest collapse into a single trailing refresh.
+    for (var i = 0; i < 10; i++) {
+      onRepoChanged!();
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    expect(statusLoads - baseline, lessThanOrEqualTo(2),
+        reason: 'a burst of signals must not spam the refresh path');
+    expect(statusLoads - baseline, greaterThanOrEqualTo(1));
+  });
+
+  test('a repo switch disposes the old watcher and builds a new one',
+      () async {
+    final built = <String>[];
+    final watchers = <_FakeGitDirWatcher>[];
+    final state = RepositoryState(
+      switchDebounce: Duration.zero,
+      openRepositoryFn: (path) async => GitResult.ok(path),
+      statusLoader: (path) async => _okStatus,
+      gitWatcherFactory: (path, cb) {
+        built.add(path);
+        final w = _FakeGitDirWatcher(path, cb);
+        watchers.add(w);
+        return w;
+      },
+    );
+
+    await state.setActivePath('repo-a', addToRecents: false);
+    await state.setActivePath('repo-b', addToRecents: false);
+
+    expect(built, ['repo-a', 'repo-b']);
+    expect(watchers[0].disposed, isTrue,
+        reason: 'the previous repo\'s watcher is torn down on switch');
+    expect(watchers[1].disposed, isFalse);
+
+    state.dispose();
+    expect(watchers[1].disposed, isTrue,
+        reason: 'dispose tears down the active watcher');
   });
 }

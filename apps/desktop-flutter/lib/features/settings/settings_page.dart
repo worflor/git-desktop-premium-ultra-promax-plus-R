@@ -19,6 +19,7 @@ import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
 import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/gitea_api.dart' show canonicalGiteaHostKey;
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/logos_flow.dart' show analyzeFlowCached;
 import '../../backend/logos_git.dart';
@@ -1693,6 +1694,8 @@ class _SettingsPageState extends State<SettingsPage>
         ),
         const SizedBox(height: 10),
         const _WickIntegrationCard(),
+        const SizedBox(height: 10),
+        const _GiteaTokenCard(),
         const SizedBox(height: 10),
         const _SettingsGap(),
         KeyedSubtree(
@@ -13583,6 +13586,169 @@ class _ScrollSectionBubble extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Per-host Gitea/Forgejo access tokens. Talks straight to the REST API
+/// (no CLI), so a token is the only thing standing between read-only and
+/// authenticated. Stored keyed by host in the settings snapshot; the
+/// `GITEA_TOKEN` env var remains a fallback for hosts left blank here.
+class _GiteaTokenCard extends StatefulWidget {
+  const _GiteaTokenCard();
+
+  @override
+  State<_GiteaTokenCard> createState() => _GiteaTokenCardState();
+}
+
+class _GiteaTokenCardState extends State<_GiteaTokenCard> {
+  final _hostCtrl = TextEditingController();
+  final _tokenCtrl = TextEditingController();
+  Map<String, String> _tokens = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_reload());
+  }
+
+  @override
+  void dispose() {
+    _hostCtrl.dispose();
+    _tokenCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _reload() async {
+    final s = await SettingsStore.load();
+    if (!mounted) return;
+    setState(() => _tokens = Map<String, String>.from(s.giteaTokens));
+  }
+
+  Future<void> _write(Map<String, String> next) async {
+    final current = await SettingsStore.load();
+    await SettingsStore.persist(current.copyWith(giteaTokens: next));
+    if (!mounted) return;
+    setState(() => _tokens = next);
+  }
+
+  Future<void> _add() async {
+    final host = canonicalGiteaHostKey(_hostCtrl.text);
+    final token = _tokenCtrl.text.trim();
+    if (host.isEmpty || token.isEmpty) return;
+    final next = Map<String, String>.from(_tokens)..[host] = token;
+    _hostCtrl.clear();
+    _tokenCtrl.clear();
+    await _write(next);
+  }
+
+  Future<void> _remove(String host) async {
+    final next = Map<String, String>.from(_tokens)..remove(host);
+    await _write(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final radius = context.surfaceShader.geometry.badgeRadius;
+    final entries = _tokens.keys.toList()..sort();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SettingsSubtitle('Gitea tokens'),
+        const SizedBox(height: 8),
+        for (final host in entries) ...[
+          Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: t.stateAdded.withValues(alpha: 0.25),
+              ),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 5,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: t.stateAdded,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    host,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontFamily: AppFonts.mono,
+                      color: t.textNormal,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '••••••',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    color: t.textFaint,
+                  ),
+                ),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: () => unawaited(_remove(host)),
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Center(
+                        child: Icon(Icons.close, size: 12, color: t.textFaint),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 150,
+              child: AppTextField(
+                controller: _hostCtrl,
+                hintText: 'host',
+                mono: true,
+                height: 26,
+                fontSize: 10,
+                onSubmitted: (_) => unawaited(_add()),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: AppTextField(
+                controller: _tokenCtrl,
+                hintText: 'token',
+                mono: true,
+                height: 26,
+                fontSize: 10,
+                onSubmitted: (_) => unawaited(_add()),
+              ),
+            ),
+            const SizedBox(width: 6),
+            _GhostMiniButton(
+              label: 'save',
+              onTap: () => unawaited(_add()),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

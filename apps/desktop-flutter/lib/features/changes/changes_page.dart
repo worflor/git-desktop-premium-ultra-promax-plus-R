@@ -1114,9 +1114,9 @@ class _ChangesPageState extends State<ChangesPage> {
     ];
 
     final results = await Future.wait([
-      runGitProbe(repoPath, diffArgs),
-      runGitProbe(repoPath, stagedArgs),
-      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+      runGit(repoPath, diffArgs),
+      runGit(repoPath, stagedArgs),
+      runGit(repoPath, ['log', '--format=%s', '-100']),
     ]);
 
     final unstaged =
@@ -1625,8 +1625,8 @@ class _ChangesPageState extends State<ChangesPage> {
     List<ProcessResult> probes;
     try {
       probes = await Future.wait([
-        runGitProbe(repoPath, diffArgs),
-        runGitProbe(repoPath, stagedArgs),
+        runGit(repoPath, diffArgs),
+        runGit(repoPath, stagedArgs),
       ]);
     } on Object {
       return; // git unavailable / repo broken — keep whatever's cached
@@ -5529,6 +5529,10 @@ class _ChangesPageState extends State<ChangesPage> {
           syncError = 'Commit succeeded, but sync was blocked by '
               '${paths.length} uncommitted '
               'file${paths.length == 1 ? '' : 's'}.';
+        case MergeNeedsCheckout(:final message):
+          // Sync operates on the checked-out branch, so this outcome never
+          // originates here; kept for exhaustiveness.
+          syncError = 'Commit succeeded, but sync stalled: $message';
         case MergeFailed(:final message):
           syncError = 'Commit succeeded, but sync failed: $message';
       }
@@ -5613,12 +5617,29 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-  Future<void> _shelveAll(String repo, {String? label}) async {
-    // "Shelve all" — capture untracked too so a fresh-cloned WIP file
-    // doesn't get silently left behind. Matches the user-facing label.
+  /// Human-readable message for a selection-scoped shelf so cabinet entries
+  /// stay identifiable — basenames of the first few files, then a count.
+  static String _shelfLabelFor(List<String> paths) {
+    final names = paths
+        .map((p) => p.split('/').last)
+        .toList();
+    const shown = 3;
+    if (names.length <= shown) return names.join(', ');
+    return '${names.take(shown).join(', ')} +${names.length - shown} more';
+  }
+
+  Future<void> _shelve(
+    String repo, {
+    String? label,
+    List<String>? paths,
+  }) async {
+    // Capture untracked too so a fresh-cloned WIP file doesn't get silently
+    // left behind. When [paths] is given the pathspec scopes both tracked
+    // and untracked capture to just those files.
     final result = await stashPush(
       repo,
       message: label,
+      paths: paths,
       includeUntracked: true,
     );
     if (!mounted) return;
@@ -6760,21 +6781,49 @@ class _ChangesPageState extends State<ChangesPage> {
                                             ),
                                           );
                                         }),
-                                      _ShelfControl(
-                                        tokens: t,
-                                        count: _stashes.length,
-                                        loading: _stashesLoading,
-                                        expanded: _stashesExpanded,
-                                        canShelve: status.files.isNotEmpty,
-                                        onShelve: status.files.isNotEmpty
-                                            ? () => _shelveAll(repoPath)
-                                            : null,
-                                        onToggleExpanded: _stashes.isEmpty
-                                            ? null
-                                            : () => setState(() =>
-                                                _stashesExpanded =
-                                                    !_stashesExpanded),
-                                      ),
+                                      Builder(builder: (ctx) {
+                                        // Shelve honors the selection: any
+                                        // checked files shelve exactly those
+                                        // (explicit pathspec, so a status
+                                        // refresh between render and click
+                                        // can't widen the scope); nothing
+                                        // checked shelves everything.
+                                        final selected = status.files
+                                            .where((f) => _includedPaths
+                                                .contains(f.path))
+                                            .map((f) => f.path)
+                                            .toList();
+                                        final scoped = selected.isNotEmpty;
+                                        final subset = scoped &&
+                                            selected.length <
+                                                status.files.length;
+                                        return _ShelfControl(
+                                          tokens: t,
+                                          count: _stashes.length,
+                                          loading: _stashesLoading,
+                                          expanded: _stashesExpanded,
+                                          canShelve: status.files.isNotEmpty,
+                                          selectedCount:
+                                              subset ? selected.length : 0,
+                                          onShelve: status.files.isNotEmpty
+                                              ? () => _shelve(
+                                                    repoPath,
+                                                    paths: scoped
+                                                        ? selected
+                                                        : null,
+                                                    label: scoped
+                                                        ? _shelfLabelFor(
+                                                            selected)
+                                                        : null,
+                                                  )
+                                              : null,
+                                          onToggleExpanded: _stashes.isEmpty
+                                              ? null
+                                              : () => setState(() =>
+                                                  _stashesExpanded =
+                                                      !_stashesExpanded),
+                                        );
+                                      }),
                                     ],
                                   ),
                                 ),
@@ -12049,6 +12098,11 @@ class _ShelfControl extends StatefulWidget {
   final bool loading;
   final bool expanded;
   final bool canShelve;
+
+  /// When > 0, a proper subset of the changed files is checked and the
+  /// shelve action targets only those — the label surfaces the count so
+  /// the scope is legible before clicking.
+  final int selectedCount;
   final VoidCallback? onShelve;
   final VoidCallback? onToggleExpanded;
 
@@ -12058,6 +12112,7 @@ class _ShelfControl extends StatefulWidget {
     required this.loading,
     required this.expanded,
     required this.canShelve,
+    this.selectedCount = 0,
     required this.onShelve,
     required this.onToggleExpanded,
   });
@@ -12141,7 +12196,9 @@ class _ShelfControlState extends State<_ShelfControl> {
       // Single-purpose pill: just shelve.
       return pill(
         segment(
-          text: '↓ shelve',
+          text: widget.selectedCount > 0
+              ? '↓ shelve ${widget.selectedCount}'
+              : '↓ shelve',
           onTap: widget.canShelve ? widget.onShelve : null,
           id: 2,
           baseColor: t.textMuted,
@@ -12168,7 +12225,9 @@ class _ShelfControlState extends State<_ShelfControl> {
             ),
             Container(width: 1, color: borderColor),
             segment(
-              text: '↓',
+              text: widget.selectedCount > 0
+                  ? '↓ ${widget.selectedCount}'
+                  : '↓',
               onTap: widget.canShelve ? widget.onShelve : null,
               id: 2,
               baseColor: t.textMuted,

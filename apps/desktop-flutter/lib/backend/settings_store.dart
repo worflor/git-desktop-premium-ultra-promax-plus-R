@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 import '../app/build_info.dart';
 import 'external_tools.dart';
 import 'storage_paths.dart';
@@ -117,6 +119,13 @@ class AppSettingsSnapshot {
   final int changesPanelWidthPx;
   final String wickExePath;
   final String alphaMathPath;
+  /// Per-host Gitea/Forgejo personal access tokens, keyed by lowercase
+  /// hostname (e.g. 'codeberg.org', 'git.mycompany.com:3000' when a
+  /// non-default port is part of the host). Empty by default. The
+  /// `GITEA_TOKEN` environment variable remains a fallback: a stored
+  /// token for the matching host wins, and env fills any host without
+  /// one. See `resolveGiteaToken` in `gitea_api.dart`.
+  final Map<String, String> giteaTokens;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -161,6 +170,7 @@ class AppSettingsSnapshot {
     required this.changesPanelWidthPx,
     this.wickExePath = '',
     this.alphaMathPath = '',
+    this.giteaTokens = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -206,6 +216,7 @@ class AppSettingsSnapshot {
         'changesPanelWidthPx': changesPanelWidthPx,
         'wickExePath': wickExePath,
         'alphaMathPath': alphaMathPath,
+        'giteaTokens': giteaTokens,
       };
 
   factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
@@ -443,6 +454,7 @@ class AppSettingsSnapshot {
       alphaMathPath: json['alphaMathPath'] is String
           ? json['alphaMathPath'] as String
           : '',
+      giteaTokens: SettingsStore._stringMapOr(json['giteaTokens']),
     );
   }
 
@@ -489,6 +501,7 @@ class AppSettingsSnapshot {
     int? changesPanelWidthPx,
     String? wickExePath,
     String? alphaMathPath,
+    Map<String, String>? giteaTokens,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -546,6 +559,7 @@ class AppSettingsSnapshot {
       changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
       wickExePath: wickExePath ?? this.wickExePath,
       alphaMathPath: alphaMathPath ?? this.alphaMathPath,
+      giteaTokens: giteaTokens ?? this.giteaTokens,
     );
   }
 }
@@ -612,6 +626,21 @@ class SettingsStore {
     _cached = null;
   }
 
+  /// Per-host Gitea tokens from the memoised snapshot, or an empty map
+  /// when settings haven't been loaded yet. Synchronous by design:
+  /// `resolveGiteaToken` is called from deep inside sync token-defaulting
+  /// expressions, and the snapshot is already warm by the time any forge
+  /// call fires (the app loads settings at startup).
+  static Map<String, String> cachedGiteaTokens() =>
+      _cached?.giteaTokens ?? const {};
+
+  /// Seed the process-scoped snapshot without touching disk. Test-only:
+  /// lets forge tests exercise token-resolution precedence hermetically.
+  @visibleForTesting
+  static void seedForTest(AppSettingsSnapshot snapshot) {
+    _cached = snapshot;
+  }
+
   static Future<void> persist(AppSettingsSnapshot snapshot) async {
     final file = await _settingsFile();
     await file.parent.create(recursive: true);
@@ -671,6 +700,26 @@ class SettingsStore {
       if (k is String && v is num) {
         final iv = v.toInt();
         if (iv >= 0 && iv <= 3600) out[k] = iv;
+      }
+    }
+    return out;
+  }
+
+  /// Parse a JSON object whose values are all strings — the shape used
+  /// by the per-host Gitea token map. Non-string keys or values are
+  /// silently dropped, and blank entries (empty key or empty token) are
+  /// skipped so a hand-edited file can't seed a useless mapping. Same
+  /// best-effort approach the other parsers take.
+  static Map<String, String> _stringMapOr(dynamic value) {
+    if (value is! Map) return const {};
+    final out = <String, String>{};
+    for (final entry in value.entries) {
+      final k = entry.key;
+      final v = entry.value;
+      if (k is String && v is String) {
+        final key = k.trim().toLowerCase();
+        final val = v.trim();
+        if (key.isNotEmpty && val.isNotEmpty) out[key] = val;
       }
     }
     return out;

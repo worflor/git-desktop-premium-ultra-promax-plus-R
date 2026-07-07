@@ -832,16 +832,19 @@ Future<GitResult<AiDebugData>> runDebug({
           .toList();
       if (keywords.isNotEmpty) {
         try {
-          final grepResult = await Process.run(
-            'git',
+          // Through _runGitCommand so this shares the throttle + non-
+          // interactive env with every other git spawn here. `git grep` exits
+          // 1 on no match, which surfaces as a non-ok result — the same "no
+          // paths" outcome the old exit-code check produced.
+          final grepResult = await _runGitCommand(
+            repositoryPath,
             [
               'grep', '-l', '-i', '--all-match',
               ...keywords.expand((k) => ['-e', k]),
             ],
-            workingDirectory: repositoryPath,
           );
-          if (grepResult.exitCode == 0) {
-            final paths = (grepResult.stdout as String)
+          if (grepResult.ok) {
+            final paths = grepResult.data!
                 .split('\n')
                 .map((l) => l.trim())
                 .where((l) => l.isNotEmpty)
@@ -865,13 +868,12 @@ Future<GitResult<AiDebugData>> runDebug({
     // Last resort: use recently changed files as seeds.
     if (response.candidates.isEmpty) {
       try {
-        final logResult = await Process.run(
-          'git',
+        final logResult = await _runGitCommand(
+          repositoryPath,
           ['log', '--oneline', '-20', '--name-only', '--format='],
-          workingDirectory: repositoryPath,
         );
-        if (logResult.exitCode == 0) {
-          final paths = (logResult.stdout as String)
+        if (logResult.ok) {
+          final paths = logResult.data!
               .split('\n')
               .map((l) => l.trim())
               .where((l) => l.isNotEmpty)
@@ -1468,6 +1470,7 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
   String command,
   List<String> args, {
   Duration timeout = const Duration(seconds: 10),
+  String? stdinPayload,
 }) async {
   final r = await _runObservedProcess(
     commandLabel: 'test.$command',
@@ -1475,11 +1478,24 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
     command: command,
     args: args,
     timeout: timeout,
+    stdinPayload: stdinPayload,
   );
   return r == null
       ? null
       : (exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr);
 }
+
+/// Drives a real git subprocess through the same throttled + non-interactive
+/// path (`withGitSubprocessLimit` → [_runObservedProcess]) every git call in
+/// this backend now takes, so a test can observe the shared semaphore while
+/// this stack's git spawns are in flight.
+@visibleForTesting
+Future<GitResult<String>> runGitCommandForTesting(
+  String repositoryPath,
+  List<String> args, {
+  Duration timeout = _gitCommandTimeout,
+}) =>
+    _runGitCommand(repositoryPath, args, timeout: timeout);
 
 Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String repositoryPath,
@@ -11489,14 +11505,27 @@ Future<GitResult<String>> _runGitCommand(
   List<String> args, {
   Duration timeout = _gitCommandTimeout,
 }) async {
-  final result = await _runObservedProcess(
-    commandLabel: args.isEmpty ? 'git' : 'git.${args.first}',
-    scope: 'git',
-    command: 'git',
-    args: args,
-    timeout: timeout,
-    workingDirectory: repositoryPath,
-  );
+  // Route through git.dart's shared subprocess semaphore so this backend's git
+  // spawns count against the same AIMD concurrency budget as the rest of the
+  // app — otherwise this stack could burst ~20 unbounded git children and
+  // defeat the controller that exists because Windows subprocess fan-out
+  // thrashes the scheduler/antivirus. The permit is held across the whole
+  // 30s-bounded observed run and released on every path (success, timeout,
+  // kill, spawn failure) by [withGitSubprocessLimit]'s finally. Re-entrant:
+  // the grep callers that already wrap this in [withGitSubprocessLimit] reuse
+  // their held permit instead of self-deadlocking on a second acquire. The
+  // non-interactive env matches git.dart's global overlay so a spawn that
+  // would block on a terminal credential prompt fails fast (freeing the
+  // permit) and optional index-lock churn is suppressed.
+  final result = await withGitSubprocessLimit(() => _runObservedProcess(
+        commandLabel: args.isEmpty ? 'git' : 'git.${args.first}',
+        scope: 'git',
+        command: 'git',
+        args: args,
+        timeout: timeout,
+        workingDirectory: repositoryPath,
+        environment: kNonInteractiveGitEnv,
+      ));
   if (result == null) {
     return const GitResult.err('Git command timed out.');
   }
@@ -11567,16 +11596,19 @@ Future<_CommandResult?> _runObservedProcess({
   // (Node.js/libuv UV_UNKNOWN, Go read failures on large payloads).
   // Bypass Dart's stdin pipe entirely: write payload to a temp file and use
   // cmd.exe's `<` redirection so the OS provides a regular file handle.
+  // Created INSIDE the try so a write failure lands in the same finally that
+  // unlinks it — otherwise a throw here would leak the .tmp on disk.
   File? stdinTempFile;
-  if (Platform.isWindows && stdinPayload != null) {
-    stdinTempFile = File(p.join(
-      Directory.systemTemp.path,
-      'ai_stdin_${DateTime.now().millisecondsSinceEpoch}_${commandLabel.hashCode.abs()}.tmp',
-    ));
-    stdinTempFile.writeAsStringSync(stdinPayload, flush: true);
-  }
 
   try {
+    if (Platform.isWindows && stdinPayload != null) {
+      stdinTempFile = File(p.join(
+        Directory.systemTemp.path,
+        'ai_stdin_${DateTime.now().millisecondsSinceEpoch}_${commandLabel.hashCode.abs()}.tmp',
+      ));
+      stdinTempFile.writeAsStringSync(stdinPayload, flush: true);
+    }
+
     final Process process;
     if (stdinTempFile != null) {
       // Write a temp .bat that runs the command with stdin redirected from

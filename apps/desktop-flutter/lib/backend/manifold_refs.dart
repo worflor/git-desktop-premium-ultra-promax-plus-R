@@ -12,12 +12,57 @@
 // Keeps the I/O surface small and testable.
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
 import 'git_result.dart';
 
 class ManifoldRefs {
+  /// The whole Manifold metadata namespace. Every issue, desk, and the
+  /// shared id-counter lives under here.
+  static const String manifoldPrefix = 'refs/manifold/';
+
+  // The LEGACY fetch refspec `+refs/manifold/*:refs/manifold/*` mapped
+  // remote `refs/manifold/*` directly onto our live refs with a leading
+  // `+` (force), so a plain `git fetch` — or any sync — could force-rewind
+  // a local ref that was AHEAD of the remote, silently reverting unpushed
+  // comments/edits and then propagating the loss on the next push. It is
+  // never written again; [ensureFetchRefspec] migrates it away and
+  // installs the per-remote staging namespace below so remote tips can
+  // never land on our live refs unreconciled.
+
+  /// Null-object SHA — the "expected value" that a `--force-with-lease`
+  /// uses to assert "this ref does NOT yet exist on the remote". If it
+  /// does exist (a peer created it since our fetch), the lease fails
+  /// rather than clobbering their creation.
+  static const String _zeroSha = '0000000000000000000000000000000000000000';
+
+  /// Prefixes scanned when computing the highest already-allocated id
+  /// (see [allocSequentialId]'s regression guard). Kept here because
+  /// this module already owns the `refs/manifold/*` namespace layout.
+  static const String _issuesPrefix = 'refs/manifold/issues/';
+  static const String _desksPrefix = 'refs/manifold/desks/';
+  static const String _deskMetaFilename = 'meta.json';
+
+  /// The shared id-counter ref. Reconciled by MAX of the two integer
+  /// values rather than by content merge (see [_reconcileRef]).
+  static const String _idCounterRef = 'refs/manifold/_id-counter';
+
+  /// Per-remote staging namespace that fetched Manifold refs land in.
+  /// A fetch into `refs/manifold-remote/<remote>/*` can never disturb a
+  /// live `refs/manifold/*` ref, so `git fetch` is permanently safe and
+  /// the only path onto a live ref is the explicit reconcile in
+  /// [syncWithRemote].
+  static String stagingPrefixFor(String remote) =>
+      'refs/manifold-remote/$remote/';
+
+  /// The fetch refspec written into `remote.<name>.fetch`. Force (`+`)
+  /// is harmless here because the *destination* is the disposable
+  /// staging namespace, not a live ref.
+  static String fetchRefspecFor(String remote) =>
+      '+refs/manifold/*:${stagingPrefixFor(remote)}*';
+
   /// Working directory passed to every git command. Should be a path
   /// inside the target repo (any worktree of it works — git resolves
   /// to the common .git via rev-parse internally).
@@ -187,9 +232,19 @@ class ManifoldRefs {
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
       );
-      if (r.exitCode != 0) return const GitResult.ok(null);
-      final sha = (r.stdout as String).trim();
-      return GitResult.ok(sha.isEmpty ? null : sha);
+      if (r.exitCode == 0) {
+        final sha = (r.stdout as String).trim();
+        return GitResult.ok(sha.isEmpty ? null : sha);
+      }
+      // `rev-parse --verify --quiet` returns exit 1 with an empty stderr
+      // for a ref that simply doesn't resolve — missing, or a malformed
+      // name. That's the "genuinely absent" case → ok(null). A higher
+      // exit (128 = not a git repository, damaged object store) is a
+      // real failure we must surface rather than paper over as "no such
+      // ref", which would silently read a broken repo as having no
+      // issues / no desks.
+      if (r.exitCode == 1) return const GitResult.ok(null);
+      return GitResult.err((r.stderr as String).trim());
     } catch (e) {
       return GitResult.err('resolveRef: $e');
     }
@@ -236,11 +291,31 @@ class ManifoldRefs {
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
       );
-      if (r.exitCode != 0) return const GitResult.ok(null);
-      return GitResult.ok(r.stdout as String);
+      if (r.exitCode == 0) return GitResult.ok(r.stdout as String);
+      // cat-file exits 128 both when the object is genuinely absent
+      // (missing ref, or a missing path inside a valid tree) and when
+      // the object store itself is damaged. Only the "absent" phrasings
+      // map to ok(null); anything else is real corruption we surface so
+      // a broken repo doesn't masquerade as an empty one.
+      final err = (r.stderr as String).trim();
+      if (_isMissingObject(err)) return const GitResult.ok(null);
+      return GitResult.err(err.isEmpty ? 'readRefBlob: exit ${r.exitCode}' : err);
     } catch (e) {
       return GitResult.err('readRefBlob: $e');
     }
+  }
+
+  /// Classify a cat-file failure as "object simply isn't there" versus a
+  /// real error. The absent case shows up empirically as either
+  /// `path '…' does not exist in '<ref>'` (missing file in a valid tree)
+  /// or `invalid object name '<ref>'.` (missing ref / unknown object).
+  /// Everything else — unreadable objects, "not a git repository" —
+  /// falls through as a genuine error.
+  static bool _isMissingObject(String stderr) {
+    final e = stderr.toLowerCase();
+    return e.contains('does not exist') ||
+        e.contains('invalid object name') ||
+        e.contains('not a valid object name');
   }
 
   /// Allocate the next sequential integer from the shared counter ref.
@@ -261,6 +336,22 @@ class ManifoldRefs {
     String commitLabel = 'id',
     int maxAttempts = 5,
   }) async {
+    // Counter-regression guard, computed ONCE per allocation — it is
+    // loop-invariant across CAS retries. The staging namespace stops a
+    // plain fetch from rewinding the counter, and [syncWithRemote]
+    // reconciles it by MAX so it never moves backwards there either — but
+    // a stale clone, a hand-edited ref, or a losing divergence resolution
+    // could still leave a local counter reading BELOW ids we've already
+    // handed out (e.g. a peer allocated up to 7 and we somehow hold a
+    // counter that still reads 3). Allocating 4 would then collide with a
+    // live #4..#7, so `next` is floored at one past the highest id
+    // actually present across issues and desks. A retry never needs a
+    // fresh floor: any concurrent allocation that could raise it also
+    // bumps the counter ref, and the retry re-reads that counter anyway.
+    // This costs a couple of ref scans, but allocation is rare (only on
+    // create), so the price is fine.
+    final highest = await _highestManifoldId();
+
     // CAS retry loop: a concurrent allocation (two windows, rapid
     // double-tap) can land between our resolveRef and updateRef and
     // cause update-ref to reject. Loop a handful of times with a tiny
@@ -281,6 +372,8 @@ class ManifoldRefs {
           if (n != null) next = n + 1;
         }
       }
+      // Apply the pre-computed regression floor (see above the loop).
+      if (highest + 1 > next) next = highest + 1;
       final blobR = await writeBlob('$next\n');
       if (!blobR.ok) {
         return GitResult.err(blobR.error ?? 'writeBlob failed');
@@ -311,6 +404,571 @@ class ManifoldRefs {
     }
     return GitResult.err(
         lastError ?? 'updateRef failed after $maxAttempts attempts');
+  }
+
+  /// Highest id already committed to any Manifold ref. Issue ids ARE
+  /// the ref tail (`refs/manifold/issues/<id>`) so they read straight
+  /// off the ref list; desk ids live inside each `meta.json` and cost
+  /// one blob read apiece. Returns 0 when nothing is allocated yet.
+  /// Used only by [allocSequentialId]'s regression guard — never on a
+  /// hot path.
+  Future<int> _highestManifoldId() async {
+    var hi = 0;
+    final issues = await listRefs(_issuesPrefix);
+    if (issues.ok) {
+      for (final ref in issues.data!.keys) {
+        final tail = ref.substring(ref.lastIndexOf('/') + 1);
+        final n = int.tryParse(tail);
+        if (n != null && n > hi) hi = n;
+      }
+    }
+    final desks = await listRefs(_desksPrefix);
+    if (desks.ok) {
+      for (final ref in desks.data!.keys) {
+        final blob = await readRefBlob(ref, _deskMetaFilename);
+        if (!blob.ok || blob.data == null) continue;
+        try {
+          final j = jsonDecode(blob.data!) as Map<String, dynamic>;
+          final n = (j['deskId'] as num?)?.toInt();
+          if (n != null && n > hi) hi = n;
+        } catch (_) {
+          // Corrupt meta.json — skip it, exactly as listAll does. A
+          // record we can't parse can't be contributing a live id we
+          // need to avoid.
+        }
+      }
+    }
+    return hi;
+  }
+
+  /// Ensure [remote] fetches Manifold metadata into the safe per-remote
+  /// staging namespace, and MIGRATE away the dangerous legacy refspec.
+  /// Idempotent; a no-op when the remote is unconfigured (a fresh repo or
+  /// a test fixture is a valid state). Only ever touches
+  /// `remote.<name>.fetch` — never `.push`, so the user's plain
+  /// `git push` default behaviour is left untouched. Both stores call
+  /// this from their create/sync path so an issues-only or desks-only
+  /// user still auto-pulls Manifold metadata on `git fetch` — now onto
+  /// staging, so that plain fetch can never rewind a live ref.
+  Future<void> ensureFetchRefspec({String remote = 'origin'}) async {
+    // Skip when there's no remote to attach to. Without this guard
+    // `git config --add` would still succeed (writing a key under a
+    // non-existent remote section), leaving misleading config behind.
+    final url = await readConfig('remote.$remote.url');
+    if (url == null) return;
+    // Remove any previously-configured `+refs/manifold/*:refs/manifold/*`
+    // entry. The value passed to `--unset-all` is a POSIX regex, so the
+    // refspec's `+` and `*` (quantifier metacharacters) are escaped and
+    // the whole thing anchored, matching ONLY the legacy value and
+    // leaving the user's other fetch refspecs (heads, tags, …) intact.
+    // A no-match exits 5; that is expected on a clean repo and ignored.
+    await unsetConfigMatching(
+      'remote.$remote.fetch',
+      r'^\+refs/manifold/\*:refs/manifold/\*$',
+    );
+    await addConfigOnce('remote.$remote.fetch', fetchRefspecFor(remote));
+  }
+
+  /// Fetch every `refs/manifold/*` from [remote] into the disposable
+  /// staging namespace `refs/manifold-remote/<remote>/*`. Works even
+  /// before [ensureFetchRefspec] has persisted the config refspec, so the
+  /// very first sync in a fresh clone still pulls peers' metadata. Force
+  /// (`+`) is safe: the destination is staging, never a live ref.
+  Future<GitResult<void>> fetchToStaging({String remote = 'origin'}) async {
+    try {
+      final r = await Process.run(
+        'git',
+        ['fetch', remote, fetchRefspecFor(remote)],
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (r.exitCode != 0) {
+        return GitResult.err((r.stderr as String).trim());
+      }
+      return const GitResult.ok(null);
+    } catch (e) {
+      return GitResult.err('fetchToStaging: $e');
+    }
+  }
+
+  /// True when [maybeAncestor] is an ancestor of [descendant] (or equal
+  /// to it — `git merge-base --is-ancestor X X` exits 0). Used by
+  /// [syncWithRemote] to classify a local/staged pair as fast-forwardable
+  /// versus genuinely diverged. Returns false on any git error, which
+  /// (conservatively) routes the pair into the divergence merge rather
+  /// than a lossy fast-forward.
+  Future<bool> isAncestor(String maybeAncestor, String descendant) async {
+    try {
+      final r = await Process.run(
+        'git',
+        ['merge-base', '--is-ancestor', maybeAncestor, descendant],
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      return r.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Create a merge commit for [treeSha] with two-or-more [parents]
+  /// (`commit-tree TREE -p A -p B`). The tree is the reconciled record;
+  /// the parents preserve BOTH lineages so the audit history shows the
+  /// merge and the counterpart's tip becomes reachable (which lets the
+  /// other side fast-forward on its next sync instead of re-merging).
+  Future<GitResult<String>> commitMergeTree({
+    required String treeSha,
+    required List<String> parents,
+    required String message,
+  }) async {
+    try {
+      final args = <String>['commit-tree', treeSha];
+      for (final p in parents) {
+        args.addAll(['-p', p]);
+      }
+      args.addAll(['-m', message]);
+      final r = await Process.run(
+        'git',
+        args,
+        workingDirectory: repoPath,
+        environment: _gitEnv,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (r.exitCode != 0) {
+        return GitResult.err((r.stderr as String).trim());
+      }
+      return GitResult.ok((r.stdout as String).trim());
+    } catch (e) {
+      return GitResult.err('commitMergeTree: $e');
+    }
+  }
+
+  /// Read the single blob of a Manifold tree (`<commit>` → its lone
+  /// `{filename → content}`). Every Manifold ref stores exactly one blob
+  /// (issue.json / meta.json / counter.txt), so this is unambiguous and
+  /// filename-agnostic — the reconcile engine reuses whatever name it
+  /// finds when writing a merged tree. Returns ok(null) for an empty
+  /// tree.
+  Future<GitResult<({String filename, String content})?>> readSingleTreeBlob(
+      String commitish) async {
+    try {
+      final ls = await Process.run(
+        'git',
+        ['ls-tree', '--name-only', commitish],
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (ls.exitCode != 0) {
+        return GitResult.err((ls.stderr as String).trim());
+      }
+      final names = (ls.stdout as String)
+          .split('\n')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (names.isEmpty) return const GitResult.ok(null);
+      final name = names.first;
+      final blob = await readRefBlob(commitish, name);
+      if (!blob.ok) return GitResult.err(blob.error ?? 'readRefBlob failed');
+      if (blob.data == null) return const GitResult.ok(null);
+      return GitResult.ok((filename: name, content: blob.data!));
+    } catch (e) {
+      return GitResult.err('readSingleTreeBlob: $e');
+    }
+  }
+
+  /// Remove every value of [configKey] matching the POSIX regex
+  /// [valueRegex]. Tolerates git's exit 5 ("no such option / nothing
+  /// matched") as a benign no-op so a clean repo isn't reported as an
+  /// error. Used to migrate away the legacy fetch refspec.
+  Future<GitResult<void>> unsetConfigMatching(
+      String configKey, String valueRegex) async {
+    try {
+      final r = await Process.run(
+        'git',
+        ['config', '--unset-all', configKey, valueRegex],
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      // 0 = removed something; 5 = nothing matched (clean repo). Both fine.
+      if (r.exitCode == 0 || r.exitCode == 5) return const GitResult.ok(null);
+      return GitResult.err((r.stderr as String).trim());
+    } catch (e) {
+      return GitResult.err('unsetConfigMatching: $e');
+    }
+  }
+
+  // ─── Sync / reconcile ────────────────────────────────────────────────
+
+  /// Marker prefix on the error string when a sync could not complete
+  /// because the remote moved between our fetch and our push (a lease
+  /// failure). The caller can treat it as retryable — nothing was
+  /// clobbered; re-running the sync re-fetches and re-reconciles.
+  static const String retryablePrefix = 'retryable: ';
+
+  /// Fetch peers' Manifold metadata into staging, RECONCILE it into the
+  /// live `refs/manifold/*` refs without ever losing a local mutation,
+  /// then push the reconciled refs back with per-ref `--force-with-lease`
+  /// so a concurrent peer push can't be clobbered. This is the whole
+  /// data-loss fix for the sync path; both stores delegate here.
+  ///
+  /// Reconcile is done over the ENTIRE `refs/manifold/*` namespace in one
+  /// pass (issues, desks, and the shared counter) because a single sync
+  /// is a whole-namespace operation. Records are merged generically over
+  /// their JSON (see [_mergeJsonRecords]); the counter is merged by MAX.
+  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
+    final fetched = await fetchToStaging(remote: remote);
+    if (!fetched.ok) return GitResult.err(fetched.error ?? 'fetch failed');
+
+    final localR = await listRefs(manifoldPrefix);
+    if (!localR.ok) return GitResult.err(localR.error ?? 'listRefs failed');
+    final stagedR = await listRefs(stagingPrefixFor(remote));
+    if (!stagedR.ok) return GitResult.err(stagedR.error ?? 'listRefs failed');
+
+    // Fold both sides onto a common "live ref" key. Staged refs live at
+    // refs/manifold-remote/<remote>/<tail>; their live counterpart is
+    // refs/manifold/<tail>.
+    final stagePrefix = stagingPrefixFor(remote);
+    final local = localR.data!; // live ref -> sha
+    final staged = <String, String>{}; // live ref -> staged sha
+    stagedR.data!.forEach((ref, sha) {
+      staged['$manifoldPrefix${ref.substring(stagePrefix.length)}'] = sha;
+    });
+
+    final liveRefs = <String>{...local.keys, ...staged.keys};
+
+    // Push entries accumulated during reconcile: each is a live ref whose
+    // local tip we want on the remote, leased against the sha we last saw
+    // there (staged sha, or the zero-sha when the remote lacked it).
+    final pushes = <({String ref, String lease})>[];
+
+    for (final ref in liveRefs) {
+      final res = await _reconcileRef(
+        ref: ref,
+        localSha: local[ref],
+        stagedSha: staged[ref],
+      );
+      if (!res.ok) return GitResult.err(res.error ?? 'reconcile failed');
+      final push = res.data;
+      if (push != null) pushes.add(push);
+    }
+
+    if (pushes.isEmpty) return const GitResult.ok(null);
+    return _leasePush(remote: remote, pushes: pushes);
+  }
+
+  /// Reconcile one live ref from its local and staged tips. Returns the
+  /// push entry the caller should send (or null when nothing needs to go
+  /// to the remote — either the ref is already in sync or we merely
+  /// fast-forwarded local onto a tip the remote already has). All local
+  /// ref movement is applied here via CAS update-ref.
+  Future<GitResult<({String ref, String lease})?>> _reconcileRef({
+    required String ref,
+    required String? localSha,
+    required String? stagedSha,
+  }) async {
+    // Remote lacks it entirely → our local ref is new to the remote.
+    // Push it, leasing against absence so a peer who created the same ref
+    // since our fetch wins instead of being clobbered.
+    if (stagedSha == null) {
+      return GitResult.ok((ref: ref, lease: _zeroSha));
+    }
+    // We lack it → adopt the remote's tip verbatim (fast-forward create).
+    // Nothing to push; the remote already has it.
+    if (localSha == null) {
+      final upd = await updateRef(ref: ref, newSha: stagedSha);
+      if (!upd.ok) return GitResult.err(upd.error ?? 'updateRef failed');
+      return const GitResult.ok(null);
+    }
+    // Identical tips → already in sync.
+    if (localSha == stagedSha) return const GitResult.ok(null);
+
+    // The shared counter is not a mergeable record: reconcile by MAX of
+    // the two integer values so it never moves backwards.
+    if (ref == _idCounterRef) {
+      return _reconcileCounter(
+          ref: ref, localSha: localSha, stagedSha: stagedSha);
+    }
+
+    // local already contains staged → keep local, push it (lease=staged).
+    if (await isAncestor(stagedSha, localSha)) {
+      return GitResult.ok((ref: ref, lease: stagedSha));
+    }
+    // staged already contains local → fast-forward local to staged.
+    // Remote already has staged, so nothing to push.
+    if (await isAncestor(localSha, stagedSha)) {
+      final upd =
+          await updateRef(ref: ref, newSha: stagedSha, oldSha: localSha);
+      if (!upd.ok) return GitResult.err(upd.error ?? 'updateRef failed');
+      return const GitResult.ok(null);
+    }
+
+    // ─── Genuine divergence ──────────────────────────────────────────
+    final localBlob = await readSingleTreeBlob(localSha);
+    if (!localBlob.ok) return GitResult.err(localBlob.error ?? 'read failed');
+    final stagedBlob = await readSingleTreeBlob(stagedSha);
+    if (!stagedBlob.ok) return GitResult.err(stagedBlob.error ?? 'read failed');
+    if (localBlob.data == null || stagedBlob.data == null) {
+      return GitResult.err('divergent ref $ref has an empty tree');
+    }
+    final lc = localBlob.data!;
+    final sc = stagedBlob.data!;
+
+    // Convergence / anti-ping-pong rule. When both machines run the same
+    // reconcile they produce the same MERGED CONTENT but different merge-
+    // commit shas; those two commits are then themselves "diverged". If
+    // we minted a fresh merge commit every time, the two sides would
+    // ping-pong forever, each re-merging the other's merge. So whenever
+    // the two tips already carry byte-identical records (canonicalised so
+    // key ordering can't cause a false mismatch), we do NOT mint a new
+    // commit: we deterministically pick the tip with the lexicographically
+    // larger sha as the survivor. Both sides pick the SAME survivor, so
+    // they converge to one sha and the next sync is a no-op.
+    if (_canonicalJson(lc.content) == _canonicalJson(sc.content)) {
+      return _adoptLargerSha(ref: ref, localSha: localSha, stagedSha: stagedSha);
+    }
+
+    // Records genuinely differ → deterministic field-wise union merge.
+    // Tie-breaks (equal updatedAt) resolve toward the lexicographically
+    // larger tip sha so BOTH machines choose the same winner and the two
+    // independent merges produce identical content.
+    final String merged;
+    try {
+      merged = _mergeJsonRecords(lc.content, sc.content, localSha, stagedSha);
+    } catch (e) {
+      return GitResult.err('merge of $ref failed: $e');
+    }
+    final blobR = await writeBlob(merged);
+    if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
+    final treeR = await mkTree({lc.filename: blobR.data!});
+    if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
+    final commitR = await commitMergeTree(
+      treeSha: treeR.data!,
+      parents: [localSha, stagedSha],
+      message: 'reconcile $ref',
+    );
+    if (!commitR.ok) return GitResult.err(commitR.error ?? 'commit failed');
+    final upd =
+        await updateRef(ref: ref, newSha: commitR.data!, oldSha: localSha);
+    if (!upd.ok) return GitResult.err(upd.error ?? 'updateRef failed');
+    // Push the merge, leasing against the staged sha we merged in.
+    return GitResult.ok((ref: ref, lease: stagedSha));
+  }
+
+  /// Reconcile the shared id-counter by MAX of the two integer values.
+  /// The higher-valued tip already exists as a commit on one side, so we
+  /// never mint a new one: we point local at whichever tip holds the
+  /// larger count (ties resolve to the larger sha for cross-machine
+  /// determinism). Never moves the counter backwards.
+  Future<GitResult<({String ref, String lease})?>> _reconcileCounter({
+    required String ref,
+    required String localSha,
+    required String stagedSha,
+  }) async {
+    final localBlob = await readSingleTreeBlob(localSha);
+    final stagedBlob = await readSingleTreeBlob(stagedSha);
+    if (!localBlob.ok || !stagedBlob.ok) {
+      return const GitResult.err('counter read failed');
+    }
+    final localVal =
+        int.tryParse((localBlob.data?.content ?? '').trim()) ?? 0;
+    final stagedVal =
+        int.tryParse((stagedBlob.data?.content ?? '').trim()) ?? 0;
+    if (localVal > stagedVal) {
+      // Keep our higher local counter; push it (lease against staged).
+      return GitResult.ok((ref: ref, lease: stagedSha));
+    }
+    if (stagedVal > localVal) {
+      // Adopt the remote's higher counter. Remote already has it → no push.
+      final upd =
+          await updateRef(ref: ref, newSha: stagedSha, oldSha: localSha);
+      if (!upd.ok) return GitResult.err(upd.error ?? 'updateRef failed');
+      return const GitResult.ok(null);
+    }
+    // Equal value, different tips → converge on one sha deterministically.
+    return _adoptLargerSha(ref: ref, localSha: localSha, stagedSha: stagedSha);
+  }
+
+  /// Converge two content-identical-but-distinct tips onto the
+  /// lexicographically larger sha (a deterministic choice both machines
+  /// make identically). When local is already the survivor we push it
+  /// (leased against staged); otherwise we fast-forward local to the
+  /// staged survivor, which the remote already holds, so nothing pushes.
+  Future<GitResult<({String ref, String lease})?>> _adoptLargerSha({
+    required String ref,
+    required String localSha,
+    required String stagedSha,
+  }) async {
+    if (localSha.compareTo(stagedSha) > 0) {
+      return GitResult.ok((ref: ref, lease: stagedSha));
+    }
+    final upd = await updateRef(ref: ref, newSha: stagedSha, oldSha: localSha);
+    if (!upd.ok) return GitResult.err(upd.error ?? 'updateRef failed');
+    return const GitResult.ok(null);
+  }
+
+  /// Push the reconciled [pushes] to [remote] in ONE invocation, each
+  /// with a per-ref `--force-with-lease=<ref>:<lease>`. The lease is the
+  /// sha we last observed on the remote (from staging), so if a peer
+  /// pushed that ref between our fetch and now, the lease fails and we
+  /// return a [retryablePrefix] error rather than clobbering their work.
+  Future<GitResult<void>> _leasePush({
+    required String remote,
+    required List<({String ref, String lease})> pushes,
+  }) async {
+    try {
+      final args = <String>['push', remote];
+      for (final p in pushes) {
+        args.add('--force-with-lease=${p.ref}:${p.lease}');
+      }
+      for (final p in pushes) {
+        args.add('${p.ref}:${p.ref}');
+      }
+      final r = await Process.run(
+        'git',
+        args,
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (r.exitCode == 0) return const GitResult.ok(null);
+      final err = (r.stderr as String).trim();
+      final lower = err.toLowerCase();
+      if (lower.contains('stale info') ||
+          lower.contains('rejected') ||
+          lower.contains('force-with-lease')) {
+        return GitResult.err(
+            '${retryablePrefix}remote moved during sync; nothing was '
+            'clobbered — retry the sync. ($err)');
+      }
+      return GitResult.err(err.isEmpty ? 'push failed' : err);
+    } catch (e) {
+      return GitResult.err('leasePush: $e');
+    }
+  }
+
+  // ─── Deterministic record merge ──────────────────────────────────────
+
+  /// Field-wise union merge of two Manifold JSON records into a single
+  /// canonical blob. Both machines running this over the same pair of
+  /// records produce byte-identical output, which is what makes the sync
+  /// converge.
+  ///
+  /// Rules:
+  ///  * `updatedAt` → the MAX of the two timestamps.
+  ///  * "comment-like" arrays — a list whose every element is an object
+  ///    carrying `author` + `at` + `body` (issue comments, PR thread
+  ///    entries) — are UNIONED, deduped by the exact (author, at, body)
+  ///    tuple, and sorted by (at, author, body). A fully deterministic
+  ///    total order is required (not merely "at, then original position",
+  ///    which isn't well-defined once entries come from two machines) so
+  ///    both sides land on the same ordering.
+  ///  * every other field (scalars and non-comment lists: title, body,
+  ///    state, labels, assignees, linked lists, reviewers, remoteNumber,
+  ///    diff stats, …) is last-writer-wins: taken wholesale from the
+  ///    record with the larger `updatedAt`; a tie resolves to the
+  ///    lexicographically larger tip [localSha]/[stagedSha] so both
+  ///    machines pick the same winner.
+  static String _mergeJsonRecords(
+    String localBlob,
+    String stagedBlob,
+    String localSha,
+    String stagedSha,
+  ) {
+    final local = jsonDecode(localBlob) as Map<String, dynamic>;
+    final staged = jsonDecode(stagedBlob) as Map<String, dynamic>;
+    final localT = _parseTs(local['updatedAt']);
+    final stagedT = _parseTs(staged['updatedAt']);
+
+    final int cmp = localT.compareTo(stagedT);
+    final bool localWins =
+        cmp > 0 || (cmp == 0 && localSha.compareTo(stagedSha) >= 0);
+    final winner = localWins ? local : staged;
+    final loser = localWins ? staged : local;
+
+    final merged = <String, dynamic>{};
+    final keys = <String>{...local.keys, ...staged.keys};
+    for (final k in keys) {
+      final lv = local[k];
+      final sv = staged[k];
+      if (_isCommentList(lv) || _isCommentList(sv)) {
+        merged[k] = _unionComments(lv, sv);
+      } else {
+        merged[k] = winner.containsKey(k) ? winner[k] : loser[k];
+      }
+    }
+    // updatedAt is always the max, regardless of which record "won".
+    merged['updatedAt'] =
+        (localT.isAfter(stagedT) ? localT : stagedT).toIso8601String();
+    return _canonicalJson(jsonEncode(merged));
+  }
+
+  static DateTime _parseTs(Object? v) =>
+      DateTime.tryParse(v is String ? v : '') ??
+      DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// A value is "comment-like" when it is a non-empty list whose every
+  /// element is a JSON object carrying author/at/body. That distinguishes
+  /// issue comments / PR thread entries (unioned) from string lists like
+  /// labels and object lists like reviewers ({login,state}) which are
+  /// last-writer-wins.
+  static bool _isCommentList(Object? v) {
+    if (v is! List || v.isEmpty) return false;
+    for (final e in v) {
+      if (e is! Map) return false;
+      if (!e.containsKey('author') ||
+          !e.containsKey('at') ||
+          !e.containsKey('body')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static List<Map<String, dynamic>> _unionComments(Object? lv, Object? sv) {
+    final all = <Map<String, dynamic>>[];
+    if (lv is List) all.addAll(lv.whereType<Map<String, dynamic>>());
+    if (sv is List) all.addAll(sv.whereType<Map<String, dynamic>>());
+    final seen = <String>{};
+    final out = <Map<String, dynamic>>[];
+    for (final e in all) {
+      final key =
+          '${e['author']}\u0000${e['at']}\u0000${e['body']}';
+      if (seen.add(key)) out.add(e);
+    }
+    out.sort((a, b) {
+      int c = _s(a['at']).compareTo(_s(b['at']));
+      if (c != 0) return c;
+      c = _s(a['author']).compareTo(_s(b['author']));
+      if (c != 0) return c;
+      return _s(a['body']).compareTo(_s(b['body']));
+    });
+    return out;
+  }
+
+  static String _s(Object? v) => v is String ? v : (v?.toString() ?? '');
+
+  /// Canonical JSON: every map's keys recursively sorted, re-serialised
+  /// with the same two-space indent the records use. Order-independent,
+  /// so two records that differ only in field order compare equal — the
+  /// linchpin of the anti-ping-pong convergence check.
+  static String _canonicalJson(String rawJson) =>
+      const JsonEncoder.withIndent('  ')
+          .convert(_canonicalize(jsonDecode(rawJson)));
+
+  static Object? _canonicalize(Object? v) {
+    if (v is Map) {
+      final keys = v.keys.map((k) => k.toString()).toList()..sort();
+      return LinkedHashMap<String, Object?>.fromEntries(
+          keys.map((k) => MapEntry(k, _canonicalize(v[k]))));
+    }
+    if (v is List) return v.map(_canonicalize).toList();
+    return v;
   }
 
   /// Probe whether [headRef] would merge cleanly into [baseRef]. Uses

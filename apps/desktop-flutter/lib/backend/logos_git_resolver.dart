@@ -437,7 +437,7 @@ Future<LogosGit?> _resolveImpl(
     // itself has no internal deadline).
     final ProcessResult head;
     try {
-      head = await runGitProbe(
+      head = await runGit(
         repoPath,
         const ['rev-parse', 'HEAD'],
       ).timeout(_kHeadProbeTimeout);
@@ -611,7 +611,7 @@ Future<FileCouplingMatrix?> _resolveShadowCoupling(String repoPath,
   try {
     // `currentHead` is threaded in from `_resolveImpl`'s rev-parse (read in
     // the same resolve, same instant) — no redundant second `git rev-parse
-    // HEAD` spawn, and it goes through the shared `runGitProbe` dedup there.
+    // HEAD` spawn, and it goes through the shared `runGit` dedup there.
     final cached = await ShadowCouplingCache.load(repoPath);
     final cacheValid = cached != null &&
         cached.isFresh &&

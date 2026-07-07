@@ -15,7 +15,7 @@ import 'dtos.dart' show BlameLineData;
 import 'engram_bootstrap.dart' show EngramRuntime;
 import 'engram_text_kspace.dart';
 import 'file_coupling.dart' show FileCouplingMatrix;
-import 'git.dart' show runGitProbe;
+import 'git.dart' show runGit;
 import 'perf_span.dart' show perfSpan, perfSpanSync;
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
@@ -2222,7 +2222,7 @@ Future<String?> _loadFileContent({
 }) async {
   try {
     if (revisionRef != null && revisionRef.trim().isNotEmpty) {
-      final result = await runGitProbe(
+      final result = await runGit(
         repositoryPath,
         ['show', '${revisionRef.trim()}:${filePath.replaceAll('\\', '/')}'],
       );

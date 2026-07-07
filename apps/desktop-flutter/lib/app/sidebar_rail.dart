@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -1430,16 +1429,18 @@ class _ProjectItemState extends State<_ProjectItem>
     final pathAtCallTime = widget.path;
     String? raw;
     try {
-      final r = await Process.run(
-        'git',
-        ['remote', 'get-url', 'origin'],
-        workingDirectory: pathAtCallTime,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
-      if (r.exitCode == 0) {
-        final s = (r.stdout as String).trim();
-        if (s.isNotEmpty) raw = s;
+      // Resolve the primary remote (origin when present, else the sole/first
+      // remote) so a fork whose forge remote is named `upstream` still yields
+      // a clone/web URL, and route through the shared git runner rather than
+      // a raw spawn.
+      final remoteRes = await primaryRemoteName(pathAtCallTime);
+      final remote = remoteRes.ok ? remoteRes.data : null;
+      if (remote != null) {
+        final r = await runGit(pathAtCallTime, ['remote', 'get-url', remote]);
+        if (r.exitCode == 0) {
+          final s = (r.stdout as String).trim();
+          if (s.isNotEmpty) raw = s;
+        }
       }
     } catch (_) {/* silent — local-only repo */}
     if (!mounted || pathAtCallTime != widget.path) return;
@@ -1454,8 +1455,8 @@ class _ProjectItemState extends State<_ProjectItem>
     final pathAtCallTime = widget.path;
     try {
       final results = await Future.wait([
-        runGitProbe(pathAtCallTime, ['rev-list', '--count', 'HEAD']),
-        runGitProbe(pathAtCallTime, ['ls-files']),
+        runGit(pathAtCallTime, ['rev-list', '--count', 'HEAD']),
+        runGit(pathAtCallTime, ['ls-files']),
       ]);
       if (!mounted || pathAtCallTime != widget.path) return;
       final commitCount = results[0].exitCode == 0
@@ -1477,9 +1478,9 @@ class _ProjectItemState extends State<_ProjectItem>
     final pathAtCallTime = widget.path;
     try {
       final results = await Future.wait([
-        runGitProbe(pathAtCallTime, ['shortlog', '-sn', '--no-merges', 'HEAD']),
-        runGitProbe(pathAtCallTime, ['count-objects', '-v']),
-        runGitProbe(pathAtCallTime, ['log', '-1', '--format=%ct']),
+        runGit(pathAtCallTime, ['shortlog', '-sn', '--no-merges', 'HEAD']),
+        runGit(pathAtCallTime, ['count-objects', '-v']),
+        runGit(pathAtCallTime, ['log', '-1', '--format=%ct']),
       ]);
       if (!mounted || pathAtCallTime != widget.path) return;
       int? contribCount;

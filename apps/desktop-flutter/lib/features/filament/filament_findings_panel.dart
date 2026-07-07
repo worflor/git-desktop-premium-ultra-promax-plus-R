@@ -9,7 +9,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
-import '../../backend/git.dart' show runGitProbe;
+import '../../backend/git.dart' show runGit;
 import '../../backend/gyat.dart' show GyatLattice, gyatForRepo;
 import '../../backend/logos_core.dart' show FlowSseLattice, flowKGInteractionStrength;
 import '../../backend/logos_flow.dart'
@@ -114,7 +114,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     _interFileResult = interFile;
 
     // ── Scale 1: per-file flow scan ─────────────────────────────────
-    final probe = await runGitProbe(repoPath, ['ls-files']);
+    final probe = await runGit(repoPath, ['ls-files']);
     if (!mounted || _gen != gen) return;
     if (probe.exitCode != 0) {
       setState(() => _done = true);

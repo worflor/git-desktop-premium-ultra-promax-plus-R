@@ -5,20 +5,49 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/git.dart';
 import '../backend/dtos.dart';
 import '../backend/git_result.dart';
+import '../backend/git_dir_watcher.dart';
 
 class RepositoryState extends ChangeNotifier {
   RepositoryState({
     Future<GitResult<String>> Function(String path)? openRepositoryFn,
     Future<GitResult<RepositoryStatus>> Function(String path)? statusLoader,
     Duration switchDebounce = const Duration(milliseconds: 80),
+    GitDirWatcher Function(String repoPath, void Function() onRepoChanged)?
+        gitWatcherFactory,
+    Duration externalRefreshThrottle = const Duration(milliseconds: 1500),
   })  : _openRepository = openRepositoryFn ?? openRepository,
         _loadRepositoryStatus = statusLoader ?? getRepositoryStatus,
-        _switchDebounceDuration = switchDebounce;
+        _switchDebounceDuration = switchDebounce,
+        _gitWatcherFactory = gitWatcherFactory ??
+            ((path, onChanged) => GitDirWatcher(path, onChanged)),
+        _externalRefreshThrottle = externalRefreshThrottle {
+    // Pause the .git watcher while the app itself is mutating the repo
+    // (any in-flight mutating git subprocess via the shared exec layer).
+    // Our own commit/merge/checkout ref churn then coalesces into ONE
+    // post-operation watcher fire instead of racing the operation with
+    // per-write refreshes; nothing is dropped — the watcher remembers
+    // paused-time events and fires once on resume.
+    addGitMutationListener(_onGitMutationsChanged);
+  }
 
   final Future<GitResult<String>> Function(String path) _openRepository;
   final Future<GitResult<RepositoryStatus>> Function(String path)
       _loadRepositoryStatus;
   final Duration _switchDebounceDuration;
+
+  /// Builds the `.git` watcher for the active repo. Injectable so tests
+  /// can drive the coalesced-change callback without a real filesystem
+  /// watch; production builds a real [GitDirWatcher].
+  final GitDirWatcher Function(String repoPath, void Function() onRepoChanged)
+      _gitWatcherFactory;
+
+  /// Minimum spacing between refreshes triggered by *external* `.git`
+  /// mutations. The watcher already debounces raw events into one
+  /// coalesced callback, but a stream of distinct external changes
+  /// (someone fetching in a loop, a long rebase) must not spam the heavy
+  /// downstream recompute chain. This throttle fires leading-edge and
+  /// guarantees one trailing refresh so the final state is never missed.
+  final Duration _externalRefreshThrottle;
 
   String? _activePath;
   RepositoryStatus? _status;
@@ -30,6 +59,13 @@ class RepositoryState extends ChangeNotifier {
   Timer? _switchDebounce;
   Completer<String?>? _switchCompleter;
   bool _disposed = false;
+
+  /// The `.git` watcher for the active repo, recreated on every repo
+  /// switch and disposed with the old one. Null before the first repo
+  /// opens (and whenever a switch is still resolving).
+  GitDirWatcher? _gitWatcher;
+  Timer? _externalRefreshTimer;
+  DateTime? _lastExternalRefresh;
 
   /// Threshold before a loading state is published. Most `git status`
   /// probes complete in a few ms on a warm repo; publishing
@@ -186,6 +222,8 @@ class RepositoryState extends ChangeNotifier {
         _recentPaths = nextRecentPaths;
       }
 
+      _rebuildGitWatcher(resolvedPath);
+
       notifyListeners();
       await refreshStatus();
 
@@ -193,6 +231,71 @@ class RepositoryState extends ChangeNotifier {
     } catch (error) {
       return error.toString();
     }
+  }
+
+  /// Tear down the watcher for the previous repo and stand one up for
+  /// [resolvedPath]. The old watcher is disposed so its subscriptions and
+  /// debounce timer are released; the external-refresh throttle is reset
+  /// so the new repo starts with a clean leading edge. A watch that can't
+  /// be established (permissions, network FS, non-repo path) degrades to
+  /// inert inside [GitDirWatcher.start] — the app is unaffected.
+  void _rebuildGitWatcher(String resolvedPath) {
+    _gitWatcher?.dispose();
+    _externalRefreshTimer?.cancel();
+    _externalRefreshTimer = null;
+    _lastExternalRefresh = null;
+    final watcher = _gitWatcherFactory(resolvedPath, _onExternalRepoChange);
+    _gitWatcher = watcher;
+    // A watcher born mid-mutation must start paused — the listener only
+    // fires on transitions, so the current state is applied here.
+    if (gitMutationsInFlight > 0) watcher.pause();
+    // start() is async and self-guards against a dispose that lands while
+    // it resolves the git dirs; we deliberately don't await it here so the
+    // repo switch isn't blocked on spawning `git rev-parse`.
+    unawaited(watcher.start());
+  }
+
+  /// Pause/resume the watcher as the app's own mutating git subprocesses
+  /// start and drain (see the constructor comment). Trivial by contract —
+  /// this runs synchronously inside the git exec path.
+  void _onGitMutationsChanged() {
+    if (_disposed) return;
+    final w = _gitWatcher;
+    if (w == null) return;
+    if (gitMutationsInFlight > 0) {
+      w.pause();
+    } else {
+      w.resume();
+    }
+  }
+
+  /// Coalesced "the `.git` changed under us" signal from [GitDirWatcher].
+  /// Runs the same status-refresh path a manual refresh uses (so all
+  /// listeners — including WorktreeState, which re-lists on our
+  /// notifications behind its own throttle — fan out), but throttled:
+  /// external churn can arrive faster than a status probe and its
+  /// downstream recompute chain should run. This is NOT a user-attention
+  /// event, so it deliberately does not bump [userRefreshEpoch].
+  void _onExternalRepoChange() {
+    if (_disposed) return;
+    final now = DateTime.now();
+    final last = _lastExternalRefresh;
+    if (last == null || now.difference(last) >= _externalRefreshThrottle) {
+      _lastExternalRefresh = now;
+      refreshStatus();
+      return;
+    }
+    // Inside the cooldown: schedule a single trailing refresh so the
+    // final external state is never dropped, and coalesce further changes
+    // into that one pending run.
+    if (_externalRefreshTimer != null) return;
+    final wait = _externalRefreshThrottle - now.difference(last);
+    _externalRefreshTimer = Timer(wait, () {
+      _externalRefreshTimer = null;
+      if (_disposed) return;
+      _lastExternalRefresh = DateTime.now();
+      refreshStatus();
+    });
   }
 
   bool _switchWasSuperseded(Completer<String?> completer) {
@@ -292,6 +395,7 @@ class RepositoryState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    removeGitMutationListener(_onGitMutationsChanged);
     _statusRequestId++;
     _switchDebounce?.cancel();
     _switchDebounce = null;
@@ -303,6 +407,10 @@ class RepositoryState extends ChangeNotifier {
     _statusLoadingPublish?.cancel();
     _statusLoadingPublish = null;
     _statusLoading = false;
+    _gitWatcher?.dispose();
+    _gitWatcher = null;
+    _externalRefreshTimer?.cancel();
+    _externalRefreshTimer = null;
     super.dispose();
   }
 }

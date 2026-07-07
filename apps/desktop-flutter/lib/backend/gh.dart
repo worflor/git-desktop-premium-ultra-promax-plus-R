@@ -484,8 +484,28 @@ Future<GitResult<List<CheckSummary>>> listChecks(
 }
 
 
-Future<ProcessResult> _gh(String repo, List<String> args) async {
-  final commandLabel = 'gh.${args.isNotEmpty ? args.first : 'unknown'}';
+Future<ProcessResult> _gh(String repo, List<String> args) =>
+    runForgeCli('gh', repo, args);
+
+/// Spawns a forge CLI (`gh`, `glab`, …) and returns its [ProcessResult].
+/// The binary name is a parameter so both wrappers — and the tests —
+/// share one spawn path.
+///
+/// If the binary vanishes from PATH mid-session (or was never installed)
+/// [Process.run] throws a [ProcessException], which would otherwise tear
+/// straight through the GitResult-returning call sites — none of them
+/// catch it. We contain the spawn failure here and hand back a synthetic
+/// non-zero result whose stderr reads like any other CLI error, so those
+/// callers funnel it into a clean `GitResult.err` via their existing
+/// exit-code check instead of surfacing a raw exception. The status
+/// probes (`ghStatus` / `glabStatus`) run their own guarded spawns and
+/// are unaffected.
+Future<ProcessResult> runForgeCli(
+  String bin,
+  String repo,
+  List<String> args,
+) async {
+  final commandLabel = '$bin.${args.isNotEmpty ? args.first : 'unknown'}';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
     type: 'start',
@@ -493,7 +513,7 @@ Future<ProcessResult> _gh(String repo, List<String> args) async {
   );
   try {
     final result = await Process.run(
-      'gh',
+      bin,
       args,
       workingDirectory: repo,
       runInShell: false,
@@ -508,7 +528,7 @@ Future<ProcessResult> _gh(String repo, List<String> args) async {
       errorCode: result.exitCode == 0 ? null : 'exit.${result.exitCode}',
     );
     return result;
-  } catch (e) {
+  } on ProcessException catch (e) {
     stopwatch.stop();
     DiagnosticsState.instance.recordCommandLifecycleEvent(
       type: 'end',
@@ -516,6 +536,13 @@ Future<ProcessResult> _gh(String repo, List<String> args) async {
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: 'process.exception',
     );
-    rethrow;
+    // 127 is the conventional "command not found" exit code. The message
+    // mirrors a normal stderr line so the call site treats it uniformly.
+    return ProcessResult(
+      0,
+      127,
+      '',
+      '$bin not found on PATH (${e.message.trim()}) — is it installed?',
+    );
   }
 }

@@ -35,6 +35,7 @@ import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/logos_git_diagnostics.dart';
 import '../../backend/pr_shape.dart';
+import '../../backend/merge_preflight.dart';
 import '../../backend/desk_pr.dart';
 import '../../backend/desk_pr_diff.dart';
 import '../../backend/undo_controller.dart';
@@ -56,13 +57,14 @@ import '../changes/merge_conflict_editor.dart'
     show MergeEditorPage, ConflictFile, enrichConflictFileWithLogos;
 import '../changes/patch_as_merge.dart' show reviewMergeFromPatch;
 import '../changes/merge_conflict_flow.dart'
-    show gatherConflictFiles, resolveNativeMergeConflicts, resolveCheckout;
+    show gatherConflictFiles, resolveLocalPrMerge, resolveCheckout;
 import '../../backend/merge_session.dart'
     show
         MergeClean,
         MergeFailed,
         MergeConflicted,
         MergeBlockedByLocalChanges,
+        MergeNeedsCheckout,
         mergeOutcomeMessage;
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -77,26 +79,6 @@ class BranchesPage extends StatefulWidget {
 /// surface different metadata about the same conceptual space — your
 /// repo's worklines.
 enum _BranchesLens { branches, prs, issues }
-
-/// Result of the pre-flight `git merge-tree` probe used by the
-/// merge-into-desk dialog. `mergeable` is true only when git reported
-/// a clean merge; `conflictingPaths` lists the files that would
-/// conflict (empty when mergeable or when the probe itself couldn't
-/// resolve).
-class _MergePreflight {
-  final bool mergeable;
-  final List<String> conflictingPaths;
-
-  /// False when the preflight command itself could not run (git < 2.38,
-  /// process error, etc.). Callers should surface a notice rather than
-  /// treating the absence of conflict paths as a clean result.
-  final bool available;
-  const _MergePreflight({
-    required this.mergeable,
-    required this.conflictingPaths,
-    this.available = true,
-  });
-}
 
 /// Indeterminate-progress dialog for in-flight PR AI review. Intentionally
 /// minimal — the work is a single awaited backend call, no streaming
@@ -324,6 +306,9 @@ class _BranchesPageState extends State<BranchesPage> {
   RemotePrProvider? _prProvider;
   RemoteIssueProvider? _issueProvider;
   RemoteProviderStatus? _remoteStatus;
+  // True while a Manifold ref sync (fetch+push of refs/manifold/*) is in
+  // flight, so the ribbon's sync glyph can tint and gate re-taps.
+  bool _manifoldSyncing = false;
   RemoteForge _forge = RemoteForge.unknown;
   String _viewerLogin = '';
 
@@ -562,14 +547,14 @@ class _BranchesPageState extends State<BranchesPage> {
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     if (engine == null) return null;
     final results = await Future.wait([
-      runGitProbe(repoPath, [
+      runGit(repoPath, [
         'diff', '-U3', '--no-color', '--patience', '--ignore-cr-at-eol',
       ]),
-      runGitProbe(repoPath, [
+      runGit(repoPath, [
         'diff', '--cached', '-U3', '--no-color', '--patience',
         '--ignore-cr-at-eol',
       ]),
-      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+      runGit(repoPath, ['log', '--format=%s', '-100']),
     ]);
     final unstaged =
         results[0].exitCode == 0 ? results[0].stdout.toString() : '';
@@ -699,7 +684,7 @@ class _BranchesPageState extends State<BranchesPage> {
     _prProvider = results[0] as RemotePrProvider;
     _issueProvider = results[1] as RemoteIssueProvider;
     _remoteStatus = await _prProvider!.status(repoPath);
-    if (_remoteStatus!.available && _viewerLogin.isEmpty) {
+    if (_remoteStatus!.canWrite && _viewerLogin.isEmpty) {
       _viewerLogin = await _prProvider!.whoami();
     }
   }
@@ -801,6 +786,9 @@ class _BranchesPageState extends State<BranchesPage> {
       MergeConflicted(:final resolved) =>
         resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
       MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      // A switch never produces this (it operates on the checked-out tree);
+      // handled for exhaustiveness so the guidance surfaces if it ever does.
+      MergeNeedsCheckout() => mergeOutcomeMessage(outcome, op: 'Switch'),
       MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
     };
     if (err != null) setState(() => _actionError = err);
@@ -828,8 +816,84 @@ class _BranchesPageState extends State<BranchesPage> {
         label: 'Rename…',
         onTap: () => _showRenameBranchDialog(repoPath, branch.name),
       ),
+      // Publish — only for local branches with no upstream. Pushes and
+      // sets the tracking ref in one shot so subsequent syncs "just work".
+      if (branch.upstream == null)
+        AppContextMenuItem(
+          icon: Icons.cloud_upload_outlined,
+          label: 'Publish',
+          onTap: () => _publishBranch(repoPath, branch.name),
+        ),
     ];
     return showAppContextMenu(ctx, globalPos, [ListMenuSection(items)]);
+  }
+
+  /// Push a local branch and set its upstream in one call, then refresh
+  /// the list so the row picks up its new tracking ref.
+  Future<void> _publishBranch(String repoPath, String name) async {
+    setState(() {
+      _actionRunning = true;
+      _actionError = null;
+    });
+    final r = await pushRemote(repoPath, branch: name, setUpstream: true);
+    if (!mounted) return;
+    setState(() => _actionRunning = false);
+    if (!r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Publish failed: ${r.error}')),
+      );
+      return;
+    }
+    await _load(repoPath);
+  }
+
+  /// Activate the worktree (desk) that holds a branch — the branches
+  /// lens' desk chip and the desk-aware delete error both route here.
+  Future<void> _openDeskForBranch(WorktreeData desk) async {
+    if (desk.path.isEmpty) return;
+    final err = await context
+        .read<RepositoryState>()
+        .setActivePath(desk.path, addToRecents: false);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't open desk: $err")),
+      );
+    }
+  }
+
+  /// Switch to the PRs lens and expand the given desk PR. Local desk PRs
+  /// surface in the PR list under their deskId, so that's the expand key.
+  void _openDeskPrInLens(DeskPr pr, String repoPath) {
+    setState(() {
+      _lens = _BranchesLens.prs;
+      _expandedPrNumber = pr.deskId;
+      _expandedIssueNumber = null;
+    });
+    if (_prs == null && !_prsLoading) {
+      _fetchPullRequests(repoPath);
+      _fetchIssues(repoPath);
+    }
+  }
+
+  /// Fetch + push the shared refs/manifold/* namespace. Desk PRs and
+  /// issues live in the same namespace, so one wire round-trip (via the
+  /// PR state) moves both; the issue view is re-derived in memory after.
+  Future<void> _syncManifold(String repoPath) async {
+    if (_manifoldSyncing) return;
+    setState(() => _manifoldSyncing = true);
+    final prErr =
+        await context.read<DeskPrState>().syncWithRemote(repoPath: repoPath);
+    if (!mounted) return;
+    if (prErr == null) {
+      await context.read<DeskIssueState>().refreshFor(repoPath);
+      if (!mounted) return;
+    }
+    setState(() => _manifoldSyncing = false);
+    if (prErr != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sync failed: $prErr')),
+      );
+    }
   }
 
   /// Rename dialog. Validates that the new name isn't empty, isn't the
@@ -954,6 +1018,29 @@ class _BranchesPageState extends State<BranchesPage> {
       // unmerged. Don't surface an error — tell the row to arm for force.
       if (!force && raw.toLowerCase().contains('not fully merged')) {
         return const _DeleteBranchOutcome.needsForce();
+      }
+      // Delete bounced because a desk still holds the branch. Raw git
+      // stderr ("... is already checked out at <path>") isn't actionable,
+      // so name the desk and offer a jump to it instead of removing it.
+      if (isWorktreeHoldsBranchError(raw)) {
+        final desk = resolveBranchLinks(
+          name,
+          desks: context.read<WorktreeState>().desks,
+          deskPrsByBranch: const {},
+        ).desk;
+        if (desk != null) {
+          final label = desk.path.split(RegExp(r'[\\/]')).last;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("'$name' is open in desk '$label'."),
+              action: SnackBarAction(
+                label: 'Open desk',
+                onPressed: () => _openDeskForBranch(desk),
+              ),
+            ),
+          );
+          return _DeleteBranchOutcome.error("open in desk '$label'");
+        }
       }
       return _DeleteBranchOutcome.error(_humanizeDeleteError(raw));
     }
@@ -1285,85 +1372,78 @@ class _BranchesPageState extends State<BranchesPage> {
   /// `.manifold/worktrees/pr-<n>` and switch the active path. The
   /// reviewer is now in the actual code with full filesystem + IDE.
   Future<void> _openPrAsDesk(String repoPath, PullRequestSummary pr) async {
-    final localRef = 'pr-${pr.number}';
-    final remoteRes = await primaryRemoteName(repoPath);
-    final remote = remoteRes.ok ? remoteRes.data : null;
-    if (remote == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text(
-            "Couldn't fetch PR: no remote configured.",
-          )),
-        );
-      }
-      return;
-    }
-    // If the local ref already exists (desk was closed but ref was kept,
-    // or the PR was previously opened), warn before force-overwriting.
-    // The reflog preserves the old tip, but the user has no UI path to
-    // it, so any local commits would be silently unreachable.
-    final refCheck = await Process.run(
-      'git',
-      ['rev-parse', '--verify', localRef],
-      workingDirectory: repoPath,
-    );
-    if (refCheck.exitCode == 0) {
-      if (!mounted) return;
-      final t = context.tokens;
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(
-            'Replace local commits?',
-            style: TextStyle(color: t.textStrong, fontSize: 14),
-          ),
-          content: Text(
-            '$localRef already exists locally. Updating it will replace any '
-            'local commits on that branch with the latest from the remote.',
-            style: TextStyle(color: t.textNormal, fontSize: 12),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              // Overwrites unreachable local commits — destructive.
-              child: Text('Update',
-                  style:
-                      TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
-    }
+    // Land the PR head on `pr-<n>` via the shared, clobber-safe path — no
+    // raw force-fetch, and no HEAD/worktree side effects (addDesk creates
+    // the worktree). The "no remote configured" case comes back as a
+    // PrCheckoutFailed, so there is nothing to resolve locally here.
+    final outcome = await fetchPrHeadToBranch(
+        repoPath, pr.number, _prProvider!.fetchRefspec(pr.number));
     if (!mounted) return;
-    final fetchRes = await Process.run(
-      'git',
-      // '+' forces the local ref to update even if non-fast-forward
-      // (force-pushed PR or ref exists from a previously closed desk).
-      ['fetch', remote, '+${_prProvider!.fetchRefspec(pr.number)}:$localRef'],
-      workingDirectory: repoPath,
-    );
-    if (fetchRes.exitCode != 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
+    switch (outcome) {
+      case PrCheckoutWouldClobber(:final localRef):
+        // Only reached when `pr-<n>` actually holds local commits not on the
+        // remote PR head — so this prompt is honest. The reflog preserves the
+        // old tip, but the user has no UI path to it.
+        final t = context.tokens;
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(
+              'Replace local commits?',
+              style: TextStyle(color: t.textStrong, fontSize: 14),
+            ),
+            content: Text(
+              '$localRef has local commits that are not on the remote PR '
+              'head. Updating it will replace them with the latest from the '
+              'remote.',
+              style: TextStyle(color: t.textNormal, fontSize: 12),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                // Overwrites unreachable local commits — destructive.
+                child: Text('Update',
+                    style: TextStyle(
+                        color: t.danger, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
         );
-      }
-      return;
+        if (ok != true || !mounted) return;
+        final forced = await fetchPrHeadToBranch(
+            repoPath, pr.number, _prProvider!.fetchRefspec(pr.number),
+            force: true);
+        if (!mounted) return;
+        switch (forced) {
+          case PrCheckoutOk():
+            break;
+          case PrCheckoutWouldClobber():
+            // Unreachable with force: true, but the switch stays exhaustive.
+            return;
+          case PrCheckoutFailed(:final error):
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Couldn't fetch PR: $error")),
+            );
+            return;
+        }
+      case PrCheckoutFailed(:final error):
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't fetch PR: $error")),
+        );
+        return;
+      case PrCheckoutOk():
+        break;
     }
     // The fetch above can take several seconds on slow networks. If the
     // widget got disposed while waiting, context.read on a deactivated
     // element throws `Looking up a deactivated widget's ancestor is
     // unsafe`. Gate both the state call and the snackbar on mounted.
     if (!mounted) return;
-    final err = await context.read<WorktreeState>().addDesk(localRef);
+    final err = await context.read<WorktreeState>().addDesk('pr-${pr.number}');
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Couldn't open as desk: $err")),
@@ -2716,17 +2796,61 @@ class _BranchesPageState extends State<BranchesPage> {
     await _fetchPullRequests(repoPath);
   }
 
-  Future<void> _checkoutPr(String repoPath, int number) async {
-    await _runPrAction(
-        repoPath, number, () => _prProvider!.checkout(repoPath, number),
-        refreshDetail: false);
+  Future<void> _checkoutPr(String repoPath, int number,
+      {bool force = false}) async {
+    if (_actionInFlight.contains(number)) return;
+    setState(() => _actionInFlight.add(number));
+    final outcome = await _prProvider!.checkout(repoPath, number, force: force);
     if (!mounted) return;
+    setState(() => _actionInFlight.remove(number));
+    switch (outcome) {
+      case PrCheckoutWouldClobber(:final localRef):
+        // The local pr-<n> carries commits the remote head can't reach;
+        // force-updating it would strand them with no UI path to the
+        // reflog. Confirm before clobbering, matching the workspace-shell
+        // idiom, then re-run with force.
+        final ok = await _confirmClobberPrRef(localRef);
+        if (ok == true && mounted) {
+          await _checkoutPr(repoPath, number, force: true);
+        }
+        return;
+      case PrCheckoutFailed(:final error):
+        setState(() => _actionError = error);
+        return;
+      case PrCheckoutOk():
+        break;
+    }
     // Spatial migration cue: pull a fresh branches list so the new
     // checkout reflects in the BRANCHES lens count + when the user
     // taps over to that lens, it's already there.
     await _load(repoPath);
     if (!mounted) return;
     await context.read<RepositoryState>().refreshStatus();
+  }
+
+  /// Confirm dialog for the would-clobber PR-ref case. Mirrors the
+  /// workspace-shell checkout guard's wording and Overwrite/Cancel shape.
+  Future<bool?> _confirmClobberPrRef(String localRef) {
+    final t = context.tokens;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Text(
+          'Overwrite $localRef with the latest from the remote?',
+          style: TextStyle(color: t.textNormal, fontSize: 12),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Overwrite', style: TextStyle(color: t.stateDeleted)),
+          ),
+        ],
+      ),
+    );
   }
 
   KeyEventResult _onLensKey(FocusNode node, KeyEvent event) {
@@ -2975,6 +3099,8 @@ class _BranchesPageState extends State<BranchesPage> {
             onToggleHelp: () =>
                 setState(() => _showKeyboardHelp = !_showKeyboardHelp),
             onImportPatch: () => _importPatch(repoPath),
+            onSyncManifold: () => _syncManifold(repoPath),
+            syncing: _manifoldSyncing,
           ),
           // Filter row — appears only on PR/Issue lenses; pills latch on
           // click. Search box on the same line.
@@ -3072,6 +3198,13 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Widget _buildBranchesBody(AppTokens t, String repoPath) {
+    // Watch the desk + desk-PR stores so the per-branch cross-link chips
+    // repaint when a desk opens/closes or a PR's state / issue links
+    // move. `byBranch` is replaced wholesale on every mutation, so the
+    // identity select fires precisely.
+    final desks = context.watch<WorktreeState>().desks;
+    final deskPrs =
+        context.select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch);
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // Left: branch list + tags
       Expanded(
@@ -3081,22 +3214,36 @@ class _BranchesPageState extends State<BranchesPage> {
           // Branch list (the lens ribbon already says "BRANCHES" —
           // a second "Repository Branches" header here was redundant
           // chrome).
-          ...(_branches.map((b) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: _BranchCard(
-                  branch: b,
-                  tokens: t,
-                  actionRunning: _actionRunning,
-                  onCheckout:
-                      b.current ? null : () => _checkout(repoPath, b.name),
-                  onDelete: b.current
-                      ? null
-                      : ({bool force = false}) =>
-                          _deleteBranch(repoPath, b.name, force: force),
-                  onSecondaryTap: (pos) =>
-                      _showBranchContextMenu(context, pos, b, repoPath),
-                ),
-              ))),
+          ...(_branches.map((b) {
+            final links = resolveBranchLinks(
+              b.name,
+              desks: desks,
+              deskPrsByBranch: deskPrs,
+            );
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: _BranchCard(
+                branch: b,
+                tokens: t,
+                actionRunning: _actionRunning,
+                onCheckout:
+                    b.current ? null : () => _checkout(repoPath, b.name),
+                onDelete: b.current
+                    ? null
+                    : ({bool force = false}) =>
+                        _deleteBranch(repoPath, b.name, force: force),
+                onSecondaryTap: (pos) =>
+                    _showBranchContextMenu(context, pos, b, repoPath),
+                links: links,
+                onOpenDesk: links.desk == null
+                    ? null
+                    : () => _openDeskForBranch(links.desk!),
+                onOpenPr: links.deskPr == null
+                    ? null
+                    : () => _openDeskPrInLens(links.deskPr!, repoPath),
+              ),
+            );
+          })),
 
           // Tags section
           if (_tags.isNotEmpty) ...[
@@ -3940,37 +4087,27 @@ class _BranchesPageState extends State<BranchesPage> {
   /// paths = conflicts; exit 0 with no paths = clean; anything else =
   /// treat as unknown (empty list) — the real merge will surface the
   /// underlying error with a clearer git message.
-  Future<_MergePreflight> _probeMergeConflicts(
+  Future<MergePreflight> _probeMergeConflicts(
     String repoPath, {
     required String baseRef,
     required String headRef,
   }) async {
     try {
-      final r = await Process.run(
-        'git',
+      // Route through the hardened exec layer (index.lock retry, semaphore,
+      // non-interactive env, lenient-UTF-8 decode) rather than a raw
+      // Process.run — this probe runs in the same worktree as a live merge
+      // and must not race the index or inherit a terminal.
+      final r = await runGit(
+        repoPath,
         ['merge-tree', '--write-tree', '--name-only', baseRef, headRef],
-        workingDirectory: repoPath,
       );
-      if (r.exitCode == 0) {
-        return const _MergePreflight(mergeable: true, conflictingPaths: []);
-      }
-      if (r.exitCode == 1) {
-        // Output: tree SHA on line 1, conflicting paths thereafter.
-        final lines = (r.stdout as String).split('\n');
-        final paths = <String>[
-          for (var i = 1; i < lines.length; i++)
-            if (lines[i].trim().isNotEmpty) lines[i].trim(),
-        ];
-        return _MergePreflight(mergeable: false, conflictingPaths: paths);
-      }
-      // Any other exit code means merge-tree --write-tree isn't supported
-      // (git < 2.38) or failed for an unrelated reason. Mark unavailable
-      // so the dialog can surface a notice instead of silently omitting
-      // the conflict check.
-      return const _MergePreflight(
-          mergeable: false, conflictingPaths: [], available: false);
+      return classifyMergeTreeProbe(
+        r.exitCode,
+        r.stdout as String,
+        r.stderr as String,
+      );
     } catch (_) {
-      return const _MergePreflight(
+      return const MergePreflight(
           mergeable: false, conflictingPaths: [], available: false);
     }
   }
@@ -4044,7 +4181,9 @@ class _BranchesPageState extends State<BranchesPage> {
               if (!preflight.available) ...[
                 const SizedBox(height: 10),
                 Text(
-                  'Conflict check unavailable — git 2.38+ required',
+                  preflight.versionUnsupported
+                      ? 'Conflict check unavailable — git 2.38+ required'
+                      : 'Conflict check unavailable',
                   style: TextStyle(color: t.textMuted, fontSize: 10),
                 ),
               ],
@@ -4123,6 +4262,9 @@ class _BranchesPageState extends State<BranchesPage> {
       baseRef: desk.branch!,
       method: method,
       squashSubject: 'Merge: ${pr.title} (#${pr.number})',
+      // The picker dialog above already surfaced this exact conflict set;
+      // re-probing here would just double-prompt.
+      skipConflictPreflight: true,
     );
   }
 
@@ -4175,179 +4317,72 @@ class _BranchesPageState extends State<BranchesPage> {
   /// [branch] is the PR's head ref. [baseRef] is the branch we're
   /// merging INTO — typically the target worktree's branch.
   /// [squashSubject] threads a nicer commit message through the squash
-  /// path. When null, falls back to the historical `Merge local PR
-  /// ($branch)` subject so existing call sites are unchanged.
-  /// On success updates DeskPrState (PR → MERGED) and refreshes the
-  /// active repo status. Every path is guarded against the widget
-  /// being disposed mid-merge — the sequence awaits several git
-  /// subprocesses in the rebase branch and we don't want to touch
-  /// `context` after a deactivation.
+  /// path. When null, [mergeBranchIntoBase] falls back to a `Merge local PR
+  /// ($branch)` subject.
+  ///
+  /// Routing, the dirty-tree check, the zero-checkout ref merge, and the
+  /// verified-MERGED gate all live in [resolveLocalPrMerge] /
+  /// [mergeBranchIntoBase] — this wrapper only renders the outcome and
+  /// records the lifecycle transition once git confirms the merge landed. The
+  /// merge NEVER switches [mergeRepoPath]'s (or any worktree's) HEAD: if the
+  /// base is checked out somewhere the merge runs there, otherwise it advances
+  /// the ref with no working tree touched. Every path is guarded against the
+  /// widget being disposed mid-merge — the sequence awaits several git
+  /// subprocesses and must not touch `context` after a deactivation.
   Future<void> _mergeLocalPr({
     required String mergeRepoPath,
     required String branch,
     required String baseRef,
     required String method,
     String? squashSubject,
+    bool skipConflictPreflight = false,
   }) async {
-    // Mirror the dirty-target guard that _showMergeIntoDeskMenu applies
-    // before opening its dialog. The PR-row's onMerge callback dispatches
-    // here without the preflight, so we do it centrally so all callers
-    // are covered. git refuses to merge into a dirty worktree anyway, but
-    // a pre-check surfaces a cleaner message than a raw stderr dump.
-    final targetDesk = context.read<WorktreeState>().desks.firstWhere(
-          (d) => d.path == mergeRepoPath,
-          orElse: () => const WorktreeData(
-            path: '',
-            head: '',
-            branch: null,
-            isMain: false,
-            isDetached: false,
-            isLocked: false,
-            dirtyFileCount: 0,
-          ),
-        );
-    if (targetDesk.dirtyFileCount > 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-            '${targetDesk.branch ?? 'target'} has ${targetDesk.dirtyFileCount} '
-            'uncommitted change${targetDesk.dirtyFileCount == 1 ? '' : 's'} — '
-            'commit or stash first.',
-          )),
-        );
-      }
-      return;
-    }
-    if (baseRef == branch) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-            "PR base and head are the same branch ($branch) — nothing to merge.",
-          )),
-        );
-      }
-      return;
-    }
-    // Conflict preflight — run merge-tree before touching the worktree.
-    // _showMergeIntoDeskMenu embeds this in its dialog before the user
-    // even picks a method. This call site (PR row → main merge) selects
-    // the method first, so we probe here and ask for confirmation when
-    // conflicts are found. git will refuse to apply conflicting merges
-    // anyway; the dialog just surfaces the specific files upfront instead
-    // of dumping raw stderr after the attempt.
-    final preflight = await _probeMergeConflicts(
-      mergeRepoPath,
-      baseRef: baseRef,
-      headRef: branch,
-    );
-    if (!mounted) return;
-    if (preflight.conflictingPaths.isNotEmpty) {
-      final t = context.tokens;
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-              title: Text(
-            'Conflicts detected',
-            style: TextStyle(color: t.textStrong, fontSize: 14),
-          ),
-          content: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '${preflight.conflictingPaths.length} '
-                'file${preflight.conflictingPaths.length == 1 ? '' : 's'} '
-                'will conflict. Resolve them after merging, or cancel.',
-                style: TextStyle(color: t.textNormal, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              for (final p in preflight.conflictingPaths.take(6))
-                Text(p,
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 10,
-                      fontFamily: AppFonts.mono,
-                    )),
-              if (preflight.conflictingPaths.length > 6)
-                Text(
-                  '+${preflight.conflictingPaths.length - 6} more',
-                  style: TextStyle(color: t.textMuted, fontSize: 10),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              // Proceeding writes conflict markers into the worktree — destructive.
-              child: Text('Merge anyway',
-                  style:
-                      TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
+    // Pre-merge conflict warning. A clean prediction is silent; a predicted
+    // conflict blocks on an explicit confirm so the user isn't dropped into
+    // the conflict editor unwarned. Callers that already surfaced the
+    // conflict set (the "Merge into desk" picker) pass
+    // skipConflictPreflight to avoid a second prompt.
+    if (!skipConflictPreflight) {
+      final preflight = await _probeMergeConflicts(
+        mergeRepoPath,
+        baseRef: baseRef,
+        headRef: branch,
       );
-      if (proceed != true || !mounted) return;
+      if (!mounted) return;
+      if (preflight.conflictingPaths.isNotEmpty) {
+        final proceed = await _confirmMergeConflicts(preflight);
+        if (proceed != true || !mounted) return;
+      }
     }
-    // The git engine — `applyBranchToBase` — lives in backend/git.dart
-    // so this widget, the desk context menu, and any future caller
-    // share one implementation. This wrapper handles the UI side:
-    // surfacing errors as snackbars, then (on success) updating the
-    // DeskPr metadata + repository status so the row reflects MERGED.
     final mergeMethod = switch (method.toLowerCase()) {
       'rebase' => BranchMergeMethod.rebase,
       'squash' => BranchMergeMethod.squash,
       _ => BranchMergeMethod.mergeCommit,
     };
-    final result = await applyBranchToBase(
-      mainRepoPath: mergeRepoPath,
+    final outcome = await resolveLocalPrMerge(
+      context,
+      repoPath: mergeRepoPath,
       branch: branch,
       baseRef: baseRef,
       method: mergeMethod,
-      // Local PR head branches are always checked out in a desk worktree.
-      // git refuses branch -d on a branch checked out elsewhere; the desk
-      // must be closed before the branch can be removed. Never true here.
-      deleteBranch: false,
       squashSubject: squashSubject,
     );
     if (!mounted) return;
-    if (!result.ok) {
-      // A merge-commit that hit conflicts leaves MERGE_HEAD + UU markers in
-      // the worktree — route them into the same editor pull and the patch
-      // preview use, instead of dead-ending on the raw stderr. Only fall
-      // through to the MERGED bookkeeping when the user actually resolved
-      // (and we committed) the merge; otherwise surface the original error.
-      final resolved =
-          await resolveNativeMergeConflicts(context, mergeRepoPath);
-      if (!resolved) {
-        // A still-in-progress merge means the text conflicts resolved but
-        // unmergeable UU (binary/rename) remain — paused, not failed.
-        final paused = (await inProgressOperation(mergeRepoPath)) != null;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(paused
-                ? 'Merge paused — finish the remaining conflicts on the '
-                    'Changes page.'
-                : (result.error ?? 'Merge failed')),
-          ));
-        }
-        return;
-      }
-      if (!mounted) return;
+    // MERGED is recorded ONLY when git verified the merge landed (the engine
+    // proves it with is-ancestor / cherry before returning MergeClean) or the
+    // conflicts were fully resolved and committed in the editor — never
+    // trusted from a bare success path.
+    final landed = outcome is MergeClean ||
+        (outcome is MergeConflicted && outcome.resolved);
+    if (!landed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Merge'))),
+      );
+      return;
     }
-    // `mergeRepoPath` may be the main worktree or a desk worktree.
-    // DeskPrState.setStateFor resolves PR records via
-    // refs/manifold/desks/*, which live in the shared .git directory and
-    // are therefore reachable from any worktree path. This works correctly
-    // today because all worktrees in a repo share the same object store
-    // and ref namespace — if that invariant ever breaks (detached .git
-    // configurations), the audit trail would need to be written via the
-    // main worktree path instead.
+    // `mergeRepoPath` may be any worktree; DeskPrState.setStateFor resolves PR
+    // records via refs/manifold/desks/*, shared across all worktrees of the
+    // repo, so the audit trail is reachable from any of them.
     await context.read<DeskPrState>().setStateFor(
           repoPath: mergeRepoPath,
           branch: branch,
@@ -4356,6 +4391,77 @@ class _BranchesPageState extends State<BranchesPage> {
     if (mounted) {
       await context.read<RepositoryState>().refreshStatus();
     }
+  }
+
+  /// Blocking "N files will conflict — merge anyway?" confirm. Uses the same
+  /// conflict-panel styling as the "Merge into desk" picker so the two merge
+  /// entry points read alike. Returns true when the user chooses to proceed.
+  Future<bool?> _confirmMergeConflicts(MergePreflight preflight) {
+    final t = context.tokens;
+    final paths = preflight.conflictingPaths;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: t.stateConflicted.withValues(alpha: 0.08),
+                border: Border.all(
+                    color: t.stateConflicted.withValues(alpha: 0.35)),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'WILL CONFLICT · ${paths.length} '
+                    'file${paths.length == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: t.stateConflicted,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  for (final p in paths.take(6))
+                    Text(
+                      p,
+                      style: TextStyle(
+                        color: t.textNormal,
+                        fontSize: 10,
+                        fontFamily: AppFonts.mono,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  if (paths.length > 6)
+                    Text(
+                      '+${paths.length - 6} more',
+                      style: TextStyle(color: t.textMuted, fontSize: 10),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Merge anyway',
+                style: TextStyle(color: t.stateConflicted)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildIssuesBody(AppTokens t, String repoPath) {
@@ -4544,6 +4650,45 @@ class _BranchesPageState extends State<BranchesPage> {
     bool isLocal,
     String repoPath,
   ) {
+    // Resolve the local twin (if any) so remote-link actions gate on the
+    // issue's actual remoteNumber rather than the summary shape.
+    final local =
+        isLocal ? context.read<DeskIssueState>().issueFor(issue.number) : null;
+    final hasRemoteLink = local?.remoteNumber != null;
+    final forgeUsable = _remoteStatus?.canWrite ?? false;
+
+    final remoteSection = <AppContextMenuItem>[
+      // Local, not yet on the forge → promote (needs a usable forge).
+      if (isLocal && !hasRemoteLink && forgeUsable)
+        AppContextMenuItem(
+          icon: Icons.cloud_upload_outlined,
+          label: 'Promote to remote',
+          onTap: () => _promoteIssueToRemote(repoPath, issue.number),
+        ),
+      // Local + already linked → two-way sync with the forge. Push is a
+      // write (needs the validated token); pull is a read and works
+      // anonymously on forges that allow it.
+      if (isLocal && hasRemoteLink && forgeUsable)
+        AppContextMenuItem(
+          icon: Icons.north_outlined,
+          label: 'Push to remote',
+          onTap: () => _pushIssueToRemote(repoPath, issue.number),
+        ),
+      if (isLocal && hasRemoteLink && (_remoteStatus?.available ?? false))
+        AppContextMenuItem(
+          icon: Icons.south_outlined,
+          label: 'Pull from remote',
+          onTap: () => _pullIssueFromRemote(repoPath, issue.number),
+        ),
+      // Pure-remote row → import a local twin.
+      if (!isLocal)
+        AppContextMenuItem(
+          icon: Icons.download_outlined,
+          label: 'Import',
+          onTap: () => _importRemoteIssue(repoPath, issue),
+        ),
+    ];
+
     showAppContextMenu(context, pos, [
       ListMenuSection([
         AppContextMenuItem(
@@ -4552,7 +4697,110 @@ class _BranchesPageState extends State<BranchesPage> {
           onTap: () => _showLinkToPrPickerFromIssue(repoPath, issue, isLocal),
         ),
       ]),
+      if (remoteSection.isNotEmpty) ListMenuSection(remoteSection),
+      if (isLocal)
+        ListMenuSection([
+          AppContextMenuItem(
+            icon: Icons.delete_outline,
+            label: 'Abandon',
+            destructive: true,
+            onTap: () => _abandonLocalIssue(repoPath, issue.number),
+          ),
+        ]),
     ]);
+  }
+
+  Future<void> _promoteIssueToRemote(String repoPath, int id) async {
+    final err = await context
+        .read<DeskIssueState>()
+        .promoteToRemote(repoPath: repoPath, id: id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(err ?? 'Issue promoted to remote.'),
+    ));
+  }
+
+  Future<void> _pushIssueToRemote(String repoPath, int id) async {
+    final err = await context
+        .read<DeskIssueState>()
+        .pushToRemote(repoPath: repoPath, id: id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(err ?? 'Pushed to remote.'),
+    ));
+  }
+
+  Future<void> _pullIssueFromRemote(String repoPath, int id) async {
+    final err = await context
+        .read<DeskIssueState>()
+        .syncFromRemote(repoPath: repoPath, id: id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(err ?? 'Pulled from remote.'),
+    ));
+  }
+
+  Future<void> _importRemoteIssue(String repoPath, IssueSummary issue) async {
+    final err = await context.read<DeskIssueState>().importFromRemote(
+          repoPath: repoPath,
+          remote: issue,
+          detail: _issueDetails[issue.number],
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(err ?? 'Imported #${issue.number} locally.'),
+    ));
+  }
+
+  Future<void> _abandonLocalIssue(String repoPath, int id) async {
+    // Abandon hard-deletes the issue's ref — confirm first (PR abandon
+    // is a soft state change; this is not, so it earns a gate).
+    final ok = await _confirmDestructive(
+      title: 'Abandon issue',
+      message:
+          'Permanently remove local issue #$id? This deletes its ref and '
+          "can't be undone.",
+      confirmLabel: 'Abandon',
+    );
+    if (!ok || !mounted) return;
+    final err =
+        await context.read<DeskIssueState>().abandon(repoPath: repoPath, id: id);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't abandon: $err")),
+      );
+    }
+  }
+
+  /// Shared destructive-action confirm. Mirrors the settings page's
+  /// clear-data dialog: danger-tiered title + a single destructive verb.
+  Future<bool> _confirmDestructive({
+    required String title,
+    required String message,
+    required String confirmLabel,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          title: Text(title,
+              style: TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
+          content: Text(message, style: TextStyle(color: t.textNormal)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(confirmLabel, style: TextStyle(color: t.danger)),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
   }
 
   Future<void> _commentOnLocalIssue(
@@ -4612,6 +4860,8 @@ class _LensRibbon extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onToggleHelp;
   final VoidCallback? onImportPatch;
+  final VoidCallback? onSyncManifold;
+  final bool syncing;
 
   const _LensRibbon({
     required this.active,
@@ -4623,6 +4873,8 @@ class _LensRibbon extends StatelessWidget {
     required this.onRefresh,
     required this.onToggleHelp,
     this.onImportPatch,
+    this.onSyncManifold,
+    this.syncing = false,
   });
 
   @override
@@ -4695,6 +4947,34 @@ class _LensRibbon extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.3,
                         )),
+                  ),
+                ),
+              ),
+            // Manifold sync — fetch + push refs/manifold/* (desk PRs and
+            // issues share one namespace, so one affordance moves both).
+            if (active == _BranchesLens.prs && onSyncManifold != null)
+              MouseRegion(
+                cursor: syncing
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: syncing ? null : onSyncManifold,
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    child: AnimatedDefaultTextStyle(
+                      duration: context.motion(AppMotion.snap),
+                      curve: AppMotion.snapCurve,
+                      style: TextStyle(
+                        color: syncing ? t.accentBright : t.textMuted,
+                        fontSize: 11,
+                        fontFamily: AppFonts.mono,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                      child: const Text('⇅ sync'),
+                    ),
                   ),
                 ),
               ),
@@ -9900,11 +10180,113 @@ class _DeleteError extends _DeleteBranchOutcome {
   const _DeleteError(this.message);
 }
 
+/// Resolved cross-links for a single branch: an open desk (worktree),
+/// a desk PR, and how many issues that PR links. Seeds the branch-card
+/// indicator chips and the desk-aware delete error. Public so the pure
+/// resolver below is unit-testable.
+class BranchLinks {
+  final WorktreeData? desk;
+  final DeskPr? deskPr;
+  final int issueCount;
+  const BranchLinks({this.desk, this.deskPr, this.issueCount = 0});
+  bool get hasAny => desk != null || deskPr != null || issueCount > 0;
+}
+
+/// Pure resolver: branch name → its desk / desk-PR / linked-issue count.
+/// Kept free of BuildContext so it's reusable and testable in isolation.
+/// Issue count folds both local and remote linkage on the PR.
+BranchLinks resolveBranchLinks(
+  String branch, {
+  required List<WorktreeData> desks,
+  required Map<String, DeskPr> deskPrsByBranch,
+}) {
+  WorktreeData? desk;
+  for (final d in desks) {
+    if (d.branch == branch && d.path.isNotEmpty) {
+      desk = d;
+      break;
+    }
+  }
+  final pr = deskPrsByBranch[branch];
+  final issueCount =
+      pr == null ? 0 : pr.linkedIssues.length + pr.linkedRemoteIssues.length;
+  return BranchLinks(desk: desk, deskPr: pr, issueCount: issueCount);
+}
+
+/// True when a branch delete bounced because a worktree (desk) still
+/// holds the branch. Git phrases this as "... is already checked out at
+/// <path>". Detecting it lets the UI offer a jump-to-desk instead of
+/// dumping raw stderr the user can't act on.
+bool isWorktreeHoldsBranchError(String rawStderr) =>
+    rawStderr.toLowerCase().contains('checked out at');
+
+/// Compact, tappable indicator chip for a branch's cross-links (open
+/// desk / desk PR / linked issues). Subtle by default — mirrors the
+/// _IssueLinkChip idiom so the branches lens keeps its restrained feel.
+class _BranchCrossLinkChip extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _BranchCrossLinkChip({
+    required this.tokens,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+  @override
+  State<_BranchCrossLinkChip> createState() => _BranchCrossLinkChipState();
+}
+
+class _BranchCrossLinkChipState extends State<_BranchCrossLinkChip> {
+  bool _hovered = false;
+  @override
+  Widget build(BuildContext context) {
+    final shader = context.surfaceShader;
+    final c = widget.color;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(shader.duration),
+          curve: shader.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: _hovered ? 0.16 : 0.07),
+            borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
+            border: Border.all(color: c.withValues(alpha: 0.4), width: 0.8),
+          ),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: c,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BranchCard extends StatefulWidget {
   final BranchInfo branch;
   final AppTokens tokens;
   final bool actionRunning;
   final VoidCallback? onCheckout;
+
+  /// Resolved cross-links (open desk / desk PR / linked issues). When
+  /// present and non-empty, the card renders compact indicator chips
+  /// that jump to the relevant surface on tap.
+  final BranchLinks? links;
+  final VoidCallback? onOpenDesk;
+  final VoidCallback? onOpenPr;
 
   /// Returns the outcome so the card can morph its trash button into
   /// a force-confirm affordance for unmerged branches, or render an
@@ -9921,7 +10303,10 @@ class _BranchCard extends StatefulWidget {
       required this.actionRunning,
       this.onCheckout,
       this.onDelete,
-      this.onSecondaryTap});
+      this.onSecondaryTap,
+      this.links,
+      this.onOpenDesk,
+      this.onOpenPr});
   @override
   State<_BranchCard> createState() => _BranchCardState();
 }
@@ -9964,6 +10349,52 @@ class _BranchCardState extends State<_BranchCard> {
     _disarmTimer?.cancel();
     if (!_armedForForce) return;
     setState(() => _armedForForce = false);
+  }
+
+  /// Renders the cross-link chip row. Only called when `links.hasAny`.
+  Widget _buildLinkChips(AppTokens t) {
+    final links = widget.links!;
+    final pr = links.deskPr;
+    Color prColor() {
+      switch (pr?.state) {
+        case 'MERGED':
+          return t.stateAdded;
+        case 'CLOSED':
+          return t.stateDeleted;
+        default:
+          return t.accentBright;
+      }
+    }
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        if (links.desk != null && widget.onOpenDesk != null)
+          _BranchCrossLinkChip(
+            tokens: t,
+            label: 'desk',
+            color: t.accentBright,
+            onTap: widget.onOpenDesk!,
+          ),
+        if (pr != null && widget.onOpenPr != null)
+          _BranchCrossLinkChip(
+            tokens: t,
+            label: pr.isDraft && pr.state == 'OPEN' ? 'PR · draft' : 'PR',
+            color: prColor(),
+            onTap: widget.onOpenPr!,
+          ),
+        if (links.issueCount > 0 && widget.onOpenPr != null)
+          _BranchCrossLinkChip(
+            tokens: t,
+            label: links.issueCount == 1
+                ? '1 issue'
+                : '${links.issueCount} issues',
+            color: t.textMuted,
+            onTap: widget.onOpenPr!,
+          ),
+      ],
+    );
   }
 
   Future<void> _handleDelete({bool force = false}) async {
@@ -10122,6 +10553,15 @@ class _BranchCardState extends State<_BranchCard> {
                             ),
                           ],
                         ]),
+                        // Cross-link chips — open desk / desk PR / linked
+                        // issues. Tapping jumps to the relevant surface.
+                        if (widget.links?.hasAny ?? false) ...[
+                          const SizedBox(height: 5),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 20),
+                            child: _buildLinkChips(t),
+                          ),
+                        ],
                         if (b.upstream != null) ...[
                           const SizedBox(height: 4),
                           Padding(

@@ -109,7 +109,7 @@ Future<Map<String, dynamic>> _deadCode(
   ManifoldBridgeContext ctx,
 ) async {
   final repo = _requireRepo(params, ctx);
-  final ls = await Process.run('git', ['ls-files'], workingDirectory: repo);
+  final ls = await runGit(repo, ['ls-files']);
   if (ls.exitCode != 0) {
     // Throw, don't return {'error': …}: the server only lifts a *thrown* error
     // to the JSON-RPC top level the CLI checks; a returned error map hides under
@@ -437,9 +437,9 @@ Future<Map<String, dynamic>> _diff(
     if (!r.ok) return {'error': r.error};
     return {'file': file, 'diff': r.data};
   }
-  final unstaged = await runGitProbe(
+  final unstaged = await runGit(
       repo, ['diff', '--no-color', '--patience', '--ignore-cr-at-eol']);
-  final staged = await runGitProbe(repo,
+  final staged = await runGit(repo,
       ['diff', '--cached', '--no-color', '--patience', '--ignore-cr-at-eol']);
   return {
     'unstaged': unstaged.exitCode == 0 ? unstaged.stdout.toString() : '',
@@ -650,7 +650,7 @@ Future<Map<String, dynamic>> _recent(
   }
 
   // Run git log touching any file in the neighborhood.
-  final r = await runGitProbe(repo, [
+  final r = await runGit(repo, [
     'log',
     '--format=%H|%ae|%s|%aI',
     '-$limit',
@@ -794,7 +794,7 @@ Future<Map<String, dynamic>> _whoKnows(
   if (file == null || file.isEmpty) {
     throw ArgumentError('file required. Usage: who-knows --file <path>');
   }
-  final r = await runGitProbe(
+  final r = await runGit(
       repo, ['log', '--follow', '--format=%ae', '-50', '--', file]);
   if (r.exitCode != 0) return {'file': file, 'experts': <Map<String, dynamic>>[]};
   final counts = <String, int>{};
@@ -873,7 +873,7 @@ Future<Map<String, dynamic>> _dream(
 ) async {
   final repo = _requireRepo(params, ctx);
   final engine = await _awaitEngine(repo, ctx);
-  final subjects = await runGitProbe(repo, ['log', '--format=%s', '-100']);
+  final subjects = await runGit(repo, ['log', '--format=%s', '-100']);
   final subjectList = subjects.exitCode == 0
       ? subjects.stdout
           .toString()
@@ -883,9 +883,9 @@ Future<Map<String, dynamic>> _dream(
           .toList()
       : <String>[];
 
-  final unstaged = await runGitProbe(
+  final unstaged = await runGit(
       repo, ['diff', '--no-color', '--patience', '-U3']);
-  final staged = await runGitProbe(
+  final staged = await runGit(
       repo, ['diff', '--cached', '--no-color', '--patience', '-U3']);
   final diffText = [
     if (staged.exitCode == 0) staged.stdout.toString(),

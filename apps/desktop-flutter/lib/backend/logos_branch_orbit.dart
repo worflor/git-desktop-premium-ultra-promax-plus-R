@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'engram_fit.dart' show BranchOrbit, computeBranchOrbit;
 import 'file_coupling.dart' show logCommitSeparator;
-import 'git.dart' show runGitProbe;
+import 'git.dart' show runGit;
 import 'lru_cache.dart';
 
 final LruCache<String, _BranchOrbitCacheEntry> _branchOrbitCache =
@@ -42,7 +42,7 @@ Future<BranchOrbit?> _probeBranchOrbitImpl(
   DateTime now,
 ) async {
   try {
-    final logResult = await runGitProbe(repositoryPath, [
+    final logResult = await runGit(repositoryPath, [
       'log',
       '-n',
       '30',

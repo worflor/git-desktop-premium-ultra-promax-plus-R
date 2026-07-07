@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show compute;
 
+import 'gh.dart' show runForgeCli;
 import 'git_result.dart';
 import 'remote_types.dart';
-import '../diagnostics/diagnostics_state.dart';
 import '../features/diff/diff_models.dart';
 
 /// Thin wrapper around the GitLab CLI (`glab`). Same pattern as gh.dart:
@@ -617,38 +617,5 @@ int _countLines(String diff, String prefix) {
   return count;
 }
 
-Future<ProcessResult> _glab(String repo, List<String> args) async {
-  final commandLabel = 'glab.${args.isNotEmpty ? args.first : 'unknown'}';
-  final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(
-    type: 'start',
-    command: commandLabel,
-  );
-  try {
-    final result = await Process.run(
-      'glab',
-      args,
-      workingDirectory: repo,
-      runInShell: false,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    stopwatch.stop();
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end',
-      command: commandLabel,
-      durationMs: stopwatch.elapsedMicroseconds / 1000,
-      errorCode: result.exitCode == 0 ? null : 'exit.${result.exitCode}',
-    );
-    return result;
-  } catch (e) {
-    stopwatch.stop();
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end',
-      command: commandLabel,
-      durationMs: stopwatch.elapsedMicroseconds / 1000,
-      errorCode: 'process.exception',
-    );
-    rethrow;
-  }
-}
+Future<ProcessResult> _glab(String repo, List<String> args) =>
+    runForgeCli('glab', repo, args);

@@ -19,7 +19,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
-import 'git.dart' show runGitProbe;
+import 'git.dart' show runGit;
 
 /// A single tracked, text-decoded, non-binary blob.
 class RepoBlob {
@@ -133,7 +133,7 @@ Future<RepoBlobWalkResult> walkRepoBlobs(
   String repoPath, {
   RepoBlobWalkOptions options = RepoBlobWalkOptions.defaults,
 }) async {
-  final lsProbe = await runGitProbe(repoPath, ['ls-files']);
+  final lsProbe = await runGit(repoPath, ['ls-files']);
   if (lsProbe.exitCode != 0) return RepoBlobWalkResult.empty;
   final allPaths = LineSplitter.split(lsProbe.stdout.toString())
       .where((l) => l.isNotEmpty)
@@ -159,7 +159,7 @@ Future<RepoBlobWalkResult> walkRepoBlobsNullDelimited(
   String repoPath, {
   RepoBlobWalkOptions options = RepoBlobWalkOptions.defaults,
 }) async {
-  final probe = await runGitProbe(repoPath, const ['ls-files', '-z']);
+  final probe = await runGit(repoPath, const ['ls-files', '-z']);
   if (probe.exitCode != 0) return RepoBlobWalkResult.empty;
   final raw = probe.stdout is List<int>
       ? utf8.decode(probe.stdout as List<int>, allowMalformed: true)

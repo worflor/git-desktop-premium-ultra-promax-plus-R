@@ -1324,7 +1324,11 @@ class _TimelineStripState extends State<_TimelineStrip>
   void didUpdateWidget(_TimelineStrip old) {
     super.didUpdateWidget(old);
     final newSig = _signatureOf(widget.commits);
-    final trunkChanged = old.trunkHashes.length != widget.trunkHashes.length;
+    // Membership equality, not length: lane assignment keys off which
+    // hashes are in the trunk set, so a same-cardinality swap (rebase,
+    // force-push, branch switch between equal-length trunks) must also
+    // invalidate the layout or lanes/edges/preview anchoring go stale.
+    final trunkChanged = !setEquals(old.trunkHashes, widget.trunkHashes);
     if (_signatureOf(old.commits) != newSig || trunkChanged) {
       // Real commits or trunk set changed → full layout invalidation.
       _layout = null;

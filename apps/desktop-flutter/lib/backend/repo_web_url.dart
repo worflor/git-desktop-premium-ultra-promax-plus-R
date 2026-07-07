@@ -1,5 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
+import 'git.dart' as git;
 
 // Resolves the web URL of a git repository from its `origin` remote
 // for the project context menu's "Open on <Host>" action. Companion
@@ -40,18 +39,17 @@ class RepoWebInfo {
   const RepoWebInfo({required this.label, required this.webUrl});
 }
 
-/// Resolve the repo at [repoPath]'s `origin` remote to a web URL +
-/// host label. Returns null when there's no origin or the URL can't
-/// be normalised to a clean https form.
+/// Resolve the repo at [repoPath]'s primary remote to a web URL + host
+/// label. Uses the primary-remote rule (origin when present, else the
+/// sole/first remote) rather than assuming `origin`, so a fork whose forge
+/// remote is named `upstream` still opens; returns null when there's no
+/// remote or the URL can't be normalised to a clean https form.
 Future<RepoWebInfo?> resolveRepoWebInfo(String repoPath) async {
   try {
-    final r = await Process.run(
-      'git',
-      ['remote', 'get-url', 'origin'],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+    final remoteRes = await git.primaryRemoteName(repoPath);
+    final remote = remoteRes.ok ? remoteRes.data : null;
+    if (remote == null) return null;
+    final r = await git.runGit(repoPath, ['remote', 'get-url', remote]);
     if (r.exitCode != 0) return null;
     final url = (r.stdout as String).trim();
     if (url.isEmpty) return null;

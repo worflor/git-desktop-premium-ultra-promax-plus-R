@@ -54,7 +54,13 @@ import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
 import '../backend/desk_issue.dart';
 import '../backend/remote_issue_provider.dart' show IssueSummary;
-import '../backend/remote_pr_provider.dart' show detectPrProvider;
+import '../backend/remote_pr_provider.dart'
+    show
+        detectPrProvider,
+        fetchPrHeadToBranch,
+        PrCheckoutOk,
+        PrCheckoutWouldClobber,
+        PrCheckoutFailed;
 import 'desk_drop_payload.dart';
 import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
@@ -1478,52 +1484,10 @@ class _DeskRow extends StatelessWidget {
             .setActivePath(existing.path, addToRecents: false);
         return;
       }
-      final remoteRes = await primaryRemoteName(activeRepoPath!);
-      final remote = remoteRes.ok ? remoteRes.data : null;
-      if (remote == null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text(
-              "Couldn't fetch PR: no remote configured.",
-            )),
-          );
-        }
-        return;
-      }
-      // If the local ref already exists without a live worktree, confirm
-      // before force-overwriting — any local commits on that branch would
-      // become unreachable with no UI path to the reflog.
-      final refCheck = await Process.run(
-        'git',
-        ['rev-parse', '--verify', localRef],
-        workingDirectory: activeRepoPath!,
-      );
-      if (refCheck.exitCode == 0 && context.mounted) {
-        final t = context.tokens;
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            content: Text(
-              'Overwrite $localRef with the latest from the remote?',
-              style: TextStyle(color: t.textNormal, fontSize: 12),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: Text('Cancel', style: TextStyle(color: t.textMuted)),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: Text('Overwrite',
-                    style: TextStyle(color: t.stateDeleted)),
-              ),
-            ],
-          ),
-        );
-        if (ok != true) return;
-      }
-      if (!context.mounted) return;
+      // Detect the forge to get the fetch refspec. The clobber-safe landing
+      // (remote resolution, fetch, guarded branch move) lives in the shared
+      // fetchPrHeadToBranch — the "no remote configured" case comes back as a
+      // PrCheckoutFailed, so there is nothing to resolve locally here.
       late final String refspec;
       try {
         final prProvider = await detectPrProvider(activeRepoPath!);
@@ -1544,20 +1508,59 @@ class _DeskRow extends StatelessWidget {
         }
         return;
       }
-      final fetchRes = await Process.run(
-        'git',
-        ['fetch', remote, '+$refspec:$localRef'],
-        workingDirectory: activeRepoPath!,
-      );
-      if (fetchRes.exitCode != 0) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text(
-                    "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
+      final outcome =
+          await fetchPrHeadToBranch(activeRepoPath!, prN, refspec);
+      if (!context.mounted) return;
+      switch (outcome) {
+        case PrCheckoutWouldClobber(:final localRef):
+          // `pr-<n>` holds local commits not on the remote PR head. Confirm
+          // before force-updating — any local commits become unreachable with
+          // no UI path to the reflog.
+          final t = context.tokens;
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              content: Text(
+                'Overwrite $localRef with the latest from the remote?',
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: Text('Overwrite',
+                      style: TextStyle(color: t.stateDeleted)),
+                ),
+              ],
+            ),
           );
-        }
-        return;
+          if (ok != true || !context.mounted) return;
+          final forced =
+              await fetchPrHeadToBranch(activeRepoPath!, prN, refspec,
+                  force: true);
+          if (!context.mounted) return;
+          switch (forced) {
+            case PrCheckoutOk():
+              break;
+            case PrCheckoutWouldClobber():
+              // Unreachable with force: true; the switch stays exhaustive.
+              return;
+            case PrCheckoutFailed(:final error):
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Couldn't fetch PR: $error")),
+              );
+              return;
+          }
+        case PrCheckoutFailed(:final error):
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Couldn't fetch PR: $error")),
+          );
+          return;
+        case PrCheckoutOk():
+          break;
       }
       final err = await worktreeState.addDesk(localRef);
       if (err != null && context.mounted) {
@@ -1586,7 +1589,7 @@ class _DeskRow extends StatelessWidget {
     // Resolve main worktree path so we can exclude it from "Apply to
     // main" even in the edge case where a desk's path resolves to the
     // main worktree but isMain is false (unusual rebuilt state).
-    // Without this guard, applyBranchToBase would merge a branch into
+    // Without this guard the merge engine would rebase a branch onto
     // itself and the PR lifecycle would still transition to MERGED.
     String? mainPath;
     for (final d in worktreeState.desks) {
@@ -1696,10 +1699,10 @@ class _DeskRow extends StatelessWidget {
   ///      page's `dirtyFileCount > 0` guard).
   ///   2. Auto-promote the desk to a PR if it isn't one yet, so the
   ///      MERGED state has a record to land on.
-  ///   3. Run the shared `applyBranchToBase` engine (rebase strategy by
-  ///      default — linear history, matches the "Rebase and merge"
-  ///      button) against the *main* worktree, which is found via the
-  ///      WorktreeState's known desks.
+  ///   3. Run the shared [resolveLocalPrMerge] engine (rebase strategy —
+  ///      linear history, matches the "Rebase and merge" button), which
+  ///      replays in the desk's own worktree and fast-forwards the base
+  ///      where it is checked out; conflicts route to the shared editor.
   ///   4. Mark the PR as MERGED via DeskPrState (the existing audit
   ///      trail in `refs/manifold/desks/...` records the transition).
   ///   5. Refresh the worktree list so ahead/behind chrome catches up.
@@ -1789,17 +1792,24 @@ class _DeskRow extends StatelessWidget {
       return;
     }
 
-    final result = await applyBranchToBase(
-      mainRepoPath: mainRepoPath,
+    // Rebase the desk's branch onto the base and fast-forward it, routing
+    // conflicts through the shared editor. The engine replays in the desk's
+    // OWN worktree and advances the base where it is checked out — it never
+    // hijacks the main worktree's HEAD (the old `applyBranchToBase` did).
+    if (!context.mounted) return;
+    final outcome = await resolveLocalPrMerge(
+      context,
+      repoPath: mainRepoPath,
       branch: branch,
       baseRef: baseRef,
       method: BranchMergeMethod.rebase,
-      deleteBranch: false, // desk worktree still references the branch
     );
     if (!context.mounted) return;
-    if (!result.ok) {
+    final landed = outcome is MergeClean ||
+        (outcome is MergeConflicted && outcome.resolved);
+    if (!landed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.error ?? 'Apply failed')),
+        SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Apply'))),
       );
       return;
     }
@@ -2235,7 +2245,7 @@ class _DeskTabState extends State<_DeskTab>
     final gen = ++_driftGen;
     _driftIsActive = isActive;
     try {
-      final r = await runGitProbe(
+      final r = await runGit(
         repo,
         isActive
             ? ['diff', '--name-only', 'HEAD']
@@ -3423,6 +3433,13 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         currentBranch: widget.branch,
         issues: openIssues,
         remoteIssues: remoteIssues,
+        // Forge write/read posture from the same cache that supplied the
+        // remote issues, mirroring branches_page's gating: canWrite gates
+        // Promote/Push (needs a validated token); available gates Pull
+        // (reads can be anonymous, e.g. a tokenless Gitea reports
+        // available-but-not-canWrite).
+        forgeUsable: remoteCache.canWrite,
+        remoteAvailable: remoteCache.available,
         branchRemoteIssues: branchRemoteIssues,
         onDismiss: _close,
         onCheckout: _checkout,
@@ -3478,10 +3495,88 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
                 if (err == null && mounted) _close();
                 return err;
               },
+        onIssueAction: widget.repoPath == null
+            ? null
+            : (action, item) =>
+                _handleSidePanelIssueAction(action, item, remoteIssues),
       );
     });
 
     Overlay.of(context).insert(_overlay!);
+  }
+
+  /// Dispatch a side-panel issue lifecycle action to DeskIssueState.
+  /// Confirms before the destructive abandon, surfaces the outcome via
+  /// a snackbar, and returns the error string (or null) for symmetry
+  /// with the other overlay callbacks. Runs in this pill's stable
+  /// State context, so it survives the transient overlay closing.
+  Future<String?> _handleSidePanelIssueAction(
+    _SidePanelIssueAction action,
+    _SidePanelIssue item,
+    List<IssueSummary> remoteIssues,
+  ) async {
+    final repo = widget.repoPath;
+    if (repo == null) return 'no repository';
+    final issueState = context.read<DeskIssueState>();
+    String? err;
+    String okMsg;
+    switch (action) {
+      case _SidePanelIssueAction.promote:
+        err = await issueState.promoteToRemote(repoPath: repo, id: item.displayId);
+        okMsg = 'Issue promoted to remote.';
+      case _SidePanelIssueAction.push:
+        err = await issueState.pushToRemote(repoPath: repo, id: item.displayId);
+        okMsg = 'Pushed to remote.';
+      case _SidePanelIssueAction.pull:
+        err = await issueState.syncFromRemote(repoPath: repo, id: item.displayId);
+        okMsg = 'Pulled from remote.';
+      case _SidePanelIssueAction.import:
+        final summary = remoteIssues
+            .where((r) => r.number == item.displayId)
+            .firstOrNull;
+        if (summary == null) return 'remote issue not found';
+        err = await issueState.importFromRemote(repoPath: repo, remote: summary);
+        okMsg = 'Imported #${item.displayId} locally.';
+      case _SidePanelIssueAction.abandon:
+        final ok = await _confirmAbandonIssue(item.displayId);
+        if (!ok) return null;
+        err = await issueState.abandon(repoPath: repo, id: item.displayId);
+        okMsg = 'Issue abandoned.';
+    }
+    if (!mounted) return err;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(err ?? okMsg)),
+    );
+    return err;
+  }
+
+  Future<bool> _confirmAbandonIssue(int id) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          title: Text('Abandon issue',
+              style: TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
+          content: Text(
+            'Permanently remove local issue #$id? This deletes its ref '
+            "and can't be undone.",
+            style: TextStyle(color: t.textNormal),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text('Abandon', style: TextStyle(color: t.danger)),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
   }
 
   Future<void> _checkout(String name) async {
@@ -3502,6 +3597,9 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
       MergeConflicted(:final resolved) =>
         resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
       MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      // A switch never yields this; handled for exhaustiveness so the
+      // guidance is surfaced rather than swallowed if it ever arrives.
+      MergeNeedsCheckout() => mergeOutcomeMessage(outcome, op: 'Switch'),
       MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
     };
     if (msg != null) {
@@ -3812,6 +3910,12 @@ class _BranchPanelOverlay extends StatefulWidget {
   /// Remote issues from [RemoteIssueCacheState].
   final List<IssueSummary> remoteIssues;
 
+  /// Forge posture for issue actions: [forgeUsable] gates Promote/Push (a
+  /// validated token), [remoteAvailable] gates Pull (possibly anonymous
+  /// reads). Both false until the forge probe lands.
+  final bool forgeUsable;
+  final bool remoteAvailable;
+
   /// Maps desk-PR head branches to the remote issue numbers they address.
   final Map<String, Set<int>> branchRemoteIssues;
   final VoidCallback onDismiss;
@@ -3828,6 +3932,12 @@ class _BranchPanelOverlay extends StatefulWidget {
     required bool promoteRemote,
   })? onCreateIssue;
 
+  /// Dispatch a lifecycle action for a side-panel issue row.
+  final Future<String?> Function(
+    _SidePanelIssueAction action,
+    _SidePanelIssue item,
+  )? onIssueAction;
+
   const _BranchPanelOverlay({
     required this.top,
     required this.left,
@@ -3839,6 +3949,8 @@ class _BranchPanelOverlay extends StatefulWidget {
     required this.currentBranch,
     this.issues = const [],
     this.remoteIssues = const [],
+    this.forgeUsable = false,
+    this.remoteAvailable = false,
     this.branchRemoteIssues = const {},
     required this.onDismiss,
     required this.onCheckout,
@@ -3847,6 +3959,7 @@ class _BranchPanelOverlay extends StatefulWidget {
     this.branchesOpenAsDesks = const {},
     required this.onNavigate,
     this.onCreateIssue,
+    this.onIssueAction,
   });
 
   @override
@@ -4028,10 +4141,13 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
               child: _IssuesSidePanel(
               localIssues: widget.issues,
               remoteIssues: widget.remoteIssues,
+              forgeUsable: widget.forgeUsable,
+              remoteAvailable: widget.remoteAvailable,
               branchRemoteIssues: widget.branchRemoteIssues,
               hoveredBranch: _hoveredBranch,
               borderColor: borderColor,
               onCreateIssue: widget.onCreateIssue,
+              onIssueAction: widget.onIssueAction,
               t: t,
             ),
             ),
@@ -4345,14 +4461,14 @@ class _NewDeskRowState extends State<_NewDeskRow> {
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     if (engine == null) return null;
     final results = await Future.wait([
-      runGitProbe(repoPath, [
+      runGit(repoPath, [
         'diff', '-U3', '--no-color', '--patience', '--ignore-cr-at-eol',
       ]),
-      runGitProbe(repoPath, [
+      runGit(repoPath, [
         'diff', '--cached', '-U3', '--no-color', '--patience',
         '--ignore-cr-at-eol',
       ]),
-      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+      runGit(repoPath, ['log', '--format=%s', '-100']),
     ]);
     final unstaged =
         results[0].exitCode == 0 ? results[0].stdout.toString() : '';
@@ -4547,6 +4663,10 @@ const double _kIssuesPanelWidth = 172.0;
 
 /// Unified item for the side panel — wraps either a local [DeskIssue] or a
 /// pure-remote [IssueSummary] (one that has no local counterpart yet).
+/// Lifecycle actions surfaced on a side-panel issue row. Local issues
+/// can promote/push/pull/abandon; pure-remote rows can import a twin.
+enum _SidePanelIssueAction { promote, push, pull, abandon, import }
+
 class _SidePanelIssue {
   final int displayId;
   final String title;
@@ -4580,6 +4700,12 @@ class _SidePanelIssue {
 class _IssuesSidePanel extends StatefulWidget {
   final List<DeskIssue> localIssues;
   final List<IssueSummary> remoteIssues;
+
+  /// Forge posture: [forgeUsable] gates Promote/Push (validated token),
+  /// [remoteAvailable] gates Pull (possibly anonymous reads).
+  final bool forgeUsable;
+  final bool remoteAvailable;
+
   final Map<String, Set<int>> branchRemoteIssues;
   final String? hoveredBranch;
   final Color borderColor;
@@ -4588,16 +4714,26 @@ class _IssuesSidePanel extends StatefulWidget {
     required String body,
     required bool promoteRemote,
   })? onCreateIssue;
+
+  /// Dispatch a lifecycle action for a row. Returns an error string or
+  /// null on success. Null disables the row context menu entirely.
+  final Future<String?> Function(
+    _SidePanelIssueAction action,
+    _SidePanelIssue item,
+  )? onIssueAction;
   final AppTokens t;
 
   const _IssuesSidePanel({
     required this.localIssues,
     required this.remoteIssues,
+    required this.forgeUsable,
+    required this.remoteAvailable,
     required this.branchRemoteIssues,
     required this.hoveredBranch,
     required this.borderColor,
     required this.onCreateIssue,
     required this.t,
+    this.onIssueAction,
   });
 
   @override
@@ -4652,7 +4788,8 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
     final err = await widget.onCreateIssue!(
       title: title,
       body: _bodyCtrl.text.trim(),
-      promoteRemote: _promoteRemote,
+      // Defense in depth: never let stale toggle state reach a read-only forge.
+      promoteRemote: _promoteRemote && widget.forgeUsable,
     );
     if (!mounted) return;
     if (err != null) {
@@ -4784,6 +4921,7 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
               bodyCtrl: _bodyCtrl,
               titleFocus: _titleFocus,
               promoteRemote: _promoteRemote,
+              forgeUsable: widget.forgeUsable,
               submitting: _submitting,
               error: _error,
               onPromoteToggle: (v) => setState(() => _promoteRemote = v),
@@ -4803,7 +4941,13 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
             ),
           if (!_composing)
             for (final item in items.take(8))
-              _SidePanelIssueRow(item: item, t: t),
+              _SidePanelIssueRow(
+                item: item,
+                t: t,
+                forgeUsable: widget.forgeUsable,
+                remoteAvailable: widget.remoteAvailable,
+                onAction: widget.onIssueAction,
+              ),
         ],
       ),
     );
@@ -4872,6 +5016,9 @@ class _IssueComposeForm extends StatelessWidget {
   final TextEditingController bodyCtrl;
   final FocusNode titleFocus;
   final bool promoteRemote;
+  /// Forge accepts writes (validated token): gates the promote toggle. When
+  /// false the toggle is hidden — matches how the row menu hides Promote/Push.
+  final bool forgeUsable;
   final bool submitting;
   final String? error;
   final ValueChanged<bool> onPromoteToggle;
@@ -4883,6 +5030,7 @@ class _IssueComposeForm extends StatelessWidget {
     required this.bodyCtrl,
     required this.titleFocus,
     required this.promoteRemote,
+    required this.forgeUsable,
     required this.submitting,
     required this.error,
     required this.onPromoteToggle,
@@ -4978,14 +5126,17 @@ class _IssueComposeForm extends StatelessWidget {
           const SizedBox(height: 6),
           Row(
             children: [
-              _RemoteToggle(
-                value: promoteRemote,
-                onChanged: submitting ? null : onPromoteToggle,
-                t: t,
-              ),
+              // Only offer promotion when the forge accepts writes; a
+              // tokenless read-only forge would guarantee a 401 on push.
+              if (forgeUsable)
+                _RemoteToggle(
+                  value: promoteRemote,
+                  onChanged: submitting ? null : onPromoteToggle,
+                  t: t,
+                ),
               const Spacer(),
               _SubmitButton(
-                label: promoteRemote ? 'create + push' : 'create',
+                label: (promoteRemote && forgeUsable) ? 'create + push' : 'create',
                 busy: submitting,
                 onTap: onSubmit,
                 t: t,
@@ -5121,11 +5272,85 @@ class _SidePanelIssueRow extends StatelessWidget {
   final _SidePanelIssue item;
   final AppTokens t;
 
-  const _SidePanelIssueRow({required this.item, required this.t});
+  /// Forge posture: [forgeUsable] gates Promote/Push (validated token),
+  /// [remoteAvailable] gates Pull (possibly anonymous reads).
+  final bool forgeUsable;
+  final bool remoteAvailable;
+
+  final Future<String?> Function(
+    _SidePanelIssueAction action,
+    _SidePanelIssue item,
+  )? onAction;
+
+  const _SidePanelIssueRow({
+    required this.item,
+    required this.t,
+    this.forgeUsable = false,
+    this.remoteAvailable = false,
+    this.onAction,
+  });
+
+  void _openMenu(BuildContext context, Offset pos) {
+    final act = onAction;
+    if (act == null) return;
+    // Mirror the desk-PR / branches-lens issue idiom: promote a local
+    // issue, sync a linked one both ways, abandon it, or import a
+    // pure-remote one. Row flags encode remote-link state: item.isRemote
+    // on a local row means it already carries a remoteNumber.
+    final remoteItems = <AppContextMenuItem>[
+      // Promote needs a usable forge; a tokenless forge serves reads only, so
+      // promote would 401.
+      if (item.isLocal && !item.isRemote && forgeUsable)
+        AppContextMenuItem(
+          icon: Icons.cloud_upload_outlined,
+          label: 'Promote to remote',
+          onTap: () => act(_SidePanelIssueAction.promote, item),
+        ),
+      if (item.isLocal && item.isRemote) ...[
+        // Push is a write (needs the validated token); pull is a read and
+        // works anonymously on forges that allow it.
+        if (forgeUsable)
+          AppContextMenuItem(
+            icon: Icons.north_outlined,
+            label: 'Push to remote',
+            onTap: () => act(_SidePanelIssueAction.push, item),
+          ),
+        if (remoteAvailable)
+          AppContextMenuItem(
+            icon: Icons.south_outlined,
+            label: 'Pull from remote',
+            onTap: () => act(_SidePanelIssueAction.pull, item),
+          ),
+      ],
+      if (!item.isLocal)
+        AppContextMenuItem(
+          icon: Icons.download_outlined,
+          label: 'Import',
+          onTap: () => act(_SidePanelIssueAction.import, item),
+        ),
+    ];
+    showAppContextMenu(context, pos, [
+      if (remoteItems.isNotEmpty) ListMenuSection(remoteItems),
+      if (item.isLocal)
+        ListMenuSection([
+          AppContextMenuItem(
+            icon: Icons.delete_outline,
+            label: 'Abandon',
+            destructive: true,
+            onTap: () => act(_SidePanelIssueAction.abandon, item),
+          ),
+        ]),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapDown: onAction == null
+          ? null
+          : (d) => _openMenu(context, d.globalPosition),
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5173,6 +5398,7 @@ class _SidePanelIssueRow extends StatelessWidget {
           ],
         ],
       ),
+    ),
     );
   }
 }

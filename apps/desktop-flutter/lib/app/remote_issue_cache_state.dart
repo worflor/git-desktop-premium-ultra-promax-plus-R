@@ -26,6 +26,7 @@ class RemoteIssueCacheState extends ChangeNotifier {
   List<IssueSummary> _issues = const [];
   bool _loading = false;
   bool _available = false;
+  bool _canWrite = false;
   String? _error;
   String? _loadedForRepo;
   int _requestId = 0;
@@ -51,15 +52,26 @@ class RemoteIssueCacheState extends ChangeNotifier {
   /// False for local repos, unknown remotes, or unauthenticated CLIs —
   /// remote issues simply don't appear (no error shown to the user).
   bool get available => _available;
+
+  /// True when the provider's validated credentials make write actions
+  /// (promote/push) expected to succeed. A forge serving anonymous reads
+  /// (tokenless Gitea/Forgejo) is [available] but not [canWrite] — write
+  /// affordances gate on this, reads on [available].
+  bool get canWrite => _canWrite;
   String? get error => _error;
   String? get loadedForRepo => _loadedForRepo;
 
   void _onRepoChanged() {
     final active = _repo.activePath;
     if (active == null) {
+      // Invalidate any in-flight refresh too — without the bump, a
+      // refreshFor() still awaiting its provider would pass its stale-id
+      // checks and write the dead repo's results back over this clear.
+      ++_requestId;
       _issues = const [];
       _loadedForRepo = null;
       _available = false;
+      _canWrite = false;
       notifyListeners();
       return;
     }
@@ -80,12 +92,14 @@ class RemoteIssueCacheState extends ChangeNotifier {
 
       if (!providerStatus.available) {
         _available = false;
+        _canWrite = false;
         _issues = const [];
         _loading = false;
         notifyListeners();
         return;
       }
       _available = true;
+      _canWrite = providerStatus.canWrite;
 
       final r = await provider.listIssues(repoPath, state: 'open', limit: 100);
       if (id != _requestId) return;
@@ -101,6 +115,13 @@ class RemoteIssueCacheState extends ChangeNotifier {
       if (id != _requestId) return;
       _issues = const [];
       _error = e.toString();
+      // The throw may have landed BEFORE this refresh's provider status —
+      // detectIssueProvider or status() itself — in which case _available /
+      // _canWrite still describe the previous repo. Write affordances gate
+      // on these, so stale true here would advertise writes against the
+      // wrong repo's posture. Conservative-false until a fresh probe lands.
+      _available = false;
+      _canWrite = false;
     }
     _loading = false;
     notifyListeners();

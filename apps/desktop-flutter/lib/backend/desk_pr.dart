@@ -122,15 +122,53 @@ class DeskPr {
     this.remoteNumber,
   });
 
+  /// Fold the thread into a single review decision using GitHub-style
+  /// per-reviewer-latest semantics: each reviewer's *most recent* verdict
+  /// is the only one that counts, so a stale CHANGES_REQUESTED no longer
+  /// blocks forever once that same reviewer later APPROVED.
+  ///
+  /// Recency is the entry timestamp; when timestamps tie or are missing,
+  /// later position in [thread] wins — the list is append-only, so its
+  /// positional order is chronological truth.
+  ///
+  /// COMMENTED is the subtle case: it neither approves nor blocks and,
+  /// matching GitHub, it does *not* dismiss a reviewer's prior standing
+  /// decision. So only APPROVED / CHANGES_REQUESTED replace a reviewer's
+  /// standing state; a later COMMENTED leaves it unchanged.
+  ///
+  /// Decision: any reviewer standing at CHANGES_REQUESTED wins; else any
+  /// standing APPROVED; else none.
   String _deriveReviewDecision() {
-    var approved = false;
-    var changesRequested = false;
-    for (final e in thread) {
-      if (e.verdict == 'APPROVED') approved = true;
-      if (e.verdict == 'CHANGES_REQUESTED') changesRequested = true;
+    // Order entries by recency: timestamp first, original position as a
+    // stable tiebreak when timestamps tie or are missing (the thread is
+    // append-only, so position is chronological truth). Dart's sort isn't
+    // guaranteed stable, so fold position into the comparator explicitly.
+    final ordered = [
+      for (var i = 0; i < thread.length; i++) (i, thread[i]),
+    ]..sort((a, b) {
+        final byTime = a.$2.at.compareTo(b.$2.at);
+        return byTime != 0 ? byTime : a.$1.compareTo(b.$1);
+      });
+
+    // author -> that reviewer's standing verdict ('APPROVED' |
+    // 'CHANGES_REQUESTED'), only mutated by decisive verdicts. Walking in
+    // recency order means the last decisive verdict we write for an author
+    // is their latest.
+    final standing = <String, String>{};
+    for (final (_, e) in ordered) {
+      if (e.verdict == 'APPROVED' || e.verdict == 'CHANGES_REQUESTED') {
+        standing[e.author] = e.verdict;
+      }
+      // COMMENTED (and plain comments) intentionally leave standing state
+      // untouched — they supersede nothing about the reviewer's decision,
+      // matching GitHub: a later COMMENTED does not dismiss a prior
+      // CHANGES_REQUESTED (or APPROVED) from that same reviewer.
     }
-    if (changesRequested) return 'CHANGES_REQUESTED';
-    if (approved) return 'APPROVED';
+
+    if (standing.values.contains('CHANGES_REQUESTED')) {
+      return 'CHANGES_REQUESTED';
+    }
+    if (standing.values.contains('APPROVED')) return 'APPROVED';
     return '';
   }
 

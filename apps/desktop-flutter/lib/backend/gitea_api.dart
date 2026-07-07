@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show compute;
 
+import 'git.dart' as git;
 import 'git_result.dart';
 import 'remote_types.dart';
+import 'settings_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import '../features/diff/diff_models.dart';
 
@@ -25,46 +27,199 @@ String _sanitizeBody(String body) {
 /// REST API client for Gitea / Forgejo / Codeberg instances.
 /// No CLI dependency — talks HTTP directly to the forge's `/api/v1/` surface.
 
+/// Resolve the access token for the Gitea instance behind [apiBase]
+/// (`https://host/api/v1`). A token stored per host in the settings
+/// snapshot wins; the `GITEA_TOKEN` environment variable is the
+/// fallback for any host without a stored token. Synchronous so the
+/// existing `token ??= resolveGiteaToken(...)` defaulting idiom keeps
+/// working — the settings snapshot is already warm by the time a forge
+/// call fires (the app loads settings at startup).
 String? resolveGiteaToken(String apiBase) {
+  final host = _hostOfApiBase(apiBase);
+  if (host.isNotEmpty) {
+    final stored = SettingsStore.cachedGiteaTokens()[host];
+    if (stored != null && stored.isNotEmpty) return stored;
+  }
   final env = Platform.environment['GITEA_TOKEN'];
   if (env != null && env.isNotEmpty) return env;
   return null;
 }
+
+/// THE single producer of the token-map key shape: lowercase `host`, plus
+/// `:port` only for a non-default port. 80 and 443 are dropped
+/// unconditionally — `GiteaRepoCoords.parse` strips per-scheme defaults
+/// when building the apiBase, so a `:443`/`:80` key could only ever be
+/// minted from user input typed with an explicit default port, and that
+/// key would then never match the apiBase-derived lookup. Every function
+/// that mints or looks up a key MUST come through here; two producers with
+/// their own port rules is exactly the bug this exists to prevent.
+String _hostKey(String host, int? port) {
+  if (host.isEmpty) return '';
+  final h = host.toLowerCase();
+  if (port == null || port == 80 || port == 443) return h;
+  return '$h:$port';
+}
+
+/// Token-map key of an `/api/v1` base URL, via [_hostKey].
+String _hostOfApiBase(String apiBase) {
+  try {
+    final u = Uri.parse(apiBase);
+    return _hostKey(u.host, u.hasPort ? u.port : null);
+  } catch (_) {
+    return '';
+  }
+}
+
+/// Canonicalize a user-typed forge identifier into exactly the key shape
+/// that [resolveGiteaToken] looks up: [_hostKey]'s lowercase `host`, or
+/// `host:port` only for an explicit NON-default HTTP(S) port (80/443 are
+/// dropped — the apiBase side never carries them, so a key holding one
+/// could never match at resolve time).
+///
+/// The token map is keyed by this shape, so the settings UI MUST route
+/// everything a user might paste — a full clone URL, a scp-style remote,
+/// or a bare host — through here before persisting, or the stored key
+/// silently never matches at resolve time. Accepts:
+///   - `scheme://…` (http/https/ssh): host (+ port via [_hostKey]); ssh
+///     keeps host only, because an ssh port is the daemon's port, not the
+///     HTTP API port (mirrors `hostAndPortOfRemote`). Path and userinfo
+///     are ignored.
+///   - scp form `git@host:path`: host between `@` and `:`, no port (the
+///     colon introduces a path).
+///   - bare `host`, `host:port`, or `host/some/path`: everything from the
+///     first `/` is dropped; a `:tail` counts as a port only when it is
+///     all digits, else discarded.
+/// Returns '' for empty or unparseable input; the caller decides what to
+/// do with that.
+String canonicalGiteaHostKey(String input) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return '';
+
+  if (trimmed.contains('://')) {
+    try {
+      final u = Uri.parse(trimmed);
+      if (u.host.isEmpty) return '';
+      final isSsh = u.scheme.toLowerCase() == 'ssh';
+      return _hostKey(u.host, !isSsh && u.hasPort ? u.port : null);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // scp-style `git@host:path` — an `@` (with userinfo) before any `:`/`/`.
+  final at = trimmed.indexOf('@');
+  if (at >= 0) {
+    final firstColon = trimmed.indexOf(':');
+    final firstSlash = trimmed.indexOf('/');
+    final sep = [
+      firstColon,
+      firstSlash,
+    ].where((i) => i >= 0).fold<int>(-1, (a, b) => a < 0 ? b : (b < a ? b : a));
+    if (sep < 0 || at < sep) {
+      final host = trimmed.substring(at + 1, sep < 0 ? trimmed.length : sep);
+      return _validHost(host) ? _hostKey(host, null) : '';
+    }
+  }
+
+  // Bare host / host:port / host/path.
+  var rest = trimmed;
+  final slash = rest.indexOf('/');
+  if (slash >= 0) rest = rest.substring(0, slash);
+  if (rest.isEmpty) return '';
+  final colon = rest.indexOf(':');
+  if (colon >= 0) {
+    final host = rest.substring(0, colon);
+    final tail = rest.substring(colon + 1);
+    if (!_validHost(host)) return '';
+    // Digits only — `tryParse` alone would admit signed forms like `+3000`.
+    final port =
+        RegExp(r'^\d+$').hasMatch(tail) ? int.parse(tail) : null;
+    return _hostKey(host, port);
+  }
+  return _validHost(rest) ? _hostKey(rest, null) : '';
+}
+
+/// A plausible DNS host / IP label: letters, digits, dots and hyphens only.
+/// Anything with spaces or other punctuation is user garbage, not a host.
+final RegExp _hostCharset = RegExp(r'^[A-Za-z0-9.-]+$');
+bool _validHost(String h) => h.isNotEmpty && _hostCharset.hasMatch(h);
 
 class GiteaApiStatus {
   final bool reachable;
   final bool authenticated;
   final String? version;
   final String? reason;
+  /// Login of the validated token holder, when [authenticated]. Empty
+  /// otherwise.
+  final String login;
 
   const GiteaApiStatus({
     required this.reachable,
     required this.authenticated,
     this.version,
     this.reason,
+    this.login = '',
   });
 
   bool get usable => reachable;
 }
 
-/// Probe the Gitea/Forgejo instance at [baseUrl].
+/// Probe the Gitea/Forgejo instance at [baseUrl]. Reachability comes
+/// from the unauthenticated `/version` endpoint; authentication is only
+/// ever reported after the token is *validated* against `/user`. A
+/// present-but-rejected token (401) reports reachable-yet-unauthenticated
+/// with a reason, never a false "authenticated".
 Future<GiteaApiStatus> giteaApiStatus(String baseUrl, {String? token}) async {
+  token ??= resolveGiteaToken(baseUrl);
   try {
     final r = await giteaGet(baseUrl, '/version', token: token);
     if (r.statusCode != 200) {
+      // statusCode 0 means the request threw (DNS / connection refused /
+      // TLS) — the body carries the exception text. Anything else is a
+      // live server answering with a non-200.
       return GiteaApiStatus(
         reachable: false,
         authenticated: false,
-        reason: 'API returned ${r.statusCode}',
+        reason: r.statusCode == 0
+            ? 'unreachable: ${r.body}'
+            : 'API returned ${r.statusCode}',
       );
     }
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     final ver = j['version'] as String? ?? '';
-    final authed = token != null && token.isNotEmpty;
+    if (token == null || token.isEmpty) {
+      return GiteaApiStatus(
+        reachable: true,
+        authenticated: false,
+        version: ver,
+        reason: 'no token for this host',
+      );
+    }
+    // Validate the token — a 200 with a login is the only thing that
+    // earns the authenticated bit.
+    final who = await giteaGet(baseUrl, '/user', token: token);
+    if (who.statusCode == 200) {
+      String login = '';
+      try {
+        login = ((jsonDecode(who.body)
+                as Map<String, dynamic>)['login'] as String? ??
+            '')
+            .trim();
+      } catch (_) {}
+      return GiteaApiStatus(
+        reachable: true,
+        authenticated: true,
+        version: ver,
+        login: login,
+      );
+    }
     return GiteaApiStatus(
       reachable: true,
-      authenticated: authed,
+      authenticated: false,
       version: ver,
+      reason: who.statusCode == 401
+          ? 'token rejected (401)'
+          : 'token check returned ${who.statusCode}',
     );
   } catch (e) {
     return GiteaApiStatus(
@@ -75,16 +230,29 @@ Future<GiteaApiStatus> giteaApiStatus(String baseUrl, {String? token}) async {
   }
 }
 
-/// Resolve the API base URL and owner/repo from a repo path's `origin` remote.
+/// Whether the repo behind [coords] answers a read with the given
+/// credentials. GET /repos/owner/repo through [giteaGet] (which already
+/// retries a token-bearing 401 anonymously), 200 = readable. Private
+/// repos answer 404 to anonymous callers — Gitea hides their existence —
+/// so "not readable" covers both private and nonexistent.
+Future<bool> giteaRepoReadable(GiteaRepoCoords coords, {String? token}) async {
+  token ??= resolveGiteaToken(coords.apiBase);
+  final r = await giteaGet(coords.apiBase, '/${coords.repoPath}', token: token);
+  return r.statusCode == 200;
+}
+
+/// Resolve the API base URL and owner/repo from the repo's primary remote.
+/// Uses the same primary-remote rule as the rest of the app (`origin` when
+/// present, otherwise the sole/first remote) rather than assuming `origin`,
+/// so a fork whose Gitea/Forgejo remote is named `upstream` still resolves
+/// its API coordinates. Routes through [git.runGit] so it shares the
+/// non-interactive env and subprocess throttle instead of spawning raw.
 Future<GiteaRepoCoords?> resolveGiteaCoords(String repoPath) async {
   try {
-    final r = await Process.run(
-      'git',
-      ['remote', 'get-url', 'origin'],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+    final remoteRes = await git.primaryRemoteName(repoPath);
+    final remote = remoteRes.ok ? remoteRes.data : null;
+    if (remote == null) return null;
+    final r = await git.runGit(repoPath, ['remote', 'get-url', remote]);
     if (r.exitCode != 0) return null;
     final url = (r.stdout as String).trim();
     return GiteaRepoCoords.parse(url);
@@ -104,15 +272,21 @@ class GiteaRepoCoords {
   });
 
   static GiteaRepoCoords? parse(String remoteUrl) {
-    final host = hostOfRemote(remoteUrl.toLowerCase());
+    final trimmed = remoteUrl.trim();
+    final (:host, :port) = hostAndPortOfRemote(trimmed);
     if (host.isEmpty) return null;
 
     String? path;
-    final trimmed = remoteUrl.trim();
+    // SSH/scp remotes have no scheme; those always speak https to the API.
+    // An explicit http:// remote (common for intranet Gitea on a plain
+    // port) keeps http, and any explicit port is carried through so a
+    // self-hosted instance on host:3000 isn't addressed at 443.
+    var scheme = 'https';
     if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
       try {
         final uri = Uri.parse(trimmed);
         path = uri.path;
+        scheme = uri.scheme;
       } catch (_) {
         return null;
       }
@@ -124,10 +298,10 @@ class GiteaRepoCoords {
     if (path.endsWith('.git')) path = path.substring(0, path.length - 4);
     final segments = path.split('/').where((s) => s.isNotEmpty).toList();
     if (segments.length < 2) return null;
-    final realHost = hostOfRemote(trimmed);
-    const scheme = 'https';
+    final defaultPort = scheme == 'http' ? 80 : 443;
+    final authority = (port != null && port != defaultPort) ? '$host:$port' : host;
     return GiteaRepoCoords(
-      apiBase: '$scheme://$realHost/api/v1',
+      apiBase: '$scheme://$authority/api/v1',
       owner: segments[segments.length - 2],
       repo: segments[segments.length - 1],
     );
@@ -197,16 +371,11 @@ Future<GitResult<int>> createGiteaPull(
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
-    final labelsRes = await giteaGet(
-      coords.apiBase, '/${coords.repoPath}/labels?limit=50', token: token);
-    if (labelsRes.statusCode == 200) {
-      final allLabels = jsonDecode(labelsRes.body) as List;
+    final ids = await _resolveLabelIds(coords, token);
+    if (ids != null) {
       for (final name in labels) {
-        final match = allLabels
-            .whereType<Map<String, dynamic>>()
-            .where((l) => l['name'] == name)
-            .firstOrNull;
-        if (match != null) labelIds.add((match['id'] as num).toInt());
+        final id = ids[name];
+        if (id != null) labelIds.add(id);
       }
     }
   }
@@ -543,16 +712,11 @@ Future<GitResult<int>> createGiteaIssue(
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
-    final labelsRes = await giteaGet(
-      coords.apiBase, '/${coords.repoPath}/labels?limit=50', token: token);
-    if (labelsRes.statusCode == 200) {
-      final allLabels = jsonDecode(labelsRes.body) as List;
+    final ids = await _resolveLabelIds(coords, token);
+    if (ids != null) {
       for (final name in labels) {
-        final match = allLabels
-            .whereType<Map<String, dynamic>>()
-            .where((l) => l['name'] == name)
-            .firstOrNull;
-        if (match != null) labelIds.add((match['id'] as num).toInt());
+        final id = ids[name];
+        if (id != null) labelIds.add(id);
       }
     }
   }
@@ -635,25 +799,57 @@ Future<GitResult<void>> reopenGiteaIssue(
   return const GitResult.ok(null);
 }
 
+// The Gitea label API addresses labels by numeric ID, not name, so
+// every label-touching call has to translate name → id via a
+// `/labels` fetch. Label definitions rarely change within a session,
+// so the name→id map is memoised per repo behind a short TTL — a burst
+// of add/remove operations (or an editIssue that both adds and removes)
+// then shares a single fetch instead of hammering `/labels` once per
+// label.
+class _LabelIdCache {
+  final Map<String, int> byName;
+  final DateTime at;
+  const _LabelIdCache(this.byName, this.at);
+}
+
+final Map<String, _LabelIdCache> _labelIdCacheByRepo = {};
+const Duration _labelIdCacheTtl = Duration(seconds: 30);
+
+/// Drop the memoised per-repo label maps. Exposed for tests and any
+/// caller that has reason to believe the label set changed underfoot.
+void clearGiteaLabelCache() => _labelIdCacheByRepo.clear();
+
+/// Resolve the repo's label name→id map, using the memo when it's still
+/// warm. Returns null only when the `/labels` fetch itself fails.
+Future<Map<String, int>?> _resolveLabelIds(
+    GiteaRepoCoords coords, String? token) async {
+  final key = '${coords.apiBase}/${coords.owner}/${coords.repo}';
+  final cached = _labelIdCacheByRepo[key];
+  if (cached != null &&
+      DateTime.now().difference(cached.at) < _labelIdCacheTtl) {
+    return cached.byName;
+  }
+  final res = await giteaGet(
+    coords.apiBase, '/${coords.repoPath}/labels?limit=100', token: token);
+  if (res.statusCode != 200) return null;
+  final map = <String, int>{};
+  for (final l in (jsonDecode(res.body) as List).whereType<Map<String, dynamic>>()) {
+    final name = (l['name'] as String? ?? '').trim();
+    if (name.isNotEmpty) map[name] = (l['id'] as num).toInt();
+  }
+  _labelIdCacheByRepo[key] = _LabelIdCache(map, DateTime.now());
+  return map;
+}
+
 Future<GitResult<void>> addGiteaIssueLabel(
   String repoPath, int number, String label, {String? token}) async {
   final coords = await resolveGiteaCoords(repoPath);
   if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
   token ??= resolveGiteaToken(coords.apiBase);
-  // Gitea label API requires label IDs, not names. Resolve first.
-  final labelsRes = await giteaGet(
-    coords.apiBase,
-    '/${coords.repoPath}/labels?limit=50',
-    token: token,
-  );
-  if (labelsRes.statusCode != 200) return const GitResult.err('Could not fetch labels');
-  final allLabels = jsonDecode(labelsRes.body) as List;
-  final match = allLabels
-      .whereType<Map<String, dynamic>>()
-      .where((l) => l['name'] == label)
-      .firstOrNull;
-  if (match == null) return GitResult.err('Label "$label" not found');
-  final labelId = (match['id'] as num).toInt();
+  final ids = await _resolveLabelIds(coords, token);
+  if (ids == null) return const GitResult.err('Could not fetch labels');
+  final labelId = ids[label];
+  if (labelId == null) return GitResult.err('Label "$label" not found');
   final r = await _post(
     coords.apiBase,
     '/${coords.repoPath}/issues/$number/labels',
@@ -661,6 +857,30 @@ Future<GitResult<void>> addGiteaIssueLabel(
     token: token,
   );
   if (r.statusCode != 200) return GitResult.err('API ${r.statusCode}');
+  return const GitResult.ok(null);
+}
+
+Future<GitResult<void>> removeGiteaIssueLabel(
+  String repoPath, int number, String label, {String? token}) async {
+  final coords = await resolveGiteaCoords(repoPath);
+  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  token ??= resolveGiteaToken(coords.apiBase);
+  final ids = await _resolveLabelIds(coords, token);
+  if (ids == null) return const GitResult.err('Could not fetch labels');
+  final labelId = ids[label];
+  // A label that isn't defined on the repo can't be attached either, so
+  // "remove" is already satisfied — treat as a no-op success rather than
+  // failing an editIssue that also did useful work.
+  if (labelId == null) return const GitResult.ok(null);
+  final r = await _delete(
+    coords.apiBase,
+    '/${coords.repoPath}/issues/$number/labels/$labelId',
+    token: token,
+  );
+  // Gitea answers a successful label removal with 204 No Content.
+  if (r.statusCode != 204 && r.statusCode != 200) {
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  }
   return const GitResult.ok(null);
 }
 
@@ -706,22 +926,73 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
   final sha = head?['sha'] as String? ?? '';
   if (sha.isEmpty) return const GitResult.ok([]);
 
-  final r = await giteaGet(
+  final checks = <CheckSummary>[];
+  final seen = <String>{};
+
+  // Combined status endpoint — dedupes to the latest state per context.
+  // Modern Gitea/Forgejo Actions register each job as a commit status,
+  // so this alone surfaces Actions on any current instance. On an older
+  // instance that predates the combined endpoint we fall back to the
+  // legacy per-status list.
+  var statuses = await giteaGet(
     coords.apiBase,
-    '/${coords.repoPath}/commits/$sha/statuses?limit=50',
+    '/${coords.repoPath}/commits/$sha/status?limit=100',
     token: token,
   );
-  if (r.statusCode != 200) return const GitResult.ok([]);
   try {
-    final parsed = jsonDecode(r.body) as List;
-    final checks = parsed
-        .whereType<Map<String, dynamic>>()
-        .map(_checkFromGiteaStatus)
-        .toList();
-    return GitResult.ok(checks);
+    if (statuses.statusCode == 200) {
+      final j = jsonDecode(statuses.body) as Map<String, dynamic>;
+      for (final s in (j['statuses'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()) {
+        final c = _checkFromGiteaStatus(s);
+        if (c.name.isEmpty || !seen.add(c.name)) continue;
+        checks.add(c);
+      }
+    } else {
+      statuses = await giteaGet(
+        coords.apiBase,
+        '/${coords.repoPath}/commits/$sha/statuses?limit=50',
+        token: token,
+      );
+      if (statuses.statusCode == 200) {
+        for (final s in (jsonDecode(statuses.body) as List)
+            .whereType<Map<String, dynamic>>()) {
+          final c = _checkFromGiteaStatus(s);
+          if (c.name.isEmpty || !seen.add(c.name)) continue;
+          checks.add(c);
+        }
+      }
+    }
   } catch (e) {
     return GitResult.err('Failed to parse commit statuses: $e');
   }
+
+  // Union with Actions runs for this head. On instances where Actions
+  // already flow through commit statuses this adds nothing new (deduped
+  // by name); on any instance where the endpoint is absent or Actions is
+  // disabled the request 404s/403s and we degrade silently to statuses.
+  final tasks = await giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/actions/tasks?limit=50',
+    token: token,
+  );
+  if (tasks.statusCode == 200) {
+    try {
+      final tj = jsonDecode(tasks.body) as Map<String, dynamic>;
+      for (final run in (tj['workflow_runs'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()) {
+        if ((run['head_sha'] as String? ?? '') != sha) continue;
+        final c = _checkFromGiteaTask(run);
+        if (c.name.isEmpty || !seen.add(c.name)) continue;
+        checks.add(c);
+      }
+    } catch (_) {
+      // A malformed Actions payload never sinks the status list we
+      // already built — Actions is the additive layer here.
+    }
+  }
+
+  return GitResult.ok(checks);
 }
 
 
@@ -850,6 +1121,30 @@ CheckSummary _checkFromGiteaStatus(Map<String, dynamic> j) {
   );
 }
 
+CheckSummary _checkFromGiteaTask(Map<String, dynamic> j) {
+  // Gitea's ActionRunStatus surfaces as one of: unknown, waiting,
+  // running, success, failure, cancelled, skipped, blocked.
+  final status = (j['status'] as String? ?? '').toLowerCase();
+  const done = {'success', 'failure', 'cancelled', 'skipped'};
+  final conclusion = switch (status) {
+    'success' => 'success',
+    'failure' => 'failure',
+    'cancelled' => 'cancelled',
+    'skipped' => 'skipped',
+    _ => null,
+  };
+  var name = (j['name'] as String? ?? '').trim();
+  if (name.isEmpty) name = (j['display_title'] as String? ?? '').trim();
+  return CheckSummary(
+    name: name,
+    status: done.contains(status)
+        ? 'completed'
+        : (status == 'running' ? 'in_progress' : 'queued'),
+    conclusion: conclusion,
+    duration: null,
+  );
+}
+
 List<String> _labelNames(dynamic value) {
   if (value is! List) return const [];
   return value
@@ -879,30 +1174,90 @@ class GiteaHttpResult {
   const GiteaHttpResult(this.statusCode, this.body);
 }
 
-Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) async {
-  final label = 'gitea.GET $path';
-  final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
+/// Wait implied by a 429's `Retry-After` header (delta-seconds form),
+/// capped so a hostile or mistaken value can't stall the UI. Accepts both
+/// RFC forms — delta-seconds and an HTTP-date — since compliant servers may
+/// send either; absent or unparseable falls back to a short fixed backoff.
+Duration _retryAfterDelay(String? header) {
+  final raw = (header ?? '').trim();
+  const cap = Duration(seconds: 5);
+  final secs = int.tryParse(raw);
+  if (secs != null && secs > 0) {
+    return secs > 5 ? cap : Duration(seconds: secs);
+  }
   try {
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(Uri.parse('$baseUrl$path'));
+    final until = HttpDate.parse(raw);
+    final wait = until.difference(DateTime.now().toUtc());
+    if (wait > Duration.zero) return wait > cap ? cap : wait;
+  } catch (_) {}
+  return const Duration(milliseconds: 500);
+}
+
+/// Single place every Gitea request funnels through. Issues [method] at
+/// [url], optionally with a JSON [body] and bearer [token].
+///
+/// A 429 is retried exactly once after respecting `Retry-After` (capped),
+/// never a storm — but ONLY for GET. A rate-limited mutation is returned
+/// as-is: if a proxy or race applied the write before the 429 surfaced, an
+/// automatic resend would double-post comments/issues or replay label and
+/// state changes. Reads replay for free; writes need the caller (a human
+/// retrying an explicit action) to mean it. A second 429 — or any other
+/// status — is returned as-is for the caller to surface.
+Future<GiteaHttpResult> _giteaSend(
+  String method,
+  String url, {
+  String? token,
+  Map<String, dynamic>? body,
+}) async {
+  final client = HttpClient();
+  try {
+    for (var attempt = 0;; attempt++) {
+      final request = await client.openUrl(method, Uri.parse(url));
       request.headers.set('Accept', 'application/json');
+      if (body != null) {
+        request.headers.set('Content-Type', 'application/json');
+      }
       if (token != null && token.isNotEmpty) {
         request.headers.set('Authorization', 'token $token');
       }
+      if (body != null) request.write(jsonEncode(body));
       final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      stopwatch.stop();
-      DiagnosticsState.instance.recordCommandLifecycleEvent(
-        type: 'end', command: label,
-        durationMs: stopwatch.elapsedMicroseconds / 1000,
-        errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
-      );
-      return GiteaHttpResult(response.statusCode, body);
-    } finally {
-      client.close();
+      final text = await response.transform(utf8.decoder).join();
+      if (response.statusCode == 429 && attempt == 0 && method == 'GET') {
+        await Future<void>.delayed(
+          _retryAfterDelay(response.headers.value(HttpHeaders.retryAfterHeader)),
+        );
+        continue;
+      }
+      return GiteaHttpResult(response.statusCode, text);
     }
+  } finally {
+    client.close();
+  }
+}
+
+/// Wrap [_giteaSend] with the command-lifecycle diagnostics every forge
+/// call records, mapping a thrown request (DNS / refused / TLS) to the
+/// sentinel status 0 with the exception text as the body.
+Future<GiteaHttpResult> _giteaRequest(
+  String verb,
+  String baseUrl,
+  String path, {
+  String? token,
+  Map<String, dynamic>? body,
+}) async {
+  final label = 'gitea.$verb $path';
+  final stopwatch = Stopwatch()..start();
+  DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
+  try {
+    final r = await _giteaSend(verb, '$baseUrl$path', token: token, body: body);
+    stopwatch.stop();
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'end', command: label,
+      durationMs: stopwatch.elapsedMicroseconds / 1000,
+      errorCode: r.statusCode >= 400 ? 'http.${r.statusCode}' : null,
+    );
+    return r;
   } catch (e) {
     stopwatch.stop();
     DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -913,95 +1268,34 @@ Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) a
     return GiteaHttpResult(0, e.toString());
   }
 }
+
+/// GET with anonymous fallback. Gitea serves public reads without a
+/// token, so a stale or wrongly-scoped token must not break a repo the
+/// status layer already promised is browseable: a 401 carrying a token
+/// retries once anonymously, and a 2xx retry wins. Anything else keeps
+/// the original 401 — the clearer diagnosis for genuinely private
+/// content. Writes never fall back; they need the token to mean it.
+Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) async {
+  final r = await _giteaRequest('GET', baseUrl, path, token: token);
+  if (r.statusCode == 401 && token != null && token.isNotEmpty) {
+    final anon = await _giteaRequest('GET', baseUrl, path);
+    if (anon.statusCode >= 200 && anon.statusCode < 300) return anon;
+  }
+  return r;
+}
+
+Future<GiteaHttpResult> _post(
+        String baseUrl, String path, Map<String, dynamic> body, {String? token}) =>
+    _giteaRequest('POST', baseUrl, path, token: token, body: body);
+
+Future<GiteaHttpResult> _patch(
+        String baseUrl, String path, Map<String, dynamic> body, {String? token}) =>
+    _giteaRequest('PATCH', baseUrl, path, token: token, body: body);
+
+Future<GiteaHttpResult> _delete(String baseUrl, String path, {String? token}) =>
+    _giteaRequest('DELETE', baseUrl, path, token: token);
 
 Future<String> _getRaw(String baseUrl, String path, {String? token}) async {
-  try {
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(Uri.parse('$baseUrl$path'));
-      if (token != null && token.isNotEmpty) {
-        request.headers.set('Authorization', 'token $token');
-      }
-      final response = await request.close();
-      return await response.transform(utf8.decoder).join();
-    } finally {
-      client.close();
-    }
-  } catch (_) {
-    return '';
-  }
-}
-
-Future<GiteaHttpResult> _post(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
-  final label = 'gitea.POST $path';
-  final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
-  try {
-    final client = HttpClient();
-    try {
-      final request = await client.postUrl(Uri.parse('$baseUrl$path'));
-      request.headers.set('Content-Type', 'application/json');
-      request.headers.set('Accept', 'application/json');
-      if (token != null && token.isNotEmpty) {
-        request.headers.set('Authorization', 'token $token');
-      }
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
-      stopwatch.stop();
-      DiagnosticsState.instance.recordCommandLifecycleEvent(
-        type: 'end', command: label,
-        durationMs: stopwatch.elapsedMicroseconds / 1000,
-        errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
-      );
-      return GiteaHttpResult(response.statusCode, responseBody);
-    } finally {
-      client.close();
-    }
-  } catch (e) {
-    stopwatch.stop();
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end', command: label,
-      durationMs: stopwatch.elapsedMicroseconds / 1000,
-      errorCode: 'http.exception',
-    );
-    return GiteaHttpResult(0, e.toString());
-  }
-}
-
-Future<GiteaHttpResult> _patch(String baseUrl, String path, Map<String, dynamic> body, {String? token}) async {
-  final label = 'gitea.PATCH $path';
-  final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
-  try {
-    final client = HttpClient();
-    try {
-      final request = await client.patchUrl(Uri.parse('$baseUrl$path'));
-      request.headers.set('Content-Type', 'application/json');
-      request.headers.set('Accept', 'application/json');
-      if (token != null && token.isNotEmpty) {
-        request.headers.set('Authorization', 'token $token');
-      }
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
-      stopwatch.stop();
-      DiagnosticsState.instance.recordCommandLifecycleEvent(
-        type: 'end', command: label,
-        durationMs: stopwatch.elapsedMicroseconds / 1000,
-        errorCode: response.statusCode >= 400 ? 'http.${response.statusCode}' : null,
-      );
-      return GiteaHttpResult(response.statusCode, responseBody);
-    } finally {
-      client.close();
-    }
-  } catch (e) {
-    stopwatch.stop();
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end', command: label,
-      durationMs: stopwatch.elapsedMicroseconds / 1000,
-      errorCode: 'http.exception',
-    );
-    return GiteaHttpResult(0, e.toString());
-  }
+  final r = await _giteaRequest('GET', baseUrl, path, token: token);
+  return r.statusCode == 0 ? '' : r.body;
 }

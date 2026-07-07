@@ -60,3 +60,9 @@ apps/desktop-flutter/build_log.txt
 # Build / debug artifacts
 globals_dump.css
 typecheck.txt
+
+# Experiment harnesses and their telemetry — probes live and die here
+# without polluting history. Files already tracked under experiments/
+# stay tracked until explicitly removed; everything new is ignored.
+# A probe that graduates gets an explicit home like research_lab ones.
+/experiments/

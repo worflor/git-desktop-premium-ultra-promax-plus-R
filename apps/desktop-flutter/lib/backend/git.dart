@@ -9,6 +9,8 @@ import 'repository_xray.dart';
 import 'dtos.dart';
 import 'git_result.dart';
 import 'merge_session.dart';
+import 'process_utils.dart';
+import 'win_job_object.dart';
 import '../diagnostics/diagnostics_state.dart';
 
 // Git emits two header forms:
@@ -311,6 +313,7 @@ class GitSubprocessSemaphore {
   int _max;
   final GitConcurrencyController? _controller;
   int _active = 0;
+  int _peakActive = 0;
   final _waiters = <Completer<void>>[];
 
   @visibleForTesting
@@ -319,9 +322,23 @@ class GitSubprocessSemaphore {
   @visibleForTesting
   int get queuedCount => _waiters.length;
 
+  /// High-water mark of concurrently-held permits since the last
+  /// [resetPeakActiveCount]. Lets a test prove throttling is real — that a
+  /// burst of acquirers never drove [activeCount] past the live ceiling.
+  @visibleForTesting
+  int get peakActiveCount => _peakActive;
+
+  @visibleForTesting
+  void resetPeakActiveCount() => _peakActive = _active;
+
+  void _onActiveIncremented() {
+    if (_active > _peakActive) _peakActive = _active;
+  }
+
   Future<void> acquire() {
     if (_active < _max) {
       _active++;
+      _onActiveIncremented();
       return Future.value();
     }
     final c = Completer<void>();
@@ -354,6 +371,7 @@ class GitSubprocessSemaphore {
   void _drainWaiters() {
     while (_waiters.isNotEmpty && _active < _max) {
       _active++;
+      _onActiveIncremented();
       _waiters.removeAt(0).complete();
     }
   }
@@ -465,6 +483,22 @@ Future<T> withGitSubprocessLimit<T>(Future<T> Function() task) async {
     _gitSubprocessSemaphore.release();
   }
 }
+
+/// Live active-permit count on the shared production semaphore — the one every
+/// throttled git spawn (including ai.dart's, via [withGitSubprocessLimit])
+/// contends for. Lets a test assert the permit is released on every exit path.
+@visibleForTesting
+int gitSubprocessActiveForTesting() => _gitSubprocessSemaphore.activeCount;
+
+/// High-water concurrency on the shared production semaphore since the last
+/// [resetGitSubprocessPeakForTesting]. A test fires a burst of git runs and
+/// asserts this never exceeded the ceiling.
+@visibleForTesting
+int gitSubprocessPeakForTesting() => _gitSubprocessSemaphore.peakActiveCount;
+
+@visibleForTesting
+void resetGitSubprocessPeakForTesting() =>
+    _gitSubprocessSemaphore.resetPeakActiveCount();
 
 String _gitDedupKey(String workingDir, List<String> args) {
   // Length-prefixed concatenation: each field is emitted as
@@ -582,6 +616,56 @@ _GitDecodeOutcome _decodeGitBytes(Object? raw, {required bool strict}) {
   }
 }
 
+/// Environment overlaid on every git subprocess we spawn (matches what VS
+/// Code sets). Passed via `environment:` WITHOUT
+/// `includeParentEnvironment: false`, so PATH / HOME / the GUI credential
+/// helper are still inherited — these two only change git's *terminal*
+/// behaviour, never the GUI credential popup:
+///   • GIT_TERMINAL_PROMPT=0 — a call that would otherwise block forever on
+///     an interactive terminal username/password prompt fails fast instead.
+///     Our calls have no timeout and share a bounded semaphore, so one hung
+///     prompt would strand a permit permanently; failing fast frees it.
+///   • GIT_OPTIONAL_LOCKS=0 — background read probes (status, etc.) no longer
+///     take the optional index lock, so they stop churning `index.lock`
+///     against user-initiated mutations that need the real lock.
+const Map<String, String> _kNonInteractiveGitEnv = {
+  'GIT_TERMINAL_PROMPT': '0',
+  'GIT_OPTIONAL_LOCKS': '0',
+};
+
+/// Public alias of [_kNonInteractiveGitEnv]. The AI backend (ai.dart) runs its
+/// own git subprocesses through a separate exec path; it overlays this so those
+/// spawns inherit the identical non-interactive terminal behaviour rather than
+/// re-declaring the constant and drifting out of sync with this layer.
+const Map<String, String> kNonInteractiveGitEnv = _kNonInteractiveGitEnv;
+
+/// True when [stderr] is git's `index.lock` contention shape — another
+/// process (or a Windows antivirus scan briefly holding the file, see the
+/// semaphore note above) owns the lock. The observed modern-git message
+/// (2.52) is:
+///   fatal: Unable to create '<path>/.git/index.lock': File exists.
+///   Another git process seems to be running in this repository ...
+/// We match on the stable fragments rather than the whole sentence so a
+/// localized or slightly reworded build still trips the retry, while an
+/// unrelated failure (which never mentions index.lock) never does.
+bool _isIndexLockContention(String stderr) {
+  if (!stderr.contains('index.lock')) return false;
+  return stderr.contains('File exists') ||
+      stderr.contains('Unable to create') ||
+      stderr.contains('Another git process');
+}
+
+/// A git call mutates the repo unless its subcommand is one we know is
+/// always read-only ([_kDedupableSubcommands]). Only mutations can lose a
+/// race for `index.lock`, so only they are worth the transient retry — a
+/// read that somehow surfaced the message would be misclassified as safe,
+/// and the retry would be skipped, which is the conservative direction.
+bool _isMutatingGitCall(List<String> args) {
+  final sub = _gitSubcommandToken(args);
+  if (sub == null) return true;
+  return !_kDedupableSubcommands.contains(sub);
+}
+
 Future<ProcessResult> _git(String workingDir, List<String> args) async {
   // Coalesce concurrent identical reads. Two callers asking for
   // `git.status --porcelain=v2 --branch -u` in the same instant pay
@@ -603,6 +687,12 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     }
     final future = _gitRaw(workingDir, args);
     _inflightGitReads[key] = future;
+    // `whenComplete` returns a NEW future that re-carries any error from
+    // [future]; leaving that chain unobserved turns every throwing
+    // dedupable call (invalid working dir, spawn failure) into an
+    // unhandled async error even though the real awaiter below handles
+    // it. Swallow the error on the cleanup chain ONLY — the caller still
+    // sees it through the returned [future].
     unawaited(future.whenComplete(() {
       // Only clear if this is still the live entry. A concurrent
       // race where another caller replaced the future would be a
@@ -611,10 +701,67 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
       if (identical(_inflightGitReads[key], future)) {
         _inflightGitReads.remove(key);
       }
-    }));
+    }).then<void>((_) {}, onError: (_) {}));
     return future;
   }
   return _gitRaw(workingDir, args);
+}
+
+/// Jitter source for the transient index.lock backoff. A shared RNG is fine —
+/// the only goal is to de-correlate two of our own colliding retries.
+final math.Random _gitRetryJitter = math.Random();
+
+/// Emits the lenient-UTF-8-fallback diagnostic (if either stream fell back)
+/// and assembles the decoded [ProcessResult]. Factored out of [_gitRaw] so
+/// the index.lock retry loop can build a result per attempt without
+/// duplicating the fallback-audit event.
+ProcessResult _finalizeGitResult(String commandLabel, ProcessResult raw,
+    _GitDecodeOutcome stdoutOut, _GitDecodeOutcome stderrOut) {
+  // Surface any lenient-decode fallback as a diagnostic lifecycle event.
+  // Without this, malformed-byte replacement (U+FFFD) is invisible to ops —
+  // downstream parsers would silently consume corrupted text. The event is
+  // type=warning rather than failure so it doesn't poison success metrics;
+  // the errorCode + message are grep-able for encoding audits.
+  if (stdoutOut.lenientFallback || stderrOut.lenientFallback) {
+    final streams = [
+      if (stdoutOut.lenientFallback) 'stdout@${stdoutOut.malformedAtOffset}',
+      if (stderrOut.lenientFallback) 'stderr@${stderrOut.malformedAtOffset}',
+    ].join(',');
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'warning',
+      command: commandLabel,
+      errorCode: 'git.malformed_utf8',
+      message: 'lenient UTF-8 fallback: $streams',
+    );
+  }
+  return ProcessResult(raw.pid, raw.exitCode, stdoutOut.text, stderrOut.text);
+}
+
+/// Count of this process's in-flight MUTATING git subprocesses (commit,
+/// checkout, fetch, merge, … — anything [_isMutatingGitCall] classifies as
+/// a write). Reads never count. [GitDirWatcher] consumers use this to
+/// pause external-change watching while the app is the one mutating the
+/// repo: our own ref churn then coalesces into one post-operation refresh
+/// instead of racing the operation with N watcher-triggered ones.
+int get gitMutationsInFlight => _gitMutationsInFlight;
+int _gitMutationsInFlight = 0;
+final List<void Function()> _gitMutationListeners = <void Function()>[];
+
+/// Register [listener] to run whenever [gitMutationsInFlight] changes.
+/// Fired synchronously from the exec path — keep listeners trivial
+/// (a pause/resume flip), never long work.
+void addGitMutationListener(void Function() listener) =>
+    _gitMutationListeners.add(listener);
+
+void removeGitMutationListener(void Function() listener) =>
+    _gitMutationListeners.remove(listener);
+
+void _bumpGitMutations(int delta) {
+  _gitMutationsInFlight += delta;
+  // Iterate a copy so a listener that removes itself mid-notify is safe.
+  for (final l in List<void Function()>.of(_gitMutationListeners)) {
+    l();
+  }
 }
 
 Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
@@ -625,45 +772,63 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
     command: commandLabel,
   );
   await _gitSubprocessSemaphore.acquire();
+  var countedMutation = false;
   try {
-    final raw = await Process.run(
-      'git',
-      args,
-      workingDirectory: workingDir,
-      stdoutEncoding: null,
-      stderrEncoding: null,
-    );
-    // Classify by subcommand. stderr is always lenient — it carries
-    // human messages that may be localized to a non-UTF-8 locale on
-    // exotic setups, and a lenient parse is fine for surfacing the
-    // text to a user. Use `_gitSubcommandToken` so global options
-    // before the subcommand (`-C`, `--git-dir`, etc.) don't silently
-    // downgrade a strict-eligible command to lenient mode.
+    // Classify by subcommand once for both strict-decode selection and the
+    // mutation gate on the index.lock retry below.
     final subcommand = _gitSubcommandToken(args);
     final strictStdout =
         subcommand != null && _kStrictDecodeSubcommands.contains(subcommand);
-    final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
-    final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
-    // Surface any lenient-decode fallback as a diagnostic lifecycle
-    // event. Without this, malformed-byte replacement (U+FFFD) is
-    // invisible to ops — downstream parsers would silently consume
-    // corrupted text. The event is type=warning rather than failure
-    // so it doesn't poison success metrics; the errorCode + message
-    // are grep-able for encoding audits.
-    if (stdoutOut.lenientFallback || stderrOut.lenientFallback) {
-      final streams = [
-        if (stdoutOut.lenientFallback) 'stdout@${stdoutOut.malformedAtOffset}',
-        if (stderrOut.lenientFallback) 'stderr@${stderrOut.malformedAtOffset}',
-      ].join(',');
+    final mutating = _isMutatingGitCall(args);
+    if (mutating) {
+      countedMutation = true;
+      _bumpGitMutations(1);
+    }
+
+    // A mutation that loses the race for `index.lock` — another git process,
+    // or (the documented Windows pain point above) an antivirus scan briefly
+    // holding the file — fails hard even though the contention is transient.
+    // Retry a few times with short jittered backoff before surfacing it; the
+    // jitter de-synchronizes two of our own mutations that collided. We only
+    // retry on the index.lock shape (see [_isIndexLockContention]) so any
+    // other failure is returned on the first attempt, unchanged.
+    const maxLockRetries = 3;
+    ProcessResult result;
+    var attempt = 0;
+    while (true) {
+      final raw = await Process.run(
+        'git',
+        args,
+        workingDirectory: workingDir,
+        environment: _kNonInteractiveGitEnv,
+        stdoutEncoding: null,
+        stderrEncoding: null,
+      );
+      // Classify by subcommand. stderr is always lenient — it carries
+      // human messages that may be localized to a non-UTF-8 locale on
+      // exotic setups, and a lenient parse is fine for surfacing the
+      // text to a user. Use `_gitSubcommandToken` so global options
+      // before the subcommand (`-C`, `--git-dir`, etc.) don't silently
+      // downgrade a strict-eligible command to lenient mode.
+      final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
+      final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
+      result = _finalizeGitResult(commandLabel, raw, stdoutOut, stderrOut);
+      final retryable = mutating &&
+          result.exitCode != 0 &&
+          attempt < maxLockRetries &&
+          _isIndexLockContention(result.stderr.toString());
+      if (!retryable) break;
+      attempt++;
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'warning',
         command: commandLabel,
-        errorCode: 'git.malformed_utf8',
-        message: 'lenient UTF-8 fallback: $streams',
+        errorCode: 'git.index_lock_contended',
+        message: 'index.lock held; retry $attempt/$maxLockRetries',
       );
+      // 50–150ms jittered backoff.
+      await Future<void>.delayed(
+          Duration(milliseconds: 50 + _gitRetryJitter.nextInt(101)));
     }
-    final result =
-        ProcessResult(raw.pid, raw.exitCode, stdoutOut.text, stderrOut.text);
     stopwatch.stop();
     final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
     final ok = result.exitCode == 0;
@@ -707,11 +872,24 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
     );
     rethrow;
   } finally {
+    if (countedMutation) _bumpGitMutations(-1);
     _gitSubprocessSemaphore.release();
   }
 }
 
-Future<ProcessResult> runGitProbe(String workingDir, List<String> args) {
+/// THE public entry point for running a git subprocess from outside this
+/// library. Routes through the same shared path (`_git`) every internal call
+/// uses: the [GitSubprocessSemaphore] throttle, the non-interactive
+/// environment ([_kNonInteractiveGitEnv] — `GIT_TERMINAL_PROMPT=0` so an auth
+/// wall fails fast instead of hanging), lenient-UTF-8 decode, transient
+/// index.lock retry, and read-coalescing for pure-read subcommands. Callers
+/// elsewhere (PR checkout, the .git watcher, forge coord/URL resolution, IPC
+/// helpers, the engine's stats walks) MUST use this rather than a raw
+/// `Process.run('git', …)`, which would prompt on a credential wall and escape
+/// the app-wide concurrency budget. Safe for mutations too: a non-read
+/// subcommand skips coalescing and runs fresh, still throttled and
+/// non-interactive.
+Future<ProcessResult> runGit(String workingDir, List<String> args) {
   return _git(workingDir, args);
 }
 
@@ -1236,123 +1414,430 @@ Future<GitResult<String>> getFileDiffAtRevision(
   return GitResult.ok(r2.stdout.toString());
 }
 
-/// Full multi-file diff for a commit. Same fallback as the per-file
-/// Method picker for [applyBranchToBase]. The three standard
-/// PR-merge strategies; each maps to a different `git`
-/// command sequence inside the function.
+/// The three PR-merge strategies. Each maps to a different landing shape in
+/// [mergeBranchIntoBase]; the routing (which worktree, or a ref-level merge)
+/// is orthogonal and chosen by the engine.
 enum BranchMergeMethod {
-  /// `git merge --no-ff <branch>` — preserves both histories with an
-  /// explicit merge commit.
+  /// A two-parent merge commit — preserves both histories. Landed by
+  /// `git merge --no-ff` in the base's worktree, or `git commit-tree` with
+  /// parents `[base, head]` when the base is checked out nowhere.
   mergeCommit,
 
-  /// `git merge --squash <branch>` then `git commit -m <subject>` —
-  /// collapses every commit on the branch into one on the base.
+  /// A squash: collapse the branch's commits into one on the base. Landed by
+  /// `git merge --squash` + commit, or a single-parent `git commit-tree`.
   squash,
 
-  /// `git rebase <base>` on the branch, then `git merge --ff-only` —
-  /// linear history, no merge commit.
+  /// Replay the branch onto the base for linear history, then fast-forward
+  /// the base. Needs the base checked out in a worktree — there is no
+  /// ref-level rebase without one.
   rebase,
 }
 
-/// Apply [branch] onto [baseRef] inside [mainRepoPath], using the
-/// chosen [method]. Optionally deletes [branch] after a successful
-/// merge. The function performs only git operations (Process.run);
-/// callers handle UI feedback (snackbars) + state updates
-/// (DeskPrState, RepositoryState refresh) themselves.
-/// On any step failure, leaves the working tree as `git` itself does
-/// (rebase failures auto-`--abort`; merge conflicts leave conflict
-/// markers in the tree as usual). The returned [GitResult.error]
-/// carries the trimmed stderr from the failing step.
-/// Shared between the branches-page PR row, the desk context menu's
-/// "Apply to main", and any future caller — the engine that decides
-/// which `git` commands to run lives here, not in widget state.
-Future<GitResult<void>> applyBranchToBase({
-  required String mainRepoPath,
+/// Routing decision + git-level classification of a local-PR merge, returned
+/// by [mergeBranchIntoBase] BEFORE any conflict-editor interaction. Splitting
+/// the pure engine (this) from the UI reconcile mirrors the pull path, where
+/// [runNativeMerge] classifies and the flow layer drives the editor.
+///
+/// [outcome] speaks the same sealed [MergeOutcome] family as pull/sync, so a
+/// caller can't mistake a recoverable conflict for a hard failure.
+/// [conflictWorktree] names the worktree whose working tree now holds live
+/// conflict markers to resolve in the shared editor — null when the conflict
+/// was found at ref level (the zero-checkout path) and no tree was touched.
+/// [rebasePaused] flags a halted rebase (finish with [finishLocalPrRebase]
+/// once its conflicts are resolved) versus a halted merge (conclude with a
+/// commit).
+class LocalPrMergeResult {
+  final MergeOutcome outcome;
+  final String? conflictWorktree;
+  final bool rebasePaused;
+  const LocalPrMergeResult(
+    this.outcome, {
+    this.conflictWorktree,
+    this.rebasePaused = false,
+  });
+}
+
+/// The worktree currently holding [branchName] checked out, or null when no
+/// worktree has it. The routing primitive behind [mergeBranchIntoBase]: a
+/// merge runs WHERE a ref is already checked out (never hijacking another
+/// worktree's HEAD), and a ref checked out nowhere is free to advance purely
+/// at the ref level.
+Future<WorktreeData?> worktreeHolding(String repo, String branchName) async {
+  final wts = await listWorktrees(repo);
+  if (!wts.ok) return null;
+  for (final wt in wts.data!) {
+    if (wt.branch == branchName) return wt;
+  }
+  return null;
+}
+
+/// Merge [branch] into [baseRef] with the chosen [method], choosing where the
+/// merge lands so it NEVER switches a worktree's HEAD as a side effect:
+///   • base checked out in a worktree → run the native merge THERE (the desk
+///     already has it out; no checkout at all);
+///   • base checked out nowhere → a zero-checkout ref-level merge
+///     (`merge-tree` → `commit-tree` → CAS `update-ref`), leaving every
+///     working tree untouched. A ref-level conflict returns [MergeConflicted]
+///     with the refs unmoved.
+/// Rebase is the exception: it needs a worktree, so an unchecked-out base
+/// yields [MergeNeedsCheckout] rather than a hidden temp worktree.
+///
+/// On success the merged state is VERIFIED from git before the result claims
+/// clean — `merge-base --is-ancestor` for merge-commit/rebase, and tree
+/// equality (the squash's committed tree must equal the tree `merge-tree`
+/// builds from the pre-merge base and head) for squash, since a squash of
+/// N≥2 commits patch-matches nothing per-commit — so a caller can trust
+/// [MergeClean] to mean history actually landed. Pure git; the caller owns
+/// UI + DeskPr bookkeeping.
+Future<LocalPrMergeResult> mergeBranchIntoBase({
+  required String repoPath,
   required String branch,
   required String baseRef,
   required BranchMergeMethod method,
-  bool deleteBranch = true,
   String? squashSubject,
 }) async {
-  // Always start from the base. If we can't switch to it the rest of
-  // the pipeline is meaningless.
-  final checkoutBase = await _git(mainRepoPath, ['checkout', baseRef]);
-  if (checkoutBase.exitCode != 0) {
-    return GitResult.err(
-      'Could not switch to $baseRef: ${checkoutBase.stderr.toString().trim()}',
-    );
+  if (branch == baseRef) {
+    return LocalPrMergeResult(
+        MergeFailed('Base and head are the same branch ($branch).'));
+  }
+  final headTip = await _revParse(repoPath, branch);
+  if (headTip.isEmpty) {
+    return LocalPrMergeResult(
+        MergeFailed('Could not resolve head branch $branch.'));
+  }
+  final baseTip = await _revParse(repoPath, baseRef);
+  if (baseTip.isEmpty) {
+    return LocalPrMergeResult(
+        MergeFailed('Could not resolve base branch $baseRef.'));
   }
 
   switch (method) {
     case BranchMergeMethod.rebase:
-      // Step onto the branch, replay it on top of the base, step back,
-      // fast-forward the base. On rebase failure: abort + restore base.
-      final coBranch = await _git(mainRepoPath, ['checkout', branch]);
-      if (coBranch.exitCode != 0) {
-        return GitResult.err(
-          'Could not switch to $branch: ${coBranch.stderr.toString().trim()}',
-        );
-      }
-      final rebase = await _git(mainRepoPath, ['rebase', baseRef]);
-      if (rebase.exitCode != 0) {
-        await _git(mainRepoPath, ['rebase', '--abort']);
-        await _git(mainRepoPath, ['checkout', baseRef]);
-        return GitResult.err(
-          'Rebase failed: ${rebase.stderr.toString().trim()}',
-        );
-      }
-      await _git(mainRepoPath, ['checkout', baseRef]);
-      final ff = await _git(mainRepoPath, ['merge', '--ff-only', branch]);
-      if (ff.exitCode != 0) {
-        return GitResult.err(
-          'Fast-forward failed: ${ff.stderr.toString().trim()}',
-        );
-      }
-      break;
-
-    case BranchMergeMethod.squash:
-      final sq = await _git(mainRepoPath, ['merge', '--squash', branch]);
-      if (sq.exitCode != 0) {
-        return GitResult.err(
-          'Squash failed: ${sq.stderr.toString().trim()}',
-        );
-      }
-      // `--squash` stages the change but leaves it uncommitted; finalise
-      // with the supplied subject (or a sane default).
-      final subject = (squashSubject != null && squashSubject.trim().isNotEmpty)
-          ? squashSubject.trim()
-          : 'Merge local PR ($branch)';
-      final commit = await _git(mainRepoPath, ['commit', '-m', subject]);
-      if (commit.exitCode != 0) {
-        return GitResult.err(
-          'Squash commit failed: ${commit.stderr.toString().trim()}',
-        );
-      }
-      break;
-
+      return _rebaseIntoBase(repoPath, branch, baseRef);
     case BranchMergeMethod.mergeCommit:
-      final mc = await _git(mainRepoPath, ['merge', '--no-ff', branch]);
-      if (mc.exitCode != 0) {
-        return GitResult.err(
-          'Merge failed: ${mc.stderr.toString().trim()}',
-        );
+    case BranchMergeMethod.squash:
+      final baseWt = await worktreeHolding(repoPath, baseRef);
+      if (baseWt != null) {
+        return _mergeInWorktree(baseWt, branch, baseRef, method, squashSubject);
       }
-      break;
+      return _mergeAtRefLevel(
+          repoPath, branch, baseRef, baseTip, headTip, method, squashSubject);
+  }
+}
+
+String _squashSubject(String? supplied, String branch) =>
+    (supplied != null && supplied.trim().isNotEmpty)
+        ? supplied.trim()
+        : 'Merge local PR ($branch)';
+
+/// Native merge inside the worktree that already has [baseRef] out — no
+/// checkout, so the desk's HEAD is exactly where it was. Conflicts leave UU
+/// markers in that tree for the shared editor to resolve.
+Future<LocalPrMergeResult> _mergeInWorktree(
+  WorktreeData baseWt,
+  String branch,
+  String baseRef,
+  BranchMergeMethod method,
+  String? squashSubject,
+) async {
+  final repo = baseWt.path;
+  // Gate on TRACKED modifications only, read fresh in this worktree at gate
+  // time (not the cached `dirtyFileCount`, which also counts untracked `??`
+  // files). A stray scratch file must not block a merge — `git merge` itself
+  // rides over non-colliding untracked files, and its own overwrite-refusal
+  // is the backstop for the rare untracked collision (handled below).
+  final dirty = await _modifiedPaths(repo);
+  if (dirty.tracked.isNotEmpty) {
+    return LocalPrMergeResult(
+        MergeBlockedByLocalChanges(dirty.tracked.toList()..sort()));
   }
 
-  if (deleteBranch) {
-    // Best-effort. `-d` (not `-D`) refuses if the branch isn't merged;
-    // after a successful merge it always succeeds. Surface the error
-    // string but don't fail the overall operation — the merge landed.
-    final del = await _git(mainRepoPath, ['branch', '-d', branch]);
-    if (del.exitCode != 0) {
-      return GitResult.err(
-        'Merged but could not delete $branch: '
-        '${del.stderr.toString().trim()}',
-      );
+  // Capture the base tip BEFORE the merge: the squash verifier needs it to
+  // rebuild the expected merged tree, and it lets a post-mutation failure
+  // report honestly whether the base already advanced.
+  final baseBefore = await _revParse(repo, baseRef);
+
+  if (method == BranchMergeMethod.squash) {
+    final sq = await _git(repo, ['merge', '--squash', branch]);
+    if (sq.exitCode != 0) {
+      final conflicted = await _conflictedPaths(repo);
+      // `--squash` on conflict leaves UU markers + SQUASH_MSG but no
+      // MERGE_HEAD; the editor's `git commit` conclusion produces the
+      // single-parent commit squash wants.
+      if (conflicted.isNotEmpty) {
+        return LocalPrMergeResult(MergeConflicted(conflicted),
+            conflictWorktree: repo);
+      }
+      final blocked = _untrackedOverwritePaths(sq.stderr as String);
+      if (blocked.isNotEmpty) {
+        return LocalPrMergeResult(
+            MergeBlockedByLocalChanges(blocked..sort()));
+      }
+      return LocalPrMergeResult(MergeFailed((sq.stderr as String).trim()));
+    }
+    final commit = await _git(
+        repo, ['commit', '-m', _squashSubject(squashSubject, branch)]);
+    if (commit.exitCode != 0) {
+      return LocalPrMergeResult(
+          MergeFailed('Squash commit failed: ${(commit.stderr as String).trim()}'));
+    }
+  } else {
+    final mc = await _git(repo, ['merge', '--no-ff', '--no-edit', branch]);
+    if (mc.exitCode != 0) {
+      final conflicted = await _conflictedPaths(repo);
+      if (conflicted.isNotEmpty) {
+        return LocalPrMergeResult(MergeConflicted(conflicted),
+            conflictWorktree: repo);
+      }
+      final blocked = _untrackedOverwritePaths(mc.stderr as String);
+      if (blocked.isNotEmpty) {
+        return LocalPrMergeResult(
+            MergeBlockedByLocalChanges(blocked..sort()));
+      }
+      return LocalPrMergeResult(MergeFailed((mc.stderr as String).trim()));
     }
   }
-  return const GitResult.ok(null);
+
+  final verified = await _verifyMerged(repo, baseRef, branch, method,
+      squashBaseBefore: baseBefore);
+  if (!verified) {
+    // The commit/merge already advanced the base by this point — say so
+    // rather than implying nothing happened. This is near-impossible with
+    // tree-equality verification, but the message must never lie.
+    final baseAfter = await _revParse(repo, baseRef);
+    final moved = baseAfter.isNotEmpty && baseAfter != baseBefore;
+    return LocalPrMergeResult(MergeFailed(moved
+        ? '$baseRef advanced but the merge of $branch could not be verified — '
+            'inspect $baseRef before marking merged.'
+        : 'Merge ran but $baseRef does not contain $branch — not marking merged.'));
+  }
+  return LocalPrMergeResult(MergeClean(SyncData(
+      operation: 'merge', remote: '', output: 'Merged $branch into $baseRef.')));
+}
+
+/// Zero-checkout merge for a base checked out nowhere: `merge-tree` builds the
+/// merged tree in the object store (no working tree), `commit-tree` wraps it
+/// (two parents for a merge commit, one for a squash), and a CAS `update-ref`
+/// advances the base only if it hasn't moved since we read it. A `merge-tree`
+/// conflict returns the file list with every ref left exactly as it was.
+Future<LocalPrMergeResult> _mergeAtRefLevel(
+  String repo,
+  String branch,
+  String baseRef,
+  String baseTip,
+  String headTip,
+  BranchMergeMethod method,
+  String? squashSubject,
+) async {
+  final mt =
+      await _git(repo, ['merge-tree', '--write-tree', '--name-only', baseRef, branch]);
+  if (mt.exitCode == 1) {
+    // Conflicts: tree SHA on line 1, conflicting paths thereafter. Nothing
+    // was written to any ref — this is a pure prediction.
+    final lines = (mt.stdout as String).split('\n');
+    final paths = <String>[
+      for (var i = 1; i < lines.length; i++)
+        if (lines[i].trim().isNotEmpty) lines[i].trim(),
+    ];
+    return LocalPrMergeResult(MergeConflicted(paths));
+  }
+  if (mt.exitCode != 0) {
+    return LocalPrMergeResult(
+        MergeFailed('merge-tree failed: ${(mt.stderr as String).trim()}'));
+  }
+  final tree = (mt.stdout as String).trim().split('\n').first.trim();
+  if (tree.isEmpty) {
+    return const LocalPrMergeResult(
+        MergeFailed('merge-tree produced no tree.'));
+  }
+
+  final ctArgs = <String>['commit-tree', tree, '-p', baseTip];
+  if (method == BranchMergeMethod.mergeCommit) ctArgs.addAll(['-p', headTip]);
+  ctArgs.addAll(['-m', _squashSubject(squashSubject, branch)]);
+  final ct = await _git(repo, ctArgs);
+  if (ct.exitCode != 0) {
+    return LocalPrMergeResult(
+        MergeFailed('commit-tree failed: ${(ct.stderr as String).trim()}'));
+  }
+  final newSha = (ct.stdout as String).trim();
+
+  // Compare-and-swap: fail cleanly if the base moved between our read and
+  // this write, rather than clobbering a concurrent update.
+  final upd =
+      await _git(repo, ['update-ref', 'refs/heads/$baseRef', newSha, baseTip]);
+  if (upd.exitCode != 0) {
+    return LocalPrMergeResult(MergeFailed(
+        '$baseRef moved during the merge — nothing changed, retry. '
+        '(${(upd.stderr as String).trim()})'));
+  }
+
+  // Verify. A squash here is verified by TREE EQUALITY like the worktree
+  // path, but we already hold the merged [tree] `merge-tree` built and
+  // [newSha] is `commit-tree` of exactly that tree — so confirm the landed
+  // commit carries it rather than recomputing the merge. Merge-commit falls
+  // back to the ancestor check.
+  final verified = method == BranchMergeMethod.squash
+      ? (await _revParse(repo, '$newSha^{tree}')) == tree
+      : await _verifyMerged(repo, baseRef, branch, method);
+  if (!verified) {
+    return LocalPrMergeResult(MergeFailed(
+        'Merge landed but $baseRef does not contain $branch — not marking merged.'));
+  }
+  return LocalPrMergeResult(MergeClean(SyncData(
+      operation: 'merge', remote: '', output: 'Merged $branch into $baseRef.')));
+}
+
+/// Rebase [branch] onto [baseRef], then fast-forward the base. The replay
+/// runs in the HEAD branch's OWN worktree (it legitimately owns that ref — no
+/// hijack) and the fast-forward in the base's worktree. Either ref checked out
+/// nowhere yields [MergeNeedsCheckout]: there is no ref-level rebase, and we
+/// won't conjure a temp worktree in v1.
+Future<LocalPrMergeResult> _rebaseIntoBase(
+    String repo, String branch, String baseRef) async {
+  final baseWt = await worktreeHolding(repo, baseRef);
+  if (baseWt == null) {
+    return LocalPrMergeResult(MergeNeedsCheckout(
+      branch: branch,
+      baseRef: baseRef,
+      message: 'Rebasing $branch onto $baseRef needs $baseRef checked out in a '
+          'desk. Open it, then rebase — or pick merge commit / squash instead.',
+    ));
+  }
+  final headWt = await worktreeHolding(repo, branch);
+  if (headWt == null) {
+    return LocalPrMergeResult(MergeNeedsCheckout(
+      branch: branch,
+      baseRef: baseRef,
+      message: 'Rebasing $branch needs it checked out in a desk. Open it, then '
+          'rebase — or pick merge commit / squash instead.',
+    ));
+  }
+  // Gate on TRACKED modifications only, read fresh in each worktree. `git
+  // rebase` refuses over any tracked change, but untracked scratch files are
+  // no obstacle — don't let one falsely block the replay.
+  final headDirty = await _modifiedPaths(headWt.path);
+  if (headDirty.tracked.isNotEmpty) {
+    return LocalPrMergeResult(
+        MergeBlockedByLocalChanges(headDirty.tracked.toList()..sort()));
+  }
+  final baseDirty = await _modifiedPaths(baseWt.path);
+  if (baseDirty.tracked.isNotEmpty) {
+    return LocalPrMergeResult(
+        MergeBlockedByLocalChanges(baseDirty.tracked.toList()..sort()));
+  }
+
+  final rb = await _git(headWt.path, ['rebase', baseRef]);
+  if (rb.exitCode != 0) {
+    final conflicted = await _conflictedPaths(headWt.path);
+    if (conflicted.isNotEmpty) {
+      // Paused mid-rebase in the head's worktree. The flow layer drives the
+      // editor loop, then calls [finishLocalPrRebase] to advance the base.
+      return LocalPrMergeResult(MergeConflicted(conflicted),
+          conflictWorktree: headWt.path, rebasePaused: true);
+    }
+    await _git(headWt.path, ['rebase', '--abort']);
+    return LocalPrMergeResult(
+        MergeFailed('Rebase failed: ${(rb.stderr as String).trim()}'));
+  }
+  return _fastForwardBaseToHead(repo, branch, baseRef, baseWt);
+}
+
+/// Fast-forward [baseRef] to the (already-rebased) tip of [branch] in the
+/// base's worktree, then verify. Shared by the clean-rebase path and the
+/// editor-resolved [finishLocalPrRebase] continuation.
+Future<LocalPrMergeResult> _fastForwardBaseToHead(
+    String repo, String branch, String baseRef, WorktreeData baseWt) async {
+  final newHeadTip = await _revParse(repo, branch);
+  final ff = await _git(baseWt.path, ['merge', '--ff-only', branch]);
+  if (ff.exitCode != 0) {
+    return LocalPrMergeResult(MergeFailed(
+        'Rebased, but fast-forward of $baseRef failed: ${(ff.stderr as String).trim()}'));
+  }
+  if (!await _isAncestor(repo, newHeadTip, baseRef)) {
+    return LocalPrMergeResult(MergeFailed(
+        'Rebased but $baseRef did not advance to $branch — not marking merged.'));
+  }
+  return LocalPrMergeResult(MergeClean(SyncData(
+      operation: 'merge', remote: '', output: 'Rebased $branch onto $baseRef.')));
+}
+
+/// Finish a rebase whose conflicts were resolved in the editor: the head
+/// branch is now at its rebased tip, so advance the base by fast-forward.
+/// Returns [MergeNeedsCheckout] if the base's worktree vanished mid-flow.
+Future<LocalPrMergeResult> finishLocalPrRebase(
+    String repo, String branch, String baseRef) async {
+  final baseWt = await worktreeHolding(repo, baseRef);
+  if (baseWt == null) {
+    return LocalPrMergeResult(MergeNeedsCheckout(
+      branch: branch,
+      baseRef: baseRef,
+      message: 'Rebased $branch, but $baseRef is no longer checked out — '
+          'open it in a desk to finish the fast-forward.',
+    ));
+  }
+  return _fastForwardBaseToHead(repo, branch, baseRef, baseWt);
+}
+
+/// Derive "merged" from git rather than trusting the caller.
+///
+/// Merge-commit and rebase land [branch] as an ancestor of [baseRef], so
+/// `merge-base --is-ancestor` is exact. A squash is different: it collapses
+/// N commits into one, so per-commit patch-ids match nothing — `git cherry`
+/// (which [detectSquashMergedBranches] uses for its own, different purpose)
+/// reports every branch commit as still-unique and would reject a perfectly
+/// good squash of N≥2 commits. The correct squash oracle is TREE EQUALITY:
+/// a clean squash's committed tree IS the tree `merge-tree` builds from the
+/// pre-merge base tip ([squashBaseBefore]) and the head — independent of how
+/// many commits were folded in. We recompute that merged tree and require it
+/// to equal `baseRef^{tree}` after the squash landed.
+Future<bool> _verifyMerged(
+    String repo, String baseRef, String branch, BranchMergeMethod method,
+    {String? squashBaseBefore}) async {
+  if (method == BranchMergeMethod.squash) {
+    if (squashBaseBefore == null || squashBaseBefore.isEmpty) return false;
+    // `merge-tree --write-tree` prints the merged tree SHA on a clean merge
+    // (exit 0); a non-zero exit means it could not reproduce a clean tree,
+    // which for an already-committed clean squash should never happen — treat
+    // it as unverified rather than guessing.
+    final mt =
+        await _git(repo, ['merge-tree', '--write-tree', squashBaseBefore, branch]);
+    if (mt.exitCode != 0) return false;
+    final expectTree = (mt.stdout as String).trim().split('\n').first.trim();
+    if (expectTree.isEmpty) return false;
+    final actualTree = await _revParse(repo, '$baseRef^{tree}');
+    return actualTree.isNotEmpty && actualTree == expectTree;
+  }
+  return _isAncestor(repo, branch, baseRef);
+}
+
+/// Paths git named in its untracked-overwrite refusal ("The following
+/// untracked working tree files would be overwritten by merge: …"). Git
+/// aborts before touching anything — the working tree is intact — so mapping
+/// this to a typed blocked outcome (with the exact files) beats dumping raw
+/// stderr. Empty when the stderr is some other failure.
+List<String> _untrackedOverwritePaths(String stderr) {
+  final paths = <String>[];
+  var capturing = false;
+  for (final line in stderr.split('\n')) {
+    if (line.contains('would be overwritten by')) {
+      capturing = true;
+      continue;
+    }
+    if (!capturing) continue;
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    // The path list is tab-indented; the "Please move…/Aborting" epilogue and
+    // any further error/warning lines close it.
+    if (line.startsWith('Please ') ||
+        line.startsWith('error:') ||
+        line.startsWith('warning:') ||
+        trimmed == 'Aborting' ||
+        trimmed.startsWith('Merge with strategy')) {
+      break;
+    }
+    paths.add(trimmed);
+  }
+  return paths;
 }
 
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
@@ -1820,6 +2305,7 @@ Future<Uint8List?> gitBlobBytes(String repo, String objectHash) async {
       'git',
       ['cat-file', 'blob', objectHash],
       workingDirectory: repo,
+      environment: _kNonInteractiveGitEnv,
       stdoutEncoding: null,
       stderrEncoding: null,
     );
@@ -1839,6 +2325,7 @@ Future<Uint8List?> gitBlobHeader(String repo, String objectHash,
       'git',
       ['cat-file', 'blob', objectHash],
       workingDirectory: repo,
+      environment: _kNonInteractiveGitEnv,
     );
     final stderrDrained = proc.stderr.drain<void>();
     final chunk = <int>[];
@@ -3012,7 +3499,8 @@ Future<GitResult<void>> applyPatch(
     if (dryRun) args.add('--check');
     if (threeWay) args.add('--3way');
     args.addAll(['--whitespace=nowarn', '-']);
-    final process = await Process.start('git', args, workingDirectory: repo);
+    final process = await Process.start('git', args,
+        workingDirectory: repo, environment: _kNonInteractiveGitEnv);
     // Raw UTF-8 bytes, never IOSink.write: process stdin defaults to the
     // SYSTEM encoding (cp1252 on Windows), which lossily mangles any
     // non-ASCII patch content and makes git reject or corrupt the hunk.
@@ -3327,7 +3815,10 @@ Future<bool> hasUnmergedPaths(String repo) async =>
 Future<List<int>?> _blobBytes(String repo, String rev, String path) async {
   try {
     final r = await Process.run('git', ['show', '$rev:$path'],
-        workingDirectory: repo, stdoutEncoding: null, stderrEncoding: null);
+        workingDirectory: repo,
+        environment: _kNonInteractiveGitEnv,
+        stdoutEncoding: null,
+        stderrEncoding: null);
     if (r.exitCode != 0) return null;
     return r.stdout as List<int>;
   } catch (_) {
@@ -3625,11 +4116,55 @@ Future<GitResult<void>> finalizeReconciledMerge(
   }
 }
 
+/// Memo of static repo geometry — `rev-parse --git-dir`,
+/// `--git-common-dir`, and `--git-path <x>` — keyed by a length-prefixed
+/// (repoPath, args) signature (see [_gitDedupKey]). These outputs are fixed
+/// for a given repo path: `.git` doesn't relocate under a live working copy,
+/// and `--git-path` resolves a name to the same location every time. We cache
+/// the RAW output byte-for-byte and never reinterpret it, so a git version
+/// that prints `--git-path` relative to CWD keeps the exact semantics the
+/// call sites already handle via [_resolveGitPath].
+///
+/// No TTL, no invalidation: the only event that changes these values is the
+/// repo moving on disk, which yields a different repoPath and therefore a
+/// different key — the stale entry is simply never consulted again. (What a
+/// path like `rebase-merge` *points at* is cached; whether that dir currently
+/// exists is always re-checked live at the call site, so mid-rebase state
+/// transitions are unaffected.)
+final Map<String, ProcessResult> _repoGeometryCache = {};
+
+/// Runs (or replays) a static repo-geometry `rev-parse` through the memo
+/// above. Only exit-zero results are cached; a failure re-spawns each time so
+/// the caller's error branch sees the real stderr rather than a stale success.
+Future<ProcessResult> _revParseGeometry(
+    String repo, List<String> revParseArgs) async {
+  final key = _gitDedupKey(repo, revParseArgs);
+  final cached = _repoGeometryCache[key];
+  if (cached != null) return cached;
+  final r = await _git(repo, revParseArgs);
+  if (r.exitCode == 0) _repoGeometryCache[key] = r;
+  return r;
+}
+
+/// Test seam onto the geometry memo. A repeat call returns the SAME cached
+/// [ProcessResult] instance, which is how a test distinguishes a memo hit
+/// from a fresh spawn.
+@visibleForTesting
+Future<ProcessResult> revParseGeometryForTesting(
+        String repo, List<String> revParseArgs) =>
+    _revParseGeometry(repo, revParseArgs);
+
+/// Drops all memoized geometry so one test can't leak a cached path into the
+/// next (temp repos are recreated per test with fresh paths, but this keeps
+/// the map from growing across a run).
+@visibleForTesting
+void clearRepoGeometryCacheForTesting() => _repoGeometryCache.clear();
+
 /// Writes the second merge parent to `<git-dir>/MERGE_HEAD` so the next
 /// `git commit` records a two-parent merge commit. Returns an error string
 /// on failure, or null on success.
 Future<String?> _writeMergeHead(String repo, String incomingRef) async {
-  final dir = await _git(repo, ['rev-parse', '--git-dir']);
+  final dir = await _revParseGeometry(repo, ['rev-parse', '--git-dir']);
   if (dir.exitCode != 0) return (dir.stderr as String).trim();
   var gitDir = (dir.stdout as String).trim();
   if (gitDir.isEmpty) return 'Could not resolve git directory.';
@@ -3687,7 +4222,7 @@ Future<void> restoreIndexEntries(
 /// Removes the hand-written `MERGE_HEAD`/`MERGE_MSG` so a failed reconcile
 /// commit doesn't leave the repo parked mid-merge. Best-effort.
 Future<void> _clearMergeState(String repo) async {
-  final dir = await _git(repo, ['rev-parse', '--git-dir']);
+  final dir = await _revParseGeometry(repo, ['rev-parse', '--git-dir']);
   if (dir.exitCode != 0) return;
   final gitDir = (dir.stdout as String).trim();
   if (gitDir.isEmpty) return;
@@ -3711,7 +4246,8 @@ Future<GitResult<void>> commitResolvedMerge(String repo) async {
 
 /// True while a rebase is paused (mid-`pull --rebase` conflict resolution).
 Future<bool> isRebaseInProgress(String repo) async {
-  final dir = await _git(repo, ['rev-parse', '--git-path', 'rebase-merge']);
+  final dir =
+      await _revParseGeometry(repo, ['rev-parse', '--git-path', 'rebase-merge']);
   if (dir.exitCode == 0) {
     final pathMerge = (dir.stdout as String).trim();
     if (pathMerge.isNotEmpty &&
@@ -3719,7 +4255,8 @@ Future<bool> isRebaseInProgress(String repo) async {
       return true;
     }
   }
-  final apply = await _git(repo, ['rev-parse', '--git-path', 'rebase-apply']);
+  final apply =
+      await _revParseGeometry(repo, ['rev-parse', '--git-path', 'rebase-apply']);
   if (apply.exitCode == 0) {
     final pathApply = (apply.stdout as String).trim();
     if (pathApply.isNotEmpty &&
@@ -3734,7 +4271,7 @@ String _resolveGitPath(String repo, String maybeRelative) =>
     p.isAbsolute(maybeRelative) ? maybeRelative : p.join(repo, maybeRelative);
 
 Future<bool> _hasGitFile(String repo, String name) async {
-  final r = await _git(repo, ['rev-parse', '--git-path', name]);
+  final r = await _revParseGeometry(repo, ['rev-parse', '--git-path', name]);
   if (r.exitCode != 0) return false;
   final path = (r.stdout as String).trim();
   return path.isNotEmpty && await File(_resolveGitPath(repo, path)).exists();
@@ -3872,8 +4409,13 @@ Future<GitResult<String>> cloneRepository(
       proc = await Process.start(
         'git',
         ['clone', '--progress', url, absTarget],
+        environment: _kNonInteractiveGitEnv,
         mode: ProcessStartMode.normal,
       );
+      // Bind the clone (a potentially long-running child) to the kill-on-close
+      // job object so app-exit tears the whole git tree down instead of
+      // orphaning a network fetch — parity with ai.dart's spawns.
+      WinJobObject.assignProcess(proc.pid);
       _activeCloneProcess = proc;
       _activeCloneTarget = absTarget;
       final recentStderr = <String>[];
@@ -3945,6 +4487,12 @@ Future<GitResult<String>> initRepository(String path) async {
   }
 }
 
+/// Upper bound on our fully-automated interactive rebase. The sequence editor
+/// writes the todo non-interactively, so there is nothing to wait on a human
+/// for — a stall means a hung child, which we tree-kill rather than let pin a
+/// semaphore permit forever.
+const Duration _kInteractiveRebaseTimeout = Duration(seconds: 120);
+
 Future<GitResult<void>> startInteractiveRebase(
     String repo, List<RebaseTodoEntry> entries) async {
   // Build the todo list content
@@ -3978,19 +4526,45 @@ Future<GitResult<void>> startInteractiveRebase(
       ? '${entries.last.commitHash}~1'
       : 'HEAD~${entries.length}';
   final ProcessResult r;
+  // Parity with the shared exec layer (`_gitRaw`): this mutation used to
+  // bypass it entirely. It now takes the same semaphore permit the clone
+  // path takes (held outside read-coalescing — it mutates), merges the
+  // non-interactive env with the sequence editor that feeds the todo list,
+  // decodes raw bytes leniently through [_decodeGitBytes] (strict utf8 would
+  // throw on a non-UTF-8 commit message replayed in the output), and kills
+  // the whole process tree on timeout via [killProcessTree] so the .cmd/.sh
+  // editor wrapper and its git child don't orphan on Windows.
+  await _gitSubprocessSemaphore.acquire();
   try {
-    r = await Process.run(
+    final proc = await Process.start(
       'git',
       ['rebase', '-i', ontoRef],
       workingDirectory: repo,
       environment: {
-        ...Platform.environment,
+        ..._kNonInteractiveGitEnv,
         'GIT_SEQUENCE_EDITOR': sequenceEditor,
       },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
     );
+    // Same orphan containment as the clone path: the interactive rebase drives
+    // a .cmd/.sh sequence-editor wrapper plus a git child, so bind the tree to
+    // the kill-on-close job object rather than relying on killProcessTree alone.
+    WinJobObject.assignProcess(proc.pid);
+    final stdoutBytes =
+        proc.stdout.fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d));
+    final stderrBytes =
+        proc.stderr.fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d));
+    int exitCode;
+    try {
+      exitCode = await proc.exitCode.timeout(_kInteractiveRebaseTimeout);
+    } on TimeoutException {
+      await killProcessTree(proc);
+      exitCode = await proc.exitCode;
+    }
+    final out = _decodeGitBytes((await stdoutBytes).takeBytes(), strict: false);
+    final err = _decodeGitBytes((await stderrBytes).takeBytes(), strict: false);
+    r = ProcessResult(proc.pid, exitCode, out.text, err.text);
   } finally {
+    _gitSubprocessSemaphore.release();
     await tmpDir.delete(recursive: true).catchError((_) => tmpDir);
   }
 
@@ -4299,11 +4873,11 @@ Future<GitResult<List<WorktreeData>>> listWorktrees(String repo) async {
 /// working tree. Idempotent; non-fatal on failure.
 Future<void> ensureManifoldExcluded(String repo) async {
   try {
-    final gitDirResult = await Process.run(
-      'git',
-      ['rev-parse', '--git-common-dir'],
-      workingDirectory: repo,
-    );
+    // Routed through the geometry memo (and the shared exec layer, so it
+    // inherits the non-interactive env + semaphore) — the common-dir is
+    // static for this repo path.
+    final gitDirResult =
+        await _revParseGeometry(repo, ['rev-parse', '--git-common-dir']);
     if (gitDirResult.exitCode == 0) {
       final gitDir = (gitDirResult.stdout as String).trim();
       final absGitDir = p.isAbsolute(gitDir) ? gitDir : p.join(repo, gitDir);

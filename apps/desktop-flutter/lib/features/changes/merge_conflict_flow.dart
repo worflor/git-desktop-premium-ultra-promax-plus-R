@@ -309,6 +309,51 @@ Future<MergeOutcome> resolveCheckout(
   return MergeConflicted(uu, resolved: true);
 }
 
+/// Local-PR merge, unified onto the same conflict-editor path as pull/sync.
+/// Delegates routing + the git-level classification to [mergeBranchIntoBase]
+/// (which never switches a worktree's HEAD and does a zero-checkout ref merge
+/// when the base is checked out nowhere), then funnels a native conflict left
+/// in a worktree through the SAME editor the pull path uses: a paused rebase
+/// drives the rebase loop and finishes the base fast-forward; a merge
+/// concludes with a commit. A ref-level (zero-checkout) conflict carries no
+/// editable tree, so it is reported as-is for the surface to guide.
+Future<MergeOutcome> resolveLocalPrMerge(
+  BuildContext context, {
+  required String repoPath,
+  required String branch,
+  required String baseRef,
+  required BranchMergeMethod method,
+  String? squashSubject,
+}) async {
+  final result = await mergeBranchIntoBase(
+    repoPath: repoPath,
+    branch: branch,
+    baseRef: baseRef,
+    method: method,
+    squashSubject: squashSubject,
+  );
+  final outcome = result.outcome;
+  if (outcome is! MergeConflicted) return outcome;
+  final wt = result.conflictWorktree;
+  // Ref-level conflict: no working tree was touched, nothing to edit.
+  if (wt == null) return outcome;
+  if (!context.mounted) return outcome;
+
+  if (result.rebasePaused) {
+    final loop = await _resolveRebaseLoop(context, wt, outcome.paths,
+        replayLabel: 'rebase $branch onto $baseRef');
+    // The rebase only landed if the loop completed; a paused/cancelled loop
+    // surfaces as-is, and the deferred base fast-forward waits for a resume.
+    if (loop is! MergeClean) return loop;
+    return (await finishLocalPrRebase(repoPath, branch, baseRef)).outcome;
+  }
+
+  // Native merge conflict sitting as UU markers in [wt]. The shared sink
+  // resolves them and concludes with a commit.
+  final resolved = await resolveNativeMergeConflicts(context, wt);
+  return MergeConflicted(outcome.paths, resolved: resolved);
+}
+
 /// The unified pull. Fetches, classifies (via [prepareMergePull]), and routes:
 ///   • clean working tree → native `git merge`; conflicts go to the editor,
 ///     then a commit concludes the merge.

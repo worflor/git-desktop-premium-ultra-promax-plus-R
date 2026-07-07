@@ -5311,7 +5311,7 @@ class _SummaryActionButton extends StatelessWidget {
 
 /// Message sent from the main isolate to the summary worker isolate.
 /// Carries the [RootIsolateToken] the worker needs to bootstrap plugin
-/// channels so `runGitProbe`, diagnostics writers, and path-provider
+/// channels so `runGit`, diagnostics writers, and path-provider
 /// calls all succeed from inside `compute`.
 class _SummaryJob {
   const _SummaryJob({required this.rootToken, required this.repoPath});

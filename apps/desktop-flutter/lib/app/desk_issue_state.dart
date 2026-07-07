@@ -44,6 +44,11 @@ class DeskIssueState extends ChangeNotifier {
   /// pushes from racing on label diff computation and interleaving edits.
   final Set<int> _pushing = <int>{};
 
+  /// Repo paths with a Manifold ref sync (fetch+push of refs/manifold/*)
+  /// in flight. Guards against a manual sync stacking on an auto one and
+  /// double-fetching the counter.
+  final Set<String> _syncing = <String>{};
+
   DeskIssueState(this._repo, this._identity) {
     _repo.addListener(_onRepoChanged);
     if (_repo.activePath != null) {
@@ -257,6 +262,33 @@ class DeskIssueState extends ChangeNotifier {
     return null;
   }
 
+  /// Share local issues over the git remote: fetch peers' Manifold refs,
+  /// push ours, then refresh in-memory state. This moves the whole
+  /// `refs/manifold/*` namespace (issues, desks, and the shared counter)
+  /// in one round-trip, so calling it from either state syncs everything
+  /// — this method just re-derives the issue view afterward. Guarded by
+  /// [_syncing] like the other in-flight operations. Returns null on
+  /// success, an error string otherwise. UI wiring is a later step.
+  Future<String?> syncWithRemote({
+    required String repoPath,
+    String remote = 'origin',
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    if (!_syncing.add(main)) return 'sync already in progress';
+    try {
+      final store = DeskIssueStore(_refsFor(main));
+      final r = await store.syncWithRemote(remote: remote);
+      if (!r.ok) return r.error;
+      await refreshFor(main);
+      // Surface any newly-synced remote links to other consumers.
+      // ignore: unawaited_futures
+      _remoteCache?.refreshFor(main);
+      return null;
+    } finally {
+      _syncing.remove(main);
+    }
+  }
+
   //
   // All methods resolve the forge via detectIssueProvider() and use the
   // RemoteIssueProvider interface — no forge-specific calls here.
@@ -290,7 +322,7 @@ class DeskIssueState extends ChangeNotifier {
 
       final provider = await detectIssueProvider(main);
       final status = await provider.status(main);
-      if (!status.available) return status.reason ?? 'remote unavailable';
+      if (!status.canWrite) return status.reason ?? 'remote unavailable';
 
       final gr = await provider.createIssue(
         main,
@@ -426,7 +458,7 @@ class DeskIssueState extends ChangeNotifier {
 
       final provider = await detectIssueProvider(main);
       final status = await provider.status(main);
-      if (!status.available) return status.reason ?? 'remote unavailable';
+      if (!status.canWrite) return status.reason ?? 'remote unavailable';
 
       final n = issue.remoteNumber!;
 

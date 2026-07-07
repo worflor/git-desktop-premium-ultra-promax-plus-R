@@ -30,6 +30,7 @@ import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import 'binary_diff_view.dart';
+import 'diff_collapse_policy.dart';
 import 'diff_document.dart';
 import 'diff_models.dart';
 import 'edit_units.dart';
@@ -295,11 +296,15 @@ class _DiffShellState extends State<DiffShell> {
   // prompt, lifted into the user-facing diff viewer so a 600-hunk
   // diff doesn't flood the scroll with low-salience lines.
   //
-  // Stored as indices into [_hunks] so we don't tether to header
-  // identity (which changes across rebuilds). Empty = nothing
-  // collapsed; the adaptive default repopulates it whenever the
-  // document + logos session both refresh.
-  Set<int> _collapsedHunks = {};
+  // Keyed by stable hunk identity ([_hunkKey] = filePath + fileHunkIndex),
+  // NOT by index into [_hunks]. `_setDisplayLines` recomputes this on every
+  // rebuild, and a same-document refresh can reorder [_hunks] (stage toggle,
+  // search, replacement-pair recompute) — an index-keyed set would then fold
+  // the wrong hunk. The (filePath, fileHunkIndex) coordinate survives those
+  // rebuilds, matching the same key `_filterCollapsedHunkBodies` already
+  // resolves against. Empty = nothing collapsed; the adaptive default
+  // repopulates it whenever the document + logos session both refresh.
+  Set<String> _collapsedHunks = {};
   // True once the user has toggled anything — we then stop blowing
   // away their explicit choices when the logos session repopulates.
   // Reset when a new document loads (different diff = fresh slate).
@@ -682,7 +687,7 @@ class _DiffShellState extends State<DiffShell> {
         // different hunks now); the auto-policy gets to re-decide
         // on the new document's φ distribution.
         _collapseUserDirtied = false;
-        _collapsedHunks = <int>{};
+        _collapsedHunks = <String>{};
         _currentDocument = document;
         _currentDiffContent = document.rawContent;
         _lines = stagedKeys.isEmpty
@@ -2718,6 +2723,12 @@ class _DiffShellState extends State<DiffShell> {
     );
   }
 
+  /// Stable identity for a hunk, independent of its index in [_hunks] (which
+  /// can reorder across a same-document refresh). The (filePath,
+  /// fileHunkIndex) coordinate is the same one `_filterCollapsedHunkBodies`
+  /// and the ParsedLine body rows key against.
+  static String _hunkKey(_HunkHeader h) => '${h.filePath}\u0000${h.fileHunkIndex}';
+
   /// Strip body rows for hunks the user has collapsed (or that the
   /// adaptive default collapsed on our behalf). Hunk-header rows are
   /// always kept — they're the chevron the user taps to expand.
@@ -2725,12 +2736,14 @@ class _DiffShellState extends State<DiffShell> {
     if (_collapsedHunks.isEmpty) return lines;
     if (_hunks.isEmpty) return lines;
     // Canonical (filePath, fileHunkIndex) → collapsed? lookup. Built
-    // once per call so the per-line check is a hash-map probe.
+    // once per call so the per-line check is a hash-map probe. Resolves
+    // the stable keys in [_collapsedHunks] against the current [_hunks],
+    // so a reorder can't fold the wrong hunk.
     final collapsedByPath = <String, Set<int>>{};
-    for (final idx in _collapsedHunks) {
-      if (idx < 0 || idx >= _hunks.length) continue;
-      final h = _hunks[idx];
-      (collapsedByPath[h.filePath] ??= <int>{}).add(h.fileHunkIndex);
+    for (final h in _hunks) {
+      if (_collapsedHunks.contains(_hunkKey(h))) {
+        (collapsedByPath[h.filePath] ??= <int>{}).add(h.fileHunkIndex);
+      }
     }
     if (collapsedByPath.isEmpty) return lines;
     final out = <ParsedLine>[];
@@ -2752,41 +2765,42 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   /// Auto-collapse policy. Runs after both [_hunks] and [_logosSession]
-  /// have resolved. Marks below-median-importance hunks as collapsed
-  /// by default so large diffs render with their noise already folded,
-  /// and the user reveals individual hunks with a tap.
+  /// have resolved. Folds the low-participation tail of a diff by default
+  /// so large diffs render with their noise already collapsed, and the
+  /// user reveals individual hunks with a tap.
   ///
-  /// Emergent — the collapse threshold is the diff's own median φ, so
-  /// a uniform-importance diff collapses nothing and a skewed diff
-  /// collapses its long tail. Respects [_collapseUserDirtied]: once
-  /// the user has manually toggled anything, we stop re-applying the
-  /// auto-policy for this diff.
+  /// The keep count is the participation ratio N_eff = (Σφ)²/Σφ² over the
+  /// hunks' importances — the effective number of participating hunks. We
+  /// keep the ceil(N_eff) most-important hunks expanded and fold the rest
+  /// (ties at the boundary are never split). This replaces an earlier
+  /// median split, which forced a ~50/50 fold on essentially every diff:
+  /// real diffs have almost no within-file φ hierarchy (measured across 200
+  /// commits — see docs/architecture/diff-collapse-policy.md), so a median
+  /// cut folded ~half the hunks of a near-uniform distribution as pure
+  /// noise. With N_eff a genuinely uniform diff collapses NOTHING (N_eff =
+  /// N) and only a diff whose importance actually concentrates loses its
+  /// tail. See [autoCollapseFoldIndices] for the math.
+  ///
+  /// Respects [_collapseUserDirtied]: once the user has manually toggled
+  /// anything, we stop re-applying the auto-policy for this diff.
   void _recomputeAutoCollapseIfNeeded() {
     if (_collapseUserDirtied) return;
     if (_logosSession == null) {
-      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <int>{};
+      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <String>{};
       return;
     }
     if (_hunks.length < 3) {
       // Tiny diffs read better fully expanded.
-      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <int>{};
+      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <String>{};
       return;
     }
-    final importances = <double>[];
-    for (var i = 0; i < _hunks.length; i++) {
-      final sig = _logosSignalForHeader(_hunks[i]);
-      importances.add(sig?.importance ?? 0.0);
-    }
-    final sorted = [...importances]..sort();
-    final median = sorted[sorted.length ~/ 2];
-    final next = <int>{};
-    for (var i = 0; i < importances.length; i++) {
-      // Below-median hunks collapse. `<=` would fold the middle hunk
-      // too; `<` keeps it expanded for the degenerate case where many
-      // importances tie at the median.
-      if (importances[i] < median) next.add(i);
-    }
-    _collapsedHunks = next;
+    final importances = <double>[
+      for (final h in _hunks) _logosSignalForHeader(h)?.importance ?? 0.0,
+    ];
+    final foldIdx = autoCollapseFoldIndices(importances);
+    _collapsedHunks = <String>{
+      for (final i in foldIdx) _hunkKey(_hunks[i]),
+    };
   }
 
   /// Toggle the collapse state of a single hunk. Called when the user
@@ -2794,12 +2808,13 @@ class _DiffShellState extends State<DiffShell> {
   /// subsequent logos-session updates don't overwrite the choice.
   void _toggleHunkCollapsed(int hunkIdx) {
     if (hunkIdx < 0 || hunkIdx >= _hunks.length) return;
+    final key = _hunkKey(_hunks[hunkIdx]);
     setState(() {
       _collapseUserDirtied = true;
-      if (_collapsedHunks.contains(hunkIdx)) {
-        _collapsedHunks.remove(hunkIdx);
+      if (_collapsedHunks.contains(key)) {
+        _collapsedHunks.remove(key);
       } else {
-        _collapsedHunks.add(hunkIdx);
+        _collapsedHunks.add(key);
       }
       // Rebuild displayLines so the body-row filter picks up the
       // change. Everything else (scroll position, selection, etc.)
@@ -3915,9 +3930,8 @@ class _DiffShellState extends State<DiffShell> {
                                     // hunk's body currently hidden? If so,
                                     // the inline hint shows a chevron + the
                                     // line count that's folded away.
-                                    final hIdx = hunkOrdinal - 1;
-                                    final isCollapsed =
-                                        _collapsedHunks.contains(hIdx);
+                                    final isCollapsed = _collapsedHunks
+                                        .contains(_hunkKey(hunkHeader));
                                     final hiddenLines = isCollapsed
                                         ? (hunkHeader.additions +
                                             hunkHeader.deletions)

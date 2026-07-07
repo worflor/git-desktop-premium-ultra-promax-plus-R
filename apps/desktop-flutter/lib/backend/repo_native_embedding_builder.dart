@@ -20,7 +20,7 @@ import 'dart:isolate';
 import 'package:path/path.dart' as p;
 
 import 'engram_file_index.dart' show isEngramIndexablePath;
-import 'git.dart' show runGitProbe;
+import 'git.dart' show runGit;
 import 'repo_native_embedding.dart';
 
 /// A built embedding tagged with the HEAD it was trained at, so the per-repo
@@ -48,11 +48,11 @@ const int _kMaxTokensPerFile = 600;
 /// "no signal" cases — a repo with no HEAD, no tracked files, or too small a
 /// vocabulary returns a result with a null embedding.
 Future<RepoEmbeddingResult> computeRepoEmbedding(String repoPath) async {
-  final headProbe = await runGitProbe(repoPath, ['rev-parse', 'HEAD']);
+  final headProbe = await runGit(repoPath, ['rev-parse', 'HEAD']);
   final headHash =
       headProbe.exitCode == 0 ? headProbe.stdout.toString().trim() : '';
 
-  final lsProbe = await runGitProbe(repoPath, ['ls-files']);
+  final lsProbe = await runGit(repoPath, ['ls-files']);
   if (lsProbe.exitCode != 0) return RepoEmbeddingResult(null, headHash);
 
   final relPaths = <String>[];

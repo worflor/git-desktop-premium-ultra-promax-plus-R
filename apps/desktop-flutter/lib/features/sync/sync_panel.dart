@@ -74,6 +74,11 @@ class _SyncPanelState extends State<SyncPanel> {
             '${pluralize(paths.length, 'file')} have uncommitted edits, '
             'commit them first to rebase-sync '
             '(${paths.take(3).join(', ')}${paths.length > 3 ? '…' : ''}).';
+      case MergeNeedsCheckout(:final message):
+        // Sync never produces this (it always operates on the checked-out
+        // branch); handled for exhaustiveness — surface the guidance if it
+        // ever reaches here rather than silently swallowing it.
+        _actionError = message;
       case MergeFailed(:final message):
         _actionError = message;
     }

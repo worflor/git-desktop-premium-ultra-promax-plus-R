@@ -54,7 +54,7 @@ Future<ShadowHistoryResult> discoverShadowHistory(
   // git scans whose tail is trimmed when earlier sources already fill it.
   const budget = _kMaxTotalShadowCommits;
   final headFuture =
-      runGitProbe(repoPath, ['rev-parse', '--short=7', 'HEAD']);
+      runGit(repoPath, ['rev-parse', '--short=7', 'HEAD']);
   final revertsFuture = _discoverReverts(repoPath, budget);
   final resetsFuture = _discoverResets(repoPath, budget, reflogLimit);
   final abandonedFuture = _discoverAbandonedBranches(repoPath, budget);
@@ -83,7 +83,7 @@ Future<ShadowHistoryResult> discoverShadowHistory(
 Future<List<ShadowCommit>> _discoverReverts(
     String repoPath, int budget) async {
   try {
-    final result = await runGitProbe(repoPath, [
+    final result = await runGit(repoPath, [
       'log',
       '--grep=^Revert',
       '-n', '${budget.clamp(0, _kMaxCommitsPerSource)}',
@@ -190,7 +190,7 @@ Future<List<ShadowCommit>> _shadowCommitsFrom(
   int limit,
 ) async {
   try {
-    final result = await runGitProbe(repoPath, [
+    final result = await runGit(repoPath, [
       'log',
       ref,
       '^HEAD',

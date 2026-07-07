@@ -338,7 +338,7 @@ class DeskPrState extends ChangeNotifier {
       }
       final provider = await detectPrProvider(main);
       final status = await provider.status(main);
-      if (!status.available) {
+      if (!status.canWrite) {
         return status.reason ?? 'remote forge not available';
       }
       // Push the branch first — forges require the head ref to exist remotely.
@@ -384,6 +384,32 @@ class DeskPrState extends ChangeNotifier {
       return null;
     } finally {
       _promoting.remove('$repoPath:$branch');
+    }
+  }
+
+  /// Repo paths with a Manifold ref sync (fetch+push of refs/manifold/*)
+  /// in flight. Guards a manual sync from stacking on an auto one.
+  final Set<String> _syncing = {};
+
+  /// Share desk PRs over the git remote: fetch peers' Manifold refs,
+  /// push ours, then refresh in-memory state. Moves the whole
+  /// `refs/manifold/*` namespace in one round-trip. Guarded by
+  /// [_syncing]. Returns null on success, an error string otherwise.
+  /// UI wiring is a later step.
+  Future<String?> syncWithRemote({
+    required String repoPath,
+    String remote = 'origin',
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    if (!_syncing.add(main)) return 'sync already in progress';
+    try {
+      final store = DeskPrStore(_refsFor(main));
+      final r = await store.syncWithRemote(remote: remote);
+      if (!r.ok) return r.error;
+      await refreshFor(main);
+      return null;
+    } finally {
+      _syncing.remove(main);
     }
   }
 

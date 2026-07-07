@@ -57,7 +57,11 @@ class DeskIssueStore {
     }
   }
 
-  Future<GitResult<void>> _commit(DeskIssue issue,
+  /// Write [issue] as the first commit on a fresh ref. Only the
+  /// `create` path uses this: the id was just allocated so the ref
+  /// can't already exist, and there is no prior state to transform, so
+  /// the CAS-retry loop [_mutate] runs would be pointless here.
+  Future<GitResult<void>> _commitNew(DeskIssue issue,
       {required String message}) async {
     final ref = refFor(issue.issueId);
     final blobR = await refs.writeBlob(issue.toBlob());
@@ -81,6 +85,68 @@ class DeskIssueStore {
     );
     if (!updR.ok) return GitResult.err(updR.error ?? 'updateRef failed');
     return const GitResult.ok(null);
+  }
+
+  /// Read-transform-commit with CAS retry. Every attempt re-resolves the
+  /// ref tip and reads the issue blob AT THAT EXACT TIP (`<sha>:file`),
+  /// so [transform] always runs over a self-consistent snapshot; the
+  /// three-arg update-ref then CAS-commits against the same tip. When a
+  /// concurrent writer landed first, update-ref rejects and we loop:
+  /// re-read the winner's fresh state, re-apply [transform], retry. This
+  /// is what lets two conflicting comments both survive instead of the
+  /// loser's write being dropped. [message] is computed from the
+  /// transformed record so subjects that depend on the outcome (link vs
+  /// unlink) stay correct. Bounded retries with jittered backoff mirror
+  /// [ManifoldRefs.allocSequentialId].
+  Future<GitResult<DeskIssue>> _mutate(
+    int id, {
+    required DeskIssue Function(DeskIssue current) transform,
+    required String Function(DeskIssue next) message,
+    int maxAttempts = 5,
+  }) async {
+    final ref = refFor(id);
+    var attempt = 0;
+    String? lastError;
+    while (attempt < maxAttempts) {
+      attempt++;
+      final tip = await refs.resolveRef(ref);
+      if (!tip.ok) return GitResult.err(tip.error ?? 'resolveRef failed');
+      if (tip.data == null) return GitResult.err('no desk issue $id');
+      // Read the blob at the resolved tip specifically, so the state we
+      // transform and the parent we commit onto are the same revision.
+      final blob = await refs.readRefBlob(tip.data!, _issueFilename);
+      if (!blob.ok) return GitResult.err(blob.error ?? 'readRefBlob failed');
+      if (blob.data == null) return GitResult.err('no desk issue $id');
+      final DeskIssue current;
+      try {
+        current = DeskIssue.fromBlob(blob.data!);
+      } catch (e) {
+        return GitResult.err('corrupt issue.json: $e');
+      }
+      final next = transform(current);
+      final blobR = await refs.writeBlob(next.toBlob());
+      if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
+      final treeR = await refs.mkTree({_issueFilename: blobR.data!});
+      if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
+      final commitR = await refs.commitTree(
+        treeSha: treeR.data!,
+        parentSha: tip.data,
+        message: message(next),
+      );
+      if (!commitR.ok) {
+        return GitResult.err(commitR.error ?? 'commitTree failed');
+      }
+      final updR = await refs.updateRef(
+        ref: ref,
+        newSha: commitR.data!,
+        oldSha: tip.data,
+      );
+      if (updR.ok) return GitResult.ok(next);
+      lastError = updR.error;
+      await Future<void>.delayed(Duration(milliseconds: 5 + (attempt * 5)));
+    }
+    return GitResult.err(
+        lastError ?? 'updateRef failed after $maxAttempts attempts');
   }
 
   /// Allocate the next sequential id from the shared [_idCounterRef]
@@ -120,8 +186,15 @@ class DeskIssueStore {
       assignees: assignees,
       remoteNumber: remoteNumber,
     );
-    final w = await _commit(issue, message: 'create issue');
+    final w = await _commitNew(issue, message: 'create issue');
     if (!w.ok) return GitResult.err(w.error ?? 'create commit failed');
+    // Configure the manifold fetch refspec on first issue creation, the
+    // same as DeskPrStore.create does on first promotion. Without this
+    // an issues-only user (who never opens a desk PR) never auto-pulls
+    // Manifold metadata on `git fetch` — a silent no-sync trap. No-op
+    // when there's no origin. The user can also configure it manually:
+    //   git config --add remote.origin.fetch +refs/manifold/*:refs/manifold/*
+    await refs.ensureFetchRefspec();
     return GitResult.ok(issue);
   }
 
@@ -130,35 +203,34 @@ class DeskIssueStore {
     required String author,
     required String body,
   }) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final next = cur.data!.copyWith(
-      comments: [
-        ...cur.data!.comments,
-        DeskIssueComment(author: author, body: body, at: DateTime.now()),
-      ],
-      updatedAt: DateTime.now(),
+    // The comment is expressed as a transform over the freshly-read
+    // record, so a concurrent commenter who wins the CAS race doesn't
+    // erase this comment — we re-read their state and append onto it.
+    return _mutate(
+      id,
+      transform: (current) => current.copyWith(
+        comments: [
+          ...current.comments,
+          DeskIssueComment(author: author, body: body, at: DateTime.now()),
+        ],
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'comment by $author',
     );
-    final w = await _commit(next, message: 'comment by $author');
-    if (!w.ok) return GitResult.err(w.error ?? 'addComment commit failed');
-    return GitResult.ok(next);
   }
 
   Future<GitResult<DeskIssue>> setState({
     required int id,
     required String state,
   }) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final next = cur.data!.copyWith(
-      state: state.toUpperCase(),
-      updatedAt: DateTime.now(),
+    return _mutate(
+      id,
+      transform: (current) => current.copyWith(
+        state: state.toUpperCase(),
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'state -> ${state.toLowerCase()}',
     );
-    final w = await _commit(next, message: 'state -> ${state.toLowerCase()}');
-    if (!w.ok) return GitResult.err(w.error ?? 'setState commit failed');
-    return GitResult.ok(next);
   }
 
   Future<GitResult<DeskIssue>> editMeta({
@@ -167,18 +239,16 @@ class DeskIssueStore {
     String? body,
     List<String>? labels,
   }) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final next = cur.data!.copyWith(
-      title: title,
-      body: body,
-      labels: labels,
-      updatedAt: DateTime.now(),
+    return _mutate(
+      id,
+      transform: (current) => current.copyWith(
+        title: title,
+        body: body,
+        labels: labels,
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'edit issue meta',
     );
-    final w = await _commit(next, message: 'edit issue meta');
-    if (!w.ok) return GitResult.err(w.error ?? 'editMeta commit failed');
-    return GitResult.ok(next);
   }
 
   /// Toggle a desk-PR branch in this issue's `addressedBy` list.
@@ -188,25 +258,25 @@ class DeskIssueStore {
     required int id,
     required String branch,
   }) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final addressed = [...cur.data!.addressedBy];
-    if (addressed.contains(branch)) {
-      addressed.remove(branch);
-    } else {
-      addressed.add(branch);
-    }
-    final next = cur.data!.copyWith(
-      addressedBy: addressed,
-      updatedAt: DateTime.now(),
+    return _mutate(
+      id,
+      transform: (current) {
+        final addressed = [...current.addressedBy];
+        if (addressed.contains(branch)) {
+          addressed.remove(branch);
+        } else {
+          addressed.add(branch);
+        }
+        return current.copyWith(
+          addressedBy: addressed,
+          updatedAt: DateTime.now(),
+        );
+      },
+      // Subject derived from the transformed record so it stays truthful
+      // even after a retry re-applied the toggle onto fresh state.
+      message: (next) =>
+          next.addressedBy.contains(branch) ? 'link desk $branch' : 'unlink desk $branch',
     );
-    final w = await _commit(next,
-        message: addressed.contains(branch)
-            ? 'link desk $branch'
-            : 'unlink desk $branch');
-    if (!w.ok) return GitResult.err(w.error ?? 'toggleAddressedBy failed');
-    return GitResult.ok(next);
   }
 
   Future<GitResult<void>> abandon(int id) async {
@@ -219,19 +289,16 @@ class DeskIssueStore {
     int id,
     int? remoteNumber,
   ) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final next = cur.data!.copyWith(
-      remoteNumber: remoteNumber,
-      updatedAt: DateTime.now(),
+    return _mutate(
+      id,
+      transform: (current) => current.copyWith(
+        remoteNumber: remoteNumber,
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => remoteNumber != null
+          ? 'link remote #$remoteNumber'
+          : 'unlink remote',
     );
-    final msg = remoteNumber != null
-        ? 'link remote #$remoteNumber'
-        : 'unlink remote';
-    final w = await _commit(next, message: msg);
-    if (!w.ok) return GitResult.err(w.error ?? 'setRemoteNumber failed');
-    return GitResult.ok(next);
   }
 
   /// Overwrite local metadata from freshly-fetched remote values.
@@ -249,19 +316,31 @@ class DeskIssueStore {
     required List<String> labels,
     required List<String> assignees,
   }) async {
-    final cur = await read(id);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
-    if (cur.data == null) return GitResult.err('no desk issue $id');
-    final next = cur.data!.copyWith(
-      title: title,
-      body: body,
-      state: state,
-      labels: labels,
-      assignees: assignees,
-      updatedAt: DateTime.now(),
+    return _mutate(
+      id,
+      transform: (current) => current.copyWith(
+        title: title,
+        body: body,
+        state: state,
+        labels: labels,
+        assignees: assignees,
+        updatedAt: DateTime.now(),
+      ),
+      message: (_) => 'sync from remote',
     );
-    final w = await _commit(next, message: 'sync from remote');
-    if (!w.ok) return GitResult.err(w.error ?? 'applyRemoteSnapshot failed');
-    return GitResult.ok(next);
+  }
+
+  /// Share local issues over [remote]: fetch peers' Manifold refs into
+  /// staging, reconcile them into the live refs WITHOUT dropping any
+  /// unpushed local mutation, then push back with per-ref
+  /// force-with-lease. All the data-loss-safe logic lives in
+  /// [ManifoldRefs.syncWithRemote]; it operates over the whole
+  /// `refs/manifold/*` namespace, so an issues sync also carries desks and
+  /// the shared counter (and vice-versa) in one round-trip. Also ensures
+  /// (and migrates) the persistent staging fetch refspec so ordinary
+  /// `git fetch` stays safe afterwards.
+  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
+    await refs.ensureFetchRefspec(remote: remote);
+    return refs.syncWithRemote(remote: remote);
   }
 }

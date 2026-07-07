@@ -71,6 +71,24 @@ class MergeFailed extends MergeOutcome {
   const MergeFailed(this.message);
 }
 
+/// The operation can't proceed at the ref level and needs a worktree it
+/// hasn't got — the rebase-into-base case where the base branch is checked
+/// out nowhere, so there is no working tree to replay onto and we refuse to
+/// conjure a hidden one. Distinct from [MergeFailed] because nothing went
+/// wrong: the user simply needs to open the branch in a desk first. [message]
+/// is the ready-to-show guidance; [branch] / [baseRef] name the pair so a
+/// surface can offer to check one out.
+class MergeNeedsCheckout extends MergeOutcome {
+  final String branch;
+  final String baseRef;
+  final String message;
+  const MergeNeedsCheckout({
+    required this.branch,
+    required this.baseRef,
+    required this.message,
+  });
+}
+
 /// One-line, user-facing summary of a [MergeOutcome] — the single source of
 /// truth so the wording never drifts between the branch pill, the clean-tree
 /// dashboard, and the sync panel. [op] names the action ("Pull", "Sync").
@@ -90,6 +108,7 @@ String mergeOutcomeMessage(MergeOutcome outcome, {String op = 'Sync'}) =>
       MergeBlockedByLocalChanges(:final paths) =>
         '${paths.length} file${paths.length == 1 ? '' : 's'} have uncommitted '
             'edits — commit them first.',
+      MergeNeedsCheckout(:final message) => message,
       MergeFailed(:final message) => message,
     };
 

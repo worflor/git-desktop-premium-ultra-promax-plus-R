@@ -110,6 +110,39 @@ void main() {
     });
   });
 
+  group('AppSettingsSnapshot — giteaTokens', () {
+    test('missing key → empty map (pre-field installs)', () {
+      final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});
+      expect(snap.giteaTokens, isEmpty);
+    });
+
+    test('persisted map round-trips through toJson/fromJson', () {
+      final base = AppSettingsSnapshot.defaults().copyWith(
+        giteaTokens: {'codeberg.org': 'abc', 'git.acme.com:3000': 'xyz'},
+      );
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.giteaTokens['codeberg.org'], 'abc');
+      expect(reloaded.giteaTokens['git.acme.com:3000'], 'xyz');
+    });
+
+    test('host keys are lowercased and blank entries dropped', () {
+      final snap = AppSettingsSnapshot.fromJson({
+        'giteaTokens': {
+          'Codeberg.ORG': 'tok',
+          'blankhost': '   ',
+          '': 'orphan',
+          'numeric': 42,
+        },
+      });
+      expect(snap.giteaTokens, {'codeberg.org': 'tok'});
+    });
+
+    test('non-map value → empty, no crash', () {
+      final snap = AppSettingsSnapshot.fromJson({'giteaTokens': 'nope'});
+      expect(snap.giteaTokens, isEmpty);
+    });
+  });
+
   group('AppSettingsSnapshot — diff diff-ability', () {
     test('missing keys → both default to true (pre-field installs)', () {
       final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});

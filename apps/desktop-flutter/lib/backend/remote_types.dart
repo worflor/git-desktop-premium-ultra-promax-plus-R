@@ -18,7 +18,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 import '../features/diff/diff_models.dart';
+import 'git.dart' as git;
 
 /// Single reviewer-state pair on a PR.
 class PrReviewer {
@@ -275,8 +278,16 @@ class TailEvent {
 /// Status of a remote provider's CLI tooling and authentication.
 class RemoteProviderStatus {
   final bool available;
+  /// Whether write actions (create/promote/merge/comment) are expected to
+  /// succeed. Defaults to [available]. A forge that serves anonymous reads
+  /// but requires a token for writes (Gitea/Forgejo) reports
+  /// available-but-not-canWrite so browsing keeps working while write
+  /// affordances stay hidden; [reason] then says what's missing.
+  final bool canWrite;
   final String? reason;
-  const RemoteProviderStatus({required this.available, this.reason});
+  const RemoteProviderStatus(
+      {required this.available, bool? canWrite, this.reason})
+      : canWrite = canWrite ?? available;
   static const yes = RemoteProviderStatus(available: true);
 }
 
@@ -320,12 +331,7 @@ class ForgeTopology {
 /// Single `git remote -v` call → parse all remote URLs at once.
 Future<ForgeTopology> detectAllForges(String repoPath) async {
   try {
-    final r = await Process.run(
-      'git', ['remote', '-v'],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+    final r = await git.runGit(repoPath, ['remote', '-v']);
     if (r.exitCode != 0) return const ForgeTopology({});
     // Parse "name\turl (fetch|push)" lines — deduplicate by name,
     // prefer fetch URL.
@@ -346,7 +352,7 @@ Future<ForgeTopology> detectAllForges(String repoPath) async {
       if (byName != RemoteForge.unknown) {
         results[entry.key] = byName;
       } else {
-        probeFuts[entry.key] = _probeForGitea(entry.value);
+        probeFuts[entry.key] = _probeForForge(entry.value);
       }
     }
     if (probeFuts.isNotEmpty) {
@@ -365,21 +371,22 @@ Future<ForgeTopology> detectAllForges(String repoPath) async {
 /// Resolve the forge hosting [repoPath] by reading `origin`.
 Future<RemoteForge> detectForge(String repoPath) async {
   try {
-    final r = await Process.run(
-      'git',
-      ['remote', 'get-url', 'origin'],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
+    // Read the primary remote (origin when present, else the sole/first
+    // remote) rather than assuming `origin`, so a fork whose forge remote is
+    // named `upstream` is still classified. Routed through [git.runGit] for
+    // the shared non-interactive env + throttle.
+    final remoteRes = await git.primaryRemoteName(repoPath);
+    final remote = remoteRes.ok ? remoteRes.data : null;
+    if (remote == null) return RemoteForge.unknown;
+    final r = await git.runGit(repoPath, ['remote', 'get-url', remote]);
     if (r.exitCode != 0) return RemoteForge.unknown;
     final url = (r.stdout as String).trim();
     final byName = forgeFromUrl(url);
     if (byName != RemoteForge.unknown) return byName;
-    // Unknown host — probe for Gitea/Forgejo API. Self-hosted instances
-    // (git.mycompany.com) won't match by hostname, but Gitea/Forgejo
-    // always responds at /api/v1/version with {"version": "..."}.
-    return await _probeForGitea(url);
+    // Unknown host — fingerprint the API. Self-hosted instances
+    // (git.mycompany.com) won't match by hostname, so we ask the host
+    // what it is: Gitea/Forgejo, self-hosted GitLab, or GitHub Enterprise.
+    return await _probeForForge(url);
   } catch (_) {
     return RemoteForge.unknown;
   }
@@ -389,36 +396,107 @@ final Map<String, RemoteForge> _forgeProbeCache = {};
 
 void clearForgeProbeCache() => _forgeProbeCache.clear();
 
-Future<RemoteForge> _probeForGitea(String remoteUrl) async {
+/// Test-only entry to the host fingerprinter — exercises the real probe
+/// (port carry-through, http fallback, Gitea/GitLab/GHE detection) against
+/// a local fake server without needing a git repo to resolve `origin`.
+@visibleForTesting
+Future<RemoteForge> probeForgeForTest(String remoteUrl) =>
+    _probeForForge(remoteUrl);
+
+/// Fingerprint an unknown host by asking each forge's version/meta
+/// endpoint what it is, in order Gitea → GitLab → GHE. First distinctive
+/// answer wins; the result is memoised per remote URL.
+///
+/// Port handling: [hostOfRemote] drops the port, so an instance on
+/// `host:3000` would otherwise be probed at the default 443. We carry the
+/// port through from the remote URL and, for a host with an explicit
+/// non-443 port, also try plain `http` as a fallback (a common shape for
+/// intranet Gitea). A default-https host is never downgraded to http.
+Future<RemoteForge> _probeForForge(String remoteUrl) async {
   final cached = _forgeProbeCache[remoteUrl];
   if (cached != null) return cached;
-  final host = hostOfRemote(remoteUrl);
+  final (:host, :port) = hostAndPortOfRemote(remoteUrl);
   if (host.isEmpty) return RemoteForge.unknown;
-  const scheme = 'https';
-  try {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
-    try {
-      final request = await client.getUrl(
-          Uri.parse('$scheme://$host/api/v1/version'));
-      request.headers.set('Accept', 'application/json');
-      final response = await request.close()
-          .timeout(const Duration(seconds: 5));
-      if (response.statusCode != 200) {
-        _forgeProbeCache[remoteUrl] = RemoteForge.unknown;
-        return RemoteForge.unknown;
-      }
-      final body = await response.transform(utf8.decoder).join();
-      final j = jsonDecode(body) as Map<String, dynamic>;
-      if (j.containsKey('version')) {
-        _forgeProbeCache[remoteUrl] = RemoteForge.gitea;
-        return RemoteForge.gitea;
-      }
-    } finally {
-      client.close();
+
+  final origins = <String>[];
+  if (port != null && port != 443) {
+    origins..add('https://$host:$port')..add('http://$host:$port');
+  } else {
+    origins.add('https://$host');
+  }
+
+  for (final origin in origins) {
+    final forge = await _fingerprintForge(origin);
+    if (forge != RemoteForge.unknown) {
+      _forgeProbeCache[remoteUrl] = forge;
+      return forge;
     }
-  } catch (_) {}
+  }
   _forgeProbeCache[remoteUrl] = RemoteForge.unknown;
   return RemoteForge.unknown;
+}
+
+/// Try each forge's tell at [origin] (`scheme://host[:port]`).
+Future<RemoteForge> _fingerprintForge(String origin) async {
+  // Gitea / Forgejo — /api/v1/version answers {"version": "..."} even
+  // unauthenticated.
+  final gitea = await _forgeProbeGet('$origin/api/v1/version');
+  if (gitea != null &&
+      gitea.status == 200 &&
+      _jsonHasKey(gitea.body, 'version')) {
+    return RemoteForge.gitea;
+  }
+  // GitLab — /api/v4/version requires a token, so an anonymous request
+  // is answered with 401 and the body {"message":"401 Unauthorized"}.
+  // A token-bearing environment instead gets 200 with a `version` field.
+  final gitlab = await _forgeProbeGet('$origin/api/v4/version');
+  if (gitlab != null) {
+    if (gitlab.status == 200 && _jsonHasKey(gitlab.body, 'version')) {
+      return RemoteForge.gitlab;
+    }
+    if (gitlab.status == 401 && gitlab.body.contains('Unauthorized')) {
+      return RemoteForge.gitlab;
+    }
+  }
+  // GitHub Enterprise — /api/v3/meta is public and carries an
+  // `installed_version` field (and `verifiable_password_authentication`)
+  // that github.com's own meta also exposes.
+  final ghe = await _forgeProbeGet('$origin/api/v3/meta');
+  if (ghe != null &&
+      ghe.status == 200 &&
+      (_jsonHasKey(ghe.body, 'installed_version') ||
+          _jsonHasKey(ghe.body, 'verifiable_password_authentication'))) {
+    return RemoteForge.github;
+  }
+  return RemoteForge.unknown;
+}
+
+/// A single probe GET with short timeouts. Returns null on any transport
+/// failure (DNS, refused, TLS, timeout) so the caller can move to the
+/// next candidate origin or forge.
+Future<({int status, String body})?> _forgeProbeGet(String url) async {
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+  try {
+    final request = await client.getUrl(Uri.parse(url));
+    request.headers.set('Accept', 'application/json');
+    final response =
+        await request.close().timeout(const Duration(seconds: 5));
+    final body = await response.transform(utf8.decoder).join();
+    return (status: response.statusCode, body: body);
+  } catch (_) {
+    return null;
+  } finally {
+    client.close();
+  }
+}
+
+bool _jsonHasKey(String body, String key) {
+  try {
+    final j = jsonDecode(body);
+    return j is Map<String, dynamic> && j.containsKey(key);
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Pure classification — no I/O.
@@ -439,6 +517,35 @@ RemoteForge forgeFromUrl(String url) {
 String hostOfRemote(String url) {
   final m = RegExp(r'(?:@|//)([^:/]+)').firstMatch(url);
   return m?.group(1) ?? url;
+}
+
+/// Host plus explicit port from a git remote URL, when one is present.
+/// HTTP(S)/SSH URLs with a `://` carry a real port after the host
+/// (`https://host:3000/...`, `ssh://git@host:2222/...`). The scp-style
+/// `git@host:path` form has no port — its colon introduces the path, not
+/// a port — so [port] is null there. Used by forge probing so a
+/// self-hosted instance on a non-default port isn't probed at 443.
+({String host, int? port}) hostAndPortOfRemote(String url) {
+  final trimmed = url.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      final u = Uri.parse(trimmed);
+      if (u.host.isNotEmpty) {
+        return (host: u.host.toLowerCase(), port: u.hasPort ? u.port : null);
+      }
+    } catch (_) {}
+  }
+  if (trimmed.startsWith('ssh://')) {
+    // An ssh:// port is the SSH daemon's port (git@host:2222), never the
+    // forge's HTTP port — carrying it into an API/probe URL would address
+    // a non-HTTP listener. Callers building HTTP URLs from an ssh remote
+    // get the host only and fall back to the scheme default.
+    try {
+      final u = Uri.parse(trimmed);
+      if (u.host.isNotEmpty) return (host: u.host.toLowerCase(), port: null);
+    } catch (_) {}
+  }
+  return (host: hostOfRemote(trimmed).toLowerCase(), port: null);
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,18 @@ class WorktreeState extends ChangeNotifier {
   // the cheap path (worktree list) lands first and the chrome can
   // tint when the slower probes resolve.
   final Map<String, DeskActivity> _activityByPath = {};
+  // Repo paths already `git worktree prune`d this session. Prune drops
+  // stale administrative entries for worktree dirs the user deleted by
+  // hand — cheap, but pointless to re-run on every 3s auto-refresh, so
+  // it fires at most once per repo path we ever list.
+  final Set<String> _prunedRepos = <String>{};
+
+  /// Records [normalizedPath] as pruned and reports whether this is the
+  /// first time we've seen it (i.e. whether a prune should run now).
+  /// Pure gate so the once-per-repo policy is unit-testable without git.
+  @visibleForTesting
+  static bool claimPrune(Set<String> pruned, String normalizedPath) =>
+      pruned.add(normalizedPath);
 
   WorktreeState(this._repo) {
     _repo.addListener(_onRepoChanged);
@@ -116,6 +128,25 @@ class WorktreeState extends ChangeNotifier {
     _loading = true;
     _error = null;
     notifyListeners();
+    // First time we touch this repo path this session, prune stale
+    // worktree admin entries (dirs the user removed by hand) so the
+    // list we're about to read doesn't carry ghosts. Fire-and-forget
+    // would race the list; awaiting is fine — prune is a single cheap
+    // `git worktree prune`. The claim is taken BEFORE the prune so a
+    // concurrent refresh can't double-prune, but it is only kept when
+    // the prune actually succeeded — a failure (GitResult.err or a
+    // spawn-level throw) releases it so the next refresh retries,
+    // instead of a transient fault silencing pruning for the session.
+    final pruneKey = _normalize(repoPath);
+    if (claimPrune(_prunedRepos, pruneKey)) {
+      var pruned = false;
+      try {
+        pruned = (await pruneWorktrees(repoPath)).ok;
+      } catch (_) {
+        // Prune is opportunistic hygiene — never block the list on it.
+      }
+      if (!pruned) _prunedRepos.remove(pruneKey);
+    }
     try {
       final result = await listWorktrees(repoPath);
       if (id != _requestId) return;
@@ -173,11 +204,7 @@ class WorktreeState extends ChangeNotifier {
   /// tree I/O — so this stays fast even on giant repos.
   Future<DateTime?> _deskLastActivity(String path) async {
     try {
-      final logRes = await Process.run(
-        'git',
-        ['log', '-1', '--format=%cI', 'HEAD'],
-        workingDirectory: path,
-      );
+      final logRes = await runGit(path, ['log', '-1', '--format=%cI', 'HEAD']);
       if (logRes.exitCode == 0) {
         final iso = (logRes.stdout as String).trim();
         if (iso.isNotEmpty) return DateTime.tryParse(iso);
@@ -206,11 +233,8 @@ class WorktreeState extends ChangeNotifier {
 
     for (final baseRef in const ['@{u}', 'main', 'master']) {
       try {
-        final r = await Process.run(
-          'git',
-          ['rev-list', '--left-right', '--count', '$baseRef...HEAD'],
-          workingDirectory: path,
-        );
+        final r = await runGit(
+            path, ['rev-list', '--left-right', '--count', '$baseRef...HEAD']);
         if (r.exitCode == 0) return parse(r);
       } catch (_) {}
     }
@@ -369,11 +393,8 @@ class WorktreeState extends ChangeNotifier {
     final from = _repo.activePath;
     if (from == null) return null;
     try {
-      final result = await Process.run(
-        'git',
-        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-        workingDirectory: from,
-      );
+      final result = await runGit(
+          from, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
       if (result.exitCode != 0) return null;
       final gitCommonDir = (result.stdout as String).trim();
       if (gitCommonDir.isEmpty) return null;
