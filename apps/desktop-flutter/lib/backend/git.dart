@@ -628,9 +628,17 @@ _GitDecodeOutcome _decodeGitBytes(Object? raw, {required bool strict}) {
 ///   • GIT_OPTIONAL_LOCKS=0 — background read probes (status, etc.) no longer
 ///     take the optional index lock, so they stop churning `index.lock`
 ///     against user-initiated mutations that need the real lock.
+///   • LC_ALL=C — pins git's message locale. Every stderr classifier in
+///     this codebase (index.lock retry matcher, held-by-desk delete
+///     classifier, untracked-overwrite mapping) matches English fragments;
+///     a localized git would silently disable them all at once. LC_ALL
+///     outranks LANG/LANGUAGE, so this one variable settles it. Message
+///     text only — path/content bytes still flow through the lenient
+///     decode and core.quotepath handling unchanged.
 const Map<String, String> _kNonInteractiveGitEnv = {
   'GIT_TERMINAL_PROMPT': '0',
   'GIT_OPTIONAL_LOCKS': '0',
+  'LC_ALL': 'C',
 };
 
 /// Public alias of [_kNonInteractiveGitEnv]. The AI backend (ai.dart) runs its
@@ -666,13 +674,21 @@ bool _isMutatingGitCall(List<String> args) {
   return !_kDedupableSubcommands.contains(sub);
 }
 
-Future<ProcessResult> _git(String workingDir, List<String> args) async {
+Future<ProcessResult> _git(String workingDir, List<String> args,
+    {Map<String, String>? extraEnv}) async {
   // Coalesce concurrent identical reads. Two callers asking for
   // `git.status --porcelain=v2 --branch -u` in the same instant pay
   // for ONE subprocess, not two. Only applies to known pure-read
   // subcommands (see [_kDedupableSubcommands]); mutating calls
   // (commit, push, add, stash push, ...) always spawn fresh.
-  if (_isDedupableGitCall(args)) {
+  //
+  // A call carrying [extraEnv] (e.g. commit-tree with author-identity
+  // overrides) always skips the dedup path below and goes straight to
+  // [_gitRaw] — the dedup key is (workingDir, args) only, and two calls
+  // with identical args but different env must never share a cached
+  // result. None of today's dedupable subcommands ever pass extraEnv,
+  // so this is a no-op for every existing caller.
+  if (extraEnv == null && _isDedupableGitCall(args)) {
     final key = _gitDedupKey(workingDir, args);
     final inflight = _inflightGitReads[key];
     if (inflight != null) {
@@ -704,7 +720,7 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     }).then<void>((_) {}, onError: (_) {}));
     return future;
   }
-  return _gitRaw(workingDir, args);
+  return _gitRaw(workingDir, args, env: extraEnv);
 }
 
 /// Jitter source for the transient index.lock backoff. A shared RNG is fine —
@@ -764,7 +780,8 @@ void _bumpGitMutations(int delta) {
   }
 }
 
-Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
+Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
+    {Map<String, String>? env}) async {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -800,7 +817,15 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
         'git',
         args,
         workingDirectory: workingDir,
-        environment: _kNonInteractiveGitEnv,
+        // Merge order is deliberate: caller-supplied [env] (GIT_INDEX_FILE
+        // for a snapshot commit; GIT_AUTHOR_*/GIT_COMMITTER_* identity
+        // overrides from callers like ManifoldRefs) is spread FIRST, then
+        // the non-interactive safety base is spread AFTER — so a caller
+        // can add whatever keys it needs, but can never shadow
+        // GIT_TERMINAL_PROMPT / GIT_OPTIONAL_LOCKS / LC_ALL by supplying
+        // same-named keys of its own. Base-after-caller, not caller-wins.
+        environment:
+            env == null ? _kNonInteractiveGitEnv : {...env, ..._kNonInteractiveGitEnv},
         stdoutEncoding: null,
         stderrEncoding: null,
       );
@@ -889,8 +914,21 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
 /// the app-wide concurrency budget. Safe for mutations too: a non-read
 /// subcommand skips coalescing and runs fresh, still throttled and
 /// non-interactive.
-Future<ProcessResult> runGit(String workingDir, List<String> args) {
-  return _git(workingDir, args);
+///
+/// [extraEnv] overlays additional environment variables onto the spawn —
+/// e.g. `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_*` for a
+/// `commit-tree` that must bake in an identity other than the repo's
+/// configured `user.name`/`user.email` (ManifoldRefs' metadata commits).
+/// Merge precedence is base-after-caller: [extraEnv] is applied first and
+/// [_kNonInteractiveGitEnv] is spread on top, so `GIT_TERMINAL_PROMPT` /
+/// `GIT_OPTIONAL_LOCKS` / `LC_ALL` can never be shadowed by a same-named
+/// key in [extraEnv] — see the merge inside [_gitRaw]. A call that passes
+/// [extraEnv] always skips read-coalescing (see [_git]'s doc), which is
+/// harmless here since every current [extraEnv] caller is a mutation
+/// anyway.
+Future<ProcessResult> runGit(String workingDir, List<String> args,
+    {Map<String, String>? extraEnv}) {
+  return _git(workingDir, args, extraEnv: extraEnv);
 }
 
 Future<GitResult<String>> openRepository(String path) async {
@@ -1632,13 +1670,20 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
   final mt =
       await _git(repo, ['merge-tree', '--write-tree', '--name-only', baseRef, branch]);
   if (mt.exitCode == 1) {
-    // Conflicts: tree SHA on line 1, conflicting paths thereafter. Nothing
-    // was written to any ref — this is a pure prediction.
+    // Conflicts. Nothing was written to any ref — this is a pure prediction.
+    // `merge-tree --write-tree --name-only` emits THREE sections separated by
+    // a blank line: the merged-tree OID (line 1), then the conflicted file
+    // NAMES (one per line), then a human-readable "informational messages"
+    // block ("Auto-merging <f>", "CONFLICT (content): …"). Only the middle
+    // section is a path list — stop at the blank line, or those prose lines
+    // leak in as bogus conflict "paths".
     final lines = (mt.stdout as String).split('\n');
-    final paths = <String>[
-      for (var i = 1; i < lines.length; i++)
-        if (lines[i].trim().isNotEmpty) lines[i].trim(),
-    ];
+    final paths = <String>[];
+    for (var i = 1; i < lines.length; i++) {
+      final name = lines[i].trim();
+      if (name.isEmpty) break; // end of the conflicted-names section
+      paths.add(name);
+    }
     return LocalPrMergeResult(MergeConflicted(paths));
   }
   if (mt.exitCode != 0) {
@@ -3221,8 +3266,18 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
       .toList();
   if (stagedPaths.isEmpty) return const GitResult.ok(null);
 
-  final r = await _git(repo,
-      ['--literal-pathspecs', 'restore', '--staged', '--', ...stagedPaths]);
+  // `reset`, not `restore --staged`: both unstage a path back to its HEAD
+  // state (`restore --staged` is documented as the modern spelling of the
+  // classic `git reset -- <path>`), but `restore --staged` unconditionally
+  // needs to resolve HEAD internally and fatals with "could not resolve
+  // HEAD" on an unborn branch — verified empirically. `reset` has a
+  // long-standing special case for exactly this: with no explicit
+  // tree-ish, an unborn HEAD is treated as the empty tree, so unstaging a
+  // path before a repo's first commit just drops it back to untracked —
+  // the correct outcome — instead of failing prepareCommitStaging outright
+  // whenever a root commit excludes any staged file.
+  final r = await _git(
+      repo, ['--literal-pathspecs', 'reset', '--', ...stagedPaths]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
@@ -3247,9 +3302,30 @@ class StagedIndexEntry {
 /// Output of [prepareCommitStaging]: the index entries of excluded
 /// paths that were unstaged to keep them out of the commit, so the
 /// caller can hand them to [restoreStagedSelections] afterward.
+///
+/// [snapshotIndexPath], when non-null, is an absolute path to a frozen
+/// byte-copy of the index taken the instant prepare finished arranging
+/// it. The commit MUST be created against this snapshot (via
+/// [createCommit]'s `indexFile`) so a mutation of the live `.git/index`
+/// by an out-of-band process — another git tool touching the repo in the
+/// window between prepare and commit — cannot smuggle an excluded path
+/// into the commit. [createCommit] deletes the snapshot after use.
+///
+/// [snapshotEntries], when [snapshotIndexPath] is non-null, is the
+/// snapshot's full entry table (`path -> "mode oid"`, stage-0 only)
+/// captured the instant the snapshot was taken. A pre-commit hook that
+/// mutates the index (format-then-`git add`, a common lint-staged
+/// pattern) runs with `GIT_INDEX_FILE` pointing at the snapshot, so its
+/// staging work lands there, not in the live index. [createCommit] diffs
+/// this frozen table against the snapshot's post-hook state to recover
+/// exactly what the hook changed, so that work can be replayed onto the
+/// live index instead of evaporating with the snapshot.
 class CommitStagingPlan {
   final List<StagedIndexEntry> excludedEntries;
-  const CommitStagingPlan(this.excludedEntries);
+  final String? snapshotIndexPath;
+  final Map<String, String>? snapshotEntries;
+  const CommitStagingPlan(this.excludedEntries,
+      {this.snapshotIndexPath, this.snapshotEntries});
 }
 
 /// Prepare the index so the next commit contains exactly [included].
@@ -3268,7 +3344,13 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
   String repo,
   List<String> included,
 ) async {
-  final st = await _git(repo, ['status', '--porcelain', '-z', '--no-renames']);
+  // -uall matters: without it, untracked files inside a brand-new
+  // directory collapse into one "?? dir/" record, while the UI's status
+  // (porcelain v2 with -u) lists them per file. The included set then
+  // holds a file path no record here matches, so the file is silently
+  // never staged and a selected new file vanishes from the commit.
+  final st = await _git(
+      repo, ['status', '--porcelain', '-z', '--no-renames', '-uall']);
   if (st.exitCode != 0) return GitResult.err(st.stderr.toString().trim());
 
   final includedSet = included.toSet();
@@ -3334,21 +3416,130 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
       return GitResult.err(unstage.error ?? 'Failed to unstage excluded files.');
     }
   }
-  return GitResult.ok(CommitStagingPlan(entries));
+  // Freeze the arranged index the instant it is correct, so the commit
+  // is built from THIS exact state — not whatever the live index holds
+  // by the time `git commit` actually runs. `git commit` always commits
+  // the whole ambient index, so an out-of-band `git add` landing in the
+  // prepare->commit window would be re-read and leak into the commit,
+  // silently violating commit-exactly-the-included-paths (verified: a
+  // concurrent external add leaks 100% of the time against the live
+  // index). Committing against a byte-copy taken here makes that window
+  // unrepresentable — another process cannot mutate a snapshot it cannot
+  // see. Hooks still run normally (`git commit` runs them regardless of
+  // which index file it reads), and empty-commit detection is preserved.
+  //
+  // The snapshot IS the contract now, not an optimization for the
+  // has-exclusions case. It is taken UNCONDITIONALLY: a path can be
+  // excluded from the commit while UNSTAGED (the common case — modified
+  // but never staged, naturally out of the commit), leaving NOTHING for
+  // the exclusion walk above to unstage and so, under the old
+  // `if (excluded.isNotEmpty)` gate, no snapshot — yet `git commit` would
+  // then read the LIVE index and a concurrent `git add` of that unstaged
+  // path would still leak it in. Snapshotting every time closes that
+  // TOCTOU hole. The file-copy cost is trivial next to running `git
+  // commit`, so paying it unconditionally is fine. The only residual
+  // (inherent) window is an external add during prepare's own multi-step
+  // walk, before this copy. `_snapshotIndex` may still return null on a
+  // filesystem failure, in which case the commit falls back to the live
+  // index — the prior behaviour.
+  final snapshotIndexPath = await _snapshotIndex(repo);
+  Map<String, String>? snapshotEntries;
+  if (snapshotIndexPath != null) {
+    // Frozen baseline for the hook-mutation diff in `createCommit`. Read
+    // against the snapshot itself, not the live index — a concurrent
+    // process can still touch the live index in this window, and that's
+    // exactly what the snapshot exists to be immune to.
+    snapshotEntries = await _indexFileEntries(repo, snapshotIndexPath);
+  }
+  return GitResult.ok(CommitStagingPlan(entries,
+      snapshotIndexPath: snapshotIndexPath, snapshotEntries: snapshotEntries));
+}
+
+/// The stage-0 entry table of an arbitrary index file (`path -> "mode
+/// oid"`), read via `GIT_INDEX_FILE` — verified empirically that
+/// `ls-files` resolves against whichever index file is named there,
+/// independent of the live `.git/index`. Conflicted (non-zero stage)
+/// entries are skipped, matching every other entry-capture in this file.
+Future<Map<String, String>> _indexFileEntries(
+    String repo, String indexFile) async {
+  final r = await _gitRaw(
+      repo, ['--literal-pathspecs', 'ls-files', '-s', '-z'],
+      env: {'GIT_INDEX_FILE': indexFile});
+  final map = <String, String>{};
+  if (r.exitCode != 0) return map;
+  for (final rec in r.stdout.toString().split('\x00')) {
+    if (rec.isEmpty) continue;
+    final tab = rec.indexOf('\t');
+    if (tab < 0) continue;
+    final meta = rec.substring(0, tab).split(' ');
+    if (meta.length < 3 || meta[2] != '0') continue;
+    map[rec.substring(tab + 1)] = '${meta[0]} ${meta[1]}';
+  }
+  return map;
+}
+
+/// Monotonic disambiguator for snapshot index filenames within a process.
+int _commitIndexSnapshotCounter = 0;
+
+/// Byte-copy the repository index to a sibling temp file inside the git
+/// dir and return its absolute path, or null on any failure (the caller
+/// then commits against the live index — the prior behaviour). Used by
+/// [prepareCommitStaging] to hand [createCommit] a frozen index that the
+/// commit is built from, immune to concurrent `.git/index` mutation.
+Future<String?> _snapshotIndex(String repo) async {
+  try {
+    final gitDirRes = await _git(repo, ['rev-parse', '--absolute-git-dir']);
+    if (gitDirRes.exitCode != 0) return null;
+    final gitDir = gitDirRes.stdout.toString().trim();
+    if (gitDir.isEmpty) return null;
+    final indexPathRes = await _git(repo, ['rev-parse', '--git-path', 'index']);
+    if (indexPathRes.exitCode != 0) return null;
+    var indexPath = indexPathRes.stdout.toString().trim();
+    if (indexPath.isEmpty) return null;
+    // `--git-path` yields a path relative to the working dir unless it is
+    // already absolute (worktrees, GIT_DIR); resolve against repo so File
+    // finds it regardless of the process CWD.
+    if (!p.isAbsolute(indexPath)) indexPath = p.join(repo, indexPath);
+    final indexFile = File(indexPath);
+    if (!await indexFile.exists()) return null;
+    final dest = p.join(gitDir,
+        'manifold-commit-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}');
+    await indexFile.copy(dest);
+    return dest;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Best-effort delete of a temp file (the commit index snapshot). Never
+/// throws — a lingering snapshot in the git dir is harmless clutter, and
+/// on Windows a spawned git process may still momentarily hold the handle.
+Future<void> _deleteQuietly(String path) async {
+  try {
+    final f = File(path);
+    if (await f.exists()) await f.delete();
+  } catch (_) {}
 }
 
 /// Re-stage the captured selections of paths that were excluded from a
 /// commit, restoring the index byte-for-byte to what the user had
 /// built: `--cacheinfo` re-points the entry at the original blob, and
 /// staged deletions are re-recorded with `--force-remove`.
+///
+/// [skip] omits entries whose path is in the set entirely — used to keep
+/// a stale capture from overwriting index work that happened AFTER the
+/// capture was taken (see [finalizeCommitStaging] for the precedence
+/// rule that computes it).
 Future<GitResult<void>> restoreStagedSelections(
   String repo,
-  List<StagedIndexEntry> entries,
-) async {
+  List<StagedIndexEntry> entries, {
+  Set<String> skip = const {},
+}) async {
   if (entries.isEmpty) return const GitResult.ok(null);
   final cacheArgs = <String>[];
   final removals = <String>[];
   for (final e in entries) {
+    if (skip.contains(e.path)) continue;
     if (e.isDeletion) {
       removals.add(e.path);
     } else {
@@ -3368,6 +3559,50 @@ Future<GitResult<void>> restoreStagedSelections(
   }
   if (errs.isNotEmpty) return GitResult.err(errs.join('\n'));
   return const GitResult.ok(null);
+}
+
+/// The commit-flow finalizer: call this — not [restoreStagedSelections]
+/// directly — after [createCommit] returns, with the same [plan] passed
+/// to [createCommit]. It owns the one precedence rule the whole
+/// snapshot-commit machinery depends on:
+///
+///   A hook's mutation is user-visible work performed AFTER the capture;
+///   the capture must never overwrite it.
+///
+/// [prepareCommitStaging] captures each excluded path's index entry
+/// BEFORE the commit runs. A pre-commit hook can then stage an excluded
+/// path itself (inside the snapshot — see [CommitStagingPlan]), which is
+/// strictly newer information than that stale capture. Blindly replaying
+/// every captured entry afterward — the pre-fix behaviour — clobbers
+/// that newer work:
+///   * on failure, the hook's replayed live-index entry is immediately
+///     overwritten by the stale capture, and the hook's staging is lost;
+///   * on success, the path was committed (same semantics as a hook
+///     staging a file against the live index), the reconcile step
+///     correctly syncs its live entry to HEAD, and then the stale
+///     capture re-stages the OLD pre-commit blob on top — a phantom
+///     staged diff for content that was just committed.
+///
+/// The fix: never write back a path the commit attempt has an opinion
+/// about newer than the capture.
+///   * on SUCCESS, skip = [CommitAttemptResult.committedPaths] ∪
+///     [CommitAttemptResult.hookTouchedPaths] — anything the commit
+///     actually contains, or that the hook touched inside the snapshot
+///     (even if, in some edge case, it didn't end up committed), must
+///     not be re-staged from the pre-commit capture.
+///   * on FAILURE, skip = [CommitAttemptResult.hookTouchedPaths] only —
+///     there is no commit, so nothing is skipped beyond what the hook
+///     itself touched; every other excluded path restores exactly as
+///     before.
+Future<GitResult<void>> finalizeCommitStaging(
+  String repo,
+  CommitStagingPlan plan,
+  CommitAttemptResult commit,
+) {
+  final skip = commit.ok
+      ? {...commit.committedPaths, ...commit.hookTouchedPaths}
+      : commit.hookTouchedPaths;
+  return restoreStagedSelections(repo, plan.excludedEntries, skip: skip);
 }
 
 /// Soft-undo the most recent commit: move the branch pointer back one
@@ -3555,13 +3790,136 @@ Future<GitResult<void>> applyFileStaging(
   return applyPatch(repo, patch, cached: true);
 }
 
+/// Outcome of [createCommit]. Unlike [GitResult] — whose `.err` factory
+/// forces `data` to null — this carries [hookTouchedPaths] on BOTH
+/// success and failure, because [finalizeCommitStaging] needs it to
+/// compute the restore-precedence skip set regardless of whether the
+/// commit itself landed.
+class CommitAttemptResult {
+  final CommitData? data;
+  final String? error;
+
+  /// Paths the new commit actually touched (`git diff-tree` against
+  /// HEAD). Empty on failure, and empty on success when no snapshot was
+  /// involved (nothing was excluded, so there is nothing to protect a
+  /// restore from).
+  final Set<String> committedPaths;
+
+  /// Paths a pre-commit hook mutated inside the commit snapshot
+  /// (relative to the snapshot's pre-hook baseline), on both success and
+  /// failure. Empty when there was no snapshot, or the hook touched
+  /// nothing.
+  final Set<String> hookTouchedPaths;
+
+  /// Non-fatal: the commit itself landed (this is only ever set on
+  /// success), but the post-commit live-index reconcile
+  /// (`--literal-pathspecs reset -q HEAD -- <committedPaths>`) failed —
+  /// e.g. transient index.lock contention this call didn't retry into
+  /// success, or a permissions hiccup. [committedPaths] is still correct
+  /// (it comes from `diff-tree`, a read, computed before the reset ever
+  /// ran) and [finalizeCommitStaging]'s skip-set — hence restore
+  /// correctness for excluded paths — is unaffected: see the disjointness
+  /// argument on [_reconcileLiveIndexAfterSnapshotCommit]. The only thing
+  /// a failed reset leaves behind is live-index tidiness — some just-
+  /// committed paths may still show as staged with their pre-commit blob
+  /// until the next `git add`/status refresh touches them. Null when
+  /// there was nothing to reconcile or the reconcile succeeded; never
+  /// used to fail a commit that already landed.
+  final String? reconcileWarning;
+
+  /// Non-fatal, failure-path sibling of [reconcileWarning]: only ever set
+  /// on FAILURE, when a pre-commit hook mutated the snapshot's index but
+  /// replaying that mutation onto the live index (`update-index --add
+  /// --cacheinfo` / `--force-remove`, see [_replayHookIndexMutations])
+  /// itself failed — e.g. the live index.lock is held. When that happens
+  /// the affected paths are excluded from [hookTouchedPaths] (the replay
+  /// never landed, so there is nothing there for [finalizeCommitStaging]
+  /// to protect), which means the OLDER pre-commit capture is restored for
+  /// them instead — strictly better than the hook's staging vanishing
+  /// with neither version surviving. This field exists purely to surface
+  /// that "kept the older capture because the replay failed" outcome to
+  /// the caller; it never blocks or unwinds anything. Null when there was
+  /// no hook mutation to replay, or the replay fully succeeded.
+  final String? hookReplayWarning;
+
+  bool get ok => error == null;
+
+  const CommitAttemptResult.ok(
+    CommitData this.data, {
+    this.committedPaths = const {},
+    this.hookTouchedPaths = const {},
+    this.reconcileWarning,
+  })  : error = null,
+        hookReplayWarning = null;
+
+  const CommitAttemptResult.err(
+    String this.error, {
+    this.hookTouchedPaths = const {},
+    this.hookReplayWarning,
+  })  : data = null,
+        committedPaths = const {},
+        reconcileWarning = null;
+}
+
 /// Create a commit. When [amend] is true, an empty [message] is
 /// allowed and routes to `git commit --amend --no-edit` so git
 /// keeps the prior commit's message (rather than rewriting it to
 /// the empty string). A non-empty [message] always wins — both
 /// amend and regular commits use `-m <message>` in that case.
-Future<GitResult<CommitData>> createCommit(String repo, String message,
-    {bool amend = false, bool signoff = false}) async {
+///
+/// [plan] — the [CommitStagingPlan] returned by [prepareCommitStaging] —
+/// carries the hermetic-commit machinery as ONE inseparable unit. Its
+/// [CommitStagingPlan.snapshotIndexPath] is a frozen byte-copy of the
+/// index the commit is built from via `GIT_INDEX_FILE`, so a concurrent
+/// mutation of the live `.git/index` cannot alter what this commit
+/// contains; its [CommitStagingPlan.snapshotEntries] is the pre-hook
+/// baseline used to recover a hook's index mutations. These two were once
+/// independent named params (`indexFile:` / `snapshotEntries:`), which
+/// let a caller pass one without the other and silently lose
+/// hook-mutation preservation — a severable contract that is now
+/// unrepresentable: both are derived from the single [plan] here.
+///
+/// Pass `plan: null` (or omit it) for a direct commit outside the staging
+/// flow: the commit then runs against the live `.git/index` with no
+/// snapshot, the pre-fix behaviour.
+///
+/// This function takes ownership of the snapshot file and deletes it after
+/// the commit (success or failure). Hooks and empty-commit detection are
+/// unaffected — `git commit` runs them against whichever index file it
+/// reads — but a hook that mutates the index (format-then-`git add`)
+/// mutates the SNAPSHOT, not the live index, so its work is reconciled
+/// back onto the live index here rather than being silently dropped or
+/// left stale:
+///   * success — the live index is brought forward to match the paths
+///     the new commit actually touched (a `git --literal-pathspecs reset
+///     -q HEAD -- <paths>`), so no phantom staged diff is left for any
+///     path the hook rewrote. [CommitAttemptResult.committedPaths]
+///     carries that touched set back to the caller.
+///   * failure — the snapshot's frozen entry table (from the instant it
+///     was created) is diffed against the snapshot's current state to
+///     recover exactly what the hook changed, and that delta is replayed
+///     onto the live index before the snapshot is deleted, so the hook's
+///     staging work survives — UNLESS the replay itself fails (e.g. the
+///     live index.lock is held), in which case [CommitAttemptResult
+///     .hookTouchedPaths] omits exactly those paths (see
+///     [_replayHookIndexMutations]'s exit-code honesty) so
+///     [finalizeCommitStaging] falls back to the older pre-commit capture
+///     for them instead of writing back nothing — the failure-path mirror
+///     of the success-path reset-honesty fix on
+///     [_reconcileLiveIndexAfterSnapshotCommit]. Any such replay failure
+///     is also surfaced via [CommitAttemptResult.hookReplayWarning].
+/// Either way, [CommitAttemptResult.hookTouchedPaths] carries the hook's
+/// SUCCESSFULLY-recovered touched-path set back to the caller — computed
+/// before the snapshot is deleted — so [finalizeCommitStaging] can keep a
+/// stale pre-commit capture from overwriting work the hook did after that
+/// capture was taken, without ever skipping a restore for a path whose
+/// hook version didn't actually make it back.
+Future<CommitAttemptResult> createCommit(String repo, String message,
+    {bool amend = false,
+    bool signoff = false,
+    CommitStagingPlan? plan}) async {
+  final indexFile = plan?.snapshotIndexPath;
+  final snapshotEntries = plan?.snapshotEntries;
   final args = ['commit'];
   if (amend) args.add('--amend');
   if (signoff) args.add('-s');
@@ -3577,21 +3935,288 @@ Future<GitResult<CommitData>> createCommit(String repo, String message,
       // but defend the API surface anyway: an empty `-m ""` on a
       // non-amend commit produces an actually-empty subject and
       // is almost never what the caller wanted.
-      return const GitResult.err('Commit message is required.');
+      if (indexFile != null) await _deleteQuietly(indexFile);
+      return const CommitAttemptResult.err('Commit message is required.');
     }
   } else {
     args.addAll(['-m', message]);
   }
-  final r = await _git(repo, args);
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  // The operation-delta oracle: captured BEFORE the commit runs, so the
+  // post-commit reconcile below can diff "what did THIS OPERATION land"
+  // rather than "what is the new HEAD relative to its own parent"
+  // (`git diff-tree HEAD` with no explicit base — the pre-fix behavior).
+  // That distinction only matters — and only costs a `rev-parse` — when
+  // there's a snapshot to reconcile afterward:
+  //   * normal commit — oldTip is the parent, identical to the old
+  //     single-rev behavior.
+  //   * amend — oldTip is the PRE-amend tip, so the diff is exactly the
+  //     amend's delta. The old single-rev form diffed the amended commit
+  //     against ITS parent, which reports the entire amended commit —
+  //     including files carried over untouched from the pre-amend
+  //     commit — as "just committed", and those files then got skipped
+  //     by finalizeCommitStaging's restore even though the amend never
+  //     touched them.
+  //   * root commit — no parent exists, so oldTip is null and
+  //     [_emptyTreeOid] stands in; the diff is the entire first commit.
+  //     The old single-rev form emits nothing at all for a rootless
+  //     `diff-tree HEAD`, so the live index was never reconciled after a
+  //     repo's first commit.
+  final oldTip =
+      indexFile == null ? null : await _revParseVerifyQuiet(repo, 'HEAD');
+  final r = indexFile == null
+      ? await _git(repo, args)
+      : await _gitRaw(repo, args, env: {'GIT_INDEX_FILE': indexFile});
+  var committedPaths = const <String>{};
+  var hookTouchedPaths = const <String>{};
+  String? reconcileWarning;
+  String? hookReplayWarning;
+  if (indexFile != null) {
+    if (r.exitCode == 0) {
+      // Compute the hook delta from the snapshot BEFORE it's deleted —
+      // needed for restore precedence even though (in the common case)
+      // any hook-touched path is already inside committedPaths, since a
+      // hook stages into the very index that then gets committed.
+      if (snapshotEntries != null) {
+        hookTouchedPaths =
+            await _hookIndexDelta(repo, indexFile, snapshotEntries);
+      }
+      // oldTip is null exactly on an unborn-HEAD (root) commit; fall back
+      // to the empty-tree oid so the diff still has a base. If BOTH the
+      // rev-parse and the empty-tree derivation come back null the repo's
+      // git plumbing is broken badly enough that guessing a base would be
+      // worse than skipping the reconcile — committedPaths stays empty,
+      // same outward shape as any other reconcile short-circuit.
+      final diffBase = oldTip ?? await _emptyTreeOid(repo);
+      if (diffBase != null) {
+        final reconciled =
+            await _reconcileLiveIndexAfterSnapshotCommit(repo, diffBase);
+        committedPaths = reconciled.paths;
+        reconcileWarning = reconciled.warning;
+      }
+    } else if (snapshotEntries != null) {
+      final replayed =
+          await _replayHookIndexMutations(repo, indexFile, snapshotEntries);
+      hookTouchedPaths = replayed.paths;
+      hookReplayWarning = replayed.warning;
+    }
+    await _deleteQuietly(indexFile);
+  }
+  if (r.exitCode != 0) {
+    return CommitAttemptResult.err(r.stderr.toString().trim(),
+        hookTouchedPaths: hookTouchedPaths,
+        hookReplayWarning: hookReplayWarning);
+  }
   // Parse: "[branch abc1234] Subject line"
   final out = r.stdout.toString();
   final match = RegExp(r'\[(?:[^\s]+)\s+([a-f0-9]+)\]\s*(.+)').firstMatch(out);
   final hash = match?.group(1) ?? '';
   final summary = match?.group(2)?.trim() ??
       (message.isEmpty ? '(amend)' : message.split('\n').first);
-  return GitResult.ok(
-      CommitData(repositoryPath: repo, commitHash: hash, summary: summary));
+  return CommitAttemptResult.ok(
+      CommitData(repositoryPath: repo, commitHash: hash, summary: summary),
+      committedPaths: committedPaths,
+      hookTouchedPaths: hookTouchedPaths,
+      reconcileWarning: reconcileWarning);
+}
+
+/// After a snapshot-backed commit succeeds, bring the live `.git/index`
+/// forward to what committing against the live index would have left:
+/// for exactly the paths THIS OPERATION landed, reset the live index
+/// entry to HEAD.
+///
+/// [base] is the diff-tree base — the answer to "what did this operation
+/// land" rather than "what is the new HEAD relative to its own parent".
+/// [createCommit] derives it as the pre-commit tip (or the empty-tree oid
+/// on a root commit) precisely so this stays correct across normal
+/// commits, amends, and root commits alike; see the comment at its call
+/// site for the amend/root reasoning. This helper itself is base-agnostic
+/// — it only trusts whatever base it's handed.
+///
+/// Returns the touched-path set (see [CommitAttemptResult.committedPaths])
+/// together with a non-fatal [_ReconcileOutcome.warning] when the `reset`
+/// step failed. Committed paths are disjoint from the excluded paths
+/// [restoreStagedSelections] is about to replay (prepare only excludes
+/// paths NOT in this commit) — EXCEPT via a path a pre-commit hook staged
+/// inside the snapshot, which [CommitAttemptResult.hookTouchedPaths]
+/// separately covers and [finalizeCommitStaging] also skips — and disjoint
+/// from any concurrent out-of-band edit to an unrelated path (reset is
+/// scoped to exactly these paths) — so this cannot reopen the TOCTOU the
+/// snapshot exists to close.
+///
+/// That disjointness is why a failed `reset` is safe to demote to a
+/// warning instead of treating it as a restore-integrity failure: the
+/// paths [restoreStagedSelections] skips because they're in [paths] were
+/// NEVER going to be written back regardless of whether the live-index
+/// reset actually ran (skip is computed from the path SET, not from the
+/// reset's success). A failed reset therefore can only leave a committed
+/// path's live-index entry stale (still showing the pre-commit blob as
+/// staged) — a tidiness gap the next status refresh or `git add` clears
+/// up — never a lost or wrongly-restored excluded selection. The exec
+/// layer already retries transient index.lock contention on mutating
+/// calls (see [_gitRaw]), so a `reset` failure that reaches here is a
+/// real error worth surfacing, not lock noise to swallow silently.
+///
+/// Verified empirically: `git reset -q HEAD -- <path>` exits 0, touches
+/// only the named entries, and removes a path from the index entirely
+/// when HEAD no longer has it (a committed deletion) — no special-casing
+/// needed for adds, edits, or deletes.
+Future<({Set<String> paths, String? warning})>
+    _reconcileLiveIndexAfterSnapshotCommit(String repo, String base) async {
+  final touched = await _git(repo, [
+    'diff-tree',
+    '--no-commit-id',
+    '--name-only',
+    '-z',
+    '-r',
+    base,
+    'HEAD'
+  ]);
+  if (touched.exitCode != 0) return (paths: const <String>{}, warning: null);
+  final paths = touched.stdout
+      .toString()
+      .split('\x00')
+      .where((s) => s.isNotEmpty)
+      .toSet();
+  if (paths.isEmpty) return (paths: const <String>{}, warning: null);
+  // `--literal-pathspecs` (before the subcommand — the only accepted
+  // position; verified `git reset --literal-pathspecs` is rejected) is
+  // mandatory here: without it a committed hostile name like
+  // `[bracket].txt` is read as a character-class glob and this `reset`
+  // also unstages an unrelated modified file it happens to match (verified
+  // live: plain `git reset -- '[bracket].txt'` also reset `a.txt`),
+  // desyncing the very live index this helper exists to reconcile. The
+  // `diff-tree` above only EMITS paths, never matching them against a
+  // pathspec, so it needs no such flag.
+  final reset = await _git(
+      repo, ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...paths]);
+  if (reset.exitCode != 0) {
+    final shown = paths.take(5).join(', ');
+    final more = paths.length > 5 ? ', +${paths.length - 5} more' : '';
+    return (
+      paths: paths,
+      warning: 'Commit landed, but the live index could not be reconciled '
+          'for $shown$more (may still show as staged with stale content '
+          'until the next refresh): ${reset.stderr.toString().trim()}',
+    );
+  }
+  return (paths: paths, warning: null);
+}
+
+/// The set of paths a pre-commit hook mutated inside the commit
+/// snapshot, computed as a read-only diff between [frozen] (the
+/// snapshot's entry table captured the instant [prepareCommitStaging]
+/// created it) and the snapshot's entries now: anything added, changed,
+/// or removed counts as touched. Does not mutate any index — used on the
+/// success path, where the live index is separately brought forward by
+/// [_reconcileLiveIndexAfterSnapshotCommit] rather than by replaying this
+/// delta.
+Future<Set<String>> _hookIndexDelta(
+  String repo,
+  String snapshotIndexPath,
+  Map<String, String> frozen,
+) async {
+  final now = await _indexFileEntries(repo, snapshotIndexPath);
+  final touched = <String>{};
+  for (final e in now.entries) {
+    if (frozen[e.key] != e.value) touched.add(e.key);
+  }
+  for (final path in frozen.keys) {
+    if (!now.containsKey(path)) touched.add(path);
+  }
+  return touched;
+}
+
+/// After a snapshot-backed commit is rejected (a pre-commit hook exited
+/// non-zero), recover any index mutation the hook made INSIDE the
+/// snapshot and replay it onto the LIVE index before the snapshot is
+/// discarded — otherwise staging work the hook did (e.g. auto-format
+/// then `git add`, the common lint-staged pattern) evaporates with it.
+/// Computed as a diff between [frozen] (the snapshot's entry table
+/// captured the instant [prepareCommitStaging] created it) and the
+/// snapshot's entries now: anything added or changed is replayed with
+/// `--cacheinfo`, anything that disappeared is replayed with
+/// `--force-remove`.
+///
+/// Mirror of [_reconcileLiveIndexAfterSnapshotCommit]'s reset-honesty fix,
+/// other branch: that helper never claims a path is reconciled unless the
+/// `reset` covering it actually exited 0; this one never claims a path is
+/// REPLAYED unless the `update-index` call covering it actually exited 0.
+/// Both `update-index` invocations run against the LIVE index (unlike the
+/// commit itself, which runs against the snapshot's own `GIT_INDEX_FILE`),
+/// so ordinary live-index contention — an index.lock, a permissions
+/// hiccup — can make either one fail independently of the other. Only the
+/// paths covered by a call that actually landed are reported as replayed
+/// (see [CommitAttemptResult.hookTouchedPaths]); the two calls are each
+/// batched (one `--add --cacheinfo` invocation for every added/changed
+/// path, one `--force-remove` invocation for every removed path) rather
+/// than issued per-path, so a failure demotes its WHOLE batch to
+/// unreplayed rather than only the one path git happened to choke on —
+/// coarser than per-path granularity, but honest: [finalizeCommitStaging]
+/// then falls back to the older pre-commit capture for exactly those
+/// paths instead of writing back nothing, which is strictly better than
+/// silently losing both the hook's version and the capture. Any such
+/// failure is also summarized in the returned `warning` (surfaced via
+/// [CommitAttemptResult.hookReplayWarning]) so the caller can tell the
+/// user their hook's staging didn't fully make it back. A hook that never
+/// touches the index produces an empty delta — a no-op costing one
+/// `ls-files` — and this can't clobber an unrelated concurrent live-index
+/// change since only paths the hook actually touched inside the snapshot
+/// are ever named.
+Future<({Set<String> paths, String? warning})> _replayHookIndexMutations(
+  String repo,
+  String snapshotIndexPath,
+  Map<String, String> frozen,
+) async {
+  final now = await _indexFileEntries(repo, snapshotIndexPath);
+  final cacheArgs = <String>[];
+  final addedOrChanged = <String>{};
+  for (final e in now.entries) {
+    if (frozen[e.key] != e.value) {
+      addedOrChanged.add(e.key);
+      final parts = e.value.split(' ');
+      if (parts.length != 2) continue;
+      cacheArgs
+        ..add('--cacheinfo')
+        ..add('${parts[0]},${parts[1]},${e.key}');
+    }
+  }
+  final removals =
+      frozen.keys.where((path) => !now.containsKey(path)).toList();
+
+  final touched = <String>{};
+  final failures = <String>[];
+
+  if (cacheArgs.isNotEmpty) {
+    final r = await _git(repo, ['update-index', '--add', ...cacheArgs]);
+    if (r.exitCode == 0) {
+      touched.addAll(addedOrChanged);
+    } else {
+      final shown = addedOrChanged.take(5).join(', ');
+      final more =
+          addedOrChanged.length > 5 ? ', +${addedOrChanged.length - 5} more' : '';
+      failures.add('staged content for $shown$more');
+    }
+  }
+  if (removals.isNotEmpty) {
+    final r =
+        await _git(repo, ['update-index', '--force-remove', '--', ...removals]);
+    if (r.exitCode == 0) {
+      touched.addAll(removals);
+    } else {
+      final shown = removals.take(5).join(', ');
+      final more = removals.length > 5 ? ', +${removals.length - 5} more' : '';
+      failures.add('removal of $shown$more');
+    }
+  }
+
+  if (failures.isEmpty) return (paths: touched, warning: null);
+  return (
+    paths: touched,
+    warning: 'The pre-commit hook modified the index, but replaying that '
+        'onto the live index after the rejected commit did not fully land '
+        '(${failures.join('; ')}); the older pre-commit staged version was '
+        'kept for those paths instead.',
+  );
 }
 
 Future<GitResult<SyncData>> fetchRemote(String repo,
@@ -3625,6 +4250,57 @@ Future<GitResult<SyncData>> fetchRemote(String repo,
 Future<String> _revParse(String repo, String rev) async {
   final r = await _git(repo, ['rev-parse', rev]);
   return r.exitCode == 0 ? (r.stdout as String).trim() : '';
+}
+
+/// `git rev-parse --verify --quiet <rev>`, returning null (not `''`) when
+/// [rev] doesn't resolve — the clean way to detect an unborn `HEAD` (a
+/// brand-new repo before its first commit): exit code 1, empty stderr
+/// thanks to `--quiet`, no exception. Distinct from [_revParse], whose
+/// `''`-on-any-failure return can't be told apart from "resolved to an
+/// empty string" (never happens for a commit-ish, but the point is this
+/// call site needs an explicit tri-state, not a lossy one).
+Future<String?> _revParseVerifyQuiet(String repo, String rev) async {
+  final r = await _git(repo, ['rev-parse', '--verify', '--quiet', rev]);
+  if (r.exitCode != 0) return null;
+  final out = (r.stdout as String).trim();
+  return out.isEmpty ? null : out;
+}
+
+/// The empty-tree object id, derived at runtime rather than hardcoded.
+/// `write-tree` against a scratch `GIT_INDEX_FILE` that does not yet exist
+/// is treated by git as an empty index (verified empirically), so this
+/// needs no stdin — unlike `git hash-object -t tree --stdin`, which would
+/// (this exec layer has no stdin-piping support; see [_gitRaw]/[_git]).
+///
+/// Why not just hardcode `4b825dc642cb6eb9a060e54bf8d69288fbee4904` (SHA-1
+/// git's well-known empty-tree oid, printed by the derivation above on
+/// every ordinary repo)? A SHA-256 repository (`git init
+/// --object-format=sha256`) has a DIFFERENT empty-tree oid. A hardcoded
+/// SHA-1 constant handed to `diff-tree` on such a repo is not a rejected
+/// oid — it just doesn't name any object git knows about — so the root-
+/// commit diff would silently misbehave instead of failing loudly. Runtime
+/// derivation is correct for both object formats without knowing which one
+/// the repo uses.
+///
+/// `write-tree` leaves the scratch index file behind on disk (a real file
+/// is created even though it started out empty) — the caller cleans it up
+/// with [_deleteQuietly], same idiom as the commit-index snapshot.
+Future<String?> _emptyTreeOid(String repo) async {
+  final gitDirRes = await _git(repo, ['rev-parse', '--absolute-git-dir']);
+  if (gitDirRes.exitCode != 0) return null;
+  final gitDir = gitDirRes.stdout.toString().trim();
+  if (gitDir.isEmpty) return null;
+  final scratchIndex = p.join(gitDir,
+      'manifold-empty-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}');
+  try {
+    final r = await _git(repo, ['write-tree'],
+        extraEnv: {'GIT_INDEX_FILE': scratchIndex});
+    if (r.exitCode != 0) return null;
+    final oid = (r.stdout as String).trim();
+    return oid.isEmpty ? null : oid;
+  } finally {
+    await _deleteQuietly(scratchIndex);
+  }
 }
 
 Future<bool> _isAncestor(String repo, String a, String b) async {

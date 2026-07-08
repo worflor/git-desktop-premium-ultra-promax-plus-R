@@ -84,7 +84,7 @@ class _LeaseRaceRefs extends ManifoldRefs {
   Future<void> Function()? afterFetch;
 
   @override
-  Future<GitResult<void>> fetchToStaging({String remote = 'origin'}) async {
+  Future<GitResult<void>> fetchToStaging({String? remote}) async {
     final r = await super.fetchToStaging(remote: remote);
     if (!_fired && afterFetch != null) {
       _fired = true;

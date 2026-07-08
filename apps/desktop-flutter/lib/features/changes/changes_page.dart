@@ -5466,17 +5466,35 @@ class _ChangesPageState extends State<ChangesPage> {
       repoPath,
       message,
       amend: amend,
+      // Commit against the frozen index snapshot prepare captured, so an
+      // out-of-band mutation of the live index in this window can't leak a
+      // path into the commit. The snapshot + its pre-hook baseline travel
+      // as one inseparable [CommitStagingPlan]: createCommit consumes and
+      // deletes the snapshot, and reconciles/replays any pre-commit-hook
+      // index mutation (e.g. lint-staged auto-fix + `git add`) onto the
+      // live index using the plan's snapshotEntries as the baseline.
+      plan: plan,
     );
     if (!commitResult.ok) {
       // The commit didn't happen. Put captured selections back so the index
-      // reads exactly as the user left it; if that restore ALSO fails the
-      // curated staging is genuinely gone, so say so rather than reporting
-      // only the commit error and letting the user assume their index is
-      // intact.
-      final restore =
-          await restoreStagedSelections(repoPath, plan.excludedEntries);
+      // reads exactly as the user left it — except any path a pre-commit
+      // hook touched after the capture was taken; finalizeCommitStaging
+      // encodes that precedence so a hook's newer work is never clobbered
+      // by the stale capture. If the restore ALSO fails the curated
+      // staging is genuinely gone, so say so rather than reporting only
+      // the commit error and letting the user assume their index is intact.
+      final restore = await finalizeCommitStaging(repoPath, plan, commitResult);
       await _refreshAndReadStatus();
-      final commitErr = commitResult.error ?? 'Commit failed.';
+      var commitErr = commitResult.error ?? 'Commit failed.';
+      // Non-fatal, same "commit is fine/absent but check the index" family
+      // as the success-path reconcileWarning below: a pre-commit hook's
+      // staging couldn't be replayed back onto the live index after the
+      // rejected commit (see [CommitAttemptResult.hookReplayWarning]), so
+      // the OLDER pre-commit capture was kept for those paths instead of
+      // nothing — worth telling the user, never worth escalating.
+      if (commitResult.hookReplayWarning != null) {
+        commitErr = '$commitErr\n${commitResult.hookReplayWarning}';
+      }
       if (!restore.ok) {
         return _CommitOutcome.err(
             '$commitErr\nCould not restore the staging of excluded files; '
@@ -5490,10 +5508,17 @@ class _ChangesPageState extends State<ChangesPage> {
         ? committed.commitHash.substring(0, 8)
         : committed.commitHash;
     var successMessage = 'Committed ${committed.summary} ($shortHash).';
-    String? syncError;
+    // Non-fatal: the commit landed either way. A reconcile warning here
+    // means only the live-index tidiness step after the commit hiccuped —
+    // see [CommitAttemptResult.reconcileWarning] — never that anything
+    // was lost. Riding it in on the same channel as the restore-failure
+    // message below is deliberate: both are "the commit is good, but
+    // check the index" follow-ups, and a genuine restore failure is the
+    // more urgent of the two, so it overwrites this rather than the other
+    // way around.
+    String? syncError = commitResult.reconcileWarning;
 
-    final restore =
-        await restoreStagedSelections(repoPath, plan.excludedEntries);
+    final restore = await finalizeCommitStaging(repoPath, plan, commitResult);
     if (!restore.ok) {
       // A failed restore is a state-integrity event: the user's hand-built
       // staging of excluded files is gone. Halt here — running the sync leg

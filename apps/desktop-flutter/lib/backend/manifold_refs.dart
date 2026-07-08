@@ -16,7 +16,27 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
+import 'git.dart' as git;
 import 'git_result.dart';
+
+/// Verdict of [ManifoldRefs._counterCoverage]: how the staged (last-seen
+/// remote) counter tip relates to the reservation an allocation attempt
+/// just minted locally.
+enum _CounterCoverage {
+  /// Staged value below the reservation (or unreadable) — push normally.
+  below,
+
+  /// Staged tip's value is at/above the reservation AND descends from the
+  /// commit this attempt minted — the reservation is already on the
+  /// remote's history; settle as success without pushing.
+  coveredByOwnChain,
+
+  /// Staged tip's value is at/above the reservation but on a foreign
+  /// chain — a peer reserved past us; retry with a refreshed floor.
+  foreignHigher,
+}
 
 class ManifoldRefs {
   /// The whole Manifold metadata namespace. Every issue, desk, and the
@@ -82,6 +102,110 @@ class ManifoldRefs {
     required this.authorEmail,
   });
 
+  /// Per-repo in-process allocation queue. [allocSequentialId] chains onto
+  /// whatever's already running for the same repo IDENTITY so two
+  /// concurrent callers IN THIS PROCESS never interleave their
+  /// fetch/CAS/push sequence — the same-process race that used to let one
+  /// allocator's push carry a DIFFERENT commit than the id it returned
+  /// (see the fix notes on [allocSequentialId]).
+  ///
+  /// Keyed by the resolved git-common-dir, NOT [repoPath]: this app
+  /// routinely addresses one repository through multiple worktree paths
+  /// (desks) — `DeskPrState`/`DeskIssueState` build a `ManifoldRefs` from
+  /// `RepositoryState.activePath`, which is worktree-specific. Two open
+  /// desks of the SAME repo would then key this queue differently, bypass
+  /// it entirely, and interleave CAS/push on the same refs in the shared
+  /// common git dir — exactly the race this queue exists to prevent.
+  /// [_commonGitDir] resolves and memoizes that identity per [repoPath];
+  /// see its doc for the empirical verification that sibling worktrees of
+  /// one repo resolve to the identical string on this machine.
+  static final Map<String, Future<void>> _allocChains = {};
+
+  /// Memoized `repoPath -> resolved common-git-dir` future, so the
+  /// `git rev-parse --git-common-dir` round trip is paid at most once per
+  /// distinct [repoPath] for the lifetime of the process — every
+  /// allocation after the first for a given path reuses the cached
+  /// future. Exposed for tests to assert the memoization (one entry per
+  /// path, shared value across sibling worktree paths of one repo).
+  @visibleForTesting
+  static final Map<String, Future<String>> commonGitDirMemo = {};
+
+  /// Resolve this instance's repo IDENTITY — the absolute common git dir
+  /// — for use as the allocation-queue key. Two worktrees of the same
+  /// repository resolve to the same string (verified empirically on this
+  /// machine: `git worktree add` a second checkout of a temp repo, then
+  /// `git -C <path> rev-parse --path-format=absolute --git-common-dir`
+  /// from each worktree returns byte-identical output — forward slashes,
+  /// no trailing slash, same casing — pointing at the shared `.git`).
+  ///
+  /// Falls back to the raw [repoPath] when resolution fails (e.g. the
+  /// path isn't a git repo at all, such as a stale/removed worktree) —
+  /// degraded (no longer worktree-safe) but never broken: allocation
+  /// still proceeds keyed on its own path rather than throwing.
+  Future<String> _commonGitDir() => commonGitDirMemo.putIfAbsent(repoPath,
+      () async {
+        try {
+          final r = await git.runGit(repoPath,
+              ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+          if (r.exitCode != 0) return repoPath;
+          final out = (r.stdout as String).trim();
+          return out.isEmpty ? repoPath : out;
+        } catch (_) {
+          return repoPath;
+        }
+      });
+
+  /// Resolve THE metadata remote: the one remote name every Manifold
+  /// surface — [allocSequentialId]'s reservation, [syncWithRemote]'s
+  /// fetch/reconcile/push, [ensureFetchRefspec]'s persisted config, the
+  /// staging-prefix namespace — defaults to when a caller doesn't
+  /// explicitly override. These all have to agree: if create() reserved
+  /// an id against 'origin' while sync() reconciled against 'upstream',
+  /// the two forge remotes would each grow their own id-counter history
+  /// and the "PR-ids and issue-ids never collide across clones" guarantee
+  /// the counter exists for would silently break the moment a repo's only
+  /// remote wasn't named 'origin' (the common fork shape: `upstream`).
+  ///
+  /// Delegates to [git.primaryRemoteName] — 'origin' wins when present,
+  /// else the sole/first configured remote — falling back to the literal
+  /// 'origin' when resolution errors or the repo has no remotes at all
+  /// (a fresh or offline-only repo; every method's pre-existing behaviour
+  /// in that case is unaffected, since there's nothing to resolve to).
+  ///
+  /// Deliberately NOT memoized, unlike [_commonGitDir]: a path's git dir
+  /// is immutable, but the remote list is runtime-mutable config — a user
+  /// can add `origin` to an upstream-only repo mid-session and resolution
+  /// must follow. The `git remote` listing is one cheap local call at
+  /// user-action rate (alloc/sync), and agreement WITHIN an operation
+  /// comes from resolve-once-per-operation threading in the stores, not
+  /// from a cache.
+  Future<String> resolveMetadataRemote() async {
+    try {
+      final r = await git.primaryRemoteName(repoPath);
+      if (r.ok && r.data != null) return r.data!;
+    } catch (_) {
+      // Fall through to the 'origin' default below.
+    }
+    return 'origin';
+  }
+
+  /// Run [body] after any allocation already queued for this repo's
+  /// resolved identity (see [_commonGitDir]) has finished, and queue any
+  /// allocation that arrives while [body] is running behind it. A failure
+  /// in [body] does not wedge the queue — the chain always resolves
+  /// (value discarded) so the next caller can proceed regardless of
+  /// whether this one succeeded.
+  Future<T> _serialized<T>(Future<T> Function() body) async {
+    final key = await _commonGitDir();
+    // The stored chain always resolves cleanly (errors are swallowed just
+    // below before being stored), so plain `.then` here — no `onError` —
+    // is enough to wait for it.
+    final prior = _allocChains[key] ?? Future<void>.value();
+    final gated = prior.then((_) => body());
+    _allocChains[key] = gated.then((_) {}, onError: (_) {});
+    return gated;
+  }
+
   Map<String, String> get _gitEnv => {
         'GIT_AUTHOR_NAME': authorName,
         'GIT_AUTHOR_EMAIL': authorEmail,
@@ -91,12 +215,24 @@ class ManifoldRefs {
 
   /// Hash + write a blob, return its SHA. Content goes through stdin
   /// to handle arbitrary bytes safely.
+  ///
+  /// Stays on a direct [Process.start] rather than [git.runGit]: the
+  /// shared runner's surface is request/response (spawn, wait for exit),
+  /// it has no stdin-piping support, and `hash-object --stdin` needs to
+  /// write content to the child's stdin before waiting on its exit code.
+  /// Retrofitting stdin support onto a runner built for request/response
+  /// calls isn't worth forcing — instead this overlays
+  /// [git.kNonInteractiveGitEnv] directly (the same non-interactive env
+  /// the shared runner applies) so this spawn still gets
+  /// `GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` / `LC_ALL=C` even
+  /// though it bypasses the runner's semaphore + dedup machinery.
   Future<GitResult<String>> writeBlob(String content) async {
     try {
       final p = await Process.start(
         'git',
         ['hash-object', '-w', '--stdin'],
         workingDirectory: repoPath,
+        environment: git.kNonInteractiveGitEnv,
       );
       p.stdin.write(content);
       await p.stdin.flush();
@@ -115,6 +251,11 @@ class ManifoldRefs {
 
   /// Build a tree from `{filename → blobSha}` entries. All entries are
   /// regular files (mode 100644).
+  ///
+  /// Same stdin rationale as [writeBlob]: kept on a direct [Process.start]
+  /// (mktree reads its entries from stdin), overlaid with
+  /// [git.kNonInteractiveGitEnv] rather than routed through [git.runGit],
+  /// which has no stdin support.
   Future<GitResult<String>> mkTree(Map<String, String> entries) async {
     try {
       // mktree wants entries sorted by name on stdin.
@@ -127,6 +268,7 @@ class ManifoldRefs {
         'git',
         ['mktree'],
         workingDirectory: repoPath,
+        environment: git.kNonInteractiveGitEnv,
       );
       p.stdin.write(buf.toString());
       await p.stdin.flush();
@@ -154,14 +296,7 @@ class ManifoldRefs {
       final args = <String>['commit-tree', treeSha];
       if (parentSha != null) args.addAll(['-p', parentSha]);
       args.addAll(['-m', message]);
-      final r = await Process.run(
-        'git',
-        args,
-        workingDirectory: repoPath,
-        environment: _gitEnv,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, args, extraEnv: _gitEnv);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }
@@ -182,13 +317,7 @@ class ManifoldRefs {
     try {
       final args = <String>['update-ref', ref, newSha];
       if (oldSha != null) args.add(oldSha);
-      final r = await Process.run(
-        'git',
-        args,
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, args);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }
@@ -201,13 +330,7 @@ class ManifoldRefs {
   /// Delete [ref]. Idempotent — succeeds if the ref doesn't exist.
   Future<GitResult<void>> deleteRef(String ref) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['update-ref', '-d', ref],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, ['update-ref', '-d', ref]);
       if (r.exitCode != 0) {
         final err = (r.stderr as String).trim();
         if (err.contains('does not exist') || err.isEmpty) {
@@ -225,13 +348,8 @@ class ManifoldRefs {
   /// (not an error — distinguish via the data field).
   Future<GitResult<String?>> resolveRef(String ref) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['rev-parse', '--verify', '--quiet', ref],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r =
+          await git.runGit(repoPath, ['rev-parse', '--verify', '--quiet', ref]);
       if (r.exitCode == 0) {
         final sha = (r.stdout as String).trim();
         return GitResult.ok(sha.isEmpty ? null : sha);
@@ -255,13 +373,8 @@ class ManifoldRefs {
   /// nothing (not an error).
   Future<GitResult<Map<String, String>>> listRefs(String pattern) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['for-each-ref', '--format=%(refname) %(objectname)', pattern],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath,
+          ['for-each-ref', '--format=%(refname) %(objectname)', pattern]);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }
@@ -284,13 +397,8 @@ class ManifoldRefs {
   /// ref or path doesn't exist.
   Future<GitResult<String?>> readRefBlob(String ref, String filename) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['cat-file', 'blob', '$ref:$filename'],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r =
+          await git.runGit(repoPath, ['cat-file', 'blob', '$ref:$filename']);
       if (r.exitCode == 0) return GitResult.ok(r.stdout as String);
       // cat-file exits 128 both when the object is genuinely absent
       // (missing ref, or a missing path inside a valid tree) and when
@@ -330,38 +438,120 @@ class ManifoldRefs {
   /// caller-visible flavour ("desk-id" vs "id") baked into the commit
   /// message, so the audit log remains legible without coupling the
   /// stores to each other.
+  ///
+  /// Same-process calls against the same [repoPath] are serialized via
+  /// [_serialized] — see that method's doc for why. Without it, two
+  /// allocations racing in this process could each win their own local
+  /// CAS and then interleave with each other's remote push in a way the
+  /// per-call retry loop below was never designed to detect (it only
+  /// watches for a REMOTE peer moving the ref, not a sibling call in the
+  /// same process moving the LOCAL ref between this call's CAS and its
+  /// push). Cross-process/cross-machine races still go through the CAS +
+  /// lease dance in [_allocSequentialIdImpl] unchanged.
+  ///
+  /// [remote] defaults to null — resolved via [resolveMetadataRemote] at
+  /// the top of the (now-serialized) call, not baked in as a literal
+  /// 'origin', so a repo whose only remote is named something else (e.g.
+  /// `upstream` after a fork) reserves against ITS remote rather than a
+  /// namespace nothing ever syncs. Callers that already know the remote
+  /// (a store mid-operation that also needs it for its own sync) should
+  /// pass it explicitly so it isn't resolved twice.
   Future<GitResult<int>> allocSequentialId({
     required String ref,
     required String filename,
     String commitLabel = 'id',
     int maxAttempts = 5,
-  }) async {
-    // Counter-regression guard, computed ONCE per allocation — it is
-    // loop-invariant across CAS retries. The staging namespace stops a
-    // plain fetch from rewinding the counter, and [syncWithRemote]
-    // reconciles it by MAX so it never moves backwards there either — but
-    // a stale clone, a hand-edited ref, or a losing divergence resolution
-    // could still leave a local counter reading BELOW ids we've already
-    // handed out (e.g. a peer allocated up to 7 and we somehow hold a
-    // counter that still reads 3). Allocating 4 would then collide with a
-    // live #4..#7, so `next` is floored at one past the highest id
-    // actually present across issues and desks. A retry never needs a
-    // fresh floor: any concurrent allocation that could raise it also
-    // bumps the counter ref, and the retry re-reads that counter anyway.
-    // This costs a couple of ref scans, but allocation is rare (only on
-    // create), so the price is fine.
-    final highest = await _highestManifoldId();
+    String? remote,
+  }) =>
+      _serialized(() async {
+        final resolvedRemote = remote ?? await resolveMetadataRemote();
+        return _allocSequentialIdImpl(
+          ref: ref,
+          filename: filename,
+          commitLabel: commitLabel,
+          maxAttempts: maxAttempts,
+          remote: resolvedRemote,
+        );
+      });
 
-    // CAS retry loop: a concurrent allocation (two windows, rapid
-    // double-tap) can land between our resolveRef and updateRef and
-    // cause update-ref to reject. Loop a handful of times with a tiny
-    // randomised backoff so independent clients converge on distinct
-    // ids. Other failures (writeBlob / mkTree / commitTree) aren't
-    // caused by CAS so they bail immediately.
+  Future<GitResult<int>> _allocSequentialIdImpl({
+    required String ref,
+    required String filename,
+    required String commitLabel,
+    required int maxAttempts,
+    required String remote,
+  }) async {
+    // Counter-regression guard. A stale clone, a hand-edited ref, or a
+    // losing divergence resolution could leave a local counter reading
+    // BELOW ids we've already handed out (e.g. a peer allocated up to 7
+    // and we somehow hold a counter that still reads 3). Allocating 4
+    // would then collide with a live #4..#7, so `next` is floored at one
+    // past the highest id actually present across issues and desks —
+    // LOCAL and staged, see [_highestManifoldId]. Recomputed on every
+    // attempt (not just once) because a remote-reservation retry (below)
+    // re-fetches staging with fresh information the floor must reflect;
+    // the cost is a couple of ref scans per attempt, and retries are rare.
+    //
+    // REGRESSION #1 (found by the randomized convergence fuzzer — see
+    // manifold_sync_convergence_test.dart's "counter properties" and
+    // "randomized anti-entropy convergence" groups): the floor used to
+    // scan LOCAL refs only, so a clone that had never synced was blind to
+    // ids the remote already published, and its very first allocation
+    // could collide with one a peer had already pushed. Fixed by having
+    // [_highestManifoldId] also scan the staging namespace.
+    //
+    // REGRESSION #2 (same fuzzer, after fixing #1): fetch-before-allocate
+    // only protects against ids a peer has already PUSHED. Two peers that
+    // each allocate locally between syncs — the routine "haven't synced
+    // *this* allocation yet" case, not a contrived zero-contact scenario —
+    // can still both win their own LOCAL update-ref CAS and hand out the
+    // same number, because neither's local ref ever saw the other's
+    // pending commit. A local CAS win only proves "first on this
+    // machine"; it says nothing about a peer machine racing on the same
+    // remote. The shared counter's whole purpose ("PR-ids and issue-ids
+    // never collide") requires a reservation that's atomic across
+    // machines, which only the remote's ref-update can provide. Fixed
+    // below: once the local CAS wins, the same commit is pushed to the
+    // remote counter ref with `--force-with-lease` against whatever we
+    // last saw staged there. Git's receive-pack serializes concurrent ref
+    // updates, so if a peer's reservation lands first, our lease fails —
+    // retryable, exactly like [ManifoldRefs.syncWithRemote] — and we loop:
+    // re-fetch staging, recompute the floor (now past the peer's
+    // reservation), and try again. When there's no remote configured, no
+    // reservation is possible or needed — allocation degrades to exactly
+    // the local-only behaviour this method always had, so a genuinely
+    // offline repo is unaffected.
+    final hasRemote = await readConfig('remote.$remote.url') != null;
+    final stagedRef =
+        '${stagingPrefixFor(remote)}${ref.substring(manifoldPrefix.length)}';
+
     var attempt = 0;
     String? lastError;
     while (attempt < maxAttempts) {
       attempt++;
+      if (hasRemote) await fetchToStaging(remote: remote);
+      var highest = await _highestManifoldId(remote: remote);
+
+      // REGRESSION #3 (same fuzzer): the floor above only reflects
+      // entity refs (issues/desks) actually pushed — but create() never
+      // pushes the entity ref itself, only this counter reservation (see
+      // REGRESSION #2). So a peer's already-reserved counter VALUE can be
+      // visible via fetch while their entity ref (and thus their id) is
+      // still invisible to `highest`, and a naive `next` computed only
+      // from our own local counter blob would land on that same value.
+      // Folding the staged counter's numeric value into the floor closes
+      // that gap without waiting for the peer's entity ref to arrive.
+      if (hasRemote) {
+        final stagedTip = await resolveRef(stagedRef);
+        if (stagedTip.ok && stagedTip.data != null) {
+          final stagedBlob = await readRefBlob(stagedTip.data!, filename);
+          if (stagedBlob.ok && stagedBlob.data != null) {
+            final n = int.tryParse(stagedBlob.data!.trim());
+            if (n != null && n > highest) highest = n;
+          }
+        }
+      }
+
       final cur = await resolveRef(ref);
       if (!cur.ok) return GitResult.err(cur.error ?? 'resolveRef failed');
       var next = 1;
@@ -372,7 +562,7 @@ class ManifoldRefs {
           if (n != null) next = n + 1;
         }
       }
-      // Apply the pre-computed regression floor (see above the loop).
+      // Apply the regression floor computed above.
       if (highest + 1 > next) next = highest + 1;
       final blobR = await writeBlob('$next\n');
       if (!blobR.ok) {
@@ -395,35 +585,176 @@ class ManifoldRefs {
         newSha: commitR.data!,
         oldSha: cur.data,
       );
-      if (updR.ok) return GitResult.ok(next);
-      lastError = updR.error;
-      // Randomised 5–25ms backoff keeps two clients from lockstepping
-      // into the same collision on the next attempt.
-      await Future<void>.delayed(
-          Duration(milliseconds: 5 + (attempt * 5)));
+      if (!updR.ok) {
+        lastError = updR.error;
+        // Randomised 5–25ms backoff keeps two clients from lockstepping
+        // into the same collision on the next attempt.
+        await Future<void>.delayed(
+            Duration(milliseconds: 5 + (attempt * 5)));
+        continue;
+      }
+      if (!hasRemote) return GitResult.ok(next);
+
+      // Reserve `next` on the remote too (see REGRESSION #2 above). The
+      // lease is the counter sha we last saw staged for this ref (or the
+      // zero-sha when the remote lacks it entirely) — the same lease
+      // discipline [_leasePush] uses for the general sync path.
+      //
+      // REGRESSION #4 (found by review, not the fuzzer — the interleaving
+      // is narrow enough it never came up randomly, but is real): pushing
+      // plain `<ref>:<ref>` sends whatever the LOCAL ref points to AT PUSH
+      // TIME, not the commit this attempt just created. In-process callers
+      // can no longer race here ([allocSequentialId] serializes them via
+      // [_serialized]), but nothing stops another local mutation of `ref`
+      // between our `updateRef` above and this push from a source outside
+      // the counter path (e.g. a concurrent [syncWithRemote] reconciling
+      // the same ref) — that would silently push a commit that is not
+      // `commitR.data!`, desynchronizing "the id this call returns" from
+      // "what got reserved on the remote". Pinning the source side of the
+      // refspec to `commitR.data!` (an explicit sha source, standard
+      // refspec syntax — verified empirically against a scratch bare+clone
+      // that `--force-with-lease=<ref>:<lease> <remote> <sha>:<ref>` pushes
+      // exactly that sha even when it isn't the local ref's current tip)
+      // means the remote receives precisely the commit this call minted,
+      // no matter what the local ref does afterwards.
+      //
+      // COVERAGE GUARD (both before the push and after a lease rejection).
+      // The staging ref is NOT a pure fetch snapshot: git updates
+      // remote-tracking refs on PUSH too (any push of `refs/manifold/*`
+      // from this clone maps through `remote.<name>.fetch` onto staging —
+      // observed empirically when a mid-allocation push from the same
+      // clone silently refreshed the lease and let a LOWER counter value
+      // overwrite a higher remote one). So by the time we resolve the
+      // lease, staging can already be AHEAD of the snapshot `next` was
+      // computed from. Before pushing, classify the staged tip:
+      //  * its counter value < `next` → normal case, push the pinned sha.
+      //  * value >= `next` AND our own commit is an ANCESTOR of that tip →
+      //    our reservation is already ON the remote's history (something —
+      //    a concurrent same-process [syncWithRemote], or a peer relaying
+      //    our local ref — pushed a descendant of the commit this call
+      //    minted). `next` is permanently reserved; settle as SUCCESS
+      //    without pushing. Reserving N under a remote already at N+1 must
+      //    be a success, not a retry storm — and pushing here would
+      //    actively REGRESS the remote counter.
+      //  * value >= `next` but a FOREIGN chain (not descended from our
+      //    commit) → a peer reserved values at-or-past `next`, and we
+      //    cannot know whether `next` itself is among the ids their
+      //    machine handed out. Returning `next` could collide; pushing
+      //    would regress their counter. Retry: the refreshed floor sees
+      //    their value, so the next attempt allocates strictly above it.
+      final stagedTip = await resolveRef(stagedRef);
+      if (stagedTip.data != null) {
+        final cover = await _counterCoverage(
+          stagedTipSha: stagedTip.data!,
+          filename: filename,
+          next: next,
+          ownCommitSha: commitR.data!,
+        );
+        if (cover == _CounterCoverage.coveredByOwnChain) {
+          return GitResult.ok(next);
+        }
+        if (cover == _CounterCoverage.foreignHigher) {
+          lastError = 'counter reservation raced: remote already past $next';
+          await Future<void>.delayed(
+              Duration(milliseconds: 5 + (attempt * 5)));
+          continue;
+        }
+      }
+      final lease = stagedTip.data ?? _zeroSha;
+      final push = await _leasePush(remote: remote, pushes: [
+        (ref: ref, lease: lease, sha: commitR.data!),
+      ]);
+      if (push.ok) return GitResult.ok(next);
+      final err = push.error ?? '';
+      if (err.startsWith(retryablePrefix)) {
+        // The remote moved between our lease resolve and our pinned push.
+        // Nothing was clobbered (the lease refused rather than
+        // overwriting). Re-fetch staging and apply the same coverage
+        // classification as above: covered-by-own-chain settles as
+        // success; foreign-higher (or a still-stale view) loops with a
+        // refreshed floor.
+        await fetchToStaging(remote: remote);
+        final coverTip = await resolveRef(stagedRef);
+        if (coverTip.ok && coverTip.data != null) {
+          final cover = await _counterCoverage(
+            stagedTipSha: coverTip.data!,
+            filename: filename,
+            next: next,
+            ownCommitSha: commitR.data!,
+          );
+          if (cover == _CounterCoverage.coveredByOwnChain) {
+            return GitResult.ok(next);
+          }
+        }
+        lastError = err;
+        await Future<void>.delayed(
+            Duration(milliseconds: 5 + (attempt * 5)));
+        continue;
+      }
+      // Any other failure (remote unreachable, auth, offline) — the
+      // remote simply isn't reachable right now, indistinguishable from
+      // there being no live peer to race from here. Degrade to the local
+      // allocation rather than blocking offline use; the residual
+      // exposure is a genuine network outage coinciding with a concurrent
+      // peer creation, not the routine case this fix targets.
+      return GitResult.ok(next);
     }
     return GitResult.err(
         lastError ?? 'updateRef failed after $maxAttempts attempts');
   }
 
-  /// Highest id already committed to any Manifold ref. Issue ids ARE
-  /// the ref tail (`refs/manifold/issues/<id>`) so they read straight
-  /// off the ref list; desk ids live inside each `meta.json` and cost
-  /// one blob read apiece. Returns 0 when nothing is allocated yet.
-  /// Used only by [allocSequentialId]'s regression guard — never on a
-  /// hot path.
-  Future<int> _highestManifoldId() async {
+  /// Classify the staged counter tip against the reservation this
+  /// allocation attempt just minted ([ownCommitSha], carrying the value
+  /// [next]). See the coverage-guard comment inside
+  /// [_allocSequentialIdImpl] for the semantics of each verdict.
+  Future<_CounterCoverage> _counterCoverage({
+    required String stagedTipSha,
+    required String filename,
+    required int next,
+    required String ownCommitSha,
+  }) async {
+    final blob = await readRefBlob(stagedTipSha, filename);
+    if (!blob.ok || blob.data == null) return _CounterCoverage.below;
+    final v = int.tryParse(blob.data!.trim());
+    if (v == null || v < next) return _CounterCoverage.below;
+    if (await isAncestor(ownCommitSha, stagedTipSha)) {
+      return _CounterCoverage.coveredByOwnChain;
+    }
+    return _CounterCoverage.foreignHigher;
+  }
+
+  /// Highest id already committed to any Manifold ref, LOCAL or staged
+  /// for [remote]. Issue ids ARE the ref tail
+  /// (`refs/manifold/issues/<id>` / `refs/manifold-remote/<remote>/issues/<id>`)
+  /// so they read straight off the ref list; desk ids live inside each
+  /// `meta.json` and cost one blob read apiece. Returns 0 when nothing is
+  /// allocated yet. Used only by [allocSequentialId]'s regression guard —
+  /// never on a hot path.
+  ///
+  /// Scans the staging namespace as well as the live one: a clone that
+  /// has never synced (or whose last sync predates a peer's push) has an
+  /// empty or stale LIVE view, but [allocSequentialId] opportunistically
+  /// refreshes staging first, so this still sees ids the remote already
+  /// holds even on this clone's very first allocation. Without this, two
+  /// fresh clones each creating their first record before ever syncing
+  /// with each other could allocate the same id into two different kinds
+  /// (an issue and a desk PR) — a real collision the shared counter
+  /// exists specifically to prevent.
+  Future<int> _highestManifoldId({required String remote}) async {
     var hi = 0;
-    final issues = await listRefs(_issuesPrefix);
-    if (issues.ok) {
+    Future<void> scanIssues(String prefix) async {
+      final issues = await listRefs(prefix);
+      if (!issues.ok) return;
       for (final ref in issues.data!.keys) {
         final tail = ref.substring(ref.lastIndexOf('/') + 1);
         final n = int.tryParse(tail);
         if (n != null && n > hi) hi = n;
       }
     }
-    final desks = await listRefs(_desksPrefix);
-    if (desks.ok) {
+
+    Future<void> scanDesks(String prefix) async {
+      final desks = await listRefs(prefix);
+      if (!desks.ok) return;
       for (final ref in desks.data!.keys) {
         final blob = await readRefBlob(ref, _deskMetaFilename);
         if (!blob.ok || blob.data == null) continue;
@@ -438,6 +769,14 @@ class ManifoldRefs {
         }
       }
     }
+
+    await scanIssues(_issuesPrefix);
+    await scanDesks(_desksPrefix);
+    final stagePrefix = stagingPrefixFor(remote);
+    await scanIssues(
+        '$stagePrefix${_issuesPrefix.substring(manifoldPrefix.length)}');
+    await scanDesks(
+        '$stagePrefix${_desksPrefix.substring(manifoldPrefix.length)}');
     return hi;
   }
 
@@ -450,11 +789,15 @@ class ManifoldRefs {
   /// this from their create/sync path so an issues-only or desks-only
   /// user still auto-pulls Manifold metadata on `git fetch` — now onto
   /// staging, so that plain fetch can never rewind a live ref.
-  Future<void> ensureFetchRefspec({String remote = 'origin'}) async {
+  /// [remote] defaults to null — resolved via [resolveMetadataRemote]
+  /// rather than a hardcoded 'origin' — so this migrates/installs the
+  /// refspec on whichever remote is actually this repo's forge remote.
+  Future<void> ensureFetchRefspec({String? remote}) async {
+    final resolvedRemote = remote ?? await resolveMetadataRemote();
     // Skip when there's no remote to attach to. Without this guard
     // `git config --add` would still succeed (writing a key under a
     // non-existent remote section), leaving misleading config behind.
-    final url = await readConfig('remote.$remote.url');
+    final url = await readConfig('remote.$resolvedRemote.url');
     if (url == null) return;
     // Remove any previously-configured `+refs/manifold/*:refs/manifold/*`
     // entry. The value passed to `--unset-all` is a POSIX regex, so the
@@ -463,10 +806,11 @@ class ManifoldRefs {
     // leaving the user's other fetch refspecs (heads, tags, …) intact.
     // A no-match exits 5; that is expected on a clean repo and ignored.
     await unsetConfigMatching(
-      'remote.$remote.fetch',
+      'remote.$resolvedRemote.fetch',
       r'^\+refs/manifold/\*:refs/manifold/\*$',
     );
-    await addConfigOnce('remote.$remote.fetch', fetchRefspecFor(remote));
+    await addConfigOnce(
+        'remote.$resolvedRemote.fetch', fetchRefspecFor(resolvedRemote));
   }
 
   /// Fetch every `refs/manifold/*` from [remote] into the disposable
@@ -474,15 +818,13 @@ class ManifoldRefs {
   /// before [ensureFetchRefspec] has persisted the config refspec, so the
   /// very first sync in a fresh clone still pulls peers' metadata. Force
   /// (`+`) is safe: the destination is staging, never a live ref.
-  Future<GitResult<void>> fetchToStaging({String remote = 'origin'}) async {
+  /// [remote] defaults to null — resolved via [resolveMetadataRemote]
+  /// rather than a hardcoded 'origin'.
+  Future<GitResult<void>> fetchToStaging({String? remote}) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['fetch', remote, fetchRefspecFor(remote)],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final resolvedRemote = remote ?? await resolveMetadataRemote();
+      final r = await git.runGit(repoPath,
+          ['fetch', resolvedRemote, fetchRefspecFor(resolvedRemote)]);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }
@@ -500,13 +842,8 @@ class ManifoldRefs {
   /// than a lossy fast-forward.
   Future<bool> isAncestor(String maybeAncestor, String descendant) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['merge-base', '--is-ancestor', maybeAncestor, descendant],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(
+          repoPath, ['merge-base', '--is-ancestor', maybeAncestor, descendant]);
       return r.exitCode == 0;
     } catch (_) {
       return false;
@@ -529,14 +866,7 @@ class ManifoldRefs {
         args.addAll(['-p', p]);
       }
       args.addAll(['-m', message]);
-      final r = await Process.run(
-        'git',
-        args,
-        workingDirectory: repoPath,
-        environment: _gitEnv,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, args, extraEnv: _gitEnv);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }
@@ -555,13 +885,8 @@ class ManifoldRefs {
   Future<GitResult<({String filename, String content})?>> readSingleTreeBlob(
       String commitish) async {
     try {
-      final ls = await Process.run(
-        'git',
-        ['ls-tree', '--name-only', commitish],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final ls = await git.runGit(
+          repoPath, ['ls-tree', '--name-only', commitish]);
       if (ls.exitCode != 0) {
         return GitResult.err((ls.stderr as String).trim());
       }
@@ -588,13 +913,8 @@ class ManifoldRefs {
   Future<GitResult<void>> unsetConfigMatching(
       String configKey, String valueRegex) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['config', '--unset-all', configKey, valueRegex],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(
+          repoPath, ['config', '--unset-all', configKey, valueRegex]);
       // 0 = removed something; 5 = nothing matched (clean repo). Both fine.
       if (r.exitCode == 0 || r.exitCode == 5) return const GitResult.ok(null);
       return GitResult.err((r.stderr as String).trim());
@@ -621,19 +941,26 @@ class ManifoldRefs {
   /// pass (issues, desks, and the shared counter) because a single sync
   /// is a whole-namespace operation. Records are merged generically over
   /// their JSON (see [_mergeJsonRecords]); the counter is merged by MAX.
-  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
-    final fetched = await fetchToStaging(remote: remote);
+  /// [remote] defaults to null — resolved ONCE here via
+  /// [resolveMetadataRemote] (rather than a hardcoded 'origin', and
+  /// rather than letting [fetchToStaging]/[_leasePush] each resolve it
+  /// again independently) so the fetch, the staging-prefix reads, and the
+  /// push all agree on the identical remote name for this one sync
+  /// operation even if a rename raced between them.
+  Future<GitResult<void>> syncWithRemote({String? remote}) async {
+    final resolvedRemote = remote ?? await resolveMetadataRemote();
+    final fetched = await fetchToStaging(remote: resolvedRemote);
     if (!fetched.ok) return GitResult.err(fetched.error ?? 'fetch failed');
 
     final localR = await listRefs(manifoldPrefix);
     if (!localR.ok) return GitResult.err(localR.error ?? 'listRefs failed');
-    final stagedR = await listRefs(stagingPrefixFor(remote));
+    final stagedR = await listRefs(stagingPrefixFor(resolvedRemote));
     if (!stagedR.ok) return GitResult.err(stagedR.error ?? 'listRefs failed');
 
     // Fold both sides onto a common "live ref" key. Staged refs live at
     // refs/manifold-remote/<remote>/<tail>; their live counterpart is
     // refs/manifold/<tail>.
-    final stagePrefix = stagingPrefixFor(remote);
+    final stagePrefix = stagingPrefixFor(resolvedRemote);
     final local = localR.data!; // live ref -> sha
     final staged = <String, String>{}; // live ref -> staged sha
     stagedR.data!.forEach((ref, sha) {
@@ -659,7 +986,16 @@ class ManifoldRefs {
     }
 
     if (pushes.isEmpty) return const GitResult.ok(null);
-    return _leasePush(remote: remote, pushes: pushes);
+    // Reconcile pushes want the ambient "whatever the local ref says now"
+    // behaviour — the local ref IS the reconciled tip at this point — so
+    // no explicit sha is pinned here (see [_leasePush]'s doc).
+    return _leasePush(
+      remote: resolvedRemote,
+      pushes: pushes
+          .map<({String ref, String lease, String? sha})>(
+              (p) => (ref: p.ref, lease: p.lease, sha: null))
+          .toList(),
+    );
   }
 
   /// Reconcile one live ref from its local and staged tips. Returns the
@@ -817,9 +1153,20 @@ class ManifoldRefs {
   /// sha we last observed on the remote (from staging), so if a peer
   /// pushed that ref between our fetch and now, the lease fails and we
   /// return a [retryablePrefix] error rather than clobbering their work.
+  ///
+  /// [pushes] entries may optionally pin an explicit source [sha] —
+  /// `<sha>:<ref>` instead of the default `<ref>:<ref>` — so the push
+  /// sends exactly that commit regardless of whatever the local ref
+  /// happens to point at when this call actually runs. Ordinary
+  /// [syncWithRemote] reconcile pushes want the ambient "whatever local
+  /// says now" behaviour (the local ref IS the reconciled result at that
+  /// point), so they leave `sha` null; [allocSequentialId] pins it to the
+  /// commit its own CAS just won (see REGRESSION #4 there) so a sibling
+  /// mutation of the same ref between its CAS and its push can't cause it
+  /// to push someone else's commit while reporting its own id.
   Future<GitResult<void>> _leasePush({
     required String remote,
-    required List<({String ref, String lease})> pushes,
+    required List<({String ref, String lease, String? sha})> pushes,
   }) async {
     try {
       final args = <String>['push', remote];
@@ -827,15 +1174,9 @@ class ManifoldRefs {
         args.add('--force-with-lease=${p.ref}:${p.lease}');
       }
       for (final p in pushes) {
-        args.add('${p.ref}:${p.ref}');
+        args.add('${p.sha ?? p.ref}:${p.ref}');
       }
-      final r = await Process.run(
-        'git',
-        args,
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, args);
       if (r.exitCode == 0) return const GitResult.ok(null);
       final err = (r.stderr as String).trim();
       final lower = err.toLowerCase();
@@ -980,13 +1321,8 @@ class ManifoldRefs {
   /// than conflicts).
   Future<String> probeMergeable(String baseRef, String headRef) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['merge-tree', '--write-tree', '--name-only', baseRef, headRef],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath,
+          ['merge-tree', '--write-tree', '--name-only', baseRef, headRef]);
       // Exit 0 = clean merge, tree SHA on stdout.
       // Exit 1 = conflicts, tree SHA + conflicting paths on stdout.
       // Other = couldn't even attempt (unreachable refs, etc.).
@@ -1003,13 +1339,7 @@ class ManifoldRefs {
   /// fetch.refspec for refs/manifold/* is already configured.
   Future<String?> readConfig(String configKey) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['config', '--get-all', configKey],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r = await git.runGit(repoPath, ['config', '--get-all', configKey]);
       if (r.exitCode != 0) return null;
       final v = (r.stdout as String).trim();
       return v.isEmpty ? null : v;
@@ -1027,13 +1357,8 @@ class ManifoldRefs {
       if (existing != null && existing.split('\n').contains(value)) {
         return const GitResult.ok(null);
       }
-      final r = await Process.run(
-        'git',
-        ['config', '--add', configKey, value],
-        workingDirectory: repoPath,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      );
+      final r =
+          await git.runGit(repoPath, ['config', '--add', configKey, value]);
       if (r.exitCode != 0) {
         return GitResult.err((r.stderr as String).trim());
       }

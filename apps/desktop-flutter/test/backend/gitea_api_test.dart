@@ -13,6 +13,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/backend/git_result.dart';
 import 'package:git_desktop/backend/gitea_api.dart';
 import 'package:git_desktop/backend/remote_issue_provider.dart';
 import 'package:git_desktop/backend/remote_types.dart';
@@ -49,8 +50,21 @@ class FakeForge {
 
 void _json(HttpRequest req, int status, Object body) {
   req.response.statusCode = status;
-  req.response.headers.contentType = ContentType.json;
-  req.response.write(jsonEncode(body));
+  req.response.headers.contentType =
+      ContentType('application', 'json', charset: 'utf-8');
+  // Emit UTF-8 bytes explicitly. `HttpResponse.write` would encode through
+  // the sink's default encoding, which mangles multi-byte characters (emoji,
+  // RTL, CJK) — and the production client always decodes with utf8.decoder,
+  // so the fake must speak the same charset or the round-trip is lossy.
+  req.response.add(utf8.encode(jsonEncode(body)));
+  req.response.close();
+}
+
+/// Write an arbitrary (possibly non-JSON / malformed) body verbatim with a
+/// chosen status. Used to probe the client's tolerance of garbage responses.
+void _raw(HttpRequest req, int status, String body) {
+  req.response.statusCode = status;
+  req.response.add(utf8.encode(body));
   req.response.close();
 }
 
@@ -543,6 +557,580 @@ void main() {
       addTearDown(forge.stop);
       final f = await probeForgeForTest('${forge.origin}/owner/repo.git');
       expect(f, RemoteForge.unknown);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Malformed responses — every list*/get*/create* parser must return a
+  // GitResult.err (or a documented safe default) rather than throw. A single
+  // reconfigurable forge + repo drives the whole table so the suite doesn't
+  // stand up a server per case.
+  // -------------------------------------------------------------------------
+  group('malformed responses — parsers never throw', () {
+    late FakeForge forge;
+    late Directory repo;
+    var raw = '';
+    var getStatus = 200;
+
+    setUpAll(() async {
+      forge = await FakeForge.start((req, key) {
+        // GETs answer [getStatus]; POSTs answer 201 so create* reaches its
+        // response parse. Either way the (possibly garbage) [raw] body is
+        // returned verbatim.
+        _raw(req, req.method == 'GET' ? getStatus : 201, raw);
+      });
+      repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+    });
+    tearDownAll(() async {
+      await forge.stop();
+      await repo.delete(recursive: true);
+    });
+
+    // Each function that decodes a JSON body. `giteaWhoami`,
+    // `listGiteaCommitStatuses` and the label calls have their own tests
+    // below (safe-default string / multi-step flows).
+    final parsers = <String, Future<GitResult<Object?>> Function()>{
+      'listGiteaPulls': () => listGiteaPulls(repo.path, token: 'good'),
+      'getGiteaPull': () => getGiteaPull(repo.path, 1, token: 'good'),
+      'giteaPullDetail': () =>
+          giteaPullDetail(repo.path, 1, includeDiff: false, token: 'good'),
+      'listGiteaIssues': () => listGiteaIssues(repo.path, token: 'good'),
+      'getGiteaIssue': () => getGiteaIssue(repo.path, 1, token: 'good'),
+      'giteaIssueDetail': () => giteaIssueDetail(repo.path, 1, token: 'good'),
+      'createGiteaIssue': () =>
+          createGiteaIssue(repo.path, title: 't', token: 'good'),
+      'createGiteaPull': () => createGiteaPull(repo.path,
+          title: 't', headRef: 'feat', baseRef: 'main', token: 'good'),
+    };
+
+    for (final entry in parsers.entries) {
+      test('${entry.key}: invalid JSON body → err, no throw', () async {
+        raw = 'not json{{{';
+        getStatus = 200;
+        final r = await entry.value();
+        expect(r.ok, isFalse, reason: '${entry.key} must not succeed on garbage');
+        expect(r.error, isNotNull);
+      });
+
+      test('${entry.key}: empty body 200 → err, no throw', () async {
+        raw = '';
+        getStatus = 200;
+        final r = await entry.value();
+        expect(r.ok, isFalse);
+      });
+    }
+
+    test('wrong shape: object where a list is expected (listGiteaIssues)',
+        () async {
+      raw = '{"not":"a list"}';
+      getStatus = 200;
+      final r = await listGiteaIssues(repo.path, token: 'good');
+      expect(r.ok, isFalse);
+    });
+
+    test('wrong shape: list where an object is expected (getGiteaIssue)',
+        () async {
+      raw = '[1,2,3]';
+      getStatus = 200;
+      final r = await getGiteaIssue(repo.path, 1, token: 'good');
+      expect(r.ok, isFalse);
+    });
+
+    test('required field missing: issue object without `number`', () async {
+      raw = '{"title":"no number"}';
+      getStatus = 200;
+      final r = await getGiteaIssue(repo.path, 1, token: 'good');
+      expect(r.ok, isFalse);
+    });
+
+    test('null in a non-null field: number explicitly null', () async {
+      raw = '{"number":null,"title":"x"}';
+      getStatus = 200;
+      final r = await getGiteaIssue(repo.path, 1, token: 'good');
+      expect(r.ok, isFalse);
+    });
+
+    test('list element missing required field (listGiteaPulls)', () async {
+      raw = '[{"title":"nameless"}]';
+      getStatus = 200;
+      final r = await listGiteaPulls(repo.path, token: 'good');
+      expect(r.ok, isFalse);
+    });
+
+    test('giteaWhoami degrades to empty string on invalid JSON', () async {
+      raw = 'not json{{{';
+      getStatus = 200;
+      expect(await giteaWhoami(repo.path), isEmpty);
+    });
+
+    test('huge (~1MB) valid list body parses without choking', () async {
+      final items = List.generate(
+          16000,
+          (i) => {
+                'number': i + 1,
+                'title': 'issue $i with padding text to inflate the payload',
+                'state': 'open',
+              });
+      raw = jsonEncode(items);
+      expect(raw.length, greaterThan(1024 * 1024));
+      getStatus = 200;
+      final r = await listGiteaIssues(repo.path, token: 'good');
+      expect(r.ok, isTrue);
+      // The client caps at its default limit (100) regardless of body size.
+      expect(r.data!.length, 100);
+    });
+  });
+
+  group('malformed responses — commit statuses', () {
+    test('malformed PR body degrades to empty checks, never throws', () async {
+      // Regression pin: the PR fetch that recovers the head sha jsonDecoded
+      // its body UNGUARDED, so a 200 with garbage threw straight out of
+      // listGiteaCommitStatuses. It must now degrade to ok([]).
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'GET /api/v1/repos/owner/repo/pulls/1') {
+          _raw(req, 200, 'not json{{{');
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r = await listGiteaCommitStatuses(repo.path, 1, token: 'good');
+      expect(r.ok, isTrue);
+      expect(r.data, isEmpty);
+    });
+
+    test('malformed combined-status body surfaces a parse error', () async {
+      final forge = await FakeForge.start((req, key) {
+        switch (key) {
+          case 'GET /api/v1/repos/owner/repo/pulls/1':
+            _json(req, 200, {
+              'head': {'sha': 'abc123'}
+            });
+          case 'GET /api/v1/repos/owner/repo/commits/abc123/status':
+            _raw(req, 200, 'not json{{{');
+          default:
+            _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r = await listGiteaCommitStatuses(repo.path, 1, token: 'good');
+      expect(r.ok, isFalse);
+      expect(r.error, contains('parse commit statuses'));
+    });
+  });
+
+  group('malformed responses — label resolution', () {
+    // Regression pin: `_resolveLabelIds` jsonDecoded /labels UNGUARDED, so a
+    // garbage body threw out of every label-touching caller.
+    test('addGiteaIssueLabel → "could not fetch labels" on garbage /labels',
+        () async {
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'GET /api/v1/repos/owner/repo/labels') {
+          _raw(req, 200, 'not json{{{');
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r = await addGiteaIssueLabel(repo.path, 1, 'bug', token: 'good');
+      expect(r.ok, isFalse);
+      expect(r.error, contains('fetch labels'));
+    });
+
+    test('removeGiteaIssueLabel surfaces the fetch failure on garbage /labels',
+        () async {
+      // Distinct from the "undefined label on a healthy repo" no-op: when the
+      // /labels fetch itself yields garbage, the map is unresolvable and the
+      // call must fail cleanly (not throw, not silently succeed).
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'GET /api/v1/repos/owner/repo/labels') {
+          _raw(req, 200, '{"unexpected":"object not a list"}');
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r = await removeGiteaIssueLabel(repo.path, 1, 'bug', token: 'good');
+      expect(r.ok, isFalse);
+      expect(r.error, contains('fetch labels'));
+    });
+
+    test('removeGiteaIssueLabel no-ops when the label is simply undefined',
+        () async {
+      // The genuine safe-default path: /labels parses fine but doesn't define
+      // the requested label → nothing to remove → success.
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'GET /api/v1/repos/owner/repo/labels') {
+          _json(req, 200, [
+            {'id': 7, 'name': 'bug'},
+          ]);
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r =
+          await removeGiteaIssueLabel(repo.path, 1, 'ghost', token: 'good');
+      expect(r.ok, isTrue);
+    });
+
+    test('label object with a null id does not throw (unresolvable)', () async {
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'GET /api/v1/repos/owner/repo/labels') {
+          _json(req, 200, [
+            {'name': 'bug'}, // id missing → `l['id'] as num` would throw
+          ]);
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/owner/repo.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r = await addGiteaIssueLabel(repo.path, 1, 'bug', token: 'good');
+      expect(r.ok, isFalse);
+      expect(r.error, contains('fetch labels'));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Transport nastiness — the client must surface an error or complete
+  // boundedly, never throw uncaught or hang forever.
+  // -------------------------------------------------------------------------
+  group('transport nastiness', () {
+    test('connection closed mid-body → sentinel status 0, no throw', () async {
+      final forge = await FakeForge.start((req, key) async {
+        // Promise a long body via Content-Length, send a fragment, then kill
+        // the socket so the client sees an abrupt close mid-body.
+        final socket = await req.response.detachSocket(writeHeaders: false);
+        socket.write('HTTP/1.1 200 OK\r\n'
+            'Content-Type: application/json\r\n'
+            'Content-Length: 4096\r\n\r\n'
+            '{"partial":');
+        await socket.flush();
+        socket.destroy();
+      });
+      addTearDown(forge.stop);
+
+      final r = await giteaGet(forge.apiBase, '/repos/o/r/issues', token: 't');
+      // A thrown/aborted request is mapped to the sentinel status 0.
+      expect(r.statusCode, 0);
+    });
+
+    test('a 2s-delayed response completes without hanging', () async {
+      final forge = await FakeForge.start((req, key) async {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        _json(req, 200, {'ok': true});
+      });
+      addTearDown(forge.stop);
+
+      final sw = Stopwatch()..start();
+      final r = await giteaGet(forge.apiBase, '/slow');
+      sw.stop();
+      expect(r.statusCode, 200);
+      expect(sw.elapsedMilliseconds, greaterThanOrEqualTo(1900));
+      expect(sw.elapsedMilliseconds, lessThan(10000));
+    });
+
+    test('a plain 500 is not auto-retried; a manual retry then succeeds',
+        () async {
+      var calls = 0;
+      final forge = await FakeForge.start((req, key) {
+        calls++;
+        if (calls == 1) {
+          _json(req, 500, {'message': 'boom'});
+        } else {
+          _json(req, 200, {'ok': true});
+        }
+      });
+      addTearDown(forge.stop);
+
+      final first = await giteaGet(forge.apiBase, '/flaky', token: 't');
+      expect(first.statusCode, 500);
+      expect(calls, 1); // exactly one request — no retry storm on a plain 500
+
+      final second = await giteaGet(forge.apiBase, '/flaky', token: 't');
+      expect(second.statusCode, 200);
+      expect(calls, 2);
+    });
+
+    for (final bad in const ['soon', '-5', '']) {
+      final label = bad.isEmpty ? '(empty)' : '"$bad"';
+      test('429 with malformed Retry-After $label → default backoff, one retry',
+          () async {
+        var calls = 0;
+        final forge = await FakeForge.start((req, key) {
+          calls++;
+          if (calls == 1) {
+            req.response.statusCode = 429;
+            req.response.headers.set(HttpHeaders.retryAfterHeader, bad);
+            req.response.write('{"message":"slow down"}');
+            req.response.close();
+          } else {
+            _json(req, 200, {'ok': true});
+          }
+        });
+        addTearDown(forge.stop);
+
+        final sw = Stopwatch()..start();
+        final r = await giteaGet(forge.apiBase, '/limited');
+        sw.stop();
+        expect(r.statusCode, 200);
+        expect(calls, 2); // original + exactly one retry
+        // Unparseable Retry-After falls back to the fixed 500ms backoff — it
+        // must neither shortcut the wait nor storm.
+        expect(sw.elapsedMilliseconds, greaterThanOrEqualTo(400));
+        expect(sw.elapsedMilliseconds, lessThan(5000));
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Unicode + hostile content must round-trip byte-for-byte through
+  // create → list → get-detail (catches double-encoding / HTML-escaping /
+  // charset mangling on either the client or the fake).
+  // -------------------------------------------------------------------------
+  group('unicode + hostile content round-trips', () {
+    const probes = <String>[
+      '👨‍👩‍👧‍👦 family', // multi-codepoint ZWJ emoji
+      '🇯🇵 flag', // regional-indicator flag
+      'مرحبا بالعالم', // Arabic (RTL)
+      'שלום עולם', // Hebrew (RTL)
+      '日本語のテスト 测试', // CJK
+      "<script>alert('it\\'s xss')</script>", // quotes + angle brackets
+    ];
+
+    for (var i = 0; i < probes.length; i++) {
+      final probe = probes[i];
+      test('probe #$i survives create → list → get → detail', () async {
+        final issues = <Map<String, dynamic>>[];
+        final comments = <Map<String, dynamic>>[];
+        final labelDef = [
+          {'id': 1, 'name': probe}
+        ];
+        final forge = await FakeForge.start((req, key) async {
+          switch (key) {
+            case 'GET /api/v1/repos/o/r/labels':
+              _json(req, 200, labelDef);
+            case 'POST /api/v1/repos/o/r/issues':
+              final m = jsonDecode(await utf8.decodeStream(req))
+                  as Map<String, dynamic>;
+              issues.add({
+                'number': 1,
+                'title': m['title'],
+                'body': m['body'] ?? '',
+                'state': 'open',
+                'labels': labelDef,
+                'comments': 0,
+              });
+              _json(req, 201, issues.first);
+            case 'GET /api/v1/repos/o/r/issues':
+              _json(req, 200, issues);
+            case 'GET /api/v1/repos/o/r/issues/1':
+              _json(req, 200, issues.first);
+            case 'GET /api/v1/repos/o/r/issues/1/comments':
+              _json(req, 200, comments);
+            case 'POST /api/v1/repos/o/r/issues/1/comments':
+              final m = jsonDecode(await utf8.decodeStream(req))
+                  as Map<String, dynamic>;
+              comments.add({
+                'body': m['body'],
+                'user': {'login': 'octo'},
+                'created_at': '2024-01-01T00:00:00Z',
+              });
+              _json(req, 201, comments.last);
+            default:
+              _json(req, 404, {'message': 'no'});
+          }
+        });
+        addTearDown(forge.stop);
+        final repo = await _repoWithOrigin('${forge.origin}/o/r.git');
+        addTearDown(() => repo.delete(recursive: true));
+
+        final created = await createGiteaIssue(repo.path,
+            title: probe, body: probe, labels: [probe], token: 'good');
+        expect(created.ok, isTrue, reason: created.error);
+        expect(created.data, 1);
+
+        final list = await listGiteaIssues(repo.path, token: 'good');
+        expect(list.ok, isTrue);
+        expect(list.data!.single.title, probe);
+        expect(list.data!.single.labels, [probe]);
+
+        final got = await getGiteaIssue(repo.path, 1, token: 'good');
+        expect(got.data!.title, probe);
+
+        final commented =
+            await giteaCommentOnIssue(repo.path, 1, probe, token: 'good');
+        expect(commented.ok, isTrue);
+
+        final detail = await giteaIssueDetail(repo.path, 1, token: 'good');
+        expect(detail.ok, isTrue);
+        expect(detail.data!.body, probe);
+        expect(detail.data!.labels, [probe]);
+        expect(detail.data!.comments.single.body, probe);
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Auth matrix — the (reachable, authenticated, reason) tuple giteaApiStatus
+  // produces across {token source} × {server response}. Source precedence is
+  // asserted through resolveGiteaToken; the response dimension is driven with
+  // a STORED token (no explicit param) so the stored→used path runs for real.
+  // -------------------------------------------------------------------------
+  group('auth matrix — giteaApiStatus', () {
+    Future<FakeForge> forgeWithUser(int userStatus, {String login = 'octo'}) {
+      return FakeForge.start((req, key) {
+        switch (key) {
+          case 'GET /api/v1/version':
+            _json(req, 200, {'version': '1.22.0'});
+          case 'GET /api/v1/user':
+            if (userStatus == 200) {
+              _json(req, 200, {'login': login});
+            } else {
+              _json(req, userStatus, {'message': 'nope'});
+            }
+          default:
+            _json(req, 404, {'message': 'no'});
+        }
+      });
+    }
+
+    void seedStored(int port, String tok) => SettingsStore.seedForTest(
+        AppSettingsSnapshot.defaults()
+            .copyWith(giteaTokens: {'127.0.0.1:$port': tok}));
+
+    test('source: stored wins (both cell); neither → env value (null clean)',
+        () {
+      const apiBase = 'https://forge.example/api/v1';
+      // Stored present → returned before env is ever consulted. This is both
+      // the "stored" and the "both stored+env" cell: stored always wins.
+      SettingsStore.seedForTest(AppSettingsSnapshot.defaults()
+          .copyWith(giteaTokens: {'forge.example': 'stored'}));
+      expect(resolveGiteaToken(apiBase), 'stored');
+      // Neither stored → env fallback, which is null in a clean test env.
+      SettingsStore.seedForTest(AppSettingsSnapshot.defaults());
+      expect(resolveGiteaToken(apiBase), Platform.environment['GITEA_TOKEN']);
+    });
+
+    test('stored × valid /user → reachable + authenticated + login', () async {
+      final forge = await forgeWithUser(200, login: 'octo');
+      addTearDown(forge.stop);
+      seedStored(forge.port, 'good');
+      final s = await giteaApiStatus(forge.apiBase);
+      expect(s.reachable, isTrue);
+      expect(s.authenticated, isTrue);
+      expect(s.login, 'octo');
+      expect(s.reason, isNull);
+    });
+
+    test('stored × rejected /user (401) → reachable, not auth, token rejected',
+        () async {
+      final forge = await forgeWithUser(401);
+      addTearDown(forge.stop);
+      seedStored(forge.port, 'bad');
+      final s = await giteaApiStatus(forge.apiBase);
+      expect(s.reachable, isTrue);
+      expect(s.authenticated, isFalse);
+      expect(s.reason, 'token rejected (401)');
+    });
+
+    test('stored × /user 500 → reachable, not auth, token check returned 500',
+        () async {
+      final forge = await forgeWithUser(500);
+      addTearDown(forge.stop);
+      seedStored(forge.port, 'tok');
+      final s = await giteaApiStatus(forge.apiBase);
+      expect(s.reachable, isTrue);
+      expect(s.authenticated, isFalse);
+      expect(s.reason, 'token check returned 500');
+    });
+
+    test('neither token, reachable → not auth, "no token for this host"',
+        () async {
+      final forge = await forgeWithUser(200);
+      addTearDown(forge.stop);
+      // setUp already cleared stored tokens; env is unset in a clean env.
+      final s = await giteaApiStatus(forge.apiBase);
+      if (Platform.environment['GITEA_TOKEN'] == null) {
+        expect(s.reachable, isTrue);
+        expect(s.authenticated, isFalse);
+        expect(s.reason, 'no token for this host');
+      } else {
+        // Ambient GITEA_TOKEN present → it authenticates against the fake.
+        expect(s.authenticated, isTrue);
+      }
+    });
+
+    test('version endpoint non-200 → unreachable with status in reason',
+        () async {
+      final forge = await FakeForge.start((req, key) {
+        _json(req, 503, {'message': 'down'});
+      });
+      addTearDown(forge.stop);
+      final s = await giteaApiStatus(forge.apiBase, token: 'whatever');
+      expect(s.reachable, isFalse);
+      expect(s.authenticated, isFalse);
+      expect(s.reason, contains('503'));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Anonymous-read-fallback edge cases.
+  // -------------------------------------------------------------------------
+  group('anonymous read fallback — edges', () {
+    test('token 401 then anonymous 403 preserves the original 401', () async {
+      final forge = await FakeForge.start((req, key) {
+        if (req.headers.value('authorization') != null) {
+          _json(req, 401, {'message': 'token rejected'});
+        } else {
+          _json(req, 403, {'message': 'forbidden'});
+        }
+      });
+      addTearDown(forge.stop);
+
+      final r =
+          await giteaGet(forge.apiBase, '/repos/o/r/issues', token: 'stale');
+      // The anonymous retry's 403 is not a 2xx, so the clearer original 401
+      // stands — the 403 must not leak through, nor be swallowed to 200.
+      expect(r.statusCode, 401);
+      expect(forge.hits['GET /api/v1/repos/o/r/issues'], 2);
+    });
+
+    test('a rejected write (POST 401) never falls back to anonymous', () async {
+      final forge = await FakeForge.start((req, key) {
+        if (key == 'POST /api/v1/repos/o/r/issues/1/comments') {
+          _json(req, 401, {'message': 'token rejected'});
+        } else {
+          _json(req, 404, {'message': 'no'});
+        }
+      });
+      addTearDown(forge.stop);
+      final repo = await _repoWithOrigin('${forge.origin}/o/r.git');
+      addTearDown(() => repo.delete(recursive: true));
+
+      final r =
+          await giteaCommentOnIssue(repo.path, 1, 'hello', token: 'stale');
+      expect(r.ok, isFalse);
+      // Exactly one request total — writes must never replay anonymously.
+      expect(forge.hits['POST /api/v1/repos/o/r/issues/1/comments'], 1);
     });
   });
 }

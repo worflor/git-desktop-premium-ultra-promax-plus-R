@@ -505,7 +505,7 @@ void main() {
     await git(work, ['add', 'other.txt']); // unrelated staged
 
     // A pre-commit hook that always rejects, to force the commit step to fail.
-    await File('$work${sep}.git${sep}hooks${sep}pre-commit')
+    await File('$work$sep.git${sep}hooks${sep}pre-commit')
         .writeAsString('#!/bin/sh\nexit 1\n');
 
     final prep = await prepareMergePull(work);
@@ -519,7 +519,7 @@ void main() {
     expect(fin.ok, isFalse, reason: 'pre-commit hook rejects the commit');
 
     // Rollback guarantees:
-    expect(await File('$work${sep}.git${sep}MERGE_HEAD').exists(), isFalse,
+    expect(await File('$work$sep.git${sep}MERGE_HEAD').exists(), isFalse,
         reason: 'no half-merge state left behind');
     final staged =
         (await git(work, ['diff', '--cached', '--name-only'])).stdout.toString();

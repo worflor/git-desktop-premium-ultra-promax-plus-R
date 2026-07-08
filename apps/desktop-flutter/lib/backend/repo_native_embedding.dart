@@ -49,6 +49,14 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+/// Weak-coupling floor for the per-changeset spectral overlay. Shared by
+/// the eigenAddress-histogram cosine and the repo-native embedding cosine
+/// so both sub-signals gate identically; below it, a pair carries no
+/// overlay edge. Lives HERE (not file_coupling.dart) so Flutter-free CLI
+/// harnesses (tool/jury_*_audit.dart) can test the shipped protocol
+/// without dragging in dart:ui.
+const double spectralCouplingFloor = 0.25;
+
 /// Feature-hash width for the bag. 2048 buckets keeps collisions negligible for
 /// real repo vocabularies (a few thousand couplable identifiers) while the
 /// per-file vector stays a single small dense Float64List.

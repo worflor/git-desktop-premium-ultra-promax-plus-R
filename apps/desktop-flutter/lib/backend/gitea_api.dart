@@ -833,9 +833,20 @@ Future<Map<String, int>?> _resolveLabelIds(
     coords.apiBase, '/${coords.repoPath}/labels?limit=100', token: token);
   if (res.statusCode != 200) return null;
   final map = <String, int>{};
-  for (final l in (jsonDecode(res.body) as List).whereType<Map<String, dynamic>>()) {
-    final name = (l['name'] as String? ?? '').trim();
-    if (name.isNotEmpty) map[name] = (l['id'] as num).toInt();
+  try {
+    // A 200 whose body is invalid JSON, the wrong shape (not a list), or a
+    // label object missing/nulling `id` is as useless as a failed fetch —
+    // there is no name→id map to build. Signal that with the same `null`
+    // callers already handle (createIssue/createPull skip labels and carry
+    // on; addLabel surfaces "could not fetch labels"), rather than letting
+    // the decode/cast throw escape into every label-touching caller.
+    for (final l
+        in (jsonDecode(res.body) as List).whereType<Map<String, dynamic>>()) {
+      final name = (l['name'] as String? ?? '').trim();
+      if (name.isNotEmpty) map[name] = (l['id'] as num).toInt();
+    }
+  } catch (_) {
+    return null;
   }
   _labelIdCacheByRepo[key] = _LabelIdCache(map, DateTime.now());
   return map;
@@ -921,9 +932,20 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
     token: token,
   );
   if (prRes.statusCode != 200) return const GitResult.ok([]);
-  final prJson = jsonDecode(prRes.body) as Map<String, dynamic>;
-  final head = prJson['head'] as Map<String, dynamic>?;
-  final sha = head?['sha'] as String? ?? '';
+  final String sha;
+  try {
+    // The PR fetch exists only to recover the head sha the status/Actions
+    // endpoints key off. A malformed or wrong-shape PR body (invalid JSON,
+    // or `head` that isn't an object) leaves us with no sha — the same dead
+    // end as a missing sha below — so degrade to "no checks" instead of
+    // letting the unguarded decode/cast throw escape the function. (The
+    // later status parse has its own guard; this early decode did not.)
+    final prJson = jsonDecode(prRes.body) as Map<String, dynamic>;
+    final head = prJson['head'] as Map<String, dynamic>?;
+    sha = head?['sha'] as String? ?? '';
+  } catch (_) {
+    return const GitResult.ok([]);
+  }
   if (sha.isEmpty) return const GitResult.ok([]);
 
   final checks = <CheckSummary>[];
@@ -1214,13 +1236,22 @@ Future<GiteaHttpResult> _giteaSend(
     for (var attempt = 0;; attempt++) {
       final request = await client.openUrl(method, Uri.parse(url));
       request.headers.set('Accept', 'application/json');
+      List<int>? payload;
       if (body != null) {
-        request.headers.set('Content-Type', 'application/json');
+        request.headers.set('Content-Type', 'application/json; charset=utf-8');
+        // Encode the JSON body to UTF-8 bytes ourselves. HttpClientRequest's
+        // string `write` serializes through the sink's encoding, which
+        // defaults to latin1 when the content type carries no charset — that
+        // throws on (or corrupts) any non-ASCII field, so an issue / PR /
+        // comment whose title or body contains emoji, CJK, or RTL text would
+        // silently fail to post. Writing the bytes directly makes the round
+        // trip faithful regardless of the payload's script.
+        payload = utf8.encode(jsonEncode(body));
       }
       if (token != null && token.isNotEmpty) {
         request.headers.set('Authorization', 'token $token');
       }
-      if (body != null) request.write(jsonEncode(body));
+      if (payload != null) request.add(payload);
       final response = await request.close();
       final text = await response.transform(utf8.decoder).join();
       if (response.statusCode == 429 && attempt == 0 && method == 'GET') {

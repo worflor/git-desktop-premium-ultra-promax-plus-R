@@ -398,7 +398,10 @@ class DeskPrState extends ChangeNotifier {
   /// UI wiring is a later step.
   Future<String?> syncWithRemote({
     required String repoPath,
-    String remote = 'origin',
+    // Null resolves via ManifoldRefs.resolveMetadataRemote (not a
+    // hardcoded 'origin'), so a fork whose only remote is `upstream`
+    // syncs against IT by default; pass an explicit name to override.
+    String? remote,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
     if (!_syncing.add(main)) return 'sync already in progress';

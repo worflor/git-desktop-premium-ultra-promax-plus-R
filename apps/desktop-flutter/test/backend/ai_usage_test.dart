@@ -19,7 +19,7 @@ void main() {
     test('cache/duration/requestId count as extras', () {
       expect(const AiUsage(cacheReadTokens: 5).hasExtras, isTrue);
       expect(const AiUsage(cacheWriteTokens: 5).hasExtras, isTrue);
-      expect(AiUsage(duration: const Duration(seconds: 1)).hasExtras, isTrue);
+      expect(const AiUsage(duration: Duration(seconds: 1)).hasExtras, isTrue);
       expect(const AiUsage(requestId: 'abc').hasExtras, isTrue);
       expect(const AiUsage(resolvedModel: 'gpt').hasExtras, isTrue);
       expect(const AiUsage(costUsd: 0.01).hasExtras, isTrue);
@@ -33,17 +33,17 @@ void main() {
 
   group('AiUsage aggregation (draft + verify)', () {
     test('token counts and duration add', () {
-      final a = AiUsage(
+      const a = AiUsage(
         inputTokens: 100,
         outputTokens: 20,
         cacheReadTokens: 4,
-        duration: const Duration(milliseconds: 500),
+        duration: Duration(milliseconds: 500),
       );
-      final b = AiUsage(
+      const b = AiUsage(
         inputTokens: 50,
         outputTokens: 10,
         cacheReadTokens: 1,
-        duration: const Duration(milliseconds: 250),
+        duration: Duration(milliseconds: 250),
       );
       final sum = a + b;
       expect(sum.inputTokens, 150);
@@ -54,10 +54,10 @@ void main() {
 
     test('null + value keeps the value (one leg reports, other does not)', () {
       const a = AiUsage(inputTokens: 100, outputTokens: 20);
-      final b = AiUsage(
+      const b = AiUsage(
         inputTokens: 50,
         outputTokens: 10,
-        duration: const Duration(seconds: 2),
+        duration: Duration(seconds: 2),
         cacheWriteTokens: 7,
       );
       final sum = a + b;

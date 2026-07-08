@@ -78,6 +78,50 @@ void main() {
     });
   });
 
+  group('extraEnv merge precedence', () {
+    // ManifoldRefs' commit-tree calls route through `runGit(..., extraEnv:
+    // _gitEnv)` to inject GIT_AUTHOR_*/GIT_COMMITTER_* identity — see
+    // backend/manifold_refs.dart's commitTree/commitMergeTree. Those
+    // specific call sites aren't alias-friendly (commit-tree takes a tree
+    // object, not an alias name), so this witnesses the same guarantee at
+    // the layer manifold_refs actually depends on: runGit's extraEnv
+    // parameter (a) does reach the child process, and (b) can never
+    // shadow the non-interactive safety vars, even when a caller supplies
+    // a same-named key. Base-after-caller, documented on `_gitRaw`/`runGit`.
+    test(
+        'caller-supplied extraEnv applies, but cannot override the '
+        'non-interactive safety vars', () async {
+      final repo = await _newRepo();
+      try {
+        await Process.run(
+          'git',
+          [
+            'config',
+            'alias.echoenv',
+            r'!echo TP=$GIT_TERMINAL_PROMPT AUTHOR=$MANIFOLD_TEST_AUTHOR'
+          ],
+          workingDirectory: repo.path,
+        );
+        // extraEnv both supplies a novel var (MANIFOLD_TEST_AUTHOR, the
+        // stand-in for GIT_AUTHOR_NAME) and attempts to clobber a safety
+        // var (GIT_TERMINAL_PROMPT) — exactly the shape a well-meaning but
+        // buggy caller could produce.
+        final r = await runGit(repo.path, ['echoenv'], extraEnv: const {
+          'MANIFOLD_TEST_AUTHOR': 'Test Author',
+          'GIT_TERMINAL_PROMPT': '1', // attempted override — must lose
+        });
+        expect(r.exitCode, 0, reason: r.stderr.toString());
+        // The caller-supplied identity var passed through.
+        expect(r.stdout.toString(), contains('AUTHOR=Test Author'));
+        // But the safety var still reads the base value (0), not the
+        // caller's attempted override (1) — base-after-caller wins.
+        expect(r.stdout.toString(), contains('TP=0'));
+      } finally {
+        await _safeCleanup(repo);
+      }
+    });
+  });
+
   group('index.lock transient retry', () {
     test('a mutation retries past a lock that clears mid-backoff', () async {
       final repo = await _newRepo();

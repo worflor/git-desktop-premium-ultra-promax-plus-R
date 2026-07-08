@@ -38,7 +38,7 @@ void main() {
       expect(files.first.blocks.length, 1);
       // Editor defaults to incoming.
       expect(files.first.blocks.first.resolution, ConflictSide.theirs);
-      expect(_build(files!, ConflictSide.theirs), theirs);
+      expect(_build(files, ConflictSide.theirs), theirs);
       expect(_build(files, ConflictSide.ours), ours);
     });
 
@@ -67,7 +67,7 @@ void main() {
       final files = reviewMergeFromPatch(patch, {'f.txt': ours});
       expect(files, isNotNull);
       expect(files!.first.blocks.length, 2);
-      expect(_build(files!, ConflictSide.theirs), theirs);
+      expect(_build(files, ConflictSide.theirs), theirs);
       expect(_build(files, ConflictSide.ours), ours);
     });
 

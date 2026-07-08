@@ -260,10 +260,18 @@ class DeskPrStore {
   /// on the same machine see an update-ref conflict on the loser and
   /// the caller can retry. PR-ids and issue-ids share the counter so
   /// they never collide.
-  Future<GitResult<int>> _allocId() => refs.allocSequentialId(
+  ///
+  /// [remote] is threaded in by the caller rather than resolved here: an
+  /// operation that also calls [ManifoldRefs.ensureFetchRefspec] (like
+  /// [create]) must use the SAME resolved remote for both, or a rename
+  /// racing between the two resolutions could point the reservation and
+  /// the refspec at different remotes.
+  Future<GitResult<int>> _allocId({required String remote}) =>
+      refs.allocSequentialId(
         ref: _idCounterRef,
         filename: _counterFilename,
         commitLabel: 'desk-id',
+        remote: remote,
       );
 
   /// Promote a branch to a desk PR. Refuses if the branch already has
@@ -284,7 +292,11 @@ class DeskPrStore {
     if (existing.ok && existing.data != null) {
       return GitResult.err('a desk PR already exists for $branch');
     }
-    final idR = await _allocId();
+    // Resolved ONCE for this whole operation (not once per call below) so
+    // the id reservation and the refspec config land on the same remote
+    // even if a rename races between them — see [_allocId]'s doc.
+    final remote = await refs.resolveMetadataRemote();
+    final idR = await _allocId(remote: remote);
     if (!idR.ok) return GitResult.err(idR.error ?? 'allocId failed');
     final now = DateTime.now();
     // Probe mergeability against the configured base. UNKNOWN when the
@@ -306,10 +318,10 @@ class DeskPrStore {
     final w = await _commit(pr, message: 'create pr');
     if (!w.ok) return GitResult.err(w.error ?? 'create commit failed');
     // Sync wiring — awaited so we know it completed (cheap, single
-    // git-config call when origin exists; no-op when it doesn't). The
+    // git-config call when the remote exists; no-op when it doesn't). The
     // user can also configure this manually:
     //   git config --add remote.origin.fetch +refs/manifold/*:refs/manifold/*
-    await refs.ensureFetchRefspec();
+    await refs.ensureFetchRefspec(remote: remote);
     return GitResult.ok(pr);
   }
 
@@ -544,8 +556,15 @@ class DeskPrStore {
   /// the shared counter in one round-trip. Also ensures (and migrates)
   /// the persistent staging fetch refspec so ordinary `git fetch` stays
   /// safe afterwards.
-  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
-    await refs.ensureFetchRefspec(remote: remote);
-    return refs.syncWithRemote(remote: remote);
+  ///
+  /// [remote] defaults to null — resolved ONCE here (rather than a
+  /// hardcoded 'origin', and rather than letting [ensureFetchRefspec] and
+  /// [ManifoldRefs.syncWithRemote] each resolve it independently) so both
+  /// calls in this one operation agree even if a remote rename races
+  /// between them.
+  Future<GitResult<void>> syncWithRemote({String? remote}) async {
+    final resolvedRemote = remote ?? await refs.resolveMetadataRemote();
+    await refs.ensureFetchRefspec(remote: resolvedRemote);
+    return refs.syncWithRemote(remote: resolvedRemote);
   }
 }

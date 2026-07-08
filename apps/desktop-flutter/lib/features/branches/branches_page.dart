@@ -38,6 +38,7 @@ import '../../backend/pr_shape.dart';
 import '../../backend/merge_preflight.dart';
 import '../../backend/desk_pr.dart';
 import '../../backend/desk_pr_diff.dart';
+import 'branch_ops.dart';
 import '../../backend/undo_controller.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
@@ -1013,22 +1014,16 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() => _actionRunning = false);
     if (r == null) return const _DeleteBranchOutcome.cancelled();
     if (!r.ok) {
-      final raw = r.error ?? '';
-      // First-tap safe delete bounced because git considers the branch
-      // unmerged. Don't surface an error — tell the row to arm for force.
-      if (!force && raw.toLowerCase().contains('not fully merged')) {
-        return const _DeleteBranchOutcome.needsForce();
-      }
-      // Delete bounced because a desk still holds the branch. Raw git
-      // stderr ("... is already checked out at <path>") isn't actionable,
-      // so name the desk and offer a jump to it instead of removing it.
-      if (isWorktreeHoldsBranchError(raw)) {
-        final desk = resolveBranchLinks(
-          name,
-          desks: context.read<WorktreeState>().desks,
-          deskPrsByBranch: const {},
-        ).desk;
-        if (desk != null) {
+      final outcome = classifyBranchDeleteFailure(
+        r.error ?? '',
+        branch: name,
+        desks: context.read<WorktreeState>().desks,
+        force: force,
+      );
+      switch (outcome) {
+        case DeleteNotMerged():
+          return const _DeleteBranchOutcome.needsForce();
+        case DeleteHeldByDesk(:final desk):
           final label = desk.path.split(RegExp(r'[\\/]')).last;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1040,22 +1035,12 @@ class _BranchesPageState extends State<BranchesPage> {
             ),
           );
           return _DeleteBranchOutcome.error("open in desk '$label'");
-        }
+        case DeleteFailed(:final message):
+          return _DeleteBranchOutcome.error(message);
       }
-      return _DeleteBranchOutcome.error(_humanizeDeleteError(raw));
     }
     await _load(repo);
     return const _DeleteBranchOutcome.ok();
-  }
-
-  /// Strips git's `error:` prefix and `hint:` lines, leaving only the
-  /// human-readable first sentence.
-  static String _humanizeDeleteError(String raw) {
-    final firstLine = raw.split('\n').first.trim();
-    if (firstLine.toLowerCase().startsWith('error:')) {
-      return firstLine.substring(6).trim();
-    }
-    return firstLine.isEmpty ? 'delete failed' : firstLine;
   }
 
   Future<void> _deleteTag(String repo, String name) async {
@@ -10179,46 +10164,6 @@ class _DeleteError extends _DeleteBranchOutcome {
   final String message;
   const _DeleteError(this.message);
 }
-
-/// Resolved cross-links for a single branch: an open desk (worktree),
-/// a desk PR, and how many issues that PR links. Seeds the branch-card
-/// indicator chips and the desk-aware delete error. Public so the pure
-/// resolver below is unit-testable.
-class BranchLinks {
-  final WorktreeData? desk;
-  final DeskPr? deskPr;
-  final int issueCount;
-  const BranchLinks({this.desk, this.deskPr, this.issueCount = 0});
-  bool get hasAny => desk != null || deskPr != null || issueCount > 0;
-}
-
-/// Pure resolver: branch name → its desk / desk-PR / linked-issue count.
-/// Kept free of BuildContext so it's reusable and testable in isolation.
-/// Issue count folds both local and remote linkage on the PR.
-BranchLinks resolveBranchLinks(
-  String branch, {
-  required List<WorktreeData> desks,
-  required Map<String, DeskPr> deskPrsByBranch,
-}) {
-  WorktreeData? desk;
-  for (final d in desks) {
-    if (d.branch == branch && d.path.isNotEmpty) {
-      desk = d;
-      break;
-    }
-  }
-  final pr = deskPrsByBranch[branch];
-  final issueCount =
-      pr == null ? 0 : pr.linkedIssues.length + pr.linkedRemoteIssues.length;
-  return BranchLinks(desk: desk, deskPr: pr, issueCount: issueCount);
-}
-
-/// True when a branch delete bounced because a worktree (desk) still
-/// holds the branch. Git phrases this as "... is already checked out at
-/// <path>". Detecting it lets the UI offer a jump-to-desk instead of
-/// dumping raw stderr the user can't act on.
-bool isWorktreeHoldsBranchError(String rawStderr) =>
-    rawStderr.toLowerCase().contains('checked out at');
 
 /// Compact, tappable indicator chip for a branch's cross-links (open
 /// desk / desk PR / linked issues). Subtle by default — mirrors the

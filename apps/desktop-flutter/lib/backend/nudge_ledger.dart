@@ -169,7 +169,14 @@ class NudgeLedger {
   /// partial lines are skipped; a missing / unreadable file yields an empty
   /// list. For future analysis — jurying the engine against realized
   /// behaviour.
+  ///
+  /// Read-your-writes: appends are fire-and-forget onto the static write
+  /// chain, so a read racing a just-recorded event could otherwise miss
+  /// it — a real hole for any consumer, not a test artifact. Awaiting the
+  /// chain's current tail first means every append that happened-before
+  /// this call is on disk before the file is read, deterministically.
   Future<List<NudgeEvent>> readAll() async {
+    await _writeLock;
     try {
       final file = await _file();
       if (!await file.exists()) return const <NudgeEvent>[];

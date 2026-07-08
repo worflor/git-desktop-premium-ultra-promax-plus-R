@@ -21,9 +21,8 @@ void main() {
     if (await tempDir.exists()) await tempDir.delete(recursive: true);
   });
 
-  // The ledger's appends are fire-and-forget on a static single-writer
-  // chain; a tiny settle lets the queued writes flush before we read.
-  Future<void> settle() => Future<void>.delayed(const Duration(milliseconds: 50));
+  // No settle/sleep needed: readAll() drains the static write chain first
+  // (read-your-writes), so a plain await is deterministic under any load.
 
   test('shown + accepted events round-trip through the JSONL', () async {
     final ledger = NudgeLedger('/repo/a', storageDirOverride: tempDir);
@@ -31,7 +30,6 @@ void main() {
         path: 'lib/a.dart', anchor: 'lib/b.dart', score: 0.42, receipts: true);
     ledger.recordAccepted(
         path: 'lib/a.dart', anchor: 'lib/b.dart', score: 0.42, receipts: true);
-    await settle();
 
     final events = await ledger.readAll();
     expect(events, hasLength(2));
@@ -62,7 +60,6 @@ void main() {
         path: 'x.dart', anchor: 'y.dart', score: 0.3, receipts: false);
     ledger.recordAccepted(
         path: 'x.dart', anchor: 'y.dart', score: 0.3, receipts: false);
-    await settle();
 
     final events = await ledger.readAll();
     final shown = events.where((e) => e.kind == 'shown').toList();

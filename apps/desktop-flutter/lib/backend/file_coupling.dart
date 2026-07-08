@@ -2590,10 +2590,6 @@ String _stripExt(String filename) {
 
 const int _spectralMaxBytes = 256 * 1024;
 
-/// Weak-coupling floor for the per-changeset spectral overlay. Shared by the
-/// eigenAddress-histogram cosine and the repo-native embedding cosine so both
-/// sub-signals gate identically; below it, a pair carries no overlay edge.
-const double _spectralCouplingFloor = 0.25;
 
 /// Identifier-run extractor for the embedding sub-signal. Whole runs (NOT
 /// camelCase-split) to match RepoNativeEmbedding's validated vocabulary.
@@ -2712,7 +2708,7 @@ Map<String, Map<String, double>> computeSpectralCoupling(
         final a = vfiles[i];
         final b = vfiles[j];
         final cos = RepoNativeEmbedding.cosine(vecs[a], vecs[b]);
-        if (cos < _spectralCouplingFloor) continue;
+        if (cos < spectralCouplingFloor) continue;
         final lo = a.compareTo(b) < 0 ? a : b;
         final hi = a.compareTo(b) < 0 ? b : a;
         final sub = result.putIfAbsent(lo, () => {});
@@ -2742,7 +2738,7 @@ Map<String, Map<String, double>> computeSpectralCoupling(
           tokenSets[a]!,
           tokenSets[b]!,
         );
-        if (s < _spectralCouplingFloor) continue;
+        if (s < spectralCouplingFloor) continue;
         final lo = a.compareTo(b) < 0 ? a : b;
         final hi = a.compareTo(b) < 0 ? b : a;
         final sub = result.putIfAbsent(lo, () => {});

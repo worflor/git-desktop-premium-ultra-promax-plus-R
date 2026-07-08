@@ -152,9 +152,17 @@ class DeskIssueStore {
   /// Allocate the next sequential id from the shared [_idCounterRef]
   /// counter. See [DeskPrStore._allocId] — both stores delegate to the
   /// same plumbing and share the counter so ids never collide.
-  Future<GitResult<int>> _allocId() => refs.allocSequentialId(
+  ///
+  /// [remote] is threaded in by the caller rather than resolved here: an
+  /// operation that also calls [ManifoldRefs.ensureFetchRefspec] (like
+  /// [create]) must use the SAME resolved remote for both, or a rename
+  /// racing between the two resolutions could point the reservation and
+  /// the refspec at different remotes.
+  Future<GitResult<int>> _allocId({required String remote}) =>
+      refs.allocSequentialId(
         ref: _idCounterRef,
         filename: _counterFilename,
+        remote: remote,
       );
 
   Future<GitResult<DeskIssue>> create({
@@ -171,7 +179,11 @@ class DeskIssueStore {
     /// reader could see an unlinked imported issue.
     int? remoteNumber,
   }) async {
-    final idR = await _allocId();
+    // Resolved ONCE for this whole operation (not once per call below) so
+    // the id reservation and the refspec config land on the same remote
+    // even if a rename races between them — see [_allocId]'s doc.
+    final remote = await refs.resolveMetadataRemote();
+    final idR = await _allocId(remote: remote);
     if (!idR.ok) return GitResult.err(idR.error ?? 'allocId failed');
     final now = DateTime.now();
     final issue = DeskIssue(
@@ -192,9 +204,10 @@ class DeskIssueStore {
     // same as DeskPrStore.create does on first promotion. Without this
     // an issues-only user (who never opens a desk PR) never auto-pulls
     // Manifold metadata on `git fetch` — a silent no-sync trap. No-op
-    // when there's no origin. The user can also configure it manually:
+    // when there's no remote configured. The user can also configure it
+    // manually:
     //   git config --add remote.origin.fetch +refs/manifold/*:refs/manifold/*
-    await refs.ensureFetchRefspec();
+    await refs.ensureFetchRefspec(remote: remote);
     return GitResult.ok(issue);
   }
 
@@ -339,8 +352,15 @@ class DeskIssueStore {
   /// the shared counter (and vice-versa) in one round-trip. Also ensures
   /// (and migrates) the persistent staging fetch refspec so ordinary
   /// `git fetch` stays safe afterwards.
-  Future<GitResult<void>> syncWithRemote({String remote = 'origin'}) async {
-    await refs.ensureFetchRefspec(remote: remote);
-    return refs.syncWithRemote(remote: remote);
+  ///
+  /// [remote] defaults to null — resolved ONCE here (rather than a
+  /// hardcoded 'origin', and rather than letting [ensureFetchRefspec] and
+  /// [ManifoldRefs.syncWithRemote] each resolve it independently) so both
+  /// calls in this one operation agree even if a remote rename races
+  /// between them.
+  Future<GitResult<void>> syncWithRemote({String? remote}) async {
+    final resolvedRemote = remote ?? await refs.resolveMetadataRemote();
+    await refs.ensureFetchRefspec(remote: resolvedRemote);
+    return refs.syncWithRemote(remote: resolvedRemote);
   }
 }

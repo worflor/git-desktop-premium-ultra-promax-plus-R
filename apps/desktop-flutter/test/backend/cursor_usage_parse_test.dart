@@ -7,7 +7,6 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/ai.dart';
-import 'package:git_desktop/backend/dtos.dart';
 
 void main() {
   group('parseCursorUsage casing tolerance', () {

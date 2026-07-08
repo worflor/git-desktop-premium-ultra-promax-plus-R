@@ -62,7 +62,16 @@ globals_dump.css
 typecheck.txt
 
 # Experiment harnesses and their telemetry — probes live and die here
-# without polluting history. Files already tracked under experiments/
-# stay tracked until explicitly removed; everything new is ignored.
-# A probe that graduates gets an explicit home like research_lab ones.
+# without polluting history. Two homes, enumerated precisely so a future
+# nested experiments/ dir elsewhere isn't silently swallowed. Files
+# already tracked under experiments/ stay tracked until explicitly
+# removed; everything new is ignored. A probe that graduates gets an
+# explicit home like research_lab ones.
 /experiments/
+/apps/desktop-flutter/experiments/
+
+# Research probes for the coupling-axis jury — untracked by design (the
+# graduated protocol lives in docs/architecture/coupling-axis-audit.md).
+/apps/desktop-flutter/tool/jury_assoc_audit.dart
+/apps/desktop-flutter/tool/jury_cn_audit.dart
+/apps/desktop-flutter/tool/jury_protocol.dart
