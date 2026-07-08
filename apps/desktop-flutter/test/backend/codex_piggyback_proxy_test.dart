@@ -176,14 +176,17 @@ void main() {
 
         final messages = sentBody['messages'] as List;
         expect(messages[0], {'role': 'system', 'content': 'You are a helpful assistant.'});
-        expect(messages[1]['role'], 'user');
-        expect(messages[1]['content'], 'hi there');
+        final userMsg = messages[1] as Map;
+        expect(userMsg['role'], 'user');
+        expect(userMsg['content'], 'hi there');
 
         final tools = sentBody['tools'] as List;
         expect(tools.length, 1);
-        expect(tools[0]['type'], 'function');
-        expect(tools[0]['function']['name'], 'get_weather');
-        expect(tools[0]['function']['description'], 'Gets the weather');
+        final weatherTool = tools[0] as Map;
+        expect(weatherTool['type'], 'function');
+        final weatherFunction = weatherTool['function'] as Map;
+        expect(weatherFunction['name'], 'get_weather');
+        expect(weatherFunction['description'], 'Gets the weather');
 
         // SSE stream parses into the expected event sequence.
         final events = parseSse(sseBody);
@@ -194,16 +197,22 @@ void main() {
         expect(textDelta.data['delta'], 'Hello from upstream');
 
         final itemDone = events.firstWhere((e) => e.type == 'response.output_item.done');
-        expect(itemDone.data['item']['type'], 'message');
-        expect(itemDone.data['item']['content'][0]['type'], 'output_text');
-        expect(itemDone.data['item']['content'][0]['text'], 'Hello from upstream');
+        final item = itemDone.data['item'] as Map;
+        expect(item['type'], 'message');
+        final content = item['content'] as List;
+        final firstPart = content[0] as Map;
+        expect(firstPart['type'], 'output_text');
+        expect(firstPart['text'], 'Hello from upstream');
 
         final completed = events.last;
-        final usage = completed.data['response']['usage'];
+        final response = completed.data['response'] as Map;
+        final usage = response['usage'] as Map;
         expect(usage['input_tokens'], 10);
-        expect(usage['input_tokens_details']['cached_tokens'], 2);
+        final inputTokensDetails = usage['input_tokens_details'] as Map;
+        expect(inputTokensDetails['cached_tokens'], 2);
         expect(usage['output_tokens'], 5);
-        expect(usage['output_tokens_details']['reasoning_tokens'], 1);
+        final outputTokensDetails = usage['output_tokens_details'] as Map;
+        expect(outputTokensDetails['reasoning_tokens'], 1);
         expect(usage['total_tokens'], 15);
       } finally {
         await proxy.dispose();
@@ -258,10 +267,12 @@ void main() {
         final events1 = parseSse(sseBody1);
 
         final fnDone = events1.firstWhere((e) =>
-            e.type == 'response.output_item.done' && e.data['item']['type'] == 'function_call');
-        expect(fnDone.data['item']['call_id'], 'call_abc123');
-        expect(fnDone.data['item']['name'], 'get_weather');
-        expect(fnDone.data['item']['arguments'], '{"city":"Berlin"}');
+            e.type == 'response.output_item.done' &&
+            (e.data['item'] as Map)['type'] == 'function_call');
+        final fnItem = fnDone.data['item'] as Map;
+        expect(fnItem['call_id'], 'call_abc123');
+        expect(fnItem['name'], 'get_weather');
+        expect(fnItem['arguments'], '{"city":"Berlin"}');
 
         // Second turn: codex sends back the function_call + its output.
         upstream.cannedResponse = {
@@ -303,13 +314,18 @@ void main() {
         final sentBody = upstream.lastBody!;
         final messages = sentBody['messages'] as List;
 
-        final assistantMsg = messages.firstWhere((m) => m['tool_calls'] != null);
+        final assistantMsg =
+            messages.firstWhere((m) => (m as Map)['tool_calls'] != null) as Map;
         expect(assistantMsg['content'], isNull);
-        expect(assistantMsg['tool_calls'][0]['id'], 'call_abc123');
-        expect(assistantMsg['tool_calls'][0]['function']['name'], 'get_weather');
-        expect(assistantMsg['tool_calls'][0]['function']['arguments'], '{"city":"Berlin"}');
+        final toolCalls = assistantMsg['tool_calls'] as List;
+        final firstToolCall = toolCalls[0] as Map;
+        expect(firstToolCall['id'], 'call_abc123');
+        final toolCallFunction = firstToolCall['function'] as Map;
+        expect(toolCallFunction['name'], 'get_weather');
+        expect(toolCallFunction['arguments'], '{"city":"Berlin"}');
 
-        final toolMsg = messages.firstWhere((m) => m['role'] == 'tool');
+        final toolMsg =
+            messages.firstWhere((m) => (m as Map)['role'] == 'tool') as Map;
         expect(toolMsg['tool_call_id'], 'call_abc123');
         expect(toolMsg['content'], '{"tempC":20,"condition":"sunny"}');
       } finally {
@@ -371,8 +387,10 @@ void main() {
         final events = parseSse(sseBody);
         expect(events.length, 1);
         expect(events.first.type, 'response.failed');
+        final failedResponse = events.first.data['response'] as Map;
+        final failedError = failedResponse['error'] as Map;
         expect(
-          events.first.data['response']['error']['message'],
+          failedError['message'],
           contains('upstream is on fire'),
         );
 
@@ -586,7 +604,8 @@ void main() {
         });
         final sseBody = await utf8.decoder.bind(resp).join();
         final events = parseSse(sseBody);
-        final usage = events.last.data['response']['usage'];
+        final response = events.last.data['response'] as Map;
+        final usage = response['usage'] as Map;
         expect(usage['input_tokens'], 20);
         expect(usage['output_tokens'], 7);
         expect(usage['total_tokens'], 27);
