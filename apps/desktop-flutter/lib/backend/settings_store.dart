@@ -88,6 +88,15 @@ class AppSettingsSnapshot {
   /// When true, the active sort guide is applied in reverse per its own
   /// notion of "opposite". See `FileCoupling.clusterFiles(inverted:)`.
   final bool fileSortInverted;
+  /// Issues rail sort direction: true = newest-updated first (default),
+  /// false = oldest first. A display law (HOW issues are shown), toggled
+  /// inline from the ISSUES header and persisted across sessions.
+  final bool issuesSortDescending;
+  /// Tags register sort direction: true = newest first (default — releases
+  /// read newest-first out of the box), false = git refname order (oldest
+  /// first). Toggled inline from the tag glyph on the branches-lens
+  /// divider and persisted across sessions.
+  final bool tagsSortDescending;
   /// Commit-message format preferences. Consumed by the AI prompt
   /// builder and by the manual commit composer to shape defaults.
   final String commitStructure; // 'title_body' | 'title_only' | 'freeform'
@@ -157,6 +166,8 @@ class AppSettingsSnapshot {
     required this.undoWindowOverrides,
     required this.fileSortGuide,
     required this.fileSortInverted,
+    this.issuesSortDescending = true,
+    this.tagsSortDescending = true,
     required this.commitStructure,
     required this.commitVoice,
     required this.commitCoverage,
@@ -203,6 +214,8 @@ class AppSettingsSnapshot {
         'undoWindowOverrides': undoWindowOverrides,
         'fileSortGuide': fileSortGuide,
         'fileSortInverted': fileSortInverted,
+        'issuesSortDescending': issuesSortDescending,
+        'tagsSortDescending': tagsSortDescending,
         'commitStructure': commitStructure,
         'commitVoice': commitVoice,
         'commitCoverage': commitCoverage,
@@ -249,6 +262,8 @@ class AppSettingsSnapshot {
         undoWindowOverrides: const {},
         fileSortGuide: 'related',
         fileSortInverted: false,
+        issuesSortDescending: true,
+        tagsSortDescending: true,
         commitStructure: 'title_body',
         commitVoice: 'verb_led',
         commitCoverage: 'balanced',
@@ -404,6 +419,14 @@ class AppSettingsSnapshot {
         json['fileSortInverted'],
         defaults.fileSortInverted,
       ),
+      issuesSortDescending: SettingsStore._boolOr(
+        json['issuesSortDescending'],
+        defaults.issuesSortDescending,
+      ),
+      tagsSortDescending: SettingsStore._boolOr(
+        json['tagsSortDescending'],
+        defaults.tagsSortDescending,
+      ),
       commitStructure: SettingsStore._normalizeCommitStructure(
         SettingsStore._stringOr(
           json['commitStructure'],
@@ -488,6 +511,8 @@ class AppSettingsSnapshot {
     Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
     bool? fileSortInverted,
+    bool? issuesSortDescending,
+    bool? tagsSortDescending,
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
@@ -545,6 +570,8 @@ class AppSettingsSnapshot {
           undoWindowOverrides ?? this.undoWindowOverrides,
       fileSortGuide: fileSortGuide ?? this.fileSortGuide,
       fileSortInverted: fileSortInverted ?? this.fileSortInverted,
+      issuesSortDescending: issuesSortDescending ?? this.issuesSortDescending,
+      tagsSortDescending: tagsSortDescending ?? this.tagsSortDescending,
       commitStructure: commitStructure ?? this.commitStructure,
       commitVoice: commitVoice ?? this.commitVoice,
       commitCoverage: commitCoverage ?? this.commitCoverage,

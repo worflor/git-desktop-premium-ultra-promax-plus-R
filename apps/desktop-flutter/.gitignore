@@ -52,3 +52,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Generated harness output (worldline audit scatter dump) — regenerate via
+# `dart run tool/worldline_audit.dart`; never commit.
+tool/worldline_audit.svg

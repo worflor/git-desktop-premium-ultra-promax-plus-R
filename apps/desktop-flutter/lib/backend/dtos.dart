@@ -330,6 +330,26 @@ class BranchInfo {
   /// `git cherry`. Null when detection hasn't run yet.
   final bool? squashMerged;
 
+  /// True when merging this branch into the comparison base would change
+  /// nothing — its content already lives in base regardless of ancestry.
+  /// The ABSORPTION LAW: `git merge-tree --write-tree <base> <branch>`
+  /// yields a tree identical to base's own tree. Subsumes tree-equal
+  /// squash detection and additionally catches transplants (Manifold's
+  /// move-changes flow), cherry-picks and amended replays — any ceremony
+  /// that lands the content without recording a parent edge. Computed via
+  /// [branchAbsorption]; null when unprobed OR when git is too old
+  /// (< 2.38) to answer, in which case [squashMerged] is the fallback.
+  ///
+  /// The law is EXISTENTIAL OVER HISTORY: some first-parent base commit
+  /// since the fork absorbs the branch. Once witnessed, permanent — base
+  /// evolving (even rewriting the same files) cannot revoke delivery.
+  final bool? absorbed;
+
+  /// The witness commit hash when [absorbed] is true — the exact base
+  /// commit into which merging this branch changes nothing. The receipt
+  /// behind the 'absorbed' whisper ("delivered in <shortHash>").
+  final String? absorbedWitness;
+
   const BranchInfo({
     required this.name,
     required this.current,
@@ -339,6 +359,8 @@ class BranchInfo {
     this.gone = false,
     this.lastCommitAt,
     this.squashMerged,
+    this.absorbed,
+    this.absorbedWitness,
   });
 
   factory BranchInfo.fromJson(Map<String, dynamic> j) => BranchInfo(
@@ -353,10 +375,14 @@ class BranchInfo {
             : null,
         squashMerged:
             j['squashMerged'] is bool ? j['squashMerged'] as bool : null,
+        absorbed: j['absorbed'] is bool ? j['absorbed'] as bool : null,
+        absorbedWitness: j['absorbedWitness'] as String?,
       );
 
   BranchInfo copyWith({
     bool? squashMerged,
+    bool? absorbed,
+    String? absorbedWitness,
   }) =>
       BranchInfo(
         name: name,
@@ -367,6 +393,8 @@ class BranchInfo {
         gone: gone,
         lastCommitAt: lastCommitAt,
         squashMerged: squashMerged ?? this.squashMerged,
+        absorbed: absorbed ?? this.absorbed,
+        absorbedWitness: absorbedWitness ?? this.absorbedWitness,
       );
 }
 
