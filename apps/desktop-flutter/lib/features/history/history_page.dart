@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'dart:math';
+import 'dart:ui' as ui show Gradient;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart'
+    show SpringDescription, SpringSimulation;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/context_menu.dart';
@@ -37,9 +40,127 @@ import 'commit_seismograph.dart';
 import 'commit_sigil.dart';
 import 'commit_tag_pill.dart';
 import 'commit_tagger.dart';
+import 'worldline_field.dart';
 
 
 const double _kNodeRadius = 3;
+
+// ── WORLDLINE POSTURE constants (θ opens the strip into the sky) ────────────
+//
+// _kWorldlineDepthK: the perspective foreshortening. depthScale =
+//   1 / (1 + k·depth·θ). Committed so the FURTHEST commit (depth=1) at full
+//   open (θ=1) shrinks to ~0.55: solve 1/(1+k) = 0.55 → k = 0.818… → 0.82.
+const double _kWorldlineDepthK = 0.82;
+//
+// _kWorldlineOpenFactor: the drawer-pull. Painted height = H0·(1 + f·θ), so
+//   at θ=1 the strip stands at 3.2×H0 (f = 2.2). This same factor maps drag
+//   pixels to θ (dθ = dy / (f·H0)), so the horizon bar tracks the finger 1:1.
+const double _kWorldlineOpenFactor = 2.2;
+//
+// Fraction of the painted height reserved for the sky's vertical centre and
+// amplitude. yCenter = H·0.46 leaves the caption band clear at the bottom;
+// amp = H·0.36 lets u=±1 fill most of the opened panel without clipping.
+const double _kWorldlineSkyCenterFrac = 0.46;
+const double _kWorldlineSkyAmpFrac = 0.36;
+//
+// Bottom band that owns the drag-to-open gesture (the "caption bar" handle).
+const double _kWorldlineHandleBand = 16;
+//
+// _kWorldlineDepthAlpha: alpha attenuation floor for the furthest dot,
+// matched to the committed 0.55 SIZE target (1/(1+k) at depth=1) so both
+// depth cues shrink in lockstep: alpha *= lerp(1, 0.55, depth·orn).
+const double _kWorldlineDepthAlpha = 0.55;
+//
+// _kWorldlineAgeCap: how far age may pull a dot away from its OWN strip
+// colour. Capped at 0.6 so even the oldest commit keeps ~40% of its
+// churn/state identity — age modulates, never repaints.
+const double _kWorldlineAgeCap = 0.6;
+//
+// Fling law for the caption-bar release: |vy| beyond this picks the detent
+// in the fling direction regardless of position. 365 px/s is Flutter's own
+// Drawer fling threshold (_kMinFlingVelocity in drawer.dart) — the same
+// "drawer-pull" idiom this gesture borrows.
+const double _kWorldlineFlingPxPerSec = 365.0;
+//
+// Release spring, θ-space, critically damped (no overshoot past a detent —
+// θ clamps at both ends, so an overshoot would read as a bounce off the
+// rim). Settle-to-2% for a critically damped spring is t ≈ 5.8/ω; the
+// authored snap is ~190ms → ω ≈ 30 rad/s → stiffness = ω² = 900, damping
+// = 2·√(k·m) = 60 at mass 1.
+const SpringDescription _kWorldlineSpring = SpringDescription(
+  mass: 1,
+  stiffness: 900,
+  damping: 60,
+);
+
+/// Ornament choreography: geometry (positions, panel height) rides θ
+/// linearly, but ornament (polyline alpha, age tint, √churn radius blend,
+/// depth attenuation) rides this smoothstep of (θ−0.25)/0.6 — the plane
+/// opens first, the sky fades in after; closing reverses so ornament
+/// leaves before the drawer shuts. Zero for all θ ≤ 0.25 (and so at θ=0).
+double _worldlineOrnament(double theta) {
+  final t = ((theta - 0.25) / 0.6).clamp(0.0, 1.0);
+  return t * t * (3 - 2 * t);
+}
+
+/// Per-dot settle roll-in — the exact law of `_trackWakeProgress` in
+/// commit_seismograph.dart: dot i's local progress maps the global settle
+/// through a window starting at (i/n)·0.4 with width 0.6, so windows
+/// overlap and the sweep travels along the time axis.
+double _worldlineDotSettle(double global, int index, int count) {
+  if (global >= 1.0) return 1.0;
+  if (count <= 1) return global.clamp(0.0, 1.0);
+  final start = (index / count) * 0.4;
+  return ((global - start) / 0.6).clamp(0.0, 1.0);
+}
+
+/// Centripetal Catmull-Rom approximated as cubic Béziers — ported verbatim
+/// from `_RidgelinePainter._catmullRom` in commit_seismograph.dart (same
+/// repo, same math). Endpoint tangents reflect so the trace doesn't snap.
+Path _catmullRom(List<Offset> p) {
+  final path = Path()..moveTo(p.first.dx, p.first.dy);
+  if (p.length == 2) {
+    path.lineTo(p.last.dx, p.last.dy);
+    return path;
+  }
+  for (var i = 0; i < p.length - 1; i++) {
+    final p0 = i == 0 ? p[0] : p[i - 1];
+    final p1 = p[i];
+    final p2 = p[i + 1];
+    final p3 = i + 2 < p.length ? p[i + 2] : p[i + 1];
+    final c1 =
+        Offset(p1.dx + (p2.dx - p0.dx) / 6, p1.dy + (p2.dy - p0.dy) / 6);
+    final c2 =
+        Offset(p2.dx - (p3.dx - p1.dx) / 6, p2.dy - (p3.dy - p1.dy) / 6);
+    path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
+  }
+  return path;
+}
+
+/// Flat 2.5D projection of one commit from its strip position toward the
+/// opened sky. x stays time; y opens into `coord.u`; `coord.depth` drives a
+/// perspective scale that foreshortens the vertical excursion and (in the
+/// painter) fades/shrinks far dots. [settle] eases the sky in when the field
+/// lands mid-pull. At [theta] == 0 this is exactly the strip position, so the
+/// rest posture is pixel-identical.
+({Offset center, double depthScale}) _projectWorldline({
+  required double xStrip,
+  required double yStrip,
+  required WorldlineCoord coord,
+  required double theta,
+  required double settle,
+  required double height,
+}) {
+  if (theta <= 0) return (center: Offset(xStrip, yStrip), depthScale: 1.0);
+  final yCenter = height * _kWorldlineSkyCenterFrac;
+  final amp = height * _kWorldlineSkyAmpFrac;
+  final uAmt = coord.u * settle;
+  final depthEff = coord.depth * settle;
+  final depthScale = 1.0 / (1.0 + _kWorldlineDepthK * depthEff * theta);
+  final ySky = yCenter + uAmt * amp * theta * depthScale;
+  final yProj = yStrip + (ySky - yStrip) * theta;
+  return (center: Offset(xStrip, yProj), depthScale: depthScale);
+}
 const double _kVertInset = 8;
 const double _kHorizPad = 4;
 const double _kLeftPad = 6;
@@ -383,6 +504,21 @@ class _TimelinePainter extends CustomPainter {
   final String? captionFontFamily;
   final List<String>? captionFontFallback;
 
+  /// WORLDLINE POSTURE. θ ∈ [0,1] opens the strip into the sky; the
+  /// settle animation eases dots from the horizon into the sky. BOTH are
+  /// live-read Listenables wired into `repaint:` (the same idiom hover
+  /// uses) so a drag/spring/settle tick costs one repaint — never a
+  /// widget rebuild or a fresh painter. [field] carries the per-commit
+  /// structural coordinates (null until computed; changes arrive with a
+  /// new painter via setState). At θ == 0 every worldline element
+  /// contributes zero, so the strip paints identically to its rest
+  /// posture. `handleHover` reveals the grip cue on the caption bar
+  /// without perturbing the rest pixels.
+  final ValueListenable<double> thetaListenable;
+  final Animation<double> fieldSettle;
+  final WorldlineField? field;
+  final ValueListenable<bool> handleHoverListenable;
+
   _TimelinePainter({
     required this.layout,
     required this.baseXs,
@@ -408,6 +544,10 @@ class _TimelinePainter extends CustomPainter {
     required this.previewLabel,
     required this.captionFontFamily,
     required this.captionFontFallback,
+    required this.thetaListenable,
+    required this.fieldSettle,
+    required this.field,
+    required this.handleHoverListenable,
   }) : super(
           repaint: Listenable.merge([
             hoveredHashListenable,
@@ -415,6 +555,9 @@ class _TimelinePainter extends CustomPainter {
             churnIntro,
             previewIntro,
             resonance,
+            handleHoverListenable,
+            thetaListenable,
+            fieldSettle,
           ]),
         );
 
@@ -447,6 +590,49 @@ class _TimelinePainter extends CustomPainter {
 
     // Total real (non-preview) node count for temporal gradient.
     final realNodeCount = layout.nodes.where((n) => !n.isPreview).length;
+
+    // WORLDLINE projection. Precompute each node's opened center, depth
+    // scale, and depth fraction once per paint. At theta == 0
+    // `_projectWorldline` returns the exact strip position with
+    // depthScale 1, so every worldline-gated branch below is a no-op and
+    // the rest posture is pixel-identical. Geometry rides θ; ornament
+    // (tints, radius blends, attenuation) rides the choreographed
+    // smoothstep so the plane opens before the sky fades in.
+    final worldT = thetaListenable.value.clamp(0.0, 1.0);
+    final settleT = fieldSettle.value;
+    final worldActive = worldT > 0.0005;
+    final worldOrn = _worldlineOrnament(worldT);
+    final centers = List<Offset>.filled(layout.nodes.length, Offset.zero);
+    final depthScales = List<double>.filled(layout.nodes.length, 1.0);
+    final depthFracs = List<double>.filled(layout.nodes.length, 0.0);
+    final previewOffset0 = previewCommits.length;
+    for (var i = 0; i < layout.nodes.length; i++) {
+      final m = metrics[i];
+      // Preview commits resolve to `absent` BY DESIGN: the field is keyed
+      // to the displayed tip's window, and previews are another desk's
+      // ahead-commits — outside that history by definition. They ride the
+      // horizon while real commits open into the sky, which reads as
+      // "hypothetical, not yet part of this trajectory". Computing their
+      // coords would need a per-hovered-desk field build; not worth it.
+      final coord = (worldActive && field != null)
+          ? field!.coordFor(layout.nodes[i].entry.commitHash)
+          : WorldlineCoord.absent;
+      // Per-dot settle: the roll-in sweeps along the time axis (real
+      // index order = time order) with overlapping windows.
+      final dotSettle = _worldlineDotSettle(
+          settleT, max(i - previewOffset0, 0), realNodeCount);
+      final p = _projectWorldline(
+        xStrip: m.x,
+        yStrip: m.y,
+        coord: coord,
+        theta: worldT,
+        settle: dotSettle,
+        height: size.height,
+      );
+      centers[i] = p.center;
+      depthScales[i] = p.depthScale;
+      depthFracs[i] = coord.depth * dotSettle;
+    }
 
     final previewFade = previewIntro.value;
     final railPaint = Paint()
@@ -570,6 +756,10 @@ class _TimelinePainter extends CustomPainter {
       if (fromIdx == null || toIdx == null) continue;
       final from = metrics[fromIdx];
       final to = metrics[toIdx];
+      // Positions come from the projected centers (strip positions at rest);
+      // scale still rides the lens metric.
+      final fc = centers[fromIdx];
+      final tc = centers[toIdx];
       final fromNode = layout.nodes[fromIdx];
 
       final isCrossLane = edge.fromLane != edge.toLane;
@@ -589,17 +779,17 @@ class _TimelinePainter extends CustomPainter {
         if (!toNode.isPreview && fromNode.row != previewBaseRow) continue;
       }
 
-      final dx = to.x - from.x;
-      final dy = to.y - from.y;
+      final dx = tc.dx - fc.dx;
+      final dy = tc.dy - fc.dy;
       final dist = sqrt(dx * dx + dy * dy);
       if (dist < 0.01) continue;
       final inv = 1.0 / dist;
       final fromR = _kNodeRadius * from.scale;
       final toR = _kNodeRadius * to.scale;
-      final startX = from.x + dx * inv * fromR;
-      final startY = from.y + dy * inv * fromR;
-      final endX = to.x - dx * inv * toR;
-      final endY = to.y - dy * inv * toR;
+      final startX = fc.dx + dx * inv * fromR;
+      final startY = fc.dy + dy * inv * fromR;
+      final endX = tc.dx - dx * inv * toR;
+      final endY = tc.dy - dy * inv * toR;
 
       edgePath.reset();
       edgePath.moveTo(startX, startY);
@@ -659,6 +849,30 @@ class _TimelinePainter extends CustomPainter {
         ..color = baseColor.withValues(alpha: alpha)
         ..strokeWidth = baseWidth;
       canvas.drawPath(edgePath, edgePaint);
+    }
+
+    // WORLDLINE trace: a Catmull-Rom-smoothed thread through consecutive
+    // commits — the worldline itself (same cubic-Bézier idiom as
+    // _RidgelinePainter in commit_seismograph.dart). Ornament-gated
+    // (absent at rest, fades in after the plane opens); age fade rides a
+    // linear gradient along the time axis (newest = left = warmer/denser,
+    // oldest = right = cooler/fainter) so one path keeps the per-segment
+    // cooling the zigzag version had. Low alpha: a trace, not a wire.
+    if (worldActive && worldOrn > 0.001 && realNodeCount >= 3) {
+      final previewOff = previewCommits.length;
+      final tracePts = centers.sublist(previewOff);
+      final newest = tracePts.first;
+      final oldest = tracePts.last;
+      final wlPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 1.1
+        ..shader = ui.Gradient.linear(newest, oldest, [
+          tokens.chromeAccent.withValues(alpha: 0.34 * worldOrn),
+          tokens.textMuted.withValues(alpha: 0.08 * worldOrn),
+        ]);
+      canvas.drawPath(_catmullRom(tracePts), wlPaint);
     }
 
     // Selected/hovered get z-priority (drawn last → on top). Skip the
@@ -731,7 +945,7 @@ class _TimelinePainter extends CustomPainter {
         localT = 1 - pow(1 - localT, 3).toDouble();
         if (localT <= 0) continue;
 
-        final center = Offset(m.x, m.y);
+        final center = centers[idx];
         final r = _kNodeRadius * m.scale;
         nodeFillPaint.color =
             tokens.stateAdded.withValues(alpha: 0.85 * localT);
@@ -785,10 +999,40 @@ class _TimelinePainter extends CustomPainter {
       // Merge convergence: merges are structurally dense — slightly
       // larger fill so they read as junction points.
       final isMerge = node.entry.isMerge;
-      final effectiveR = isMerge ? r * 1.12 : r;
+      var effectiveR = isMerge ? r * 1.12 : r;
 
-      nodeFillPaint.color = nodeColor;
-      final center = Offset(m.x, m.y);
+      // WORLDLINE blend (ornament-gated, no-op at rest — worldOrn is 0
+      // for all θ ≤ 0.25). Radius eases toward a √churn sizing
+      // foreshortened by the commit's depth. Age MODULATES the dot's own
+      // strip colour — a lerp toward the theme's cold token capped at
+      // _kWorldlineAgeCap so even the oldest keeps ~40% of its churn/
+      // state identity; never a wholesale repaint. Depth attenuates
+      // alpha in lockstep with the 0.55 size target. Selected dots keep
+      // their accent so selection stays legible.
+      var fillColor = nodeColor;
+      final center = centers[idx];
+      if (worldActive && worldOrn > 0.001) {
+        final coord = field?.coordFor(hash) ?? WorldlineCoord.absent;
+        final ds = depthScales[idx];
+        final worldR =
+            _kNodeRadius * m.scale * (0.7 + 1.3 * coord.churn) * ds;
+        effectiveR += (worldR - effectiveR) * worldOrn;
+        if (!isSelected) {
+          final ageFrac = realNodeCount <= 1 || realIndex < 0
+              ? 0.0
+              : realIndex / (realNodeCount - 1); // 0 = newest, 1 = oldest
+          final cooled = Color.lerp(
+              fillColor, tokens.textMuted, ageFrac * _kWorldlineAgeCap)!;
+          final depthAtten = 1.0 -
+              (1.0 - _kWorldlineDepthAlpha) * depthFracs[idx] * worldOrn;
+          final aged = cooled.withValues(
+              alpha: (fillColor.a * (1.0 - 0.35 * ageFrac) * depthAtten)
+                  .clamp(0.0, 1.0));
+          fillColor = Color.lerp(fillColor, aged, worldOrn)!;
+        }
+      }
+
+      nodeFillPaint.color = fillColor;
       canvas.drawCircle(center, effectiveR, nodeFillPaint);
 
       if (isSelected) {
@@ -845,6 +1089,24 @@ class _TimelinePainter extends CustomPainter {
     }
 
     _paintHoverCaption(canvas, size);
+    _paintGripCue(canvas, size);
+  }
+
+  /// The drag affordance on the caption bar: three faint dots at the
+  /// bottom-centre. Painted ONLY while the handle is hovered or the strip
+  /// is already open (θ>0), so the rest posture stays pixel-identical.
+  void _paintGripCue(Canvas canvas, Size size) {
+    final hovered = handleHoverListenable.value;
+    final amt =
+        max(hovered ? 1.0 : 0.0, thetaListenable.value.clamp(0.0, 1.0));
+    if (amt <= 0.0005) return;
+    final cx = size.width / 2;
+    final cy = size.height - _kWorldlineHandleBand / 2;
+    final dotPaint = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.16 * amt);
+    for (final dx in const [-5.0, 0.0, 5.0]) {
+      canvas.drawCircle(Offset(cx + dx, cy), 0.9, dotPaint);
+    }
   }
 
   /// Inline hover caption, painted INTO the strip's own quiet bottom
@@ -943,7 +1205,11 @@ class _TimelinePainter extends CustomPainter {
       return spans;
     }
 
-    final maxW = width - _kLeftPad * 2;
+    // Symmetric text insets: the head's origin sits at _kLeftPad + 2,
+    // so the tail's right edge must mirror it at width − (_kLeftPad + 2).
+    // The old maxW (width − 2·_kLeftPad) silently gave the right side a
+    // 4px tighter inset and the churn numbers kissed the clip edge.
+    final maxW = width - (_kLeftPad + 2) * 2;
     if (maxW < 40) return;
     // Head ellipsizes against the full band as a last resort so even
     // a pathologically narrow strip never paints past its edge.
@@ -1009,7 +1275,12 @@ class _TimelinePainter extends CustomPainter {
       // without a structural change must not leave a stale caption.
       old.previewLabel != previewLabel ||
       old.captionFontFamily != captionFontFamily ||
-      old.captionFontFallback != captionFontFallback;
+      old.captionFontFallback != captionFontFallback ||
+      // Worldline: θ / settle / handleHover are live-read through
+      // `repaint:` and never compared here. The FIELD is a plain value —
+      // a new one arrives with a new painter (setState), so it must
+      // repaint through this path.
+      old.field != field;
 }
 
 
@@ -1064,7 +1335,14 @@ class _TimelineStrip extends StatefulWidget {
   /// Owned and disposed by the page, NOT this strip.
   final ValueNotifier<String?> hoverNotifier;
 
+  /// Repo + window that key the Worldline structural field. Pulling the
+  /// caption bar down opens the strip into the sky computed for exactly
+  /// this repo's last [historyLimit] commits.
+  final String repoPath;
+  final int historyLimit;
+
   const _TimelineStrip({
+    super.key,
     required this.commits,
     required this.selectedHash,
     required this.onSelected,
@@ -1072,6 +1350,8 @@ class _TimelineStrip extends StatefulWidget {
     required this.detailCache,
     required this.detailCacheVersion,
     required this.hoverNotifier,
+    required this.repoPath,
+    required this.historyLimit,
     this.trunkHashes = const {},
     this.previewCommits = const [],
     this.previewLabel,
@@ -1143,6 +1423,65 @@ class _TimelineStripState extends State<_TimelineStrip>
   );
   final ValueNotifier<String?> _resonanceAuthorNotifier = ValueNotifier(null);
 
+  // ── WORLDLINE POSTURE ──────────────────────────────────────────────────
+  /// The single opening scalar. 0 = strip at rest, 1 = full spacetime view.
+  /// Drives the panel height and the projection; the painter and the
+  /// hit-test both read it, so the surface never disagrees with itself.
+  final ValueNotifier<double> _theta = ValueNotifier(0.0);
+  /// True while the caption-bar drag handle is hovered OR keyboard-focused
+  /// — reveals the grip. Two independent input channels feed one cue, so
+  /// they're tracked separately and OR-ed: a mouse exit must not hide the
+  /// grip from a keyboard user parked on the handle, and vice versa.
+  final ValueNotifier<bool> _handleHover = ValueNotifier(false);
+  bool _handleHovered = false;
+  bool _handleFocused = false;
+  void _syncHandleCue() =>
+      _handleHover.value = _handleHovered || _handleFocused;
+
+  /// Derived posture bit for the handle's Semantics label ("open" vs
+  /// "close"). A ValueNotifier so the label can rebuild through a scoped
+  /// ValueListenableBuilder — it flips only when θ crosses 0.5 (twice per
+  /// gesture at most), so the semantics wrapper never rides the per-tick
+  /// animation the way the old whole-subtree AnimatedBuilder did.
+  final ValueNotifier<bool> _postureOpen = ValueNotifier(false);
+  void _syncPostureOpen() => _postureOpen.value = _theta.value > 0.5;
+
+  /// The panel's painted height at the CURRENT θ. Pointer callbacks and
+  /// the sizing builder both compute through this so no event handler
+  /// ever captures a stale openHeight snapshot from build time.
+  double _openHeightFor(double totalHeight) =>
+      totalHeight * (1.0 + _kWorldlineOpenFactor * _theta.value);
+
+  /// Release-spring / keyboard-toggle driver. UNBOUNDED: its value IS θ
+  /// (clamped into [0,1] by [_tickSpring]) so a [SpringSimulation] can
+  /// inherit the hand's release velocity directly in θ-space.
+  late final AnimationController _thetaSpringCtrl =
+      AnimationController.unbounded(vsync: this);
+
+  /// One-shot settle: dots roll from the flat horizon into the sky, per-
+  /// dot staggered along the time axis (see [_worldlineDotSettle]). Runs
+  /// when the field lands mid-open AND on a detent-open with a warm
+  /// field. ≤120ms total window; reduce-motion skips (value pinned to 1).
+  late final AnimationController _fieldSettleCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 120),
+  );
+
+  WorldlineField? _field;
+  String _fieldKey = '';
+  int _fieldGen = 0;
+  // Failure memo. `_fieldKey` means "this request is handled" and a failed
+  // load must NOT get to keep that claim (that made one transient git/isolate
+  // hiccup flatten the window forever). But `_maybeLoadField` runs on every
+  // build, so bare retry would hammer git while a failure persists. The memo
+  // holds the line between the two: a failed key is skipped by builds and
+  // released by the next OPEN GESTURE — retry is user-intent-driven, one
+  // isolate per pull at worst, never one per frame.
+  String _fieldFailedKey = '';
+
+  /// Escape closes the open posture; focus is claimed on drag/toggle open.
+  final FocusNode _stripFocus = FocusNode(skipTraversal: true);
+
   static String _signatureOf(List<CommitHistoryEntry> commits) {
     if (commits.isEmpty) return '';
     return '${commits.length}|${commits.first.commitHash}|${commits.last.commitHash}';
@@ -1155,6 +1494,14 @@ class _TimelineStripState extends State<_TimelineStrip>
     // Mounted mid-hover (e.g. repo strip rebuilt under the cursor):
     // show the overlay settled rather than replaying the entrance.
     if (_shownPreview.isNotEmpty) _previewIntroCtrl.value = 1.0;
+    _thetaSpringCtrl.addListener(_tickSpring);
+    _theta.addListener(_syncPostureOpen);
+    // First field request — didUpdateWidget owns every subsequent one.
+    _maybeLoadField();
+  }
+
+  void _tickSpring() {
+    _theta.value = _thetaSpringCtrl.value.clamp(0.0, 1.0);
   }
 
   @override
@@ -1204,7 +1551,131 @@ class _TimelineStripState extends State<_TimelineStrip>
     _churnIntroCtrl.dispose();
     _previewIntroCtrl.dispose();
     _resonanceCtrl.dispose();
+    _thetaSpringCtrl.dispose();
+    _fieldSettleCtrl.dispose();
+    _theta.dispose();
+    _handleHover.dispose();
+    _postureOpen.dispose();
+    _stripFocus.dispose();
     super.dispose();
+  }
+
+  // ── WORLDLINE gesture + field ───────────────────────────────────────────
+
+  /// Load (or peek) the structural field for the current repo+window+tip.
+  /// Warm on every relevant build; when it lands mid-open, ease it in.
+  void _maybeLoadField() {
+    if (widget.commits.isEmpty) return;
+    final tip = widget.commits.first.commitHash;
+    final key = worldlineFieldKey(widget.repoPath, widget.historyLimit, tip);
+    if (key == _fieldKey || key == _fieldFailedKey) return;
+    _fieldKey = key;
+    final gen = ++_fieldGen;
+    final warm = peekWorldlineField(widget.repoPath, widget.historyLimit, tip);
+    if (warm != null) {
+      _field = warm;
+      _fieldSettleCtrl.value = 1.0; // already known → no migration
+      return;
+    }
+    // Not ready: dots stay on the horizon until it lands.
+    _field = null;
+    _fieldSettleCtrl.value = 0.0;
+    loadWorldlineField(widget.repoPath, widget.historyLimit, tip)
+        .then((field) {
+      if (!mounted || gen != _fieldGen) return;
+      setState(() => _field = field);
+      // If the user is already in the opened posture, ease the sky in;
+      // otherwise it's just cached for the next pull.
+      if (_theta.value > 0.0 && !context.reduceMotionRead) {
+        _fieldSettleCtrl.forward(from: 0.0);
+      } else {
+        _fieldSettleCtrl.value = 1.0;
+      }
+    }).catchError((_) {
+      if (!mounted || gen != _fieldGen) return;
+      // Release the "handled" claim and memo the failure: the horizon
+      // posture stays (empty field), but the request is retryable again
+      // the next time the user pulls the strip open.
+      setState(() {
+        _field = WorldlineField.empty;
+        _fieldFailedKey = key;
+        _fieldKey = '';
+      });
+      _fieldSettleCtrl.value = 1.0;
+    });
+  }
+
+  /// Map a vertical drag delta to θ. [restHeight] is H0 (the strip's rest
+  /// height), so dragging down by dy grows the panel by exactly dy — the
+  /// horizon bar tracks the finger (drawer-pull).
+  void _dragTheta(double dy, double restHeight) {
+    _thetaSpringCtrl.stop();
+    final span = _kWorldlineOpenFactor * max(restHeight, 1.0);
+    _theta.value = (_theta.value + dy / span).clamp(0.0, 1.0);
+  }
+
+  /// Drive θ to a detent with a critically-damped spring, inheriting
+  /// [velocity] (θ-units/s) from the hand. Motion-rate scales the clock:
+  /// ω′ = ω·rate ⇒ stiffness·rate², damping·rate (settle time ∝ 1/rate).
+  /// Reduce-motion snaps. Opening from rest with a warm field replays the
+  /// settle roll-in so the dots sweep into the sky on detent-open too.
+  void _animateThetaTo(double target, {double velocity = 0}) {
+    final opening = target > 0.5 && _theta.value < 0.05;
+    if (context.reduceMotionRead) {
+      _thetaSpringCtrl.stop();
+      _theta.value = target;
+      _fieldSettleCtrl.value = 1.0;
+      return;
+    }
+    if (opening && _field != null && _fieldSettleCtrl.value >= 1.0) {
+      _fieldSettleCtrl.forward(from: 0.0);
+    }
+    final rate = context.motionRateRead;
+    final spring = rate == 1.0
+        ? _kWorldlineSpring
+        : SpringDescription(
+            mass: _kWorldlineSpring.mass,
+            stiffness: _kWorldlineSpring.stiffness * rate * rate,
+            damping: _kWorldlineSpring.damping * rate,
+          );
+    _thetaSpringCtrl.animateWith(
+        SpringSimulation(spring, _theta.value, target, velocity));
+  }
+
+  /// Release: a fling (|vy| ≥ the drawer threshold) picks the detent in
+  /// the fling direction regardless of position and hands its momentum to
+  /// the spring; a slow release keeps nearest-detent. [restHeight] is H0,
+  /// so vy/(f·H0) converts pixel velocity into θ-space exactly as the
+  /// drag itself maps pixels to θ.
+  void _springToDetent(DragEndDetails d, double restHeight) {
+    final vy = d.velocity.pixelsPerSecond.dy;
+    final vTheta = vy / (_kWorldlineOpenFactor * max(restHeight, 1.0));
+    final double target;
+    if (vy.abs() >= _kWorldlineFlingPxPerSec) {
+      target = vy > 0 ? 1.0 : 0.0; // pull down opens, push up closes
+    } else {
+      target = _theta.value < 0.5 ? 0.0 : 1.0;
+    }
+    _animateThetaTo(target, velocity: vTheta);
+  }
+
+  /// Keyboard / screen-reader activate: toggle open↔closed.
+  void _toggleTheta() {
+    final opening = _theta.value <= 0.5;
+    if (opening) {
+      // Claim focus only when nothing in the strip subtree holds it —
+      // a pointer tap needs the claim so Esc works afterwards, but a
+      // keyboard activation from the handle already has focus INSIDE the
+      // subtree (Esc bubbles up from there), and stealing it would rip
+      // the user off their tab position.
+      if (!_stripFocus.hasFocus) _stripFocus.requestFocus();
+      // Opening is the retry gesture, same as a pull (see drag start).
+      if (_fieldFailedKey.isNotEmpty) {
+        _fieldFailedKey = '';
+        _maybeLoadField();
+      }
+    }
+    _animateThetaTo(opening ? 1.0 : 0.0);
   }
 
   void _rebuildLayout() {
@@ -1324,7 +1795,13 @@ class _TimelineStripState extends State<_TimelineStrip>
   void didUpdateWidget(_TimelineStrip old) {
     super.didUpdateWidget(old);
     final newSig = _signatureOf(widget.commits);
-    final trunkChanged = old.trunkHashes.length != widget.trunkHashes.length;
+    // Lane assignment derives from trunk MEMBERSHIP (`contains` per commit
+    // in _buildLayout), so invalidation must compare membership too. A
+    // length shortcut misses same-cardinality swaps — branch switch or
+    // trunk recompute exchanging hashes one-for-one kept stale lanes,
+    // edges, and preview anchoring. setEquals is O(n) over a ≤window-sized
+    // set, only on widget updates — exactness is affordable here.
+    final trunkChanged = !setEquals(old.trunkHashes, widget.trunkHashes);
     if (_signatureOf(old.commits) != newSig || trunkChanged) {
       // Real commits or trunk set changed → full layout invalidation.
       _layout = null;
@@ -1335,6 +1812,12 @@ class _TimelineStripState extends State<_TimelineStrip>
       _rebuildChurnMaps();
     }
     _syncPreview();
+    // Field lifecycle rides widget-update boundaries, not build. Every
+    // input to the field key (repoPath, historyLimit, tip commit) arrives
+    // through a widget update, so this is the complete set of trigger
+    // points — build stays side-effect-free and the key guard inside
+    // makes repeat calls a string compare.
+    _maybeLoadField();
   }
 
   /// Preview overlay state machine. Signature match against
@@ -1382,20 +1865,52 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// the user means. Lane separation is small relative to horizontal
   /// density, so dy gets a modest weight rather than full Euclidean
   /// dominance.
-  int? _nearestIndex(Offset pos, List<double> baseXs, double laneStep) {
+  int? _nearestIndex(
+      Offset pos, List<double> baseXs, double laneStep, double height) {
     if (baseXs.isEmpty || _layout == null) return null;
     // Preview dots are only pointer-targets while actually visible —
     // a strand mid-exit (or not yet populated in) shouldn't swallow
     // hovers and clicks aimed at the real rail behind it.
     final previewTargetable = _previewIntroCtrl.value > 0.35;
+    // Hit-test against the SAME projected positions the painter draws, so
+    // clicking a commit lands on it at every θ. At θ==0 the projection is
+    // the identity, so this is byte-for-byte the original rail behaviour
+    // (including the 1.4 dy lane-disambiguation weight).
+    final theta = _theta.value;
+    final worldActive = theta > 0.0005;
+    final settle = _fieldSettleCtrl.value;
+    final previewOff = _shownPreview.length;
+    final realCount = _layout!.nodes.length - previewOff;
+    // The 1.4 dy weight compensates the flat strip's anisotropy (lane
+    // separation is small relative to horizontal density). The projection
+    // dissolves lane structure LINEARLY in θ (yProj = yStrip + Δ·θ), so
+    // the compensation must fade on the very same scalar — a boolean
+    // regime switch here diverged from the painted geometry whenever the
+    // field was still loading or the settle hadn't run (hit-testing with
+    // opened weights against effectively-flat pixels). A weight that is a
+    // function of the same θ that moves the dots cannot disagree with them.
+    final dyWeight = 1.4 + (1.0 - 1.4) * theta;
     int nearest = -1;
     double best = double.infinity;
     for (int i = 0; i < baseXs.length && i < _layout!.nodes.length; i++) {
       final node = _layout!.nodes[i];
       if (node.isPreview && !previewTargetable) continue;
-      final dx = baseXs[i] - pos.dx;
-      final ny = _kVertInset + node.lane * laneStep + laneStep / 2;
-      final dy = (ny - pos.dy) * 1.4;
+      final stripY = _kVertInset + node.lane * laneStep + laneStep / 2;
+      final coord = (worldActive && _field != null)
+          ? _field!.coordFor(node.entry.commitHash)
+          : WorldlineCoord.absent;
+      final proj = _projectWorldline(
+        xStrip: baseXs[i],
+        yStrip: stripY,
+        coord: coord,
+        theta: theta,
+        // Same per-dot stagger the painter applies, so a click mid-roll
+        // still lands on the dot where it's drawn.
+        settle: _worldlineDotSettle(settle, max(i - previewOff, 0), realCount),
+        height: height,
+      );
+      final dx = proj.center.dx - pos.dx;
+      final dy = (proj.center.dy - pos.dy) * dyWeight;
       final d = dx * dx + dy * dy;
       if (d < best) {
         best = d;
@@ -1405,8 +1920,9 @@ class _TimelineStripState extends State<_TimelineStrip>
     return nearest < 0 ? null : nearest;
   }
 
-  void _selectNearest(Offset pos, List<double> baseXs, double laneStep) {
-    final i = _nearestIndex(pos, baseXs, laneStep);
+  void _selectNearest(
+      Offset pos, List<double> baseXs, double laneStep, double height) {
+    final i = _nearestIndex(pos, baseXs, laneStep, height);
     if (i == null) return;
     final hash = _layout!.nodes[i].entry.commitHash;
     widget.hoverNotifier.value = hash;
@@ -1425,7 +1941,10 @@ class _TimelineStripState extends State<_TimelineStrip>
     // canvas text can't inherit DefaultTextStyle on its own.
     final inheritedStyle = DefaultTextStyle.of(context).style;
 
-    return LayoutBuilder(builder: (ctx, constraints) {
+    return Focus(
+      focusNode: _stripFocus,
+      onKeyEvent: _onStripKey,
+      child: LayoutBuilder(builder: (ctx, constraints) {
       final width = max(constraints.maxWidth, 64.0);
       // Height is a function of RESERVED lanes, not currently-drawn
       // lanes: real lanes + one preview lane whenever chips exist.
@@ -1451,11 +1970,26 @@ class _TimelineStripState extends State<_TimelineStrip>
         width,
         _percents,
         _kLeftPad + _kNodeRadius,
-        _kNodeRadius,
+        // Mirror the left inset. A bare _kNodeRadius put the newest
+        // commit's center one radius from the clip edge, so anything
+        // wider than the base dot — selection ring, hover ring, the
+        // worldline's churn-grown radius — painted half-clipped.
+        _kLeftPad + _kNodeRadius,
         firstReal: _shownPreview.length,
       );
-      return Container(
-        height: totalHeight,
+      // REPAINT, DON'T REBUILD. The panel physically grows with θ (the
+      // drawer-pull): height eases from H0 (totalHeight) to 3.2×H0, so
+      // exactly one thing must ride the θ tick: the SizedBox that sizes
+      // the paint surface. Everything else — decorated surface, scrub
+      // Listener, painter, handle band, semantics — is `content`, built
+      // ONCE per widget build and re-parented through the sizing
+      // builder's `child`. θ and settle reach the painter as live-read
+      // Listenables wired into `repaint:` (the same idiom hover uses), so
+      // a drag/spring/settle tick costs one box relayout + one repaint —
+      // no subtree rebuild, no fresh painter. At θ==0 the height is
+      // exactly totalHeight and nothing worldline-gated paints: the rest
+      // posture stays byte-identical.
+      final content = Container(
         decoration: BoxDecoration(
           color: widget.tokens.surface0,
           border: Border(
@@ -1463,80 +1997,189 @@ class _TimelineStripState extends State<_TimelineStrip>
                 color: widget.tokens.chromeBorder.withValues(alpha: 0.1)),
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: _kHorizPad),
-          child: Listener(
-            onPointerHover: (e) {
-              _hoverXNotifier.value = e.localPosition.dx;
-              final hash = _nearestHash(e.localPosition, baseXs, laneStep);
-              widget.hoverNotifier.value = hash;
-              _updateResonance(hash);
-            },
-            onPointerDown: (e) {
-              _hoverXNotifier.value = e.localPosition.dx;
-              _dragging = true;
-              _selectNearest(e.localPosition, baseXs, laneStep);
-            },
-            onPointerMove: (e) {
-              if (_dragging) {
+        child: Stack(fit: StackFit.expand, children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: _kHorizPad),
+            child: Listener(
+              // Every callback derives the CURRENT open height via
+              // _openHeightFor — no handler holds a θ snapshot from
+              // build time, so hit-testing stays honest mid-animation.
+              onPointerHover: (e) {
                 _hoverXNotifier.value = e.localPosition.dx;
-                _selectNearest(e.localPosition, baseXs, laneStep);
-              }
-            },
-            onPointerUp: (_) => _dragging = false,
-            // Wheel over the strip steps the selection one commit at
-            // a time — scroll down walks older, up walks newer. Turns
-            // the rail into a scrubber you can nudge without aiming.
-            onPointerSignal: (e) {
-              if (e is! PointerScrollEvent || e.scrollDelta.dy == 0) return;
-              _stepSelection(e.scrollDelta.dy > 0 ? 1 : -1);
-            },
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              onExit: (_) {
-                _hoverXNotifier.value = null;
-                widget.hoverNotifier.value = null;
-                _updateResonance(null);
+                final hash = _nearestHash(e.localPosition, baseXs,
+                    laneStep, _openHeightFor(totalHeight));
+                widget.hoverNotifier.value = hash;
+                _updateResonance(hash);
               },
-              // RepaintBoundary isolates the timeline's repaint region
-              // so the header/siblings don't get invalidated on every
-              // hover tick.
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _TimelinePainter(
-                    layout: _layout!,
-                    baseXs: baseXs,
-                    selectedHash: widget.selectedHash,
-                    hoveredHashListenable: widget.hoverNotifier,
-                    hoverXListenable: _hoverXNotifier,
-                    tokens: widget.tokens,
-                    width: width,
-                    height: height,
-                    vertInset: _kVertInset,
-                    laneStep: laneStep,
-                    churnNorm: _churnNorm,
-                    netRatio: _netRatio,
-                    fileSpread: _fileSpread,
-                    targetColors: _churnTargetColors,
-                    churnIntro: _churnIntroCtrl,
-                    previewCommits: _shownPreview,
-                    previewIntro: _previewIntroCtrl,
-                    resonance: _resonanceCtrl,
-                    resonanceAuthorListenable: _resonanceAuthorNotifier,
-                    localOnlyHashes: widget.localOnlyHashes,
-                    detailByHash: _detailByHash,
-                    previewLabel: widget.previewLabel,
-                    captionFontFamily: inheritedStyle.fontFamily,
-                    captionFontFallback: inheritedStyle.fontFamilyFallback,
+              onPointerDown: (e) {
+                _hoverXNotifier.value = e.localPosition.dx;
+                _dragging = true;
+                _selectNearest(e.localPosition, baseXs, laneStep,
+                    _openHeightFor(totalHeight));
+              },
+              onPointerMove: (e) {
+                if (_dragging) {
+                  _hoverXNotifier.value = e.localPosition.dx;
+                  _selectNearest(e.localPosition, baseXs, laneStep,
+                      _openHeightFor(totalHeight));
+                }
+              },
+              onPointerUp: (_) => _dragging = false,
+              // Wheel over the strip steps the selection one commit
+              // at a time — scroll down walks older, up walks newer.
+              onPointerSignal: (e) {
+                if (e is! PointerScrollEvent || e.scrollDelta.dy == 0) {
+                  return;
+                }
+                _stepSelection(e.scrollDelta.dy > 0 ? 1 : -1);
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                onExit: (_) {
+                  _hoverXNotifier.value = null;
+                  widget.hoverNotifier.value = null;
+                  _updateResonance(null);
+                },
+                // RepaintBoundary isolates the timeline's repaint
+                // region so the header/siblings don't get
+                // invalidated on every hover tick.
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _TimelinePainter(
+                      layout: _layout!,
+                      baseXs: baseXs,
+                      selectedHash: widget.selectedHash,
+                      hoveredHashListenable: widget.hoverNotifier,
+                      hoverXListenable: _hoverXNotifier,
+                      tokens: widget.tokens,
+                      width: width,
+                      height: height,
+                      vertInset: _kVertInset,
+                      laneStep: laneStep,
+                      churnNorm: _churnNorm,
+                      netRatio: _netRatio,
+                      fileSpread: _fileSpread,
+                      targetColors: _churnTargetColors,
+                      churnIntro: _churnIntroCtrl,
+                      previewCommits: _shownPreview,
+                      previewIntro: _previewIntroCtrl,
+                      resonance: _resonanceCtrl,
+                      resonanceAuthorListenable: _resonanceAuthorNotifier,
+                      localOnlyHashes: widget.localOnlyHashes,
+                      detailByHash: _detailByHash,
+                      previewLabel: widget.previewLabel,
+                      captionFontFamily: inheritedStyle.fontFamily,
+                      captionFontFallback: inheritedStyle.fontFamilyFallback,
+                      thetaListenable: _theta,
+                      fieldSettle: _fieldSettleCtrl,
+                      field: _field,
+                      handleHoverListenable: _handleHover,
+                    ),
+                    // Fills the θ-sized surface (the outer SizedBox is the
+                    // one thing that relayouts per tick), replacing the
+                    // old per-tick `size:` reconstruction.
+                    child: const SizedBox.expand(),
                   ),
-                  size: Size(width, totalHeight),
                 ),
               ),
             ),
           ),
+          // The caption bar IS the drag handle: a thin band at the
+          // bottom edge. Pull down to open the worldline, back up to
+          // close. Activate (keyboard / screen-reader) toggles.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: _kWorldlineHandleBand,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeUpDown,
+              onEnter: (_) {
+                _handleHovered = true;
+                _syncHandleCue();
+              },
+              onExit: (_) {
+                _handleHovered = false;
+                _syncHandleCue();
+              },
+              // Only the Semantics wrapper listens to the posture bit —
+              // the label flips at the 0.5 crossing (twice per gesture,
+              // not per tick) and the detector/gesture subtree passes
+              // through `child` untouched.
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _postureOpen,
+                // THE keyboard path to the posture. The strip's own
+                // focus node is skipTraversal (it's the Esc catcher,
+                // not a tab stop), so without this detector the handle
+                // was pointer-only despite its toggle contract. Tab
+                // reaches it, the grip reveals on focus, Enter/Space
+                // (default ActivateIntent bindings) toggle open↔closed,
+                // and Esc bubbles from here to the strip Focus above.
+                child: FocusableActionDetector(
+                  onShowFocusHighlight: (f) {
+                    _handleFocused = f;
+                    _syncHandleCue();
+                  },
+                  actions: <Type, Action<Intent>>{
+                    ActivateIntent: CallbackAction<ActivateIntent>(
+                      onInvoke: (_) {
+                        _toggleTheta();
+                        return null;
+                      },
+                    ),
+                  },
+                  child: GestureDetector(
+                    // Opaque so a pull on the band is owned by the handle
+                    // and never leaks through to the scrub Listener behind.
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragStart: (_) {
+                      _thetaSpringCtrl.stop();
+                      _stripFocus.requestFocus();
+                      // A fresh pull releases any failure memo — the
+                      // gesture is the retry.
+                      if (_fieldFailedKey.isNotEmpty) {
+                        _fieldFailedKey = '';
+                        _maybeLoadField();
+                      }
+                    },
+                    onVerticalDragUpdate: (d) =>
+                        _dragTheta(d.primaryDelta ?? 0.0, totalHeight),
+                    onVerticalDragEnd: (d) => _springToDetent(d, totalHeight),
+                    onTap: _toggleTheta,
+                  ),
+                ),
+                builder: (_, open, child) => Semantics(
+                  button: true,
+                  label:
+                      open ? 'Close worldline' : 'Drag to open worldline',
+                  onTap: _toggleTheta,
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        ]),
+      );
+      return ValueListenableBuilder<double>(
+        valueListenable: _theta,
+        child: content,
+        builder: (_, __, child) => SizedBox(
+          height: _openHeightFor(totalHeight),
+          child: child,
         ),
       );
-    });
+    }));
+  }
+
+  /// Escape springs the strip shut when it's open.
+  KeyEventResult _onStripKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.escape &&
+        _theta.value > 0.0) {
+      _animateThetaTo(0.0);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   /// Moves the selection ±1 through the REAL commit list (previews
@@ -1596,8 +2239,9 @@ class _TimelineStripState extends State<_TimelineStrip>
     return (norm, ratio, spread);
   }
 
-  String? _nearestHash(Offset pos, List<double> baseXs, double laneStep) {
-    final i = _nearestIndex(pos, baseXs, laneStep);
+  String? _nearestHash(
+      Offset pos, List<double> baseXs, double laneStep, double height) {
+    final i = _nearestIndex(pos, baseXs, laneStep, height);
     return i == null ? null : _layout!.nodes[i].entry.commitHash;
   }
 }
@@ -1939,6 +2583,11 @@ class _HistoryPageState extends State<HistoryPage> {
   // Shift-select rebase range
   int? _rebaseRangeEndIndex;
   bool get _isRebaseMode => _rebaseRangeEndIndex != null;
+
+  /// Reaches the strip's posture from page chrome: the 'History' header
+  /// text toggles the worldline open/closed. Same-file private State
+  /// access — the header and the strip are two limbs of one surface.
+  final GlobalKey<_TimelineStripState> _timelineStripKey = GlobalKey();
 
   String? _lastRepo;
   int _lastActivationEpoch = -1;
@@ -2990,12 +3639,27 @@ class _HistoryPageState extends State<HistoryPage> {
         height: 36,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(children: [
-          Text('History',
-              style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.05)),
+          // The page title doubles as the worldline toggle — visually
+          // unchanged (the posture is discoverable via the handle; this
+          // is a power-user shortcut, cursor + semantics only).
+          Semantics(
+            button: true,
+            label: 'Toggle worldline',
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    _timelineStripKey.currentState?._toggleTheta(),
+                child: Text('History',
+                    style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.05)),
+              ),
+            ),
+          ),
           const Spacer(),
           Row(children: [
             Text('Viewing last',
@@ -3021,6 +3685,7 @@ class _HistoryPageState extends State<HistoryPage> {
 
       if (_commits.isNotEmpty)
         _TimelineStrip(
+          key: _timelineStripKey,
           commits: _commits,
           selectedHash: _selectedHash,
           onSelected: (hash) {
@@ -3040,6 +3705,8 @@ class _HistoryPageState extends State<HistoryPage> {
           detailCache: _detailCache,
           detailCacheVersion: _detailCacheVersion,
           hoverNotifier: _railHover,
+          repoPath: repoPath,
+          historyLimit: _effectiveHistoryLimit,
           trunkHashes: _trunkHashes,
           previewCommits: _activePreviewCommits,
           previewLabel: _previewBranch,

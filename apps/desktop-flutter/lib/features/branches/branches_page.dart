@@ -293,6 +293,25 @@ class _BranchesPageState extends State<BranchesPage> {
   String? _lastRepo;
   String? _hoveredTag;
 
+  // Task 1 — anti-teleport pin. The branch list is enriched by async
+  // facts that arrive AFTER first paint: the absorption probe
+  // (`_runAbsorptionDetection` flips branches to the corpse band) and the
+  // worktree-lease state (`WorktreeState.desks` lands and promotes a
+  // branch to the leased-live band). Re-running `_evidenceSorted` when
+  // those arrive would visibly reorder rows under the user's eyes.
+  //
+  // LAW chosen: PIN, not animate. The list is a plain Column inside a
+  // SingleChildScrollView — honest reorder animation would mean rebuilding
+  // it as an AnimatedList/custom choreography, disproportionate here. So a
+  // branch NEVER changes slot once painted for a repo session: we freeze
+  // the first-paint evidence order and reuse it, while late facts morph
+  // each row's MATERIAL in place (dim, whisper reason, room glyph). The
+  // order re-derives only on a natural full rebuild — repo switch or
+  // manual refresh — both of which route through `_load`, which clears
+  // the pin. That makes a silent mid-view position jump unrepresentable.
+  List<String>? _pinnedBranchOrder;
+  String? _pinnedOrderRepo;
+
   final _newBranchCtrl = TextEditingController();
   final DreamHintController<String> _branchNameDream = DreamHintController();
   bool _actionRunning = false;
@@ -633,6 +652,10 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     setState(() {
       _loading = false;
+      // A fresh load is a natural full rebuild — drop the anti-teleport
+      // pin so first paint re-derives the evidence order from scratch.
+      _pinnedBranchOrder = null;
+      _pinnedOrderRepo = null;
       if (bResult.ok) {
         _branches = bResult.data!;
       } else {
@@ -642,14 +665,14 @@ class _BranchesPageState extends State<BranchesPage> {
         _tags = tResult.data!;
       }
     });
-    // Squash-merge detection runs in the background after the list
-    // renders. Cost is N parallel `git cherry` probes — fast on
-    // typical repos but can be measurable on large ones; deferring
-    // it past the initial paint keeps the lens snappy. The branch
-    // list rebuilds when results arrive and the `squashed` pill
-    // appears on each detected row.
+    // Absorption detection runs in the background after the list
+    // renders. Cost is N parallel `git merge-tree --write-tree` probes
+    // (or legacy `git cherry` on git < 2.38) — fast on typical repos but
+    // measurable on large ones; deferring it past the initial paint keeps
+    // the lens snappy. The list rebuilds when results arrive and each
+    // absorbed row dims into the corpse band whispering its reason.
     if (bResult.ok) {
-      unawaited(_runSquashDetection(repo, bResult.data!));
+      unawaited(_runAbsorptionDetection(repo, bResult.data!));
     }
     stopwatch.stop();
     await DiagnosticsState.instance.recordUiTiming(
@@ -673,11 +696,20 @@ class _BranchesPageState extends State<BranchesPage> {
     }
   }
 
-  /// Background pass: probe each non-current branch with `git cherry`
-  /// to identify squash-merged branches that `--merged` misses. Runs
-  /// after the initial branch list paints so the lens stays snappy.
-  /// Bails on a stale repo (mid-flight repo switch).
-  Future<void> _runSquashDetection(
+  /// Background pass folding the ABSORPTION LAW and legacy squash detection
+  /// into one probe cycle: judge each non-current branch by content, not
+  /// ancestry. The law is existential over history — SOME first-parent base
+  /// commit since the fork into which merging the branch was a no-op
+  /// (`git merge-tree --write-tree <c> <branch>` == c's tree). Once
+  /// witnessed, permanent: base evolving afterwards cannot revoke delivery.
+  /// Catches transplants / cherry-picks / squashes / amended replays alike.
+  /// On git < 2.38 [detectAbsorbedBranches] falls back to the legacy
+  /// `git cherry` squash check. Runs after the initial paint so the lens
+  /// stays snappy; bails on a stale repo (mid-flight repo switch).
+  ///
+  /// Base = the repo default branch (same base squash detection and the
+  /// merge-target flows use), resolved by [defaultBranchName].
+  Future<void> _runAbsorptionDetection(
     String repo,
     List<BranchInfo> seed,
   ) async {
@@ -685,10 +717,17 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     final base = defaultRes.ok ? defaultRes.data : null;
     if (base == null || base.isEmpty) return;
-    final updated = await detectSquashMergedBranches(
+    // Leased branches (open worktrees) sitting exactly on base are trivial
+    // no-ops; the probe skips them so we don't spend a merge-tree on them.
+    final leasedNames = <String>{
+      for (final d in context.read<WorktreeState>().desks)
+        if (d.branch != null && d.branch!.isNotEmpty) d.branch!,
+    };
+    final updated = await detectAbsorbedBranches(
       repo,
       seed,
       baseRef: base,
+      leasedNames: leasedNames,
     );
     if (!mounted) return;
     // Re-check that the active repo hasn't changed underneath us;
@@ -2828,7 +2867,13 @@ class _BranchesPageState extends State<BranchesPage> {
         }
       }
     } else if (_lens == _BranchesLens.issues && _issues != null) {
-      final visible = _issues!.where(_issueMatchesFilters).toList();
+      // Keyboard focus indexes the DISPLAYED order, so apply the same
+      // persisted sort the lens body uses (Task 2) — otherwise J/K would
+      // land on a different row than the eye expects.
+      final visible = _sortIssues(
+        _issues!.where(_issueMatchesFilters).toList(),
+        context.read<PreferencesState>().issuesSortDescending,
+      );
       if (visible.isEmpty) return KeyEventResult.ignored;
       if (key == LogicalKeyboardKey.keyJ ||
           key == LogicalKeyboardKey.arrowDown) {
@@ -2956,6 +3001,11 @@ class _BranchesPageState extends State<BranchesPage> {
       _viewerLogin = '';
       _prsError = null;
       _issuesError = null;
+      // Drop the anti-teleport pin on repo switch so the incoming repo's
+      // branches paint in fresh evidence order rather than inheriting the
+      // outgoing repo's frozen sequence.
+      _pinnedBranchOrder = null;
+      _pinnedOrderRepo = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _load(repoPath));
     }
 
@@ -3105,6 +3155,13 @@ class _BranchesPageState extends State<BranchesPage> {
     // The order and the per-row material are the only signals — no
     // headings.
     final sorted = _evidenceSorted(_branches, leases.keys.toSet());
+    // Anti-teleport pin (Task 1): hold the first-paint order for the
+    // session so async squash/lease facts morph material in place instead
+    // of reordering rows. The pin re-derives on repo switch / refresh via
+    // `_load`. Classification below still reads LIVE facts, so a row's
+    // band material (dim, whisper, room glyph) updates even while its slot
+    // stays put.
+    final orderedBranches = _pinnedOrder(sorted, repoPath);
 
     // Dream a branch name from the working-tree diff while the ghost
     // creator is open and empty — same engine the commit composer uses,
@@ -3119,7 +3176,7 @@ class _BranchesPageState extends State<BranchesPage> {
 
     final rows = <Widget>[];
     _BranchStratum? prev;
-    for (final b in sorted) {
+    for (final b in orderedBranches) {
       // The current branch's own room is where the user is sitting —
       // HEAD material already says "you are here", so only non-current
       // branches read as leased.
@@ -3193,31 +3250,121 @@ class _BranchesPageState extends State<BranchesPage> {
         // end — glyph and line compose one divider; no loud "Tags"
         // heading. textMuted glyph + subtle-tier line so the pair reads
         // together instead of a floating orphan over an invisible rule.
+        // The glyph doubles as the sort-direction flip — same persisted
+        // display-law idiom as the ISSUES header. `git tag -l` emits
+        // refname order (oldest release first for version tags), so
+        // descending (default) is simply the reversed list: releases
+        // read newest-first out of the box.
         if (_tags.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(0, 6, 0, 10),
-            child: Row(children: [
-              AppIcon(name: 'tag', size: 11, color: t.textMuted),
-              const SizedBox(width: 6),
-              Expanded(
-                  child: Container(height: 1, color: t.chromeBorderSubtle)),
-            ]),
-          ),
-          ..._tags.map((tag) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: _TagCard(
-                  tag: tag,
-                  tokens: t,
-                  hovered: _hoveredTag == tag.name,
-                  actionRunning: _actionRunning,
-                  onHoverChange: (v) =>
-                      setState(() => _hoveredTag = v ? tag.name : null),
-                  onDelete: () => _deleteTag(repoPath, tag.name),
+          Builder(builder: (context) {
+            final tagsDescending = context.select<PreferencesState, bool>(
+              (s) => s.tagsSortDescending,
+            );
+            final orderedTags =
+                tagsDescending ? _tags.reversed.toList() : _tags;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  // The glyph's own hit padding (6 vertical, 6 right)
+                  // already contributes the breathing room and the
+                  // glyph→line gap, so the outer padding shrinks by the
+                  // same amount — net geometry identical to the old
+                  // static divider.
+                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+                  child: Row(children: [
+                    _buildTagsSortGlyph(t, tagsDescending),
+                    Expanded(
+                        child: Container(
+                            height: 1, color: t.chromeBorderSubtle)),
+                  ]),
                 ),
-              )),
+                for (final tag in orderedTags)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: _TagCard(
+                      tag: tag,
+                      tokens: t,
+                      hovered: _hoveredTag == tag.name,
+                      actionRunning: _actionRunning,
+                      onHoverChange: (v) =>
+                          setState(() => _hoveredTag = v ? tag.name : null),
+                      onDelete: () => _deleteTag(repoPath, tag.name),
+                    ),
+                  ),
+              ],
+            );
+          }),
         ],
       ]),
     );
+  }
+
+  /// The engraved tag glyph on the divider, made live as the tags
+  /// sort-direction flip (same treatment as the ISSUES header chevron).
+  /// Padded opaque hit box gives the small glyph a comfortable target
+  /// without moving the divider geometry; the glyph itself flips
+  /// vertically as the direction cue.
+  Widget _buildTagsSortGlyph(AppTokens t, bool descending) {
+    return Semantics(
+      button: true,
+      label: descending ? 'tags, newest first' : 'tags, oldest first',
+      hint: 'flip sort direction',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => context
+              .read<PreferencesState>()
+              .setTagsSortDescending(!descending),
+          child: Padding(
+            // Right/vertical only — the glyph stays engraved at the
+            // divider's left edge; the padding is pure hit area (the
+            // right 6px doubles as the glyph→line gap).
+            padding: const EdgeInsets.fromLTRB(0, 6, 6, 6),
+            child: AnimatedRotation(
+              turns: descending ? 0.0 : 0.5,
+              duration: context.motion(const Duration(milliseconds: 160)),
+              child: AppIcon(name: 'tag', size: 11, color: t.textMuted),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Task 1 pin. Freezes the evidence-sorted branch order for a repo
+  /// session so async enrichments (squash probe, worktree lease) update
+  /// row material in place without teleporting positions. On the first
+  /// call per repo it adopts [sorted]'s order and returns it unchanged;
+  /// afterward it returns the same branches reordered to the frozen
+  /// sequence. A branch that only appears after the pin was set (rare —
+  /// the branch set is stable between `_load`s) falls in at the end in
+  /// evidence order so no ref ever goes missing. Cleared by `_load`,
+  /// where a re-sort reads as an intentional refresh rather than a jump.
+  List<BranchInfo> _pinnedOrder(List<BranchInfo> sorted, String repoPath) {
+    if (_pinnedOrderRepo != repoPath || _pinnedBranchOrder == null) {
+      _pinnedBranchOrder = [for (final b in sorted) b.name];
+      _pinnedOrderRepo = repoPath;
+      return sorted;
+    }
+    final byName = {for (final b in sorted) b.name: b};
+    final result = <BranchInfo>[];
+    final placed = <String>{};
+    for (final name in _pinnedBranchOrder!) {
+      final b = byName[name];
+      if (b != null) {
+        result.add(b);
+        placed.add(name);
+      }
+    }
+    for (final b in sorted) {
+      if (!placed.contains(b.name)) {
+        result.add(b);
+        _pinnedBranchOrder!.add(b.name);
+      }
+    }
+    return result;
   }
 
   Widget _buildPullRequestsBody(AppTokens t, String repoPath) {
@@ -3369,9 +3516,89 @@ class _BranchesPageState extends State<BranchesPage> {
   /// pills; body is a vertical list of cached issues using the same
   /// `_IssueRow` widget so cross-links / actions / markdown comments
   /// all carry through unchanged.
+  /// Order issues by last-updated per the persisted display law (Task 2).
+  /// Newest-updated first by default; the ISSUES rail header flips it.
+  /// Ties break on issue number in the same direction so equal timestamps
+  /// don't shuffle between builds.
+  List<IssueSummary> _sortIssues(List<IssueSummary> issues, bool descending) {
+    final out = [...issues];
+    out.sort((a, b) {
+      final cmp = a.updatedAt.compareTo(b.updatedAt);
+      if (cmp != 0) return descending ? -cmp : cmp;
+      return descending
+          ? b.number.compareTo(a.number)
+          : a.number.compareTo(b.number);
+    });
+    return out;
+  }
+
+  /// The ISSUES rail header doubles as the sort-direction control
+  /// (Task 2): the existing label + count are made live, with a chevron
+  /// that rotates to point the way. Clicking flips newest-first ↔
+  /// oldest-first and persists across sessions. No new chrome.
+  Widget _buildIssuesSortHeader(AppTokens t, int count, bool descending) {
+    return Semantics(
+      button: true,
+      label: descending ? 'issues, newest first' : 'issues, oldest first',
+      hint: 'flip sort direction',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => context
+              .read<PreferencesState>()
+              .setIssuesSortDescending(!descending),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'ISSUES',
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$count',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.85),
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(width: 6),
+              AnimatedRotation(
+                turns: descending ? 0.0 : 0.5,
+                duration: context.motion(const Duration(milliseconds: 160)),
+                child: AppIcon(
+                  name: 'chevron-down',
+                  size: 10,
+                  color: t.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildIssuesSidePanel(AppTokens t, String repoPath) {
+    final descending = context.select<PreferencesState, bool>(
+      (s) => s.issuesSortDescending,
+    );
     final allIssues = _issues ?? const <IssueSummary>[];
-    final issues = allIssues.where(_issueMatchesFilters).toList();
+    final issues = _sortIssues(
+      allIssues.where(_issueMatchesFilters).toList(),
+      descending,
+    );
     return MaterialSurface(
       tone: AppMaterialTone.surface1,
       radius: 0,
@@ -3399,30 +3626,9 @@ class _BranchesPageState extends State<BranchesPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      'ISSUES',
-                      style: TextStyle(
-                        color: t.textStrong,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${issues.length}',
-                      style: TextStyle(
-                        color: t.textMuted.withValues(alpha: 0.85),
-                        fontSize: 10,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                        letterSpacing: 0.4,
-                      ),
-                    ),
+                    _buildIssuesSortHeader(t, issues.length, descending),
                     const Spacer(),
                   ],
                 ),
@@ -4347,7 +4553,15 @@ class _BranchesPageState extends State<BranchesPage> {
         onCreateLocal: () => _showCreateLocalIssueDialog(repoPath),
       );
     }
-    final issues = allIssues.where(_issueMatchesFilters).toList();
+    // Same persisted display law as the ISSUES rail (Task 2): honor the
+    // user's newest/oldest-first choice here too so both surfaces agree.
+    final descending = context.select<PreferencesState, bool>(
+      (s) => s.issuesSortDescending,
+    );
+    final issues = _sortIssues(
+      allIssues.where(_issueMatchesFilters).toList(),
+      descending,
+    );
     if (issues.isEmpty) {
       return const _LensEmptyNotice(
         primary: 'No issues match these filters',
@@ -9867,7 +10081,9 @@ enum _BranchStratum { head, live, idle, corpse }
 _BranchStratum _classifyBranch(BranchInfo b, {bool leased = false}) {
   if (b.current) return _BranchStratum.head;
   if (leased) return _BranchStratum.live;
-  if (b.gone || b.squashMerged == true) return _BranchStratum.corpse;
+  if (b.gone || b.squashMerged == true || b.absorbed == true) {
+    return _BranchStratum.corpse;
+  }
   final last = b.lastCommitAt;
   if (last == null) return _BranchStratum.idle;
   if (DateTime.now().difference(last).inDays >= 30) return _BranchStratum.idle;
@@ -10042,6 +10258,53 @@ class _BranchCardState extends State<_BranchCard> {
     return '${(d / 365).floor()}y';
   }
 
+  /// The whisper vocabulary for a spent branch — one word per law, simplest
+  /// honest term. 'gone' when the upstream vanished; 'absorbed' when the
+  /// content already lives in base (the absorption law: merging adds no
+  /// changes — subsumes transplants, cherry-picks, squashes); 'squashed'
+  /// only on the legacy git < 2.38 fallback where we can prove tree-equal
+  /// squash via `git cherry` but not the general law. gone wins — the
+  /// upstream story is the more specific one.
+  String _corpseWhisper(BranchInfo b) {
+    if (b.gone) return 'gone';
+    if (b.absorbed == true) return 'absorbed';
+    return 'squashed';
+  }
+
+  /// The absorbed receipt — the courtroom exhibit. When the witness commit
+  /// is known it is NAMED ('delivered in <shortHash>': the exact base commit
+  /// into which merging changed nothing); the generic law statement is the
+  /// fallback for a witness-less flag.
+  String _absorbedReceipt(BranchInfo b) {
+    final w = b.absorbedWitness;
+    if (w != null && w.length >= 7) return 'delivered in ${w.substring(0, 7)}';
+    return 'merging adds no changes';
+  }
+
+  /// Narration of the corpse reason for the Semantics receipt.
+  String _corpseSemanticsTag(BranchInfo b) {
+    if (b.gone) return 'upstream gone';
+    if (b.absorbed == true) return 'absorbed, ${_absorbedReceipt(b)}';
+    return 'squashed and merged';
+  }
+
+  /// The whisper text for a spent branch. On an absorbed row it also carries
+  /// the receipt as a Tooltip ('delivered in <shortHash>'); gone/squashed
+  /// keep the Semantics label as their only narration. Data, not microcopy.
+  Widget _corpseWhisperText(BranchInfo b, AppTokens t) {
+    final text = Text(_corpseWhisper(b),
+        style: TextStyle(
+            color: t.textFaint, fontSize: 10.5, fontFamily: AppFonts.mono));
+    if (!b.gone && b.absorbed == true) {
+      return Tooltip(
+        message: _absorbedReceipt(b),
+        waitDuration: const Duration(milliseconds: 400),
+        child: text,
+      );
+    }
+    return text;
+  }
+
   /// The one right-anchored data column. Every row gets exactly one; it
   /// sits flush right and writes leftward, vertically centered. Living
   /// bands show ahead/behind then the spark (spark flush-right so every
@@ -10058,14 +10321,10 @@ class _BranchCardState extends State<_BranchCard> {
         // its room whispers the reason, then the room glyph itself. The
         // glyph's hover carries the worktree path — a path is data.
         if (widget.leased) {
-          if (b.gone || b.squashMerged == true) {
+          if (b.gone || b.squashMerged == true || b.absorbed == true) {
             children.add(Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: Text(b.gone ? 'gone' : 'squashed',
-                    style: TextStyle(
-                        color: t.textFaint,
-                        fontSize: 10.5,
-                        fontFamily: AppFonts.mono))));
+                child: _corpseWhisperText(b, t)));
           }
           children.add(Padding(
               padding: const EdgeInsets.only(right: 6),
@@ -10077,8 +10336,11 @@ class _BranchCardState extends State<_BranchCard> {
               )));
         }
         // Arrows sit LEFT of the spark, so the spark's right edge is the
-        // shared column line across every living row.
-        if (b.ahead > 0) {
+        // shared column line across every living row. An ABSORBED branch
+        // never shows ghost-ahead: its commits are testimony about content
+        // base already holds, so ↑N would be a lie. (Behind is untouched —
+        // it's honest about what base has that this branch doesn't.)
+        if (b.ahead > 0 && b.absorbed != true) {
           children.add(Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text('${b.ahead}↑',
@@ -10108,11 +10370,7 @@ class _BranchCardState extends State<_BranchCard> {
         // The quietest stratum whispers its reason — plain faint mono,
         // no pill, no border, no color. The row's hover wake (0.45 →
         // 0.72 on the enclosing AnimatedOpacity) is the only brightening.
-        children.add(Text(b.gone ? 'gone' : 'squashed',
-            style: TextStyle(
-                color: t.textFaint,
-                fontSize: 10.5,
-                fontFamily: AppFonts.mono)));
+        children.add(_corpseWhisperText(b, t));
     }
     if (children.isEmpty) return const SizedBox.shrink();
     return Row(mainAxisSize: MainAxisSize.min, children: children);
@@ -10184,16 +10442,17 @@ class _BranchCardState extends State<_BranchCard> {
         if (widget.leased) {
           // The lease keeps a would-be corpse in the live band, but its
           // reason is still narrated alongside the open room.
-          if (b.gone) label = '$label, upstream gone';
-          if (b.squashMerged == true) label = '$label, squashed and merged';
+          if (b.gone || b.squashMerged == true || b.absorbed == true) {
+            label = '$label, ${_corpseSemanticsTag(b)}';
+          }
           label = '$label, worktree open';
         }
         return label;
       case _BranchStratum.idle:
         return '${b.name}, ${_idlePhrase(b.lastCommitAt)}';
       case _BranchStratum.corpse:
-        final tag = b.gone ? 'upstream gone' : 'squashed and merged';
-        return '${b.name}, $tag, ${_idlePhrase(b.lastCommitAt)}';
+        return '${b.name}, ${_corpseSemanticsTag(b)}, '
+            '${_idlePhrase(b.lastCommitAt)}';
     }
   }
 

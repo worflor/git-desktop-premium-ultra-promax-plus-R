@@ -47,6 +47,8 @@ class PreferencesState extends ChangeNotifier {
   Map<String, int> _undoWindowOverrides = const {};
   FileSortGuide _fileSortGuide = FileSortGuide.relatedProximity;
   bool _fileSortInverted = false;
+  bool _issuesSortDescending = true;
+  bool _tagsSortDescending = true;
   CommitStructure _commitStructure = kDefaultCommitStructure;
   CommitVoice _commitVoice = kDefaultCommitVoice;
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
@@ -96,6 +98,15 @@ class PreferencesState extends ChangeNotifier {
   }
   FileSortGuide get fileSortGuide => _fileSortGuide;
   bool get fileSortInverted => _fileSortInverted;
+
+  /// Issues rail sort direction. True = newest-updated first (default),
+  /// false = oldest first. A display law persisted across sessions.
+  bool get issuesSortDescending => _issuesSortDescending;
+
+  /// Tags register sort direction. True = newest first (default), false
+  /// = git refname order (oldest first). A display law persisted across
+  /// sessions.
+  bool get tagsSortDescending => _tagsSortDescending;
   CommitStructure get commitStructure => _commitStructure;
   CommitVoice get commitVoice => _commitVoice;
   CommitCoverage get commitCoverage => _commitCoverage;
@@ -136,6 +147,8 @@ class PreferencesState extends ChangeNotifier {
     _undoWindowOverrides = Map<String, int>.from(settings.undoWindowOverrides);
     _fileSortGuide = _sortGuideFromString(settings.fileSortGuide);
     _fileSortInverted = settings.fileSortInverted;
+    _issuesSortDescending = settings.issuesSortDescending;
+    _tagsSortDescending = settings.tagsSortDescending;
     _commitStructure = commitStructureFromKey(settings.commitStructure);
     _commitVoice = commitVoiceFromKey(settings.commitVoice);
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
@@ -171,6 +184,8 @@ class PreferencesState extends ChangeNotifier {
     Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
     bool? fileSortInverted,
+    bool? issuesSortDescending,
+    bool? tagsSortDescending,
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
@@ -202,6 +217,8 @@ class PreferencesState extends ChangeNotifier {
         undoWindowOverrides: undoWindowOverrides,
         fileSortGuide: fileSortGuide,
         fileSortInverted: fileSortInverted,
+        issuesSortDescending: issuesSortDescending,
+        tagsSortDescending: tagsSortDescending,
         commitStructure: commitStructure,
         commitVoice: commitVoice,
         commitCoverage: commitCoverage,
@@ -388,6 +405,20 @@ class PreferencesState extends ChangeNotifier {
     if (_fileSortInverted == value) return;
     _fileSortInverted = value;
     await _persistWith(fileSortInverted: value);
+    notifyListeners();
+  }
+
+  Future<void> setIssuesSortDescending(bool value) async {
+    if (_issuesSortDescending == value) return;
+    _issuesSortDescending = value;
+    await _persistWith(issuesSortDescending: value);
+    notifyListeners();
+  }
+
+  Future<void> setTagsSortDescending(bool value) async {
+    if (_tagsSortDescending == value) return;
+    _tagsSortDescending = value;
+    await _persistWith(tagsSortDescending: value);
     notifyListeners();
   }
 

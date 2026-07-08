@@ -2027,6 +2027,922 @@ Future<List<BranchInfo>> detectSquashMergedBranches(
 @visibleForTesting
 const int squashProbeMaxConcurrency = gitSubprocessMaxConcurrency - 1;
 
+// ===========================================================================
+// THE ABSORPTION LAW — judge a branch by content, not ancestry.
+// ===========================================================================
+//
+// Git's ancestry is testimony; the tree is ground truth. When the owner
+// develops in a worktree and TRANSPLANTS the changes onto main (Manifold's
+// move-changes flow) instead of merging — or squash-merges, cherry-picks, or
+// replays amended commits — the CONTENT lands in main but no parent edge
+// records it. So `git branch --merged` and ahead/behind lie ("12 ahead" of
+// ghosts) and the branch reads live/idle when it is actually spent.
+//
+// The exact test is EXISTENTIAL OVER HISTORY, not a tip check. Absorption is
+// a historical event: at the moment of the squash/transplant, merging the
+// branch into that base commit was a no-op — the base evolving afterwards
+// (even rewriting the very same files) cannot revoke delivery. Evaluating
+// only at base's tip damns branches whose files base has since touched
+// (orrery: squash-merged, then history_page.dart moved on → tip merge-tree
+// conflicts even though delivery happened). The corrected law:
+//
+//   absorbed(b, m)  ⇔  ∃ commit c on m's first-parent line since fork(b, m):
+//                        merge-tree --write-tree(c, b) == c^{tree}
+//
+// Once a witness c exists, absorbed is PERMANENT. The tip-only check is the
+// special case c = tip — kept as the instant accept (cheapest witness, no
+// walk). The proof search, in cost order:
+//
+//   1. TIP        — merge-tree(tip, b) == tip^{tree}: one probe, no walk.
+//   2. PATCH-ID   — the branch's cumulative change (diff fork→b) hashed via
+//                   `git patch-id --stable`, matched against every
+//                   first-parent commit's patch-id (one batched
+//                   `log --first-parent -p` pipeline). A hit is a CANDIDATE
+//                   only: patch-id hashes normalized hunks (near-exact), so
+//                   the candidate is confirmed with the tree algebra —
+//                   merge-tree(c, b) == c^{tree} — before we claim anything.
+//                   Catches clean transplants and squashes applied to a
+//                   fork-identical parent.
+//   3. LINEAR SCAN— fork-forward walk of first-parent commits for split
+//                   transplants / amended replays where no single commit's
+//                   patch matches. UNCAPPED — fork to base tip, always; the
+//                   verdict is always a proven yes or a proven no. Pruned
+//                   exactly (derivations at the scan): only commits that
+//                   touch a branch file after full coverage can be
+//                   witnesses, blob-exact candidates resolve in memory, and
+//                   the added-line necessary condition rejects hunk-subset
+//                   non-witnesses from one `cat-file --batch`.
+//
+// The law itself is the optimization — two permanence properties make
+// re-probes near-free:
+//   * PERMANENCE CACHE: absorbed is forever (delivery cannot be revoked),
+//     so a witnessed verdict keyed by (repo, branch tip, base) never
+//     re-probes while the branch tip is unchanged.
+//   * INCREMENTAL FRONTIER: a proven-no verdict records how far up base's
+//     first-parent line it examined (plus the scan state at that point);
+//     the next probe examines only base commits newer than the frontier —
+//     usually zero. The frontier self-invalidates when the branch tip
+//     moves (it's in the key) or the fork changes (base rebase/force-push,
+//     detected by fork-hash mismatch → full rescan; correctness beats
+//     cleverness).
+//
+// Concurrency note: batch trials run through the global git semaphore
+// (adaptive, starts at [gitSubprocessMaxConcurrency] = 6). Measured on the
+// 12-core dev box (cold 9-branch batch, two runs each): 6 permits → 4.1s /
+// 5.5s; 12 permits → 7.2s / 4.1s. Overlapping ranges, worst case at 12 —
+// raising the start buys nothing and risks the documented spawn-thrash
+// (see the constant's own telemetry), so the start stays 6 and the
+// controller keeps tuning the live limit.
+//
+// Honest nuance, intended and documented: a branch absorbed and then
+// REVERTED on base still reports absorbed. The law reports DELIVERY, not
+// present containment — the whisper word stays truthful about the event.
+//
+// This subsumes squash detection (a tree-equal squash is one way to be
+// absorbed) and covers transplants / cherry-picks / amended replays alike —
+// any ceremony, because we compare merged TREES, never the commit graph.
+//
+// `git merge-tree --write-tree` requires git >= 2.38. On older gits the probe
+// reports null (unknown) and callers fall back to the legacy `git cherry`
+// tree-equality squash check ([detectSquashMergedBranches]).
+
+/// How the absorption witness was found — the proof path, cheapest first.
+enum AbsorptionWitnessVia {
+  /// c = base tip: merging right now is a no-op.
+  tip,
+
+  /// Batched patch-id match located the candidate, tree algebra confirmed.
+  patchId,
+
+  /// Fork-forward coverage-pruned linear scan found the witness.
+  scan,
+}
+
+/// Structured verdict of the absorption law for one branch against one base.
+typedef BranchAbsorption = ({
+  /// True iff SOME first-parent commit of base since the fork point absorbs
+  /// the branch (merging into it is a no-op). Permanent once witnessed.
+  bool absorbed,
+
+  /// The witness commit hash when [absorbed] — the courtroom exhibit: the
+  /// exact base commit into which merging the branch changes nothing.
+  String? witness,
+
+  /// Which proof path produced [witness]. Null when not absorbed.
+  AbsorptionWitnessVia? via,
+
+  /// The exact files this branch still uniquely holds AT TIP — `diff-tree`
+  /// between base's tree and the merged result on a clean merge, or the
+  /// conflicted paths on a conflicted one. Tip-scoped by design: it answers
+  /// "what would merging now bring", which only makes sense at tip. Empty
+  /// when tip-absorbed. (On a permanence-cache hit these fields are frozen
+  /// at witness time — the UI never reads them for absorbed rows.)
+  List<String> outstandingFiles,
+
+  /// True when the TIP trial merge could not be resolved automatically.
+  /// Tip-scoped like [outstandingFiles]; a historically-absorbed branch can
+  /// be conflicted at tip (base rewrote its files after delivery).
+  bool conflicted,
+});
+
+// ── The two permanence caches (see the law comment above) ──────────────
+//
+// Keys are `repo NUL branchTip NUL base` — the branch TIP HASH, not the
+// name, so any movement of the branch (new commit, amend, rebase) simply
+// misses the cache and re-proves. The NUL separator appears only via a
+// string escape in source (never a raw byte — the logos_flow incident) and
+// cannot occur in a path, a hash, or a ref name — the key is
+// injection-proof.
+
+/// Absorption cache key. The separator is written as an escape on purpose;
+/// see the block comment above.
+String _absorptionKey(String repo, String branchTip, String base) =>
+    '$repo\u0000$branchTip\u0000$base';
+
+/// Proven-yes verdicts. Absorbed is PERMANENT for a fixed branch tip:
+/// delivery cannot be revoked by anything base does later, so this map is
+/// never invalidated — entries just stop being reachable when a tip moves.
+final Map<String, BranchAbsorption> _absorbedVerdictCache = {};
+
+/// Scan state behind a proven-no verdict: how far up base's first-parent
+/// line the scan examined, and the accumulated per-branch-file state at
+/// that point, so the next probe continues instead of restarting.
+class _AbsorptionFrontier {
+  _AbsorptionFrontier({
+    required this.fork,
+    required this.scannedTo,
+    required this.coveredBranchFiles,
+    required this.currentBlobs,
+    required this.tipOutstanding,
+    required this.tipConflicted,
+  });
+
+  /// merge-base(base, branch) at scan time. A mismatch on a later probe
+  /// means base history was rewritten under us → full rescan from fork.
+  final String fork;
+
+  /// Base tip (inclusive) fully examined by the scan.
+  final String scannedTo;
+
+  /// covered ∩ branchFiles at [scannedTo] (coverage only ever queries
+  /// membership of branch files, so the intersection is the whole state).
+  final Set<String> coveredBranchFiles;
+
+  /// Base's current blob per branch file at [scannedTo].
+  final Map<String, String> currentBlobs;
+
+  /// Tip-scoped report at [scannedTo] — still exact when base hasn't moved.
+  final List<String> tipOutstanding;
+  final bool tipConflicted;
+}
+
+final Map<String, _AbsorptionFrontier> _absorptionFrontiers = {};
+
+/// Drop both permanence caches. Test-only.
+@visibleForTesting
+void resetAbsorptionCaches() {
+  _absorbedVerdictCache.clear();
+  _absorptionFrontiers.clear();
+}
+
+/// Cached once per app run: does the local git support
+/// `git merge-tree --write-tree` (i.e. is it >= 2.38)? The absorption law is
+/// unavailable on older gits, in which case callers fall back to legacy
+/// squash detection.
+bool? _mergeTreeWriteTreeSupported;
+
+/// Reset the cached merge-tree support probe. Test-only — lets a test
+/// exercise both the supported and the unsupported (fallback) paths.
+@visibleForTesting
+void resetMergeTreeAbsorptionSupportCache([bool? force]) {
+  _mergeTreeWriteTreeSupported = force;
+}
+
+/// True when the local git is new enough (>= 2.38) to answer the absorption
+/// law via `git merge-tree --write-tree`. Probed once via `git version` and
+/// cached for the app's lifetime — the git binary does not change under us.
+Future<bool> mergeTreeAbsorptionSupported(String repo) async {
+  final cached = _mergeTreeWriteTreeSupported;
+  if (cached != null) return cached;
+  var supported = false;
+  try {
+    final r = await _git(repo, ['version']);
+    if (r.exitCode == 0) {
+      final m = RegExp(r'(\d+)\.(\d+)').firstMatch(r.stdout.toString());
+      if (m != null) {
+        final major = int.parse(m.group(1)!);
+        final minor = int.parse(m.group(2)!);
+        supported = major > 2 || (major == 2 && minor >= 38);
+      }
+    }
+  } catch (_) {
+    supported = false;
+  }
+  _mergeTreeWriteTreeSupported = supported;
+  return supported;
+}
+
+/// One `git merge-tree --write-tree` trial: is merging [branch] into
+/// [commit] a no-op? Exit status: 0 = clean merge, 1 = conflicts, anything
+/// else = error. In BOTH the clean and conflicted cases the FIRST line of
+/// stdout is the resulting toplevel tree OID; on a conflict that is followed
+/// by conflicted-file records `<mode> <oid> <stage>\t<path>`, a blank line,
+/// then human-readable informational messages (shape verified empirically).
+///
+/// Returns the raw pieces the callers need: the result tree ('' on error),
+/// whether the trial conflicted, and the conflicted paths.
+Future<({String resultTree, bool conflicted, List<String> conflictedFiles})>
+    _mergeTreeTrial(String repo, String commit, String branch) async {
+  final r = await _git(repo, ['merge-tree', '--write-tree', commit, branch]);
+  if (r.exitCode > 1) {
+    return (
+      resultTree: '',
+      conflicted: false,
+      conflictedFiles: const <String>[]
+    );
+  }
+  final lines = r.stdout.toString().split('\n');
+  final resultTree = lines.isNotEmpty ? lines.first.trim() : '';
+  if (r.exitCode == 0) {
+    return (
+      resultTree: resultTree,
+      conflicted: false,
+      conflictedFiles: const <String>[]
+    );
+  }
+  // Conflicted-file stage lines run up to the first blank line.
+  final files = <String>{};
+  for (var i = 1; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.trim().isEmpty) break;
+    final tab = line.indexOf('\t');
+    if (tab >= 0) files.add(line.substring(tab + 1).trim());
+  }
+  return (
+    resultTree: resultTree,
+    conflicted: true,
+    conflictedFiles: files.toList()..sort(),
+  );
+}
+
+/// Pipe [patchText] through `git patch-id --stable` and return its stdout
+/// (lines of `<patch-id> <commit-id>`). Empty input short-circuits to ''.
+/// Runs under the shared git subprocess semaphore like every other spawn.
+Future<String> _patchIdStable(String repo, String patchText) async {
+  if (patchText.trim().isEmpty) return '';
+  await _gitSubprocessSemaphore.acquire();
+  try {
+    final proc = await Process.start('git', ['patch-id', '--stable'],
+        workingDirectory: repo);
+    // Wire the readers BEFORE writing stdin so a large patch can't deadlock
+    // on a full stdout pipe buffer.
+    final outF = proc.stdout.transform(utf8.decoder).join();
+    final errF = proc.stderr.drain<void>();
+    proc.stdin.write(patchText);
+    await proc.stdin.close();
+    final out = await outF;
+    await errF;
+    await proc.exitCode;
+    return out;
+  } catch (_) {
+    return '';
+  } finally {
+    _gitSubprocessSemaphore.release();
+  }
+}
+
+/// Apply the (historical) absorption law to a single [branch] against
+/// [base]. Returns null when git is too old (< 2.38) to answer, or on any
+/// unexpected failure — the caller then falls back to legacy behaviour and
+/// shows nothing new.
+///
+/// Proof search per the law comment above: permanence cache, incremental
+/// frontier, tip instant-accept, the batched patch-id fast path (candidate
+/// confirmed by tree algebra — the final claim is never patch-id alone),
+/// then the pruned fork-forward linear scan, uncapped: the verdict is
+/// always a proven yes or a proven no.
+///
+/// Note: the coordinator's spec suggested synthesizing the branch's
+/// cumulative change via `git commit-tree`; unnecessary — `git diff
+/// <fork> <branch>` IS the cumulative patch, and patch-id hashes the patch
+/// text, not the commit object.
+Future<BranchAbsorption?> branchAbsorption(
+  String repo,
+  String branch,
+  String base,
+) async {
+  try {
+    // Resolve both tips in one spawn — they key the permanence caches.
+    final tipR = await _git(repo, [
+      'rev-parse',
+      '$branch^{commit}',
+      '$base^{commit}',
+      '$base^{tree}',
+    ]);
+    if (tipR.exitCode != 0) return null;
+    final tipLines = tipR.stdout
+        .toString()
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (tipLines.length < 3) return null;
+    final branchTip = tipLines[0];
+    final baseTip = tipLines[1];
+    final baseTree = tipLines[2];
+    final key = _absorptionKey(repo, branchTip, base);
+
+    // ---- 0a. PERMANENCE CACHE: a witnessed verdict for this branch tip is
+    // final — delivery cannot be revoked. Checked before even the support
+    // gate: a cached proof needs no git at all.
+    final cachedYes = _absorbedVerdictCache[key];
+    if (cachedYes != null) return cachedYes;
+
+    // ---- 0b. INCREMENTAL FRONTIER: a proven-no verdict examined base up
+    // to some tip. If base hasn't moved since, nothing can have changed —
+    // same proven no, zero further spawns. (Same branch tip + same base tip
+    // ⟹ same fork, so no separate fork check is needed on this path.)
+    final frontier = _absorptionFrontiers[key];
+    if (frontier != null && frontier.scannedTo == baseTip) {
+      return (
+        absorbed: false,
+        witness: null,
+        via: null,
+        outstandingFiles: frontier.tipOutstanding,
+        conflicted: frontier.tipConflicted,
+      );
+    }
+
+    if (!await mergeTreeAbsorptionSupported(repo)) return null;
+
+    // Every witness found below is permanent for this key: record + return.
+    BranchAbsorption witnessed(String witness, AbsorptionWitnessVia via,
+        {required List<String> tipOutstanding, required bool tipConflicted}) {
+      final v = (
+        absorbed: true,
+        witness: witness,
+        via: via,
+        outstandingFiles: tipOutstanding,
+        conflicted: tipConflicted,
+      );
+      _absorbedVerdictCache[key] = v;
+      _absorptionFrontiers.remove(key);
+      return v;
+    }
+
+    // ---- 1. TIP: the cheapest witness needs no walk. Also the only place
+    // outstandingFiles/conflicted mean anything ("what would merging NOW do").
+    final tip = await _mergeTreeTrial(repo, baseTip, branch);
+    if (tip.resultTree.isEmpty) return null;
+    if (!tip.conflicted && tip.resultTree == baseTree) {
+      return witnessed(baseTip, AbsorptionWitnessVia.tip,
+          tipOutstanding: const [], tipConflicted: false);
+    }
+    // Tip-scoped report for the not-(tip-)absorbed shapes, reused by every
+    // return below — the historical scan never changes what merging NOW does.
+    final List<String> tipOutstanding;
+    if (tip.conflicted) {
+      tipOutstanding = tip.conflictedFiles;
+    } else {
+      final diff = await _git(
+          repo, ['diff-tree', '--name-only', '-r', baseTree, tip.resultTree]);
+      tipOutstanding = diff.stdout
+          .toString()
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .toList();
+    }
+
+    // The historical search needs a fork point; without one (unrelated
+    // histories) tip was the whole story.
+    final forkR = await _git(repo, ['merge-base', base, branch]);
+    final fork = forkR.stdout.toString().trim();
+    if (forkR.exitCode != 0 || fork.isEmpty) {
+      return (
+        absorbed: false,
+        witness: null,
+        via: null,
+        outstandingFiles: tipOutstanding,
+        conflicted: tip.conflicted,
+      );
+    }
+
+    // A proven-no re-probe continues from its frontier instead of the fork
+    // — but only when the recorded fork still holds (a mismatch means base
+    // history was rewritten: full rescan; correctness beats cleverness).
+    final resume = (frontier != null && frontier.fork == fork)
+        ? frontier
+        : null;
+    final scanFrom = resume?.scannedTo ?? fork;
+
+    // Branch's changed files WITH their target blob OIDs, computed once via
+    // `diff-tree --raw` (`--no-renames` pins the plumbing output shape:
+    // `:mode mode oldOid newOid S\tpath`; a deletion's newOid is all-zeros,
+    // which is exactly the "base must delete it too" target). Empty means
+    // the branch tree equals fork's tree — tip already told the whole story.
+    final bfR = await _git(repo, [
+      'diff-tree',
+      '-r',
+      '--raw',
+      '--no-abbrev',
+      '--no-renames',
+      fork,
+      branch,
+    ]);
+    final branchBlobs = _parseRawDiffBlobs(bfR.stdout.toString());
+    final branchFiles = branchBlobs.keys.toSet();
+
+    // Every proven-no below records the frontier for the next probe, then
+    // returns. State passed in is the scan state AT baseTip.
+    BranchAbsorption provenNo(
+        Set<String> coveredBranchFiles, Map<String, String> currentBlobs) {
+      _absorptionFrontiers[key] = _AbsorptionFrontier(
+        fork: fork,
+        scannedTo: baseTip,
+        coveredBranchFiles: coveredBranchFiles,
+        currentBlobs: currentBlobs,
+        tipOutstanding: tipOutstanding,
+        tipConflicted: tip.conflicted,
+      );
+      return (
+        absorbed: false,
+        witness: null,
+        via: null,
+        outstandingFiles: tipOutstanding,
+        conflicted: tip.conflicted,
+      );
+    }
+
+    if (branchFiles.isEmpty) return provenNo(const {}, const {});
+
+    // ONE walk of base's first-parent line, resuming at the frontier when
+    // valid, else from the fork: commit hash, its tree, and the raw records
+    // of what it changed vs its first parent (`--first-parent` implies
+    // first-parent diffs for merges — verified empirically). Both proof
+    // paths below read from this single parse. UNCAPPED — the range is
+    // finite and the verdict must be proven either way.
+    final walkR = await _git(repo, [
+      'log',
+      '--first-parent',
+      '--reverse',
+      '--format=commit:%H %T',
+      '--raw',
+      '--no-abbrev',
+      '--no-renames',
+      '$scanFrom..$base',
+    ]);
+    if (walkR.exitCode != 0) {
+      // Transient failure — no verdict, no frontier update (never record
+      // "scanned to here" for ground we didn't actually walk).
+      return (
+        absorbed: false,
+        witness: null,
+        via: null,
+        outstandingFiles: tipOutstanding,
+        conflicted: tip.conflicted,
+      );
+    }
+    final entries = <({String hash, String tree, Map<String, String> blobs})>[];
+    {
+      String? hash;
+      String? tree;
+      var blobs = <String, String>{};
+      void close() {
+        final h = hash;
+        final t = tree;
+        if (h != null && t != null) {
+          entries.add((hash: h, tree: t, blobs: blobs));
+        }
+      }
+
+      for (final raw in walkR.stdout.toString().split('\n')) {
+        final line = raw.trimRight();
+        if (line.trim().isEmpty) continue;
+        if (line.startsWith('commit:')) {
+          close();
+          final body = line.substring('commit:'.length).trim();
+          final sp = body.indexOf(' ');
+          hash = sp > 0 ? body.substring(0, sp) : body;
+          tree = sp > 0 ? body.substring(sp + 1).trim() : null;
+          blobs = <String, String>{};
+        } else if (line.startsWith(':')) {
+          final rec = _parseRawDiffLine(line);
+          if (rec != null) blobs[rec.path] = rec.newBlob;
+        }
+      }
+      close();
+    }
+
+    // Theorem-grade confirmation shared by both proof paths: a candidate
+    // only ever becomes a witness through the tree algebra.
+    Future<bool> confirms(String candidate, String candidateTree) async {
+      final trial = await _mergeTreeTrial(repo, candidate, branch);
+      return !trial.conflicted &&
+          trial.resultTree.isNotEmpty &&
+          trial.resultTree == candidateTree;
+    }
+
+    // ---- 2. PATCH-ID fast path. A commit whose patch equals the branch's
+    // cumulative patch necessarily touched EXACTLY the branch's file set —
+    // so only those few commits get piped through `-p`, never the whole
+    // range (the unpruned `log -p` pipeline cost seconds per branch,
+    // measured). The set-equality is a pre-filter on a pre-filter: a true
+    // candidate it would miss (rename/mode oddities) simply falls through
+    // to the scan. Full-range on purpose — patch-id reaches witnesses
+    // beyond the scan window at negligible cost.
+    final patchCandidates = [
+      for (final e in entries)
+        if (e.blobs.length == branchFiles.length &&
+            e.blobs.keys.every(branchFiles.contains))
+          e,
+    ];
+    // The branch's cumulative patch, fetched at most once and shared by the
+    // patch-id fast path and the scan's added-line reject filter.
+    String? branchDiffText;
+    Future<String> branchDiff() async {
+      return branchDiffText ??=
+          (await _git(repo, ['diff', '--no-renames', fork, branch]))
+              .stdout
+              .toString();
+    }
+
+    if (patchCandidates.isNotEmpty) {
+      final branchIdOut = await _patchIdStable(repo, await branchDiff());
+      final branchIdParts = branchIdOut.trim().split(RegExp(r'\s+'));
+      final branchPatchId = branchIdParts.isEmpty ? '' : branchIdParts.first;
+      if (branchPatchId.isNotEmpty) {
+        final logP = await _git(repo, [
+          'log',
+          '--no-walk',
+          '-p',
+          '--format=commit %H',
+          for (final e in patchCandidates) e.hash,
+        ]);
+        if (logP.exitCode == 0) {
+          final ids = await _patchIdStable(repo, logP.stdout.toString());
+          for (final line in ids.split('\n')) {
+            final parts = line.trim().split(RegExp(r'\s+'));
+            if (parts.length < 2 || parts[0] != branchPatchId) continue;
+            final hit = patchCandidates.where((e) => e.hash == parts[1]);
+            if (hit.isEmpty) continue;
+            final e = hit.first;
+            if (await confirms(e.hash, e.tree)) {
+              return witnessed(e.hash, AbsorptionWitnessVia.patchId,
+                  tipOutstanding: tipOutstanding,
+                  tipConflicted: tip.conflicted);
+            }
+          }
+        }
+      }
+    }
+
+    // ---- 3. LINEAR SCAN, fork-forward, uncapped. Pruned by an EXACT
+    // observation, not a heuristic: merge-tree(c, b)'s no-op status depends
+    // only on c's versions of the files the branch changed (the 3-way only
+    // resolves paths where the branch differs from the fork), and those
+    // versions change only at commits whose first-parent diff touches a
+    // branch file. So by induction from the fork, the EARLIEST witness must
+    // (i) have coverage — base's cumulative history has touched every
+    // branch file (all content delivered) — and (ii) itself touch a branch
+    // file. Only such commits are candidates. (Caveat, documented not
+    // patched: base-side renames of branch files could in theory move
+    // content without "touching" the original path; the tip check still
+    // covers the living case.)
+    //
+    // Candidates are then tested in two tiers, cheapest sufficient evidence
+    // first:
+    //   BLOB-EXACT — c's blob of every branch file equals the branch's own
+    //     blob (deletions match the all-zeros target). Then the 3-way at
+    //     each branch path trivially resolves to c's version, so c is a
+    //     near-certain witness; decided IN MEMORY from the walk's raw
+    //     records, confirmed with one real merge-tree. Every literal
+    //     transplant/squash lands here — ~1 spawn.
+    //   MERGE-TREE — remaining candidates (possible hunk-subset witnesses:
+    //     base absorbed the branch's edits INTO further edits of the same
+    //     files, e.g. move-changes onto a moved main) each need the real
+    //     trial. These are the expensive tail (~150-500ms each, rename
+    //     detection dominates — measured), so they run CONCURRENTLY through
+    //     the global git semaphore; the earliest confirmed index wins so
+    //     the receipt is deterministic.
+    // Scan state, seeded from the frontier on a resumed walk. `covered`
+    // holds only branch files (the coverage test never asks about others).
+    final covered = <String>{...?resume?.coveredBranchFiles};
+    // Current blob of each branch file as base history advances; a path
+    // absent means base still has fork's version (which cannot equal the
+    // branch's target — the branch changed it, so equality needs an
+    // explicit touch).
+    final current = <String, String>{...?resume?.currentBlobs};
+    // Tier 2, in walk order. Each carries a snapshot of the branch files'
+    // blobs at that commit for the added-line reject filter below, plus the
+    // overlap size for most-likely-first ordering.
+    final mergeTreeCandidates =
+        <({String hash, String tree, Map<String, String> snap, int overlap})>[];
+    for (final e in entries) {
+      var overlap = 0;
+      for (final rec in e.blobs.entries) {
+        if (branchFiles.contains(rec.key)) {
+          overlap++;
+          covered.add(rec.key);
+          current[rec.key] = rec.value;
+        }
+      }
+      if (overlap == 0 || !covered.containsAll(branchFiles)) continue;
+      final blobExact = branchFiles
+          .every((f) => current[f] != null && current[f] == branchBlobs[f]);
+      if (blobExact) {
+        // Near-certain witness (every branch path resolves trivially to
+        // c's own version); confirm through the algebra and take it as the
+        // exhibit. Earliest-witness preference is a receipt nicety, not
+        // law — any confirmed commit is a true witness.
+        if (await confirms(e.hash, e.tree)) {
+          return witnessed(e.hash, AbsorptionWitnessVia.scan,
+              tipOutstanding: tipOutstanding, tipConflicted: tip.conflicted);
+        }
+      } else {
+        mergeTreeCandidates.add((
+          hash: e.hash,
+          tree: e.tree,
+          snap: {for (final f in branchFiles) f: current[f]!},
+          overlap: overlap,
+        ));
+      }
+    }
+
+    // Tier 2: possible hunk-subset witnesses (base absorbed the branch's
+    // edits INTO further edits of the same files). Each real merge-tree
+    // trial costs ~150-500ms (rename detection dominates — measured), so
+    // first apply the exact added-line NECESSARY condition (see
+    // [_diffAddedLinesByFile]) with the blob contents fetched in ONE
+    // `cat-file --batch` spawn — on hot files this rejects nearly every
+    // candidate in memory. Survivors get real trials, run CONCURRENTLY
+    // through the global git semaphore.
+    if (mergeTreeCandidates.isNotEmpty) {
+      final addedByFile = _diffAddedLinesByFile(await branchDiff());
+      var survivors = mergeTreeCandidates;
+      if (addedByFile.isNotEmpty) {
+        final needed = <String>{
+          for (final c in mergeTreeCandidates)
+            for (final f in addedByFile.keys)
+              if (c.snap[f] != null && !_kAllZerosOid.hasMatch(c.snap[f]!))
+                c.snap[f]!,
+        };
+        final contents = await _catFileBatch(repo, needed);
+        bool passes(
+            ({
+              String hash,
+              String tree,
+              Map<String, String> snap,
+              int overlap
+            }) c) {
+          for (final entry in addedByFile.entries) {
+            final blob = c.snap[entry.key];
+            if (blob == null || _kAllZerosOid.hasMatch(blob)) {
+              // Branch adds lines to a file this commit's base has deleted
+              // — a merge could never be a no-op here.
+              return false;
+            }
+            final content = contents[blob];
+            if (content == null) continue; // fetch hiccup: never reject blind
+            final lines = <String>{
+              for (var l in content.split('\n'))
+                l.endsWith('\r') ? l.substring(0, l.length - 1) : l,
+            };
+            if (!entry.value.every(lines.contains)) return false;
+          }
+          return true;
+        }
+
+        survivors = [for (final c in mergeTreeCandidates) if (passes(c)) c];
+      }
+      if (survivors.isNotEmpty) {
+        // Most-likely witnesses first: a squash/transplant witness touches
+        // the branch's WHOLE file set, so larger touched-file overlap fires
+        // the early-exit sooner on real absorptions. Ties keep walk order
+        // (sort is only applied when it can help; List.sort is unstable, so
+        // decorate with the original index to keep determinism).
+        final indexed = [
+          for (var i = 0; i < survivors.length; i++) (i: i, c: survivors[i]),
+        ];
+        indexed.sort((a, b) {
+          final d = b.c.overlap - a.c.overlap;
+          return d != 0 ? d : a.i - b.i;
+        });
+        final ordered = [for (final x in indexed) x.c];
+        final confirmed = List<bool>.filled(ordered.length, false);
+        var next = 0;
+        var anyHit = false;
+        final workers = math.min(squashProbeMaxConcurrency, ordered.length);
+        await Future.wait(List.generate(workers, (_) => Future(() async {
+              while (true) {
+                final i = next++;
+                if (i >= ordered.length) return;
+                // Early exit: the law is existential — once any witness is
+                // confirmed, stop claiming new work.
+                if (anyHit) return;
+                final c = ordered[i];
+                if (await confirms(c.hash, c.tree)) {
+                  confirmed[i] = true;
+                  anyHit = true;
+                }
+              }
+            })));
+        final hit = confirmed.indexOf(true);
+        if (hit >= 0) {
+          return witnessed(ordered[hit].hash, AbsorptionWitnessVia.scan,
+              tipOutstanding: tipOutstanding, tipConflicted: tip.conflicted);
+        }
+      }
+    }
+
+    // Proven no — the entire fork..baseTip line has been examined (this
+    // probe plus any frontier it resumed from). Record the frontier so the
+    // next probe only walks base commits newer than today's tip.
+    return provenNo(
+      {for (final f in covered) if (branchFiles.contains(f)) f},
+      Map.of(current),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Fetch many blobs in ONE `git cat-file --batch` spawn. Returns OID →
+/// content (leniently decoded — the filter that consumes this only does
+/// line-set membership, where U+FFFD replacement is harmless). Missing or
+/// non-blob OIDs are simply absent from the map. Byte-exact parsing: the
+/// batch protocol frames each object as `<oid> blob <size>\n<size bytes>\n`,
+/// and <size> counts BYTES, so the walk happens over raw bytes, never over
+/// a decoded string.
+Future<Map<String, String>> _catFileBatch(
+    String repo, Iterable<String> oids) async {
+  final wanted = oids.toSet();
+  if (wanted.isEmpty) return const {};
+  await _gitSubprocessSemaphore.acquire();
+  try {
+    final proc = await Process.start('git', ['cat-file', '--batch'],
+        workingDirectory: repo);
+    final buf = BytesBuilder(copy: false);
+    final outDone = proc.stdout.listen(buf.add).asFuture<void>();
+    final errF = proc.stderr.drain<void>();
+    proc.stdin.write(wanted.map((o) => '$o\n').join());
+    await proc.stdin.close();
+    await outDone;
+    await errF;
+    await proc.exitCode;
+    final bytes = buf.takeBytes();
+    final result = <String, String>{};
+    var pos = 0;
+    while (pos < bytes.length) {
+      final nl = bytes.indexOf(0x0A, pos);
+      if (nl < 0) break;
+      final header = ascii.decode(bytes.sublist(pos, nl), allowInvalid: true);
+      pos = nl + 1;
+      final parts = header.trim().split(RegExp(r'\s+'));
+      if (parts.length >= 3 && parts[1] == 'blob') {
+        final size = int.tryParse(parts[2]) ?? 0;
+        final end = math.min(pos + size, bytes.length);
+        result[parts[0]] = const Utf8Decoder(allowMalformed: true)
+            .convert(bytes.sublist(pos, end));
+        pos = end + 1; // skip the trailing framing '\n'
+      }
+      // `<oid> missing` (or anything else) has no body; loop continues at
+      // the next header.
+    }
+    return result;
+  } catch (_) {
+    return const {};
+  } finally {
+    _gitSubprocessSemaphore.release();
+  }
+}
+
+/// Per-file ADDED lines of a unified diff (lines starting `+`, excluding
+/// the `+++` header), CR-normalized. The absorption scan uses these as an
+/// exact NECESSARY condition: if merging branch b into commit c is a no-op
+/// (result == c's tree), every line b added must appear verbatim in c's
+/// version of that file — theirs' insertions either already exist in ours
+/// (so they're in c.f) or the region conflicts / changes the result,
+/// contradicting no-op. Files whose diff section can't be attributed to a
+/// path are skipped (the filter only ever REJECTS with certainty).
+Map<String, Set<String>> _diffAddedLinesByFile(String diffText) {
+  final out = <String, Set<String>>{};
+  String? file;
+  for (final raw in diffText.split('\n')) {
+    final header = diffHeaderPath(raw);
+    if (header != null) {
+      file = header;
+      continue;
+    }
+    if (file == null) continue;
+    if (raw.startsWith('+++') || raw.startsWith('---')) continue;
+    if (raw.startsWith('+')) {
+      var line = raw.substring(1);
+      if (line.endsWith('\r')) line = line.substring(0, line.length - 1);
+      (out[file] ??= <String>{}).add(line);
+    }
+  }
+  return out;
+}
+
+final RegExp _kAllZerosOid = RegExp(r'^0+$');
+
+/// One record of `diff-tree --raw --no-abbrev --no-renames` plumbing output:
+/// `:oldMode newMode oldOid newOid S\tpath`. Returns the path and its NEW
+/// blob OID (all-zeros for a deletion — the caller treats that as the
+/// "must be deleted" target, which is exactly right for blob matching).
+({String path, String newBlob})? _parseRawDiffLine(String line) {
+  final tab = line.indexOf('\t');
+  if (!line.startsWith(':') || tab < 0) return null;
+  final meta = line.substring(1, tab).trim().split(RegExp(r'\s+'));
+  if (meta.length < 5) return null;
+  return (path: line.substring(tab + 1).trim(), newBlob: meta[3]);
+}
+
+/// Parse a whole `--raw` diff body into path → new blob OID.
+Map<String, String> _parseRawDiffBlobs(String out) {
+  final blobs = <String, String>{};
+  for (final line in out.split('\n')) {
+    final rec = _parseRawDiffLine(line.trimRight());
+    if (rec != null) blobs[rec.path] = rec.newBlob;
+  }
+  return blobs;
+}
+
+/// Batch pass folding absorption + squash detection into ONE probe cycle for
+/// the branches lens. When the local git supports the absorption law it
+/// STRICTLY SUPERSEDES the legacy tree-equality squash check, so we run
+/// [branchAbsorption] per branch and populate [BranchInfo.absorbed]. On older
+/// gits (< 2.38) we transparently fall back to [detectSquashMergedBranches],
+/// populating [BranchInfo.squashMerged] instead — so callers get one call and
+/// a fully-classified list either way.
+///
+/// Probes skip: the current branch, the base branch itself, branches already
+/// known gone (their corpse story is already told), and leased branches whose
+/// tip already equals base (merging is trivially a no-op — no probe needed).
+///
+/// Uses the same order-preserving index-stream worker pool as
+/// [detectSquashMergedBranches], capped at [squashProbeMaxConcurrency].
+Future<List<BranchInfo>> detectAbsorbedBranches(
+  String repo,
+  List<BranchInfo> branches, {
+  required String baseRef,
+  Set<String> leasedNames = const {},
+}) async {
+  final supported = await mergeTreeAbsorptionSupported(repo);
+  if (!supported) {
+    // Legacy fallback path (git < 2.38): tree-equal squash via `git cherry`.
+    return detectSquashMergedBranches(repo, branches, baseRef: baseRef);
+  }
+
+  // Resolve base tip once so leased branches sitting exactly on base can be
+  // skipped without a probe.
+  final baseTip = (await _git(repo, ['rev-parse', '$baseRef^{commit}']))
+      .stdout
+      .toString()
+      .trim();
+
+  Future<({bool absorbed, String? witness})?> probe(BranchInfo b) async {
+    if (b.current) return null;
+    if (b.name == baseRef) return null;
+    if (b.gone) return null; // already a known corpse; whisper is 'gone'
+    if (leasedNames.contains(b.name) && baseTip.isNotEmpty) {
+      final tip = (await _git(repo, ['rev-parse', '${b.name}^{commit}']))
+          .stdout
+          .toString()
+          .trim();
+      if (tip == baseTip) return null; // trivial no-op; keep leased material
+    }
+    final r = await branchAbsorption(repo, b.name, baseRef);
+    if (r == null) return null;
+    // The absorbed flag is only ever true on a tree-algebra witness.
+    return (absorbed: r.absorbed, witness: r.witness);
+  }
+
+  final flags =
+      List<({bool absorbed, String? witness})?>.filled(branches.length, null);
+  var next = 0;
+  final workers = math.min(squashProbeMaxConcurrency, branches.length);
+  await Future.wait(
+    List.generate(
+        workers,
+        (_) => Future(() async {
+              while (true) {
+                final i = next++;
+                if (i >= branches.length) return;
+                flags[i] = await probe(branches[i]);
+              }
+            })),
+  );
+  return [
+    for (var i = 0; i < branches.length; i++)
+      branches[i].copyWith(
+        absorbed: flags[i]?.absorbed,
+        absorbedWitness: flags[i]?.witness,
+      ),
+  ];
+}
+
 Future<GitResult<void>> createBranch(String repo, String name,
     {String? from}) async {
   final args =

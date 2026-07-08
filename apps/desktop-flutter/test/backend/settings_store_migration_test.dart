@@ -138,4 +138,55 @@ void main() {
       expect(snap.diffMediaEnabled, isTrue);
     });
   });
+
+  group('AppSettingsSnapshot — issuesSortDescending', () {
+    test('missing key → defaults to true (newest first)', () {
+      final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});
+      expect(snap.issuesSortDescending, isTrue);
+    });
+
+    test('persisted false round-trips through toJson/fromJson', () {
+      final base = AppSettingsSnapshot.defaults()
+          .copyWith(issuesSortDescending: false);
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.issuesSortDescending, isFalse);
+    });
+
+    test('copyWith leaves the flag untouched when omitted', () {
+      final base = AppSettingsSnapshot.defaults()
+          .copyWith(issuesSortDescending: false);
+      expect(base.copyWith(themeId: 'petrichor').issuesSortDescending, isFalse);
+    });
+
+    test('non-bool value → falls back to default true, no crash', () {
+      final snap =
+          AppSettingsSnapshot.fromJson({'issuesSortDescending': 'nope'});
+      expect(snap.issuesSortDescending, isTrue);
+    });
+  });
+
+  group('AppSettingsSnapshot — tagsSortDescending', () {
+    test('missing key → defaults to true (newest first)', () {
+      final snap = AppSettingsSnapshot.fromJson(const <String, dynamic>{});
+      expect(snap.tagsSortDescending, isTrue);
+    });
+
+    test('persisted false round-trips through toJson/fromJson', () {
+      final base =
+          AppSettingsSnapshot.defaults().copyWith(tagsSortDescending: false);
+      final reloaded = AppSettingsSnapshot.fromJson(base.toJson());
+      expect(reloaded.tagsSortDescending, isFalse);
+    });
+
+    test('copyWith leaves the flag untouched when omitted', () {
+      final base =
+          AppSettingsSnapshot.defaults().copyWith(tagsSortDescending: false);
+      expect(base.copyWith(themeId: 'petrichor').tagsSortDescending, isFalse);
+    });
+
+    test('non-bool value → falls back to default true, no crash', () {
+      final snap = AppSettingsSnapshot.fromJson({'tagsSortDescending': 'nope'});
+      expect(snap.tagsSortDescending, isTrue);
+    });
+  });
 }
