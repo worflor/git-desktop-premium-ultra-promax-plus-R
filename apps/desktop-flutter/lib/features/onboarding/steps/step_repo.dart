@@ -125,7 +125,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
         children: [
           Center(
             child: Text(
-              '${identity.shortName} needs something to look at.',
+              'point ${identity.shortName} at something.',
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 20,
