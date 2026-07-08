@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'ai_api_keys_store.dart';
 import 'ai_api_provider.dart';
+import 'codex_piggyback_proxy.dart';
 import 'cursor_effort.dart';
 import 'ai_audit_store.dart';
 import 'storage_paths.dart';
@@ -109,6 +110,16 @@ final Set<String> cliProviderIds = Set.unmodifiable(
 
 List<_ProviderSpec> _allProviderSpecs = List.unmodifiable(_cliProviderSpecs);
 AiApiKeysSnapshot _apiKeysSnapshot = AiApiKeysSnapshot.empty();
+
+String _piggybackCliSnapshot = '';
+
+/// Transport policy for API-provider prompts (see _runCodexPiggyback):
+/// '' = direct HTTP, 'codex' = ride through the codex CLI when available.
+/// Mirrors the _apiKeysSnapshot pattern — settings push it in; call sites
+/// never thread it.
+void configurePiggybackCli(String value) {
+  _piggybackCliSnapshot = value.trim();
+}
 
 // Disabled CLI providers (see [_isCliProviderEnabled]) are filtered out of the
 // single source every path reads — availability, model discovery, dispatch,
@@ -577,7 +588,7 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       logosShape: commitShape,
     );
 
-    final providerResult = await _runProviderPrompt(
+    var providerResult = await _runProviderPrompt(
       provider: provider,
       resolution: availability.resolution!,
       modelId: modelId,
@@ -587,6 +598,22 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       reasoningEffort: reasoningEffort,
       fastMode: fastMode,
       supportsReasoning: supportsReasoning,
+    );
+    providerResult = await _healPiggybackSchemaDrift(
+      providerResult,
+      parses: (o) => _normalizeCommitMessage(o).isNotEmpty,
+      runDirect: () => _runProviderPrompt(
+        provider: provider,
+        resolution: availability.resolution!,
+        modelId: modelId,
+        prompt: prompt,
+        repositoryPath: repositoryPath,
+        readOnly: readOnly,
+        reasoningEffort: reasoningEffort,
+        fastMode: fastMode,
+        supportsReasoning: supportsReasoning,
+        allowPiggyback: false,
+      ),
     );
     if (!providerResult.ok || providerResult.output == null) {
       return GitResult.err(
@@ -657,7 +684,7 @@ Future<GitResult<AiPatchData>> generatePatch({
     // to any of them reaches patch generation for free. Patch flow is
     // read-only text-in/text-out (no effort/fast routing), so effectiveModelId
     // equals the picked id here.
-    final result = await _runProviderPrompt(
+    var result = await _runProviderPrompt(
       provider: provider,
       resolution: availability.resolution!,
       modelId: modelId,
@@ -665,6 +692,20 @@ Future<GitResult<AiPatchData>> generatePatch({
       repositoryPath: repositoryPath,
       readOnly: readOnly,
       commandLabelPrefix: commandLabelPrefix,
+    );
+    result = await _healPiggybackSchemaDrift(
+      result,
+      parses: (o) => _extractPatchFromModelOutput(o).isNotEmpty,
+      runDirect: () => _runProviderPrompt(
+        provider: provider,
+        resolution: availability.resolution!,
+        modelId: modelId,
+        prompt: prompt,
+        repositoryPath: repositoryPath,
+        readOnly: readOnly,
+        commandLabelPrefix: commandLabelPrefix,
+        allowPiggyback: false,
+      ),
     );
     if (!result.ok || result.output == null) {
       return GitResult.err(result.error ?? 'Provider did not return a patch.');
@@ -1429,6 +1470,22 @@ String? extractDeepestErrorMessageForTesting(dynamic node) =>
 String? parseCodexJsonlForTesting(String stdout) =>
     _parseCodexJsonl(stdout)?.text;
 
+/// Test seam for the codex-piggyback argv builder — pure, no I/O, so its
+/// isolation trio (`--sandbox read-only`, `--ephemeral`,
+/// `--ignore-user-config`) and the manifold-provider `-c` wiring can be
+/// pinned directly.
+@visibleForTesting
+List<String> buildCodexPiggybackArgsForTesting({
+  required String modelId,
+  required String proxyBaseUrl,
+  String? reasoningEffort,
+}) =>
+    _buildCodexPiggybackArgs(
+      modelId: modelId,
+      proxyBaseUrl: proxyBaseUrl,
+      reasoningEffort: reasoningEffort,
+    );
+
 @visibleForTesting
 String? parseOpenCodeJsonlForTesting(String stdout) =>
     _parseOpenCodeJsonl(stdout)?.text;
@@ -1471,6 +1528,7 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
   List<String> args, {
   Duration timeout = const Duration(seconds: 10),
   String? stdinPayload,
+  Map<String, String> environment = const {},
 }) async {
   final r = await _runObservedProcess(
     commandLabel: 'test.$command',
@@ -1479,6 +1537,7 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
     args: args,
     timeout: timeout,
     stdinPayload: stdinPayload,
+    environment: environment,
   );
   return r == null
       ? null
@@ -1626,7 +1685,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       (sid) => LogosVisTransmit(sid),
     );
 
-    final providerOutput = await _runProviderPrompt(
+    var providerOutput = await _runProviderPrompt(
       provider: provider,
       resolution: availability.resolution!,
       modelId: modelId,
@@ -1654,6 +1713,32 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       return GitResult.err(providerOutput.error ?? 'Review did not return.');
     }
 
+    providerOutput = await _healPiggybackSchemaDrift(
+      providerOutput,
+      parses: (o) => _parseDraftReview(o) != null,
+      runDirect: () => _runProviderPrompt(
+        provider: provider,
+        resolution: availability.resolution!,
+        modelId: modelId,
+        prompt: draftPrompt,
+        repositoryPath: repositoryPath,
+        readOnly: readOnly,
+        reasoningEffort: reasoningEffort,
+        fastMode: fastMode,
+        supportsReasoning: supportsReasoning,
+        allowPiggyback: false,
+      ),
+      onRetry: (retry) => _recordReviewAudit(
+        event: 'review_commit_draft_piggyback_reparse',
+        providerId: provider.id,
+        repositoryPath: repositoryPath,
+        scopeLabel: scopeLabel,
+        promptPreview: draftPrompt,
+        outputPreview: retry.outputPreview,
+        ok: retry.ok,
+        errorCode: retry.ok ? null : retry.error,
+      ),
+    );
     final draftReview = _parseDraftReview(providerOutput.output!);
     if (draftReview == null) {
       return const GitResult.err(
@@ -1733,7 +1818,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       spec: verifySpec,
       profile: profile,
     );
-    final verifyOutput = await _runProviderPrompt(
+    var verifyOutput = await _runProviderPrompt(
       provider: provider,
       resolution: availability.resolution!,
       modelId: modelId,
@@ -1755,11 +1840,10 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       errorCode: verifyOutput.ok ? null : verifyOutput.error,
     );
 
-    // Draft + verify are two real calls; sum their usage so the surfaced
-    // telemetry reflects the whole review, not just the last leg.
-    final totalUsage = providerOutput.usage + verifyOutput.usage;
-
     if (!verifyOutput.ok || verifyOutput.output == null) {
+      // Draft + verify are two real calls; sum their usage so the surfaced
+      // telemetry reflects the whole review, not just the last leg.
+      final totalUsage = providerOutput.usage + verifyOutput.usage;
       final fallback = AiCommitReviewData(
         providerId: provider.id,
         modelId: providerOutput.effectiveModelId,
@@ -1787,6 +1871,35 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       return GitResult.ok(fallback);
     }
 
+    verifyOutput = await _healPiggybackSchemaDrift(
+      verifyOutput,
+      parses: (o) => _parseVerificationReview(o) != null,
+      runDirect: () => _runProviderPrompt(
+        provider: provider,
+        resolution: availability.resolution!,
+        modelId: modelId,
+        prompt: verifyPrompt,
+        repositoryPath: repositoryPath,
+        readOnly: readOnly,
+        reasoningEffort: reasoningEffort,
+        fastMode: fastMode,
+        supportsReasoning: supportsReasoning,
+        allowPiggyback: false,
+      ),
+      onRetry: (retry) => _recordReviewAudit(
+        event: 'review_commit_verify_piggyback_reparse',
+        providerId: provider.id,
+        repositoryPath: repositoryPath,
+        scopeLabel: scopeLabel,
+        promptPreview: verifyPrompt,
+        outputPreview: retry.outputPreview,
+        ok: retry.ok,
+        errorCode: retry.ok ? null : retry.error,
+      ),
+    );
+    // Draft + verify are two real calls (plus any healed retry leg); sum
+    // their usage so the surfaced telemetry reflects the whole review.
+    final totalUsage = providerOutput.usage + verifyOutput.usage;
     final verification = _parseVerificationReview(verifyOutput.output!);
     if (verification == null) {
       return GitResult.ok(
@@ -4136,7 +4249,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     // Canvas beam kicks in here — the reshaped context is about to
     // travel to the synthesis model.
     LogosVisBus.instance.emitInSession((sid) => LogosVisTransmit(sid));
-    final providerOutput = await _runProviderPrompt(
+    var providerOutput = await _runProviderPrompt(
       provider: synthProvider,
       resolution: synthAvail.resolution!,
       modelId: synthModelId,
@@ -4164,6 +4277,32 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       );
     }
 
+    providerOutput = await _healPiggybackSchemaDrift(
+      providerOutput,
+      parses: (o) => _parseMuseOutput(o).proposals.isNotEmpty,
+      runDirect: () => _runProviderPrompt(
+        provider: synthProvider,
+        resolution: synthAvail.resolution!,
+        modelId: synthModelId,
+        prompt: synthPrompt,
+        repositoryPath: repositoryPath,
+        readOnly: readOnly,
+        reasoningEffort: synthesisReasoningEffort,
+        fastMode: synthesisFastMode,
+        supportsReasoning: synthesisSupportsReasoning,
+        allowPiggyback: false,
+      ),
+      onRetry: (retry) => _recordReviewAudit(
+        event: 'muse_synthesis_piggyback_reparse',
+        providerId: synthProvider.id,
+        repositoryPath: repositoryPath,
+        scopeLabel: scopeLabel,
+        promptPreview: synthPrompt,
+        outputPreview: retry.outputPreview,
+        ok: retry.ok,
+        errorCode: retry.ok ? null : retry.error,
+      ),
+    );
     final parsed = _parseMuseOutput(providerOutput.output!);
 
     // Silent-parse-failure guard. The parser is regex-based and
@@ -9913,6 +10052,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   bool fastMode = false,
   bool supportsReasoning = true,
   int? maxTokens,
+  bool allowPiggyback = true,
 }) async {
   // Resolve the id that will actually run ONCE, up front: it feeds both the
   // `--model` arg (via _buildProviderAttempts below) and the effectiveModelId
@@ -9942,6 +10082,27 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     );
     final effectiveEffort =
         fastMode || !supportsReasoning ? null : reasoningEffort;
+
+    if (allowPiggyback &&
+        _piggybackCliSnapshot == 'codex' &&
+        provider.apiProvider is OpenAiCompatibleApiProvider) {
+      final piggybacked = await _runCodexPiggyback(
+        apiProvider: provider.apiProvider! as OpenAiCompatibleApiProvider,
+        credentials: creds,
+        providerId: provider.id,
+        modelId: effectiveModelId,
+        prompt: prompt,
+        repositoryPath: repositoryPath,
+        commandLabelPrefix: commandLabelPrefix,
+        reasoningEffort: effectiveEffort,
+      );
+      if (piggybacked != null) return piggybacked;
+      // Any failure on the piggyback path (codex not installed, proxy
+      // startup failure, malformed/empty output, timeout, ...) falls
+      // through silently to the direct HTTP call below — the user is
+      // never worse off than with piggybacking off.
+    }
+
     final apiResult = await provider.apiProvider!.complete(AiApiRequest(
       prompt: prompt,
       model: modelId,
@@ -10042,6 +10203,206 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     usage: providerUsage,
     effectiveModelId: effectiveModelId,
   );
+}
+
+/// Piggyback drift heal: a piggybacked call that succeeded at process level
+/// but produced output THIS feature's parser can't use retries once direct
+/// (allowPiggyback: false). Universal contract: piggybacking can only help,
+/// never break — and that must hold one altitude above process success.
+/// Usage from both legs is summed; the direct leg's output/model win.
+/// Tolerant parsers (ask/debug/brainstorm) don't need this — they degrade
+/// gracefully by design.
+Future<_ProviderPromptResult> _healPiggybackSchemaDrift(
+  _ProviderPromptResult first, {
+  required bool Function(String output) parses,
+  required Future<_ProviderPromptResult> Function() runDirect,
+  Future<void> Function(_ProviderPromptResult retry)? onRetry,
+}) async {
+  if (!first.ok || first.output == null) return first;
+  if (!first.viaPiggyback || parses(first.output!)) return first;
+  final retry = await runDirect();
+  await onRetry?.call(retry);
+  if (!retry.ok || retry.output == null) return first;
+  return _ProviderPromptResult(
+    ok: true,
+    output: retry.output,
+    outputPreview: retry.outputPreview,
+    usage: first.usage + retry.usage,
+    effectiveModelId: retry.effectiveModelId,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Codex piggyback: run a review prompt through `codex exec` (full agentic
+// CLI, sandboxed read-only) instead of a bare HTTP call, so an
+// OpenAI-compatible API-provider model (OpenRouter/OpenAI/xAI) gets codex's
+// own agentic scaffolding around the same upstream key. Hermetic by
+// construction, same spirit as the sandbox-pin comment on the CLI codex
+// attempts above (see 2026-07-04 incident): codex's own `~/.codex`
+// config.toml is never read (`--ignore-user-config`) or written
+// (`--ephemeral`), its sandbox is pinned read-only regardless of any trust
+// level, and the real upstream API key never enters codex's env or argv —
+// it stays inside this process; codex only ever sees a random, single-use
+// loopback bearer token (`MANIFOLD_PROXY_TOKEN`) that is worthless outside
+// this one call. ANY failure anywhere in this path returns null so the
+// caller falls back to the direct HTTP call — piggybacking can only help,
+// never break, a review.
+Future<_ProviderPromptResult?> _runCodexPiggyback({
+  required OpenAiCompatibleApiProvider apiProvider,
+  required AiApiCredentials credentials,
+  required String providerId,
+  required String modelId,
+  required String prompt,
+  required String repositoryPath,
+  required String commandLabelPrefix,
+  String? reasoningEffort,
+}) async {
+  try {
+    final codexSpec =
+        _cliProviderSpecs.where((s) => s.id == 'codex').firstOrNull;
+    if (codexSpec == null || !_isCliProviderEnabled('codex')) return null;
+
+    // Deliberately NOT `avail.ready` (that also demands `auth.ok`, i.e. a
+    // ChatGPT login). Irrelevant here: we bring our own provider + API key
+    // via the loopback proxy config, so codex never needs its own
+    // credentials for this call. All this path needs is the binary itself.
+    final avail = await _inspectProviderCached(codexSpec);
+    final resolution = avail.resolution;
+    if (resolution == null) return null;
+
+    CodexPiggybackProxy? proxy;
+    try {
+      proxy = await CodexPiggybackProxy.start(
+        upstreamBaseUrl: apiProvider.effectiveBaseUrl(credentials),
+        upstreamApiKey: credentials.apiKey,
+        upstreamHeaders: apiProvider.extraHeaders(credentials),
+        // Manifold-canonical — always wins over whatever codex mapped from
+        // its own model catalog, so the effort slider works for every
+        // model, not just the OpenAI-family slugs codex recognizes.
+        reasoningEffort: reasoningEffort,
+        // OpenRouter reports per-request USD cost only when asked; every
+        // other upstream ignores the extra field harmlessly.
+        requestCostAccounting: providerId == 'openrouter',
+      );
+
+      final args = _buildCodexPiggybackArgs(
+        modelId: modelId,
+        proxyBaseUrl: proxy.baseUrl,
+        reasoningEffort: reasoningEffort,
+      );
+
+      final result = await _runObservedProcess(
+        commandLabel: '$commandLabelPrefix.$providerId.codex-piggyback',
+        scope: 'ai',
+        command: resolution.command,
+        args: args,
+        timeout: _runtimeTimeoutFor(_ProviderKind.codex),
+        workingDirectory: repositoryPath,
+        stdinPayload: prompt,
+        environment: {
+          ..._providerEnvironment(_ProviderKind.codex),
+          'MANIFOLD_PROXY_TOKEN': proxy.token,
+        },
+      );
+      if (result == null || result.exitCode != 0) return null;
+
+      final formatted = _formatProviderOutput(
+        _ProviderOutputMode.codexJsonl,
+        result.stdout,
+        result.stderr,
+      );
+      final text = formatted.text;
+      if (text == null ||
+          text.trim().isEmpty ||
+          _looksLikeProviderError(_ProviderKind.codex, text)) {
+        return null;
+      }
+
+      // Snapshot the proxy's own accounting before disposal — it tracks
+      // fields codex's JSONL summary can never carry (upstream cost,
+      // request id, resolved model) since codex only ever talks to our
+      // loopback stand-in, never the real upstream directly. Token counts
+      // are left as codex parsed them (formatted.usage): both numbers
+      // originate from the very same upstream response, so there's nothing
+      // to reconcile there.
+      final totals = proxy.usageTotals;
+      final parsedUsage = formatted.usage;
+      final resolvedModel =
+          (totals.resolvedModel != null && totals.resolvedModel != modelId)
+              ? totals.resolvedModel
+              : parsedUsage.resolvedModel;
+      final usage = AiUsage(
+        inputTokens: parsedUsage.inputTokens,
+        outputTokens: parsedUsage.outputTokens,
+        cacheReadTokens: parsedUsage.cacheReadTokens,
+        cacheWriteTokens: parsedUsage.cacheWriteTokens,
+        reasoningTokens: parsedUsage.reasoningTokens,
+        duration: parsedUsage.duration,
+        requestId: totals.requestId ?? parsedUsage.requestId,
+        resolvedModel: resolvedModel,
+        costUsd: totals.costUsd ?? parsedUsage.costUsd,
+      );
+
+      return _ProviderPromptResult(
+        ok: true,
+        output: text,
+        outputPreview: text,
+        usage: usage,
+        effectiveModelId: modelId,
+        viaPiggyback: true,
+      );
+    } finally {
+      await proxy?.dispose();
+    }
+  } catch (e) {
+    // The fallback to direct HTTP stays silent in the UI by design, but the
+    // abort must not be invisible to diagnostics: the codex run itself is
+    // already observed via _runObservedProcess, while failures BEFORE it
+    // (proxy bind, spec lookup) would otherwise vanish into this catch.
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'error',
+      command: '$commandLabelPrefix.$providerId.codex-piggyback',
+      errorCode: 'piggyback-abort',
+      message: '$e',
+      notify: false,
+    );
+    return null;
+  }
+}
+
+/// Pure arg-builder for the codex piggyback path — no I/O, fully testable.
+/// `proxyBaseUrl` is passed as a raw `-c` value (no quotes): codex's TOML
+/// config parser falls back to a literal string for values that don't parse
+/// as TOML, and a `http://127.0.0.1:<port>/v1` URL never does.
+List<String> _buildCodexPiggybackArgs({
+  required String modelId,
+  required String proxyBaseUrl,
+  String? reasoningEffort,
+}) {
+  final mapped = _codexEffort(reasoningEffort);
+  return [
+    'exec', '--model', modelId,
+    '--sandbox', 'read-only',
+    '--ephemeral',
+    '--ignore-user-config',
+    '--skip-git-repo-check',
+    // Our review prompt is the sole instruction source on every provider
+    // path — a repo's AGENTS.md must not steer verdicts, so codex's
+    // project-doc injection is disabled outright. (`--strict-config` would
+    // pin these keys against version drift, but it doesn't exist on 0.128's
+    // `exec` yet — revisit when the installed floor rises.)
+    '-c', 'project_doc_max_bytes=0',
+    '-c', 'model_provider=manifold',
+    '-c', 'model_providers.manifold.name=Manifold',
+    '-c', 'model_providers.manifold.base_url=$proxyBaseUrl',
+    '-c', 'model_providers.manifold.env_key=MANIFOLD_PROXY_TOKEN',
+    '-c', 'model_providers.manifold.wire_api=responses',
+    '-c', 'model_providers.manifold.request_max_retries=1',
+    '-c', 'model_providers.manifold.stream_max_retries=1',
+    '-c', 'model_providers.manifold.stream_idle_timeout_ms=900000',
+    if (mapped != null) ...['-c', 'model_reasoning_effort="$mapped"'],
+    '--json', '-',
+  ];
 }
 
 _ParsedReviewResult? _parseDraftReview(String raw) {
@@ -12531,6 +12892,12 @@ class _ProviderPromptResult {
   /// picker value the effort router may have swapped away from.
   final String effectiveModelId;
 
+  /// True when the output was produced by the codex piggyback path rather
+  /// than the provider's own transport. Lets the review layer treat a
+  /// schema-drifted draft as a piggyback failure (retry direct) instead of
+  /// a terminal review error.
+  final bool viaPiggyback;
+
   const _ProviderPromptResult({
     required this.ok,
     this.output,
@@ -12538,6 +12905,7 @@ class _ProviderPromptResult {
     required this.outputPreview,
     this.usage = AiUsage.empty,
     this.effectiveModelId = '',
+    this.viaPiggyback = false,
   });
 
   int get inputTokens => usage.inputTokens;

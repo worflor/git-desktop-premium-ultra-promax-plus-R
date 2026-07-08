@@ -429,6 +429,17 @@ const _aboutDevelopment = <_AboutEntry>[
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.1.6',
+    date: '2026-07-08',
+    bullets: [
+      'Staging a file that lives under an unstaged directory no longer gets left behind at commit. This is the real reason 0.1.6 exists. And since it had to ship early, everything below is early-access cooking, served a little raw.',
+      'The history DAG can expand into a worldline view now, your whole history stretched out along one thread.',
+      'The branches and PR page got its first real love since launch: a full backend overhaul of how branches are processed and understood, so absorbed vs squashed vs merged finally get told apart. And the page itself looks far better for it.',
+      'API models (OpenRouter, OpenAI, xAI) can piggyback the Codex CLI now for full read-only agentic capability. Basically codex, but with your API models slotted in automatically.',
+      'One new equation entered the chat: a participation ratio for diffs, N_eff = (Σφ)² / Σφ². the engine keeps eating math.',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.5',
     date: '2026-07-04',
     bullets: [

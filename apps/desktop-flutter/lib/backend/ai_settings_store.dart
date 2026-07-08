@@ -12,6 +12,12 @@ import 'dtos.dart'
         parseMuseStrand;
 import 'storage_paths.dart';
 
+/// The closed set of CLIs that can carry API-provider prompts (see
+/// `apiPiggybackCli`). Store load, the settings setter, and the settings
+/// dropdown all key off this one set, so a value that can't be rendered or
+/// dispatched can never enter the system.
+const Set<String> kSupportedPiggybackClis = {'codex'};
+
 class AiSettingsSnapshot {
   final Map<String, String> modelSelections;
   final Map<String, String> modelCategoryLabels;
@@ -19,6 +25,11 @@ class AiSettingsSnapshot {
   final String commitMessageModelCategoryId;
   final String reviewCommitModelCategoryId;
   final bool reviewCommitDoubleCheckEnabled;
+  /// Universal transport policy for API-provider models across all AI
+  /// features (reviews, commit messages, muse, ask, debug, patch).
+  /// `''` = direct HTTP; `'codex'` = ride through the codex CLI. More
+  /// providers may join this dropdown later; today codex is the only option.
+  final String apiPiggybackCli;
   final String museBrainstormModelCategoryId;
   final String museSynthesisModelCategoryId;
   final String presentModelCategoryId;
@@ -41,6 +52,7 @@ class AiSettingsSnapshot {
     required this.commitMessageModelCategoryId,
     required this.reviewCommitModelCategoryId,
     required this.reviewCommitDoubleCheckEnabled,
+    this.apiPiggybackCli = 'codex',
     required this.museBrainstormModelCategoryId,
     required this.museSynthesisModelCategoryId,
     required this.presentModelCategoryId,
@@ -57,6 +69,7 @@ class AiSettingsSnapshot {
         commitMessageModelCategoryId: 'quality',
         reviewCommitModelCategoryId: 'quality',
         reviewCommitDoubleCheckEnabled: false,
+        apiPiggybackCli: 'codex',
         museBrainstormModelCategoryId: 'fast',
         museSynthesisModelCategoryId: 'quality',
         presentModelCategoryId: 'quality',
@@ -71,6 +84,7 @@ class AiSettingsSnapshot {
         'commitMessageModelCategoryId': commitMessageModelCategoryId,
         'reviewCommitModelCategoryId': reviewCommitModelCategoryId,
         'reviewCommitDoubleCheckEnabled': reviewCommitDoubleCheckEnabled,
+        'apiPiggybackCli': apiPiggybackCli,
         'museBrainstormModelCategoryId': museBrainstormModelCategoryId,
         'museSynthesisModelCategoryId': museSynthesisModelCategoryId,
         'presentModelCategoryId': presentModelCategoryId,
@@ -98,6 +112,10 @@ class AiSettingsSnapshot {
       reviewCommitDoubleCheckEnabled: _boolOr(
         json['reviewCommitDoubleCheckEnabled'],
         defaults.reviewCommitDoubleCheckEnabled,
+      ),
+      apiPiggybackCli: _piggybackCliOr(
+        json['apiPiggybackCli'],
+        defaults.apiPiggybackCli,
       ),
       museBrainstormModelCategoryId: _stringOr(
         json['museBrainstormModelCategoryId'],
@@ -168,8 +186,62 @@ class AiSettingsSnapshot {
     return value is String && value.trim().isNotEmpty ? value.trim() : fallback;
   }
 
+  /// Like [_stringOr], but a persisted empty string is a real value
+  /// (not "missing") — only an absent/non-string key falls back.
+  /// Reader for `apiPiggybackCli`. Unlike the category-id fields, '' is a
+  /// meaningful, distinct value (piggyback off) rather than "unset" — and
+  /// the value set must stay closed over [kSupportedPiggybackClis]: an
+  /// arbitrary persisted string (hand-edited JSON, a newer build's provider
+  /// name after a downgrade) would otherwise reach the settings dropdown as
+  /// a value matching no item, which asserts and takes the page down. An
+  /// unknown carrier degrades to the fallback, preserving "piggyback on".
+  static String _piggybackCliOr(dynamic value, String fallback) {
+    if (value is! String) return fallback;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || kSupportedPiggybackClis.contains(trimmed)) {
+      return trimmed;
+    }
+    return fallback;
+  }
+
   static bool _boolOr(dynamic value, bool fallback) {
     return value is bool ? value : fallback;
+  }
+
+  AiSettingsSnapshot copyWith({
+    Map<String, String>? modelSelections,
+    Map<String, String>? modelCategoryLabels,
+    Map<String, String>? reasoningEfforts,
+    String? commitMessageModelCategoryId,
+    String? reviewCommitModelCategoryId,
+    bool? reviewCommitDoubleCheckEnabled,
+    String? apiPiggybackCli,
+    String? museBrainstormModelCategoryId,
+    String? museSynthesisModelCategoryId,
+    String? presentModelCategoryId,
+    List<MuseQuiverEntry>? museQuiver,
+    List<MuseStrandKind>? museStrandOrder,
+  }) {
+    return AiSettingsSnapshot(
+      modelSelections: modelSelections ?? this.modelSelections,
+      modelCategoryLabels: modelCategoryLabels ?? this.modelCategoryLabels,
+      reasoningEfforts: reasoningEfforts ?? this.reasoningEfforts,
+      commitMessageModelCategoryId:
+          commitMessageModelCategoryId ?? this.commitMessageModelCategoryId,
+      reviewCommitModelCategoryId:
+          reviewCommitModelCategoryId ?? this.reviewCommitModelCategoryId,
+      reviewCommitDoubleCheckEnabled:
+          reviewCommitDoubleCheckEnabled ?? this.reviewCommitDoubleCheckEnabled,
+      apiPiggybackCli: apiPiggybackCli ?? this.apiPiggybackCli,
+      museBrainstormModelCategoryId:
+          museBrainstormModelCategoryId ?? this.museBrainstormModelCategoryId,
+      museSynthesisModelCategoryId:
+          museSynthesisModelCategoryId ?? this.museSynthesisModelCategoryId,
+      presentModelCategoryId:
+          presentModelCategoryId ?? this.presentModelCategoryId,
+      museQuiver: museQuiver ?? this.museQuiver,
+      museStrandOrder: museStrandOrder ?? this.museStrandOrder,
+    );
   }
 }
 

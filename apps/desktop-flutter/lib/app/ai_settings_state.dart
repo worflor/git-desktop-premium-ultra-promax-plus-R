@@ -39,6 +39,7 @@ class AiSettingsState extends ChangeNotifier {
   String _reviewCommitPrompt = '';
   String _reviewCommitPromptPath = '';
   bool _reviewCommitDoubleCheckEnabled = false;
+  String _apiPiggybackCli = 'codex';
   String _musePrompt = '';
   String _musePromptPath = '';
   String _museBrainstormModelCategoryId = 'fast';
@@ -72,6 +73,7 @@ class AiSettingsState extends ChangeNotifier {
   String get reviewCommitPrompt => _reviewCommitPrompt;
   String get reviewCommitPromptPath => _reviewCommitPromptPath;
   bool get reviewCommitDoubleCheckEnabled => _reviewCommitDoubleCheckEnabled;
+  String get apiPiggybackCli => _apiPiggybackCli;
   String get musePrompt => _musePrompt;
   String get musePromptPath => _musePromptPath;
   String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
@@ -140,6 +142,11 @@ class AiSettingsState extends ChangeNotifier {
     _commitMessageModelCategoryId = snapshot.commitMessageModelCategoryId;
     _reviewCommitModelCategoryId = snapshot.reviewCommitModelCategoryId;
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
+    _apiPiggybackCli = snapshot.apiPiggybackCli;
+    // Seed the module-level transport snapshot ai.dart consults at its
+    // single dispatch seam, so every API-model call (review, muse, ask,
+    // debug, patch, commit) picks up the policy without threading it.
+    configurePiggybackCli(_apiPiggybackCli);
     _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
     _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
     final loadedQuiver = snapshot.museQuiver.isEmpty
@@ -327,6 +334,36 @@ class AiSettingsState extends ChangeNotifier {
 
     _reviewCommitDoubleCheckEnabled = value;
     await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setApiPiggybackCli(String value) async {
+    var normalized = value.trim();
+    // Same closed set the store enforces on load: an unknown carrier can
+    // neither render in the dropdown nor dispatch, so it never gets in.
+    if (normalized.isNotEmpty &&
+        !kSupportedPiggybackClis.contains(normalized)) {
+      normalized = 'codex';
+    }
+    if (_apiPiggybackCli == normalized) {
+      return;
+    }
+
+    final previous = _apiPiggybackCli;
+    _apiPiggybackCli = normalized;
+    // Push the new policy into ai.dart's dispatch-seam snapshot so it
+    // takes effect immediately, before persistence or listeners.
+    configurePiggybackCli(_apiPiggybackCli);
+    try {
+      await _persistSnapshot();
+    } catch (_) {
+      // A failed save must not leave the live transport out of sync with
+      // what's on disk and with what the UI reports: roll both the field
+      // and the dispatch-seam snapshot back before surfacing the error.
+      _apiPiggybackCli = previous;
+      configurePiggybackCli(previous);
+      rethrow;
+    }
     notifyListeners();
   }
 
@@ -645,6 +682,7 @@ class AiSettingsState extends ChangeNotifier {
         commitMessageModelCategoryId: _commitMessageModelCategoryId,
         reviewCommitModelCategoryId: _reviewCommitModelCategoryId,
         reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,
+        apiPiggybackCli: _apiPiggybackCli,
         museBrainstormModelCategoryId: _museBrainstormModelCategoryId,
         museSynthesisModelCategoryId: _museSynthesisModelCategoryId,
         presentModelCategoryId: _presentModelCategoryId,

@@ -665,6 +665,23 @@ class _SettingsPageState extends State<SettingsPage>
     }
   }
 
+  Future<void> _saveApiPiggybackCli(String value) async {
+    try {
+      await context.read<AiSettingsState>().setApiPiggybackCli(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save API piggyback CLI.');
+    }
+  }
+
   String? _commitPromptStatusLabel() {
     switch (_commitPromptSaveState) {
       case _PromptSaveState.typing:
@@ -1468,6 +1485,22 @@ class _SettingsPageState extends State<SettingsPage>
                 aiSettings: aiSettings,
                 onApiKeyChanged: () {
                   _refreshAiDiagnostics(forceRefresh: true);
+                },
+              ),
+              const SizedBox(height: 10),
+              _PiggybackCliRow(
+                value: aiSettings.apiPiggybackCli,
+                // Mirrors the EXECUTION gate in _runCodexPiggyback: binary
+                // presence only. `available` would also demand ChatGPT auth,
+                // which piggyback deliberately doesn't need (it brings its
+                // own key via the loopback proxy) — using it here would show
+                // DORMANT while piggybacking actually works.
+                dormant: aiSettings.apiPiggybackCli.isNotEmpty &&
+                    !_aiProviders.any((p) =>
+                        p.id == 'codex' &&
+                        (p.resolvedBinary?.isNotEmpty ?? false)),
+                onChanged: (value) {
+                  unawaited(_saveApiPiggybackCli(value));
                 },
               ),
               const _SettingsGap(),
@@ -10387,6 +10420,132 @@ class _CheckboxRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Closing row of the CLI Piggybacking section: a checkbox (toggling
+/// `apiPiggybackCli` between `''` and `'codex'`) plus an inline provider
+/// dropdown for *which* agentic CLI carries API-provider prompts. This is
+/// the universal transport policy for API-provider models across every AI
+/// feature (reviews, commit messages, muse, ask, debug, patch) — not
+/// reviews-only. When the chosen model is an API provider, the CLI talks
+/// to a loopback proxy so the real key never leaves the app. Only `codex`
+/// exists today, but the dropdown leaves room for more providers without a
+/// shape change.
+/// Visually a sibling of
+/// [_CheckboxRow] — same 18x18 square/label idiom — except the dropdown
+/// and status chip sit outside the toggle's own tap target so picking a
+/// provider doesn't fight the row's on/off gesture.
+class _PiggybackCliRow extends StatelessWidget {
+  final String value;
+  final bool dormant;
+  final ValueChanged<String> onChanged;
+
+  const _PiggybackCliRow({
+    required this.value,
+    required this.dormant,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final isCrafty = t.id == AppThemeId.crafty;
+    final isBlackboard = t.id == AppThemeId.blackboard;
+    final enabled = value.isNotEmpty;
+
+    void toggle() => onChanged(enabled ? '' : 'codex');
+
+    return Row(
+      children: [
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: toggle,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: enabled
+                        ? (isBlackboard ? Colors.transparent : t.sliderThumb)
+                        : t.inputBg,
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.tinyRadius),
+                    border: Border.all(
+                      color: enabled
+                          ? (isCrafty
+                              ? t.btnBorder
+                              : (isBlackboard ? Colors.white : t.accentBright))
+                          : t.inputBorder,
+                      width: isCrafty ? 2 : 1,
+                    ),
+                    boxShadow: enabled && isCrafty
+                        ? [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.3),
+                              offset: const Offset(-2, -2),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: enabled
+                      ? _ThemeCheckGlyph(tokens: t)
+                      : const SizedBox.shrink(),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'API models use',
+                  style: TextStyle(color: t.textNormal, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Opacity(
+          opacity: enabled ? 1.0 : 0.45,
+          child: SizedBox(
+            width: 110,
+            child: AppDropdownField<String>(
+              // The stored value drives the selection; when the toggle is
+              // off ('') the dropdown shows the provider that WOULD carry
+              // the calls, dimmed — and stays interactive on purpose: this
+              // is a dual-function control, so picking a provider IS the
+              // gesture that re-enables piggybacking through it.
+              value: value.isEmpty ? 'codex' : value,
+              height: 26,
+              fontSize: 11,
+              items: const [
+                DropdownMenuItem<String>(
+                  value: 'codex',
+                  child: Text('codex', style: TextStyle(fontFamily: AppFonts.mono)),
+                ),
+              ],
+              onChanged: (next) {
+                if (next != null) onChanged(next);
+              },
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (dormant)
+          Tooltip(
+            message: 'codex not detected',
+            child: Text(
+              'DORMANT',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
