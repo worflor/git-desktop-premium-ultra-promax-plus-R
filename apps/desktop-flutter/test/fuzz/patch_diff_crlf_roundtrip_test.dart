@@ -33,24 +33,35 @@
 //   7.   git's C-quoting of unusual (unicode/space) filenames is correctly
 //        reversed by logos_hunks.dart's path extraction.
 //
-// Known bugs (each has a dedicated `skip:`-ed repro test; full writeups in
+// Formerly-known bugs (each had a dedicated `skip:`-ed repro test, now
+// fixed and unskipped — search this file for `GENUINE BUG (FIXED)` for the
+// individual writeups; original writeups in
 // docs/architecture/test-hardening-bug-dossier.md):
 //   - patch_engine.dart: `PatchEngine.buildStagedPatch`'s `isNewFile`
-//     heuristic can't tell "brand new file" from "an existing, already-
+//     heuristic couldn't tell "brand new file" from "an existing, already-
 //     tracked, empty file gaining its first line(s)" — both diffs have
-//     zero old-side lines. It emits `--- /dev/null`, which real
-//     `git apply` rejects since the target already exists.
-//   - patch_as_merge.dart: `_spliceConflictMarkers` never reads
+//     zero old-side lines. It emitted `--- /dev/null`, which real
+//     `git apply` rejects since the target already exists. Fixed by
+//     deriving new/deleted status from the diff's own meta lines.
+//   - patch_as_merge.dart: `_spliceConflictMarkers` never read
 //     `ParsedLine.noNewlineAtEof`, so `reviewMergeFromPatch`'s accept-all/
-//     reject-all can silently gain a trailing newline the real file never
-//     had, whenever the diff's last touched line has none (contrast
-//     `PatchEngine.buildStagedPatch`, which gets this right).
+//     reject-all could silently gain a trailing newline the real file
+//     never had, whenever the diff's last touched line has none. Fixed by
+//     threading the flag through to the last ConflictBlock and having
+//     ConflictFile.buildResult() honor it.
 //   - logos_hunks.dart, x2, both under LAW 7: (a) non-ASCII filenames —
-//     git's per-byte octal C-quoting is decoded one UTF-16 code unit per
+//     git's per-byte octal C-quoting was decoded one UTF-16 code unit per
 //     escape instead of being recombined and UTF-8-decoded, producing
 //     mojibake; (b) space-containing filenames — `_pathFromDiffHeader`'s
-//     `line.split(' ')[3]` shatters on the filename's own internal spaces.
-//     diff_models.dart's regex-based header parser has neither defect.
+//     `line.split(' ')[3]` shattered on the filename's own internal
+//     spaces. Both fixed locally in logos_hunks.dart, THEN extracted into
+//     lib/backend/git_diff_paths.dart (pathFromDiffGitHeader /
+//     unCQuoteGitPath / patchSidePath) once diff_models.dart's separate,
+//     naive `RegExp(r'^diff --git a/(.+) b/(.+)$')` header parser was
+//     found to have the SAME two defects independently — the canonical UI
+//     parser (parseUnifiedDiff/sliceDiffByFile, used by PatchEngine,
+//     DiffShell, reviewMergeFromPatch) now shares the one fixed
+//     implementation instead of drifting from logos_hunks.dart's.
 //
 // Async fuzzing note: test/support/prop.dart's `forAll` is deliberately
 // synchronous (a for-loop + try/catch) — properties here need real git
@@ -312,15 +323,20 @@ void main() {
     });
 
     test(
-        'known bug: an existing (tracked, empty) file gaining its '
-        'first line is misdetected as a brand-new file', () async {
-      // PatchEngine.buildStagedPatch's `isNewFile` heuristic is "no line
-      // in the diff has an old-side line number" — but an already-tracked
-      // empty file gaining its first line(s) produces exactly that same
-      // shape (zero old-side lines) as a genuinely brand-new file. The
-      // rebuilt patch wrongly emits `--- /dev/null`, which real git
-      // rejects because the target file already exists. Not a CRLF issue:
-      // reproduces identically with plain LF.
+        // GENUINE BUG (FIXED): PatchEngine.buildStagedPatch's `isNewFile`
+        // heuristic used to be "no line in the diff has an old-side line
+        // number" — but an already-tracked empty file gaining its first
+        // line(s) produces exactly that same shape (zero old-side lines)
+        // as a genuinely brand-new file, so it wrongly emitted
+        // `--- /dev/null`, which real git rejects because the target file
+        // already exists. Fixed by deriving new/deleted status from the
+        // diff's OWN `--- `/`+++ `/`new file mode` meta lines (which
+        // parseUnifiedDiff already preserves per-line) instead of from
+        // line-number absence. Not a CRLF issue: reproduces identically
+        // with plain LF.
+        'an existing (tracked, empty) file gaining its first line is '
+        'staged as an edit to an existing file, not a brand-new file',
+        () async {
       const emptyPath = 'was_empty.txt';
       await _writeAndCommit(repo, emptyPath, '', message: 'empty base');
       await repo.writeFile(emptyPath, 'first line\n');
@@ -331,30 +347,24 @@ void main() {
       final lines = parseUnifiedDiff(diffText);
       final rebuilt =
           PatchEngine.buildStagedPatch(emptyPath, _stageAll(lines));
-      expect(rebuilt, contains('/dev/null'),
-          reason: 'documents the CURRENT (buggy) output — if this starts '
-              'failing, isNewFile has changed and this test should be '
-              'revisited');
+      expect(rebuilt, isNot(contains('/dev/null')),
+          reason: 'the file already exists — the rebuilt patch must not '
+              'claim it is new.\n--- rebuilt ---\n$rebuilt');
+      expect(rebuilt, contains('--- a/$emptyPath'));
+      expect(rebuilt, contains('+++ b/$emptyPath'));
 
       await repo.gitOk(['checkout', '--', emptyPath]);
       final patchFile =
           await _writePatchFile(patchDir, 'was_empty.patch', rebuilt);
       final applyRes =
           await repo.git(['apply', '--whitespace=nowarn', patchFile.path]);
-      expect(applyRes.exitCode, isNot(0),
-          reason: 'expected git to reject the wrongly-new-file patch; if '
-              'this now passes, isNewFile has been fixed and this test '
-              '(and its skip) should be removed');
-    },
-        skip: 'known bug: PatchEngine.buildStagedPatch cannot '
-            'distinguish "brand new file" from "existing tracked file '
-            'that was empty and gained its first line(s)" — both diffs '
-            'have zero old-side lines, so isNewFile emits `--- /dev/null`, '
-            'which real `git apply` rejects with "error: dev/null: No '
-            'such file or directory" since the target already exists. '
-            'Root cause: patch_engine.dart\'s isNewFile/isDeletedFile '
-            'detection needs an explicit "does this path already exist" '
-            'signal, not just line-number presence.');
+      expect(applyRes.exitCode, 0,
+          reason: 'git apply rejected the rebuilt patch.\n'
+              'STDERR: ${applyRes.stderr}\n--- rebuilt ---\n$rebuilt');
+
+      final resultBytes = await _repoFile(repo, emptyPath).readAsBytes();
+      expect(resultBytes, equals(utf8.encode('first line\n')));
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -487,15 +497,6 @@ void main() {
           expect(diffRes.exitCode, 0);
           final diffText = diffRes.stdout as String;
           if (diffText.isEmpty) return;
-          if (a.isEmpty) {
-            // Starting from an empty (but already-tracked) file hits a
-            // separate, already-documented defect (PatchEngine.isNewFile
-            // can't distinguish "brand new file" from "existing empty file
-            // gaining its first line") — see the dedicated known-bug test
-            // in the LAW 1+2 group. Not a CRLF question; skip so it doesn't
-            // conflate the two findings.
-            return;
-          }
 
           final lines = parseUnifiedDiff(diffText);
           final rebuilt = PatchEngine.buildStagedPatch(path, _stageAll(lines));
@@ -670,15 +671,6 @@ void main() {
           expect(diffRes.exitCode, 0);
           final diffText = diffRes.stdout as String;
           if (diffText.isEmpty) return;
-          if (parseUnifiedDiff(diffText).any((l) => l.noNewlineAtEof)) {
-            // SEPARATE, already-documented defect: _spliceConflictMarkers
-            // never reads ParsedLine.noNewlineAtEof, so accept-all/
-            // reject-all can gain a spurious trailing newline whenever the
-            // diff's last touched line has none. See the dedicated GENUINE
-            // BUG test below — skip here so it doesn't mask the rest of
-            // this sweep.
-            return;
-          }
 
           final result = reviewMergeFromPatch(diffText, {path: a});
           expect(result, isNotNull,
@@ -710,14 +702,22 @@ void main() {
     });
 
     test(
-        'known bug: reviewMergeFromPatch loses the file\'s '
-        'no-trailing-newline status on accept-all', () async {
-      // _spliceConflictMarkers (patch_as_merge.dart) builds the
-      // marker-spliced text purely from ParsedLine.text substrings and
-      // never consults ParsedLine.noNewlineAtEof — unlike
-      // PatchEngine.buildStagedPatch, which explicitly re-emits the
-      // `\ No newline at end of file` marker. Plain LF content, no CRLF
-      // involved.
+        // GENUINE BUG (FIXED): _spliceConflictMarkers (patch_as_merge.dart)
+        // used to build the marker-spliced text purely from
+        // ParsedLine.text substrings and never consulted
+        // ParsedLine.noNewlineAtEof — unlike PatchEngine.buildStagedPatch,
+        // which explicitly re-emits the `\ No newline at end of file`
+        // marker. The marker-embedded document is invariant to trailing-
+        // newline status (round-trips identically either way), so the
+        // fix threads the real noNewlineAtEof flags through explicitly:
+        // _spliceConflictMarkers now returns them alongside the text,
+        // reviewMergeFromPatch stamps them onto whichever ConflictBlock
+        // ends up last, and ConflictFile.buildResult() (merge_conflict_
+        // editor.dart) suppresses its unconditional rejoin-newline for
+        // that block when the resolved side is flagged. Plain LF content,
+        // no CRLF involved.
+        'reviewMergeFromPatch preserves the file\'s no-trailing-newline '
+        'status on accept-all and reject-all', () async {
       const a = 'one\ntwo\nthree';
       const t = 'one\ntwo\nthree EDITED'; // theirs — no trailing newline
       await _writeAndCommit(repo, path, a, message: 'no-newline base');
@@ -731,20 +731,18 @@ void main() {
         block.resolution = ConflictSide.theirs;
       }
       final acceptAll = result.single.buildResult();
-      expect(acceptAll, isNot(t),
-          reason: 'documents the current (buggy) output — if accept-all '
-              'now equals theirs exactly, the bug has been fixed and this '
-              'test should be revisited.\ngot: ${acceptAll.toString()}');
-      expect(acceptAll, '$t\n',
-          reason: 'a spurious trailing newline was expected to be added '
-              '(the current, buggy behavior) — got something else '
-              'entirely, worth a fresh look: ${acceptAll.toString()}');
-    },
-        skip: 'known bug: patch_as_merge.dart\'s _spliceConflictMarkers '
-            'never reads ParsedLine.noNewlineAtEof, so reviewMergeFromPatch '
-            'accept-all/reject-all silently gains a trailing newline the '
-            'real file never had, whenever the diff\'s last touched line '
-            'has none');
+      expect(acceptAll, t,
+          reason: 'accept-all must reproduce theirs exactly, including no '
+              'trailing newline.\ngot: ${acceptAll.toString()}');
+
+      for (final block in result.single.blocks) {
+        block.resolution = ConflictSide.ours;
+      }
+      final rejectAll = result.single.buildResult();
+      expect(rejectAll, a,
+          reason: 'reject-all must reproduce ours exactly, including no '
+              'trailing newline.\ngot: ${rejectAll.toString()}');
+    });
 
     test('fuzz: mismatched ours (unrelated content) returns null, never '
         'throws', () async {
@@ -865,7 +863,13 @@ void main() {
           }
         },
       );
-    });
+    },
+        // Each case shells out to real git several times (write+add+commit
+        // per file, plus diff/name-only/commit) across up to 4 files; at
+        // MANIFOLD_FUZZ scales ≥5 (75+ cases) that reliably exceeds the
+        // default 30s test timeout well before any assertion fails —
+        // pre-existing IO cost, unrelated to B22-B25.
+        timeout: const Timeout(Duration(minutes: 5)));
   });
 
   // ---------------------------------------------------------------------------
@@ -883,29 +887,21 @@ void main() {
       await repo.dispose();
     });
 
-    // Two distinct bugs live in lib/backend/logos_hunks.dart's path
-    // extraction, found by this law:
+    // Two distinct bugs used to live in lib/backend/logos_hunks.dart's path
+    // extraction, found by this law (both now fixed — see the GENUINE BUG
+    // (FIXED) comments on the tests below):
     //  (a) non-ASCII names: git C-quotes them as octal per-byte escapes
     //      (e.g. "caf\303\251-file.txt" for the UTF-8 bytes of "café..."),
-    //      but `_unCQuoteGitPath` decodes each octal escape as its own
-    //      UTF-16 code unit instead of recombining the escaped bytes into
-    //      one UTF-8 decode — the recovered path is mojibake
-    //      ("cafeÃ©-file.txt"), not the real name.
+    //      and `_unCQuoteGitPath` now recombines the escaped bytes into
+    //      one UTF-8 decode instead of decoding each octal escape as its
+    //      own UTF-16 code unit.
     //  (b) space-containing names: git does not quote plain spaces (only
     //      backslash/doublequote/non-ASCII trigger quoting), so the
-    //      header is un-quoted — but `_pathFromDiffHeader` recovers the
-    //      path via `line.split(' ')[3]`, which shatters on the filename's
-    //      own internal spaces (recovers just "space" from "has space in
-    //      it.txt"). diff_models.dart's regex-based parser does not have
-    //      this defect — only logos_hunks.dart's simpler splitter does.
-    // `allowKnownBugs` lets the fuzz sweep keep testing the safe subset
-    // (plain ASCII, no spaces) for regressions without re-failing on
-    // these two already-documented shapes every time the generator draws
-    // one.
-    bool isKnownBugShape(String name) =>
-        name.contains(' ') || name.codeUnits.any((c) => c > 0x7E);
+    //      header is un-quoted — `_pathFromDiffHeader` now recovers the
+    //      path by exploiting that non-rename headers repeat it on both
+    //      sides, instead of a naive `line.split(' ')[3]`.
 
-    Future<void> caseFor(String name, {bool allowKnownBugs = false}) async {
+    Future<void> caseFor(String name) async {
       try {
         await _writeAndCommit(repo, name, 'v1\n', message: 'add $name');
         await repo.writeFile(name, 'v1\nv2 added\n');
@@ -922,13 +918,6 @@ void main() {
         final recoveredEverywhere = hunksForFile.isNotEmpty &&
             allHunks.any((h) => h.filePath == name);
         if (!recoveredEverywhere) {
-          if (allowKnownBugs && isKnownBugShape(name)) {
-            // ignore: avoid_print
-            print('[quotepath] known-bug shape re-hit for "$name" (space '
-                'and/or non-ASCII) — see the dedicated (skipped) known-bug '
-                'tests above; not treated as a new failure.');
-            return;
-          }
           fail('failed to recover path "$name" '
               'from its diff header via un-C-quoting.\n'
               'parseDiffHunksForFile: ${hunksForFile.length} hunks, '
@@ -937,6 +926,27 @@ void main() {
               '--- diff ---\n$diffText');
         }
         expect(hunksForFile.length, greaterThanOrEqualTo(1));
+
+        // Canonical parser parity (git_diff_paths.dart): the app's other
+        // diff consumer — parseUnifiedDiff/sliceDiffByFile in
+        // features/diff/diff_models.dart — must decode the SAME quoted/
+        // C-quoted path as logos_hunks' hunk parser above. Before the
+        // git_diff_paths.dart extraction these two parsers had
+        // independent (and differently buggy) header-decoding logic; this
+        // is the regression guard that they can no longer drift.
+        final parsedLines = parseUnifiedDiff(diffText);
+        final decodedFilePaths =
+            parsedLines.map((l) => l.filePath).whereType<String>().toSet();
+        expect(decodedFilePaths, contains(name),
+            reason: 'parseUnifiedDiff failed to decode path "$name" from '
+                'its diff header.\ndecoded paths: $decodedFilePaths\n'
+                '--- diff ---\n$diffText');
+
+        final slices = sliceDiffByFile(diffText);
+        expect(slices.keys, contains(name),
+            reason: 'sliceDiffByFile failed to decode path "$name" from '
+                'its diff header.\ndecoded keys: ${slices.keys}\n'
+                '--- diff ---\n$diffText');
       } finally {
         // Settle this case's dirty file before the NEXT fuzz case (which
         // reuses the SAME repo/working tree) runs — otherwise a later
@@ -956,45 +966,50 @@ void main() {
     }
 
     test(
+        // GENUINE BUG (FIXED): git C-quotes non-ASCII paths as per-byte
+        // octal escapes; _unCQuoteGitPath (lib/backend/logos_hunks.dart)
+        // used to decode each escaped byte as its own UTF-16 code unit
+        // instead of recombining the bytes and UTF-8-decoding, recovering
+        // mojibake ("cafeÃ©-file.txt") instead of the real name
+        // ("café-file.txt"). Fixed by accumulating consecutive escape
+        // bytes into a byte buffer and running ONE utf8DecodeExact per
+        // contiguous escape run.
         'unicode filename (built via fromCharCode — no raw non-ASCII '
         'literals in source)', () async {
       final cafe = 'cafe${String.fromCharCode(0xE9)}-file.txt'; // "café-file.txt"
       await caseFor(cafe);
-    },
-        skip: 'known bug: git C-quotes non-ASCII paths as '
-            'per-byte octal escapes, but _unCQuoteGitPath in '
-            'lib/backend/logos_hunks.dart decodes each escaped byte as '
-            'its own UTF-16 code unit instead of recombining the bytes '
-            'and UTF-8-decoding — recovers mojibake ("cafeÃ©-file.txt") '
-            'instead of the real name ("café-file.txt")');
+    });
 
-    test('CJK filename', () async {
+    test(
+        // GENUINE BUG (FIXED): same root cause as the café case — see
+        // above.
+        'CJK filename', () async {
       final cjk = '${String.fromCharCodes([0x6587, 0x4EF6])}.txt'; // "文件.txt"
       await caseFor(cjk);
-    },
-        skip: 'known bug: same root cause as the café case — '
-            'per-byte octal C-quoting decoded one byte at a time instead '
-            'of as UTF-8, producing mojibake instead of "文件.txt"');
+    });
 
-    test('filename with a space', () async {
+    test(
+        // GENUINE BUG (FIXED): git does not quote a plain space, so the
+        // header is un-quoted — but _pathFromDiffHeader (logos_hunks.dart)
+        // used to recover the path via line.split(' ')[3], which shatters
+        // on the filename's own internal spaces, recovering just "space"
+        // instead of "has space in it.txt". Fixed by exploiting that
+        // non-rename headers repeat the identical path on both sides:
+        // find the space that splits the remainder into `a/P` and `b/P`
+        // for the same P.
+        'filename with a space', () async {
       await caseFor('has space in it.txt');
-    },
-        skip: 'known bug: git does not quote a plain space, '
-            'so the header is un-quoted — but '
-            '_pathFromDiffHeader (logos_hunks.dart) recovers the path via '
-            "line.split(' ')[3], which shatters on the filename's own "
-            'internal spaces and recovers just "space" instead of "has '
-            'space in it.txt"');
+    });
 
-    test('fuzz: filesystem-legal hostile filenames recover their path '
-        '(plain-ASCII/no-space subset must never regress; the two known '
-        'bug shapes above are tolerated, not re-asserted)', () async {
+    test(
+        'fuzz: filesystem-legal hostile filenames recover their path',
+        () async {
       await forAllAsync(
         _genHostileFileName(),
         count: 15 * scale,
         seed: 0x9A73,
         describe: 'hostile filename',
-        check: (name) => caseFor(name, allowKnownBugs: true),
+        check: (name) => caseFor(name),
       );
     });
   });

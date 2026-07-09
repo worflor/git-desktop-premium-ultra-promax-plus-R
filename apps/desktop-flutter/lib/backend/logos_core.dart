@@ -574,8 +574,29 @@ class CsrGraph {
       if (loss == null) {
         newDegreeInvSqrt[writeRow] = oldDInv;
       } else {
+        // Reconstructing newDeg as oldDeg - loss via oldDeg = 1/oldDInv^2
+        // is catastrophic-cancellation-prone: when a row's entire
+        // remaining degree came from the removed neighbour, ~1-ULP
+        // positive residual survives and explodes through 1/sqrt into a
+        // huge degreeInvSqrt, corrupting the row. Instead sum the
+        // surviving explicit edges directly (exact) and recover the
+        // selfMass residual (which lives only in degreeInvSqrt —
+        // withNodeAppended's selfMass is never written into rawWeights)
+        // from the oldDeg round-trip, clamped to a numerical noise floor.
+        var retained = 0.0;
+        final start = indptr[i];
+        final end = indptr[i + 1];
+        for (var k = start; k < end; k++) {
+          if (indices[k] != id) retained += rawWeights[k];
+        }
         final oldDeg = oldDInv > 0 ? 1.0 / (oldDInv * oldDInv) : 0.0;
-        final newDeg = oldDeg - loss;
+        var selfResidual = oldDeg - (retained + loss);
+        // The 1/(dInv*dInv) round-trip carries a few ULPs (~2.2e-16
+        // relative) of reconstruction error; 1e-12 relative is a noise
+        // floor (orders above float noise, orders below any genuine
+        // selfMass) — not a tuning knob.
+        if (selfResidual <= oldDeg * 1e-12) selfResidual = 0.0;
+        final newDeg = retained + selfResidual;
         newDegreeInvSqrt[writeRow] =
             newDeg > 0 ? 1.0 / math.sqrt(newDeg) : 0.0;
       }
@@ -1900,12 +1921,26 @@ class LaplacianEigenpairs {
   for (var i = 0; i < n; i++) {
     volByRoot[root[i]] = (volByRoot[root[i]] ?? 0.0) + sqrtDeg[i] * sqrtDeg[i];
   }
+  // A node appended via withNodeAppended(edges: [], selfMass: s) has zero
+  // CSR edges but nonzero degree, so its union-find singleton gets vol > 0
+  // and would be wrongly classified as a λ=0 kernel direction. Its L_sym
+  // row is actually the identity row (no coupling) → λ = 1, not kernel.
+  // Track which roots carry at least one real (non-self, nonzero) edge and
+  // require that in addition to vol > 0.
+  final hasEdge = <int>{};
+  for (var i = 0; i < n; i++) {
+    for (var p = graph.indptr[i]; p < graph.indptr[i + 1]; p++) {
+      if (graph.indices[p] != i && graph.values[p] != 0.0) {
+        hasEdge.add(root[i]);
+      }
+    }
+  }
   final indexByRoot = <int, int>{};
   var count = 0;
   for (var i = 0; i < n; i++) {
     final r = root[i];
     final vol = volByRoot[r]!;
-    if (vol <= 0.0) continue;
+    if (vol <= 0.0 || !hasEdge.contains(r)) continue;
     final c = indexByRoot[r] ??= count++;
     compOf[i] = c;
     entry[i] = sqrtDeg[i] / math.sqrt(vol);
@@ -1931,6 +1966,18 @@ class LaplacianEigenpairs {
 /// the top-k Ritz values converge to working precision on a normalised
 /// Laplacian. Random init uses a fixed seed so the decomposition is
 /// deterministic across runs (test reproducibility).
+///
+/// The real guarantee: the kernel dimension (β₀) is exact and
+/// permutation-invariant — it comes from the closed-form union-find
+/// injection in [_exactLaplacianKernel], not from Lanczos convergence.
+/// The number of *excited* eigenpairs actually resolved (`basis.k`) is
+/// NOT permutation-invariant when the excited spectrum has exact
+/// degeneracies (e.g. bipartite components each contributing λ = 2):
+/// single-vector deflated Lanczos captures only one Ritz vector per
+/// exactly-repeated eigenvalue, and how many of a degenerate cluster
+/// converge depends on how the index-based seed aligns with the
+/// relabeled structure. Converged eigenVALUES are still correct to
+/// ~1e-13 regardless — only the count of resolved excited pairs varies.
 LaplacianEigenpairs lanczosSmallEigenpairs(
   CsrGraph graph,
   int kRequested, {
@@ -2380,6 +2427,12 @@ class SpectralBasis {
   /// reconstructed basis is bit-identical to the original (same
   /// eigenvalues → same signature → same identity).
   factory SpectralBasis.fromBytes(Uint8List bytes) {
+    // Length guards throw FormatException (matching the sibling codecs'
+    // contract) instead of letting truncated input crash ByteData reads
+    // with a RangeError.
+    if (bytes.lengthInBytes < 28) {
+      throw const FormatException('SpectralBasis.fromBytes: truncated header');
+    }
     final bd = ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes);
     final magic = bd.getUint32(0, Endian.little);
     final version = bd.getUint32(4, Endian.little);
@@ -2390,6 +2443,10 @@ class SpectralBasis {
     final n = bd.getUint32(16, Endian.little);
     final k = bd.getUint32(20, Endian.little);
     final labelCount = bd.getUint32(24, Endian.little);
+    final fixedSize = 28 + k * 8 + k * n * 8;
+    if (bytes.lengthInBytes < fixedSize) {
+      throw const FormatException('SpectralBasis.fromBytes: truncated payload');
+    }
     var off = 28;
     final eigenvalues = Float64List(k);
     for (var i = 0; i < k; i++) {
@@ -2405,8 +2462,14 @@ class SpectralBasis {
     if (labelCount > 0) {
       nodePaths = <String>[];
       for (var i = 0; i < labelCount; i++) {
+        if (off + 4 > bytes.lengthInBytes) {
+          throw const FormatException('SpectralBasis.fromBytes: truncated label');
+        }
         final len = bd.getUint32(off, Endian.little);
         off += 4;
+        if (off + len > bytes.lengthInBytes) {
+          throw const FormatException('SpectralBasis.fromBytes: truncated label');
+        }
         nodePaths.add(utf8.decode(
           Uint8List.view(bytes.buffer, bytes.offsetInBytes + off, len),
         ));

@@ -12,8 +12,8 @@ index 123..456 100644
 +++ b/lib/foo.dart
 @@ -1,3 +1,3 @@
  line1
--oldValue
-+newValue
+-  return oldValue;
++  return oldValue + 1;
  line3
 ''';
 

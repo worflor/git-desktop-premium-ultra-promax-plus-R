@@ -130,6 +130,21 @@ LogosGit _warmEngine() {
   return LogosGit.buildFromStats(stats);
 }
 
+/// Windows can hold a lock on freshly-written git objects briefly after the
+/// child process exits, so a bare recursive delete intermittently throws
+/// `errno = 145` (directory not empty). Retry, then give up: a leaked temp
+/// dir must never fail an otherwise-passing test.
+Future<void> _bestEffortDelete(Directory dir) async {
+  for (var attempt = 0; attempt < 5; attempt++) {
+    try {
+      if (await dir.exists()) await dir.delete(recursive: true);
+      return;
+    } on FileSystemException {
+      await Future<void>.delayed(Duration(milliseconds: 50 * (attempt + 1)));
+    }
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -137,7 +152,7 @@ void main() {
     test('analyzeDiff produces hunk and file signals for a real repo diff',
         () async {
       final repo = await _initRepo();
-      addTearDown(() => repo.delete(recursive: true));
+      addTearDown(() => _bestEffortDelete(repo));
       final engine = _warmEngine();
 
       final diffText = await _gitStdout(repo, ['diff', '--', 'lib/foo.dart']);

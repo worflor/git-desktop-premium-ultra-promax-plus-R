@@ -186,7 +186,16 @@ const List<(String, String)> _rawEncodedCorpus = [
 
 void _probeDeskPrBranchCodec(Map<String, Object?> out) {
   for (final (label, branch) in _branchCorpus) {
-    final encoded = DeskPrStore.encodeBranch(branch);
+    // encodeBranch throws on empty input (git forbids empty branch names);
+    // record the throw as a value so the rejection itself is asserted
+    // OS-invariant rather than crashing the probe.
+    final String encoded;
+    try {
+      encoded = DeskPrStore.encodeBranch(branch);
+    } on ArgumentError {
+      out['encodeBranch::$label'] = 'THROWS:ArgumentError';
+      continue;
+    }
     out['encodeBranch::$label'] = encoded;
     out['decodeBranchRoundtrip::$label'] = DeskPrStore.decodeBranch(encoded);
   }

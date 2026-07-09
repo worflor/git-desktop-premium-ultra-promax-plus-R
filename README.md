@@ -1,17 +1,21 @@
 # Manifold
 
-A Git client. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
+A cross-platform desktop Git client for Windows and Linux. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
 
 <p align="center">
   <img src="pics/code-review-hero.webp" alt="Manifold reviewing a diff: files and evidence orbiting a central node while Logos diffuses signal across the repo" width="760">
 </p>
 
+> Manifold is a free, open source Git client for Windows and Linux with a spectral engine (Logos) that reads your commit history as a graph of how files couple, then uses it for merge conflict prediction, grounded AI code review, and codebase maps. Works with GitHub, GitLab, and self-hosted Gitea, or fully offline with local-first pull requests and issues that need no remote.
+
 ## It's a Git client :]
 
 Stage, commit, push, pull, diff, branch, merge, rebase, stash, cherry-pick,
 reflog. The usual. If you've used GitHub Desktop, Sourcetree, Fork,
-Tower or GitKraken; you already know the shape, and Manifold does that shape. The
+Tower or GitKraken; you already know the shape, and Manifold does that shape, an open source alternative to them all. The
 day-to-day stuff works how you'd expect it to.
+
+Works with GitHub, GitLab (including self-hosted), and Gitea, syncing PRs and issues both ways. Or go local-first: with no remote at all, PRs and issues still live inside the repo, fully offline.
 
 ## Why you might care anyway
 
@@ -30,18 +34,22 @@ lands and tells you what it finds. Git-Logos is built on top of the
 What that looks like in practice:
 
 - Manifold can map your diff to external file context automatically using repo history, the spectral graph, and an experimental execution flow engine; Filament.
-  - Use non-agentic (one-shot) LLM-powered Code Review, Muse Brainstorming, and Generate Message with *logos-backed* context gathering. Cheap, efficient, extraordinarily thorough.
+  - It feeds LLM-powered Code Review, Muse Brainstorming, and Generate Message, all with *logos-backed* context. The one-shot gather stays cheap and fast, and a new optional read-only agentic harness explores outward from what Logos surfaces. It piggybacks Codex, so Codex and API models can go agentic (Claude Code can't host the harness, so it stays one-shot there).
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
-- View changes by *geometric Atlas* rather than by file.
-- PRs, worktrees, and branches have **Orbits**. This allows Manifold to predict merge conflicts before you merge, and show you the exact files that will fight.
+- View changes by *geometric Atlas* (preview) rather than by file.
+- PRs, worktrees, and branches get **Orbits**, orbital shapes drawn from the coupling graph, so related branches surface as merge risk even when they aren't touching the same files.
 - See through a repo with X-Ray. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
+- Bring your own model. Route the AI features through Cursor, Copilot, Codex, OpenRouter, or opencode.
+- Plus the stuff a mature client needs: a scrubbable history timeline (Orrery, preview), image, video, and binary diffs, and a command palette tying it together.
 
 Oh yeah, and it's *free* ♥
 
 ### ...in monke terms..?
 
 *monke add repo. repo get analyzed. monke see where banana generater was added vs banna VIEWER (monke doesnt add descriptions. too busy making banana generators in different languages). friend send monke spaghetti repo when monke prefer banana repo. Manifold show monke around the new repo as if monke's own repo. spaghetti turned lasagna. all with manifold*
+
+Translation for the humans and the robots: Manifold hands you the lay of the land in a repo you didn't write, before you open a single file.
 
 ## Pics or it didn't happen
 
@@ -72,6 +80,11 @@ Every shot below is in a different theme. And that's only a fraction of them.
 </tr>
 </table>
 
+<p align="center">
+<img src="pics/xray-signals-redshift.webp" alt="X-Ray Signals tab listing hidden refs, machine-heavy commits, migrations, single-owner files, bursty work, and live engine metrics" width="520"><br>
+<sub><b>Signals: the repo's character, made legible.</b> commit rhythm, machine noise, hidden refs, the quirks that make it itself · Redshift</sub>
+</p>
+
 ### The everyday client
 
 <table>
@@ -82,7 +95,13 @@ Every shot below is in a different theme. And that's only a fraction of them.
 </td>
 <td align="center" width="50%">
 <img src="pics/history-petrichor.webp" alt="History view with a per-commit seismograph and treemap" width="400"><br>
-<sub><b>History as a seismograph.</b> importance, churn, and overlap per commit. Dig deep, or just glance. · Petrichor</sub>
+<sub><b>History as a seismograph and worldline.</b> importance, churn, and branches woven into one thread. · Petrichor</sub>
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="pics/worldline-kirby.webp" alt="A full repository's history drawn as a single worldline strand across 500 commits, from quiet stretches to bursts of activity" width="820"><br>
+<sub><b>Zoom all the way out.</b> a repo's entire history as one strand, from calm stretches to storms · Kirby</sub>
 </td>
 </tr>
 <tr>
@@ -92,21 +111,44 @@ Every shot below is in a different theme. And that's only a fraction of them.
 </td>
 <td align="center" width="50%">
 <img src="pics/line-staging-aether.webp" alt="Line-level diff staging" width="400"><br>
-<sub><b>Line-level staging.</b> split a hunk down to the exact lines that belong · Aether</sub>
+<sub><b>Line-level staging.</b> split a hunk down to just the lines that belong · Aether</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="pics/branches-helix.webp" alt="Branches page detecting absorbed, squashed, and merged branches with commit-activity sparklines" width="400"><br>
+<sub><b>Branches, understood.</b> it tells absorbed from squashed from merged · Helix</sub>
+</td>
+<td align="center" width="50%">
+<img src="pics/palette-redshift.webp" alt="Command palette searching repos, files, and actions" width="400"><br>
+<sub><b>One palette for everything.</b> repos, files, actions. Right there · Redshift</sub>
 </td>
 </tr>
 </table>
-
-<p align="center">
-<img src="pics/palette-redshift.webp" alt="Command palette searching repos, files, and actions" width="400"><br>
-<sub><b>One palette for everything.</b> repos, files, actions. Right there · Redshift</sub>
-</p>
 
 ## Mine, and yours
 
 Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude inspired "Halo". Show off that you earned your fairy wings with Bibble or forget the world like a Nightwalker.
 
 Cellshaded comic book page, cosmic glass in three unique perspectives... you get the point.
+
+## Reach for it when you're...
+
+- **onboarding into an unfamiliar codebase.** X-Ray builds a map from the history: which files cluster, which are hotspots, which one file everything secretly leans on.
+- **tired of merge conflicts ambushing you.** Orbits is merge conflict prediction: it calls which branches will collide before you press merge.
+- **after AI code review that actually knows your repo.** Reviews are grounded in the coupling graph, not grep, with an optional read-only agentic mode.
+- **on self-hosted GitLab or Gitea.** Two-way PR and issue sync, same as GitHub. No remote at all? They still work, stored right in the repo.
+- **living in a large, fast-moving repo.** Line-level staging, parallel worktrees, full undo on destructive operations, and a commit graph you can zoom until 500 commits read like weather.
+
+## Questions you might have
+
+**Is it free?** Yes, completely. Free and open source, no account required.
+
+**Does it work offline, without a remote?** Yes. PRs and issues live inside the repo as orphan refs, so it is fully local-first. Push whenever you feel like it.
+
+**Which AI models can it use?** Yours. Cursor, Copilot, Codex, OpenRouter, or anything through opencode. The agentic review mode is read-only: it looks everywhere and changes nothing.
+
+**How is it different from GitKraken or GitHub Desktop?** They show you your repo. Manifold has done the math on it: it predicts merge conflicts, grounds AI review in your real coupling structure, and can map a codebase you have never seen.
 
 ## Status
 
@@ -154,8 +196,7 @@ fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just 
 ## Known Things
 
 - Runs hot 👉👈 (hot math ayo)
-- Muse needs to regurgitate less with all faces enabled (issue in 0.1.3)
-- Dream Hint hasnt been implemented 'with seriousness' yet... yet.....
+- Loading a huge, MANY-gb file still causes big issues. on the list.
 
 ## License
 

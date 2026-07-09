@@ -1129,14 +1129,29 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   }
 
   // Jaccard: |A ∩ B| / |A ∪ B| = co / (Na + Nb - co), with the counts
-  // now being time-weighted sums instead of integers. Still in [0, 1].
+  // now being time-weighted sums instead of integers. At lag-0 alone
+  // AM-GM keeps this in [0, 1] (each commit adds sqrt(la·lb) ≤
+  // (la+lb)/2 to co vs la/lb to the marginals), but the lag-1..3 terms
+  // above augment the INTERSECTION with no matching marginal mass, so
+  // a pair whose co-change dominates its history can push co past
+  // min(Na, Nb) — and, in the extreme, past the union itself. The
+  // score's contract is [0, 1] (calibration and the Born mixer assume
+  // it), so saturate at 1.0: maximal coupling, not an error. A
+  // non-positive union is the same extreme — dropping it (the old
+  // `union > 0` guard's behavior) would silently delete exactly the
+  // strongest-coupled pairs from the matrix.
   final jaccard = <String, Map<String, double>>{};
   pairCount.forEach((a, row) {
     final na = fileCommits[a] ?? 0;
     final dest = jaccard.putIfAbsent(a, () => {});
     row.forEach((b, co) {
       final union = na + (fileCommits[b] ?? 0) - co;
-      if (union > 0) dest[b] = co / union;
+      if (union <= 0) {
+        dest[b] = 1.0;
+      } else {
+        final j = co / union;
+        dest[b] = j > 1.0 ? 1.0 : j;
+      }
     });
   });
 

@@ -53,6 +53,7 @@ import 'dart:convert' show utf8;
 import 'dart:typed_data';
 
 import 'logos_signature.dart';
+import 'utf8_exact.dart';
 
 /// Monotone Lamport timestamp + peer identifier. Total ordering
 /// defined by `(lamport, peer)` tuple comparison — the canonical
@@ -434,11 +435,14 @@ int mockStateSignature(LogosMockState state) {
 /// to compute the ground-truth final adjacency, then emits the
 /// minimal edit sequence that reproduces it:
 ///
-///   1. **One `AddPathEdit` per surviving path**. Reuses the earliest
-///      `AddPathEdit` for that path from the input when present;
-///      synthesises a new one at `(lamport=0, peer='_synth_<path>')`
-///      when the path only came into existence via lazy-create
-///      SetEdges (whose references were later superseded or deleted).
+///   1. **One `AddPathEdit` per surviving path that needs one**.
+///      Reuses the earliest `AddPathEdit` for that path from the
+///      input when present; synthesises a new one at
+///      `(lamport=0, peer='_synth_<path>')` ONLY when no emitted edit
+///      already brings the path into existence. A surviving
+///      `SetEdgeEdit` on that path already lazy-creates it on apply
+///      (see [applyEdit]), so a path covered by one needs no explicit
+///      add — emitting one anyway would be redundant growth.
 ///   2. **One `SetEdgeEdit` per surviving edge**, reusing the last
 ///      input `SetEdgeEdit` whose weight matches the final adjacency
 ///      value. No ambiguity — equal clocks are tie-broken by peer.
@@ -478,6 +482,12 @@ List<LogosEdit> compactEdits(Iterable<LogosEdit> edits) {
   final out = <LogosEdit>[];
   final pathsEmitted = <String>{};
   final edgesEmitted = <String>{};
+  // Paths already brought into existence by SOME emitted edit — either
+  // an explicit AddPathEdit (pathsEmitted) or a surviving SetEdgeEdit,
+  // which (per applyEditSet/applyEdit) lazy-creates both its endpoint
+  // rows on apply if they're absent. A path in this set needs no
+  // synthesised AddPathEdit: emitting one would be redundant growth.
+  final pathsCovered = <String>{};
 
   for (final e in ordered) {
     switch (e) {
@@ -490,6 +500,7 @@ List<LogosEdit> compactEdits(Iterable<LogosEdit> edits) {
             !pathsEmitted.contains(path)) {
           out.add(e);
           pathsEmitted.add(path);
+          pathsCovered.add(path);
         }
       case SetEdgeEdit(:final pathA, :final pathB, :final weight):
         final lo = pathA.compareTo(pathB) < 0 ? pathA : pathB;
@@ -502,16 +513,21 @@ List<LogosEdit> compactEdits(Iterable<LogosEdit> edits) {
         if (survivingEdges[key] != weight) break;
         out.add(e);
         edgesEmitted.add(key);
+        // Lazy-create covers both endpoints — see the comment on
+        // `pathsCovered` above.
+        pathsCovered.add(pathA);
+        pathsCovered.add(pathB);
     }
   }
 
-  // Synthesise AddPathEdit for paths that never got an explicit add
-  // in the input (they came into existence via lazy-create SetEdges).
-  // Insert at lamport=0 with a reserved peer prefix so these go
-  // first in canonical order and never collide with real peers.
+  // Synthesise AddPathEdit only for surviving paths that no emitted
+  // edit already brings into existence (neither an explicit AddPath
+  // nor a surviving SetEdge's lazy-create). Insert at lamport=0 with
+  // a reserved peer prefix so these go first in canonical order and
+  // never collide with real peers.
   final synthesised = <LogosEdit>[];
   for (final p in survivingPaths) {
-    if (!pathsEmitted.contains(p)) {
+    if (!pathsCovered.contains(p)) {
       synthesised.add(AddPathEdit(
         clock: EditClock(lamport: 0, peer: '_synth_$p'),
         path: p,
@@ -663,9 +679,7 @@ class VersionVector {
     for (var i = 0; i < count; i++) {
       final peer = _readString(bd, offset);
       offset = peer.nextOffset;
-      if (offset + 8 > bd.lengthInBytes) {
-        throw const FormatException('VV.fromBytes: truncated lamport');
-      }
+      _need(bd, offset, 8, 'VV lamport');
       final lo = bd.getUint32(offset, Endian.little);
       final hi = bd.getUint32(offset + 4, Endian.little);
       offset += 8;
@@ -738,6 +752,11 @@ List<LogosEdit> deltaForPeer({
 //
 // Byte length is variable (peer and path strings). Callers that need
 // a fixed frame can wrap with a length prefix.
+//
+// Every length-prefixed string (peer, path, pathA, pathB) is bounded
+// to 65535 UTF-8 bytes by its uint16 length prefix; [_writeString]
+// throws [ArgumentError] rather than silently wrapping the length for
+// anything at or past that bound.
 
 const int _kEditWireMagic = 0x0044454c; // 'LED\0' little-endian
 const int _kEditWireVersion = 1;
@@ -749,17 +768,34 @@ const int _kVariantSetEdge = 3;
 
 void _writeString(BytesBuilder out, String s) {
   final bytes = utf8.encode(s);
+  if (bytes.length > 0xFFFF) {
+    throw ArgumentError.value(s, 's',
+        'string exceeds uint16 length prefix (${bytes.length} bytes UTF-8, max 65535)');
+  }
   final hdr = ByteData(2)..setUint16(0, bytes.length, Endian.little);
   out.add(hdr.buffer.asUint8List());
   out.add(bytes);
 }
 
+/// Throws [FormatException] naming [what] unless [count] bytes are
+/// actually available at [offset] in [bd]. Called before every
+/// fixed-size read in the decode paths so truncated input surfaces as
+/// the documented [FormatException] instead of a raw RangeError/
+/// IndexError from the underlying [ByteData] accessor.
+void _need(ByteData bd, int offset, int count, String what) {
+  if (offset + count > bd.lengthInBytes) {
+    throw FormatException('truncated $what at offset $offset');
+  }
+}
+
 ({String value, int nextOffset}) _readString(ByteData bd, int offset) {
+  _need(bd, offset, 2, 'string length prefix');
   final len = bd.getUint16(offset, Endian.little);
   offset += 2;
+  _need(bd, offset, len, 'string payload');
   final bytes = Uint8List.view(
       bd.buffer, bd.offsetInBytes + offset, len);
-  return (value: utf8.decode(bytes), nextOffset: offset + len);
+  return (value: utf8DecodeExact(bytes), nextOffset: offset + len);
 }
 
 void _writeEditClock(BytesBuilder out, EditClock clock) {
@@ -780,6 +816,7 @@ void _writeEditClock(BytesBuilder out, EditClock clock) {
 }
 
 ({EditClock value, int nextOffset}) _readEditClock(ByteData bd, int offset) {
+  _need(bd, offset, 8, 'EditClock lamport');
   final lo = bd.getUint32(offset, Endian.little);
   final hi = bd.getUint32(offset + 4, Endian.little);
   offset += 8;
@@ -869,10 +906,7 @@ LogosEdit decodeLogosEdit(Uint8List bytes) {
       offset = pathA.nextOffset;
       final pathB = _readString(bd, offset);
       offset = pathB.nextOffset;
-      if (offset + 8 > bd.lengthInBytes) {
-        throw const FormatException(
-            'LogosEdit.decode: truncated SetEdge weight');
-      }
+      _need(bd, offset, 8, 'SetEdge weight');
       final weight = bd.getFloat64(offset, Endian.little);
       return SetEdgeEdit(
         clock: clock,

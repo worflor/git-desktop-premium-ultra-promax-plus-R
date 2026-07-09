@@ -40,12 +40,25 @@ List<ConflictFile>? reviewMergeFromPatch(
     final path = entry.key;
     // A new file the patch creates has no current content — treat as empty.
     final ours = oursByPath[path] ?? '';
-    final marker = _spliceConflictMarkers(ours, entry.value);
-    if (marker == null) return null; // misalignment → caller falls back
-    final cf = parseConflictFile(path, marker);
+    final spliced = _spliceConflictMarkers(ours, entry.value);
+    if (spliced == null) return null; // misalignment → caller falls back
+    final cf = parseConflictFile(path, spliced.text);
     if (cf.blocks.isEmpty) continue; // nothing actually changed
     for (final b in cf.blocks) {
       b.resolution = ConflictSide.theirs;
+    }
+    // The marker-splice document is invariant to trailing-newline status
+    // (parseConflictFile/buildResult can't distinguish "block is the
+    // file's genuine final content, no trailing newline" from "block
+    // happens to sit at the end of THIS document" purely from the text —
+    // both shapes produce identical bytes). Thread the real flag through
+    // explicitly onto whichever block ends up last, so buildResult() can
+    // suppress the newline it otherwise unconditionally re-adds to rejoin
+    // a block with its (empty) trailing segment.
+    if (cf.blocks.isNotEmpty) {
+      final last = cf.blocks.last;
+      last.oursNoTrailingNewline = spliced.oursNoTrailingNewline;
+      last.theirsNoTrailingNewline = spliced.theirsNoTrailingNewline;
     }
     out.add(cf);
   }
@@ -53,13 +66,27 @@ List<ConflictFile>? reviewMergeFromPatch(
   return out;
 }
 
+/// Result of [_spliceConflictMarkers]: the marker-embedded document plus
+/// whether the file's genuine final content (ours-side / theirs-side,
+/// independently — either can lack a trailing newline while the other has
+/// one) has no trailing newline. Both flags are only ever meaningful when
+/// the differing region reaches the file's true end-of-content (no
+/// unchanged tail lines follow it) — see [_spliceConflictMarkers]'s
+/// `idx >= ours.length` check.
+typedef _SplicedConflict = ({
+  String text,
+  bool oursNoTrailingNewline,
+  bool theirsNoTrailingNewline,
+});
+
 /// Splices `<<<<<<< ours / ======= / >>>>>>> theirs` markers into
 /// [oursText] at the positions the [diffLines] (a single file's parsed
 /// context/added/deleted lines, in order) describe. Returns standard
 /// conflict-file text that [parseConflictFile] round-trips exactly, or null
 /// if a context/deleted line doesn't match the current content at its line
 /// number (the patch doesn't align here).
-String? _spliceConflictMarkers(String oursText, List<ParsedLine> diffLines) {
+_SplicedConflict? _spliceConflictMarkers(
+    String oursText, List<ParsedLine> diffLines) {
   // split('\n') round-trips join('\n') exactly, including the trailing ''
   // element a file-final newline produces.
   final ours = oursText.isEmpty ? <String>[] : oursText.split('\n');
@@ -67,6 +94,10 @@ String? _spliceConflictMarkers(String oursText, List<ParsedLine> diffLines) {
   var idx = 0; // next unread line in `ours`
   final oursRun = <String>[];
   final theirsRun = <String>[];
+  // Tracks noNewlineAtEof from the most recently seen line touching each
+  // side. Only the LAST update of each survives to the end of the loop —
+  // exactly the line git considers that side's true final line, if any.
+  var theirsNoNewlineAtEof = false;
 
   void flush() {
     if (oursRun.isEmpty && theirsRun.isEmpty) return;
@@ -82,6 +113,7 @@ String? _spliceConflictMarkers(String oursText, List<ParsedLine> diffLines) {
   for (final pl in diffLines) {
     if (pl.kind == LineKind.added) {
       theirsRun.add(pl.text.isEmpty ? '' : pl.text.substring(1));
+      theirsNoNewlineAtEof = pl.noNewlineAtEof;
       continue;
     }
     // context or deleted — both occupy a position in `ours`.
@@ -100,6 +132,7 @@ String? _spliceConflictMarkers(String oursText, List<ParsedLine> diffLines) {
       }
       out.add(ours[idx]);
       idx++;
+      theirsNoNewlineAtEof = pl.noNewlineAtEof;
     } else {
       // deleted
       while (idx < target && idx < ours.length) {
@@ -113,10 +146,50 @@ String? _spliceConflictMarkers(String oursText, List<ParsedLine> diffLines) {
       idx++;
     }
   }
+  // `ours` carries a trailing '' sentinel element whenever oursText itself
+  // ends with '\n' (split('\n') convention) — that sentinel isn't a real
+  // unconsumed line, just the split-artifact representing the file's own
+  // trailing newline. Excluding it from the "is there real trailing
+  // content" check is required: otherwise a full-file replacement whose
+  // OLD content happened to end with a newline always looks like it has a
+  // trailing tail (idx never "reaches" the sentinel, since no diff line
+  // corresponds to it), permanently defeating the no-newline handling below.
+  final oursEndsWithNewline = oursText.isNotEmpty && oursText.endsWith('\n');
+  final effectiveOursLength =
+      oursEndsWithNewline ? ours.length - 1 : ours.length;
+  final hasTrailingTail = idx < effectiveOursLength;
+  if (!hasTrailingTail && oursEndsWithNewline && oursRun.isNotEmpty) {
+    // The diffed region reaches ours's true end, and `oursText` itself
+    // ends with a newline — a fact git's diff never represents as an
+    // explicit "-" line (only real content lines are shown; a file's own
+    // trailing newline is implicit). We already have the FULL original
+    // `oursText` in hand, so encode it directly here: one more (empty)
+    // element makes the eventual `oursLines.join('\n')` in
+    // parseConflictFile reconstruct that trailing newline exactly,
+    // instead of depending on ConflictFile.buildResult's generic
+    // "add a newline unless one is already there" default (which can't
+    // tell "add one" from "one is already present" on its own). Guarded
+    // on oursRun.isNotEmpty: a pure-addition hunk (nothing deleted) has no
+    // "ours" replacement content here at all — appending would fabricate
+    // a phantom blank line reject-all never had.
+    oursRun.add('');
+  }
   flush();
   while (idx < ours.length) {
     out.add(ours[idx]);
     idx++;
   }
-  return out.join('\n');
+  // theirsNoNewlineAtEof is only trustworthy when nothing unchanged trails
+  // the diffed region — otherwise the tail (plain `ours` content,
+  // reproduced verbatim above) is the file's real final content and
+  // theirs doesn't actually end where the diff's last touched line does.
+  // oursNoTrailingNewline needs no such flag at all: since we hold the
+  // full original `oursText`, "does the block's own text end with a
+  // newline" is decidable directly from it (and is exactly what the
+  // sentinel-append above already encodes when true).
+  return (
+    text: out.join('\n'),
+    oursNoTrailingNewline: !hasTrailingTail && !oursEndsWithNewline,
+    theirsNoTrailingNewline: !hasTrailingTail && theirsNoNewlineAtEof,
+  );
 }

@@ -18,13 +18,14 @@
 //      missing/null/wrong-typed/out-of-range JSON, must never throw and
 //      must fall back to its documented default (or, for the clamped
 //      numeric fields, clamp into range) — the untested surface a
-//      corrupt or hand-edited settings.json actually exercises. A few
-//      known bugs on this surface are left `skip:`-ped inline with a
-//      terse repro; see docs/architecture/test-hardening-bug-dossier.md
-//      for the full writeup. `_doubleOr`'s NaN-becomes-upper-bound
-//      behavior (via `num.clamp`'s `compareTo` semantics) is a
-//      documented quirk, not a bug — see the dedicated non-skipped test
-//      below.
+//      corrupt or hand-edited settings.json actually exercises. Formerly
+//      `skip:`-ped known bugs (non-finite `.toInt()`/`.toDouble()` and
+//      the `wickExePath` unsafe cast) are now fixed at the source and
+//      covered as regular passing tests; see
+//      docs/architecture/test-hardening-bug-dossier.md for the writeup.
+//      `_doubleOr`'s NaN/±Infinity handling is covered by the dedicated
+//      test below, which now asserts the fixed per-field-default law
+//      (previously it asserted the old num.clamp-to-upper-bound quirk).
 //   3. LAW — migration idempotence: legacy-shaped JSON (fuzzed across
 //      many shapes, including the ALSO-untested reduceMotion->motionRate
 //      migration) migrates correctly AND re-running
@@ -734,23 +735,34 @@ void main() {
       );
     });
 
-    test('double fields: NaN never throws — num.clamp treats NaN as '
-        '"greater than any bound" via compareTo, so it silently becomes '
-        'the field\'s UPPER bound (a real quirk, not a crash; locked in '
-        'here so a future refactor can\'t silently change it unnoticed)',
-        () {
+    test('double fields: NaN/±Infinity never throw and never clamp — '
+        '_doubleOr rejects any non-finite num before num.clamp ever runs, '
+        'so the field falls back to its own default (this used to be a '
+        'quirk where num.clamp\'s compareTo semantics silently sent NaN '
+        'to the UPPER bound; that\'s now fixed at the source)', () {
       expect(
         AppSettingsSnapshot.fromJson({'guardrailValue': double.nan})
             .guardrailValue,
-        equals(1.0),
+        equals(AppSettingsSnapshot.defaults().guardrailValue),
+      );
+      expect(
+        AppSettingsSnapshot.fromJson({'guardrailValue': double.infinity})
+            .guardrailValue,
+        equals(AppSettingsSnapshot.defaults().guardrailValue),
+      );
+      expect(
+        AppSettingsSnapshot.fromJson(
+                {'guardrailValue': double.negativeInfinity})
+            .guardrailValue,
+        equals(AppSettingsSnapshot.defaults().guardrailValue),
       );
       expect(
         AppSettingsSnapshot.fromJson({'motionRate': double.nan}).motionRate,
-        equals(2.0),
+        equals(AppSettingsSnapshot.defaults().motionRate),
       );
       expect(
         AppSettingsSnapshot.fromJson({'logosPadX': double.nan}).logosPadX,
-        equals(1.0),
+        equals(AppSettingsSnapshot.defaults().logosPadX),
       );
     });
 
@@ -815,61 +827,68 @@ void main() {
           context: 'kitchen-sink corruption');
     });
 
-    group('unguarded num.toInt() on non-finite doubles', () {
-      const affectedIntFields = [
-        'telemetryRetentionDays', 'telemetryRetentionMb', 'sidebarWidthPx',
-        'utilityDrawerHeightPx', 'undoWindowSeconds', 'changesPanelWidthPx',
-      ];
-      for (final field in affectedIntFields) {
+    group('guarded num.toInt() on non-finite doubles (fixed)', () {
+      final defaults = AppSettingsSnapshot.defaults();
+      final affectedIntFieldDefaults = <String, int>{
+        'telemetryRetentionDays': defaults.telemetryRetentionDays,
+        'telemetryRetentionMb': defaults.telemetryRetentionMb,
+        'sidebarWidthPx': defaults.sidebarWidthPx,
+        'utilityDrawerHeightPx': defaults.utilityDrawerHeightPx,
+        'undoWindowSeconds': defaults.undoWindowSeconds,
+        'changesPanelWidthPx': defaults.changesPanelWidthPx,
+      };
+      for (final entry in affectedIntFieldDefaults.entries) {
         test(
-          '$field = double.infinity throws UnsupportedError instead of '
-          'defaulting',
+          '${entry.key} = double.infinity falls back to the field default '
+          'instead of throwing',
           () {
+            late AppSettingsSnapshot snap;
             expect(
-              () => AppSettingsSnapshot.fromJson({field: double.infinity}),
-              throwsA(isA<UnsupportedError>()),
+              () => snap =
+                  AppSettingsSnapshot.fromJson({entry.key: double.infinity}),
+              returnsNormally,
             );
+            final value = switch (entry.key) {
+              'telemetryRetentionDays' => snap.telemetryRetentionDays,
+              'telemetryRetentionMb' => snap.telemetryRetentionMb,
+              'sidebarWidthPx' => snap.sidebarWidthPx,
+              'utilityDrawerHeightPx' => snap.utilityDrawerHeightPx,
+              'undoWindowSeconds' => snap.undoWindowSeconds,
+              'changesPanelWidthPx' => snap.changesPanelWidthPx,
+              _ => throw StateError('unreachable'),
+            };
+            expect(value, equals(entry.value));
           },
-          skip: 'known bug: SettingsStore._intOr calls value.toInt() on any '
-              'num with no finiteness check; jsonDecode(\'{"x": 1e400}\') '
-              'legitimately decodes to double.infinity with no parse '
-              'error, so a hand-edited settings.json with an overflowing '
-              'exponent crashes fromJson with UnsupportedError instead of '
-              'falling back to the field default',
         );
       }
 
       test(
-        'undoWindowOverrides entry = double.nan throws UnsupportedError',
+        'undoWindowOverrides entry = double.nan is dropped instead of '
+        'throwing',
         () {
+          late AppSettingsSnapshot snap;
           expect(
-            () => AppSettingsSnapshot.fromJson({
+            () => snap = AppSettingsSnapshot.fromJson({
               'undoWindowOverrides': {'commit': double.nan},
             }),
-            throwsA(isA<UnsupportedError>()),
+            returnsNormally,
           );
+          expect(snap.undoWindowOverrides.containsKey('commit'), isFalse);
         },
-        skip: 'known bug: same root cause as the sibling _intOr bug above '
-            '— SettingsStore._intMapOr also calls v.toInt() on any num '
-            'entry value with no finiteness guard',
       );
     });
 
     test(
-      'wickExePath with a non-null, non-String value throws TypeError '
-      'instead of defaulting to empty (contrast: the very next field, '
-      'alphaMathPath, handles the identical shape of corruption safely '
-      'via an `is String` check)',
+      'wickExePath with a non-null, non-String value falls back to empty '
+      'instead of throwing (matches the very next field, alphaMathPath, '
+      'which handles the identical shape of corruption via the same '
+      '`is String` check)',
       () {
         expect(
-          () => AppSettingsSnapshot.fromJson({'wickExePath': 42}),
-          throwsA(isA<TypeError>()),
+          AppSettingsSnapshot.fromJson({'wickExePath': 42}).wickExePath,
+          equals(''),
         );
       },
-      skip: 'known bug: AppSettingsSnapshot.fromJson does '
-          "json['wickExePath'] as String? ?? '' — an unsafe cast; null "
-          'succeeds, but any other type throws a raw TypeError uncaught '
-          'anywhere in fromJson',
     );
   });
 

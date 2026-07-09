@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'json_safety.dart';
 import 'storage_paths.dart';
 
 class AiApiKeyEntry {
@@ -14,8 +15,8 @@ class AiApiKeyEntry {
       };
 
   factory AiApiKeyEntry.fromJson(Map<String, dynamic> json) => AiApiKeyEntry(
-        apiKey: (json['apiKey'] as String?) ?? '',
-        baseUrl: json['baseUrl'] as String?,
+        apiKey: asStringOr(json['apiKey'], ''),
+        baseUrl: asStringOrNull(json['baseUrl']),
       );
 }
 
@@ -32,8 +33,9 @@ class AiApiKeysSnapshot {
   factory AiApiKeysSnapshot.fromJson(Map<String, dynamic> json) {
     final entries = <String, AiApiKeyEntry>{};
     for (final e in json.entries) {
-      if (e.value is Map<String, dynamic>) {
-        final entry = AiApiKeyEntry.fromJson(e.value as Map<String, dynamic>);
+      final map = asMapOrNull(e.value);
+      if (map != null) {
+        final entry = AiApiKeyEntry.fromJson(map);
         if (entry.apiKey.trim().isNotEmpty) {
           entries[e.key] = entry;
         }

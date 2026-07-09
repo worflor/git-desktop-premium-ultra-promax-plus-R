@@ -10,12 +10,14 @@
 // gitea/glab process JSON — missing/null/unknown-extra keys must never
 // throw, per each class's `?? default` / `is T ?` leniency contract.
 //
-// Most of these classes use `j['x'] as T?`, which is null-safe but not
-// type-safe, so a present-but-wrong-typed value throws instead of
-// defaulting; that known bug pattern is pinned per-class below as a
-// paired throws-today/should-tolerate test. See
-// docs/architecture/test-hardening-bug-dossier.md (B15-B16 for
-// SpectralBasis/ClaimOutcomeRatchet) for the fuller writeup.
+// Most of these classes used to read `j['x'] as T?`, which is null-safe but
+// not type-safe, so a present-but-wrong-typed value threw instead of
+// defaulting. Fixed for B16/B17/B18 (dtos.dart, review_ratchet.dart,
+// shadow_coupling_cache.dart, ai_api_keys_store.dart, ai_audit_store.dart)
+// via lib/backend/json_safety.dart's total readers — the wrong-type repros
+// below now assert `returnsNormally`. See
+// docs/architecture/test-hardening-bug-dossier.md (B15-B19) for the fuller
+// writeup; B15 (SpectralBasis) is a separate, still-open bug.
 // `RepositoryStatusFile` is the positive control proving the other
 // classes aren't unsafe by accident (its fields go through `.toString()`,
 // which cannot throw).
@@ -30,6 +32,7 @@ import 'package:git_desktop/backend/desk_issue.dart';
 import 'package:git_desktop/backend/desk_pr.dart';
 import 'package:git_desktop/backend/dtos.dart';
 import 'package:git_desktop/backend/graph/csr_builder.dart';
+import 'package:git_desktop/backend/json_safety.dart';
 import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/remote_types.dart' show PrReviewer;
 import 'package:git_desktop/backend/review_logos.dart' show ClaimShape;
@@ -92,6 +95,53 @@ List<int> _intList(Rng rng, {int maxLen = 4}) => List<int>.generate(
 
 void main() {
   // ===========================================================================
+  // json_safety.dart — the total readers every parser below now depends on.
+  // Pins the numeric contract explicitly (raised in external review): an
+  // integral double is accepted, a FRACTIONAL one is rejected rather than
+  // silently truncated, because truncating fabricates a value the sender
+  // never transmitted. Non-finite is rejected too (jsonDecode('1e400') is
+  // Infinity with no parse error, and .toInt() on it throws).
+  // ===========================================================================
+  group('json_safety numeric readers', () {
+    test('asIntOrNull accepts ints and exactly-integral doubles', () {
+      expect(asIntOrNull(3), 3);
+      expect(asIntOrNull(-7), -7);
+      expect(asIntOrNull(3.0), 3);
+      expect(asIntOrNull(-7.0), -7);
+      expect(asIntOrNull(0.0), 0);
+    });
+
+    test('asIntOrNull rejects fractional doubles (no silent truncation)', () {
+      expect(asIntOrNull(3.7), isNull);
+      expect(asIntOrNull(-0.5), isNull);
+      expect(asIntOr(3.7, 42), 42, reason: 'falls back, does not truncate to 3');
+    });
+
+    test('asIntOrNull / asDoubleOrNull reject non-finite and non-numbers', () {
+      for (final bad in <Object?>[
+        double.nan,
+        double.infinity,
+        double.negativeInfinity,
+        '5',
+        true,
+        <String, Object?>{},
+        <Object?>[],
+        null,
+      ]) {
+        expect(asIntOrNull(bad), isNull, reason: 'asIntOrNull($bad)');
+        expect(asDoubleOrNull(bad), isNull, reason: 'asDoubleOrNull($bad)');
+      }
+      expect(asIntOr(double.nan, 9), 9);
+      expect(asDoubleOr('x', 1.5), 1.5);
+    });
+
+    test('asDoubleOrNull accepts any finite num, fractional included', () {
+      expect(asDoubleOrNull(3), 3.0);
+      expect(asDoubleOrNull(3.7), 3.7);
+    });
+  });
+
+  // ===========================================================================
   // SpectralBasis.toBytes / fromBytes — lib/backend/logos_core.dart
   // ===========================================================================
   group('SpectralBasis.toBytes / fromBytes — roundtrip identity', () {
@@ -129,23 +179,23 @@ void main() {
 
   group('SpectralBasis.fromBytes — malformed-input robustness', () {
     test(
-      'known bug: fromBytes(empty bytes) throws RangeError, not the '
-      'documented FormatException',
+      'fixed: fromBytes(empty bytes) throws the documented FormatException '
+      '(length guard added ahead of any fixed-offset read)',
       () {
         expect(
           () => SpectralBasis.fromBytes(Uint8List(0)),
-          throwsA(isA<RangeError>()),
+          throwsA(isA<FormatException>()),
         );
       },
     );
 
     test(
-      'known bug: fromBytes(1 byte) throws RangeError, not the '
-      'documented FormatException',
+      'fixed: fromBytes(1 byte) throws the documented FormatException '
+      '(length guard added ahead of any fixed-offset read)',
       () {
         expect(
           () => SpectralBasis.fromBytes(Uint8List.fromList(const [0x00])),
-          throwsA(isA<RangeError>()),
+          throwsA(isA<FormatException>()),
         );
       },
     );
@@ -175,13 +225,12 @@ void main() {
     );
 
     test(
-      'known bug: every truncated prefix of a valid encoding throws '
-      'RangeError, never the documented FormatException — fromBytes has no '
-      'minimum-length guard before it reads fixed-offset header/payload '
-      'fields',
+      'fixed: every truncated prefix of a valid encoding throws the '
+      'documented FormatException, never a RangeError — length guards now '
+      'cover the header, the fixed value/vector payload, and each label '
+      'read',
       () {
         final rng = Rng(0xBEEF01);
-        var sawRangeError = false;
         final trials = 6 * fuzzScale();
         for (var trial = 0; trial < trials; trial++) {
           final graph = genConnectedGraph(maxNodes: 10)(rng);
@@ -198,28 +247,15 @@ void main() {
           final bytes = basis.toBytes();
           for (var len = 0; len < bytes.length; len++) {
             final prefix = bytes.sublist(0, len);
-            try {
-              SpectralBasis.fromBytes(prefix);
-              fail(
-                'SpectralBasis.fromBytes silently accepted a truncated '
-                'prefix (len=$len of ${bytes.length}, trial=$trial, '
-                'n=${basis.n} k=${basis.k} labeled=$labeled) instead of '
-                'throwing',
-              );
-            } on FormatException {
-              // Not observed in practice for pure truncation (see reason
-              // below), but a controlled failure mode either way.
-            } on RangeError {
-              sawRangeError = true;
-            }
+            expect(
+              () => SpectralBasis.fromBytes(prefix),
+              throwsA(isA<FormatException>()),
+              reason: 'truncated prefix (len=$len of ${bytes.length}, '
+                  'trial=$trial, n=${basis.n} k=${basis.k} '
+                  'labeled=$labeled) should throw FormatException',
+            );
           }
         }
-        expect(
-          sawRangeError,
-          isTrue,
-          reason: 'expected to observe the documented RangeError bug at '
-              'least once across fuzzed truncations',
-        );
       },
     );
 
@@ -247,7 +283,9 @@ void main() {
             } on FormatException {
               // controlled, documented failure mode.
             } on RangeError {
-              // the known-bug family documented above.
+              // Should no longer occur now that length guards cover the
+              // header, fixed payload, and each label read — kept as a
+              // defensive catch, not an expected outcome.
             }
           },
         );
@@ -303,16 +341,16 @@ void main() {
     });
 
     test(
-      'fromJson throws on a wrong-typed field (same `as T?` pattern as '
-      "dtos.dart; reached in production only through ShadowCouplingCache."
-      "load's own try/catch, which degrades to a cold cache rather than "
-      'crashing the app)',
+      'GENUINE BUG (B18, FIXED): fromJson tolerates a wrong-typed field '
+      '(was the same `as T?` pattern as dtos.dart; now reads through '
+      'json_safety, matching ShadowCouplingCache.load\'s own try/catch '
+      'contract instead of relying on it to mask a throw)',
       () {
         expect(
           () => ShadowCouplingCacheData.fromJson(<String, dynamic>{
             'shadowCommitCount': 'not-a-number',
           }),
-          throwsA(isA<TypeError>()),
+          returnsNormally,
         );
       },
     );
@@ -384,32 +422,27 @@ void main() {
     );
 
     test(
-      'known bug: fromJsonString throws on a structurally-valid bucket '
-      'whose "a"/"r" value is present-but-wrong-typed, contradicting its own '
-      'doc comment ("malformed entries silently dropped ... never throwing")',
-      () {
-        const bad = '{"5": {"a": "not-a-number", "r": 0}}';
-        expect(
-          () => ClaimOutcomeRatchet.fromJsonString(bad),
-          throwsA(isA<TypeError>()),
-        );
-      },
-    );
-
-    test(
-      'should silently drop a bucket with a wrong-typed "a"/"r" value like '
-      'every other malformed shape (currently throws — see the paired test '
-      "above for today's passing repro)",
+      'GENUINE BUG (B16, FIXED): fromJsonString never throws on a '
+      'structurally-valid bucket whose "a"/"r" value is present-but-wrong-'
+      'typed, honoring its own doc comment ("malformed entries silently '
+      'dropped ... never throwing") — was an uncaught TypeError because '
+      '_Bucket.fromJson(value) ran inside decoded.forEach, outside the '
+      'try/catch guarding json.decode; now each entry is parsed under its '
+      'own try/catch and a bucket with a present-but-wrong-typed counter is '
+      'DROPPED (a missing counter still defaults to 0 for older-schema '
+      'tolerance) — dropping honors the doc contract; defaulting would '
+      'fabricate an observation bucket that never existed',
       () {
         const bad = '{"5": {"a": "not-a-number", "r": 0}}';
         expect(() => ClaimOutcomeRatchet.fromJsonString(bad), returnsNormally);
+        final restored = ClaimOutcomeRatchet.fromJsonString(bad);
+        expect(restored.bucketCount, 0);
+        expect(restored.totalObservations, 0);
+        // Older-schema tolerance: a merely-missing counter is not malformed.
+        final partial = ClaimOutcomeRatchet.fromJsonString('{"5": {"a": 3}}');
+        expect(partial.bucketCount, 1);
+        expect(partial.totalObservations, 3);
       },
-      skip: 'known bug: fromJsonString calls _Bucket.fromJson(value) '
-          'inside decoded.forEach, outside the try/catch guarding '
-          'json.decode; _Bucket.fromJson does `j["a"] as int? ?? 0` '
-          '(null-safe, not type-safe), so a present-but-wrong-typed '
-          '"a"/"r" throws an uncaught TypeError instead of the documented '
-          'silent-drop.',
     );
   });
 
@@ -664,16 +697,16 @@ void main() {
     });
 
     test(
-      'AiApiKeysSnapshot.fromJson throws on a wrong-typed nested apiKey '
-      "(same `as T?` pattern; reached in production only through "
-      "AiApiKeysStore.load's own try/catch, which degrades to an empty "
-      'snapshot rather than crashing the app)',
+      'GENUINE BUG (B18, FIXED): AiApiKeysSnapshot.fromJson tolerates a '
+      'wrong-typed nested apiKey (was the same `as T?` pattern; now reads '
+      "through json_safety, matching AiApiKeysStore.load's own try/catch "
+      'contract instead of relying on it to mask a throw)',
       () {
         expect(
           () => AiApiKeysSnapshot.fromJson(<String, dynamic>{
             'openai': <String, dynamic>{'apiKey': 12345},
           }),
-          throwsA(isA<TypeError>()),
+          returnsNormally,
         );
       },
     );
@@ -720,11 +753,11 @@ void main() {
     });
 
     test(
-      'fromJson throws on a wrong-typed required field — uses a bare '
-      '`as String` (not even `as String?`), so this one never attempted '
-      "the leniency pattern used elsewhere; reached in production only "
-      "through AiAuditStore._loadEntries's own per-line try/catch, which "
-      'skips just that one corrupted line',
+      'GENUINE BUG (B18, FIXED): fromJson tolerates a wrong-typed required '
+      'field — used a bare `as String` (not even `as String?`), so this one '
+      'never even attempted the leniency pattern used elsewhere; now reads '
+      "through json_safety, matching AiAuditStore._loadEntries's own "
+      'per-line try/catch contract instead of relying on it to mask a throw',
       () {
         expect(
           () => AiAuditEntryData.fromJson(<String, dynamic>{
@@ -737,7 +770,7 @@ void main() {
             'ok': true,
             'createdAt': 123,
           }),
-          throwsA(isA<TypeError>()),
+          returnsNormally,
         );
       },
     );
@@ -926,12 +959,15 @@ void _wrongTypeFuzzCanary({
   });
 }
 
-/// Documents the dtos.dart-wide bug: `j['x'] as T?` is only null-safe,
-/// not type-safe, so a wrong-type-but-present JSON value throws instead
-/// of falling back to the class's own documented default. Two paired
-/// tests: one asserts today's actual (buggy) behavior so it stays a
-/// visible regression net; the other records the desired behavior as a
-/// `skip`ped case so fixing the bug is a one-line un-skip.
+/// GENUINE BUG (B17, FIXED): dtos.dart's parse-only classes used to read
+/// `j['x'] as T?`, which is only null-safe, not type-safe — a wrong-type-
+/// but-present JSON value threw instead of falling back to the class's own
+/// documented default. Every class exercised via this helper now reads
+/// through lib/backend/json_safety.dart's total readers (asStringOr,
+/// asIntOr, asBoolOr, asDoubleOrNull, asMapOrNull, asListOrNull), so the
+/// wrong-type repro below returns normally instead of throwing. Kept as a
+/// single assertion per class so a regression back to a hard `as T?` cast
+/// fails loudly.
 void _expectGenuineWrongTypeBug({
   required String label,
   required String fieldNote,
@@ -939,24 +975,15 @@ void _expectGenuineWrongTypeBug({
   required void Function(Map<String, dynamic>) callFromJson,
 }) {
   test(
-    '$label.fromJson: wrong-type $fieldNote throws instead of defaulting',
+    '$label.fromJson: tolerates wrong-type $fieldNote (fixed via '
+    'json_safety, B17)',
     () {
       expect(
         () => callFromJson(badMap),
-        throwsA(anyOf(isA<TypeError>(), isA<NoSuchMethodError>())),
+        returnsNormally,
         reason: 'repro map: $badMap',
       );
     },
-  );
-
-  test(
-    '$label.fromJson: should tolerate wrong-type $fieldNote (currently throws)',
-    () {
-      expect(() => callFromJson(badMap), returnsNormally);
-    },
-    skip: 'known bug: $label.fromJson uses an `as T?` hard cast for '
-        '$fieldNote — null-safe but not type-safe, so a schema drift in '
-        'upstream JSON throws instead of defaulting. Repro map: $badMap',
   );
 }
 
@@ -1046,6 +1073,15 @@ Map<String, dynamic> _goodReflogEntryJson(Rng rng) => <String, dynamic>{
       'actionSummary': _text(rng, maxLen: 40),
       'authorName': _text(rng, maxLen: 20),
       'authoredAt': _genDateTime(rng).toIso8601String(),
+    };
+
+Map<String, dynamic> _goodCommitSearchResultJson(Rng rng) => <String, dynamic>{
+      'commit_hash': _text(rng, maxLen: 40),
+      'short_hash': _text(rng, maxLen: 8),
+      'subject': _text(rng, maxLen: 60),
+      'author_name': _text(rng, maxLen: 20),
+      'authored_at': _genDateTime(rng).toIso8601String(),
+      'match_context': _text(rng, maxLen: 60),
     };
 
 Map<String, dynamic> _goodBlameLineJson(Rng rng) => <String, dynamic>{
@@ -1351,6 +1387,49 @@ void _runParseOnlyWireParserSuite() {
       badMap: const <String, dynamic>{'commitHash': 42},
       callFromJson: (m) => ReflogEntryData.fromJson(m),
     );
+  });
+
+  // The class the first B17 sweep MISSED (caught by external review): its
+  // dual-key reads ((j['commit_hash'] ?? j['commitHash']) as String?) kept
+  // the unsafe cast while every sibling was converted.
+  group('CommitSearchResultData.fromJson', () {
+    const validKeys = [
+      'commit_hash',
+      'short_hash',
+      'subject',
+      'author_name',
+      'authored_at',
+      'match_context',
+    ];
+    _expectLenientToMissingAndNull(
+      label: 'CommitSearchResultData',
+      validKeys: validKeys,
+      genGoodMap: _goodCommitSearchResultJson,
+      callFromJson: (m) => CommitSearchResultData.fromJson(m),
+    );
+    _wrongTypeFuzzCanary(
+      label: 'CommitSearchResultData',
+      genGoodMap: _goodCommitSearchResultJson,
+      validKeys: validKeys,
+      callFromJson: (m) => CommitSearchResultData.fromJson(m),
+    );
+    _expectGenuineWrongTypeBug(
+      label: 'CommitSearchResultData',
+      fieldNote: "'commit_hash' (int instead of String)",
+      badMap: const <String, dynamic>{'commit_hash': 42},
+      callFromJson: (m) => CommitSearchResultData.fromJson(m),
+    );
+    test('camelCase alternate keys are honored and equally type-safe', () {
+      final d = CommitSearchResultData.fromJson(const <String, dynamic>{
+        'commitHash': 'abc',
+        'shortHash': 'ab',
+        'authorName': 'a',
+        'authoredAt': 't',
+        'matchContext': 42, // wrong-typed → null, not TypeError
+      });
+      expect(d.commitHash, 'abc');
+      expect(d.matchContext, isNull);
+    });
   });
 
   group('BlameLineData.fromJson', () {

@@ -27,13 +27,13 @@ import '../support/prop.dart';
 /// Strips every leading U+FEFF (byte-order mark), if present, from a
 /// generator's raw output — looped, since the hostile token pool can
 /// independently pick the lone-BOM token more than once in a row.
-/// A leading BOM is the one input shape excluded from the "should
-/// genuinely roundtrip" generators: `_readString`'s `utf8.decode` call
-/// silently strips a leading BOM from any byte slice it's handed (known
-/// bug, see the skipped test below), so it isn't worth drowning the
-/// general-case properties in an already-diagnosed failure. A BOM
-/// anywhere else in the string (start excluded) roundtrips fine and is
-/// left untouched.
+///
+/// Historically `_readString` dropped a leading BOM (fixed: it now uses
+/// `utf8DecodeExact`, which round-trips it — see the un-skipped BOM
+/// test below). This generator-side filter is kept anyway so the
+/// general-case fuzz properties don't overlap the dedicated BOM
+/// regression; a BOM anywhere else in the string (start excluded)
+/// roundtrips fine and is left untouched.
 String _avoidLeadingBom(String s) {
   while (s.isNotEmpty && s.codeUnitAt(0) == 0xFEFF) {
     s = s.substring(1);
@@ -290,27 +290,25 @@ void main() {
     // Deterministic repro (not a property loop): the failure is a
     // categorical threshold effect at exactly 2^16 bytes, not something
     // randomization adds value to.
+    //
+    // Fixed: _writeString now rejects (ArgumentError) any string whose
+    // UTF-8 encoding is >= 65536 bytes instead of silently wrapping the
+    // uint16 length prefix and corrupting the field. The wire format's
+    // string bound stays uint16 (max 65535 bytes) — this is a clean
+    // rejection, not an expanded frame, so encode throws rather than
+    // round-tripping.
     test(
-      'a peer string of exactly 65536 UTF-8 bytes round-trips through '
-      'encode/decode',
+      'a peer string of exactly 65536 UTF-8 bytes is rejected by '
+      'encodeLogosEdit instead of silently corrupting the frame',
       () {
         final hugePeer = List.filled(65536, 'a').join(); // exactly 2^16 bytes
         final edit = AddPathEdit(
           clock: EditClock(lamport: 1, peer: hugePeer),
           path: 'x.dart',
         );
-        final decoded =
-            decodeLogosEdit(encodeLogosEdit(edit)) as AddPathEdit;
-        expect(decoded.clock.peer, equals(hugePeer));
-        expect(decoded.path, equals('x.dart'));
+        expect(() => encodeLogosEdit(edit), throwsA(isA<ArgumentError>()));
       },
-      skip: 'known bug: _writeString stores the string length via '
-          '`ByteData.setUint16`, which silently wraps at 65536 bytes '
-          'instead of throwing, while still appending the full byte '
-          'sequence — decode reads back the wrapped (zero) length and '
-          'corrupts that field plus everything after it, with no '
-          'exception. Affects any peer/path/pathA/pathB >= 65536 UTF-8 '
-          'bytes.',
+      skip: false,
     );
 
     // Deterministic minimal repro: a peer starting with U+FEFF loses
@@ -326,11 +324,7 @@ void main() {
             decodeLogosEdit(encodeLogosEdit(edit)) as AddPathEdit;
         expect(decoded.clock.peer, equals(peer));
       },
-      skip: 'known bug: _readString decodes via plain utf8.decode(bytes), '
-          'which silently strips a leading byte-order mark (U+FEFF) from '
-          'any field slice it is handed, not just the start of the '
-          'message. Affects path/pathA/pathB and VersionVector peer '
-          'names (same _readString).',
+      skip: false,
     );
   });
 
@@ -451,9 +445,10 @@ void main() {
       );
     });
 
-    // Deterministic minimal repros (not property loops): the failure is
-    // a structural gap in the reader (missing bounds checks), reproducible
-    // with any input landing in the unguarded byte ranges.
+    // Deterministic minimal repros (not property loops): were a
+    // structural gap in the reader (missing bounds checks); fixed via
+    // the shared `_need` guard called before every fixed-size read in
+    // `_readEditClock`, `_readString`, and `VersionVector.fromBytes`.
     test(
       'truncating inside EditClock\'s lamport field throws '
       'FormatException',
@@ -467,9 +462,7 @@ void main() {
         expect(() => decodeLogosEdit(truncated),
             throwsA(isA<FormatException>()));
       },
-      skip: 'known bug: _readEditClock calls bd.getUint32 with no prior '
-          "bounds check, so truncating inside the clock's 8-byte lamport "
-          'region throws a raw IndexError instead of FormatException.',
+      skip: false,
     );
 
     test(
@@ -487,11 +480,7 @@ void main() {
         expect(() => decodeLogosEdit(truncated),
             throwsA(isA<FormatException>()));
       },
-      skip: 'known bug: _readString builds a Uint8List.view with no '
-          'check that the declared length actually remains, so '
-          'truncating inside any length-prefixed string (peer, path, '
-          'pathA, pathB) throws a raw RangeError instead of '
-          'FormatException.',
+      skip: false,
     );
 
     test(
@@ -507,15 +496,14 @@ void main() {
         expect(() => VersionVector.fromBytes(truncated),
             throwsA(isA<FormatException>()));
       },
-      skip: 'known bug: VersionVector.fromBytes shares the edit codec\'s '
-          '_readString, so truncating inside a peer name throws a raw '
-          'RangeError instead of FormatException.',
+      skip: false,
     );
 
     // Systemic form of the two minimal repros above, across random valid
-    // encodings and every possible truncation length. Skipped because it
-    // currently fails on the large majority of cuts, not a rare edge
-    // case — remove `skip` once the reader gains proper bounds checks.
+    // encodings and every possible truncation length. Now exercised for
+    // real: the `_need` bounds guard covers every fixed-size read on
+    // both decode paths, so every truncation prefix throws
+    // FormatException rather than RangeError/IndexError.
     test(
       'every truncation prefix of a valid encoding throws FormatException',
       () {
@@ -548,10 +536,7 @@ void main() {
           },
         );
       },
-      skip: 'known bug: most truncation offsets inside the EditClock or '
-          'any length-prefixed string throw RangeError/IndexError rather '
-          'than FormatException, for both decodeLogosEdit and '
-          'VersionVector.fromBytes.',
+      skip: false,
     );
   });
 
@@ -576,8 +561,10 @@ void main() {
     });
 
     // Deterministic minimal repro: a triangle of SetEdgeEdits whose 3
-    // paths were never explicitly added compacts to more edits than it
-    // started with (3 -> 6).
+    // paths were never explicitly added used to compact to more edits
+    // than it started with (3 -> 6). Fixed: synthesised AddPathEdits
+    // are now skipped for any path already covered by a surviving
+    // SetEdgeEdit's lazy-create.
     test(
       'compactEdits never produces a longer log than its input',
       () {
@@ -601,12 +588,7 @@ void main() {
         final compacted = compactEdits(edits);
         expect(compacted.length, lessThanOrEqualTo(edits.length));
       },
-      skip: 'known bug: compactEdits synthesizes one AddPathEdit per '
-          'surviving path lacking an explicit AddPathEdit, without '
-          'checking whether a retained SetEdgeEdit already lazily '
-          'creates that path — so a triangle of SetEdgeEdits with no '
-          'explicit AddPathEdit compacts to 6 edits from 3. Final state '
-          'is still correct; only the never-grows guarantee is broken.',
+      skip: false,
     );
 
     test('compacting an already-compact (or empty) sequence is a stable '

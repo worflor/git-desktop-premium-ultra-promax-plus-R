@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'json_safety.dart';
 import 'storage_paths.dart';
 
 class AiAuditEntryData {
@@ -43,19 +44,16 @@ class AiAuditEntryData {
 
   factory AiAuditEntryData.fromJson(Map<String, dynamic> json) {
     return AiAuditEntryData(
-      id: json['id'] as String,
-      event: json['event'] as String,
-      providerId: json['providerId'] as String,
-      repositoryHint: json['repositoryHint'] as String,
-      diffScopePath: json['diffScopePath'] is String
-          ? json['diffScopePath'] as String
-          : null,
-      promptPreview: json['promptPreview'] as String,
-      outputPreview: json['outputPreview'] as String,
-      ok: json['ok'] == true,
-      errorCode:
-          json['errorCode'] is String ? json['errorCode'] as String : null,
-      createdAt: json['createdAt'] as String,
+      id: asStringOr(json['id'], ''),
+      event: asStringOr(json['event'], ''),
+      providerId: asStringOr(json['providerId'], ''),
+      repositoryHint: asStringOr(json['repositoryHint'], ''),
+      diffScopePath: asStringOrNull(json['diffScopePath']),
+      promptPreview: asStringOr(json['promptPreview'], ''),
+      outputPreview: asStringOr(json['outputPreview'], ''),
+      ok: asBoolOr(json['ok'], false),
+      errorCode: asStringOrNull(json['errorCode']),
+      createdAt: asStringOr(json['createdAt'], ''),
     );
   }
 }

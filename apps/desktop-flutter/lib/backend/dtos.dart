@@ -1,3 +1,5 @@
+import 'json_safety.dart';
+
 /// How many commits back the app reaches by default when reading history.
 /// Single source of truth shared by the History page (its limit field) and the
 /// Orrery (its trajectory window), so the two stay in step instead of each
@@ -131,17 +133,17 @@ class RepositoryStatus {
       required this.files,
       this.hasHeadCommit = true});
   factory RepositoryStatus.fromJson(Map<String, dynamic> j) => RepositoryStatus(
-        branch: j['branch'] as String? ?? '',
-        upstream: j['upstream'] as String?,
-        ahead: j['ahead'] as int? ?? 0,
-        behind: j['behind'] as int? ?? 0,
-        files: (j['files'] as List? ?? [])
-            .map((f) =>
-                RepositoryStatusFile.fromJson(f as Map<String, dynamic>))
+        branch: asStringOr(j['branch'], ''),
+        upstream: asStringOrNull(j['upstream']),
+        ahead: asIntOr(j['ahead'], 0),
+        behind: asIntOr(j['behind'], 0),
+        files: (asListOrNull(j['files']) ?? const [])
+            .map((f) => RepositoryStatusFile.fromJson(
+                asMapOrNull(f) ?? const <String, Object?>{}))
             .toList(),
         // Default true when the field is absent so older serialised
         // statuses don't suddenly hide affordances after this rolls in.
-        hasHeadCommit: j['hasHeadCommit'] as bool? ?? true,
+        hasHeadCommit: asBoolOr(j['hasHeadCommit'], true),
       );
 
   /// Structural equality. Required so `context.select<RepositoryState,
@@ -202,17 +204,20 @@ class CommitHistoryEntry {
   });
   factory CommitHistoryEntry.fromJson(Map<String, dynamic> j) =>
       CommitHistoryEntry(
-        commitHash: (j['commit_hash'] ?? j['commitHash']) as String? ?? '',
-        shortHash: (j['short_hash'] ?? j['shortHash']) as String? ?? '',
-        parentHashes: List<String>.from(
-            (j['parent_hashes'] ?? j['parentHashes']) as List? ?? []),
-        refNames: List<String>.from(
-            (j['ref_names'] ?? j['refNames']) as List? ?? []),
-        isMerge: (j['is_merge'] ?? j['isMerge']) as bool? ?? false,
-        subject: j['subject'] as String? ?? '',
-        authorName: (j['author_name'] ?? j['authorName']) as String? ?? '',
-        authorEmail: (j['author_email'] ?? j['authorEmail']) as String? ?? '',
-        authoredAt: (j['authored_at'] ?? j['authoredAt']) as String? ?? '',
+        commitHash: asStringOr(j['commit_hash'] ?? j['commitHash'], ''),
+        shortHash: asStringOr(j['short_hash'] ?? j['shortHash'], ''),
+        parentHashes: (asListOrNull(j['parent_hashes'] ?? j['parentHashes']) ??
+                const [])
+            .map((e) => asStringOr(e, ''))
+            .toList(),
+        refNames: (asListOrNull(j['ref_names'] ?? j['refNames']) ?? const [])
+            .map((e) => asStringOr(e, ''))
+            .toList(),
+        isMerge: asBoolOr(j['is_merge'] ?? j['isMerge'], false),
+        subject: asStringOr(j['subject'], ''),
+        authorName: asStringOr(j['author_name'] ?? j['authorName'], ''),
+        authorEmail: asStringOr(j['author_email'] ?? j['authorEmail'], ''),
+        authoredAt: asStringOr(j['authored_at'] ?? j['authoredAt'], ''),
       );
 }
 
@@ -228,10 +233,10 @@ class CommitFileStatData {
       this.changeType = 'M'});
   factory CommitFileStatData.fromJson(Map<String, dynamic> j) =>
       CommitFileStatData(
-          path: j['path'] as String? ?? '',
-          additions: j['additions'] as int? ?? 0,
-          deletions: j['deletions'] as int? ?? 0,
-          changeType: j['changeType'] as String? ?? 'M');
+          path: asStringOr(j['path'], ''),
+          additions: asIntOr(j['additions'], 0),
+          deletions: asIntOr(j['deletions'], 0),
+          changeType: asStringOr(j['changeType'], 'M'));
 }
 
 /// One hunk header from a commit's diff, parsed straight from the
@@ -286,18 +291,19 @@ class CommitDetailData {
     required this.files,
   });
   factory CommitDetailData.fromJson(Map<String, dynamic> j) => CommitDetailData(
-        commitHash: (j['commit_hash'] ?? j['commitHash']) as String? ?? '',
-        shortHash: (j['short_hash'] ?? j['shortHash']) as String? ?? '',
-        subject: j['subject'] as String? ?? '',
-        body: j['body'] as String? ?? '',
-        authorName: (j['author_name'] ?? j['authorName']) as String? ?? '',
-        authorEmail: (j['author_email'] ?? j['authorEmail']) as String? ?? '',
-        authoredAt: (j['authored_at'] ?? j['authoredAt']) as String? ?? '',
-        filesChanged: (j['files_changed'] ?? j['filesChanged']) as int? ?? 0,
-        additions: j['additions'] as int? ?? 0,
-        deletions: j['deletions'] as int? ?? 0,
-        files: (j['files'] as List? ?? [])
-            .map((f) => CommitFileStatData.fromJson(f as Map<String, dynamic>))
+        commitHash: asStringOr(j['commit_hash'] ?? j['commitHash'], ''),
+        shortHash: asStringOr(j['short_hash'] ?? j['shortHash'], ''),
+        subject: asStringOr(j['subject'], ''),
+        body: asStringOr(j['body'], ''),
+        authorName: asStringOr(j['author_name'] ?? j['authorName'], ''),
+        authorEmail: asStringOr(j['author_email'] ?? j['authorEmail'], ''),
+        authoredAt: asStringOr(j['authored_at'] ?? j['authoredAt'], ''),
+        filesChanged: asIntOr(j['files_changed'] ?? j['filesChanged'], 0),
+        additions: asIntOr(j['additions'], 0),
+        deletions: asIntOr(j['deletions'], 0),
+        files: (asListOrNull(j['files']) ?? const [])
+            .map((f) => CommitFileStatData.fromJson(
+                asMapOrNull(f) ?? const <String, Object?>{}))
             .toList(),
       );
 }
@@ -364,19 +370,19 @@ class BranchInfo {
   });
 
   factory BranchInfo.fromJson(Map<String, dynamic> j) => BranchInfo(
-        name: j['name'] as String? ?? '',
-        current: j['current'] as bool? ?? false,
-        upstream: j['upstream'] as String?,
-        ahead: j['ahead'] as int? ?? 0,
-        behind: j['behind'] as int? ?? 0,
-        gone: j['gone'] as bool? ?? false,
-        lastCommitAt: j['lastCommitAt'] is String
-            ? DateTime.tryParse(j['lastCommitAt'] as String)
-            : null,
-        squashMerged:
-            j['squashMerged'] is bool ? j['squashMerged'] as bool : null,
-        absorbed: j['absorbed'] is bool ? j['absorbed'] as bool : null,
-        absorbedWitness: j['absorbedWitness'] as String?,
+        name: asStringOr(j['name'], ''),
+        current: asBoolOr(j['current'], false),
+        upstream: asStringOrNull(j['upstream']),
+        ahead: asIntOr(j['ahead'], 0),
+        behind: asIntOr(j['behind'], 0),
+        gone: asBoolOr(j['gone'], false),
+        lastCommitAt: () {
+          final raw = asStringOrNull(j['lastCommitAt']);
+          return raw == null ? null : DateTime.tryParse(raw);
+        }(),
+        squashMerged: asBoolOrNull(j['squashMerged']),
+        absorbed: asBoolOrNull(j['absorbed']),
+        absorbedWitness: asStringOrNull(j['absorbedWitness']),
       );
 
   BranchInfo copyWith({
@@ -413,12 +419,12 @@ class TagEntryData {
       this.creatorName,
       this.subject});
   factory TagEntryData.fromJson(Map<String, dynamic> j) => TagEntryData(
-        name: j['name'] as String? ?? '',
-        tagType: (j['tag_type'] ?? j['tagType']) as String? ?? '',
-        targetHash: (j['target_hash'] ?? j['targetHash']) as String?,
-        createdAt: (j['created_at'] ?? j['createdAt']) as String?,
-        creatorName: (j['creator_name'] ?? j['creatorName']) as String?,
-        subject: j['subject'] as String?,
+        name: asStringOr(j['name'], ''),
+        tagType: asStringOr(j['tag_type'] ?? j['tagType'], ''),
+        targetHash: asStringOrNull(j['target_hash'] ?? j['targetHash']),
+        createdAt: asStringOrNull(j['created_at'] ?? j['createdAt']),
+        creatorName: asStringOrNull(j['creator_name'] ?? j['creatorName']),
+        subject: asStringOrNull(j['subject']),
       );
 }
 
@@ -438,13 +444,13 @@ class ReflogEntryData {
     required this.authoredAt,
   });
   factory ReflogEntryData.fromJson(Map<String, dynamic> j) => ReflogEntryData(
-        commitHash: (j['commit_hash'] ?? j['commitHash']) as String? ?? '',
-        shortHash: (j['short_hash'] ?? j['shortHash']) as String? ?? '',
-        refSelector: (j['ref_selector'] ?? j['refSelector']) as String? ?? '',
+        commitHash: asStringOr(j['commit_hash'] ?? j['commitHash'], ''),
+        shortHash: asStringOr(j['short_hash'] ?? j['shortHash'], ''),
+        refSelector: asStringOr(j['ref_selector'] ?? j['refSelector'], ''),
         actionSummary:
-            (j['action_summary'] ?? j['actionSummary']) as String? ?? '',
-        authorName: (j['author_name'] ?? j['authorName']) as String? ?? '',
-        authoredAt: (j['authored_at'] ?? j['authoredAt']) as String? ?? '',
+            asStringOr(j['action_summary'] ?? j['actionSummary'], ''),
+        authorName: asStringOr(j['author_name'] ?? j['authorName'], ''),
+        authoredAt: asStringOr(j['authored_at'] ?? j['authoredAt'], ''),
       );
 }
 
@@ -464,12 +470,12 @@ class BlameLineData {
     required this.lineContent,
   });
   factory BlameLineData.fromJson(Map<String, dynamic> j) => BlameLineData(
-        lineNumber: (j['line_number'] ?? j['lineNumber']) as int? ?? 0,
-        commitHash: (j['commit_hash'] ?? j['commitHash']) as String? ?? '',
-        shortHash: (j['short_hash'] ?? j['shortHash']) as String? ?? '',
-        authorName: (j['author_name'] ?? j['authorName']) as String? ?? '',
-        authoredAt: (j['authored_at'] ?? j['authoredAt']) as String? ?? '',
-        lineContent: (j['line_content'] ?? j['lineContent']) as String? ?? '',
+        lineNumber: asIntOr(j['line_number'] ?? j['lineNumber'], 0),
+        commitHash: asStringOr(j['commit_hash'] ?? j['commitHash'], ''),
+        shortHash: asStringOr(j['short_hash'] ?? j['shortHash'], ''),
+        authorName: asStringOr(j['author_name'] ?? j['authorName'], ''),
+        authoredAt: asStringOr(j['authored_at'] ?? j['authoredAt'], ''),
+        lineContent: asStringOr(j['line_content'] ?? j['lineContent'], ''),
       );
 }
 
@@ -490,12 +496,12 @@ class CommitSearchResultData {
   });
   factory CommitSearchResultData.fromJson(Map<String, dynamic> j) =>
       CommitSearchResultData(
-        commitHash: (j['commit_hash'] ?? j['commitHash']) as String? ?? '',
-        shortHash: (j['short_hash'] ?? j['shortHash']) as String? ?? '',
-        subject: j['subject'] as String? ?? '',
-        authorName: (j['author_name'] ?? j['authorName']) as String? ?? '',
-        authoredAt: (j['authored_at'] ?? j['authoredAt']) as String? ?? '',
-        matchContext: (j['match_context'] ?? j['matchContext']) as String?,
+        commitHash: asStringOr(j['commit_hash'] ?? j['commitHash'], ''),
+        shortHash: asStringOr(j['short_hash'] ?? j['shortHash'], ''),
+        subject: asStringOr(j['subject'], ''),
+        authorName: asStringOr(j['author_name'] ?? j['authorName'], ''),
+        authoredAt: asStringOr(j['authored_at'] ?? j['authoredAt'], ''),
+        matchContext: asStringOrNull(j['match_context'] ?? j['matchContext']),
       );
 }
 
@@ -520,10 +526,10 @@ class SyncData {
       this.branch,
       required this.output});
   factory SyncData.fromJson(Map<String, dynamic> j) => SyncData(
-        operation: j['operation'] as String? ?? '',
-        remote: j['remote'] as String? ?? '',
-        branch: j['branch'] as String?,
-        output: j['output'] as String? ?? '',
+        operation: asStringOr(j['operation'], ''),
+        remote: asStringOr(j['remote'], ''),
+        branch: asStringOrNull(j['branch']),
+        output: asStringOr(j['output'], ''),
       );
 }
 
@@ -991,14 +997,15 @@ class AiProviderStatus {
     this.healthCheck,
   });
   factory AiProviderStatus.fromJson(Map<String, dynamic> j) => AiProviderStatus(
-        id: j['id'] as String? ?? '',
-        available: j['available'] as bool? ?? false,
-        binary: j['binary'] as String? ?? '',
-        planName: (j['plan_name'] ?? j['planName']) as String?,
-        resolvedBinary: (j['resolved_binary'] ?? j['resolvedBinary']) as String?,
+        id: asStringOr(j['id'], ''),
+        available: asBoolOr(j['available'], false),
+        binary: asStringOr(j['binary'], ''),
+        planName: asStringOrNull(j['plan_name'] ?? j['planName']),
+        resolvedBinary:
+            asStringOrNull(j['resolved_binary'] ?? j['resolvedBinary']),
         detectionSource:
-            (j['detection_source'] ?? j['detectionSource']) as String?,
-        healthCheck: (j['health_check'] ?? j['healthCheck']) as String?,
+            asStringOrNull(j['detection_source'] ?? j['detectionSource']),
+        healthCheck: asStringOrNull(j['health_check'] ?? j['healthCheck']),
       );
 }
 
@@ -1007,9 +1014,9 @@ class AiProviderListData {
   const AiProviderListData({required this.providers});
   factory AiProviderListData.fromJson(Map<String, dynamic> j) =>
       AiProviderListData(
-        providers: (j['providers'] as List? ?? [])
-            .map((provider) =>
-                AiProviderStatus.fromJson(provider as Map<String, dynamic>))
+        providers: (asListOrNull(j['providers']) ?? const [])
+            .map((provider) => AiProviderStatus.fromJson(
+                asMapOrNull(provider) ?? const <String, Object?>{}))
             .toList(),
       );
 }
@@ -1046,19 +1053,18 @@ class AiModelOptionData {
 
   factory AiModelOptionData.fromJson(Map<String, dynamic> j) =>
       AiModelOptionData(
-        value: j['value'] as String? ?? '',
-        modelId: (j['model_id'] ?? j['modelId']) as String? ?? '',
-        providerId: (j['provider_id'] ?? j['providerId']) as String? ?? '',
+        value: asStringOr(j['value'], ''),
+        modelId: asStringOr(j['model_id'] ?? j['modelId'], ''),
+        providerId: asStringOr(j['provider_id'] ?? j['providerId'], ''),
         providerLabel:
-            (j['provider_label'] ?? j['providerLabel']) as String? ?? '',
-        planName: (j['plan_name'] ?? j['planName']) as String?,
-        label: j['label'] as String? ?? '',
-        description: j['description'] as String? ?? '',
-        promptPricePer1m: (j['prompt_price_per_1m'] as num?)?.toDouble(),
-        completionPricePer1m:
-            (j['completion_price_per_1m'] as num?)?.toDouble(),
-        supportsReasoning: j['supports_reasoning'] == true,
-        hasFastTier: j['has_fast_tier'] == true,
+            asStringOr(j['provider_label'] ?? j['providerLabel'], ''),
+        planName: asStringOrNull(j['plan_name'] ?? j['planName']),
+        label: asStringOr(j['label'], ''),
+        description: asStringOr(j['description'], ''),
+        promptPricePer1m: asDoubleOrNull(j['prompt_price_per_1m']),
+        completionPricePer1m: asDoubleOrNull(j['completion_price_per_1m']),
+        supportsReasoning: asBoolOr(j['supports_reasoning'], false),
+        hasFastTier: asBoolOr(j['has_fast_tier'], false),
       );
 }
 
@@ -1077,11 +1083,12 @@ class AiModelCategoryData {
 
   factory AiModelCategoryData.fromJson(Map<String, dynamic> j) =>
       AiModelCategoryData(
-        id: j['id'] as String? ?? '',
-        label: j['label'] as String? ?? '',
-        description: j['description'] as String?,
-        models: (j['models'] as List? ?? [])
-            .map((model) => AiModelOptionData.fromJson(model as Map<String, dynamic>))
+        id: asStringOr(j['id'], ''),
+        label: asStringOr(j['label'], ''),
+        description: asStringOrNull(j['description']),
+        models: (asListOrNull(j['models']) ?? const [])
+            .map((model) => AiModelOptionData.fromJson(
+                asMapOrNull(model) ?? const <String, Object?>{}))
             .toList(),
       );
 }
@@ -1093,9 +1100,9 @@ class AiModelOptionListData {
 
   factory AiModelOptionListData.fromJson(Map<String, dynamic> j) =>
       AiModelOptionListData(
-        categories: (j['categories'] as List? ?? [])
-            .map((category) =>
-                AiModelCategoryData.fromJson(category as Map<String, dynamic>))
+        categories: (asListOrNull(j['categories']) ?? const [])
+            .map((category) => AiModelCategoryData.fromJson(
+                asMapOrNull(category) ?? const <String, Object?>{}))
             .toList(),
       );
 }
@@ -1948,14 +1955,12 @@ class AppSettingsData {
     required this.aiReadOnlyDefault,
   });
   factory AppSettingsData.fromJson(Map<String, dynamic> j) => AppSettingsData(
-        themeId: (j['theme_id'] ?? j['themeId']) as String? ?? 'aether',
-        keybindingProfile:
-            (j['keybinding_profile'] ?? j['keybindingProfile']) as String? ??
-                'classic',
+        themeId: asStringOr(j['theme_id'] ?? j['themeId'], 'aether'),
+        keybindingProfile: asStringOr(
+            j['keybinding_profile'] ?? j['keybindingProfile'], 'classic'),
         sidebarWidthPx:
-            (j['sidebar_width_px'] ?? j['sidebarWidthPx']) as int? ?? 240,
-        aiReadOnlyDefault:
-            (j['ai_read_only_default'] ?? j['aiReadOnlyDefault']) as bool? ??
-                true,
+            asIntOr(j['sidebar_width_px'] ?? j['sidebarWidthPx'], 240),
+        aiReadOnlyDefault: asBoolOr(
+            j['ai_read_only_default'] ?? j['aiReadOnlyDefault'], true),
       );
 }

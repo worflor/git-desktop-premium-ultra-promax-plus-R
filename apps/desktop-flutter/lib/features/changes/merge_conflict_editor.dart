@@ -32,6 +32,21 @@ class ConflictBlock {
   // Null when no engine is available.
   double? coherenceBias;
 
+  /// True when the `ours` side of THIS block is the file's genuine final
+  /// content and that content has no trailing newline. Only ever set (by
+  /// patch_as_merge.dart's `_spliceConflictMarkers`, the sole producer) on
+  /// whichever block ends up last in a [ConflictFile] whose diff reaches
+  /// true end-of-file with no unchanged trailing lines — the one shape
+  /// [ConflictFile.buildResult] cannot recover from the marker text alone,
+  /// since that text round-trips identically whether or not the original
+  /// had a trailing newline.
+  bool oursNoTrailingNewline = false;
+
+  /// Same as [oursNoTrailingNewline] but for the `theirs` side. Ours and
+  /// theirs are tracked independently because only one side's edit may
+  /// actually be "drop the trailing newline" while the other still has one.
+  bool theirsNoTrailingNewline = false;
+
   ConflictBlock({
     required this.index,
     required this.oursText,
@@ -137,7 +152,32 @@ class ConflictFile {
         }
       }
     }
-    return buf.toString();
+    var result = buf.toString();
+    // The loop above always re-adds the newline the conflict markers
+    // consumed, even for the LAST block — correct when more content
+    // follows, wrong when that block IS the file's genuine end and the
+    // chosen side never had a trailing newline. oursNoTrailingNewline /
+    // theirsNoTrailingNewline (populated by patch_as_merge.dart, the only
+    // producer with the information needed to know this) carry the one
+    // bit the marker text itself can't represent. Guarded on the LAST
+    // block's own resolvedText being non-empty — an empty resolution
+    // (e.g. reject-all on a pure-addition hunk) contributes nothing of
+    // its own, so any trailing '\n' in `result` came from earlier
+    // content and must not be touched.
+    if (blocks.isNotEmpty &&
+        result.endsWith('\n') &&
+        blocks.last.resolvedText.isNotEmpty) {
+      final last = blocks.last;
+      final suppressTrailingNewline = switch (last.resolution) {
+        ConflictSide.ours => last.oursNoTrailingNewline,
+        ConflictSide.theirs => last.theirsNoTrailingNewline,
+        _ => false,
+      };
+      if (suppressTrailingNewline) {
+        result = result.substring(0, result.length - 1);
+      }
+    }
+    return result;
   }
 }
 

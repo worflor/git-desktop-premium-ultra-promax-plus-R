@@ -27,6 +27,7 @@
 
 import 'dart:convert' show json;
 
+import 'json_safety.dart';
 import 'review_logos.dart' show ClaimShape;
 
 /// Per-shape outcome counters. Accept / reject tallies feed the
@@ -45,8 +46,19 @@ class _Bucket {
 
   Map<String, int> toJson() => {'a': accepts, 'r': rejects};
 
-  static _Bucket fromJson(Map<String, dynamic> j) =>
-      _Bucket(accepts: j['a'] as int? ?? 0, rejects: j['r'] as int? ?? 0);
+  /// Total parse. A missing counter defaults to 0 (older-schema
+  /// tolerance), but a present-and-wrong-typed counter makes the whole
+  /// bucket malformed — returns null so [ClaimOutcomeRatchet.fromJsonString]
+  /// drops the entry per its contract, rather than recording a
+  /// fabricated observation bucket.
+  static _Bucket? fromJsonOrNull(Map<String, Object?> j) {
+    final a = j['a'];
+    final r = j['r'];
+    final accepts = a == null ? 0 : asIntOrNull(a);
+    final rejects = r == null ? 0 : asIntOrNull(r);
+    if (accepts == null || rejects == null) return null;
+    return _Bucket(accepts: accepts, rejects: rejects);
+  }
 }
 
 /// In-memory store of (shape → outcome-counts). Backs the axis-5
@@ -138,10 +150,22 @@ class ClaimOutcomeRatchet {
     }
     if (decoded is! Map<String, dynamic>) return ratchet;
     decoded.forEach((key, value) {
-      final parsedKey = int.tryParse(key);
-      if (parsedKey == null) return;
-      if (value is! Map<String, dynamic>) return;
-      ratchet._buckets[parsedKey] = _Bucket.fromJson(value);
+      // Each entry is parsed under its own guard so one malformed bucket
+      // (bad key, wrong shape, or a present-but-wrong-typed "a"/"r")
+      // drops just that entry instead of aborting the whole rehydrate —
+      // belt-and-suspenders alongside _Bucket.fromJsonOrNull's own total
+      // json_safety reads.
+      try {
+        final parsedKey = int.tryParse(key);
+        if (parsedKey == null) return;
+        final map = asMapOrNull(value);
+        if (map == null) return;
+        final bucket = _Bucket.fromJsonOrNull(map);
+        if (bucket == null) return;
+        ratchet._buckets[parsedKey] = bucket;
+      } catch (_) {
+        // Drop the malformed entry; never let it take down the parse.
+      }
     });
     return ratchet;
   }

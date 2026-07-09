@@ -19,6 +19,7 @@ import 'dart:convert';
 import 'desk_pr.dart';
 import 'git_result.dart';
 import 'manifold_refs.dart';
+import 'utf8_exact.dart';
 
 class DeskPrStore {
   static const String refPrefix = 'refs/manifold/desks/';
@@ -34,60 +35,97 @@ class DeskPrStore {
   static String refFor(String branch) =>
       '$refPrefix${encodeBranch(branch)}';
 
-  /// Bijective branch encoding for ref names. The naive approach (drop
-  /// or substitute each illegal character) collides — `feat/~x` and
-  /// `feat-x` would both encode to `feat-x` and silently overwrite
-  /// each other. Percent-encoding is reversible: every illegal char
-  /// becomes `%XX` and `%` itself is escaped first so the encoding is
-  /// injective.
-  /// Slash is preserved — multi-segment refs are valid and we want
-  /// `feat/x` to render as `refs/manifold/desks/feat/x`, not flattened.
-  /// Trailing `.`, leading `/`, and `..` sequences are rejected by git
-  /// itself; we encode `.` only when it would create those, and reject
-  /// empty input outright.
+  /// Injective encoding of any non-empty Dart string into a legal git
+  /// ref tail under `refs/manifold/desks/`.
+  ///
+  /// Laws:
+  ///  * Injective over all non-empty strings —
+  ///    `decodeBranch(encodeBranch(s)) == s` for every non-empty `s`, no
+  ///    carve-outs. No trim, no normalization: leading/trailing
+  ///    whitespace (including a BOM) is payload and survives like any
+  ///    other character.
+  ///
+  /// This is byte-identical to the pre-redesign scheme for every tail
+  /// the old encoder could actually store (its trims/strips and lossy
+  /// astral collapses are all fixed points of decode-then-re-encode), so
+  /// existing `refs/manifold/desks/*` refs need no migration.
+  ///  * Iterates by RUNE (`src.runes`), not UTF-16 code unit, so a
+  ///    surrogate pair (astral character — most emoji) is one unit and
+  ///    UTF-8-encodes to its real bytes instead of shredding into two
+  ///    lone-surrogate replacement characters.
+  ///  * `%` always escapes first (`%25`) so the percent-encoding itself
+  ///    stays reversible.
+  ///  * Letters, digits, `-`, `_` pass through literally.
+  ///  * Empty input throws [ArgumentError]: git itself rejects an empty
+  ///    branch name, so no caller can legitimately produce one — failing
+  ///    loudly beats inventing a sentinel tail (a sentinel would need a
+  ///    leading-`_` escape to stay unforgeable, which would change the
+  ///    encoding of every real `_`-prefixed branch for nothing).
+  ///  * `/` passes through literally only when it is not the first rune,
+  ///    not the last rune, and the immediately preceding source rune is
+  ///    not itself `/` — otherwise it's escaped to `%2F`. This makes
+  ///    leading slash, trailing slash, and doubled-slash (empty ref
+  ///    components — the exact shapes git's own `check-ref-format`
+  ///    rejects) unrepresentable rather than merely discouraged.
+  ///  * `.` is always encoded (falls through to the general case below),
+  ///    so `..`, a leading `.`, ` .lock`, or a trailing `.` — all
+  ///    git-illegal ref-name shapes — can never appear literally.
+  ///  * Everything else: UTF-8-encode the single rune and emit uppercase
+  ///    `%XX` per byte.
   static String encodeBranch(String branch) {
-    final src = branch.trim();
-    if (src.isEmpty) return '_empty';
+    if (branch.isEmpty) {
+      throw ArgumentError.value(
+          branch, 'branch', 'branch name must be non-empty');
+    }
     final buf = StringBuffer();
-    for (var i = 0; i < src.length; i++) {
-      final c = src[i];
+    final runes = branch.runes.toList(growable: false);
+    int? prevRune;
+    for (var idx = 0; idx < runes.length; idx++) {
+      final rune = runes[idx];
+      final c = String.fromCharCode(rune);
       // Escape `%` first so the encoding is reversible.
       if (c == '%') {
         buf.write('%25');
-        continue;
-      }
-      // Slash is kept literal — multi-segment refs are valid git refs.
-      if (c == '/') {
-        buf.write('/');
+        prevRune = rune;
         continue;
       }
       // Letters, digits, `-`, `_` pass through untouched.
-      final code = c.codeUnitAt(0);
       final isLetter =
-          (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A);
-      final isDigit = code >= 0x30 && code <= 0x39;
+          (rune >= 0x41 && rune <= 0x5A) || (rune >= 0x61 && rune <= 0x7A);
+      final isDigit = rune >= 0x30 && rune <= 0x39;
       if (isLetter || isDigit || c == '-' || c == '_') {
         buf.write(c);
+        prevRune = rune;
+        continue;
+      }
+      // Slash is kept literal only when it can't produce an empty ref
+      // component: not first, not last, and not immediately following
+      // another slash in the SOURCE.
+      if (c == '/') {
+        final isFirst = idx == 0;
+        final isLast = idx == runes.length - 1;
+        final afterSlash = prevRune == 0x2F;
+        if (!isFirst && !isLast && !afterSlash) {
+          buf.write('/');
+        } else {
+          buf.write('%2F');
+        }
+        prevRune = rune;
         continue;
       }
       // Everything else (including `.`, `~`, `^`, `:`, `?`, `*`, `[`,
-      // backslash, whitespace, unicode) → %XX. UTF-8-encode then hex
-      // each byte so non-ASCII branch names roundtrip cleanly.
+      // backslash, whitespace/BOM, unicode) → %XX. UTF-8-encode the
+      // single rune then hex each byte, so astral characters (one rune,
+      // encoded as their real multi-byte UTF-8 sequence) roundtrip
+      // cleanly instead of shredding through UTF-16 code units.
       final bytes = utf8.encode(c);
       for (final b in bytes) {
         buf.write('%');
         buf.write(b.toRadixString(16).padLeft(2, '0').toUpperCase());
       }
+      prevRune = rune;
     }
-    var encoded = buf.toString();
-    // Normalize edge sequences git rejects in refnames.
-    while (encoded.startsWith('/')) {
-      encoded = encoded.substring(1);
-    }
-    while (encoded.endsWith('/')) {
-      encoded = encoded.substring(0, encoded.length - 1);
-    }
-    return encoded;
+    return buf.toString();
   }
 
   /// Inverse of [encodeBranch] — restores the original branch name
@@ -113,7 +151,10 @@ class DeskPrStore {
             bytes.add(b);
             j += 3;
           }
-          buf.write(utf8.decode(bytes, allowMalformed: true));
+          // utf8DecodeExact (not plain utf8.decode) so a byte run that IS
+          // a BOM (EF BB BF) round-trips instead of being silently
+          // stripped — a mid-string BOM is payload, not noise.
+          buf.write(utf8DecodeExact(bytes, allowMalformed: true));
           i = j;
           continue;
         }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'json_safety.dart';
 import 'storage_paths.dart';
 
 class ShadowCouplingCacheData {
@@ -61,11 +62,10 @@ class ShadowCouplingCacheData {
     }
 
     return ShadowCouplingCacheData(
-      headHash: (json['headHash'] as String?) ?? '',
-      discoveredAt: DateTime.tryParse(
-              (json['discoveredAt'] as String?) ?? '') ??
+      headHash: asStringOr(json['headHash'], ''),
+      discoveredAt: DateTime.tryParse(asStringOr(json['discoveredAt'], '')) ??
           DateTime.fromMillisecondsSinceEpoch(0),
-      shadowCommitCount: (json['shadowCommitCount'] as int?) ?? 0,
+      shadowCommitCount: asIntOr(json['shadowCommitCount'], 0),
       jaccardEdges: edges,
       edgeTypeCounts: typeCounts,
     );

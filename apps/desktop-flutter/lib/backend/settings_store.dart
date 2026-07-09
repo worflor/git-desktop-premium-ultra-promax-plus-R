@@ -473,7 +473,9 @@ class AppSettingsSnapshot {
         json['changesPanelWidthPx'],
         defaults.changesPanelWidthPx,
       ).clamp(220, 520),
-      wickExePath: json['wickExePath'] as String? ?? '',
+      wickExePath: json['wickExePath'] is String
+          ? json['wickExePath'] as String
+          : '',
       alphaMathPath: json['alphaMathPath'] is String
           ? json['alphaMathPath'] as String
           : '',
@@ -684,12 +686,27 @@ class SettingsStore {
     return File('${dir.path}${Platform.pathSeparator}$_settingsFileName');
   }
 
+  // jsonDecode can hand back non-finite doubles (e.g. `1e400` decodes to
+  // double.infinity with no parse error), and `.toInt()`/`.toDouble()`
+  // on a non-finite value throws. A throw here escapes fromJson and
+  // wipes the *entire* settings snapshot via load()'s catch-all, so
+  // every non-finite value must degrade to its field default instead.
+  //
+  // Deliberately more lenient than `json_safety.dart`'s `asIntOrNull`,
+  // which REJECTS a fractional double: that reader parses untrusted wire
+  // data, where `3.7` in an int field is malformed and truncating would
+  // fabricate a value nobody sent. This one parses a hand-editable local
+  // settings.json whose int fields are UI dimensions and durations, all
+  // clamped into range right after — a human typing `220.5` means 220,
+  // and defaulting them to something far away would be the surprising
+  // answer. Same non-finite guard, different fractional policy, on
+  // purpose.
   static int _intOr(dynamic value, int fallback) {
-    return value is num ? value.toInt() : fallback;
+    return value is num && value.isFinite ? value.toInt() : fallback;
   }
 
   static double _doubleOr(dynamic value, double fallback) {
-    return value is num ? value.toDouble() : fallback;
+    return value is num && value.isFinite ? value.toDouble() : fallback;
   }
 
   static bool _boolOr(dynamic value, bool fallback) {
@@ -724,7 +741,7 @@ class SettingsStore {
     for (final entry in value.entries) {
       final k = entry.key;
       final v = entry.value;
-      if (k is String && v is num) {
+      if (k is String && v is num && v.isFinite) {
         final iv = v.toInt();
         if (iv >= 0 && iv <= 3600) out[k] = iv;
       }

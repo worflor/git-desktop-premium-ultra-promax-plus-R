@@ -33,6 +33,7 @@ import 'dart:typed_data';
 
 import 'engram_bootstrap.dart' show EngramAssets;
 import 'engram_hunk_encoder.dart';
+import 'git_diff_paths.dart' show pathFromDiffGitHeader;
 import 'graph/csr_builder.dart' show buildSymmetricCsrGraph;
 import 'graph/top_k_symmetrise.dart' show topKSymmetriseEdges;
 import 'logos_core.dart';
@@ -175,7 +176,7 @@ List<DiffHunk> parseDiffHunks(String diffText) {
   for (final line in lines) {
     if (line.startsWith('diff --git ')) {
       flushHunk();
-      currentFile = _pathFromDiffHeader(line);
+      currentFile = pathFromDiffGitHeader(line) ?? 'unknown';
       fileHunkIndex = 0;
       continue;
     }
@@ -256,7 +257,7 @@ List<DiffHunk> parseDiffHunksForFile(String diffText, String filePath) {
   for (final line in lines) {
     if (line.startsWith('diff --git ')) {
       flushHunk();
-      final path = _pathFromDiffHeader(line);
+      final path = pathFromDiffGitHeader(line) ?? 'unknown';
       inTarget = path == filePath;
       fileHunkIndex = 0;
       continue;
@@ -284,63 +285,12 @@ List<DiffHunk> parseDiffHunksForFile(String diffText, String filePath) {
   return result;
 }
 
-String _pathFromDiffHeader(String line) {
-  final parts = line.split(' ');
-  if (parts.length < 4) return 'unknown';
-  final candidate = parts[3];
-  final stripped =
-      candidate.startsWith('b/') ? candidate.substring(2) : candidate;
-  return _unCQuoteGitPath(stripped);
-}
-
-/// Single-char escape sequences git emits alongside octal for paths
-/// containing control/non-ASCII bytes. Maps the char AFTER the `\` to
-/// the decoded byte.
-const Map<int, int> _cQuoteEscapeByte = {
-  0x6E: 0x0A, // \n
-  0x74: 0x09, // \t
-  0x72: 0x0D, // \r
-  0x22: 0x22, // \"
-  0x5C: 0x5C, // \\
-};
-
-/// Reverse of git's `core.quotepath` encoding for paths containing
-/// non-printable / special bytes. Unwraps the surrounding double
-/// quotes and decodes `\n`, `\t`, `\r`, `\"`, `\\`, and octal
-/// `\NNN` byte escapes. Non-quoted paths pass through unchanged.
-String _unCQuoteGitPath(String s) {
-  if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) return s;
-  final inner = s.substring(1, s.length - 1);
-  final buf = StringBuffer();
-  var i = 0;
-  while (i < inner.length) {
-    final c = inner.codeUnitAt(i);
-    if (c == 0x5C && i + 1 < inner.length) {
-      final n = inner.codeUnitAt(i + 1);
-      if (n >= 0x30 && n <= 0x37 && i + 3 < inner.length) {
-        final b = inner.codeUnitAt(i + 2);
-        final d = inner.codeUnitAt(i + 3);
-        if (b >= 0x30 && b <= 0x37 && d >= 0x30 && d <= 0x37) {
-          buf.writeCharCode(((n - 0x30) << 6) | ((b - 0x30) << 3) | (d - 0x30));
-          i += 4;
-          continue;
-        }
-      }
-      final mapped = _cQuoteEscapeByte[n];
-      if (mapped != null) {
-        buf.writeCharCode(mapped);
-      } else {
-        buf.writeCharCode(c);
-        buf.writeCharCode(n);
-      }
-      i += 2;
-      continue;
-    }
-    buf.writeCharCode(c);
-    i++;
-  }
-  return buf.toString();
-}
+// `diff --git` header path extraction (quoted-token parse, unquoted
+// `a/P b/P` identical-path scan, C-quote/octal decode) moved to
+// `git_diff_paths.dart` — shared with the canonical UI diff parser in
+// `features/diff/diff_models.dart` so path handling can't drift between
+// the two. See [pathFromDiffGitHeader], [extractQuotedToken],
+// [unCQuoteGitPath] there.
 
 // Identifier tokenisation is now a single-pass char-code scan (see
 // `_tokensOf` above). The legacy `_nonWord` / `_camelBoundary` regexes

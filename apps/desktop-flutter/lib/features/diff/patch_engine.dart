@@ -5,8 +5,23 @@ class PatchEngine {
   /// It computes the exact @@ -a,b +c,d @@ headers dynamically so
   /// line staging is completely mathematically verified before git-apply.
   static String buildStagedPatch(String filePath, List<ParsedLine> allLines) {
-    bool isNewFile = !allLines.any((l) => l.lineNumOld != null && l.kind != LineKind.meta);
-    bool isDeletedFile = !allLines.any((l) => l.lineNumNew != null && l.kind != LineKind.meta);
+    // Derive new/deleted status from the ORIGINAL diff's own metadata
+    // (the `--- `/`+++ `/`new file mode`/`deleted file mode` meta lines
+    // parseUnifiedDiff preserves), not from line-number absence. An
+    // already-tracked, previously-empty file gaining its first lines has
+    // ZERO old-side line numbers too — indistinguishable from a brand-new
+    // file under the old heuristic — but its meta lines say `--- a/path`,
+    // not `--- /dev/null`. Real `git apply` rejects `--- /dev/null` for a
+    // path that already exists, so this must come from the diff's own
+    // header, never be inferred.
+    bool isNewFile = allLines.any((l) =>
+        l.kind == LineKind.meta &&
+        (l.text.startsWith('new file mode') ||
+            l.text.trimRight() == '--- /dev/null'));
+    bool isDeletedFile = allLines.any((l) =>
+        l.kind == LineKind.meta &&
+        (l.text.startsWith('deleted file mode') ||
+            l.text.trimRight() == '+++ /dev/null'));
 
     final builder = StringBuffer();
     builder.writeln('diff --git a/$filePath b/$filePath');

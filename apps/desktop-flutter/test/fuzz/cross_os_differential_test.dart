@@ -252,25 +252,29 @@ void main() {
       }
 
       // `git worktree add`/`checkout` only materializes COMMITTED content
-      // — this harness's own probe files may be mid-iteration and not
-      // yet committed. Copy them byte-for-byte from the live Windows
-      // working tree (read-only, no `flutter`/`dart` invoked against
-      // /mnt/c) so the Linux side always runs the exact same probe code
-      // this run's Windows side just executed in-process, regardless of
-      // git commit state.
+      // — but this is a differential oracle over the LIVE working tree:
+      // both the probe harness AND the lib code under test may be
+      // mid-iteration and not yet committed. Copying only the probe files
+      // (the original approach) silently pinned the Linux side's lib/ to
+      // HEAD, so any uncommitted lib fix showed up as a spurious
+      // "cross-OS divergence" (new code on Windows vs stale code on
+      // Linux). Sync lib/ and test/support/ byte-exact from the live
+      // Windows working tree instead — delete-then-copy so files removed
+      // locally can't linger from the HEAD checkout. Read-only against
+      // /mnt/c; no `flutter`/`dart` is ever invoked against /mnt/c.
       final syncProbe = await Process.run('wsl.exe', [
         '-e',
         'bash',
         '-lc',
-        "mkdir -p '$linuxProjectDir/test/support' && "
-            "cp '$repoPathWsl/test/support/os_probe_corpus.dart' "
-            "'$linuxProjectDir/test/support/os_probe_corpus.dart' && "
-            "cp '$repoPathWsl/test/support/os_probe_main.dart' "
-            "'$linuxProjectDir/test/support/os_probe_main.dart'",
+        "rm -rf '$linuxProjectDir/lib' '$linuxProjectDir/test/support' && "
+            "mkdir -p '$linuxProjectDir/test' && "
+            "cp -r '$repoPathWsl/lib' '$linuxProjectDir/lib' && "
+            "cp -r '$repoPathWsl/test/support' "
+            "'$linuxProjectDir/test/support'",
       ]);
       expect(syncProbe.exitCode, 0,
-          reason: 'could not sync probe source files into the Linux '
-              'worktree:\nstdout: ${syncProbe.stdout}\n'
+          reason: 'could not sync live lib/ + probe source files into the '
+              'Linux worktree:\nstdout: ${syncProbe.stdout}\n'
               'stderr: ${syncProbe.stderr}');
 
       // pub get + test compile on a cold cache is slow — this is the

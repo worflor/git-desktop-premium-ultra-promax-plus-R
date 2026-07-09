@@ -832,15 +832,11 @@ void main() {
   group(
     'appended isolated selfMass-only node vs lanczosSmallEigenpairs',
     () {
-      // known bug: withNodeAppended(edges: [], selfMass: s) agrees with
-      // the from-scratch oracle (both give degree=s, zero real CSR
-      // edges) so this isn't an incremental-vs-rebuild mismatch — both
-      // are wrong relative to the true spectrum. Root cause:
-      // `_exactLaplacianKernel` (lib/backend/logos_core.dart) recovers
-      // sqrtDeg from degreeInvSqrt and treats any unmerged singleton
-      // root with positive volume as a lambda=0 kernel direction, which
-      // holds for a self-loop row but not for a selfMass-only node
-      // (empty CSR row, so true L_sym action is identity, eigenvalue 1).
+      // fixed: _exactLaplacianKernel now requires a root to carry at
+      // least one real (non-self, nonzero) edge before qualifying it as
+      // a lambda=0 kernel direction — a selfMass-only node has vol > 0
+      // but no coupling, so its L_sym row is identity (eigenvalue 1) and
+      // it's correctly excluded from the kernel.
       // Cross-checked against `denseSymmetricEigen` on the dense L_sym
       // built directly from the CsrGraph's own arrays.
       test(
@@ -869,23 +865,24 @@ void main() {
 
           final lanczos = lanczosSmallEigenpairs(withIsolated, 3);
           final lanczosSorted = [...lanczos.eigenvalues]..sort();
-          // known bug: lanczos reports [0.0, 0.0, 2.0], inventing a
-          // second zero mode and dropping the true eigenvalue of 1.0
-          // for the selfMass-only isolated node.
+          // fixed: lanczos used to report [0.0, 0.0, 2.0], inventing a
+          // second zero mode; now correctly reports 1.0 for the
+          // selfMass-only isolated node.
           expect(lanczosSorted[1], closeTo(1.0, 1e-9),
               reason: 'expected the isolated selfMass-only node at '
                   'eigenvalue 1.0, got a spurious second zero instead: '
                   '$lanczosSorted');
         },
-        skip: 'known bug: _exactLaplacianKernel misclassifies a '
-            'selfMass-only appended node as a lambda=0 kernel direction '
-            'instead of eigenvalue 1.0',
       );
     },
   );
 
   group('Law 2 — withNodeRemoved equals a from-scratch rebuild on remaining nodes', () {
-    // known bug: see `_rebuildRemoveOracle` above (repro: seed=0xA004 index=10).
+    // fixed: withNodeRemoved now recomputes a row's degree by summing its
+    // surviving raw edge weights directly (exact) and recovering the
+    // selfMass residual from the oldDeg round-trip, clamped to a 1e-12
+    // relative noise floor, instead of subtracting loss from a
+    // degreeInvSqrt round-trip (repro: seed=0xA004 index=10).
     test('CSR structure matches exactly after id remap', () {
       forAll(
         _genRemoveCase(_graphMix),
@@ -894,13 +891,9 @@ void main() {
         describe: 'remove-rebuild-structure',
         check: _checkRemoveCase,
       );
-    },
-    skip: 'known bug: withNodeRemoved reconstructs a row\'s degree via a '
-        'degreeInvSqrt round-trip instead of the exact raw weight sum, so a '
-        'leaf losing its last edge yields a garbage degreeInvSqrt instead of '
-        '0.0 (repro: seed=0xA004 index=10)');
+    });
 
-    // known bug: same root cause as above, surfacing as a spurious extra
+    // fixed: same root cause as above, surfacing as a spurious extra
     // zero eigenvalue where the honest rebuild reports the true isolated-
     // node eigenvalue of 1.0 (repro: seed=0xA005 index=7, n=6, removeId=2).
     test('sorted eigenvalue spectrum matches within tolerance', () {
@@ -911,11 +904,7 @@ void main() {
         describe: 'remove-rebuild-spectrum',
         check: _checkRemoveSpectrum,
       );
-    },
-    skip: 'known bug: same withNodeRemoved degree round-trip bug as the '
-        'structure test above, manifesting as a spurious extra zero '
-        'eigenvalue instead of the true isolated-node eigenvalue of 1.0 '
-        '(repro: seed=0xA005 index=7)');
+    });
   });
 
   group('Law 3 — coarsen equals the manual quotient-graph rebuild', () {
@@ -965,8 +954,8 @@ void main() {
   });
 
   group('Law 4 — append+remove round trip returns to the original graph', () {
-    // known bug: same withNodeRemoved degree round-trip bug as Law 2,
-    // inherited because removing the just-appended node is itself a
+    // fixed: same withNodeRemoved degree reconstruction fix as Law 2,
+    // exercised here because removing the just-appended node is itself a
     // withNodeRemoved call (repro: seed=0xA00A index=4, base.n=3).
     test('CSR structure round-trips exactly', () {
       forAll(
@@ -976,14 +965,11 @@ void main() {
         describe: 'append-remove-roundtrip-structure',
         check: _checkRoundTrip,
       );
-    },
-    skip: 'known bug: inherits the withNodeRemoved degree round-trip bug '
-        '(removing the just-appended node is itself a withNodeRemoved call) '
-        '— repro: seed=0xA00A index=4');
+    });
 
-    // known bug: same root cause, surfacing as a mismatched extractable-
-    // eigenpair count between the round-tripped and original graphs
-    // (repro: seed=0xA00B index=10, base.n=6).
+    // fixed: same root cause, previously surfacing as a mismatched
+    // extractable-eigenpair count between the round-tripped and original
+    // graphs (repro: seed=0xA00B index=10, base.n=6).
     test('spectrum round-trips within tolerance', () {
       forAll(
         _genAppendCase(_graphMixSmall),
@@ -992,10 +978,7 @@ void main() {
         describe: 'append-remove-roundtrip-spectrum',
         check: _checkRoundTripSpectrum,
       );
-    },
-    skip: 'known bug: same withNodeRemoved degree round-trip bug, '
-        'surfacing as a mismatched extractable-eigenpair count between the '
-        'round-tripped and original graphs (repro: seed=0xA00B index=10)');
+    });
   });
 
   group('Law 5 — csr_builder normalization laws (adversarial)', () {

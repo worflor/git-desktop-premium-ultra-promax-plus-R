@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+import '../../backend/git_diff_paths.dart'
+    show pathFromDiffGitHeader, patchSidePath;
+
 enum LineKind { added, deleted, hunk, meta, context }
 
 /// SplitMix64 avalanche — Principia Mathematica Obscura, Circle XVII.
@@ -279,11 +282,10 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
   String? currentFile;
   String? pendingOldFile;
 
-  final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
   for (final line in rawLines) {
     if (line.startsWith('diff --git')) {
-      final m = diffHeaderRe.firstMatch(line);
-      if (m != null) currentFile = m.group(2) ?? m.group(1);
+      final path = pathFromDiffGitHeader(line);
+      if (path != null) currentFile = path;
       pendingOldFile = null;
       continue;
     }
@@ -328,14 +330,14 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
         result.add(prev.copyWith(noNewlineAtEof: true));
       }
     } else if (line.startsWith('--- ')) {
-      pendingOldFile = _patchSidePath(line, preferredPrefix: 'a');
+      pendingOldFile = patchSidePath(line, preferredPrefix: 'a');
       result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
           kind: LineKind.meta,
           filePath: currentFile ?? pendingOldFile));
     } else if (line.startsWith('+++ ')) {
-      currentFile = _patchSidePath(line, preferredPrefix: 'b') ??
+      currentFile = patchSidePath(line, preferredPrefix: 'b') ??
           pendingOldFile ??
           currentFile;
       pendingOldFile = null;
@@ -392,10 +394,10 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
 /// `filePath` values exactly. Each value is the raw diff text belonging
 /// to that file, starting with its `diff --git ...` header and ending
 /// just before the next file's header (or the end of the input).
-/// Mirrors [parseUnifiedDiff]'s header regex so the two stay in lockstep
-/// — any parser-side change to how paths are extracted must be mirrored
-/// here. Returns an empty map for empty input; files whose header can't
-/// be parsed are skipped (same degrade behaviour as the parser).
+/// Shares [pathFromDiffGitHeader] with [parseUnifiedDiff] so the two stay
+/// in lockstep automatically. Returns an empty map for empty input; files
+/// whose header can't be parsed are skipped (same degrade behaviour as
+/// the parser).
 /// Used by surfaces that want to hand a RAW diff string to [DiffShell]
 /// for a single file out of a multi-file PR payload, without forcing
 /// the Shell to re-scan the full patch for every rebuild. Pair with
@@ -409,7 +411,6 @@ Map<String, String> sliceDiffByFile(String raw) {
 
   final lines = raw.split('\n');
   final result = <String, String>{};
-  final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
   var sectionStart = -1;
   String? currentPath;
   void flush(int endExclusive) {
@@ -422,8 +423,7 @@ Map<String, String> sliceDiffByFile(String raw) {
     if (line.startsWith('diff --git')) {
       flush(i);
       sectionStart = i;
-      final m = diffHeaderRe.firstMatch(line);
-      currentPath = m == null ? null : (m.group(2) ?? m.group(1));
+      currentPath = pathFromDiffGitHeader(line);
     }
   }
   flush(lines.length);
@@ -450,28 +450,13 @@ Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
 
     flush(i);
     sectionStart = i;
-    currentPath = _patchSidePath(plus, preferredPrefix: 'b') ??
-        _patchSidePath(minus, preferredPrefix: 'a');
+    currentPath = patchSidePath(plus, preferredPrefix: 'b') ??
+        patchSidePath(minus, preferredPrefix: 'a');
     i++;
   }
 
   flush(lines.length);
   return result;
-}
-
-String? _patchSidePath(String headerLine, {required String preferredPrefix}) {
-  final marker = headerLine.length >= 4 ? headerLine.substring(0, 4) : '';
-  if (marker != '--- ' && marker != '+++ ') return null;
-  var value = headerLine.substring(4).trim();
-  if (value.isEmpty || value == '/dev/null') return null;
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    value = value.substring(1, value.length - 1);
-  }
-  final prefixed = '$preferredPrefix/';
-  if (value.startsWith(prefixed)) {
-    return value.substring(prefixed.length);
-  }
-  return value;
 }
 
 /// Returns the index of the paired add/delete line for an edit-in-place,
