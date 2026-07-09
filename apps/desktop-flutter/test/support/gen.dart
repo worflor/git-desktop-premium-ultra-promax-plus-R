@@ -31,16 +31,95 @@
 // those risks.
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'prop.dart';
+
+// ---------------------------------------------------------------------------
+// Combinators
+// ---------------------------------------------------------------------------
+//
+// Plain functions over `Gen<T>`, matching this file's stated philosophy
+// (see the [Gen] doc comment in prop.dart): generators compose with
+// ordinary function combinators instead of a bespoke builder class. Every
+// one of these is itself a `Gen<T> Function(Rng) -> T`, so it inherits
+// shrinking for free — no separate shrink logic to keep in sync.
+
+/// Transforms every value [g] produces through [f]. The shrink behavior is
+/// entirely [g]'s: whatever tape shrinks [g]'s output also shrinks the
+/// mapped output, since `f` is applied after the value is drawn.
+Gen<R> genMap<T, R>(Gen<T> g, R Function(T) f) => (rng) => f(g(rng));
+
+/// Draws a [T] from [g], then uses it to pick and run a second generator.
+/// The composed draw records onto one flat tape like any nested generator
+/// call, so it shrinks normally.
+Gen<R> genFlatMap<T, R>(Gen<T> g, Gen<R> Function(T) f) =>
+    (rng) => f(g(rng))(rng);
+
+/// Picks uniformly among [options] and runs it. Shrinks toward
+/// `options.first`, so — as with [Rng.pick] generally — list the most
+/// boring generator first.
+Gen<T> genOneOf<T>(List<Gen<T>> options) {
+  if (options.isEmpty) {
+    throw ArgumentError('genOneOf requires at least one option');
+  }
+  return (rng) => rng.pick(options)(rng);
+}
+
+/// Picks among [options] with probability proportional to each entry's
+/// weight (all weights must be `> 0`) and runs the chosen generator.
+Gen<T> genFrequency<T>(List<(int weight, Gen<T>)> options) {
+  if (options.isEmpty) {
+    throw ArgumentError('genFrequency requires at least one option');
+  }
+  var total = 0;
+  for (final (weight, _) in options) {
+    assert(weight > 0, 'genFrequency weights must be > 0');
+    total += weight;
+  }
+  return (rng) {
+    var roll = rng.intBetween(0, total - 1);
+    for (final (weight, gen) in options) {
+      if (roll < weight) return gen(rng);
+      roll -= weight;
+    }
+    return options.last.$2(rng); // unreachable: roll < total by construction
+  };
+}
+
+/// A list of [element] values, length drawn via `intBetween(0, maxLen)` so
+/// the length itself shrinks toward `0` (an empty list), the usual
+/// degenerate case worth checking first.
+Gen<List<T>> genList<T>(Gen<T> element, {int maxLen = 12}) {
+  return (rng) {
+    final length = rng.intBetween(0, maxLen);
+    return List<T>.generate(length, (_) => element(rng));
+  };
+}
+
+/// [g], or `null` roughly 25% of the time. Backed by `intBetween(0, 3)`
+/// (rolling `0` -> null), so shrinking drifts the roll toward `0` and a
+/// minimized counterexample lands on `null` rather than a shrunk [g].
+Gen<T?> genOptional<T>(Gen<T> g) {
+  return (rng) => rng.intBetween(0, 3) == 0 ? null : g(rng);
+}
+
+/// Always produces [value], ignoring the [Rng] entirely (no draw, so it
+/// contributes nothing to the tape).
+Gen<T> genConst<T>(T value) => (_) => value;
 
 // ---------------------------------------------------------------------------
 // Primitives
 // ---------------------------------------------------------------------------
 
 /// Uniform integers in `[min, max]` (inclusive both ends).
+///
+/// Draws through [Rng.simpleIntBetween], so a minimized counterexample
+/// reports `0` rather than whichever endpoint the tape happens to bottom out
+/// at. The draw itself is uniform over the range either way — only the
+/// shrink ordering differs.
 Gen<int> genInt({int min = -1000, int max = 1000}) {
-  return (rng) => rng.intBetween(min, max);
+  return (rng) => rng.simpleIntBetween(min, max);
 }
 
 /// Uniform, finite doubles in `[min, max)` - never NaN or +/-infinity, since
@@ -48,6 +127,44 @@ Gen<int> genInt({int min = -1000, int max = 1000}) {
 /// linearly interpolated between two finite bounds.
 Gen<double> genDouble({double min = -1e6, double max = 1e6}) {
   return (rng) => min + rng.nextDouble() * (max - min);
+}
+
+/// The adversarial counterpart to [genDouble]: every non-finite double
+/// value, every magnitude extreme, and every mantissa-precision edge case
+/// that [genDouble] deliberately never produces.
+///
+/// Exists to attack `lib/backend/json_safety.dart`, which exists
+/// specifically to reject non-finite doubles read from untrusted JSON
+/// (`asIntOrNull`/`asDoubleOrNull`) — and nothing else in this repo's
+/// generator vocabulary ever hands it a NaN, an Infinity, or a double
+/// outside the exact-int64-representable range to check that rejection
+/// against.
+///
+/// The pool's first element is `0.0` so a minimized counterexample starts
+/// from the most boring double, not `NaN` or a signed extreme.
+Gen<double> genDoubleHostile() {
+  final finite = genDouble(min: -1e6, max: 1e6);
+  final pool = <double Function(Rng)>[
+    (_) => 0.0,
+    (_) => -0.0,
+    (_) => double.nan,
+    (_) => double.infinity,
+    (_) => double.negativeInfinity,
+    (_) => double.maxFinite,
+    (_) => double.minPositive,
+    (_) => -double.maxFinite,
+    (_) => 1e308,
+    (_) => 1e-308,
+    (_) => 4503599627370496.0, // 2^52 — last exactly-representable "small" run
+    (_) => 9007199254740992.0, // 2^53 — mantissa precision boundary
+    (_) => 9007199254740993.0, // 2^53 + 1 — rounds to 2^53 in a double
+    (_) => -1.0,
+    (_) => 1.0,
+    (_) => 0.5,
+    (_) => 3.7,
+    (rng) => finite(rng),
+  ];
+  return (rng) => rng.pick(pool)(rng);
 }
 
 /// Printable, non-control ASCII (space `0x20` through `~` `0x7E`), the
@@ -246,6 +363,190 @@ Gen<String> genRelPath() {
     }
     return path;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Bytes / file headers
+// ---------------------------------------------------------------------------
+
+/// Uniform random bytes, length via `intBetween(0, maxLen)` so it shrinks
+/// toward the empty buffer.
+Gen<Uint8List> genBytes({int maxLen = 64}) {
+  return (rng) {
+    final length = rng.intBetween(0, maxLen);
+    return Uint8List.fromList(
+      List<int>.generate(length, (_) => rng.intBetween(0, 255)),
+    );
+  };
+}
+
+/// `(formatName, magicBytes)` pairs mirroring `lib/backend/magic_bytes.dart`'s
+/// `_signatures`/RIFF-subtype table, so [genFileHeaderBytes] and the
+/// truncation/prefix laws in `hostile_input_laws_test.dart` share one
+/// fixture instead of two copies that can silently drift apart. The RIFF
+/// container (WebP) and the offset-4 `ftyp` (MP4) box are represented as
+/// their minimal full recognized headers (arbitrary-but-fixed filler for
+/// the bytes `probeContentClass` doesn't examine), not as flat offset-0
+/// signatures — `probeContentClass` reads those two at different offsets
+/// than everything else in the table.
+const List<(String name, List<int> bytes)> fileHeaderMagicSignatures = [
+  ('PNG', [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+  ('JPEG', [0xFF, 0xD8, 0xFF]),
+  ('GIF', [0x47, 0x49, 0x46, 0x38]),
+  ('PDF', [0x25, 0x50, 0x44, 0x46]), // %PDF
+  ('ZIP', [0x50, 0x4B, 0x03, 0x04]),
+  ('GZIP', [0x1F, 0x8B]),
+  ('OTF', [0x4F, 0x54, 0x54, 0x4F]), // OTTO
+  (
+    'WEBP_RIFF',
+    [
+      0x52, 0x49, 0x46, 0x46, // "RIFF"
+      0x00, 0x00, 0x00, 0x00, // container size — probeContentClass ignores it
+      0x57, 0x45, 0x42, 0x50, // "WEBP"
+    ],
+  ),
+  (
+    'MP4_FTYP',
+    [
+      0x00, 0x00, 0x00, 0x00, // box size — probeContentClass ignores it
+      0x66, 0x74, 0x79, 0x70, // "ftyp" at offset 4
+    ],
+  ),
+];
+
+/// Half the time, an arbitrary [genBytes] blob. Half the time, a real
+/// magic-byte signature from [fileHeaderMagicSignatures] followed by a
+/// random tail — and, about a quarter of THAT half, the signature itself
+/// truncated mid-way instead of complete.
+///
+/// Attacks `lib/backend/magic_bytes.dart`'s `probeContentClass`, which has
+/// zero tests today: totality over arbitrary bytes, determinism, prefix
+/// stability (a longer header sharing a matched header's bytes classifies
+/// identically), and truncation-below-signature-length falling back to
+/// `unknown`.
+Gen<Uint8List> genFileHeaderBytes() {
+  final randomBlob = genBytes(maxLen: 64);
+  return (rng) {
+    if (!rng.nextBool()) return randomBlob(rng);
+    final magic = rng.pick(fileHeaderMagicSignatures).$2;
+    final truncate = rng.intBetween(0, 3) == 0; // ~25% truncated mid-signature
+    final prefixLen = truncate
+        ? (magic.length <= 1 ? 0 : rng.intBetween(0, magic.length - 1))
+        : magic.length;
+    final tailLen = rng.intBetween(0, 32);
+    final bytes = <int>[
+      ...magic.take(prefixLen),
+      ...List<int>.generate(tailLen, (_) => rng.intBetween(0, 255)),
+    ];
+    return Uint8List.fromList(bytes);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Hostile identifiers — ref names, Windows paths, case collisions
+// ---------------------------------------------------------------------------
+
+/// One C0 control byte (BEL), reused from [_hostileTokens]'s constant
+/// rather than pasted as a raw literal — see the file-level comment for
+/// why control characters never appear as literal source text here.
+const int _cpBadRefControl = _cpBel;
+
+/// Strings that violate `git check-ref-format` in the specific shapes that
+/// matter for `DeskPrStore.encodeBranch`/`decodeBranch` injectivity
+/// (lib/backend/desk_pr_store.dart): a leading `-`, a `@{` reflog-style
+/// sequence, `..`, a trailing `.lock`, a trailing `.`, a leading/trailing/
+/// doubled `/`, an embedded control byte, a space, every character in
+/// `~ ^ : ? * [ \`, the single character `@`, the empty string, and one
+/// ordinary valid ref for contrast. `'a'` is first so a minimized
+/// counterexample starts from the most boring, entirely legal ref.
+final List<String> _badRefPool = [
+  'a',
+  '-branch',
+  'refs@{1}',
+  'a..b',
+  'branch.lock',
+  'branch.',
+  '/branch',
+  'branch/',
+  'a//b',
+  'ref${String.fromCharCode(_cpBadRefControl)}name',
+  'has space',
+  'a~b',
+  'a^b',
+  'a:b',
+  'a?b',
+  'a*b',
+  'a[b',
+  'a\\b',
+  '@',
+  '',
+  'valid/ref-name',
+];
+
+Gen<String> genBadRef() {
+  return (rng) => rng.pick(_badRefPool);
+}
+
+/// A path segment made of `'a' * 60` repeated deeply enough (30 segments,
+/// `/`-joined) to bust Windows' historical 260-character `MAX_PATH` by a
+/// wide margin — built at load time rather than pasted as a giant literal.
+final String _maxPathBustingPath =
+    List<String>.generate(30, (_) => 'a' * 60).join('/');
+
+/// Windows-hostile path names: every reserved DOS device name (`CON`,
+/// `PRN`, `AUX`, `NUL`, `COM1`, `LPT1`) bare and with an extension (both
+/// are reserved on Windows — the device name wins regardless of what
+/// follows the dot), a name ending in a trailing dot, a name ending in a
+/// trailing space (both silently stripped by the Win32 API, a classic
+/// source of a create/open mismatch), and [_maxPathBustingPath]. First
+/// element is `'a.txt'`, an entirely ordinary filename, so a minimized
+/// counterexample starts from the boring case.
+final List<String> _windowsHostilePathPool = [
+  'a.txt',
+  'CON',
+  'CON.txt',
+  'PRN',
+  'PRN.txt',
+  'AUX',
+  'AUX.txt',
+  'NUL',
+  'NUL.txt',
+  'COM1',
+  'COM1.txt',
+  'LPT1',
+  'LPT1.txt',
+  'trailing.',
+  'trailing ',
+  _maxPathBustingPath,
+];
+
+Gen<String> genWindowsHostilePath() {
+  return (rng) => rng.pick(_windowsHostilePathPool);
+}
+
+/// Pairs of strings that collide under a case-insensitive (or, for the
+/// German entry, case-FOLDING) filesystem/ref comparison despite being
+/// `==`-distinct Dart strings: an ordinary ASCII case difference, an
+/// all-caps vs. all-lowercase pair, Turkish `İ` (LATIN CAPITAL LETTER I
+/// WITH DOT ABOVE, U+0130) against ASCII `i` (collides under a
+/// Turkish-locale-agnostic case fold but NOT under simple `toLowerCase()`
+/// — the classic "Turkish I problem"), and German `ß` (U+00DF) against its
+/// standard uppercase expansion `SS`. The Turkish/German entries are
+/// written as literal, ordinary-rendering non-ASCII text (matching
+/// `_pathSegmentPool`'s convention — only combining/zero-width/control
+/// characters are barred from appearing as source literals in this file).
+/// First pair is a non-colliding control, so a minimized counterexample
+/// that doesn't need a collision lands there.
+final List<(String, String)> _caseCollisionPairPool = [
+  ('alpha', 'beta'),
+  ('File.txt', 'file.txt'),
+  ('README', 'readme'),
+  ('İ', 'i'),
+  ('ß', 'SS'),
+];
+
+Gen<(String, String)> genCaseCollisionPair() {
+  return (rng) => rng.pick(_caseCollisionPairPool);
 }
 
 // ---------------------------------------------------------------------------

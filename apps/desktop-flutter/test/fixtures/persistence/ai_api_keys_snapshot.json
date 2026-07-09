@@ -1,0 +1,9 @@
+{
+  "openai": {
+    "apiKey": "sk-ünïcode-1234567890",
+    "baseUrl": "https://api.openai.com/v1"
+  },
+  "custom": {
+    "apiKey": "edge-key-0"
+  }
+}

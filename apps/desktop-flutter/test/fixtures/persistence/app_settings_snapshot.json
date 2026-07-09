@@ -1,0 +1,60 @@
+{
+  "guardrailValue": 0.125,
+  "aiReadOnlyDefault": false,
+  "logoAnimatesWhenUnfocused": false,
+  "telemetryRetentionDays": 365,
+  "telemetryRetentionMb": 16,
+  "updateChannel": "beta",
+  "updateChannelExplicit": true,
+  "crashReportingEnabled": true,
+  "themeId": "phosphor",
+  "keybindingProfile": "vim",
+  "sidebarWidthPx": 220,
+  "sidebarPosition": "right",
+  "utilityDrawerDefaultExpanded": true,
+  "utilityDrawerHeightPx": 300,
+  "reduceMotion": false,
+  "motionRate": 1.75,
+  "reduceMotionPhase": 0.42,
+  "stashCabinetDefaultExpanded": true,
+  "instantBlameHover": true,
+  "autoSelectNewChanges": true,
+  "diffMediaEnabled": false,
+  "diffBinaryEnabled": false,
+  "fetchOnlineIssuesOnBranchLoad": false,
+  "rememberWorkInProgress": false,
+  "hideAiFeatures": true,
+  "undoWindowSeconds": 3600,
+  "undoWindowOverrides": {},
+  "fileSortGuide": "impact",
+  "fileSortInverted": true,
+  "issuesSortDescending": false,
+  "tagsSortDescending": false,
+  "commitStructure": "freeform",
+  "commitVoice": "narrative",
+  "commitCoverage": "everything",
+  "logosPadX": 0.0,
+  "logosPadY": 1.0,
+  "appShortName": "Ünïcode™ App",
+  "onboardingComplete": true,
+  "bondExperimentEnabled": true,
+  "bondDockOpenedOnce": true,
+  "externalTools": [
+    {
+      "id": "tool_frozen_1",
+      "label": "Ünïcode Tool 🔥",
+      "executable": "my-tool",
+      "args": [
+        "{path}",
+        "--flag=1"
+      ],
+      "mode": "detached"
+    }
+  ],
+  "changesPanelWidthPx": 520,
+  "wickExePath": "C:\\tools\\wick ünïcode.exe",
+  "alphaMathPath": "",
+  "giteaTokens": {
+    "codeberg.org": "tok_ünïcode_123"
+  }
+}

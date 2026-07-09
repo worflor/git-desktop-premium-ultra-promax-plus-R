@@ -34,7 +34,12 @@ class ScratchRepo {
   /// The repo's working tree root.
   final Directory dir;
 
-  ScratchRepo._(this.dir);
+  /// The private parent directory [dir] lives inside. Nothing else is ever
+  /// created here, which is what makes "did a git op escape the repo?"
+  /// answerable by listing `dir.parent`.
+  final Directory _sandbox;
+
+  ScratchRepo._(this.dir, this._sandbox);
 
   /// Environment overlay applied to every git call this harness makes,
   /// layered as `runGit`'s `extraEnv` on top of its own
@@ -53,8 +58,20 @@ class ScratchRepo {
   /// from the moment [create] returns.
   static Future<ScratchRepo> create({String? name, bool autocrlf = false}) async {
     final prefix = 'scratch_repo_${name == null ? '' : '${name}_'}';
-    final dir = await Directory.systemTemp.createTemp(prefix);
-    final repo = ScratchRepo._(dir);
+    // The worktree lives one level DOWN, inside its own private sandbox,
+    // rather than directly in the shared system temp dir. Two reasons, both
+    // load-bearing:
+    //  - a test asserting "a hostile ref name never created anything outside
+    //    the repo" lists `dir.parent`. When that was the system temp dir the
+    //    assertion was simultaneously RACY (any concurrently-running test's
+    //    temp dir tripped it — `flutter test` runs files in parallel) and
+    //    WEAK (it only saw escapes landing in exactly that one directory);
+    //  - `dispose()` can then remove the whole sandbox, so anything a git op
+    //    created as a sibling of the worktree is cleaned up too.
+    final sandbox = await Directory.systemTemp.createTemp(prefix);
+    final dir = Directory(p.join(sandbox.path, 'repo'));
+    await dir.create();
+    final repo = ScratchRepo._(dir, sandbox);
     await repo._initialize(autocrlf: autocrlf);
     return repo;
   }
@@ -64,18 +81,49 @@ class ScratchRepo {
     if (initResult.exitCode != 0) {
       throw StateError('git init failed: ${initResult.stderr}');
     }
-    for (final args in <List<String>>[
-      ['config', 'user.name', 'Scratch Repo'],
-      ['config', 'user.email', 'scratch@example.invalid'],
-      ['config', 'commit.gpgsign', 'false'],
-      ['config', 'core.autocrlf', autocrlf ? 'true' : 'false'],
-    ]) {
-      await gitOk(args);
-    }
+    // Was 4 `git config` subprocess spawns (one per key). `git init` always
+    // writes `.git/config` as plain INI text ending in `\n` (verified against
+    // the installed git — see the comment on `_writeIdentityConfig`), so the
+    // same four settings can be appended with one file read + one file write
+    // instead: identical end state (`git config --get <key>` returns the same
+    // value either way — proved by the "identity config matches four
+    // `git config` calls" group in `test/backend/repo_topology_test.dart`),
+    // zero extra processes.
+    await _writeIdentityConfig(autocrlf: autocrlf);
     // HEAD exists from the start — every downstream helper (`head()`,
     // `currentBranch()`, merges, the fuzzer, ...) starts from a real commit
     // rather than the unborn-branch edge case.
     await gitOk(['commit', '--allow-empty', '-m', 'root']);
+  }
+
+  /// Appends `user.name`/`user.email`/`commit.gpgsign`/`core.autocrlf` as new
+  /// INI sections directly onto `.git/config`, replacing four `git config`
+  /// subprocess calls with one file read + one file write.
+  ///
+  /// Safe because git's config parser accepts a section header appearing
+  /// more than once in a file (every `[core]` block's keys are merged), and
+  /// because `git config --get <key>` — the only way any caller ever reads
+  /// these back — returns the *last* occurrence of a single-valued key in
+  /// file order. Appending at the end therefore always wins, identically to
+  /// what four separate `git config <key> <value>` calls would have produced
+  /// (each of which also always rewrites-or-appends, never a first-wins
+  /// merge). `git init -b main` is confirmed (empirically, on the git build
+  /// this harness runs against) to already emit a trailing `[core]` block
+  /// ending in `\n`, so a straight append never collides mid-line.
+  Future<void> _writeIdentityConfig({required bool autocrlf}) async {
+    final configFile = File(p.join(dir.path, '.git', 'config'));
+    final existing = await configFile.readAsString();
+    final buffer = StringBuffer(existing);
+    if (!existing.endsWith('\n')) buffer.write('\n');
+    buffer
+      ..writeln('[user]')
+      ..writeln('\tname = Scratch Repo')
+      ..writeln('\temail = scratch@example.invalid')
+      ..writeln('[commit]')
+      ..writeln('\tgpgsign = false')
+      ..writeln('[core]')
+      ..writeln('\tautocrlf = ${autocrlf ? 'true' : 'false'}');
+    await configFile.writeAsString(buffer.toString(), flush: true);
   }
 
   /// Runs `git [args]` in this repo's working tree through the app's own
@@ -157,7 +205,7 @@ class ScratchRepo {
   /// delete; swallow that rather than fail teardown.
   Future<void> dispose() async {
     try {
-      await dir.delete(recursive: true);
+      await _sandbox.delete(recursive: true);
     } catch (_) {
       // Ignored — see docstring.
     }

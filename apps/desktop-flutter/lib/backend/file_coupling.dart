@@ -154,6 +154,63 @@ class FileCouplingMatrix {
     );
   }
 
+  /// A stable, content-COMPLETE fingerprint of everything [score] — and
+  /// therefore clustering — reads from this matrix: the head it was built
+  /// from, the commit depth, the exact path set, and BOTH CSR triangles
+  /// (jaccard co-change + spectral). [headHash] alone is NOT sufficient: the
+  /// same HEAD can produce different content across refreshes (a deeper log
+  /// walk, merged shadow-coupling, changed edges), and a cache keyed on
+  /// headHash would then serve stale clusters. This hashes the actual edge
+  /// data: identical content always hashes identically, and two matrices with
+  /// genuinely different content collide only with negligible (~2^-63)
+  /// probability — a full-width mix, not an exact fingerprint. A collision's
+  /// blast radius is one stale cluster derivation for a single refresh.
+  ///
+  /// Computed once, lazily, then memoised — O(nodes+edges) on first read,
+  /// O(1) after, far cheaper than the cluster re-derivation a stale (too
+  /// coarse) or churning (too fine) key would trigger. In-memory use only
+  /// (drives the ChangesetController cluster cache within one session), never
+  /// persisted or compared across isolates, so ordinary hashCodes are fine.
+  int get contentHash => _contentHash ??= _computeContentHash();
+  int? _contentHash;
+
+  int _computeContentHash() {
+    var h = 0x9E3779B1 ^ headHash.hashCode;
+    h = _hashCombine(h, commitsAnalyzed);
+    h = _hashCombine(h, paths.length);
+    for (final p in paths) {
+      h = _hashCombine(h, p.hashCode);
+    }
+    h = _hashCsr(h, _jRowPtr, _jColIdx, _jValues);
+    h = _hashCsr(h, _sRowPtr, _sColIdx, _sValues);
+    return h;
+  }
+
+  static int _hashCsr(
+      int h, Int32List rowPtr, Int32List colIdx, Float64List values) {
+    for (final v in rowPtr) {
+      h = _hashCombine(h, v);
+    }
+    for (final v in colIdx) {
+      h = _hashCombine(h, v);
+    }
+    for (final v in values) {
+      h = _hashCombine(h, v.hashCode);
+    }
+    return h;
+  }
+
+  /// 64-bit FNV-1a-style mix (multiply by the FNV prime + xorshift avalanche)
+  /// — order-sensitive, allocation-free, and stable within a run. Full-width
+  /// so distinct content collides with ~2^-63 probability rather than the
+  /// ~2^-29 a 29-bit masked Jenkins step gave; native ints wrap mod 2^64 on
+  /// the multiply, which is exactly the mixing we want.
+  static int _hashCombine(int h, int x) {
+    h = (h ^ x) * 0x100000001b3;
+    h ^= h >> 29;
+    return h & 0x7fffffffffffffff; // keep it a non-negative cache key
+  }
+
   /// Coupling score for a pair — maximum of historical co-change and
   /// spectral profile similarity. The two axes are independent evidence;
   /// neither suppresses the other. New files have zero history, so spectral

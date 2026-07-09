@@ -12,10 +12,22 @@ class BlobRef {
 
   const BlobRef({required this.repoPath, this.objectHash, this.workingTreePath});
 
+  /// The cache identity of this blob.
+  ///
+  /// A git object hash is content-addressed, so it stands alone. A
+  /// working-tree file is not, so the key must capture everything cheap that
+  /// changes when the bytes change. Mtime alone is not enough: filesystem
+  /// timestamp granularity is coarse (milliseconds on NTFS, and coarser
+  /// still when the OS defers the update), so two writes inside one tick
+  /// share an mtime and the second one is served the first one's bytes.
+  /// Folding in the size closes the overwhelming majority of that window at
+  /// zero cost — a same-tick rewrite must now also preserve the exact byte
+  /// length to collide.
   String cacheKeyWithStat(FileStat? stat) {
     if (objectHash != null) return objectHash!;
     final mtime = stat?.modified.microsecondsSinceEpoch ?? 0;
-    return 'wt:$workingTreePath:$mtime';
+    final size = stat?.size ?? -1;
+    return 'wt:$workingTreePath:$mtime:$size';
   }
 }
 

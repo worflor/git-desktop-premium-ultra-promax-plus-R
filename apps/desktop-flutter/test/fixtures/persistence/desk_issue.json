@@ -1,0 +1,25 @@
+{
+  "issueId": 314159,
+  "title": "Crash on unicode path 🔥",
+  "body": "Steps to reproduce:\n1. Open a file named 日本語.txt\n2. Boom.",
+  "state": "CLOSED",
+  "authorIdentity": "reporter@example.com",
+  "createdAt": "2023-12-25T09:00:00.000Z",
+  "updatedAt": "2024-02-14T16:45:00.000Z",
+  "labels": [],
+  "assignees": [
+    "alice",
+    "ünïcode_dev"
+  ],
+  "addressedBy": [
+    "fix/unicode-path"
+  ],
+  "comments": [
+    {
+      "author": "alice",
+      "body": "confirmed ✓",
+      "at": "2024-01-01T01:01:01.000Z"
+    }
+  ],
+  "remoteNumber": 555
+}

@@ -22,9 +22,25 @@
 /// returning null lets the caller apply its own documented default,
 /// which is the honest answer. (Non-finite is likewise rejected — see
 /// the header note.)
+///
+/// Rejects an OUT-OF-RANGE double (`1e308`) for exactly the same reason.
+/// `1e308` is finite and integral, so it passes both tests above — but
+/// `(1e308).toInt()` does not throw and does not overflow: on the Dart VM
+/// it silently *saturates* to `9223372036854775807`, a number the sender
+/// never transmitted and that the caller cannot tell apart from a
+/// faithfully-decoded int64 max. Same fabrication, different axis.
+const double _int64MinAsDouble = -9223372036854775808.0; // -2^63, exact
+const double _int64ExclusiveMaxAsDouble = 9223372036854775808.0; // 2^63, exact
+
 int? asIntOrNull(Object? v) {
   if (v is int) return v;
-  if (v is double && v.isFinite && v == v.roundToDouble()) return v.toInt();
+  if (v is double &&
+      v.isFinite &&
+      v == v.roundToDouble() &&
+      v >= _int64MinAsDouble &&
+      v < _int64ExclusiveMaxAsDouble) {
+    return v.toInt();
+  }
   return null;
 }
 

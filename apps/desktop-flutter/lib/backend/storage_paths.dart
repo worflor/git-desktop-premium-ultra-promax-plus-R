@@ -5,7 +5,19 @@ import 'package:meta/meta.dart';
 class StoragePaths {
   static const String _appDataDirName = 'gdpu';
 
+  /// Test-only redirect for the entire app-data directory.
+  ///
+  /// Anything that persists (settings, caches, audit logs) resolves through
+  /// here, so a widget/state test can point ALL of it at an isolated temp dir
+  /// — hermetically, without the developer or CI having to export
+  /// `GDPU_DATA_DIR`, and without ever touching the real `settings.json`.
+  /// Checked BEFORE the env var so a test override always wins. Set it in
+  /// `setUp`, null it in `tearDown`.
+  @visibleForTesting
+  static Directory? debugOverrideDir;
+
   static Future<Directory> gdpuDataDir() async {
+    if (debugOverrideDir != null) return debugOverrideDir!;
     final overridePath = _envNonEmpty('GDPU_DATA_DIR');
     if (overridePath != null) {
       return Directory(overridePath);
@@ -58,6 +70,7 @@ class StoragePaths {
   }
 
   static Directory? gdpuDataDirSync() {
+    if (debugOverrideDir != null) return debugOverrideDir;
     final overridePath = _envNonEmpty('GDPU_DATA_DIR');
     if (overridePath != null) return Directory(overridePath);
     if (Platform.isWindows) {

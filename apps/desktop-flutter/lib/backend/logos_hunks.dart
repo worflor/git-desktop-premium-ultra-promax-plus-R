@@ -190,7 +190,14 @@ List<DiffHunk> parseDiffHunks(String diffText) {
       hunkBuf = StringBuffer()..writeln(line);
       continue;
     }
-    if (line.startsWith('+++ ') || line.startsWith('--- ')) continue;
+    // A `+++ ` / `--- ` line is a file header only OUTSIDE a hunk body. Once a
+    // hunk is open it is CONTENT — an added line whose text starts with `++ `
+    // renders as `+++ …`, a deleted `-- …` as `--- …` (ordinary C `++i;` / SQL
+    // `-- comment`). The `hunkBuf == null` guard already skips every pre-hunk
+    // line, so it alone correctly drops the real headers while keeping body
+    // content; the old unconditional `+++ `/`--- ` skip dropped body lines and
+    // undercounted the hunk (the prefix-vs-content confusion fixed in
+    // diff_models.dart's _HunkCursor).
     if (hunkBuf == null) continue;
     hunkBuf!.writeln(line);
     if (line.startsWith('+')) {
@@ -272,7 +279,14 @@ List<DiffHunk> parseDiffHunksForFile(String diffText, String filePath) {
       hunkBuf = StringBuffer()..writeln(line);
       continue;
     }
-    if (line.startsWith('+++ ') || line.startsWith('--- ')) continue;
+    // A `+++ ` / `--- ` line is a file header only OUTSIDE a hunk body. Once a
+    // hunk is open it is CONTENT — an added line whose text starts with `++ `
+    // renders as `+++ …`, a deleted `-- …` as `--- …` (ordinary C `++i;` / SQL
+    // `-- comment`). The `hunkBuf == null` guard already skips every pre-hunk
+    // line, so it alone correctly drops the real headers while keeping body
+    // content; the old unconditional `+++ `/`--- ` skip dropped body lines and
+    // undercounted the hunk (the prefix-vs-content confusion fixed in
+    // diff_models.dart's _HunkCursor).
     if (hunkBuf == null) continue;
     hunkBuf!.writeln(line);
     if (line.startsWith('+')) {

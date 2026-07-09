@@ -173,11 +173,22 @@ class SidebarOrgState extends ChangeNotifier {
   }
 
   void addToGroup(String repoPath, String groupId, {int? index}) {
+    // Resolve the target BEFORE mutating. The old order — remove first, then
+    // `findGroup(groupId)` — lost data: if `repoPath` was the head of the
+    // target group, `_removeByPath` dissolved that group, the subsequent
+    // lookup returned null, and the method returned having deleted the repo
+    // from the tree with no notifyListeners() (silent data loss + stale UI).
+    final group = findGroup(groupId);
+    if (group == null) return;
+    // Degenerate self-add: the repo already heads this group. Nesting it into
+    // its own group is meaningless, and removing it first is what destroyed
+    // the target above — so make it a clean no-op (no mutation, no notify).
+    if (group.headRepoPath == repoPath) return;
+    // With that guard, `_removeByPath` can only remove a leaf or dissolve a
+    // DIFFERENT group, so `group` always survives and stays in the tree.
     if (organizedPaths.contains(repoPath)) {
       _removeByPath(repoPath);
     }
-    final group = findGroup(groupId);
-    if (group == null) return;
     group.children
         .insert(index ?? group.children.length, SidebarRepo(repoPath));
     _save();
@@ -260,9 +271,13 @@ class SidebarOrgState extends ChangeNotifier {
   }
 
   void insertIntoGroup(String sourcePath, String groupId) {
-    _removeByPath(sourcePath);
+    // Resolve the target BEFORE mutating (same fix as addToGroup): removing
+    // sourcePath first, then looking up the group, silently drops the repo
+    // with no notify when sourcePath heads the target group.
     final group = findGroup(groupId);
     if (group == null) return;
+    if (group.headRepoPath == sourcePath) return; // self-insert: no-op
+    _removeByPath(sourcePath);
     group.children.insert(0, SidebarRepo(sourcePath));
     _pruneEmpty();
     _save();
@@ -270,6 +285,11 @@ class SidebarOrgState extends ChangeNotifier {
   }
 
   void createGroupFromDrop(String headPath, String childPath) {
+    // A repo can't be grouped with itself: dropping X onto X would list X as
+    // BOTH the group head and its own child, so the path claims two slots and
+    // the tree is corrupt (single-slot invariant broken). No-op the degenerate
+    // self-drop.
+    if (headPath == childPath) return;
     _removeByPath(headPath);
     _removeByPath(childPath);
     final group = SidebarGroup(
@@ -300,6 +320,7 @@ class SidebarOrgState extends ChangeNotifier {
   void setGroupColor(String groupId, int? slot) {
     final group = findGroup(groupId);
     if (group == null) return;
+    if (group.colorSlot == slot) return; // no-op set: no rebuild
     group.colorSlot = slot;
     _save();
     notifyListeners();
@@ -321,7 +342,9 @@ class SidebarOrgState extends ChangeNotifier {
   void setGroupLabel(String groupId, String? label) {
     final group = findGroup(groupId);
     if (group == null) return;
-    group.label = label?.isEmpty == true ? null : label;
+    final normalized = label?.isEmpty == true ? null : label;
+    if (group.label == normalized) return; // no-op set: no rebuild
+    group.label = normalized;
     _save();
     notifyListeners();
   }
@@ -366,7 +389,11 @@ class SidebarOrgState extends ChangeNotifier {
   }
 
   void forgetRepo(String path) {
-    _removeByPath(path);
+    // Only notify when something actually changed. A forget for a path that
+    // was never organized removes nothing and leaves the tree byte-identical,
+    // so an unconditional notifyListeners() here is a spurious rebuild —
+    // exactly what `unanchorRepo` above already guards against. Match it.
+    if (_removeByPath(path) == null) return;
     _pruneEmpty();
     _save();
     notifyListeners();

@@ -1,0 +1,10 @@
+{
+  "id": "audit-ünïcode-001",
+  "event": "review.completed",
+  "providerId": "anthropic",
+  "repositoryHint": "git-desktop 🔥",
+  "promptPreview": "Review this diff for correctness...",
+  "outputPreview": "Looks good ✓ no issues found.",
+  "ok": true,
+  "createdAt": "2024-05-05T05:05:05.000Z"
+}

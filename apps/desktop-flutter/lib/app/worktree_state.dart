@@ -58,9 +58,17 @@ class WorktreeState extends ChangeNotifier {
   static bool claimPrune(Set<String> pruned, String normalizedPath) =>
       pruned.add(normalizedPath);
 
+  /// Test-only: when true, construction and repo-change do NOT fire the
+  /// `git worktree list` subprocess. A widget test can then wire this state
+  /// against an active-repo RepositoryState (so palette entries generate)
+  /// without a real `Process.run` that would hang `testWidgets`' fake-async,
+  /// and seed data via [debugSeedDesks] instead.
+  @visibleForTesting
+  static bool debugSuppressAutoRefresh = false;
+
   WorktreeState(this._repo) {
     _repo.addListener(_onRepoChanged);
-    if (_repo.activePath != null) {
+    if (!debugSuppressAutoRefresh && _repo.activePath != null) {
       fireAndLog(refreshFor(_repo.activePath!), 'WorktreeState');
     }
   }
@@ -74,6 +82,17 @@ class WorktreeState extends ChangeNotifier {
   List<WorktreeData> get desks => _desks;
   bool get loading => _loading;
   String? get error => _error;
+
+  /// Test-only: install [desks] directly, bypassing the `git worktree list`
+  /// subprocess. Lets a widget test exercise anything that reads
+  /// [WorktreeState.desks] (e.g. the command palette's worktree entries)
+  /// hermetically — no real repo, no `Process.run` that would never resolve
+  /// inside `testWidgets`' fake-async clock.
+  @visibleForTesting
+  void debugSeedDesks(List<WorktreeData> desks) {
+    _desks = List.unmodifiable(desks);
+    notifyListeners();
+  }
   DeskActivity? activityFor(String worktreePath) =>
       _activityByPath[_normalize(worktreePath)];
 
@@ -90,6 +109,7 @@ class WorktreeState extends ChangeNotifier {
   }
 
   void _onRepoChanged() {
+    if (debugSuppressAutoRefresh) return;
     // When the active path changes, decide whether the worktree list is
     // still valid. A desk switch WITHIN the current repo's worktree set
     // keeps the list correct. A switch to any other path — a different

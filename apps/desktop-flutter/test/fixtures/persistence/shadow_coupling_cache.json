@@ -1,0 +1,15 @@
+{
+  "headHash": "abc123ünïcode",
+  "discoveredAt": "2024-03-10T05:06:07.000Z",
+  "shadowCommitCount": 987654321,
+  "edgeTypeCounts": {},
+  "edges": {
+    "lib/a.dart": {
+      "lib/b.dart": 0.75,
+      "lib/c🔥.dart": 1.0
+    },
+    "lib/d.dart": {
+      "lib/a.dart": 0.0
+    }
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "branch": "feature/simple",
+    "encoded": "feature/simple"
+  },
+  {
+    "branch": "feature/ünïcode-branch-🔥",
+    "encoded": "feature/%C3%BCn%C3%AFcode-branch-%F0%9F%94%A5"
+  },
+  {
+    "branch": "has%percent",
+    "encoded": "has%25percent"
+  },
+  {
+    "branch": "trailing-dot.",
+    "encoded": "trailing-dot%2E"
+  },
+  {
+    "branch": ".leading-dot",
+    "encoded": "%2Eleading-dot"
+  },
+  {
+    "branch": "double//slash",
+    "encoded": "double/%2Fslash"
+  },
+  {
+    "branch": "/leading-slash",
+    "encoded": "%2Fleading-slash"
+  },
+  {
+    "branch": "trailing-slash/",
+    "encoded": "trailing-slash%2F"
+  },
+  {
+    "branch": "plain_underscore-dash123",
+    "encoded": "plain_underscore-dash123"
+  },
+  {
+    "branch": "..dotdot..",
+    "encoded": "%2E%2Edotdot%2E%2E"
+  }
+]

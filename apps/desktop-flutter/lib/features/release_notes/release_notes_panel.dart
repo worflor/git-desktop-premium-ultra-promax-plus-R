@@ -433,12 +433,12 @@ const _changelog = <_ReleaseNote>[
     date: '2026-07-08',
     bullets: [
       'Staging a file that lives under an unstaged directory no longer gets left behind at commit. This is the real reason 0.1.6 exists. And since it had to ship early, the features below are early-access cooking, served a little raw.',
-      'The test suite got a serious upgrade. it asserts laws and invariants now instead of snapshots, and fuzzes them until something gives. there is also an opt-in pass that runs the same operations on Windows and in WSL and diffs the two to check for inconsistencies.',
-      'So it found a lot, all fixed. the ugliest one: a hostile branch name could encode into a ref that collided with a real branch, and Manifold could have clobbered it. the encoding is bijective now, and fuzzed against it. the rest were quieter. names that start with a byte-order mark survive a round trip exactly, and one garbage field in a config or in a CLI\'s json output no longer takes the whole parse down with it.',
       'The history DAG can expand into a worldline view now, your whole history stretched out along one thread.',
       'The branches and PR page got its first real love since launch: a full backend overhaul of how branches are processed and understood, so absorbed vs squashed vs merged finally get told apart. And the page itself looks far better for it.',
       'API models (OpenRouter, OpenAI, xAI) can piggyback the Codex CLI now for full read-only agentic capability. Basically codex, but with your API models slotted in automatically.',
       'One new equation entered the chat: a participation ratio for diffs, N_eff = (Σφ)² / Σφ². the engine keeps eating math.',
+      'The test suite got a serious upgrade. it asserts laws and invariants now instead of snapshots, and fuzzes them until something gives. there is also an opt-in pass that runs the same operations on Windows and in WSL and diffs the two to check for inconsistencies.',
+      'So it found a lot, all fixed. the ugliest one: a hostile branch name could encode into a ref that collided with a real branch, and Manifold could have clobbered it. the encoding is bijective now, and fuzzed against it. the rest were quieter. names that start with a byte-order mark survive a round trip exactly, and one garbage field in a config or in a CLI\'s json output no longer takes the whole parse down with it.',
     ],
   ),
   _ReleaseNote(

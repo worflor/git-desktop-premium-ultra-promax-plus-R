@@ -605,6 +605,16 @@ class SettingsStore {
   static AppSettingsSnapshot? _cached;
   static Future<AppSettingsSnapshot>? _loading;
 
+  /// Test-only: when true, [persist] updates the in-memory snapshot but
+  /// never touches disk. Widget tests run under a fake-async clock where a
+  /// real `File.writeAsString` future stays pending forever (tripping the
+  /// framework's "a Timer/Future is still pending" failure) and, worse,
+  /// leaks the app's settings write into the developer's real data dir. A
+  /// test seeds [seedForTest] + flips this flag so every settings mutation
+  /// resolves synchronously in memory. Reset it in `tearDown`.
+  @visibleForTesting
+  static bool debugSuppressDiskWrites = false;
+
   static Future<AppSettingsSnapshot> load() {
     final cached = _cached;
     if (cached != null) return Future<AppSettingsSnapshot>.value(cached);
@@ -671,6 +681,13 @@ class SettingsStore {
   }
 
   static Future<void> persist(AppSettingsSnapshot snapshot) async {
+    if (debugSuppressDiskWrites) {
+      // Keep the memoised snapshot coherent without any disk round-trip so
+      // the write completes on the microtask queue (drained by pump) rather
+      // than a never-resolving I/O future.
+      _cached = snapshot;
+      return;
+    }
     final file = await _settingsFile();
     await file.parent.create(recursive: true);
     await file.writeAsString(

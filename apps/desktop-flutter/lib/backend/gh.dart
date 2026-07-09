@@ -86,6 +86,9 @@ Future<GitResult<List<PullRequestSummary>>> listPullRequests(
     final prs = parsed
         .whereType<Map<String, dynamic>>()
         .map(PullRequestSummary.fromJson)
+        // Drop rows with no usable identity (unreadable `number`) rather than
+        // surface a fabricated, actionable PR #0. See fromJson.
+        .whereType<PullRequestSummary>()
         .toList();
     return GitResult.ok(prs);
   } catch (e) {
@@ -116,6 +119,8 @@ Future<GitResult<List<IssueSummary>>> listIssues(
     final issues = parsed
         .whereType<Map<String, dynamic>>()
         .map(IssueSummary.fromJson)
+        // Drop identity-less rows rather than fabricate issue #0. See fromJson.
+        .whereType<IssueSummary>()
         .toList();
     return GitResult.ok(issues);
   } catch (e) {
@@ -164,7 +169,11 @@ Future<GitResult<PullRequestSummary>> getPullRequestSummary(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(PullRequestSummary.fromJson(j));
+    final pr = PullRequestSummary.fromJson(j);
+    if (pr == null) {
+      return const GitResult.err('gh pr view returned a row with no usable number');
+    }
+    return GitResult.ok(pr);
   } catch (e) {
     return GitResult.err('Failed to parse gh pr view: $e');
   }
@@ -184,7 +193,11 @@ Future<GitResult<IssueSummary>> getIssueSummary(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(IssueSummary.fromJson(j));
+    final issue = IssueSummary.fromJson(j);
+    if (issue == null) {
+      return const GitResult.err('gh issue view returned a row with no usable number');
+    }
+    return GitResult.ok(issue);
   } catch (e) {
     return GitResult.err('Failed to parse gh issue view: $e');
   }

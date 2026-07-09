@@ -94,13 +94,34 @@ abstract class AiApiProvider {
   Future<AiApiKeyInfo?> fetchKeyInfo(AiApiCredentials creds) async => null;
   bool isReady(AiApiCredentials creds) => creds.apiKey.trim().isNotEmpty;
 
+  /// The base URL to actually call: [creds]'s custom one when it is safe,
+  /// else this provider's [defaultBaseUrl].
+  ///
+  /// This is a security control, not a convenience — a custom base URL is
+  /// where the user's API key gets sent. So it is an ALLOWLIST: `https` is
+  /// always fine; cleartext `http` only to a loopback host (the codex
+  /// piggyback proxy); everything else falls back to the provider default.
+  ///
+  /// Deriving the scheme from `Uri` rather than `startsWith('http://')`
+  /// matters. URI schemes are case-insensitive, so `HTTP://evil.com` fails
+  /// a literal lowercase prefix test and would sail through unmodified —
+  /// shipping the key in cleartext to an arbitrary host. Parsing also means
+  /// a scheme we never considered (`ftp:`, `file:`, or no scheme at all)
+  /// falls into the default branch instead of being passed straight
+  /// through, which is what a denylist would have done.
   String effectiveBaseUrl(AiApiCredentials creds) {
     final custom = creds.baseUrl?.trim() ?? '';
     if (custom.isEmpty) return defaultBaseUrl;
-    if (custom.startsWith('http://') && !_isLoopback(custom)) {
-      return defaultBaseUrl;
+    final uri = Uri.tryParse(custom);
+    if (uri == null || !uri.hasScheme) return defaultBaseUrl;
+    switch (uri.scheme.toLowerCase()) {
+      case 'https':
+        return custom;
+      case 'http':
+        return _isLoopback(custom) ? custom : defaultBaseUrl;
+      default:
+        return defaultBaseUrl;
     }
-    return custom;
   }
 }
 

@@ -1,0 +1,53 @@
+{
+  "deskId": 424242,
+  "title": "Unicode✧ fix: 修复 空指针 bug",
+  "body": "Multi-line body.\nSecond line with emoji 🔥 and a tab\tchar.",
+  "headRef": "feature/ünïcode-branch",
+  "baseRef": "main",
+  "state": "OPEN",
+  "isDraft": true,
+  "authorIdentity": "Jane Doe <jane@example.com>",
+  "createdAt": "2024-01-02T03:04:05.000Z",
+  "updatedAt": "2024-06-15T12:30:00.000Z",
+  "reviewers": [
+    {
+      "login": "ünïcode_reviewer",
+      "state": "CHANGES_REQUESTED"
+    },
+    {
+      "login": "bob",
+      "state": "APPROVED"
+    }
+  ],
+  "labels": [
+    "bug",
+    "p0-urgent"
+  ],
+  "assignees": [],
+  "linkedIssues": [
+    7,
+    2147483647
+  ],
+  "linkedRemoteIssues": [
+    0
+  ],
+  "thread": [
+    {
+      "author": "jane",
+      "body": "plain comment 👋",
+      "at": "2024-01-03T00:00:00.000Z",
+      "verdict": ""
+    },
+    {
+      "author": "bob",
+      "body": "LGTM ✓",
+      "at": "2024-01-04T08:15:30.000Z",
+      "verdict": "APPROVED"
+    }
+  ],
+  "additions": 2147483647,
+  "deletions": 0,
+  "changedFiles": 12,
+  "mergeable": "CONFLICTING",
+  "remoteNumber": 99
+}

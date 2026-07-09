@@ -22,6 +22,7 @@ import 'package:meta/meta.dart';
 
 import '../features/diff/diff_models.dart';
 import 'git.dart' as git;
+import 'json_safety.dart';
 
 /// Single reviewer-state pair on a PR.
 class PrReviewer {
@@ -74,50 +75,57 @@ class PullRequestSummary {
     this.assignees = const [],
   });
 
-  factory PullRequestSummary.fromJson(Map<String, dynamic> j) {
-    final author = j['author'];
-    final login = author is Map<String, dynamic>
-        ? (author['login'] as String? ?? '')
-        : '';
+  /// Parses one forge PR row, or `null` if it has no usable identity.
+  ///
+  /// DISPLAY fields (title, refs, counts, …) degrade softly through
+  /// json_safety's total readers, never a raw `as` cast — untrusted forge-CLI
+  /// JSON can hand us a missing, null, or wrong-typed field, and a cast like
+  /// `(j['x'] as String? ?? '')` only falls through the `??` on null (a
+  /// PRESENT-but-mistyped value throws a TypeError). But the IDENTITY field
+  /// `number` is NOT a display field: it keys detail loads, checkout, comment,
+  /// merge/close actions, and dedup maps. Softening a missing/mistyped number
+  /// to `0` would fabricate a real-looking, actionable PR #0 (and collide in
+  /// number-keyed maps) — strictly worse than skipping the row. So identity is
+  /// read strictly: an unreadable `number` rejects the whole row (returns
+  /// null), and callers drop it rather than surface a phantom.
+  ///
+  /// A static method, not a factory, because a factory cannot return null.
+  static PullRequestSummary? fromJson(Map<String, dynamic> j) {
+    final number = asIntOrNull(j['number']);
+    if (number == null) return null; // no identity → not a real PR
+
+    final login = asStringOr(asMapOrNull(j['author'])?['login'], '');
 
     final reviewers = <String, PrReviewer>{};
-    final requests = j['reviewRequests'];
-    if (requests is List) {
-      for (final r in requests.whereType<Map<String, dynamic>>()) {
-        final l = (r['login'] as String? ?? '').trim();
-        if (l.isNotEmpty) reviewers[l] = PrReviewer(login: l, state: 'PENDING');
-      }
+    for (final r in asListOrNull(j['reviewRequests']) ?? const []) {
+      final l = asStringOr(asMapOrNull(r)?['login'], '').trim();
+      if (l.isNotEmpty) reviewers[l] = PrReviewer(login: l, state: 'PENDING');
     }
-    final reviews = j['reviews'];
-    if (reviews is List) {
-      for (final r in reviews.whereType<Map<String, dynamic>>()) {
-        final author = r['author'];
-        final l = author is Map<String, dynamic>
-            ? (author['login'] as String? ?? '').trim()
-            : '';
-        final st = (r['state'] as String? ?? '').toUpperCase();
-        if (l.isNotEmpty && st.isNotEmpty) {
-          reviewers[l] = PrReviewer(login: l, state: st);
-        }
+    for (final r in asListOrNull(j['reviews']) ?? const []) {
+      final rm = asMapOrNull(r);
+      if (rm == null) continue;
+      final l = asStringOr(asMapOrNull(rm['author'])?['login'], '').trim();
+      final st = asStringOr(rm['state'], '').toUpperCase();
+      if (l.isNotEmpty && st.isNotEmpty) {
+        reviewers[l] = PrReviewer(login: l, state: st);
       }
     }
 
     return PullRequestSummary(
-      number: (j['number'] as num).toInt(),
-      title: (j['title'] as String? ?? '').trim(),
-      headRef: (j['headRefName'] as String? ?? '').trim(),
-      baseRef: (j['baseRefName'] as String? ?? '').trim(),
-      state: (j['state'] as String? ?? 'OPEN').toUpperCase(),
-      isDraft: j['isDraft'] as bool? ?? false,
+      number: number,
+      title: asStringOr(j['title'], '').trim(),
+      headRef: asStringOr(j['headRefName'], '').trim(),
+      baseRef: asStringOr(j['baseRefName'], '').trim(),
+      state: asStringOr(j['state'], 'OPEN').toUpperCase(),
+      isDraft: asBoolOr(j['isDraft'], false),
       authorLogin: login,
       conversationCount: parseCommentCount(j['comments']),
       updatedAt: parseRemoteDate(j['updatedAt']),
-      additions: (j['additions'] as num? ?? 0).toInt(),
-      deletions: (j['deletions'] as num? ?? 0).toInt(),
-      changedFiles: (j['changedFiles'] as num? ?? 0).toInt(),
-      mergeable: (j['mergeable'] as String? ?? 'UNKNOWN').toUpperCase(),
-      reviewDecision:
-          (j['reviewDecision'] as String? ?? '').toUpperCase(),
+      additions: asIntOr(j['additions'], 0),
+      deletions: asIntOr(j['deletions'], 0),
+      changedFiles: asIntOr(j['changedFiles'], 0),
+      mergeable: asStringOr(j['mergeable'], 'UNKNOWN').toUpperCase(),
+      reviewDecision: asStringOr(j['reviewDecision'], '').toUpperCase(),
       reviewers: reviewers.values.toList(),
       labels: parseLabelStrings(j['labels']),
       assignees: parseAssigneeLogins(j['assignees']),
@@ -148,13 +156,9 @@ class RemoteComment {
     required this.createdAt,
   });
   factory RemoteComment.fromJson(Map<String, dynamic> j) {
-    final author = j['author'];
-    final login = author is Map<String, dynamic>
-        ? (author['login'] as String? ?? '')
-        : '';
     return RemoteComment(
-      authorLogin: login,
-      body: (j['body'] as String? ?? '').trim(),
+      authorLogin: asStringOr(asMapOrNull(j['author'])?['login'], ''),
+      body: asStringOr(j['body'], '').trim(),
       createdAt: parseRemoteDate(j['createdAt']),
     );
   }
@@ -212,16 +216,18 @@ class IssueSummary {
     required this.updatedAt,
   });
 
-  factory IssueSummary.fromJson(Map<String, dynamic> j) {
-    final author = j['author'];
-    final login = author is Map<String, dynamic>
-        ? (author['login'] as String? ?? '')
-        : '';
+  /// Parses one forge issue row, or `null` if it has no usable identity.
+  /// See [PullRequestSummary.fromJson] — `number` is strict (an unreadable
+  /// one rejects the row rather than fabricate an actionable issue #0);
+  /// display fields degrade softly. Static, not a factory, so it can be null.
+  static IssueSummary? fromJson(Map<String, dynamic> j) {
+    final number = asIntOrNull(j['number']);
+    if (number == null) return null; // no identity → not a real issue
     return IssueSummary(
-      number: (j['number'] as num).toInt(),
-      title: (j['title'] as String? ?? '').trim(),
-      state: (j['state'] as String? ?? 'OPEN').toUpperCase(),
-      authorLogin: login,
+      number: number,
+      title: asStringOr(j['title'], '').trim(),
+      state: asStringOr(j['state'], 'OPEN').toUpperCase(),
+      authorLogin: asStringOr(asMapOrNull(j['author'])?['login'], ''),
       labels: parseLabelStrings(j['labels']),
       assignees: parseAssigneeLogins(j['assignees']),
       commentCount: parseCommentCount(j['comments']),
@@ -247,11 +253,11 @@ class CheckSummary {
   });
 
   factory CheckSummary.fromJson(Map<String, dynamic> j) {
-    final bucket = j['bucket'] as String?;
-    final state = (j['state'] as String? ?? '').toLowerCase();
+    final bucket = asStringOrNull(j['bucket']);
+    final state = asStringOr(j['state'], '').toLowerCase();
     final isCompleted = bucket != null && bucket != 'pending';
     return CheckSummary(
-      name: (j['name'] as String? ?? '').trim(),
+      name: asStringOr(j['name'], '').trim(),
       status: isCompleted ? 'completed' : (state.isEmpty ? 'queued' : state),
       conclusion: bucket,
       duration: parseRemoteDuration(j['startedAt'], j['completedAt']),
@@ -562,18 +568,20 @@ DateTime parseRemoteDate(dynamic value) {
 
 List<String> parseLabelStrings(dynamic value) {
   if (value is! List) return const [];
-  return value
-      .whereType<Map<String, dynamic>>()
-      .map((m) => (m['name'] as String? ?? '').trim())
+  final list = asListOrNull(value);
+  if (list == null) return const [];
+  return list
+      .map((m) => asStringOr(asMapOrNull(m)?['name'], '').trim())
       .where((s) => s.isNotEmpty)
       .toList();
 }
 
 List<String> parseAssigneeLogins(dynamic value) {
   if (value is! List) return const [];
-  return value
-      .whereType<Map<String, dynamic>>()
-      .map((m) => (m['login'] as String? ?? '').trim())
+  final list = asListOrNull(value);
+  if (list == null) return const [];
+  return list
+      .map((m) => asStringOr(asMapOrNull(m)?['login'], '').trim())
       .where((s) => s.isNotEmpty)
       .toList();
 }

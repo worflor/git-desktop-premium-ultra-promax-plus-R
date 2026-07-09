@@ -30,9 +30,17 @@ class DeskPrState extends ChangeNotifier {
   String? _loadedForRepo;
   int _requestId = 0;
 
+  /// Test-only: when true, construction and repo-change do NOT fire the
+  /// ManifoldRefs git read. Mirrors [WorktreeState.debugSuppressAutoRefresh]
+  /// — lets a widget test wire this against an active-repo RepositoryState
+  /// without a `Process.run` that hangs `testWidgets`' fake-async, seeding via
+  /// [debugSeed] instead.
+  @visibleForTesting
+  static bool debugSuppressAutoRefresh = false;
+
   DeskPrState(this._repo, this._identity) {
     _repo.addListener(_onRepoChanged);
-    if (_repo.activePath != null) {
+    if (!debugSuppressAutoRefresh && _repo.activePath != null) {
       fireAndLog(refreshFor(_repo.activePath!), 'DeskPrState');
     }
   }
@@ -45,6 +53,18 @@ class DeskPrState extends ChangeNotifier {
 
   Map<String, DeskPr> get byBranch => _byBranch;
   List<DeskPr> get all => _byBranch.values.toList();
+
+  /// Test-only: install [byBranch] directly, bypassing the ManifoldRefs git
+  /// read. Lets a widget test exercise anything that reads [DeskPrState]
+  /// (e.g. the command palette's PR entries) hermetically — no real repo, no
+  /// `Process.run` that would never resolve inside `testWidgets`' fake-async.
+  @visibleForTesting
+  void debugSeed(Map<String, DeskPr> byBranch, {String? loadedForRepo}) {
+    _byBranch = Map.unmodifiable(byBranch);
+    _loadedForRepo = loadedForRepo;
+    notifyListeners();
+  }
+
   bool get loading => _loading;
   String? get error => _error;
   String? get loadedForRepo => _loadedForRepo;
@@ -52,6 +72,7 @@ class DeskPrState extends ChangeNotifier {
   DeskPr? prFor(String branch) => _byBranch[branch];
 
   void _onRepoChanged() {
+    if (debugSuppressAutoRefresh) return;
     final active = _repo.activePath;
     if (active == null) {
       _byBranch = const {};

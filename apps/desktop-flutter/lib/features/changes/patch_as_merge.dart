@@ -174,6 +174,24 @@ _SplicedConflict? _spliceConflictMarkers(
     // a phantom blank line reject-all never had.
     oursRun.add('');
   }
+  // The mirror of the ours sentinel, for the theirs side. `theirsRun` holds
+  // the added lines verbatim; `theirsRun.join('\n')` therefore represents
+  // "N-1 terminated lines plus an unterminated last one". That is correct
+  // UNLESS theirs genuinely ends on a *terminated empty line* — an added
+  // line whose content is '' with no `\ No newline` marker after it. Then
+  // the join collapses that final empty terminated line into a bare trailing
+  // '\n' that buildResult reads as "already terminated, nothing to add", and
+  // the file loses its true final newline (accept-all drops a byte). One
+  // more empty element encodes that terminator explicitly, exactly as the
+  // ours branch above does. Guarded identically: only at true EOF, only when
+  // theirs actually has a trailing newline, and only when its last line is
+  // the empty one that makes the representation ambiguous.
+  if (!hasTrailingTail &&
+      !theirsNoNewlineAtEof &&
+      theirsRun.isNotEmpty &&
+      theirsRun.last.isEmpty) {
+    theirsRun.add('');
+  }
   flush();
   while (idx < ours.length) {
     out.add(ours[idx]);

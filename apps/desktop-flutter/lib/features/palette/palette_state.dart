@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
@@ -28,6 +29,33 @@ class PaletteState extends ChangeNotifier {
   final PaletteScorer _scorer = PaletteScorer();
   final PaletteGitCache _gitCache = PaletteGitCache();
   final Map<String, String> _forgeCache = {};
+
+  /// Notifies listeners, but never *during* a build/layout/paint phase.
+  ///
+  /// `CommandPalette.initState` calls [open] (and [updateMode]) synchronously
+  /// as it mounts, and those set-then-`notifyListeners` — legitimate, because
+  /// the palette is "open the moment it exists." But this notifier is an
+  /// ancestor Provider the palette (and its siblings) `watch`, so a synchronous
+  /// notify raised while the framework is still building throws
+  /// "setState()/markNeedsBuild() called during build" — an assert that is
+  /// silent in release but fires in every debug build. The fields are already
+  /// set by the time we get here; only the *wake* is illegal at this instant,
+  /// so defer just the wake to the end of the frame. Outside a build phase
+  /// (the overwhelmingly common case — keystrokes, async results) it stays a
+  /// plain synchronous notify with no added latency.
+  @override
+  void notifyListeners() {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed) super.notifyListeners();
+      });
+    } else {
+      super.notifyListeners();
+    }
+  }
+
+  bool _disposed = false;
 
   List<PaletteEntry> _staticEntries = [];
   List<PaletteEntry> _asyncEntries = [];
@@ -92,6 +120,7 @@ class PaletteState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _debounce?.cancel();
     _hoverDebounce?.cancel();
     super.dispose();

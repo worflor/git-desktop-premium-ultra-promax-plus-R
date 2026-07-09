@@ -1,0 +1,10 @@
+{
+  "guardrailValue": 0.5,
+  "themeId": "aether",
+  "keybindingProfile": "classic",
+  "sidebarWidthPx": 188,
+  "sidebarPosition": "left",
+  "reduceMotion": true,
+  "updateChannel": "beta",
+  "onboardingComplete": true
+}

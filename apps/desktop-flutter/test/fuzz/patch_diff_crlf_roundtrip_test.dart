@@ -63,12 +63,12 @@
 //     DiffShell, reviewMergeFromPatch) now shares the one fixed
 //     implementation instead of drifting from logos_hunks.dart's.
 //
-// Async fuzzing note: test/support/prop.dart's `forAll` is deliberately
-// synchronous (a for-loop + try/catch) — properties here need real git
-// subprocesses, so this file adds a tiny async-aware sibling, `forAllAsync`,
-// built the same way `forAll` documents (SplitMix64-derived, seed+index
-// reproducible) but using `Rng.split()` for per-case determinism instead of
-// prop.dart's private case-seed mixer.
+// Async fuzzing note: the properties here need real git subprocesses, so
+// they run through `forAllAsync` (test/support/prop.dart) — the async
+// sibling of `forAll`, sharing its seed/index reproducibility contract, its
+// choice-tape shrinker, and its on-disk corpus. Its shrink budget defaults
+// low (40 candidate evaluations) precisely because each candidate here
+// re-spawns git.
 //
 // SCALING: every fuzz group multiplies its case count by `fuzzScale()`
 // (env `MANIFOLD_FUZZ`), default 1 -> a normal, CI-sized run.
@@ -89,44 +89,6 @@ import 'package:git_desktop/features/diff/patch_engine.dart';
 import '../support/gen.dart';
 import '../support/prop.dart';
 import '../support/scratch_repo.dart';
-
-// ---------------------------------------------------------------------------
-// Async fuzz harness — see file header note.
-// ---------------------------------------------------------------------------
-
-/// Async counterpart to [forAll]: same seed/index reproducibility
-/// contract, but `check` may await real IO (git subprocesses). Per-case
-/// determinism comes from [Rng.split] (an independent, deterministic
-/// substream) rather than prop.dart's private `_deriveCaseSeed`, since that
-/// helper isn't exported.
-Future<void> forAllAsync<T>(
-  Gen<T> gen, {
-  required Future<void> Function(T value) check,
-  int count = 20,
-  int seed = 0x5EED,
-  String? describe,
-}) async {
-  final master = Rng(seed);
-  for (var index = 0; index < count; index++) {
-    final caseRng = master.split();
-    final value = gen(caseRng);
-    try {
-      await check(value);
-    } catch (error, stackTrace) {
-      final label = describe == null ? '' : '$describe — ';
-      // ignore: avoid_print
-      print(
-        '[fuzz-async] ${label}FAILED at seed=0x${seed.toRadixString(16)} '
-        'index=$index\n'
-        '[fuzz-async] value=$value\n'
-        '[fuzz-async] reproduce: rerun forAllAsync with seed=0x'
-        '${seed.toRadixString(16)} (same seed -> same failure at index '
-        '$index, deterministically)',
-      );
-      Error.throwWithStackTrace(error, stackTrace);
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Shared repo/file helpers
@@ -662,6 +624,11 @@ void main() {
         count: 25 * scale,
         seed: 0x5E17,
         describe: 'ours/theirs pair',
+        // Each candidate re-spawns git, so this is deliberately bounded.
+        // 200 was measured to take the known counterexample from 151 draws
+        // to 6 ("ours" and "theirs" both a single empty terminated line).
+        shrinkEvaluations: 200,
+        shrinkTimeout: const Duration(minutes: 2),
         check: (pair) async {
           final (a, t) = pair;
           final id = caseId++;

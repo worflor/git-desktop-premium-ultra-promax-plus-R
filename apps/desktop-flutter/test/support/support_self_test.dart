@@ -69,12 +69,19 @@ void main() {
       }
     });
 
-    test('split() produces independent, deterministic substreams', () {
+    test('split() is a deterministic, replayable handle on the shared stream',
+        () {
+      // NOTE: `split()` does NOT fork a statistically-independent substream
+      // (it did before the tape rewrite). It now returns another handle onto
+      // the SAME recorded choice tape — required so the shrinker can see and
+      // minimize draws a generator delegates to a split (a private substream
+      // would be invisible to it; see prop.dart's split() doc). What this
+      // test locks is the property callers actually rely on: determinism —
+      // the same seed split at the same point replays the same draws.
       final r1 = Rng(555);
       final sub1 = r1.split();
       final r2 = Rng(555);
       final sub2 = r2.split();
-      // Same seed, same point of split -> identical substream.
       for (var i = 0; i < 20; i++) {
         expect(sub1.nextInt(1 << 30), sub2.nextInt(1 << 30));
       }
@@ -94,6 +101,9 @@ void main() {
               count: 5,
               seed: failingSeed,
               describe: 'self-test deliberate failure',
+              // This failure is deliberate scaffolding — don't let it seed
+              // the on-disk corpus with a case that isn't a real bug.
+              persistCorpus: false,
             ),
             throwsA(isA<StateError>()),
           );
@@ -123,6 +133,7 @@ void main() {
               seed: 1,
               describe: 'shrink test',
               shrink: (v) => v > 3 ? v - 1 : v,
+              persistCorpus: false,
             ),
             throwsA(isA<StateError>()),
           );

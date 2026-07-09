@@ -101,6 +101,8 @@ Future<GitResult<List<PullRequestSummary>>> listMergeRequests(
     final mrs = parsed
         .whereType<Map<String, dynamic>>()
         .map(mrSummaryFromGlab)
+        // Drop rows with no usable iid rather than fabricate an MR #0.
+        .whereType<PullRequestSummary>()
         .toList();
     return GitResult.ok(mrs);
   } catch (e) {
@@ -147,7 +149,11 @@ Future<GitResult<PullRequestSummary>> getMergeRequest(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(mrSummaryFromGlab(j));
+    final mr = mrSummaryFromGlab(j);
+    if (mr == null) {
+      return const GitResult.err('glab mr view returned a row with no usable iid');
+    }
+    return GitResult.ok(mr);
   } catch (e) {
     return GitResult.err('Failed to parse glab mr view: $e');
   }
@@ -333,6 +339,8 @@ Future<GitResult<List<IssueSummary>>> listGlabIssues(
     final issues = parsed
         .whereType<Map<String, dynamic>>()
         .map(issueSummaryFromGlab)
+        // Drop rows with no usable iid rather than fabricate an issue #0.
+        .whereType<IssueSummary>()
         .toList();
     return GitResult.ok(issues);
   } catch (e) {
@@ -354,7 +362,12 @@ Future<GitResult<IssueSummary>> getGlabIssue(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(issueSummaryFromGlab(j));
+    final issue = issueSummaryFromGlab(j);
+    if (issue == null) {
+      return const GitResult.err(
+          'glab issue view returned a row with no usable iid');
+    }
+    return GitResult.ok(issue);
   } catch (e) {
     return GitResult.err('Failed to parse glab issue view: $e');
   }
@@ -474,7 +487,13 @@ Future<GitResult<void>> addGlabIssueLabel(
 // JSON → DTO mappers (normalize GitLab field names to shared shapes)
 // ---------------------------------------------------------------------------
 
-PullRequestSummary mrSummaryFromGlab(Map<String, dynamic> j) {
+/// Maps one glab MR row, or `null` if it has no usable identity. The MR
+/// `iid` is strict identity — it keys detail loads, checkout, and actions —
+/// so an unreadable one rejects the row rather than fabricate an actionable
+/// MR #0 (mirrors [PullRequestSummary.fromJson]'s strict-number rule).
+PullRequestSummary? mrSummaryFromGlab(Map<String, dynamic> j) {
+  final number = glabIntOrNull(j['iid']);
+  if (number == null) return null;
   final authorRaw = j['author'];
   final login =
       authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
@@ -517,7 +536,7 @@ PullRequestSummary mrSummaryFromGlab(Map<String, dynamic> j) {
   };
 
   return PullRequestSummary(
-    number: glabIntOrNull(j['iid']) ?? 0,
+    number: number,
     title: (j['title'] as String? ?? '').trim(),
     headRef: (j['source_branch'] as String? ?? '').trim(),
     baseRef: (j['target_branch'] as String? ?? '').trim(),
@@ -578,14 +597,18 @@ int? glabIntOrNull(Object? value) {
   return null;
 }
 
-IssueSummary issueSummaryFromGlab(Map<String, dynamic> j) {
+/// Maps one glab issue row, or `null` if it has no usable identity — see
+/// [mrSummaryFromGlab]. Strict `iid`; display fields degrade softly.
+IssueSummary? issueSummaryFromGlab(Map<String, dynamic> j) {
+  final number = glabIntOrNull(j['iid']);
+  if (number == null) return null;
   final authorRaw = j['author'];
   final login =
       authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
   final glabState = (j['state'] as String? ?? 'opened').toLowerCase();
 
   return IssueSummary(
-    number: glabIntOrNull(j['iid']) ?? 0,
+    number: number,
     title: (j['title'] as String? ?? '').trim(),
     state: glabState == 'opened' ? 'OPEN' : 'CLOSED',
     authorLogin: login,

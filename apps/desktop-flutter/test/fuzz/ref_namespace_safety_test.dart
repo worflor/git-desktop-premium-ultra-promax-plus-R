@@ -121,11 +121,14 @@ Gen<String> _longGen() {
   };
 }
 
-/// Two independent draws from [single], via `Rng.split()` — the documented
-/// way to fork a deterministic sub-stream (see prop.dart) — for the
-/// injectivity sweeps ("fuzz many pairs"). Generic so it serves both the
-/// `String` pair-fuzzes (LAW 5) and the `int` pair-fuzz (DeskIssueStore
-/// symmetry) below.
+/// Two SEQUENTIAL draws from [single] for the injectivity sweeps ("fuzz many
+/// pairs"). `Rng.split()` no longer forks an independent sub-stream — it hands
+/// back another handle onto the same recorded tape (so the shrinker can reach
+/// these draws; see prop.dart's split() doc). The two draws are therefore
+/// consecutive positions on one tape: still distinct (what a pair needs) and
+/// still fully shrinkable, just not statistically independent. Generic so it
+/// serves both the `String` pair-fuzzes (LAW 5) and the `int` pair-fuzz
+/// (DeskIssueStore symmetry) below.
 Gen<(T, T)> _pairGen<T>(Gen<T> single) {
   return (rng) {
     final a = single(rng.split());

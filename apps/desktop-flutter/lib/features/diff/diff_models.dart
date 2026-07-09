@@ -267,6 +267,105 @@ class ParsedLine {
 /// end of file` markers by attaching them to the previous line via
 /// [ParsedLine.noNewlineAtEof] without consuming a counter slot.
 /// This is the canonical parser for the app — used by the changes-panel
+final RegExp _kHunkHeader =
+    RegExp(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@');
+
+/// Tracks where a hunk body begins and ends while walking a raw unified
+/// diff line by line.
+///
+/// This exists because prefix-only dispatch is *wrong*, and quietly so. A
+/// hunk body line is a marker char followed by the file's literal content,
+/// so an ADDED line whose content begins `++` renders as `+++…`, and a
+/// DELETED line whose content begins `--` renders as `---…`. Those are
+/// indistinguishable from the `+++ b/path` / `--- a/path` file headers by
+/// prefix alone — and both shapes are ordinary source code (`++i;` in
+/// C/C++/Java/JS, `-- comment` in SQL/Haskell/Lua). Reading them as headers
+/// silently mis-classifies real content, corrupts the per-line stage
+/// accounting, and can even re-bind which file a hunk is attributed to.
+///
+/// A unified diff is self-delimiting: `@@ -a,b +c,d @@` promises exactly
+/// `b` old-side and `d` new-side body lines. Counting them down says
+/// precisely where the body ends. That is how `git apply` itself parses,
+/// and it makes the confusion class unrepresentable instead of patching the
+/// symptoms one prefix at a time.
+///
+/// Every consumer in this file shares this one cursor rather than
+/// re-deriving the rule — two diff parsers drifting apart is exactly the
+/// defect this codebase already paid for once.
+class _HunkCursor {
+  bool _inHunk = false;
+  bool _bounded = false;
+  int _oldRemaining = 0;
+  int _newRemaining = 0;
+
+  /// Old/new starting line numbers of the hunk header last seen.
+  int oldStart = 0;
+  int newStart = 0;
+
+  /// Feeds one raw line, in order, and reports whether it is hunk BODY
+  /// content — i.e. whether a `---`/`+++` prefix on it must be read as
+  /// file content rather than as a header.
+  ///
+  /// Structural lines (`diff …`, `index …`, `@@ …`) can never be body: a
+  /// body line always carries a marker char in column 0. So they close any
+  /// open hunk, which also self-heals a header whose counts lied.
+  bool advance(String line) {
+    if (line.startsWith('diff --git') ||
+        line.startsWith('diff ') ||
+        line.startsWith('index ')) {
+      _close();
+      return false;
+    }
+    if (line.startsWith('@@')) {
+      final m = _kHunkHeader.firstMatch(line);
+      if (m != null) {
+        oldStart = int.tryParse(m.group(1)!) ?? 0;
+        newStart = int.tryParse(m.group(3)!) ?? 0;
+        // An omitted count means exactly one line (`@@ -1 +1 @@`).
+        _oldRemaining = m.group(2) == null ? 1 : int.tryParse(m.group(2)!) ?? 1;
+        _newRemaining = m.group(4) == null ? 1 : int.tryParse(m.group(4)!) ?? 1;
+        _bounded = true;
+        _inHunk = _oldRemaining > 0 || _newRemaining > 0;
+      } else {
+        // Combined/merge diffs (`diff --cc`, `@@@ -1,2 -1,2 +1,2 @@@`) carry
+        // a second marker column and their own header shape. Stay in the
+        // body until a structural line closes it.
+        _bounded = false;
+        _inHunk = true;
+      }
+      return false;
+    }
+    // `\ No newline at end of file` annotates the preceding body line; it
+    // is not one itself, and consumes no budget. A body line whose content
+    // begins `\` renders as `+\…` / `-\…` / ` \…`, so a backslash in column
+    // 0 is unambiguously this marker.
+    if (line.startsWith('\\')) return false;
+
+    if (!_inHunk) return false;
+
+    if (line.startsWith('+')) {
+      if (_newRemaining > 0) _newRemaining--;
+    } else if (line.startsWith('-')) {
+      if (_oldRemaining > 0) _oldRemaining--;
+    } else if (line.isEmpty) {
+      // A truly empty line can never be body — even blank context carries
+      // its ' ' marker. Consumes no budget.
+    } else {
+      if (_oldRemaining > 0) _oldRemaining--;
+      if (_newRemaining > 0) _newRemaining--;
+    }
+    if (_bounded && _oldRemaining <= 0 && _newRemaining <= 0) _close();
+    return true;
+  }
+
+  void _close() {
+    _inHunk = false;
+    _bounded = false;
+    _oldRemaining = 0;
+    _newRemaining = 0;
+  }
+}
+
 /// diff shell, the patch engine, and the PR detail surface so every
 /// place that reads a diff sees the exact same model.
 List<ParsedLine> parseUnifiedDiff(String diff) {
@@ -282,54 +381,84 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
   String? currentFile;
   String? pendingOldFile;
 
+  // Where the hunk body starts and stops. See [_HunkCursor] — this is what
+  // keeps a line of file content that happens to begin `++` or `--` from
+  // being read as a `+++ b/path` / `--- a/path` header.
+  final cursor = _HunkCursor();
+
   for (final line in rawLines) {
-    if (line.startsWith('diff --git')) {
-      final path = pathFromDiffGitHeader(line);
-      if (path != null) currentFile = path;
-      pendingOldFile = null;
-      continue;
-    }
-    if (line.startsWith('diff ') || line.startsWith('index ')) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      final m =
-          RegExp(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@').firstMatch(line);
-      if (m != null) {
-        oldLine = int.tryParse(m.group(1)!) ?? 0;
-        newLine = int.tryParse(m.group(2)!) ?? 0;
+    final inHunk = cursor.advance(line);
+
+    if (!inHunk) {
+      if (line.startsWith('diff --git')) {
+        final path = pathFromDiffGitHeader(line);
+        if (path != null) currentFile = path;
+        pendingOldFile = null;
+        continue;
       }
-      hunkIdx++;
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.hunk,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.added,
-          lineNumNew: newLine++,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.deleted,
-          lineNumOld: oldLine++,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('\\')) {
-      // `\ No newline at end of file` — attach the flag to the prior
-      // line. See ParsedLine.noNewlineAtEof for the full reasoning.
+      if (line.startsWith('diff ') || line.startsWith('index ')) {
+        continue;
+      }
+      if (line.startsWith('@@')) {
+        oldLine = cursor.oldStart;
+        newLine = cursor.newStart;
+        hunkIdx++;
+        result.add(ParsedLine(
+            text: line,
+            lowerText: line.toLowerCase(),
+            kind: LineKind.hunk,
+            hunkIndex: hunkIdx,
+            filePath: currentFile));
+        continue;
+      }
+    }
+    // `\ No newline at end of file` — attach the flag to the prior line.
+    // See ParsedLine.noNewlineAtEof for the full reasoning.
+    if (line.startsWith('\\')) {
       if (result.isNotEmpty) {
         final prev = result.removeLast();
         result.add(prev.copyWith(noNewlineAtEof: true));
       }
-    } else if (line.startsWith('--- ')) {
+      continue;
+    }
+
+    if (inHunk) {
+      if (line.startsWith('+')) {
+        result.add(ParsedLine(
+            text: line,
+            lowerText: line.toLowerCase(),
+            kind: LineKind.added,
+            lineNumNew: newLine++,
+            hunkIndex: hunkIdx,
+            filePath: currentFile));
+      } else if (line.startsWith('-')) {
+        result.add(ParsedLine(
+            text: line,
+            lowerText: line.toLowerCase(),
+            kind: LineKind.deleted,
+            lineNumOld: oldLine++,
+            hunkIndex: hunkIdx,
+            filePath: currentFile));
+      } else if (line.isEmpty) {
+        // A truly empty line can never be hunk body — even blank context
+        // carries its ' ' marker — so it claims no hunk membership. See the
+        // blank-row branch below.
+        result.add(ParsedLine(
+            text: line, lowerText: '', kind: LineKind.context, hunkIndex: -1));
+      } else {
+        result.add(ParsedLine(
+            text: line,
+            lowerText: line.toLowerCase(),
+            kind: LineKind.context,
+            lineNumOld: oldLine++,
+            lineNumNew: newLine++,
+            hunkIndex: hunkIdx,
+            filePath: currentFile));
+      }
+      continue;
+    }
+
+    if (line.startsWith('--- ')) {
       pendingOldFile = patchSidePath(line, preferredPrefix: 'a');
       result.add(ParsedLine(
           text: line,
@@ -441,7 +570,19 @@ Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
     result[currentPath] = lines.sublist(sectionStart, endExclusive).join('\n');
   }
 
+  // A `--- x` / `+++ y` pair is only a file header when it sits OUTSIDE a
+  // hunk body. Inside one, that same pair is a deleted line whose content
+  // begins `-- ` followed by an added line whose content begins `++ ` — an
+  // ordinary SQL-comment-to-C-increment edit, not a new file. See
+  // [_HunkCursor].
+  final cursor = _HunkCursor();
+  final outsideHunk = List<bool>.filled(lines.length, false);
+  for (var i = 0; i < lines.length; i++) {
+    outsideHunk[i] = !cursor.advance(lines[i]);
+  }
+
   for (var i = 0; i < lines.length - 1; i++) {
+    if (!outsideHunk[i] || !outsideHunk[i + 1]) continue;
     final minus = lines[i];
     final plus = lines[i + 1];
     if (!minus.startsWith('--- ') || !plus.startsWith('+++ ')) {
@@ -497,12 +638,20 @@ class DiffStats {
     int a = 0;
     int d = 0;
     int h = 0;
+    // Counting by prefix alone undercounts: an added line whose content
+    // begins `++` renders as `+++…` and would be skipped as a header. Only
+    // a hunk body line can be an add or a delete, so track the body. See
+    // [_HunkCursor].
+    final cursor = _HunkCursor();
     for (final line in diff.split('\n')) {
-      if (line.startsWith('@@ ')) {
-        h++;
-      } else if (line.startsWith('+') && !line.startsWith('+++')) {
+      final inHunk = cursor.advance(line);
+      if (!inHunk) {
+        if (line.startsWith('@@')) h++;
+        continue;
+      }
+      if (line.startsWith('+')) {
         a++;
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
+      } else if (line.startsWith('-')) {
         d++;
       }
     }

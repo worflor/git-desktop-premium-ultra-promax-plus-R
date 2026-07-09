@@ -107,9 +107,12 @@ class _FieldCase {
 }
 
 /// Case set shared by every int-valued "count" field that falls back to
-/// `0` via `?? 0` — mrSummaryFromGlab's iid/user_notes_count/additions/
-/// deletions/changes_count, and issueSummaryFromGlab's iid/user_notes_count.
-/// All of them now route through `glabIntOrNull`, the same parser
+/// `0` via `?? 0` — mrSummaryFromGlab's user_notes_count/additions/
+/// deletions/changes_count, and issueSummaryFromGlab's user_notes_count.
+/// (`iid` used to be in this family too, but it is the IDENTITY field: an
+/// unreadable one now rejects the whole row instead of falling back to 0 —
+/// see `_identityFieldCases` below, which is NOT shared with this table.)
+/// All of these still route through `glabIntOrNull`, the same parser
 /// `changes_count` was hardened with first, so they share one case table: a
 /// digit string and the "N+" sentinel parse to their numeric value (the
 /// real GitLab wire shape for `changes_count`; defensive hardening for the
@@ -140,14 +143,32 @@ List<_FieldCase> _durationFieldCases() => [
       const _FieldCase('control: null', null, null),
     ];
 
+/// Case set for the IDENTITY field itself (mrSummaryFromGlab's `iid` and
+/// issueSummaryFromGlab's `iid`, both -> `number`). Unlike every other
+/// numeric field (which falls back to 0 via `?? 0`), an unreadable identity
+/// now REJECTS the whole row (the mapper returns null) rather than
+/// fabricating an actionable #0 — mirroring gh.dart's
+/// `PullRequestSummary.fromJson`/`IssueSummary.fromJson` strict-number rule.
+/// So "expected" here is either the parsed int (row survives) or `null`
+/// (row rejected), never a fallback 0.
+List<_FieldCase> _identityFieldCases() => [
+      const _FieldCase('String digit "5"', '5', 5),
+      const _FieldCase('String "1000+" sentinel', '1000+', 1000),
+      const _FieldCase('bool true', true, null),
+      const _FieldCase('nested map {}', <String, dynamic>{}, null),
+      const _FieldCase('empty list []', <dynamic>[], null),
+      const _FieldCase('control: normal int', 5, 5),
+      const _FieldCase('control: null', null, null),
+    ];
+
 /// One numeric field to sweep: which mapper, which JSON key, how to reach
 /// its parsed value from the mapper's return type, and the case table to
 /// run against it. `minimalValidJson` is the smallest payload that reaches
-/// this field's parse without erroring on anything else first — for every
-/// field in this file that's simply `{}`, since every other field these
-/// mappers read tolerates being absent (confirmed by the existing
-/// "completely empty MR json" / "issues have no merged state" /
-/// `checkFromGlabJob({})` tests above).
+/// this field's parse without erroring on anything else first. For
+/// mrSummaryFromGlab/issueSummaryFromGlab fields that means `{'iid': 1}` —
+/// a valid identity so the row survives to exercise the field under test
+/// (an identity-less row is now rejected outright); checkFromGlabJob has no
+/// identity concept, so `{}` still suffices there.
 class _NumericFieldSpec {
   final String groupLabel;
   final String fieldKey;
@@ -166,54 +187,40 @@ class _NumericFieldSpec {
 
 final List<_NumericFieldSpec> _numericFieldSpecs = [
   _NumericFieldSpec(
-    groupLabel: 'mrSummaryFromGlab: iid -> number',
-    fieldKey: 'iid',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => mrSummaryFromGlab(j).number,
-    cases: _countFieldCases(),
-  ),
-  _NumericFieldSpec(
     groupLabel:
         'mrSummaryFromGlab: user_notes_count -> conversationCount',
     fieldKey: 'user_notes_count',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => mrSummaryFromGlab(j).conversationCount,
+    minimalValidJson: () => <String, dynamic>{'iid': 1},
+    getResult: (j) => mrSummaryFromGlab(j)!.conversationCount,
     cases: _countFieldCases(),
   ),
   _NumericFieldSpec(
     groupLabel: 'mrSummaryFromGlab: additions',
     fieldKey: 'additions',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => mrSummaryFromGlab(j).additions,
+    minimalValidJson: () => <String, dynamic>{'iid': 1},
+    getResult: (j) => mrSummaryFromGlab(j)!.additions,
     cases: _countFieldCases(),
   ),
   _NumericFieldSpec(
     groupLabel: 'mrSummaryFromGlab: deletions',
     fieldKey: 'deletions',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => mrSummaryFromGlab(j).deletions,
+    minimalValidJson: () => <String, dynamic>{'iid': 1},
+    getResult: (j) => mrSummaryFromGlab(j)!.deletions,
     cases: _countFieldCases(),
   ),
   _NumericFieldSpec(
     groupLabel: 'mrSummaryFromGlab: changes_count -> changedFiles '
         '(hardened via glabChangesCount / glabIntOrNull)',
     fieldKey: 'changes_count',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => mrSummaryFromGlab(j).changedFiles,
-    cases: _countFieldCases(),
-  ),
-  _NumericFieldSpec(
-    groupLabel: 'issueSummaryFromGlab: iid -> number',
-    fieldKey: 'iid',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => issueSummaryFromGlab(j).number,
+    minimalValidJson: () => <String, dynamic>{'iid': 1},
+    getResult: (j) => mrSummaryFromGlab(j)!.changedFiles,
     cases: _countFieldCases(),
   ),
   _NumericFieldSpec(
     groupLabel: 'issueSummaryFromGlab: user_notes_count -> commentCount',
     fieldKey: 'user_notes_count',
-    minimalValidJson: () => <String, dynamic>{},
-    getResult: (j) => issueSummaryFromGlab(j).commentCount,
+    minimalValidJson: () => <String, dynamic>{'iid': 1},
+    getResult: (j) => issueSummaryFromGlab(j)!.commentCount,
     cases: _countFieldCases(),
   ),
   _NumericFieldSpec(
@@ -259,7 +266,7 @@ void main() {
         ],
       };
 
-      final s = mrSummaryFromGlab(json);
+      final s = mrSummaryFromGlab(json)!;
 
       // iid -> number, NOT GitLab's project-global `id`.
       expect(s.number, 42);
@@ -288,28 +295,38 @@ void main() {
     });
 
     test('state: opened/closed/merged map to OPEN/CLOSED/MERGED', () {
-      expect(mrSummaryFromGlab({'state': 'opened'}).state, 'OPEN');
-      expect(mrSummaryFromGlab({'state': 'closed'}).state, 'CLOSED');
-      expect(mrSummaryFromGlab({'state': 'merged'}).state, 'MERGED');
+      // Non-identity field under test -> a valid `iid` is added so the row
+      // survives (an identity-less row is now rejected outright).
+      expect(mrSummaryFromGlab({'iid': 1, 'state': 'opened'})!.state, 'OPEN');
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'state': 'closed'})!.state, 'CLOSED');
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'state': 'merged'})!.state, 'MERGED');
       // Unrecognized/future GitLab state -> safe default, not a crash.
-      expect(mrSummaryFromGlab({'state': 'locked'}).state, 'OPEN');
+      expect(mrSummaryFromGlab({'iid': 1, 'state': 'locked'})!.state, 'OPEN');
     });
 
     test('merge_status: can_be_merged/cannot_be_merged map to '
         'MERGEABLE/CONFLICTING; has_conflicts is the fallback', () {
       expect(
-          mrSummaryFromGlab({'merge_status': 'can_be_merged'}).mergeable,
+          mrSummaryFromGlab({'iid': 1, 'merge_status': 'can_be_merged'})!
+              .mergeable,
           'MERGEABLE');
       expect(
-          mrSummaryFromGlab({'merge_status': 'cannot_be_merged'}).mergeable,
+          mrSummaryFromGlab({'iid': 1, 'merge_status': 'cannot_be_merged'})!
+              .mergeable,
           'CONFLICTING');
       // merge_status absent (or an unrecognized value, e.g. 'unchecked')
       // falls back to the has_conflicts boolean.
-      expect(mrSummaryFromGlab({'has_conflicts': true}).mergeable,
+      expect(mrSummaryFromGlab({'iid': 1, 'has_conflicts': true})!.mergeable,
           'CONFLICTING');
-      expect(mrSummaryFromGlab({}).mergeable, 'UNKNOWN');
+      expect(mrSummaryFromGlab({'iid': 1})!.mergeable, 'UNKNOWN');
       expect(
-          mrSummaryFromGlab({'merge_status': 'unchecked', 'has_conflicts': false})
+          mrSummaryFromGlab({
+            'iid': 1,
+            'merge_status': 'unchecked',
+            'has_conflicts': false
+          })!
               .mergeable,
           'UNKNOWN');
     });
@@ -317,6 +334,7 @@ void main() {
     test('reviewer/approval precedence: approved_by wins over a pending '
         'reviewer entry for the same user', () {
       final s = mrSummaryFromGlab({
+        'iid': 1,
         'reviewers': [
           {'username': 'alice'},
           {'username': 'bob'},
@@ -324,7 +342,7 @@ void main() {
         'approved_by': [
           {'username': 'alice'}, // flat shape (no nested `user`)
         ],
-      });
+      })!;
       expect(_reviewerStates(s.reviewers), {
         'alice': 'APPROVED', // promoted, not left PENDING
         'bob': 'PENDING',
@@ -335,15 +353,18 @@ void main() {
       // A payload shaped like GH's PR JSON (number/login/headRefName) rather
       // than GitLab's (iid/username/source_branch) must NOT leak through —
       // proves the mapper is keyed on GitLab's real field names, not
-      // coincidentally compatible with gh.dart's.
+      // coincidentally compatible with gh.dart's. `iid` is set so the row
+      // isn't dropped for lacking identity; GH's `number` must be ignored
+      // in favor of it.
       final s = mrSummaryFromGlab({
+        'iid': 1,
         'number': 99,
         'headRefName': 'gh-feature',
         'baseRefName': 'gh-main',
         'author': {'login': 'gh-user'},
         'state': 'OPEN', // GH's already-uppercase shape
-      });
-      expect(s.number, 0); // 'iid' is absent, not 99
+      })!;
+      expect(s.number, 1); // 'iid' wins; GH's 'number' (99) is ignored
       expect(s.headRef, ''); // 'source_branch' is absent
       expect(s.baseRef, '');
       expect(s.authorLogin, ''); // author has 'login', not 'username'
@@ -354,9 +375,37 @@ void main() {
   });
 
   group('mrSummaryFromGlab — malformed-shape robustness', () {
-    test('completely empty MR json -> sane defaults, no throw', () {
-      final s = mrSummaryFromGlab(const {});
-      expect(s.number, 0);
+    test('an identity-less MR json is rejected (returns null), not '
+        'fabricated as MR #0', () {
+      expect(mrSummaryFromGlab(const {}), isNull);
+    });
+
+    test('a valid iid + every OTHER field explicitly null -> sane defaults, '
+        'no throw', () {
+      // `iid` is set (RULE 2: this test's intent is every OTHER field's
+      // null-safety, not the identity field itself, which has its own
+      // dedicated rejection coverage above).
+      final s = mrSummaryFromGlab({
+        'iid': 1,
+        'title': null,
+        'source_branch': null,
+        'target_branch': null,
+        'state': null,
+        'draft': null,
+        'author': null,
+        'user_notes_count': null,
+        'updated_at': null,
+        'changes_count': null,
+        'changed_files': null,
+        'merge_status': null,
+        'has_conflicts': null,
+        'approved': null,
+        'reviewers': null,
+        'approved_by': null,
+        'labels': null,
+        'assignees': null,
+      })!;
+      expect(s.number, 1);
       expect(s.title, '');
       expect(s.headRef, '');
       expect(s.baseRef, '');
@@ -375,71 +424,51 @@ void main() {
       expect(s.updatedAt, DateTime.fromMillisecondsSinceEpoch(0));
     });
 
-    test('every field explicitly null -> same sane defaults, no throw', () {
-      final s = mrSummaryFromGlab({
-        'iid': null,
-        'title': null,
-        'source_branch': null,
-        'target_branch': null,
-        'state': null,
-        'draft': null,
-        'author': null,
-        'user_notes_count': null,
-        'updated_at': null,
-        'changes_count': null,
-        'changed_files': null,
-        'merge_status': null,
-        'has_conflicts': null,
-        'approved': null,
-        'reviewers': null,
-        'approved_by': null,
-        'labels': null,
-        'assignees': null,
-      });
-      expect(s.number, 0);
-      expect(s.title, '');
-      expect(s.changedFiles, 0);
-      expect(s.mergeable, 'UNKNOWN');
-      expect(s.reviewers, isEmpty);
-      expect(s.labels, isEmpty);
-      expect(s.assignees, isEmpty);
-    });
-
     test('a non-map author does not throw (hardened is-Map check)', () {
-      expect(() => mrSummaryFromGlab({'author': 'not-a-map'}), returnsNormally);
-      expect(mrSummaryFromGlab({'author': 'not-a-map'}).authorLogin, '');
-      expect(mrSummaryFromGlab({'author': 123}).authorLogin, '');
-      expect(mrSummaryFromGlab({'author': <dynamic>[]}).authorLogin, '');
+      expect(
+          () => mrSummaryFromGlab({'iid': 1, 'author': 'not-a-map'}),
+          returnsNormally);
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'author': 'not-a-map'})!.authorLogin,
+          '');
+      expect(mrSummaryFromGlab({'iid': 1, 'author': 123})!.authorLogin, '');
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'author': <dynamic>[]})!.authorLogin,
+          '');
     });
 
     test('reviewers/approved_by shaped as a Map instead of a List does not '
         'throw (hardened is-List check)', () {
       expect(
           () => mrSummaryFromGlab({
+                'iid': 1,
                 'reviewers': {'not': 'a list'},
                 'approved_by': {'not': 'a list'},
               }),
           returnsNormally);
       final s = mrSummaryFromGlab({
+        'iid': 1,
         'reviewers': {'not': 'a list'},
         'approved_by': {'not': 'a list'},
-      });
+      })!;
       expect(s.reviewers, isEmpty);
     });
 
     test('approved_by entries with a non-map nested `user` do not throw', () {
       expect(
           () => mrSummaryFromGlab({
+                'iid': 1,
                 'approved_by': [
                   {'user': 'not-a-map'}
                 ],
               }),
           returnsNormally);
       final s = mrSummaryFromGlab({
+        'iid': 1,
         'approved_by': [
           {'user': 'not-a-map'}
         ],
-      });
+      })!;
       // No username resolvable from either the flat or nested shape ->
       // dropped, not a phantom empty-login reviewer.
       expect(s.reviewers, isEmpty);
@@ -471,18 +500,29 @@ void main() {
     test('mrSummaryFromGlab: string changes_count no longer throws and '
         'produces the right count (was: crashes the whole MR list parse)',
         () {
-      expect(() => mrSummaryFromGlab({'changes_count': '3'}), returnsNormally);
-      expect(mrSummaryFromGlab({'changes_count': '3'}).changedFiles, 3);
-      expect(mrSummaryFromGlab({'changes_count': '1000+'}).changedFiles, 1000);
+      expect(() => mrSummaryFromGlab({'iid': 1, 'changes_count': '3'}),
+          returnsNormally);
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'changes_count': '3'})!.changedFiles,
+          3);
+      expect(
+          mrSummaryFromGlab({'iid': 1, 'changes_count': '1000+'})!
+              .changedFiles,
+          1000);
     });
 
     test('falls back to changed_files, then to 0', () {
-      expect(mrSummaryFromGlab({'changed_files': 4}).changedFiles, 4);
+      expect(mrSummaryFromGlab({'iid': 1, 'changed_files': 4})!.changedFiles,
+          4);
       expect(
-          mrSummaryFromGlab({'changes_count': 'garbage', 'changed_files': 9})
+          mrSummaryFromGlab({
+            'iid': 1,
+            'changes_count': 'garbage',
+            'changed_files': 9
+          })!
               .changedFiles,
           9);
-      expect(mrSummaryFromGlab({}).changedFiles, 0);
+      expect(mrSummaryFromGlab({'iid': 1})!.changedFiles, 0);
     });
   });
 
@@ -503,7 +543,7 @@ void main() {
         'user_notes_count': 3,
         'updated_at': '2026-04-15T09:30:00Z',
       };
-      final s = issueSummaryFromGlab(json);
+      final s = issueSummaryFromGlab(json)!;
       expect(s.number, 17);
       expect(s.title, 'Crash on startup');
       expect(s.state, 'OPEN');
@@ -515,12 +555,20 @@ void main() {
     });
 
     test('issues have no merged state — anything but opened is CLOSED', () {
-      expect(issueSummaryFromGlab({'state': 'opened'}).state, 'OPEN');
-      expect(issueSummaryFromGlab({'state': 'closed'}).state, 'CLOSED');
+      // Non-identity field under test -> a valid `iid` is added so the row
+      // survives.
+      expect(
+          issueSummaryFromGlab({'iid': 1, 'state': 'opened'})!.state,
+          'OPEN');
+      expect(
+          issueSummaryFromGlab({'iid': 1, 'state': 'closed'})!.state,
+          'CLOSED');
       // No third bucket exists for issues (unlike MRs' merged).
-      expect(issueSummaryFromGlab({'state': 'anything-else'}).state, 'CLOSED');
+      expect(
+          issueSummaryFromGlab({'iid': 1, 'state': 'anything-else'})!.state,
+          'CLOSED');
       // Missing state defaults to 'opened' -> OPEN, matching the MR default.
-      expect(issueSummaryFromGlab({}).state, 'OPEN');
+      expect(issueSummaryFromGlab({'iid': 1})!.state, 'OPEN');
     });
   });
 
@@ -716,15 +764,16 @@ void main() {
       test('probe #$i survives mrSummaryFromGlab / issueSummaryFromGlab / '
           'commentFromGlab', () {
         final mr = mrSummaryFromGlab({
+          'iid': 1,
           'title': probe,
           'author': {'username': probe},
           'labels': [probe],
-        });
+        })!;
         expect(mr.title, probe);
         expect(mr.authorLogin, probe);
         expect(mr.labels, [probe]);
 
-        final issue = issueSummaryFromGlab({'title': probe});
+        final issue = issueSummaryFromGlab({'iid': 1, 'title': probe})!;
         expect(issue.title, probe);
 
         final comment = commentFromGlab({'body': probe});
@@ -791,7 +840,10 @@ void main() {
         describe: 'mrSummaryFromGlab well-typed fuzz',
         count: 200 * fuzzScale(),
         check: (json) {
-          final s = mrSummaryFromGlab(json);
+          // `iid` is always a real int (0..1000000) in genMr, so the row is
+          // never rejected here — the identity-rejection path has its own
+          // dedicated coverage elsewhere in this file.
+          final s = mrSummaryFromGlab(json)!;
           expect(s.title, (json['title'] as String).trim());
           expect(s.number, json['iid']);
           expect(s.changedFiles, isA<int>());
@@ -815,8 +867,10 @@ void main() {
 
   // ---------------------------------------------------------------------
   // Numeric-field family — parametrized robustness sweep covering every
-  // `as num?` field. All 8 fields share `glabIntOrNull`, so each case
-  // below is a passing contract.
+  // NON-identity `as num?` field (6 of the original 8 — `iid` moved to its
+  // own identity-specific groups below, since it now rejects the row
+  // instead of falling back to 0). All 6 share `glabIntOrNull`, so each
+  // case below is a passing contract.
   // ---------------------------------------------------------------------
   for (final spec in _numericFieldSpecs) {
     group(spec.groupLabel, () {
@@ -830,22 +884,74 @@ void main() {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Identity field (`iid`) — separated from the shared numeric-field sweep
+  // above because its contract genuinely differs: every other numeric
+  // field falls back to 0 when unreadable, but `iid` keys detail loads,
+  // checkout, and actions, so an unreadable one now rejects the whole row
+  // (mapper returns null) instead of fabricating an actionable MR/issue #0.
+  // ---------------------------------------------------------------------
+  group('mrSummaryFromGlab: iid -> number (identity — rejects the row, '
+      'does not fall back to 0)', () {
+    for (final c in _identityFieldCases()) {
+      test('${c.label} -> ${c.expected ?? "null (row rejected)"}, '
+          'does not throw', () {
+        final json = {'iid': c.value};
+        expect(() => mrSummaryFromGlab(json), returnsNormally);
+        final s = mrSummaryFromGlab(json);
+        if (c.expected == null) {
+          expect(s, isNull);
+        } else {
+          expect(s!.number, c.expected);
+        }
+      });
+    }
+  });
+
+  group('issueSummaryFromGlab: iid -> number (identity — rejects the row, '
+      'does not fall back to 0)', () {
+    for (final c in _identityFieldCases()) {
+      test('${c.label} -> ${c.expected ?? "null (row rejected)"}, '
+          'does not throw', () {
+        final json = {'iid': c.value};
+        expect(() => issueSummaryFromGlab(json), returnsNormally);
+        final s = issueSummaryFromGlab(json);
+        if (c.expected == null) {
+          expect(s, isNull);
+        } else {
+          expect(s!.number, c.expected);
+        }
+      });
+    }
+  });
+
   group('numeric-field family — end-to-end', () {
     test(
       'a wrong-typed numeric field never crashes the mapper it belongs to',
       () {
-        expect(mrSummaryFromGlab({'iid': 'not-a-number'}).number, 0);
+        // iid is the identity field: an unreadable one now REJECTS the row
+        // (returns null) rather than fabricating number 0 — see the
+        // dedicated "iid -> number (identity...)" groups above. Every
+        // OTHER numeric field is unchanged: it still degrades to 0 (a
+        // valid `iid` is added here so those rows survive to exercise the
+        // field under test, per this file's RULE 2).
+        expect(mrSummaryFromGlab({'iid': 'not-a-number'}), isNull);
         expect(
-            mrSummaryFromGlab({'user_notes_count': 'not-a-number'})
+            mrSummaryFromGlab({'iid': 1, 'user_notes_count': 'not-a-number'})!
                 .conversationCount,
             0);
         expect(
-            mrSummaryFromGlab({'additions': 'not-a-number'}).additions, 0);
+            mrSummaryFromGlab({'iid': 1, 'additions': 'not-a-number'})!
+                .additions,
+            0);
         expect(
-            mrSummaryFromGlab({'deletions': 'not-a-number'}).deletions, 0);
-        expect(issueSummaryFromGlab({'iid': 'not-a-number'}).number, 0);
+            mrSummaryFromGlab({'iid': 1, 'deletions': 'not-a-number'})!
+                .deletions,
+            0);
+        expect(issueSummaryFromGlab({'iid': 'not-a-number'}), isNull);
         expect(
-            issueSummaryFromGlab({'user_notes_count': 'not-a-number'})
+            issueSummaryFromGlab(
+                    {'iid': 1, 'user_notes_count': 'not-a-number'})!
                 .commentCount,
             0);
         expect(checkFromGlabJob({'duration': 'not-a-number'}).duration,
@@ -853,4 +959,45 @@ void main() {
       },
     );
   });
+
+  group(
+    'mrSummaryFromGlab / issueSummaryFromGlab — list-parse drops only '
+    'identity-less rows (mirrors glab.dart\'s listMergeRequests/'
+    'listGlabIssues drop-null pattern)',
+    () {
+      test('identity-less MR rows are dropped, not fabricated as MR #0', () {
+        final rows = <Map<String, dynamic>>[
+          {'iid': 1, 'title': 'first'},
+          {'title': 'missing iid'}, // no identity -> dropped
+          {'iid': null, 'title': 'explicit null iid'}, // dropped
+          {'iid': 'not-a-number', 'title': 'unreadable iid'}, // dropped
+          {'iid': 3, 'title': 'third'},
+        ];
+        final mrs = rows
+            .map(mrSummaryFromGlab)
+            .whereType<PullRequestSummary>()
+            .toList();
+        expect(mrs.length, 2);
+        expect(mrs.map((m) => m.number).toList(), [1, 3]);
+        expect(mrs.map((m) => m.title).toList(), ['first', 'third']);
+      });
+
+      test('identity-less issue rows are dropped, not fabricated as issue '
+          '#0', () {
+        final rows = <Map<String, dynamic>>[
+          {'iid': 5, 'title': 'first'},
+          {'title': 'missing iid'}, // no identity -> dropped
+          {'iid': null, 'title': 'explicit null iid'}, // dropped
+          {'iid': 9, 'title': 'second'},
+        ];
+        final issues = rows
+            .map(issueSummaryFromGlab)
+            .whereType<IssueSummary>()
+            .toList();
+        expect(issues.length, 2);
+        expect(issues.map((i) => i.number).toList(), [5, 9]);
+        expect(issues.map((i) => i.title).toList(), ['first', 'second']);
+      });
+    },
+  );
 }

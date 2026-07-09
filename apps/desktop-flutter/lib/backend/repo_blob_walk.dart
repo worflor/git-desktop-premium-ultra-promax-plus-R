@@ -297,6 +297,12 @@ Int32List buildLineOffsets(String text) {
       offsets.add(i + 1);
     }
   }
-  offsets.add(n);
+  // `n` is the end sentinel, so `lineCount == offsets.length - 1` (see
+  // repo_summary/types.dart). When the text ends ON a terminator the loop
+  // already pushed `n`, and pushing it again would invent a phantom
+  // zero-length final line — inflating every newline-terminated file's line
+  // count by one and breaking the strict monotonicity `lineForOffset`'s
+  // binary search relies on. An empty text likewise needs `[0]`, not `[0,0]`.
+  if (offsets.last != n) offsets.add(n);
   return Int32List.fromList(offsets);
 }

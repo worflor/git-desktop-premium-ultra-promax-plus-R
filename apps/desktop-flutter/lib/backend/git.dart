@@ -13,6 +13,113 @@ import 'process_utils.dart';
 import 'win_job_object.dart';
 import '../diagnostics/diagnostics_state.dart';
 
+// ---------------------------------------------------------------------------
+// Subprocess seam
+// ---------------------------------------------------------------------------
+
+/// The single point every `git` subprocess in this library passes through.
+///
+/// Two reasons it exists. First, counting: [GitSpawn.runCount] +
+/// [GitSpawn.startCount] let a test assert that a flow spawns exactly N
+/// subprocesses, which is a deterministic, zero-variance proxy for the work
+/// the flow does — far more stable than a wall-clock budget. Second,
+/// injection: [GitSpawn.runOverride] / [GitSpawn.startOverride] let a test
+/// script a failing, hanging, or partially-writing `git` without a real
+/// process, so the retry/decode/recovery paths below can be exercised
+/// directly instead of hoped about.
+///
+/// Both overrides are null in production and the counters are two integer
+/// increments, so the cost on the hot path is nil.
+@visibleForTesting
+class GitSpawn {
+  GitSpawn._();
+
+  /// Replaces the `Process.run` spawn. Receives the argv (without the
+  /// leading `git`). Must return raw-byte stdout/stderr, exactly as the
+  /// real call does (`stdoutEncoding: null`).
+  static Future<ProcessResult> Function(
+    List<String> args, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+  })? runOverride;
+
+  /// Replaces the `Process.start` spawn.
+  static Future<Process> Function(
+    List<String> args, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    ProcessStartMode mode,
+  })? startOverride;
+
+  static int runCount = 0;
+  static int startCount = 0;
+
+  /// Total subprocesses spawned since the last [reset].
+  static int get totalCount => runCount + startCount;
+
+  /// Clears counters AND overrides. Call in `tearDown` so one test's
+  /// injected fault can never leak into the next.
+  static void reset() {
+    runCount = 0;
+    startCount = 0;
+    runOverride = null;
+    startOverride = null;
+  }
+}
+
+/// Spawns `git [args]` and collects raw bytes. Every `Process.run` in this
+/// library goes through here — see [GitSpawn].
+Future<ProcessResult> _spawnRunRaw(
+  List<String> args, {
+  String? workingDirectory,
+  Map<String, String>? environment,
+}) {
+  GitSpawn.runCount++;
+  final override = GitSpawn.runOverride;
+  if (override != null) {
+    return override(args,
+        workingDirectory: workingDirectory, environment: environment);
+  }
+  return Process.run(
+    'git',
+    args,
+    workingDirectory: workingDirectory,
+    environment: environment,
+    stdoutEncoding: null,
+    stderrEncoding: null,
+  );
+}
+
+/// Spawns `git [args]` as a streamed process. Every `Process.start` in this
+/// library goes through here — see [GitSpawn].
+///
+/// [environment] defaults to [_kNonInteractiveGitEnv]. Two call sites
+/// (`git patch-id`, `git cat-file --batch`) historically passed no
+/// environment at all and so inherited the ambient one, silently opting out
+/// of `GIT_TERMINAL_PROMPT=0` / `LC_ALL=C`. Defaulting here closes that gap
+/// without those call sites having to remember.
+Future<Process> _spawnStart(
+  List<String> args, {
+  String? workingDirectory,
+  Map<String, String>? environment,
+  ProcessStartMode mode = ProcessStartMode.normal,
+}) {
+  GitSpawn.startCount++;
+  final env = environment ?? _kNonInteractiveGitEnv;
+  final override = GitSpawn.startOverride;
+  if (override != null) {
+    return override(args,
+        workingDirectory: workingDirectory, environment: env, mode: mode);
+  }
+  return Process.start(
+    'git',
+    args,
+    workingDirectory: workingDirectory,
+    environment: env,
+    mode: mode,
+  );
+}
+
 // Git emits two header forms:
 //   unquoted: `diff --git a/path b/path`
 //   quoted:   `diff --git "a/path with spaces" "b/path with spaces"` (C-string
@@ -813,8 +920,7 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
     ProcessResult result;
     var attempt = 0;
     while (true) {
-      final raw = await Process.run(
-        'git',
+      final raw = await _spawnRunRaw(
         args,
         workingDirectory: workingDir,
         // Merge order is deliberate: caller-supplied [env] (GIT_INDEX_FILE
@@ -826,8 +932,6 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
         // same-named keys of its own. Base-after-caller, not caller-wins.
         environment:
             env == null ? _kNonInteractiveGitEnv : {...env, ..._kNonInteractiveGitEnv},
-        stdoutEncoding: null,
-        stderrEncoding: null,
       );
       // Classify by subcommand. stderr is always lenient — it carries
       // human messages that may be localized to a non-UTF-8 locale on
@@ -910,7 +1014,7 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
 /// index.lock retry, and read-coalescing for pure-read subcommands. Callers
 /// elsewhere (PR checkout, the .git watcher, forge coord/URL resolution, IPC
 /// helpers, the engine's stats walks) MUST use this rather than a raw
-/// `Process.run('git', …)`, which would prompt on a credential wall and escape
+/// a raw `Process.run` spawn of `git`, which would prompt on a credential wall and escape
 /// the app-wide concurrency budget. Safe for mutations too: a non-read
 /// subcommand skips coalescing and runs fresh, still throttled and
 /// non-interactive.
@@ -2346,13 +2450,10 @@ Future<String> _buildSyntheticUntrackedDiff(
 Future<Uint8List?> gitBlobBytes(String repo, String objectHash) async {
   await _gitSubprocessSemaphore.acquire();
   try {
-    final raw = await Process.run(
-      'git',
+    final raw = await _spawnRunRaw(
       ['cat-file', 'blob', objectHash],
       workingDirectory: repo,
       environment: _kNonInteractiveGitEnv,
-      stdoutEncoding: null,
-      stderrEncoding: null,
     );
     if (raw.exitCode != 0) return null;
     return Uint8List.fromList(raw.stdout as List<int>);
@@ -2366,8 +2467,7 @@ Future<Uint8List?> gitBlobHeader(String repo, String objectHash,
   await _gitSubprocessSemaphore.acquire();
   Process? proc;
   try {
-    proc = await Process.start(
-      'git',
+    proc = await _spawnStart(
       ['cat-file', 'blob', objectHash],
       workingDirectory: repo,
       environment: _kNonInteractiveGitEnv,
@@ -2824,7 +2924,7 @@ Future<String> _patchIdStable(String repo, String patchText) async {
   if (patchText.trim().isEmpty) return '';
   await _gitSubprocessSemaphore.acquire();
   try {
-    final proc = await Process.start('git', ['patch-id', '--stable'],
+    final proc = await _spawnStart(['patch-id', '--stable'],
         workingDirectory: repo);
     // Wire the readers BEFORE writing stdin so a large patch can't deadlock
     // on a full stdout pipe buffer.
@@ -3312,7 +3412,7 @@ Future<Map<String, String>> _catFileBatch(
   if (wanted.isEmpty) return const {};
   await _gitSubprocessSemaphore.acquire();
   try {
-    final proc = await Process.start('git', ['cat-file', '--batch'],
+    final proc = await _spawnStart(['cat-file', '--batch'],
         workingDirectory: repo);
     final buf = BytesBuilder(copy: false);
     final outDone = proc.stdout.listen(buf.add).asFuture<void>();
@@ -4688,7 +4788,7 @@ Future<GitResult<void>> applyPatch(
     if (dryRun) args.add('--check');
     if (threeWay) args.add('--3way');
     args.addAll(['--whitespace=nowarn', '-']);
-    final process = await Process.start('git', args,
+    final process = await _spawnStart(args,
         workingDirectory: repo, environment: _kNonInteractiveGitEnv);
     // Raw UTF-8 bytes, never IOSink.write: process stdin defaults to the
     // SYSTEM encoding (cp1252 on Windows), which lossily mangles any
@@ -5444,11 +5544,9 @@ Future<bool> hasUnmergedPaths(String repo) async =>
 /// lossily map binary to U+FFFD). Null when the path doesn't exist there.
 Future<List<int>?> _blobBytes(String repo, String rev, String path) async {
   try {
-    final r = await Process.run('git', ['show', '$rev:$path'],
+    final r = await _spawnRunRaw(['show', '$rev:$path'],
         workingDirectory: repo,
-        environment: _kNonInteractiveGitEnv,
-        stdoutEncoding: null,
-        stderrEncoding: null);
+        environment: _kNonInteractiveGitEnv);
     if (r.exitCode != 0) return null;
     return r.stdout as List<int>;
   } catch (_) {
@@ -6036,8 +6134,7 @@ Future<GitResult<String>> cloneRepository(
     await _gitSubprocessSemaphore.acquire();
     Process? proc;
     try {
-      proc = await Process.start(
-        'git',
+      proc = await _spawnStart(
         ['clone', '--progress', url, absTarget],
         environment: _kNonInteractiveGitEnv,
         mode: ProcessStartMode.normal,
@@ -6166,8 +6263,7 @@ Future<GitResult<void>> startInteractiveRebase(
   // editor wrapper and its git child don't orphan on Windows.
   await _gitSubprocessSemaphore.acquire();
   try {
-    final proc = await Process.start(
-      'git',
+    final proc = await _spawnStart(
       ['rebase', '-i', ontoRef],
       workingDirectory: repo,
       environment: {

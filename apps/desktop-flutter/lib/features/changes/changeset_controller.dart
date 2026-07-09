@@ -86,6 +86,16 @@ class ChangesetController extends ChangeNotifier {
   int weightsVersion = 0;
   int couplingVersion = 0;
 
+  /// Count of `_clusterKey` misses — every time [_maybeDeriveClusters]
+  /// decides the cluster derivation must re-run (a background `clusterFiles`
+  /// pass, isolate-hopping above [_kClusterIsolateThreshold]). Wiring
+  /// audit (docs/architecture/wiring-redundancy-audit.md, Tier 1 #3) found
+  /// `effectiveMatrix` getting a fresh identity on every `_fuse()` — this
+  /// counter turns that into an assertable contract instead of a wall-clock
+  /// guess.
+  @visibleForTesting
+  int clusterCacheMisses = 0;
+
   _Inputs? _inputs;
   String? _sourcesKey;
   bool _fuseScheduled = false;
@@ -297,11 +307,21 @@ class ChangesetController extends ChangeNotifier {
     final inputs = _inputs;
     if (inputs == null) return;
     final paths = inputs.paths;
-    // Content key over everything clusterFiles consumes. couplingVersion tracks
-    // the effective matrix; weightsVersion the impact signals; the rest hash
-    // directly. Identity hashes suffice for the engine view + correlatedness
-    // context — both reassigned wholesale by their producers.
-    final key = '${Object.hashAll(paths)}|$couplingVersion|$weightsVersion'
+    // Content key over everything clusterFiles consumes. The coupling is keyed
+    // by its CONTENT, via `effectiveMatrix.contentHash` — NOT by the monotonic
+    // `couplingVersion` (which bumped on every `_fuse()`, so a content-
+    // identical matrix arriving with a fresh identity churned the key and
+    // forced a redundant full `clusterFiles` re-derivation: the wiring-audit
+    // Tier-1 stutter finding), and NOT by `headHash` (too COARSE — the same
+    // HEAD can yield different edges across refreshes: a deeper log walk,
+    // merged shadow-coupling, changed jaccard weights; a headHash key would
+    // then serve STALE clusters). `contentHash` fingerprints the actual CSR
+    // edge data, so the key moves iff the coupling content genuinely changed.
+    // weightsVersion tracks the impact signals; the rest hash directly.
+    // Identity hashes suffice for the engine view + correlatedness context —
+    // both reassigned wholesale by their producers.
+    final couplingContentKey = effectiveMatrix?.contentHash ?? 0;
+    final key = '${Object.hashAll(paths)}|$couplingContentKey|$weightsVersion'
         '|${_sortGuide.index}|$_inverted'
         '|${Object.hashAll(_includedPaths)}|${Object.hashAll(_conflictedPaths)}'
         '|${_couplingConstants.hashCode}'
@@ -309,6 +329,7 @@ class ChangesetController extends ChangeNotifier {
         '|${_engine?.manifoldRevision ?? -1}';
     if (key == _clusterKey) return;
     _clusterKey = key;
+    clusterCacheMisses++;
     // Defer so a derive triggered from a build (via setClusterInputs) never
     // calls notifyListeners() synchronously during that build.
     scheduleMicrotask(() {
