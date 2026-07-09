@@ -1,5 +1,9 @@
+@Tags(['manual'])
+library;
+
 // Throwaway R&D test.
-// Run: flutter test test/coupling_research_test.dart
+// Tagged `manual` (see dart_test.yaml), so it is skipped by default.
+// Run: flutter test --run-skipped -t manual test/coupling_research_test.dart
 //
 // Measures empirical co-change frequency per transport role pair
 // and compares to hand-authored _kCoupling* constants.

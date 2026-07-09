@@ -1,0 +1,3 @@
+tags:
+  manual:
+    skip: "manual profiling/research; run explicitly with: flutter test --run-skipped -t manual"

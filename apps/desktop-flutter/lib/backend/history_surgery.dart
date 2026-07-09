@@ -397,7 +397,7 @@ class HistorySurgeryEngine {
     // Get all commits in topo order (oldest first)
     final revListR = await Process.run(
       'git', ['rev-list', '--topo-order', '--reverse',
-             '--glob=refs/heads/*', '--glob=refs/tags/*'],
+             '--glob=refs/heads/*', '--glob=refs/tags/*', 'HEAD'],
       workingDirectory: repoPath,
     );
     if (revListR.exitCode != 0) {
@@ -492,7 +492,7 @@ class HistorySurgeryEngine {
         } else {
           final emptyR = await commitTree(
             repoPath,
-            treeHash: '4b825dc642cb6eb9a060e54bf899d15006578022',
+            treeHash: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
             parentHashes: const [],
             message: parsed.message,
             authorName: parsed.authorName,
@@ -660,12 +660,21 @@ class HistorySurgeryEngine {
     );
   }
 
-  /// Verify no trace of target paths remains in history.
+  /// Verify no trace of target paths remains in the LOCAL reachable
+  /// history: all branches, all tags, and HEAD (including a detached
+  /// HEAD). Deliberately EXCLUDES the surgery's own backup refs
+  /// (`refs/manifold-surgery-backup/*`) — those are meant to retain the
+  /// pre-surgery content until the caller drops them.
+  ///
+  /// NOTE: remote-tracking refs (`refs/remotes/*`) and stash entries are
+  /// out of scope for this check. Remotes require a server-side purge
+  /// plus a re-fetch/re-clone by every collaborator; stashes must be
+  /// dropped separately (`git stash clear` / `git stash drop`).
   Future<bool> verifyPurge(Set<String> targetPaths) async {
     final r = await Process.run(
       'git',
-      ['log', '--all', '--oneline', '--diff-filter=ACDMR', '--',
-       ...targetPaths],
+      ['log', 'HEAD', '--branches', '--tags', '--oneline',
+       '--diff-filter=ACDMR', '--', ...targetPaths],
       workingDirectory: repoPath,
     );
     return r.exitCode == 0 && r.stdout.toString().trim().isEmpty;

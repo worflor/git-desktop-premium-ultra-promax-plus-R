@@ -1,3 +1,6 @@
+@Tags(['manual'])
+library;
+
 // engine_real_profile_test.dart — REAL profiling of the core Manifold engine on
 // REAL repos on this disk. Not a unit test: it runs the production cold-build
 // pipeline (git log → computeFileCoupling → collectLogosGitStats → buildFromStats
@@ -5,7 +8,9 @@
 // separating I/O (git subprocess) from compute (buildFromStats internal phases,
 // via the engine's own probeTimingsUs) from interactive queries.
 //
-//   run:  flutter test test/perf/engine_real_profile_test.dart --no-pub
+//   run:  flutter test --run-skipped -t manual --no-pub \
+//           test/perf/engine_real_profile_test.dart
+//         (tagged `manual` in dart_test.yaml; skipped by default)
 //
 // Profiles the CORE 4-axis build (no engram K-vectors — the EN axis needs asset
 // bundles unavailable in `flutter test`; scoreLoop / calibration / spectral are

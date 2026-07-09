@@ -1,3 +1,6 @@
+@Tags(['manual'])
+library;
+
 // coupling_golden_test.dart — bit-identity golden for the git-log dedup. Dumps
 // an exact checksum of computeFileCoupling's output on real repos so a refactor
 // of the git-log walk / parser can be proven byte-identical (run before + after).

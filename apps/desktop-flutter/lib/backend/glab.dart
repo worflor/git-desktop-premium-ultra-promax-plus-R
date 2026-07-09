@@ -100,7 +100,7 @@ Future<GitResult<List<PullRequestSummary>>> listMergeRequests(
     final parsed = jsonDecode(r.stdout.toString()) as List;
     final mrs = parsed
         .whereType<Map<String, dynamic>>()
-        .map(_mrSummaryFromGlab)
+        .map(mrSummaryFromGlab)
         .toList();
     return GitResult.ok(mrs);
   } catch (e) {
@@ -147,7 +147,7 @@ Future<GitResult<PullRequestSummary>> getMergeRequest(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(_mrSummaryFromGlab(j));
+    return GitResult.ok(mrSummaryFromGlab(j));
   } catch (e) {
     return GitResult.err('Failed to parse glab mr view: $e');
   }
@@ -175,8 +175,8 @@ Future<GitResult<PullRequestDetail>> mergeRequestDetail(
         .whereType<Map<String, dynamic>>()
         .map((f) => PrFile(
               path: (f['new_path'] as String? ?? f['old_path'] as String? ?? '').trim(),
-              additions: _countLines(f['diff'] as String? ?? '', '+'),
-              deletions: _countLines(f['diff'] as String? ?? '', '-'),
+              additions: countGlabDiffLines(f['diff'] as String? ?? '', '+'),
+              deletions: countGlabDiffLines(f['diff'] as String? ?? '', '-'),
             ))
         .toList();
 
@@ -184,7 +184,7 @@ Future<GitResult<PullRequestDetail>> mergeRequestDetail(
     final comments = notes
         .whereType<Map<String, dynamic>>()
         .where((n) => n['system'] != true)
-        .map(_commentFromGlab)
+        .map(commentFromGlab)
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
@@ -282,7 +282,7 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
     final pipelineId = pipeline['id'];
     if (pipelineId == null) {
       // Fallback: use the pipeline object itself as a single check.
-      return GitResult.ok([_checkFromGlabJob(pipeline)]);
+      return GitResult.ok([checkFromGlabJob(pipeline)]);
     }
     // List jobs for this specific pipeline.
     final jobsRes = await _glab(repoPath, [
@@ -290,16 +290,16 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
     ]);
     if (jobsRes.exitCode != 0) {
       // Fallback to pipeline-level status.
-      return GitResult.ok([_checkFromGlabJob(pipeline)]);
+      return GitResult.ok([checkFromGlabJob(pipeline)]);
     }
     final jobsList = jsonDecode(jobsRes.stdout.toString());
     if (jobsList is List && jobsList.isNotEmpty) {
       return GitResult.ok(jobsList
           .whereType<Map<String, dynamic>>()
-          .map(_checkFromGlabJob)
+          .map(checkFromGlabJob)
           .toList());
     }
-    return GitResult.ok([_checkFromGlabJob(pipeline)]);
+    return GitResult.ok([checkFromGlabJob(pipeline)]);
   } catch (e) {
     return GitResult.err('Failed to parse pipeline: $e');
   }
@@ -332,7 +332,7 @@ Future<GitResult<List<IssueSummary>>> listGlabIssues(
     final parsed = jsonDecode(r.stdout.toString()) as List;
     final issues = parsed
         .whereType<Map<String, dynamic>>()
-        .map(_issueSummaryFromGlab)
+        .map(issueSummaryFromGlab)
         .toList();
     return GitResult.ok(issues);
   } catch (e) {
@@ -354,7 +354,7 @@ Future<GitResult<IssueSummary>> getGlabIssue(
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
-    return GitResult.ok(_issueSummaryFromGlab(j));
+    return GitResult.ok(issueSummaryFromGlab(j));
   } catch (e) {
     return GitResult.err('Failed to parse glab issue view: $e');
   }
@@ -378,13 +378,13 @@ Future<GitResult<IssueDetail>> glabIssueDetail(
     final comments = notes
         .whereType<Map<String, dynamic>>()
         .where((n) => n['system'] != true)
-        .map(_commentFromGlab)
+        .map(commentFromGlab)
         .toList();
     return GitResult.ok(IssueDetail(
       body: (j['description'] as String? ?? '').trim(),
       comments: comments,
-      assignees: _glabAssigneeLogins(j['assignees']),
-      labels: _glabLabels(j['labels']),
+      assignees: glabAssigneeLogins(j['assignees']),
+      labels: glabLabels(j['labels']),
     ));
   } catch (e) {
     return GitResult.err('Failed to parse glab issue view: $e');
@@ -474,21 +474,31 @@ Future<GitResult<void>> addGlabIssueLabel(
 // JSON → DTO mappers (normalize GitLab field names to shared shapes)
 // ---------------------------------------------------------------------------
 
-PullRequestSummary _mrSummaryFromGlab(Map<String, dynamic> j) {
-  final author = j['author'] as Map<String, dynamic>?;
-  final login = author?['username'] as String? ?? '';
+PullRequestSummary mrSummaryFromGlab(Map<String, dynamic> j) {
+  final authorRaw = j['author'];
+  final login =
+      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
 
   final reviewers = <String, PrReviewer>{};
-  final reviewerList = j['reviewers'] as List? ?? const [];
-  for (final r in reviewerList.whereType<Map<String, dynamic>>()) {
-    final u = (r['username'] as String? ?? '').trim();
-    if (u.isNotEmpty) reviewers[u] = PrReviewer(login: u, state: 'PENDING');
+  final reviewerList = j['reviewers'];
+  if (reviewerList is List) {
+    for (final r in reviewerList.whereType<Map<String, dynamic>>()) {
+      final u = (r['username'] as String? ?? '').trim();
+      if (u.isNotEmpty) reviewers[u] = PrReviewer(login: u, state: 'PENDING');
+    }
   }
-  final approvedBy = j['approved_by'] as List? ?? const [];
-  for (final a in approvedBy.whereType<Map<String, dynamic>>()) {
-    final u = (a['username'] as String? ??
-        (a['user'] as Map<String, dynamic>?)?['username'] as String? ?? '').trim();
-    if (u.isNotEmpty) reviewers[u] = PrReviewer(login: u, state: 'APPROVED');
+  final approvedBy = j['approved_by'];
+  if (approvedBy is List) {
+    for (final a in approvedBy.whereType<Map<String, dynamic>>()) {
+      final nestedUser = a['user'];
+      final u = (a['username'] as String? ??
+              (nestedUser is Map<String, dynamic>
+                  ? nestedUser['username'] as String?
+                  : null) ??
+              '')
+          .trim();
+      if (u.isNotEmpty) reviewers[u] = PrReviewer(login: u, state: 'APPROVED');
+    }
   }
 
   final glabState = (j['state'] as String? ?? 'opened').toLowerCase();
@@ -507,54 +517,97 @@ PullRequestSummary _mrSummaryFromGlab(Map<String, dynamic> j) {
   };
 
   return PullRequestSummary(
-    number: (j['iid'] as num? ?? 0).toInt(),
+    number: glabIntOrNull(j['iid']) ?? 0,
     title: (j['title'] as String? ?? '').trim(),
     headRef: (j['source_branch'] as String? ?? '').trim(),
     baseRef: (j['target_branch'] as String? ?? '').trim(),
     state: state,
     isDraft: j['draft'] as bool? ?? false,
     authorLogin: login,
-    conversationCount: (j['user_notes_count'] as num? ?? 0).toInt(),
-    updatedAt: _parseDate(j['updated_at']),
-    additions: (j['additions'] as num? ?? 0).toInt(),
-    deletions: (j['deletions'] as num? ?? 0).toInt(),
-    changedFiles: (j['changes_count'] as num? ?? j['changed_files'] as num? ?? 0).toInt(),
+    conversationCount: glabIntOrNull(j['user_notes_count']) ?? 0,
+    updatedAt: parseGlabDate(j['updated_at']),
+    additions: glabIntOrNull(j['additions']) ?? 0,
+    deletions: glabIntOrNull(j['deletions']) ?? 0,
+    changedFiles: glabChangesCount(j['changes_count']) ??
+        glabChangesCount(j['changed_files']) ??
+        0,
     mergeable: mergeable,
     reviewDecision: j['approved'] == true ? 'APPROVED' : '',
     reviewers: reviewers.values.toList(),
-    labels: _glabLabels(j['labels']),
-    assignees: _glabAssigneeLogins(j['assignees']),
+    labels: glabLabels(j['labels']),
+    assignees: glabAssigneeLogins(j['assignees']),
   );
 }
 
-IssueSummary _issueSummaryFromGlab(Map<String, dynamic> j) {
-  final author = j['author'] as Map<String, dynamic>?;
-  final login = author?['username'] as String? ?? '';
+/// GitLab's `changes_count` field on a merge request is documented as a
+/// STRING (e.g. `"3"`), not a number, and can be the sentinel `"1000+"`
+/// for very large diffs. A naive `as num?` cast throws a [TypeError] on
+/// either real shape instead of falling through a `??` default (the cast
+/// only yields null when the *source* is null), which used to fail every
+/// merge request row's parse the moment GitLab populated this field.
+/// Accepts num, digit strings, and the `"N+"` sentinel (parsed as N);
+/// anything else yields null so the caller can fall back further.
+///
+/// Kept as a named alias of [glabIntOrNull] — `changes_count` is where this
+/// bug class was first caught, so the name stays put as a landmark, but the
+/// parsing itself now lives in the shared helper every numeric field uses.
+int? glabChangesCount(Object? value) => glabIntOrNull(value);
+
+/// Shared safe-int parser for every numeric field glab.dart reads off
+/// GitLab's JSON. A plain `(j['x'] as num? ?? 0).toInt()` / bare `as num?`
+/// cast is only *null*-safe, not *type*-safe: it throws an uncaught
+/// [TypeError] the instant the field is present with any non-num,
+/// non-null runtime type, because a cast only falls through `??` when the
+/// source itself is null, never when it's merely the wrong type. GitLab is
+/// documented to send at least one numeric-looking field (`changes_count`)
+/// as a string; every numeric field in this file now degrades the same
+/// defensive way instead of trusting each one's runtime shape.
+///
+/// Accepts a [num] directly, a digit string (`"12"`), or the `"N+"`
+/// sentinel GitLab uses for very large diffs (`"1000+"` -> `1000`).
+/// Anything else (bool, Map, List, unparseable String, null) yields null
+/// so the caller can fall back via `??`.
+int? glabIntOrNull(Object? value) {
+  if (value is num) return value.toInt();
+  if (value is String) {
+    final direct = int.tryParse(value);
+    if (direct != null) return direct;
+    final m = RegExp(r'^(\d+)\+?$').firstMatch(value.trim());
+    if (m != null) return int.tryParse(m.group(1)!);
+  }
+  return null;
+}
+
+IssueSummary issueSummaryFromGlab(Map<String, dynamic> j) {
+  final authorRaw = j['author'];
+  final login =
+      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
   final glabState = (j['state'] as String? ?? 'opened').toLowerCase();
 
   return IssueSummary(
-    number: (j['iid'] as num? ?? 0).toInt(),
+    number: glabIntOrNull(j['iid']) ?? 0,
     title: (j['title'] as String? ?? '').trim(),
     state: glabState == 'opened' ? 'OPEN' : 'CLOSED',
     authorLogin: login,
-    labels: _glabLabels(j['labels']),
-    assignees: _glabAssigneeLogins(j['assignees']),
-    commentCount: (j['user_notes_count'] as num? ?? 0).toInt(),
-    updatedAt: _parseDate(j['updated_at']),
+    labels: glabLabels(j['labels']),
+    assignees: glabAssigneeLogins(j['assignees']),
+    commentCount: glabIntOrNull(j['user_notes_count']) ?? 0,
+    updatedAt: parseGlabDate(j['updated_at']),
   );
 }
 
-RemoteComment _commentFromGlab(Map<String, dynamic> j) {
-  final author = j['author'] as Map<String, dynamic>?;
-  final login = author?['username'] as String? ?? '';
+RemoteComment commentFromGlab(Map<String, dynamic> j) {
+  final authorRaw = j['author'];
+  final login =
+      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
   return RemoteComment(
     authorLogin: login,
     body: (j['body'] as String? ?? '').trim(),
-    createdAt: _parseDate(j['created_at']),
+    createdAt: parseGlabDate(j['created_at']),
   );
 }
 
-CheckSummary _checkFromGlabJob(Map<String, dynamic> j) {
+CheckSummary checkFromGlabJob(Map<String, dynamic> j) {
   final glabStatus = (j['status'] as String? ?? '').toLowerCase();
   final isCompleted = const {'success', 'failed', 'canceled', 'skipped'}
       .contains(glabStatus);
@@ -571,12 +624,12 @@ CheckSummary _checkFromGlabJob(Map<String, dynamic> j) {
     'pending' || 'created' || 'waiting_for_resource' => 'queued',
     _ => isCompleted ? 'completed' : 'queued',
   };
-  final dur = j['duration'] as num?;
+  final durSec = glabIntOrNull(j['duration']);
   return CheckSummary(
     name: (j['name'] as String? ?? j['ref'] as String? ?? '').trim(),
     status: status,
     conclusion: conclusion,
-    duration: dur != null ? Duration(seconds: dur.toInt()) : null,
+    duration: durSec != null ? Duration(seconds: durSec) : null,
   );
 }
 
@@ -585,13 +638,13 @@ CheckSummary _checkFromGlabJob(Map<String, dynamic> j) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-List<String> _glabLabels(dynamic value) {
+List<String> glabLabels(dynamic value) {
   if (value is! List) return const [];
   // GitLab returns labels as plain strings, not objects.
   return value.whereType<String>().where((s) => s.isNotEmpty).toList();
 }
 
-List<String> _glabAssigneeLogins(dynamic value) {
+List<String> glabAssigneeLogins(dynamic value) {
   if (value is! List) return const [];
   return value
       .whereType<Map<String, dynamic>>()
@@ -600,14 +653,14 @@ List<String> _glabAssigneeLogins(dynamic value) {
       .toList();
 }
 
-DateTime _parseDate(dynamic value) {
+DateTime parseGlabDate(dynamic value) {
   if (value is String) {
     return DateTime.tryParse(value) ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
   return DateTime.fromMillisecondsSinceEpoch(0);
 }
 
-int _countLines(String diff, String prefix) {
+int countGlabDiffLines(String diff, String prefix) {
   var count = 0;
   for (final line in diff.split('\n')) {
     if (line.startsWith(prefix) && !line.startsWith('$prefix$prefix$prefix')) {

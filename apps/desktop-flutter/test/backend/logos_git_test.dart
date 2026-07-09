@@ -665,13 +665,22 @@ void main() {
         generatedId,
         sourceId,
       );
+      // Must use the engine's own CALIBRATED coupling constants
+      // (`calibrateCouplingConstants`, derived from these very stats), not
+      // the `CouplingConstants.prior` static baseline `logosTransportLane`
+      // defaults to when called bare — the scoreLoop that materializes
+      // `transportGraph` always reads the calibrated constants, so any
+      // independent oracle for its values must too, or the comparison is
+      // apples-to-oranges.
       final forwardLane = logosTransportLane(
         'lib/foo.dart',
         'lib/generated/foo.g.dart',
+        engine.couplingConstants,
       );
       final backwardLane = logosTransportLane(
         'lib/generated/foo.g.dart',
         'lib/foo.dart',
+        engine.couplingConstants,
       );
 
       expect(graphBackward, closeTo(graphForward, 1e-9));
