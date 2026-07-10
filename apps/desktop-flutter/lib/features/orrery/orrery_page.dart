@@ -12,6 +12,8 @@ import '../../ui/tokens.dart';
 import 'orrery_findings.dart';
 import 'orrery_model.dart';
 import 'orrery_painter.dart';
+import 'orrery_rail.dart';
+import 'orrery_timeline.dart';
 
 /// The Orrery — scrub through the repo's structural history and watch its
 /// files drift through the Poincaré disk as the codebase reorganises. Reached
@@ -126,32 +128,6 @@ class _OrreryStatus extends StatelessWidget {
   }
 }
 
-/// Per-scalar [lo, hi] across the whole trajectory, so each rail bar shows
-/// where the current step sits within the repo's own range.
-class _Ranges {
-  final double gapLo, gapHi, rigLo, rigHi, vnLo, vnHi;
-  const _Ranges(
-      this.gapLo, this.gapHi, this.rigLo, this.rigHi, this.vnLo, this.vnHi);
-
-  factory _Ranges.of(OrreryModel model) {
-    double gl = double.infinity, gh = -double.infinity;
-    double rl = double.infinity, rh = -double.infinity;
-    double vl = double.infinity, vh = -double.infinity;
-    for (final s in model.steps) {
-      gl = math.min(gl, s.gap);
-      gh = math.max(gh, s.gap);
-      rl = math.min(rl, s.rigidity);
-      rh = math.max(rh, s.rigidity);
-      vl = math.min(vl, s.vonNeumann);
-      vh = math.max(vh, s.vonNeumann);
-    }
-    return _Ranges(gl, gh, rl, rh, vl, vh);
-  }
-
-  static double norm(double v, double lo, double hi) =>
-      (hi - lo).abs() < 1e-9 ? 0.5 : ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
-}
-
 class _HoverInfo {
   final Offset pos;
   final String label;
@@ -164,6 +140,12 @@ class _HoverInfo {
 /// Robertson et al., Tversky — so the two are separate surfaces).
 enum OrreryMode { scrub, compare }
 
+/// The observatory console over a ready [OrreryModel]: the Poincaré disk holds
+/// the centre, the [OrreryRail] instrument column reads out structure and
+/// findings on the right, and the [OrreryTimeline] spine along the bottom
+/// carries the scrub, the commit readout, and event markers. This class owns
+/// only the state orchestration (scrub/play, level of detail, mode, pin/hover)
+/// and the disk; the spine and column are their own widgets.
 class OrreryView extends StatefulWidget {
   final OrreryModel model;
   final String repoLabel;
@@ -209,14 +191,17 @@ class _OrreryViewState extends State<OrreryView>
   final ValueNotifier<_HoverInfo?> _hoverInfo =
       ValueNotifier<_HoverInfo?>(null);
   final ValueNotifier<int?> _pinned = ValueNotifier<int?>(null);
-  late final _Ranges _ranges;
+
+  /// Shared cross-highlight channel: a finding index that both the rail rows and
+  /// the timeline markers light up on, so hovering one echoes on the other.
+  final ValueNotifier<int?> _hoveredFinding = ValueNotifier<int?>(null);
   late final List<OrreryFinding> _findings;
   bool _playing = false;
 
   // Level of detail. The disk swaps between files and module super-nodes; the
-  // module model is derived once on demand. Steps (and thus the scrubber,
-  // meters, and findings) are level-independent, so only the disk + its
-  // hit-testing read [_activeModel].
+  // module model is derived once on demand. Steps (and thus the timeline and
+  // findings) are level-independent, so only the disk + its hit-testing read
+  // [_activeModel].
   OrreryLod _lod = OrreryLod.files;
   String? _expandedModule; // the drilled-in module (modules LOD only)
   OrreryModel? _modulesCache;
@@ -244,14 +229,16 @@ class _OrreryViewState extends State<OrreryView>
   OrreryMode _mode = OrreryMode.scrub;
   late final List<int> _milestones = _computeMilestones();
 
+  // Compare-mode frame selection (milestone steps, selection order, max two).
+  // Two selected frames open the A/B bench. A task posture, never persisted —
+  // cleared on any route out of compare.
+  final List<int> _compareSel = <int>[];
+
   double get _maxHead => widget.model.headPosition;
-  OrreryStep _stepAt(double head) =>
-      widget.model.steps[head.round().clamp(0, widget.model.stepCount - 1)];
 
   @override
   void initState() {
     super.initState();
-    _ranges = _Ranges.of(widget.model);
     _findings = computeFindings(widget.model);
     // Lead with the aggregated view on large repos — a handful of modules reads
     // where thousands of file-dots fog out. An explicit initialLod overrides.
@@ -284,6 +271,7 @@ class _OrreryViewState extends State<OrreryView>
     _hover.dispose();
     _hoverInfo.dispose();
     _pinned.dispose();
+    _hoveredFinding.dispose();
     super.dispose();
   }
 
@@ -333,6 +321,7 @@ class _OrreryViewState extends State<OrreryView>
       if (_lod != OrreryLod.files) _lod = OrreryLod.files;
       _expandedModule = null;
       _mode = OrreryMode.scrub; // findings drill into the live disk
+      _compareSel.clear();
     });
     _scrubTo(step.toDouble());
     _pinned.value = nodeId;
@@ -344,13 +333,40 @@ class _OrreryViewState extends State<OrreryView>
     setState(() {
       _mode = mode;
       _playing = false;
+      _compareSel.clear();
+    });
+    // The page owns the cross-highlight channel, so the page resets it when a
+    // surface leaves: switching modes unmounts the timeline, and a hover it
+    // set must not strand a lit rail row (a widget clearing shared state from
+    // its own dispose would notify mid-teardown instead).
+    _hoveredFinding.value = null;
+  }
+
+  /// Tapping a bench disk opens that moment in the live disk.
+  void _openMilestone(int step) {
+    setState(() {
+      _mode = OrreryMode.scrub;
+      _compareSel.clear();
+    });
+    _scrubTo(step.toDouble());
+  }
+
+  /// Toggle a compare frame in/out of the A/B pair. A third pick starts a
+  /// fresh pair — the intent is clearly "compare something else now".
+  void _toggleCompareFrame(int step) {
+    setState(() {
+      if (_compareSel.contains(step)) {
+        _compareSel.remove(step);
+      } else {
+        if (_compareSel.length == 2) _compareSel.clear();
+        _compareSel.add(step);
+      }
     });
   }
 
-  /// Tapping a compare-grid frame opens that moment in the live disk.
-  void _openMilestone(int step) {
-    setState(() => _mode = OrreryMode.scrub);
-    _scrubTo(step.toDouble());
+  void _clearCompareSel() {
+    if (_compareSel.isEmpty) return;
+    setState(_compareSel.clear);
   }
 
   /// The moments worth comparing side-by-side: genesis, every regime change and
@@ -533,20 +549,14 @@ class _OrreryViewState extends State<OrreryView>
       onKeyEvent: _handleKey,
       child: Column(
         children: [
-          ValueListenableBuilder<double>(
-            valueListenable: _head,
-            builder: (_, head, __) => _OrreryHeader(
-              repoLabel: widget.repoLabel,
-              step: _stepAt(head),
-              index: head.round(),
-              total: widget.model.stepCount,
-              mode: _mode,
-              onMode: _setMode,
-              lod: _lod,
-              onLod: _setLod,
-              showLodToggle: _canAggregate,
-              onClose: widget.onClose,
-            ),
+          _OrreryHeader(
+            repoLabel: widget.repoLabel,
+            mode: _mode,
+            onMode: _setMode,
+            lod: _lod,
+            onLod: _setLod,
+            showLodToggle: _canAggregate,
+            onClose: widget.onClose,
           ),
           Expanded(
             child: Row(
@@ -570,13 +580,13 @@ class _OrreryViewState extends State<OrreryView>
                   valueListenable: _head,
                   builder: (_, head, __) => ValueListenableBuilder<int?>(
                     valueListenable: _pinned,
-                    builder: (_, pinned, __) => _OrreryRail(
+                    builder: (_, pinned, __) => OrreryRail(
                       model: widget.model,
-                      step: _stepAt(head),
-                      index: head.round(),
-                      ranges: _ranges,
+                      head: head,
                       findings: _findings,
                       onSelect: _select,
+                      hoveredFinding: _hoveredFinding,
+                      pinnedNodeId: pinned,
                       selection: _selectionInfo(pinned, head),
                       onClearSelection: () => _pinned.value = null,
                     ),
@@ -585,30 +595,46 @@ class _OrreryViewState extends State<OrreryView>
               ],
             ),
           ),
-          // The compare grid is its own timeline, so the scrubber belongs to scrub.
+          // The compare grid carries its own milestone filmstrip, so the
+          // timeline spine belongs to scrub mode.
           if (_mode == OrreryMode.scrub)
-            _OrreryScrubber(
+            OrreryTimeline(
               model: widget.model,
               head: _head,
               playing: _playing,
               onTogglePlay: _togglePlay,
               onScrub: _scrubTo,
+              findings: _findings,
+              hoveredFinding: _hoveredFinding,
+              onSelectFinding: (i) {
+                final f = _findings[i];
+                _select(f.stepIndex, f.nodeId);
+              },
             ),
         ],
       ),
     );
   }
 
-  /// Keyboard: Esc closes, ←/→ step the scrub, Space toggles play. Mirrors the
-  /// reflexes a desktop user brings to a timeline.
+  /// Keyboard: Esc closes, ←/→ step the scrub, Home/End jump to genesis/head,
+  /// Space toggles play. Mirrors the reflexes a desktop user brings to a
+  /// timeline.
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.escape && widget.onClose != null) {
-      widget.onClose!();
-      return KeyEventResult.handled;
+    if (key == LogicalKeyboardKey.escape) {
+      // Esc unwinds one layer at a time: an open A/B bench (or half-picked
+      // pair) collapses back to the grid before Esc means "leave the Orrery".
+      if (_mode == OrreryMode.compare && _compareSel.isNotEmpty) {
+        _clearCompareSel();
+        return KeyEventResult.handled;
+      }
+      if (widget.onClose != null) {
+        widget.onClose!();
+        return KeyEventResult.handled;
+      }
     }
     if (_mode == OrreryMode.scrub) {
       if (key == LogicalKeyboardKey.arrowRight) {
@@ -621,6 +647,14 @@ class _OrreryViewState extends State<OrreryView>
             (_head.value.round() - 1).clamp(0, _maxHead.round()).toDouble());
         return KeyEventResult.handled;
       }
+      if (key == LogicalKeyboardKey.home) {
+        _scrubTo(0);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.end) {
+        _scrubTo(_maxHead);
+        return KeyEventResult.handled;
+      }
       if (key == LogicalKeyboardKey.space) {
         _togglePlay();
         return KeyEventResult.handled;
@@ -629,17 +663,22 @@ class _OrreryViewState extends State<OrreryView>
     return KeyEventResult.ignored;
   }
 
-  /// Compare mode: static small-multiples of the structure at each milestone,
-  /// for side-by-side analysis (what animation can't do well). Tapping a frame
-  /// opens that moment in the live disk.
+  /// Compare mode: static small-multiples of the structure at each milestone.
+  /// Picking two frames opens the A/B bench — the two moments large, with the
+  /// scalar deltas and the files that moved most between them.
   Widget _buildCompare(OrreryColors colors) {
     return _OrreryCompare(
       model: _activeModel,
+      fileModel: widget.model,
       milestones: _milestones,
       colors: colors,
       labelOf: _milestoneLabel,
       stepOf: (i) => widget.model.steps[i],
+      selected: _compareSel,
+      onToggle: _toggleCompareFrame,
+      onClearSelection: _clearCompareSel,
       onOpen: _openMilestone,
+      onPinMover: _select,
     );
   }
 
@@ -721,11 +760,11 @@ class _OrreryViewState extends State<OrreryView>
   }
 }
 
+/// The slim console header: identity (title + repo) and the two mode switches
+/// (explore↔analyze, modules↔files), nothing more. The commit readout now lives
+/// on the timeline spine, so the header is static per mode/lod change.
 class _OrreryHeader extends StatelessWidget {
   final String repoLabel;
-  final OrreryStep step;
-  final int index;
-  final int total;
   final OrreryMode mode;
   final ValueChanged<OrreryMode> onMode;
   final OrreryLod lod;
@@ -734,9 +773,6 @@ class _OrreryHeader extends StatelessWidget {
   final VoidCallback? onClose;
   const _OrreryHeader({
     required this.repoLabel,
-    required this.step,
-    required this.index,
-    required this.total,
     required this.mode,
     required this.onMode,
     required this.lod,
@@ -758,13 +794,10 @@ class _OrreryHeader extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, c) {
-          // Shed the least-essential metadata as the window narrows so the
-          // header never overflows; the toggles and position always stay, and
-          // a long repo name ellipsises rather than pushing anything off-edge.
-          final double w = c.maxWidth;
-          final bool showDate = w > 980;
-          final bool showSha = w > 880;
-          final bool showRepo = repoLabel.isNotEmpty && w > 740;
+          // With the readout gone the header rarely crowds; a long repo name
+          // ellipsises rather than pushing the toggles off-edge, and it drops
+          // out entirely only on the narrowest windows.
+          final bool showRepo = repoLabel.isNotEmpty && c.maxWidth > 560;
           return Row(
             children: [
               Text('Orrery',
@@ -804,28 +837,6 @@ class _OrreryHeader extends StatelessWidget {
                 ),
               ],
               const Spacer(),
-              Text('${index + 1}',
-                  style: TextStyle(
-                      color: t.textStrong,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
-              Text(' / $total',
-                  style: TextStyle(color: t.textFaint, fontSize: 12)),
-              if (showSha) ...[
-                const SizedBox(width: 12),
-                Text(step.shortSha,
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 12,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    )),
-              ],
-              if (showDate) ...[
-                const SizedBox(width: 8),
-                Text(_fmtDate(step.date),
-                    style: TextStyle(color: t.textFaint, fontSize: 12)),
-              ],
-              const SizedBox(width: 12),
               if (onClose != null) _CloseChip(onTap: onClose!),
             ],
           );
@@ -1025,476 +1036,105 @@ class _NodeTooltip extends StatelessWidget {
   }
 }
 
-class _OrreryRail extends StatelessWidget {
-  final OrreryModel model;
-  final OrreryStep step;
-  final int index;
-  final _Ranges ranges;
-  final List<OrreryFinding> findings;
-  final void Function(int step, int? nodeId) onSelect;
-  final ({String path, String story})? selection;
-  final VoidCallback onClearSelection;
-  const _OrreryRail({
-    required this.model,
-    required this.step,
-    required this.index,
-    required this.ranges,
-    required this.findings,
-    required this.onSelect,
-    required this.selection,
-    required this.onClearSelection,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Container(
-      width: 250,
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (selection != null) ...[
-            _SelectionCard(
-              path: selection!.path,
-              story: selection!.story,
-              onClear: onClearSelection,
-            ),
-            const SizedBox(height: 14),
-          ],
-          const _RailLabel('STRUCTURE'),
-          const SizedBox(height: 6),
-          Text(
-            step.archetype.isEmpty ? 'forming…' : step.archetype,
-            style: TextStyle(
-              color: t.accentBright,
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-          _Meter(
-            label: 'canonical',
-            value: step.canonicality,
-            color: t.accentBright,
-          ),
-          const SizedBox(height: 14),
-          const _RailLabel('FIELD'),
-          const SizedBox(height: 8),
-          _Meter(
-            label: 'connectivity',
-            value: _Ranges.norm(step.gap, ranges.gapLo, ranges.gapHi),
-            trailing: step.gap.toStringAsFixed(3),
-            color: t.textNormal,
-          ),
-          const SizedBox(height: 6),
-          _Meter(
-            label: 'rigidity',
-            value: _Ranges.norm(step.rigidity, ranges.rigLo, ranges.rigHi),
-            trailing: step.rigidity.toStringAsFixed(3),
-            color: t.textNormal,
-          ),
-          const SizedBox(height: 6),
-          _Meter(
-            label: 'entropy',
-            value: _Ranges.norm(step.vonNeumann, ranges.vnLo, ranges.vnHi),
-            trailing: step.vonNeumann.toStringAsFixed(2),
-            color: t.textNormal,
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              const _RailLabel('FINDINGS'),
-              if (findings.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text('${findings.length}',
-                    style: TextStyle(
-                      color: t.textFaint,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    )),
-              ],
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: findings.isEmpty
-                ? Text('No structural events detected in this history.',
-                    style: TextStyle(
-                        color: t.textFaint, fontSize: 11.5, height: 1.3))
-                : ListView.separated(
-                    padding: EdgeInsets.zero,
-                    itemCount: findings.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, k) {
-                      final f = findings[k];
-                      return _FindingCard(
-                        finding: f,
-                        active: f.stepIndex == index,
-                        onTap: () => onSelect(f.stepIndex, f.nodeId),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FindingCard extends StatelessWidget {
-  final OrreryFinding finding;
-  final bool active;
-  final VoidCallback onTap;
-  const _FindingCard({
-    required this.finding,
-    required this.active,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final Color accent = switch (finding.kind) {
-      OrreryFindingKind.hub => t.accentBright,
-      OrreryFindingKind.driftOut => t.stateModified,
-      OrreryFindingKind.driftIn => t.stateAdded,
-      OrreryFindingKind.tangle => t.stateModified,
-      OrreryFindingKind.clarify => t.stateAdded,
-      OrreryFindingKind.regime => t.accentBright,
-      OrreryFindingKind.thrash => t.stateModified,
-      OrreryFindingKind.reshuffle => t.accentBright,
-      OrreryFindingKind.forecast => t.stateModified,
-    };
-    final IconData icon = switch (finding.kind) {
-      OrreryFindingKind.hub => Icons.adjust_rounded,
-      OrreryFindingKind.driftOut => Icons.call_made_rounded,
-      OrreryFindingKind.driftIn => Icons.call_received_rounded,
-      OrreryFindingKind.tangle => Icons.warning_amber_rounded,
-      OrreryFindingKind.clarify => Icons.auto_awesome_rounded,
-      OrreryFindingKind.regime => Icons.bolt_rounded,
-      OrreryFindingKind.thrash => Icons.sync_problem_rounded,
-      OrreryFindingKind.reshuffle => Icons.shuffle_rounded,
-      OrreryFindingKind.forecast => Icons.trending_down_rounded,
-    };
-    final String kindLabel = switch (finding.kind) {
-      OrreryFindingKind.hub => 'HUB',
-      OrreryFindingKind.driftOut => 'DRIFTING OUT',
-      OrreryFindingKind.driftIn => 'DRIFTING IN',
-      OrreryFindingKind.tangle => 'TANGLING',
-      OrreryFindingKind.clarify => 'CLARIFYING',
-      OrreryFindingKind.regime => 'REORG',
-      OrreryFindingKind.thrash => 'THRASHING',
-      OrreryFindingKind.reshuffle => 'RESHUFFLE',
-      OrreryFindingKind.forecast => 'FORECAST',
-    };
-    // The anchor is a commit ref on the event findings ("13 · a1b2c3d") and a
-    // bare word on the position ones ("core"); show only the former, since the
-    // kind label already says what a position finding is.
-    final bool showAnchor = finding.anchor.contains('·');
-
-    return HoverableTap(
-      onTap: onTap,
-      borderRadius: AppRadii.baseAll,
-      builder: (context, hovered) => Container(
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          // Inset, lightweight: the recessed input surface under a hairline;
-          // the active card lifts to a faint accent tint + thin accent edge.
-          color: active ? t.itemActiveBg.withValues(alpha: 0.4) : t.inputBg,
-          borderRadius: AppRadii.baseAll,
-          border: Border.all(
-            color: active
-                ? accent.withValues(alpha: 0.5)
-                : t.inputBorder.withValues(alpha: hovered ? 1.0 : 0.7),
-            width: active ? AppBorderWidth.thin : AppBorderWidth.hairline,
-          ),
-        ),
-        child: Stack(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(13, 8, 10, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(icon, size: 12, color: accent),
-                      const SizedBox(width: 6),
-                      Text(
-                        kindLabel,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.8,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (showAnchor)
-                        Text(
-                          finding.anchor,
-                          style: TextStyle(
-                            color: t.textFaint,
-                            fontSize: 9.5,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  Text(
-                    finding.headline,
-                    style: TextStyle(
-                      color: active ? t.textStrong : t.textNormal,
-                      fontSize: 11.5,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // A kind-coloured spine down the left edge — colour-codes the
-            // finding and gives the card structure. Positioned so it spans the
-            // card's content height without forcing an intrinsic pass.
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              child: Container(
-                width: 2.5,
-                color: accent.withValues(
-                    alpha: active ? 0.95 : (hovered ? 0.7 : 0.5)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The inspector for a pinned file/module: its name and a plain-language
-/// account of where it sits and how it has drifted (P1 #9 — "why is it here?").
-class _SelectionCard extends StatelessWidget {
-  final String path;
-  final String story;
-  final VoidCallback onClear;
-  const _SelectionCard({
-    required this.path,
-    required this.story,
-    required this.onClear,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    // Split the path so the filename leads (bold) over a faint directory line,
-    // instead of one long token wrapping mid-word.
-    final segs = path.split('/');
-    final filename = segs.isEmpty ? path : segs.last;
-    final dirSegs =
-        segs.length > 1 ? segs.sublist(0, segs.length - 1) : const <String>[];
-    final dir = dirSegs.isEmpty
-        ? ''
-        : (dirSegs.length <= 2
-            ? dirSegs.join('/')
-            : '…/${dirSegs.sublist(dirSegs.length - 2).join('/')}');
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(11, 8, 8, 11),
-      decoration: BoxDecoration(
-        // Inset, lightweight: the app's recessed input surface under a hairline
-        // tinted with the accent — reads as a quiet panel, not a raised box.
-        color: t.inputBg,
-        borderRadius: AppRadii.baseAll,
-        border: Border.all(
-          color: t.accentBright.withValues(alpha: 0.3),
-          width: AppBorderWidth.hairline,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('SELECTED',
-                  style: TextStyle(
-                    color: t.accentBright,
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.4,
-                  )),
-              const Spacer(),
-              ChromeButton(
-                onTap: onClear,
-                borderRadius: AppRadii.xsAll,
-                padding: const EdgeInsets.all(3),
-                chromeBuilder: (
-                        {required bool hovered, required bool pressed}) =>
-                    ghostButtonChrome(t,
-                        hovered: hovered,
-                        pressed: pressed,
-                        enabled: true,
-                        baseBorderColor: Colors.transparent),
-                child: Icon(Icons.close_rounded,
-                    size: AppIconSize.xs, color: t.textMuted),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          if (dir.isNotEmpty)
-            Text(dir,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    TextStyle(color: t.textFaint, fontSize: 10, height: 1.2)),
-          Text(
-            filename,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
-            ),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            story,
-            style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RailLabel extends StatelessWidget {
-  final String text;
-  const _RailLabel(this.text);
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Text(
-      text,
-      style: TextStyle(
-        color: t.textFaint,
-        fontSize: 10,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 1.5,
-      ),
-    );
-  }
-}
-
-class _Meter extends StatelessWidget {
-  final String label;
-  final double value; // 0..1
-  final String? trailing;
-  final Color color;
-  const _Meter({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(label,
-                  style: TextStyle(color: t.textMuted, fontSize: 11.5)),
-            ),
-            if (trailing != null)
-              Text(trailing!,
-                  style: TextStyle(
-                    color: t.textFaint,
-                    fontSize: 11,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  )),
-          ],
-        ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(2),
-          child: SizedBox(
-            height: 4,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child:
-                      ColoredBox(color: t.chromeBorder.withValues(alpha: 0.45)),
-                ),
-                FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: value.clamp(0.0, 1.0),
-                  child: ColoredBox(color: color.withValues(alpha: 0.85)),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The compare surface: a grid of static disk snapshots at each milestone, for
-/// side-by-side structural comparison. Each frame opens that moment on tap.
+/// The compare surface. A grid of static disk snapshots at each milestone for
+/// triage; picking two frames (A, then B) opens the bench — both moments
+/// large, the scalar deltas between them, and the files that moved most, each
+/// drilling into the live disk pinned. Small multiples find the interesting
+/// pair; the bench answers what changed.
 class _OrreryCompare extends StatelessWidget {
-  final OrreryModel model;
+  final OrreryModel model; // active LOD — what the disks draw
+  final OrreryModel fileModel; // file-level — what the movers rank
   final List<int> milestones;
   final OrreryColors colors;
   final String Function(int) labelOf;
   final OrreryStep Function(int) stepOf;
+  final List<int> selected; // 0–2 milestone steps, selection order
+  final ValueChanged<int> onToggle;
+  final VoidCallback onClearSelection;
   final ValueChanged<int> onOpen;
+  final void Function(int step, int? nodeId) onPinMover;
   const _OrreryCompare({
     required this.model,
+    required this.fileModel,
     required this.milestones,
     required this.colors,
     required this.labelOf,
     required this.stepOf,
+    required this.selected,
+    required this.onToggle,
+    required this.onClearSelection,
     required this.onOpen,
+    required this.onPinMover,
   });
 
   @override
   Widget build(BuildContext context) {
     if (milestones.isEmpty) return const SizedBox.shrink();
+    final Widget surface;
+    if (selected.length == 2) {
+      // Chronological bench regardless of pick order — A is always earlier.
+      final int a = math.min(selected[0], selected[1]);
+      final int b = math.max(selected[0], selected[1]);
+      surface = KeyedSubtree(
+        key: const ValueKey('compare-bench'),
+        child: _CompareBench(
+          model: model,
+          fileModel: fileModel,
+          a: a,
+          b: b,
+          colors: colors,
+          labelOf: labelOf,
+          stepOf: stepOf,
+          onClose: onClearSelection,
+          onOpen: onOpen,
+          onPinMover: onPinMover,
+        ),
+      );
+    } else {
+      surface = KeyedSubtree(
+        key: const ValueKey('compare-grid'),
+        child: _buildGrid(context),
+      );
+    }
+    return AnimatedSwitcher(
+      duration: context.motion(AppMotion.fade),
+      child: surface,
+    );
+  }
+
+  Widget _buildGrid(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 12, 14),
       child: LayoutBuilder(
         builder: (context, c) {
+          // Never fewer than two columns — a single-file compare grid can't
+          // compare anything. Cards shrink before side-by-side gives way.
           final cols = math.min(
-              (c.maxWidth / 290).floor().clamp(1, 4), milestones.length);
+              (c.maxWidth / 240).floor().clamp(2, 4), milestones.length);
           return GridView.count(
             crossAxisCount: cols,
             mainAxisSpacing: 14,
             crossAxisSpacing: 14,
             childAspectRatio: 0.84,
             children: <Widget>[
-              for (final i in milestones)
+              for (int k = 0; k < milestones.length; k++)
                 _CompareCard(
+                  key: ValueKey('compare-card-${milestones[k]}'),
                   model: model,
-                  step: i,
-                  stepData: stepOf(i),
-                  label: labelOf(i),
+                  step: milestones[k],
+                  stepData: stepOf(milestones[k]),
+                  label: labelOf(milestones[k]),
                   colors: colors,
-                  onTap: () => onOpen(i),
+                  // Connectivity change since the previous milestone — the
+                  // one-number orientation for "did anything happen here".
+                  deltaGap: k == 0
+                      ? null
+                      : stepOf(milestones[k]).gap -
+                          stepOf(milestones[k - 1]).gap,
+                  badge: !selected.contains(milestones[k])
+                      ? null
+                      : (selected.indexOf(milestones[k]) == 0 ? 'A' : 'B'),
+                  onTap: () => onToggle(milestones[k]),
                 ),
             ],
           );
@@ -1510,19 +1150,25 @@ class _CompareCard extends StatelessWidget {
   final OrreryStep stepData;
   final String label;
   final OrreryColors colors;
+  final double? deltaGap;
+  final String? badge; // 'A' / 'B' when part of the bench pair
   final VoidCallback onTap;
   const _CompareCard({
+    super.key,
     required this.model,
     required this.step,
     required this.stepData,
     required this.label,
     required this.colors,
+    required this.deltaGap,
+    required this.badge,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final bool picked = badge != null;
     return HoverableTap(
       onTap: onTap,
       borderRadius: AppRadii.baseAll,
@@ -1535,18 +1181,48 @@ class _CompareCard extends StatelessWidget {
                 borderRadius: AppRadii.baseAll,
                 color: hovered ? t.surface1.withValues(alpha: 0.25) : null,
                 border: Border.all(
-                    color:
-                        t.chromeBorder.withValues(alpha: hovered ? 0.85 : 0.5)),
+                  color: picked
+                      ? t.accentBright.withValues(alpha: 0.8)
+                      : t.chromeBorder.withValues(alpha: hovered ? 0.85 : 0.5),
+                  width: picked ? AppBorderWidth.thin : AppBorderWidth.hairline,
+                ),
               ),
               clipBehavior: Clip.antiAlias,
-              child: CustomPaint(
-                painter: OrreryPainter(
-                  model: model,
-                  head: step.toDouble(),
-                  colors: colors,
-                  trailSteps: 2,
-                ),
-                size: Size.infinite,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: OrreryPainter(
+                        model: model,
+                        head: step.toDouble(),
+                        colors: colors,
+                        trailSteps: 2,
+                      ),
+                      size: Size.infinite,
+                    ),
+                  ),
+                  if (badge != null)
+                    Positioned(
+                      left: 7,
+                      top: 7,
+                      child: _BenchBadge(letter: badge!),
+                    ),
+                  if (deltaGap != null && deltaGap!.isFinite)
+                    Positioned(
+                      right: 8,
+                      top: 7,
+                      child: IgnorePointer(
+                        child: Text(
+                          _signedFixed(deltaGap!, 3),
+                          style: TextStyle(
+                            color: t.textFaint,
+                            fontSize: 9.5,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -1580,96 +1256,372 @@ class _CompareCard extends StatelessWidget {
   }
 }
 
-class _OrreryScrubber extends StatelessWidget {
+/// The A/B marker on a picked frame and on the bench captions.
+class _BenchBadge extends StatelessWidget {
+  final String letter;
+  const _BenchBadge({required this.letter});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      width: 16,
+      height: 16,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: t.accentBright.withValues(alpha: 0.9),
+        borderRadius: AppRadii.xsAll,
+      ),
+      child: Text(
+        letter,
+        style: TextStyle(
+          color: t.bg0,
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+/// Two moments, large, and what changed between them: the scalar deltas and
+/// the files that travelled furthest through the manifold. Tapping a disk
+/// opens that moment in scrub; tapping a mover opens scrub at B with the file
+/// pinned — the receipt behind the claim.
+class _CompareBench extends StatelessWidget {
   final OrreryModel model;
-  final ValueNotifier<double> head;
-  final bool playing;
-  final VoidCallback onTogglePlay;
-  final ValueChanged<double> onScrub;
-  const _OrreryScrubber({
+  final OrreryModel fileModel;
+  final int a;
+  final int b;
+  final OrreryColors colors;
+  final String Function(int) labelOf;
+  final OrreryStep Function(int) stepOf;
+  final VoidCallback onClose;
+  final ValueChanged<int> onOpen;
+  final void Function(int step, int? nodeId) onPinMover;
+  const _CompareBench({
     required this.model,
-    required this.head,
-    required this.playing,
-    required this.onTogglePlay,
-    required this.onScrub,
+    required this.fileModel,
+    required this.a,
+    required this.b,
+    required this.colors,
+    required this.labelOf,
+    required this.stepOf,
+    required this.onClose,
+    required this.onOpen,
+    required this.onPinMover,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final colors = _ScrubberColors.fromTokens(t);
-    final genesis = _fmtDate(model.steps.first.date);
-    final present = _fmtDate(model.steps.last.date);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
-        ),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _PlayButton(playing: playing, onTap: onTogglePlay),
-              const SizedBox(width: 14),
-              SizedBox(
-                width: 78,
-                child: Text('connectivity',
-                    style: TextStyle(color: t.textFaint, fontSize: 10.5)),
-              ),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final w = constraints.maxWidth;
-                    final maxHead = model.headPosition;
-                    void handle(double dx) {
-                      if (maxHead <= 0 || w <= 0) return;
-                      onScrub((dx / w) * maxHead);
-                    }
+    // Source files first; when none survived both moments (a genesis→now
+    // bench mostly compares against files born in between), docs/config
+    // movers still beat an empty panel.
+    var movers =
+        OrreryModel.topMovers(fileModel, a, b, include: isCodeFilePath);
+    if (movers.isEmpty) {
+      movers = OrreryModel.topMovers(fileModel, a, b);
+    }
+    // Population delta: how many files exist at each moment. Movement is
+    // only defined for files alive at both ends, so this row is what makes
+    // a sparse movers list read as "the codebase grew", not "nothing moved".
+    int aliveAt(int s) {
+      int c = 0;
+      for (final node in fileModel.nodes) {
+        if (s < node.positions.length && node.positions[s] != null) c++;
+      }
+      return c;
+    }
 
-                    return MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) => handle(d.localPosition.dx),
-                        onHorizontalDragStart: (d) =>
-                            handle(d.localPosition.dx),
-                        onHorizontalDragUpdate: (d) =>
-                            handle(d.localPosition.dx),
-                        child: SizedBox(
-                          height: 44,
-                          child: ValueListenableBuilder<double>(
-                            valueListenable: head,
-                            builder: (_, h, __) => CustomPaint(
-                              painter: _ScrubberPainter(
-                                model: model,
-                                head: h,
-                                colors: colors,
-                              ),
-                              size: Size.infinite,
-                            ),
-                          ),
+    final int filesDelta = aliveAt(b) - aliveAt(a);
+    final sa = stepOf(a);
+    final sb = stepOf(b);
+    final diskA = _BenchDisk(
+      model: model,
+      step: a,
+      stepData: sa,
+      label: labelOf(a),
+      badge: 'A',
+      colors: colors,
+      onTap: () => onOpen(a),
+    );
+    final diskB = _BenchDisk(
+      model: model,
+      step: b,
+      stepData: sb,
+      label: labelOf(b),
+      badge: 'B',
+      colors: colors,
+      onTap: () => onOpen(b),
+    );
+    final header = Row(
+      children: [
+        const _CompareLabel('A → B'),
+        const Spacer(),
+        ChromeButton(
+          onTap: onClose,
+          borderRadius: AppRadii.xsAll,
+          padding: const EdgeInsets.all(3),
+          chromeBuilder: ({required bool hovered, required bool pressed}) =>
+              ghostButtonChrome(t,
+                  hovered: hovered,
+                  pressed: pressed,
+                  enabled: true,
+                  baseBorderColor: Colors.transparent),
+          child: Icon(Icons.close_rounded,
+              size: AppIconSize.xs, color: t.textMuted),
+        ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 12, 14),
+      // Two shapes for the same content: a wide window earns the analysis
+      // panel beside the disks; a narrow one stacks it underneath so the
+      // disks — the point of the bench — never starve below legibility.
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final bool wide = c.maxWidth >= 760;
+          if (wide) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                const SizedBox(height: 8),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: diskA),
+                      const SizedBox(width: 14),
+                      SizedBox(
+                        width: 250,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ..._changeRows(t, sa, sb, filesDelta),
+                            const SizedBox(height: 12),
+                            _moversHeader(t, movers),
+                            const SizedBox(height: 6),
+                            Expanded(child: _moversList(t, movers)),
+                          ],
                         ),
                       ),
-                    );
-                  },
+                      const SizedBox(width: 14),
+                      Expanded(child: diskB),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              const SizedBox(height: 8),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: diskA),
+                    const SizedBox(width: 12),
+                    Expanded(child: diskB),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 150,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 180,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: _changeRows(t, sa, sb, filesDelta),
+                      ),
+                    ),
+                    const SizedBox(width: 22),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _moversHeader(t, movers),
+                          const SizedBox(height: 6),
+                          Expanded(child: _moversList(t, movers)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 3),
-          Padding(
-            padding: const EdgeInsets.only(left: 138),
-            child: Row(
-              children: [
-                Text(genesis,
-                    style: TextStyle(color: t.textFaint, fontSize: 10)),
-                const Spacer(),
-                Text(present,
-                    style: TextStyle(color: t.textFaint, fontSize: 10)),
-              ],
+          );
+        },
+      ),
+    );
+  }
+
+  List<Widget> _changeRows(
+      AppTokens t, OrreryStep sa, OrreryStep sb, int filesDelta) {
+    Widget deltaRow(String label, String value) => Row(
+          children: [
+            Text(label, style: TextStyle(color: t.textMuted, fontSize: 11)),
+            const Spacer(),
+            Text(
+              value,
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 11,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
+          ],
+        );
+    String fixed(double d, int digits) =>
+        d.isFinite ? _signedFixed(d, digits) : '—';
+    return [
+      const _CompareLabel('CHANGE'),
+      const SizedBox(height: 6),
+      deltaRow('files', filesDelta >= 0 ? '+$filesDelta' : '$filesDelta'),
+      const SizedBox(height: 4),
+      deltaRow('connectivity', fixed(sb.gap - sa.gap, 3)),
+      const SizedBox(height: 4),
+      deltaRow('rigidity', fixed(sb.rigidity - sa.rigidity, 3)),
+      const SizedBox(height: 4),
+      deltaRow('entropy', fixed(sb.vonNeumann - sa.vonNeumann, 2)),
+    ];
+  }
+
+  Widget _moversHeader(AppTokens t, List<OrreryMover> movers) {
+    return Row(
+      children: [
+        const _CompareLabel('MOVERS'),
+        if (movers.isNotEmpty) ...[
+          const SizedBox(width: 6),
+          Text('${movers.length}',
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              )),
+        ],
+      ],
+    );
+  }
+
+  Widget _moversList(AppTokens t, List<OrreryMover> movers) {
+    if (movers.isEmpty) {
+      return Text('No files moved between these frames.',
+          style: TextStyle(color: t.textFaint, fontSize: 11.5, height: 1.3));
+    }
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (int k = 0; k < movers.length; k++) ...[
+            if (k > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 1),
+                child: Container(
+                  height: 1,
+                  color: t.chromeBorder.withValues(alpha: 0.25),
+                ),
+              ),
+            _MoverRow(
+              key: ValueKey('mover-${movers[k].id}'),
+              mover: movers[k],
+              onTap: () => onPinMover(b, movers[k].id),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BenchDisk extends StatelessWidget {
+  final OrreryModel model;
+  final int step;
+  final OrreryStep stepData;
+  final String label;
+  final String badge;
+  final OrreryColors colors;
+  final VoidCallback onTap;
+  const _BenchDisk({
+    required this.model,
+    required this.step,
+    required this.stepData,
+    required this.label,
+    required this.badge,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return HoverableTap(
+      onTap: onTap,
+      borderRadius: AppRadii.baseAll,
+      builder: (context, hovered) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            // A square panel wherever the cell's proportions land — the disk
+            // is a circle, and letting it float in a tall slab reads as lost.
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: AppRadii.baseAll,
+                    border: Border.all(
+                        color: t.chromeBorder
+                            .withValues(alpha: hovered ? 0.85 : 0.5)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: CustomPaint(
+                    painter: OrreryPainter(
+                      model: model,
+                      head: step.toDouble(),
+                      colors: colors,
+                      trailSteps: 2,
+                    ),
+                    size: Size.infinite,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              _BenchBadge(letter: badge),
+              const SizedBox(width: 7),
+              Text('${step + 1}',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  )),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: hovered ? t.textStrong : t.textNormal,
+                        fontSize: 11.5)),
+              ),
+              const SizedBox(width: 6),
+              Text(_fmtDate(stepData.date),
+                  style: TextStyle(color: t.textFaint, fontSize: 10)),
+            ],
           ),
         ],
       ),
@@ -1677,173 +1629,95 @@ class _OrreryScrubber extends StatelessWidget {
   }
 }
 
-class _PlayButton extends StatelessWidget {
-  final bool playing;
+/// One mover in the bench ledger — flat, like the findings rail: the file that
+/// travelled, how far, and which way. Click = scrub at B with it pinned.
+class _MoverRow extends StatelessWidget {
+  final OrreryMover mover;
   final VoidCallback onTap;
-  const _PlayButton({required this.playing, required this.onTap});
+  const _MoverRow({super.key, required this.mover, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final path = mover.path ?? 'node #${mover.id}';
+    final segs = path.split('/');
+    final filename = segs.isEmpty ? path : segs.last;
+    final dir =
+        segs.length > 1 ? segs.sublist(0, segs.length - 1).join('/') : '';
+    final String way = mover.radialDelta > 0.08
+        ? 'outward'
+        : (mover.radialDelta < -0.08 ? 'inward' : 'shifted');
     return HoverableTap(
       onTap: onTap,
-      borderRadius: AppRadii.pillAll,
+      borderRadius: AppRadii.xsAll,
       builder: (context, hovered) => Container(
-        width: 34,
-        height: 34,
-        alignment: Alignment.center,
         decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: t.surface1.withValues(alpha: hovered ? 0.85 : 0.6),
-          border: Border.all(
-              color: t.chromeBorder.withValues(alpha: hovered ? 0.95 : 0.7)),
+          color: hovered ? t.itemHoverBg : null,
+          borderRadius: AppRadii.xsAll,
         ),
-        child: Icon(
-          playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          size: 19,
-          color: hovered ? t.textStrong : t.textNormal,
+        padding: const EdgeInsets.fromLTRB(8, 5, 6, 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(filename,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: hovered ? t.textStrong : t.textNormal,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      )),
+                ),
+                const SizedBox(width: 6),
+                Text(way, style: TextStyle(color: t.textMuted, fontSize: 10)),
+                const SizedBox(width: 5),
+                Text(mover.dist.toStringAsFixed(2),
+                    style: TextStyle(
+                      color: t.textFaint,
+                      fontSize: 10,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    )),
+              ],
+            ),
+            if (dir.isNotEmpty)
+              Text(dir,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: t.textFaint, fontSize: 9.5, height: 1.3)),
+          ],
         ),
       ),
     );
   }
 }
 
-class _ScrubberColors {
-  final Color track;
-  final Color spark;
-  final Color sparkFill;
-  final Color regime;
-  final Color archetype;
-  final Color playhead;
-  const _ScrubberColors({
-    required this.track,
-    required this.spark,
-    required this.sparkFill,
-    required this.regime,
-    required this.archetype,
-    required this.playhead,
-  });
-
-  factory _ScrubberColors.fromTokens(AppTokens t) => _ScrubberColors(
-        track: t.chromeBorder,
-        spark: t.textNormal,
-        sparkFill: t.accentBright,
-        regime: t.stateModified,
-        archetype: t.accentBright,
-        playhead: t.textStrong,
-      );
-}
-
-/// The timeline: a sparkline of the spectral gap across history (the repo's
-/// connectivity terrain), with regime changes and archetype shifts flagged,
-/// and the scrub playhead.
-class _ScrubberPainter extends CustomPainter {
-  final OrreryModel model;
-  final double head;
-  final _ScrubberColors colors;
-
-  _ScrubberPainter({
-    required this.model,
-    required this.head,
-    required this.colors,
-  });
-
+/// Section heading for the bench — same voice as the rail's labels.
+class _CompareLabel extends StatelessWidget {
+  final String text;
+  const _CompareLabel(this.text);
   @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty || model.stepCount < 2) return;
-    final int n = model.stepCount;
-    final double w = size.width;
-    final double h = size.height;
-
-    double xOf(int i) => n == 1 ? 0 : i / (n - 1) * w;
-
-    double lo = double.infinity, hi = -double.infinity;
-    for (final s in model.steps) {
-      lo = math.min(lo, s.gap);
-      hi = math.max(hi, s.gap);
-    }
-    final double span = (hi - lo).abs() < 1e-9 ? 1.0 : (hi - lo);
-    double yOf(double gap) => h * 0.86 - ((gap - lo) / span) * (h * 0.64);
-
-    // Sparkline + soft fill underneath.
-    final Path line = Path();
-    final Path fill = Path()..moveTo(0, h);
-    for (int i = 0; i < n; i++) {
-      final p = Offset(xOf(i), yOf(model.steps[i].gap));
-      if (i == 0) {
-        line.moveTo(p.dx, p.dy);
-      } else {
-        line.lineTo(p.dx, p.dy);
-      }
-      fill.lineTo(p.dx, p.dy);
-    }
-    fill
-      ..lineTo(w, h)
-      ..close();
-    canvas.drawPath(
-      fill,
-      Paint()..color = colors.sparkFill.withValues(alpha: 0.10),
-    );
-    canvas.drawPath(
-      line,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6
-        ..strokeJoin = StrokeJoin.round
-        ..color = colors.spark.withValues(alpha: 0.85),
-    );
-
-    // Regime changes (notches w/ a top dot) and archetype shifts (diamonds).
-    for (int i = 0; i < n; i++) {
-      final s = model.steps[i];
-      final x = xOf(i);
-      if (s.regimeChange) {
-        canvas.drawLine(
-          Offset(x, h * 0.12),
-          Offset(x, h * 0.9),
-          Paint()
-            ..color = colors.regime.withValues(alpha: 0.6)
-            ..strokeWidth = 1.4,
-        );
-        canvas.drawCircle(Offset(x, h * 0.12), 2.2,
-            Paint()..color = colors.regime.withValues(alpha: 0.9));
-      }
-      if (s.archetypeShift) {
-        _diamond(canvas, Offset(x, yOf(s.gap)), 3.2,
-            Paint()..color = colors.archetype.withValues(alpha: 0.95));
-      }
-    }
-
-    // Playhead.
-    final double px = (head / model.headPosition).clamp(0.0, 1.0) * w;
-    canvas.drawLine(
-      Offset(px, 0),
-      Offset(px, h),
-      Paint()
-        ..color = colors.playhead.withValues(alpha: 0.9)
-        ..strokeWidth = 1.4,
-    );
-    canvas.drawCircle(
-      Offset(px, yOf(model.steps[head.round().clamp(0, n - 1)].gap)),
-      3.6,
-      Paint()..color = colors.playhead,
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Text(
+      text,
+      style: TextStyle(
+        color: t.textFaint,
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.5,
+      ),
     );
   }
-
-  void _diamond(Canvas canvas, Offset c, double r, Paint paint) {
-    final path = Path()
-      ..moveTo(c.dx, c.dy - r)
-      ..lineTo(c.dx + r, c.dy)
-      ..lineTo(c.dx, c.dy + r)
-      ..lineTo(c.dx - r, c.dy)
-      ..close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(_ScrubberPainter old) =>
-      old.head != head || old.model != model;
 }
+
+/// Signed fixed-point ("+0.012" / "−0.034") so deltas read as changes, not
+/// values. Zero keeps the plus — direction is what the column is about.
+String _signedFixed(double v, int digits) =>
+    v >= 0 ? '+${v.toStringAsFixed(digits)}' : v.toStringAsFixed(digits);
 
 /// Last two path segments — enough to identify a file/module without the full
 /// prefix. '(root)' and other bare labels pass through unchanged.

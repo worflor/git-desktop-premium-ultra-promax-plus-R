@@ -100,6 +100,10 @@ class OrreryNode {
 /// collapsed into directory super-nodes (the answer to the hairball at scale).
 enum OrreryLod { files, modules }
 
+/// One entry of [OrreryModel.topMovers]: a node, how far it travelled between
+/// the two compared moments, and which way ([radialDelta] > 0 = outward).
+typedef OrreryMover = ({int id, String? path, double dist, double radialDelta});
+
 class OrreryModel {
   final List<OrreryStep> steps;
   final List<OrreryNode> nodes;
@@ -143,6 +147,48 @@ class OrreryModel {
     final Offset? b = node.positions[i + 1];
     if (a == null || b == null) return 0;
     return (b - a).distance;
+  }
+
+  /// The nodes that travelled furthest between steps [a] and [b] — the
+  /// "what actually changed between these two moments" answer behind the
+  /// compare bench. Distance is disk displacement; [radialDelta] signs it
+  /// (positive = toward the rim, decoupling; negative = toward the core,
+  /// integrating). Nodes absent at either end are skipped — motion is only
+  /// defined for files alive at both moments — as is sub-noise drift.
+  /// [include] filters by path (e.g. source files only); pathless nodes pass.
+  static List<OrreryMover> topMovers(
+    OrreryModel model,
+    int a,
+    int b, {
+    int count = 6,
+    bool Function(String path)? include,
+  }) {
+    final n = model.stepCount;
+    if (n == 0) return const <OrreryMover>[];
+    final int lo = a.clamp(0, n - 1);
+    final int hi = b.clamp(0, n - 1);
+    if (lo == hi) return const <OrreryMover>[];
+    const double noiseFloor = 0.05;
+
+    final movers = <OrreryMover>[];
+    for (final node in model.nodes) {
+      if (lo >= node.positions.length || hi >= node.positions.length) continue;
+      final pa = node.positions[lo];
+      final pb = node.positions[hi];
+      if (pa == null || pb == null) continue;
+      final path = node.path;
+      if (path != null && include != null && !include(path)) continue;
+      final double dist = (pb - pa).distance;
+      if (dist < noiseFloor) continue;
+      movers.add((
+        id: node.id,
+        path: path,
+        dist: dist,
+        radialDelta: pb.distance - pa.distance,
+      ));
+    }
+    movers.sort((x, y) => y.dist.compareTo(x.dist));
+    return movers.length <= count ? movers : movers.sublist(0, count);
   }
 
   /// Ideal module count when aggregating — small enough to read at a glance,

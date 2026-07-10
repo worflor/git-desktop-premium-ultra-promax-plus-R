@@ -42,6 +42,12 @@ class OrreryFinding {
     required this.anchor,
     this.nodeId,
   });
+
+  /// True when the finding names a specific commit moment (anchor carries a
+  /// "step · sha" ref). Position and trend findings anchor to the present as a
+  /// jump target, but they are properties of the repo, not events — surfaces
+  /// use this to decide whether standing on [stepIndex] means anything.
+  bool get isEventAnchored => anchor.contains('·');
 }
 
 // "Tangledness" of each structural archetype. tree / modular / crystalline are
@@ -89,6 +95,11 @@ bool _isCodeFile(String path) {
   if (dot < 0) return false; // LICENSE, Makefile, … — treat as non-code here
   return !_nonCodeExt.contains(path.substring(dot + 1).toLowerCase());
 }
+
+/// Public view of the source-file gate, so every surface that ranks files
+/// (findings here, the compare bench's movers) draws the same line between
+/// actionable code and docs/config noise.
+bool isCodeFilePath(String path) => _isCodeFile(path);
 
 /// Last two path segments, for a readable-but-located file name.
 String _shortPath(String path) {

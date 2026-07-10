@@ -215,6 +215,38 @@ terminates in one concrete next action**, never a bare metric.
   **stay silent** otherwise. Deferred: God-file degree count and hidden coupling
   — both need per-commit file-membership threaded into the view-model to be
   trustworthy (do them right or not at all).
+- **Console redesign (2026-07)** — the surface rebuilt as an observatory
+  console: sky (disk, untouched) / time (timeline spine) / instruments (rail).
+  The timeline (`orrery_timeline.dart`) is the event index — markers in a top
+  band for **commit-anchored findings only** (`timelineEventMarkers`; position
+  and trend findings anchor to the head as a jump target, not a moment, so a
+  tick would assert a false "this happened here" — same contract as the rail's
+  active state). Tap = jump+pin, hover cross-highlights the rail row (the page
+  owns the shared hover channel and resets it on mode transitions). The commit
+  readout (step · sha · date, moved out of the header), and a structural-motion
+  heat band (per-step mean node displacement, **median-baselined** so a storm
+  is motion above the typical step, not above zero). The rail
+  (`orrery_rail.dart`) is a flat instrument column — no card chrome: the three
+  FIELD scalars are full-history micro-sparklines with a sweeping playhead dot
+  (NaN steps render as honest gaps), findings are a flat ledger with
+  kind-coloured ticks, and the selection inspector docks at the bottom so
+  pinning never shifts the layout. Active-row semantics: a row lights only when
+  the disk is *showing* that finding — event findings on their commit, position
+  findings only with their file pinned (most anchor at head; opening at the
+  present must not light the whole ledger). Kind styling lives once in
+  `orrery_finding_style.dart`.
+- **Compare v2 (2026-07)** — compare is no longer tap-to-eject small
+  multiples. The grid (min two columns, always side-by-side) annotates each
+  frame with its connectivity delta vs the previous milestone; tapping frames
+  picks A and B (badged), which opens the **bench**: both moments as square
+  disks (tap one = open it in scrub), a CHANGE block (files population delta +
+  the three scalar deltas, em-dash on NaN), and **MOVERS** — the files that
+  travelled furthest between the two moments (`OrreryModel.topMovers`:
+  displacement-ranked, noise-floored, alive-at-both-ends only, source files
+  first with docs/config fallback), each row drilling into scrub at B with the
+  file pinned. Esc unwinds bench → grid → page. The `files` delta is what
+  keeps a genesis→now bench honest: most files were born in between, so an
+  empty movers list must read as "the codebase grew", not "nothing moved".
 
 ---
 
