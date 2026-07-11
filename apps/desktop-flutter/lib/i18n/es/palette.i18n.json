@@ -1,0 +1,201 @@
+{
+  "active": "activo",
+  "prefixes": {
+    "askHint": "preguntar: [pregunta]",
+    "nearHint": "cerca: [archivo]",
+    "whoHint": "quién: [archivo]",
+    "logHint": "log: [mensaje]",
+    "runHint": "ejecutar: [herramienta]",
+    "askLabel": "Preguntar a {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} revisores · {touches} toques",
+    "whoTouchesLabel": "{name} — {touches} toques",
+    "whoTouchesSubtitle": "{path} · sin revisores registrados"
+  },
+  "chips": {
+    "ai": "IA",
+    "near": "CERCA",
+    "who": "QUIÉN",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HOT",
+    "key": "CLAVE",
+    "web": "WEB",
+    "sys": "SIS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORZAR",
+    "pr": "PR",
+    "draft": "BORRADOR",
+    "undo": "DESHACER",
+    "thm": "TEMA",
+    "ver": "VER",
+    "desk": "ESCR",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "IDA",
+    "remote": "REMOTO",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% de impulso"
+  },
+  "topTouched": {
+    "subtitle": "{count} toques · {path}"
+  },
+  "coherence": {
+    "label": "Coherencia en stage: {percent}%",
+    "subtitle": "{count} archivos"
+  },
+  "keystone": {
+    "subtitle": "{path} · clave {score}"
+  },
+  "repoSub": {
+    "changes": "Cambios en {name}",
+    "history": "Historial en {name}",
+    "branches": "Ramas en {name}",
+    "terminal": "Terminal en {name}",
+    "generateCommit": "Generar commit · {name}",
+    "reviewChanges": "Revisar cambios en {name}",
+    "muse": "Musa en {name}"
+  },
+  "desks": {
+    "mainWorktree": "árbol de trabajo principal",
+    "detached": "desacoplado",
+    "dirty": "{count} sucios"
+  },
+  "actions": {
+    "openInBrowser": "Abrir en el navegador",
+    "terminal": "Terminal",
+    "revealInFiles": "Mostrar en el explorador",
+    "copyPath": "Copiar ruta",
+    "copyBranch": "Copiar rama"
+  },
+  "tools": {
+    "launch": "Lanzar {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} por detrás",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
+    "pushCommitsUpstream": "{commits} a {upstream}",
+    "forcePush": "Push forzado",
+    "forcePushNoUpstream": "No se puede hacer push forzado: no hay upstream configurado para {branch}.",
+    "commit": "Commit",
+    "stageAll": "Poner todo en stage",
+    "unstageAll": "Quitar todo del stage",
+    "discardAll": "Descartar todo",
+    "createBranch": "Crear rama",
+    "deleteBranch": "Eliminar rama",
+    "renameBranch": "Renombrar rama",
+    "stash": "Stash",
+    "stashPop": "Stash pop",
+    "stashApply": "Stash apply",
+    "stashDrop": "Stash drop",
+    "createTag": "Crear etiqueta",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revertir",
+    "stashConflictMessage": "Stash aplicado con conflictos. Resuélvelos en la página de Cambios."
+  },
+  "pr": {
+    "create": "Crear PR",
+    "merge": "Merge del PR",
+    "markReady": "Marcar PR como listo"
+  },
+  "ai": {
+    "generateCommit": "Generar commit",
+    "reviewChanges": "Revisar cambios",
+    "runMuse": "Invocar la Musa",
+    "debugRepo": "Depurar {name}",
+    "describeSymptom": "describe un síntoma",
+    "viewResult": "Ver {kind}",
+    "unseenResult": "resultado sin ver",
+    "runningResult": "IA: {kind}…",
+    "running": "en curso",
+    "kindCommitMessage": "Mensaje de commit",
+    "kindCodeReview": "Revisión de código",
+    "kindMuseResult": "Resultado de la Musa",
+    "kindPresentation": "Presentación",
+    "kindDebugResult": "Resultado de depuración"
+  },
+  "undo": {
+    "cancel": "Cancelar: {label}"
+  },
+  "navigation": {
+    "changes": "Cambios",
+    "history": "Historial",
+    "branches": "Ramas",
+    "xray": "Radiografía",
+    "settings": "Ajustes",
+    "refresh": "Actualizar"
+  },
+  "settings": {
+    "reduceMotion": "Reducir movimiento",
+    "animateLogoUnfocused": "Animar el logo sin foco",
+    "instantBlameHover": "Blame instantáneo al pasar el cursor",
+    "autoSelectChanges": "Autoseleccionar cambios",
+    "fetchOnlineIssues": "Traer issues en línea",
+    "rememberWip": "Recordar trabajo en curso",
+    "hideAiFeatures": "Ocultar funciones de IA",
+    "crashReporting": "Reporte de fallos",
+    "aiReadOnly": "IA de solo lectura",
+    "stashCabinetExpanded": "Gabinete de stash expandido",
+    "fileSortInverted": "Orden de archivos invertido"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Estado del motor",
+    "engineStatusSubtitle": "Diagnóstico del motor espectral LogosGit",
+    "fileCoupling": "Acoplamiento de archivos",
+    "fileCouplingSubtitle": "Vecinos de co-cambio más cercanos para los archivos en stage",
+    "themeSpecimen": "Muestra del tema",
+    "themeSpecimenSubtitle": "Todos los colores, iconos, niveles de texto y geometría"
+  },
+  "dev": {
+    "testMergeEditor": "Probar el editor de merge",
+    "testHistorySurgery": "Probar la cirugía de historial",
+    "back": "atrás",
+    "cancel": "cancelar",
+    "buildingConflicts": "construyendo conflictos de prueba desde el historial…"
+  },
+  "historySurgery": {
+    "label": "Cirugía de historial",
+    "subtitle": "Reescribe el historial para eliminar archivos de forma permanente"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Recorre la historia estructural del repo a través del manifold"
+  },
+  "command": {
+    "complete": "{label} completado",
+    "failed": "{label} falló: {message}",
+    "copy": "Copiar"
+  },
+  "search": {
+    "hintDefault": "buscar en todo...",
+    "hintElevated": "elevado — todas las acciones",
+    "emptyTypeToSearch": "escribe para buscar",
+    "emptyNoResults": "sin resultados"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "acoplado"
+  },
+  "gitCache": {
+    "current": "actual",
+    "staged": "en stage",
+    "modified": "modificado"
+  }
+}

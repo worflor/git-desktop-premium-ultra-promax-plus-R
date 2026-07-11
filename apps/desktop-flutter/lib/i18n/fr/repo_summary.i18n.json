@@ -1,0 +1,67 @@
+{
+  "@@locale": "fr",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} ligne",
+      "other": "{n} lignes"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} fichier.",
+      "other": "{n} fichiers."
+    },
+    "lines": {
+      "one": "{n} ligne ({bytes}).",
+      "other": "{n} lignes ({bytes})."
+    },
+    "roles": "Rôles — {parts}.",
+    "showingNofM": "Affichage de {active} sur {total} fichiers, classés par centralité structurelle."
+  },
+  "heading": {
+    "atAGlance": "En un coup d'œil",
+    "core": "Cœur",
+    "gettingStarted": "Pour commencer",
+    "regions": "Régions",
+    "shape": "Forme"
+  },
+  "historyStarvedCaveat": "Classement limité : le graphe de couplage n'avait aucune arête (clone récent ou trop peu de commits). L'ordre des fichiers reflète la taille, pas la centralité structurelle.",
+  "pitch": {
+    "empty": "Un dépôt sans fichier texte lisible{detail}.",
+    "emptyBinary": "{n} binaire",
+    "emptyUnreadable": "{n} illisible",
+    "noRegions": {
+      "one": "Un dépôt de {n} fichier actif.",
+      "other": "Un dépôt de {n} fichiers actifs."
+    },
+    "withRegions": {
+      "one": "Un dépôt de {n} fichier actif — {regions}.",
+      "other": "Un dépôt de {n} fichiers actifs — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Tous sous `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 cœur",
+      "other": "{n} cœurs"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Un fichier",
+      "other": "{n} fichiers"
+    },
+    "connectsTo": "Se connecte à : {linked}.",
+    "filesLabel": "Fichiers :"
+  },
+  "shape": {
+    "bulk": "Base de code densément interconnectée : la plupart des fichiers participent à un grand voisinage de changements partagés.",
+    "crystalline": "Base de code en réseau : couplage uniforme et régulier entre fichiers, avec une structure locale prévisible.",
+    "goe": "Base de code richement interconnectée : les couplages s'étalent sur les fichiers sans épine dorsale dominante.",
+    "modular": "Base de code modulaire : plusieurs régions cohésives à couplage croisé limité. Travailler dans une région perturbe rarement une autre.",
+    "poisson": "Base de code faiblement couplée : les fichiers évoluent surtout seuls, avec des changements partagés occasionnels.",
+    "tree": "Base de code en arbre : une épine dorsale dominante avec des branches dépendantes. Le changement se propage généralement du cœur vers l'extérieur."
+  }
+}

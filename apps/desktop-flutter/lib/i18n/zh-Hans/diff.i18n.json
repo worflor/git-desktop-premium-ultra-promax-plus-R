@@ -1,0 +1,142 @@
+{
+  "@@locale": "zh-Hans",
+  "status": {
+    "loadingTitle": "正在加载差异",
+    "loadingMessage": "正在读取文件改动。",
+    "unavailableTitle": "差异不可用",
+    "noChangesTitle": "无改动",
+    "noChangesMessage": "此文件没有可显示的差异内容。"
+  },
+  "toolbar": {
+    "searchHint": "搜索差异…",
+    "lineCount": {
+      "other": "{n} 行"
+    },
+    "blameLoading": "blame…",
+    "blame": "blame",
+    "wearMapOn": "磨损 · 开",
+    "wearMapOnHint": "磨损图已开 — 点击隐藏",
+    "wearMapOffHint": "显示磨损图（活动热力图）",
+    "trailBadge": "· 轨迹"
+  },
+  "hunkDropdown": {
+    "tooltip": "跳到改动块。Git 称之为 hunk。",
+    "changeCount": {
+      "other": "{n} 处改动"
+    }
+  },
+  "stagingFailed": "部分暂存失败：{error}",
+  "trail": {
+    "loading": "正在加载轨迹…",
+    "noHistory": "未找到历史",
+    "nowWorkingCopy": "现在 · 工作副本",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "正在加载固定上下文",
+    "pageManifold": "Manifold",
+    "pageSignals": "信号",
+    "echoesTitle": "回响",
+    "technicalLedger": "技术账本",
+    "noSecondaryCues": "未检测到次级线索。",
+    "linkedPaths": "关联路径",
+    "moreCount": "+{n} 更多",
+    "localSeam": "局部接缝",
+    "sharedOwnership": "共有归属",
+    "historyWarmingUp": "历史预热中",
+    "echoesTotal": "共 {n}",
+    "noEchoes": "此差异中无回响。",
+    "openRelatedFile": "打开关联文件 {name}",
+    "inspectFile": "查看 {name}",
+    "jumpEcho": "跳到回响",
+    "copyLine": "复制行",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "近期有改动，附近有一位主导者。",
+      "activeSeam": "近期有改动，来自附近多人之手。",
+      "stableOwnerLane": "长期存在的轨道，由一位主导者掌控。",
+      "sharedLongLivedSeam": "随时间积累的共享接缝。",
+      "sharedLane": "共享轨道，无单一主导者。",
+      "resolving": "此行周围的历史仍在厘清中。"
+    },
+    "tone": {
+      "hot": "火热",
+      "novel": "新奇",
+      "contested": "争夺",
+      "spreading": "扩散",
+      "stable": "稳定"
+    },
+    "summary": {
+      "livesIn": "位于 {concept}",
+      "sitsInLocalSeam": "处于局部接缝",
+      "workedMostlyBy": "附近主要由 {owner} 经手",
+      "echoesInSpots": {
+        "other": "在另外 {n} 处有回响"
+      },
+      "inspectNext": "接下来查看 {path}{detail}",
+      "inspectDetail": "（{reason}）"
+    },
+    "tightness": {
+      "tight": "紧密贴合",
+      "close": "较近贴合",
+      "loose": "松散贴合"
+    },
+    "conceptWithTightness": "{concept}（{tightness}）",
+    "storyWhyThisMatters": "为何重要",
+    "storyConfidence": "置信度",
+    "storySecondarySignal": "次级信号",
+    "storyNeighbourhood": "邻域",
+    "neighbourhoodDetail": "在当前代码库场中，此行与 {name} 相邻。",
+    "propagationLane": "传播轨道",
+    "propagationLaneNamed": "传播轨道：{lane}",
+    "witness": {
+      "nearbySupport": "附近支持 · {label}",
+      "localizedMove": "局部改动 · {label}",
+      "surprisingMove": "意外改动 · {label}"
+    },
+    "integrity": {
+      "stableStructure": "稳定结构",
+      "conflictingSignals": "信号冲突",
+      "novelShape": "新奇形态"
+    },
+    "related": {
+      "testMirror": "测试镜像",
+      "semanticHistorySibling": "语义 + 历史同胞",
+      "recentCoChange": "近期共变",
+      "semanticSibling": "语义同胞",
+      "relatedStructure": "相关结构",
+      "tightlyBound": "紧密绑定",
+      "orbiting": "环绕",
+      "weaklyCoupled": "弱耦合",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "历史轨迹",
+      "testMirrorLane": "测试镜像轨道",
+      "structuralLane": "结构轨道",
+      "semanticNeighbourhood": "语义邻域"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} 隐藏",
+    "landing": "落点"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB（过大，无法预览）",
+    "unableToLoadBlob": "无法加载 blob",
+    "omittedKindMedia": "媒体",
+    "omittedKindBinary": "二进制",
+    "omittedStub": "{kind} · 已隐藏"
+  },
+  "media": {
+    "unableToDecodeImage": "无法解码图像",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  （{sign}{delta}）",
+    "stateAdded": "已添加",
+    "stateDeleted": "已删除",
+    "stateModified": "已修改",
+    "fallbackFormatName": "二进制"
+  }
+}

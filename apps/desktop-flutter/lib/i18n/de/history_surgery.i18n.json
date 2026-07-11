@@ -1,0 +1,83 @@
+{
+  "@@locale": "de",
+  "chrome": {
+    "title": "Historien-Chirurgie",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "TROCKENLAUF"
+  },
+  "select": {
+    "prompt": "Wähle Dateien, die aus der Historie entfernt werden sollen",
+    "selectedCount": "{n} ausgewählt",
+    "searchHint": "suchen...",
+    "readingTree": "lese baum...",
+    "continueDisabled": "wähle Dateien zum Fortfahren",
+    "continueEnabled": "weiter →",
+    "toPurgeCount": "{n} zu tilgen",
+    "analyzing": "analysiere...",
+    "riskLow": "geringes Risiko",
+    "riskModerate": "mittleres Risiko",
+    "riskHigh": "hohes Risiko",
+    "impactCommitsLabel": "Commits",
+    "impactBranchesLabel": "Branches",
+    "impactWorktreesLabel": "Worktrees",
+    "impactCouplingLabel": "Kopplung",
+    "impactCouplingIsland": "Insel",
+    "impactCouplingNeighbors": "{n} Nachbarn",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "So funktioniert das",
+    "backupTitle": "Backup",
+    "backupBody": "Jede Branch- und Tag-Ref wird in einen Backup-Namespace kopiert, bevor sich etwas ändert. Falls etwas schiefgeht, stellt ein Klick den Ursprungszustand wieder her.",
+    "rewriteTitle": "Neuschreiben",
+    "rewriteBody": "Jeder Commit wird von der Wurzel bis zur Spitze durchlaufen. Für jeden Commit, der die Zieldateien enthält, wird ein neuer Commit erstellt, in dessen Baum diese Dateien entfernt sind. Elternketten werden neu zugeordnet, um die Topologie zu erhalten. ",
+    "rewriteSummary": "{affected} von {total} Commits werden neu geschrieben.",
+    "updateRefsTitle": "Refs aktualisieren",
+    "updateRefsBody": "Branch- und Tag-Zeiger werden auf die neuen Commit-SHAs verschoben. Die alten Objekte existieren weiter, bis die Garbage Collection greift. ",
+    "worktreesNeedRecheckout": "Deine {n} Worktree(s) müssen neu ausgecheckt werden.",
+    "noWorktreesAffected": "Keine Worktrees betroffen.",
+    "forcePushTitle": "Force-Push",
+    "forcePushBody": "Nach der Prüfung der Tilgung wählst du, welche Branches force-gepusht werden. Nutzt --force-with-lease, sodass es sicher fehlschlägt, falls jemand anderes zwischenzeitlich gepusht hat.",
+    "plumbingNote": "Anders als filter-repo oder BFG läuft das komplett über Git-Plumbing-Befehle (cat-file, mktree, commit-tree, update-ref). Keine externen Abhängigkeiten. Das Umbenennungs-Tracking folgt einer Kette pro Datei — falls eine Datei kopiert und beide Kopien unabhängig umbenannt wurden, prüfe das Tilgungsergebnis nach der Ausführung.",
+    "back": "← Zurück",
+    "continueLabel": "Verstanden, weiter →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} Commits werden neu geschrieben",
+    "forcePushRequired": "Für Remote-Branches ist ein Force-Push erforderlich",
+    "worktreesRecheckout": "{n} Worktrees müssen neu ausgecheckt werden",
+    "stashesInvalid": "{n} Stashes könnten ungültig werden",
+    "heading": "Diese Operation schreibt die Git-Historie neu",
+    "subheading": "Nach dem Force-Push lässt sie sich nicht automatisch rückgängig machen.",
+    "typeHint": "tippe {word}",
+    "goBack": "Zurück",
+    "begin": "Chirurgie beginnen"
+  },
+  "execute": {
+    "preparing": "Bereite vor...",
+    "backingUpRefs": "Sichere Refs...",
+    "rewritingCommits": "Schreibe Commits neu...",
+    "updatingRefs": "Aktualisiere Refs..."
+  },
+  "verify": {
+    "complete": "Chirurgie abgeschlossen",
+    "failed": "Chirurgie fehlgeschlagen",
+    "commitsRewrittenLabel": "Commits neu geschrieben",
+    "refsUpdatedLabel": "Refs aktualisiert",
+    "oldHeadLabel": "Altes HEAD",
+    "newHeadLabel": "Neues HEAD",
+    "purgeVerifiedLabel": "Tilgung geprüft",
+    "purgeClean": "sauber",
+    "purgeTracesRemain": "SPUREN VERBLEIBEN",
+    "displacedWorktrees": "Verdrängte Worktrees",
+    "undoSurgery": "Chirurgie rückgängig machen",
+    "rolledBack": "Auf Backup-Refs zurückgesetzt.",
+    "done": "Fertig"
+  },
+  "forcePush": {
+    "pushing": "pushe...",
+    "forcePushAll": "Alle force-pushen",
+    "confirmPush": "Push bestätigen",
+    "cancel": "abbrechen"
+  }
+}

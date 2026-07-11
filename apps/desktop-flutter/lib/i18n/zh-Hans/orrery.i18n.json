@@ -1,0 +1,101 @@
+{
+  "@@locale": "zh-Hans",
+  "header": {
+    "title": "天象仪",
+    "modeScrub": "拖拽",
+    "modeCompare": "对比",
+    "lodModules": "模块",
+    "lodFiles": "文件"
+  },
+  "status": {
+    "loading": "正在沿历史追溯流形…",
+    "loadError": "无法读取此仓库的历史。",
+    "notEnoughHistory": "历史尚不足以绘制轨迹。",
+    "notEnoughHistoryDetail": "天象仪需要几个提交才能作图。"
+  },
+  "legend": {
+    "central": "中心",
+    "peripheral": "边缘"
+  },
+  "node": {
+    "module": "模块",
+    "moduleWithCount": "{path} · {n} 个文件",
+    "fileFallback": "文件 #{id}",
+    "nodeFallback": "节点 #{id}",
+    "rootModule": "（根）"
+  },
+  "milestone": {
+    "genesis": "起源",
+    "now": "现在",
+    "reorganized": "已重组",
+    "becameArchetype": "成为 {archetype}",
+    "snapshot": "快照"
+  },
+  "structure": {
+    "forming": "正在成形…",
+    "canonical": "典范",
+    "connectivity": "连通性",
+    "rigidity": "刚性",
+    "entropy": "熵"
+  },
+  "rail": {
+    "structureLabel": "结构",
+    "fieldLabel": "场",
+    "findingsLabel": "发现",
+    "selectedLabel": "已选",
+    "noFindings": "此历史中未检测到结构事件。"
+  },
+  "selection": {
+    "notPresent": "在历史的此时点尚不存在。",
+    "roleCentral": "耦合中心 — 此处的改动会波及整个系统。",
+    "rolePeripheral": "边缘 — 松散耦合，多为自身改动。",
+    "roleMid": "中层结构 — 中度耦合。",
+    "driftOutward": " 向外漂移 — 正在解耦。",
+    "driftInward": " 向内漂移 — 正在融合。",
+    "driftHolding": " 保持原位。"
+  },
+  "findingKind": {
+    "hub": "枢纽",
+    "driftOut": "向外漂移",
+    "driftIn": "向内漂移",
+    "tangle": "纠缠加剧",
+    "clarify": "趋于清晰",
+    "regime": "重组",
+    "thrash": "反复折腾",
+    "reshuffle": "重新洗牌",
+    "forecast": "预测"
+  },
+  "findings": {
+    "forecastSplit": "连通性一直在下降，已接近最低点 — 若持续下去，代码库将走向分裂为两个松散耦合的部分。现在就要决定这是否是本意。",
+    "forecastConsolidate": "连通性一直在攀向峰值 — 若持续下去，代码库将合并为一整块紧密耦合的团块。当心它硬化成单体。",
+    "thrash": "{name} 反复被来回重组 — 结构上折腾很多，净位移却很少。要么厘清它的耦合，要么别再碰它。",
+    "reshuffle": "此提交看似常规，却悄然改变了哪些文件处于中心 — 整体形态未变，底下的结构却重新洗牌了。请仔细审查。",
+    "hub": "{name} 位于结构核心 — 系统围绕它重组。把此处的改动当作高波及范围来对待。",
+    "driftOut": "{name} 已从核心漂向边缘 — 它正在与系统解耦。要么它正被退役，要么它在悄然腐坏。",
+    "driftIn": "{name} 已迁向核心 — 它正在成为承重结构。在更多东西依赖它之前，确保它经过充分测试。",
+    "regime": "代码库在此处急剧重组 — 其连通性发生跃变。请审查是什么分裂或合并了。",
+    "tangleTrend": "纵观历史，代码库趋向于更纠缠的结构 — 其连通性变得更密、更不模块化。",
+    "clarifyTrend": "纵观历史，代码库趋向于更清晰的结构 — 它正在分离为更清晰的模块。"
+  },
+  "anchor": {
+    "core": "核心",
+    "drift": "漂移",
+    "trend": "趋势",
+    "thrash": "折腾"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "改动",
+    "movers": "移动者",
+    "noMovers": "这两帧之间没有文件移动。",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "文件",
+    "deltaConnectivity": "连通性",
+    "deltaRigidity": "刚性",
+    "deltaEntropy": "熵",
+    "wayOutward": "向外",
+    "wayInward": "向内",
+    "wayShifted": "偏移"
+  }
+}

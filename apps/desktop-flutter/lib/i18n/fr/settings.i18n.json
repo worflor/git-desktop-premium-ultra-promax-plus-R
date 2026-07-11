@@ -1,0 +1,591 @@
+{
+  "@@locale": "fr",
+  "language": {
+    "title": "Langue",
+    "summary": "Langue de l'interface pour cette application. La sortie git, les journaux et les diagnostics restent en anglais pour que les rapports de bug restent trouvables.",
+    "label": "LANGUE D'AFFICHAGE",
+    "systemDefault": "Défaut du système",
+    "systemDefaultDetail": "Suit la langue de votre OS ({resolved})",
+    "disclosureSource": "Langue source, écrite par les développeurs.",
+    "disclosureAi": "Traduit automatiquement par {model}, pas encore relu par un humain. Corrections bienvenues.",
+    "disclosureAiReviewed": "Traduit automatiquement par {model}. {percent}% relu par un humain.",
+    "disclosureHuman": "Traduction humaine, maintenue par la communauté.",
+    "reviewedBy": "Relu par {names}."
+  },
+  "sectionLabels": {
+    "preferences": "Préférences",
+    "shortcuts": "Raccourcis",
+    "behaviour": "Comportement",
+    "aiProviders": "Fournisseurs IA",
+    "modelSlots": "Emplacements de modèles",
+    "tools": "Outils",
+    "diagnostics": "Diagnostics",
+    "offenders": "Fautifs",
+    "release": "Version"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Échec de l'enregistrement du profil de garde-fous.",
+    "saveRetentionPolicy": "Échec de l'enregistrement de la politique de rétention.",
+    "saveUpdateChannel": "Échec de l'enregistrement du canal de mise à jour.",
+    "saveModelSelection": "Échec de l'enregistrement de la sélection du modèle IA.",
+    "saveModelAlias": "Échec de l'enregistrement de l'alias du modèle.",
+    "saveCommitMessageModelSlot": "Échec de l'enregistrement de l'emplacement du modèle de message de commit.",
+    "saveReviewModelSlot": "Échec de l'enregistrement de l'emplacement du modèle de revue.",
+    "saveCommitMessageCustomPrompt": "Échec de l'enregistrement de l'invite personnalisée de message de commit.",
+    "saveReviewGuide": "Échec de l'enregistrement du guide de revue.",
+    "saveMuseNotes": "Échec de l'enregistrement des notes de la muse.",
+    "saveReviewDoubleCheck": "Échec de l'enregistrement du mode double-vérification de revue.",
+    "saveApiPiggybackCli": "Échec de l'enregistrement du CLI de relais API.",
+    "clearLocalData": "Impossible d'effacer les données locales : {error}"
+  },
+  "promptStatus": {
+    "editing": "Édition",
+    "saving": "Enregistrement",
+    "saveFailed": "Échec de l'enregistrement"
+  },
+  "clearData": {
+    "dialogTitle": "Effacer les données locales",
+    "clear": "Effacer",
+    "confirmDiagnostics": "Effacer les échantillons de diagnostic locaux et les mesures de performance ?",
+    "confirmAudit": "Effacer les enregistrements de métadonnées d'audit IA locaux ?",
+    "confirmAll": "Effacer tous les échantillons de diagnostic locaux et les enregistrements de métadonnées d'audit IA ?",
+    "confirmWipeAll": "Effacer toutes les données locales de l'application — y compris la liste des dépôts récents — et quitter ? Vos dépôts git réels sur le disque ne sont pas touchés.",
+    "confirmReset": "Réinitialiser les données locales de l'application et quitter ?\n\nLes paramètres, le thème, l'accueil, les préférences IA, la télémétrie et les caches d'engrammes sont effacés. Votre liste de dépôts récents est conservée."
+  },
+  "guardrailStageLabels": ["Souple", "Équilibré", "Strict", "Paranoïaque"],
+  "guardrailMacro": {
+    "loose": "souple",
+    "balanced": "équilibré",
+    "strict": "strict",
+    "paranoid": "paranoïaque"
+  },
+  "guardrails": {
+    "title": "Garde-fous",
+    "summary": "À quel point l'automatisation est attentive dans toute l'expérience."
+  },
+  "appearance": {
+    "title": "Apparence",
+    "summary": "Ambiance et atmosphère globales de l'interface."
+  },
+  "retention": {
+    "title": "Rétention des données locales",
+    "summaryDiagnostics": "Politique de rétention des diagnostics.",
+    "summaryWithAudit": "Politique de rétention des diagnostics et de l'audit IA.",
+    "unitDays": "jours",
+    "unitMb": "Mo",
+    "includesNote": "Inclut les diagnostics, les mesures de performance et les métadonnées."
+  },
+  "navigation": {
+    "title": "Navigation et dynamique",
+    "summaryShortcuts": "Raccourcis et comportement de l'interface.",
+    "summaryWithAi": "Raccourcis, comportement de l'interface et routage IA."
+  },
+  "behaviour": {
+    "title": "Dynamiques comportementales"
+  },
+  "retentionClear": {
+    "diag": "Diag",
+    "audit": "Audit",
+    "all": "Tout",
+    "clearsHint": "<-- efface"
+  },
+  "channels": {
+    "stable": "STABLE",
+    "beta": "BÊTA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "à jour",
+    "updateAvailable": "{version} disponible",
+    "notConfigured": "aucun serveur de mise à jour",
+    "notFound": "aucune version {channel}",
+    "unreachable": "injoignable",
+    "badManifest": "manifeste invalide"
+  },
+  "keybindingProfile": {
+    "label": "Profil de raccourcis",
+    "porcelain": "Porcelaine",
+    "numeric": "Numérique",
+    "porcelainDescription": "Raccourcis en accords (G puis C, H, B…).",
+    "numericDescription": "Raccourcis numériques à une touche (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "clé api",
+    "endpointHint": "point de terminaison",
+    "test": "Tester",
+    "hide": "Masquer",
+    "show": "Afficher"
+  },
+  "shortcuts": {
+    "navigate": "naviguer",
+    "staging": "indexation",
+    "branchesPrs": "branches et PR",
+    "modifiers": "modificateurs",
+    "changes": "Modifications",
+    "history": "Historique",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "switchAlways": "Basculer (toujours)",
+    "search": "Rechercher",
+    "dismiss": "Fermer",
+    "refresh": "Actualiser",
+    "shortcuts": "Raccourcis",
+    "nextChange": "Modif. suivante",
+    "prevChange": "Modif. précédente",
+    "toggleLine": "Basculer la ligne",
+    "toggleHunk": "Basculer la section",
+    "toggleFile": "Basculer le fichier",
+    "pinContext": "Épingler le contexte",
+    "commit": "Valider",
+    "acceptHint": "Accepter l'indice",
+    "undo": "Annuler",
+    "navigateRow": "Naviguer",
+    "expand": "Développer",
+    "checkout": "Extraire",
+    "approve": "Approuver",
+    "requestChanges": "Demander des modifications",
+    "selectRange": "Sélectionner une plage",
+    "extendedMenu": "Menu étendu"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "Mode IA en lecture seule",
+    "aiReadOnlyDescription": "Empêche l'IA d'écrire ou d'indexer des changements automatiquement.",
+    "logoMotionLabel": "Le logo s'anime en arrière-plan",
+    "logoMotionDescriptionEnabled": "Il est conçu pour être efficace, ne froissez pas ses sentiments",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Mémoriser le travail en cours",
+    "rememberWipDescription": "Conserve vos brouillons de commit et votre sélection de fichiers entre les sessions.",
+    "stashCabinetLabel": "L'armoire de remisage démarre déployée",
+    "stashCabinetDescription": "Affiche le tiroir de l'armoire ouvert par défaut quand un dépôt a des étagères.",
+    "instantBlameLabel": "Survol blame instantané",
+    "instantBlameDescription": "Passe le délai de 180 ms avant l'affichage du blame sur une ligne de diff.",
+    "autoSelectLabel": "Sélection auto des nouvelles modifications",
+    "autoSelectDescription": "Les fichiers nouvellement suivis ou modifiés sont ajoutés automatiquement à la sélection de commit.",
+    "fetchIssuesLabel": "Récupérer les tickets en ligne au chargement des branches",
+    "fetchIssuesDescription": "Récupère en arrière-plan les détails des PR et tickets depuis votre fournisseur git à l'ouverture de la page des branches.",
+    "hateAiLabel": "Je déteste l'IA",
+    "hateAiDescription": "Bannit toutes les fonctions basées sur les LLM. Logos continue de tourner car ce ne sont que des maths spectrales."
+  },
+  "diffDiffability": {
+    "title": "diff diff-abilité"
+  },
+  "modelSlots": {
+    "loadingProviders": "Chargement des fournisseurs...",
+    "refreshingProviders": "Actualisation des diagnostics des fournisseurs...",
+    "routeDescription": "Renommez et routez les configurations vers n'importe quel modèle de fournisseur détecté.",
+    "loadingCategories": "Chargement des catégories de modèles...",
+    "noOptions": "Aucune option de modèle disponible pour l'instant. Détectez d'abord un CLI IA local compatible.",
+    "slotsAppearWhenAvailable": "Les paramètres d'emplacement de modèle apparaîtront ici une fois les modèles de fournisseur disponibles.",
+    "effortDefault": "défaut",
+    "noModelsForSlot": "Aucun modèle détecté pour cet emplacement.",
+    "viaProvider": "via {provider}",
+    "customModelId": "id de modèle personnalisé"
+  },
+  "modelPicker": {
+    "noMatch": "aucun modèle ne correspond à « {query} »",
+    "noModels": "aucun modèle disponible",
+    "filterHint": "filtrer les modèles...",
+    "warming": "préchauffe…",
+    "detailsUnavailable": "détails indisponibles",
+    "free": "gratuit"
+  },
+  "aiFeatures": {
+    "commitDescription": "Rédige des messages de commit à partir des changements indexés selon vos préférences de structure, de voix et de couverture.",
+    "reviewDescription": "Relit le périmètre du commit actuel avant que vous ne validiez.",
+    "museDescription": "Oracle en trois phases qui remue-méninge puis synthétise une direction à suivre pour le diff."
+  },
+  "commitEditor": {
+    "styleGuide": "Guide de style",
+    "styleGuideHint": "Facultatif. Voix / ton / interdits. Le format ci-dessus gère le squelette."
+  },
+  "review": {
+    "additionalNotes": "Notes supplémentaires pour la revue",
+    "doubleCheckLabel": "Double-vérification de la revue",
+    "doubleCheckDescription": "Effectue une deuxième passe de vérification avant d'afficher le rapport final."
+  },
+  "museHint": {
+    "loose": "quelque chose vers quoi orienter en douceur ? l'humeur est clémente aujourd'hui.",
+    "balanced": "sur quoi s'attarder, quoi sauter. honnête, pas dur.",
+    "strict": "les standards. les interdits. ce que la muse ne laissera pas passer.",
+    "paranoid": "réglez la lentille. sur quelles fréquences le manifold doit-il vibrer ?"
+  },
+  "museEditor": {
+    "additionalNotes": "Notes supplémentaires pour la muse"
+  },
+  "museStage": {
+    "brainstorm": "REMUE-MÉNINGES",
+    "synthesize": "SYNTHÈSE",
+    "slot": "emplacement",
+    "ideaCountLoose": "~12 idées",
+    "ideaCountBalanced": "~16 idées",
+    "ideaCountStrict": "~20 idées",
+    "ideaCountParanoid": "~24 idées",
+    "guardrailHint": "{ideas}  ·  garde-fou : {macro}"
+  },
+  "lensAxis": {
+    "folder": "DOSSIER",
+    "history": "HISTORIQUE",
+    "far": "LOIN",
+    "near": "PROCHE"
+  },
+  "logosLens": {
+    "moduleMap": "carte des modules",
+    "repoCenters": "centres du dépôt",
+    "neighbors": "voisins",
+    "toTouch": "quoi toucher ensuite",
+    "relevanceEngine": "moteur de pertinence",
+    "description": "lit comment les fichiers bougent ensemble à travers la structure, l'histoire et le rythme, pour que Manifold sache ce qui compte, pas seulement ce qui a changé.",
+    "withinReach": "à portée",
+    "gate": "seuil",
+    "nearest": "le plus proche",
+    "warming": "préchauffe",
+    "emptyOpenRepo": "ouvrez un dépôt pour\nvoir la lentille en direct",
+    "emptyNoFiles": "aucun fichier à\nportée — glissez\nvers HISTORIQUE"
+  },
+  "sortGuide": {
+    "title": "Guide de tri des modifications",
+    "related": "Les fichiers qui changent ensemble se regroupent. Le sujet d'abord ; le contexte suit.",
+    "relatedInverted": "Les changements isolés d'abord. Les grappes fortement couplées coulent au fond.",
+    "alphabetical": "Simple A → Z par chemin. Insensible à la casse, nombres ordonnés naturellement.",
+    "alphabeticalInverted": "Simple Z → A par chemin. Insensible à la casse, nombres ordonnés naturellement.",
+    "impact": "Les changements les plus lourds en premier. Le brassage est pondéré ; les binaires et nouveaux fichiers sont mis en avant.",
+    "impactInverted": "Les changements les plus légers en premier. Les gains rapides en haut ; les gros efforts attendent.",
+    "nearRelated": "proche lié",
+    "alphabeticalShort": "alphabétique",
+    "byImpact": "par impact",
+    "flipped": "inversé",
+    "peek": "aperçu"
+  },
+  "piggyback": {
+    "apiModelsUse": "les modèles API utilisent",
+    "codexNotDetected": "codex non détecté",
+    "dormant": "DORMANT"
+  },
+  "diffStage": {
+    "viewer": "visionneuse",
+    "media": "média",
+    "binary": "binaire",
+    "hidden": "masqué"
+  },
+  "undoScope": {
+    "destructiveActions": "actions destructrices",
+    "discards": "abandons",
+    "commits": "commits",
+    "commitPush": "commit + push",
+    "all": "tout"
+  },
+  "undoWindow": {
+    "label": "Fenêtre d'annulation",
+    "off": "Désactivée",
+    "descriptionInstant": "{scope} se finalisent instantanément.",
+    "descriptionDelayed": "{seconds}s avant que {scope} ne se finalisent.",
+    "cycleScopeTooltip": "Cliquez pour faire défiler la portée · glissez aussi vers le haut/bas sur le curseur",
+    "resetTooltip": "Réinitialiser chaque action pour utiliser la fenêtre par défaut"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "Probablement bon veut dire bon",
+    "proper": "Une vraie lecture, la logique, l'intégration, les patterns",
+    "lookAgain": "Regardez encore. Quelque chose se cache peut-être",
+    "assumeWrong": "Supposez que quelque chose cloche. Trouvez-le"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "ex. Concentrez-vous sur la logique de haut niveau et les bugs majeurs. Soyez bref et indulgent.",
+    "surfaceBugs": "ex. Faites ressortir les bugs potentiels, les incohérences architecturales et les cas limites.",
+    "scrutinize": "ex. Scrutez chaque ligne pour l'optimisation, la sécurité et le respect des patterns.",
+    "trustNothing": "ex. Ne faites confiance à rien. Questionnez chaque effet de bord. Traitez chaque ligne comme une défaillance potentielle.",
+    "optional": "Conseils facultatifs sur ce dont la revue devrait se soucier."
+  },
+  "commitFormat": {
+    "title": "Format",
+    "peek": "aperçu",
+    "structure": "Structure",
+    "voice": "Voix",
+    "coverage": "Couverture",
+    "structureTitleBody": "titre + corps",
+    "structureTitleOnly": "titre seul",
+    "structureFreeform": "libre",
+    "voiceVerbLed": "orienté action",
+    "voiceDescriptive": "descriptif",
+    "voiceNarrative": "narratif",
+    "coverageEssentials": "essentiels",
+    "coverageBalanced": "équilibré",
+    "coverageEverything": "tout"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Laisser le renard sauter les biscuits qui sentent mauvais",
+        "s2": "Dresser le renard à refuser les biscuits trafiqués avant de les avaler",
+        "s3": "Contraindre le renard à examiner chaque biscuit au portail comme une scène de crime",
+        "def": "Apprendre au renard à refuser les mauvais biscuits"
+      },
+      "descriptive": {
+        "s0": "le renard trie désormais les biscuits",
+        "s2": "Routine d'inspection des biscuits, inculquée au renard",
+        "s3": "Expertise médico-légale du biscuit, ancrée dans le renard à force de répétition",
+        "def": "Protocole de reniflage des biscuits, installé dans le renard"
+      },
+      "narrative": {
+        "s0": "le renard s'est mis à laisser les biscuits qui sentaient bizarre",
+        "s2": "Assis avec le renard, on a passé en revue quels biscuits refuser",
+        "s3": "Passé une bonne partie d'un après-midi à convaincre le renard que tout biscuit offert n'est pas, de bonne foi, un biscuit",
+        "def": "Demandé au renard de flairer les biscuits avant de les manger"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Le renard jette un œil. Tout ce qui cloche, il laisse.",
+        "s2": "Le renard inspecte chaque jeton, décline tout ce qui sent mauvais, et note le refus sur le perron.",
+        "s3": "Le renard tourne autour de chaque jeton, hume l'air sous trois angles, refuse ceux qui sentent le faux, et attend un instant pour être sûr que le refus tienne.",
+        "def": "Le renard flaire désormais chaque jeton et décline poliment les suspects."
+      },
+      "descriptive": {
+        "s0": "Léger passage sur les bizarres, surtout.",
+        "s2": "Un refus documenté sur chaque jeton à l'odeur suspecte, prononcé depuis le perron et consigné.",
+        "s3": "Un refus notarié par jeton à l'odeur suspecte, prononcé depuis le perron une patte levée, l'autre immobile.",
+        "def": "Un refus poli sur les jetons suspects, prononcé depuis le perron."
+      },
+      "narrative": {
+        "s0": "Le renard a en gros arrêté de manger les bizarres. Facile.",
+        "s2": "Chaque jeton passait avant sans trop réfléchir ; maintenant il y a une pause, un vrai coup d'œil, et un refus pour ceux qui ne sentent pas bon.",
+        "s3": "Chaque jeton passait avant sans réfléchir. Maintenant : une pause. L'air, inspiré. L'air, retenu. Le renard guette sur les planches du perron le petit tressaillement qu'elles ont parfois quand quelque chose cloche, et alors seulement la décision tombe.",
+        "def": "Chaque jeton se faisait avaler sans cérémonie ; maintenant, on renifle d'abord."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Le perron, ça va. L'arrière-cour, on verra.",
+        "s2": " Perron balayé après chaque refus ; boue de l'arrière-cour tolérée aux heures affichées.",
+        "s3": " Perron balayé et rebalayé ; boue de l'arrière-cour cataloguée par empreinte et par météo, et le renard s'attarde au seuil plus longtemps qu'avant.",
+        "def": " Le perron reste propre ; l'arrière-cour garde ses droits à la boue."
+      },
+      "descriptive": {
+        "s0": " Perron ok. L'arrière-cour fait des trucs d'arrière-cour.",
+        "s2": " Perron comme zone propre de niveau preuve ; arrière-cour comme zone de boue désignée, horaires affichés.",
+        "s3": " Perron comme salle blanche de niveau preuve ; arrière-cour comme archive de boue cataloguée ; seuil comme l'endroit où le renard reste planté à réfléchir trop longtemps.",
+        "def": " Perron propre ; droits à la boue préservés dans l'arrière-cour."
+      },
+      "narrative": {
+        "s0": " Le perron, ça allait. L'arrière-cour, qui sait.",
+        "s2": " Le perron était tenu propre ensuite ; le renard se retirait dans l'arrière-cour, là où se fait la réflexion.",
+        "s3": " Le perron a été récuré deux fois ce soir-là. Le renard a arpenté l'arrière-cour lentement, s'est arrêté au même piquet de clôture que d'habitude, et a regardé le perron comme s'il lui devait quelque chose.",
+        "def": " Le perron reste propre, même si l'arrière-cour l'emporte encore en dignité."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Ambre est là. La dérive dérive. L'épine pique s'il le faut. La plupart du temps, rien.",
+        "s2": " Ambre retient chaque odeur pour examen. La dérive porte l'air du jour vers l'épine du portail, qui marque chaque refus pour le décompte du soir.",
+        "s3": " Ambre retient chaque odeur et lui donne un poids différent selon l'heure. La dérive traverse le perron sous des angles qui ne devraient pas compter mais comptent. L'épine du portail pique une fois pour les refus et deux fois pour ceux que le renard a failli manquer, et le renard fait la différence même quand personne d'autre ne la voit.",
+        "def": " Ambre retient l'odeur. La dérive la fait circuler. L'épine du portail attrape ce qui ne devrait pas passer."
+      },
+      "descriptive": {
+        "s0": " Ambre sur le piquet. La dérive dans l'air. L'épine au portail. Ça va.",
+        "s2": " Ambre comme témoin d'odeur désigné ; la dérive comme ambiance consignée ; les marques d'épine comme le relevé des refus du jour, réconcilié au crépuscule.",
+        "s3": " Ambre comme témoin d'odeur dont le silence est déjà une lecture ; la dérive comme ambiance à motif qui bouge de travers les jours où quelque chose cloche ; l'épine comme teneuse de comptes du portail, dont le renard vérifie les marques avant de dormir et de nouveau avant l'aube.",
+        "def": " Ambre comme témoin d'odeur ; la dérive comme contexte ambiant ; l'épine comme la marque de refus silencieuse du portail."
+      },
+      "narrative": {
+        "s0": " Ambre traînait dans le coin. La dérive allait et venait. L'épine faisait son petit truc tranquille. Bref, c'était peinard.",
+        "s2": " Ambre a tenu le relevé des odeurs du jour, la dérive était notée par direction et par heure, et les marques de l'épine ont été décomptées et contresignées par le perron.",
+        "s3": " Ambre a tenu le relevé des odeurs, mais le renard jure qu'il pèse plus lourd certains matins. La dérive a traversé le perron comme toujours, c'est-à-dire de travers les jours qui comptent. L'épine du portail a marqué chaque refus ; le renard est sorti aux premières lueurs pour les compter, comme on compte des marches qu'on a déjà comptées.",
+        "def": " Ambre a tenu le relevé des odeurs, la dérive a fait circuler l'air, et l'épine du portail a attrapé ce qu'il fallait attraper."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "Outils externes",
+    "summary": "Clic droit sur un projet dans la barre latérale pour l'ouvrir avec l'un d'eux. Les arguments utilisent \\{path} pour le dossier du projet.",
+    "detecting": "Détection des outils installés…",
+    "allPresetsAdded": "Tous les préréglages connus sont déjà ajoutés. Utilisez « + Personnalisé » pour en ajouter.",
+    "noToolsConfigured": "Aucun outil configuré pour l'instant. Ajoutez-en un ci-dessus.",
+    "categoryAi": "ia",
+    "categoryEditors": "éditeurs",
+    "categoryExplore": "explorer",
+    "categoryOps": "ops",
+    "categoryGitOps": "git ops",
+    "nameHint": "Nom",
+    "commandHint": "commande",
+    "test": "tester",
+    "removeTool": "Retirer l'outil",
+    "modeTerminal": "terminal",
+    "modeDetached": "détaché"
+  },
+  "apiUsage": {
+    "thisMonth": "{used}{limit} ce mois-ci"
+  },
+  "gitea": {
+    "title": "Jetons Gitea",
+    "hostHint": "hôte",
+    "tokenHint": "jeton",
+    "save": "enregistrer"
+  },
+  "wick": {
+    "selectExecutable": "Sélectionner l'exécutable wick",
+    "connected": "wick · connecté",
+    "pathToExecutable": "wick · chemin de l'exécutable"
+  },
+  "integrations": {
+    "title": "& Intégrations",
+    "alpha": "alpha",
+    "planned": "prévu",
+    "lspComingSoon": "lsp · bientôt",
+    "alphaMathConnected": "alpha-math · connecté",
+    "alphaMathComingSoon": "alpha-math · bientôt"
+  },
+  "reduceMotion": {
+    "label": "Réduire les animations",
+    "subtitleStill": "Immobile… comme la glace ?",
+    "subtitleFlow": "Fluide comme l'eau."
+  },
+  "resetQuit": {
+    "resetAndQuit": "RÉINITIALISER & QUITTER",
+    "keepRepos": "GARDER LES DÉPÔTS",
+    "wipeAll": "TOUT EFFACER"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Diagnostics des commandes",
+    "networkFlowTelemetry": "Télémétrie du flux réseau",
+    "clearSamples": "Effacer les échantillons",
+    "clearMetrics": "Effacer les métriques",
+    "clearTimings": "Effacer les mesures",
+    "recalibrate": "RECALIBRER",
+    "ok": "ok",
+    "noCommandTimings": "Aucune mesure de commande capturée pour l'instant. Effectuez des actions normales pour peupler les diagnostics.",
+    "noBackendSamples": "Aucun échantillon de commande backend capturé pour l'instant. Effectuez des actions git et paramètres pour peupler ce journal.",
+    "noDiffSessions": "Aucune session de rendu de diff capturée pour l'instant. Ouvrez et faites défiler des diffs de fichiers pour peupler ce panneau.",
+    "noUiSessions": "Aucune session de mesure UI capturée pour l'instant. Ouvrez des panneaux et naviguez pour peupler ce panneau.",
+    "recentOperations": "Opérations récentes",
+    "recentBackendOperations": "Opérations backend récentes",
+    "recentDiffSessions": "Sessions de diff récentes",
+    "recentUiTimings": "Mesures UI récentes",
+    "uniqueCommands": {
+      "one": "{n} commande unique",
+      "other": "{n} commandes uniques"
+    },
+    "scopedCommands": {
+      "one": "{n} commande cadrée",
+      "other": "{n} commandes cadrées"
+    },
+    "instrumentedEvents": {
+      "one": "{n} événement instrumenté",
+      "other": "{n} événements instrumentés"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | à-coups {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["commande", "p50", "fiabilité", "plage"],
+    "headersBackend": ["portée", "p50", "p95", "échecs"],
+    "headersDiff": ["moteur de rendu", "premier rendu", "trame p95", "raster p95", "à-coups"],
+    "headersUi": ["événement", "p50", "échecs", "plage"]
+  },
+  "telemetry": {
+    "samples": {
+      "one": "{n} échantillon",
+      "other": "{n} échantillons"
+    },
+    "commands": {
+      "one": "{n} commande",
+      "other": "{n} commandes"
+    },
+    "sessions": {
+      "one": "{n} session",
+      "other": "{n} sessions"
+    },
+    "events": {
+      "one": "{n} événement",
+      "other": "{n} événements"
+    },
+    "stability": "{pct}% de stabilité",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "flux-d'exécution",
+    "description": "simule des oscillateurs sur le code. fait ressortir les chemins d'exécution fragiles avant qu'ils ne se cristallisent en bugs.",
+    "idle": "au repos",
+    "emptyOpenRepo": "ouvrez un dépôt pour\nvoir l'analyse de flux",
+    "scanning": "analyse",
+    "analysing": "analyse des fichiers\ndans la lentille…",
+    "fragility": "fragilité",
+    "findings": "constats",
+    "gap": "écart",
+    "clean": "propre",
+    "severity": "sévérité",
+    "critical": "critique",
+    "warn": "alerte",
+    "info": "info"
+  },
+  "museStrands": {
+    "spark": "étincelle d'inspiration · la toute prochaine étape",
+    "current": "courant dans l'eau · extensions au présent",
+    "horizon": "regarder par-delà l'horizon · directions à atteindre",
+    "fever": "s'éveiller d'un rêve fiévreux · provocations",
+    "echo": "un écho à travers le canyon · analogues ailleurs",
+    "vertigo": "vertige au bord de la falaise · risques adjacents",
+    "ghost": "le fantôme de ce qui fut · contexte historique",
+    "mirror": "un miroir sur l'eau calme · inversions"
+  },
+  "cliPiggyback": {
+    "title": "Relais CLI",
+    "clearCacheLabel": "Vider le cache",
+    "clearCacheTooltip": "Efface les modèles en cache et re-sonde. Retire ceux qu'un fournisseur a abandonnés.",
+    "refreshLabel": "Actualiser les fournisseurs",
+    "refreshTooltip": "Re-sonder chaque fournisseur maintenant.",
+    "body": "Redirige directement les messages de l'interface vers les binaires des fournisseurs locaux."
+  },
+  "header": {
+    "title": "Préférences de l'espace de travail",
+    "subtitle": "Configurez l'esthétique globale, la dynamique de l'interface et les garde-fous opérationnels de base pour tout l'espace de travail.",
+    "releaseNotesTooltip": "Notes de version",
+    "replayOnboardingTooltip": "Rejouer l'accueil"
+  },
+  "diagnosticsPanel": {
+    "title": "Diagnostics de performance",
+    "copyTrace": "Copier la trace",
+    "offenderRanking": "Classement des fautifs",
+    "offenderRankingSubtitle": "Facteurs de latence à travers les flux.",
+    "noOffenders": "Aucun classement de fautifs pour l'instant. Capturez de l'activité de diagnostic pour peupler cette liste."
+  },
+  "release": {
+    "title": "Déploiement de version",
+    "summary": "Paramètres liés aux mises à jour.",
+    "deploymentChannel": "CANAL DE DÉPLOIEMENT",
+    "captureCrashDiagnostics": "Capturer les diagnostics de plantage",
+    "comingSoon": "Bientôt.",
+    "checking": "VÉRIFICATION…",
+    "pollForUpdates": "RECHERCHER DES MISES À JOUR"
+  },
+  "providerStatus": {
+    "detecting": "Détection...",
+    "ready": "Prêt",
+    "notDetected": "Non détecté",
+    "configured": "{count} configurés",
+    "notConfigured": "Non configuré",
+    "cliManaged": "Géré par CLI",
+    "connected": "Connecté",
+    "modelCount": {
+      "one": "{n} modèle",
+      "other": "{n} modèles"
+    },
+    "providerCount": {
+      "one": "{n} fournisseur",
+      "other": "{n} fournisseurs"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Commande",
+    "diffStream": "Rendu de diff",
+    "uiStream": "Mesure UI",
+    "rendererName": "moteur {mode}",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% échec",
+    "jankFrameMetric": "{jank}% à-coups | {frame}ms trame p95",
+    "inStream": "dans {stream}"
+  }
+}

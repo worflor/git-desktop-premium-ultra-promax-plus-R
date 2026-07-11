@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
+import 'repository_xray_strings.dart';
 import 'dtos.dart';
 import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
@@ -6815,11 +6816,13 @@ Future<GitResult<String>> getRepositoryXrayFingerprint(String repo) {
 Future<GitResult<RepositoryXraySnapshotData>> getRepositoryXray(
   String repo, {
   bool forceRefresh = false,
+  XrayCardStrings cardStrings = const EnglishXrayCardStrings(),
 }) {
   return buildRepositoryXraySnapshot(
     repo,
     forceRefresh: forceRefresh,
     statusLoader: getRepositoryStatus,
     probe: _git,
+    cardStrings: cardStrings,
   );
 }

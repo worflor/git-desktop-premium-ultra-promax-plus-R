@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../i18n/gen/strings.g.dart';
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/logos_vis_events.dart';
 import '../../ui/control_chrome.dart';
@@ -848,7 +849,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
         baseBorderColor: tokens.chromeBorder.withValues(alpha: 0.35),
       ),
       child: Text(
-        'Cancel',
+        context.t.common.cancel,
         style: TextStyle(
           color: tokens.textMuted,
           fontSize: 11,

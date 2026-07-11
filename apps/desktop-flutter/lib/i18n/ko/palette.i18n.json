@@ -1,0 +1,201 @@
+{
+  "active": "활성",
+  "prefixes": {
+    "askHint": "ask: [질문]",
+    "nearHint": "near: [파일]",
+    "whoHint": "who: [파일]",
+    "logHint": "log: [메시지]",
+    "runHint": "run: [도구]",
+    "askLabel": "{name}에게 묻기: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · 리뷰어 {count}명 · {touches}회 터치",
+    "whoTouchesLabel": "{name} — {touches}회 터치",
+    "whoTouchesSubtitle": "{path} · 기록된 리뷰어 없음"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "근처",
+    "who": "누구",
+    "term": "터미널",
+    "gui": "GUI",
+    "dev": "개발",
+    "debug": "디버그",
+    "alpha": "알파",
+    "hot": "핫",
+    "key": "키",
+    "web": "웹",
+    "sys": "시스템",
+    "clip": "클립",
+    "sync": "동기화",
+    "force": "강제",
+    "pr": "PR",
+    "draft": "초안",
+    "undo": "실행취소",
+    "thm": "테마",
+    "ver": "버전",
+    "desk": "데스크",
+    "det": "분리",
+    "main": "메인",
+    "head": "HEAD",
+    "gone": "사라짐",
+    "remote": "원격",
+    "local": "로컬",
+    "an": "주석",
+    "lw": "경량"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% 모멘텀"
+  },
+  "topTouched": {
+    "subtitle": "{count}회 터치 · {path}"
+  },
+  "coherence": {
+    "label": "스테이징 응집도: {percent}%",
+    "subtitle": "파일 {count}개"
+  },
+  "keystone": {
+    "subtitle": "{path} · 키스톤 {score}"
+  },
+  "repoSub": {
+    "changes": "{name}의 변경사항",
+    "history": "{name}의 히스토리",
+    "branches": "{name}의 브랜치",
+    "terminal": "{name}의 터미널",
+    "generateCommit": "커밋 생성 · {name}",
+    "reviewChanges": "{name}의 변경 검토",
+    "muse": "{name}의 Muse"
+  },
+  "desks": {
+    "mainWorktree": "메인 작업 트리",
+    "detached": "분리됨",
+    "dirty": "{count}개 변경됨"
+  },
+  "actions": {
+    "openInBrowser": "브라우저에서 열기",
+    "terminal": "터미널",
+    "revealInFiles": "파일 탐색기에서 보기",
+    "copyPath": "경로 복사",
+    "copyBranch": "브랜치 복사"
+  },
+  "tools": {
+    "launch": "{label} 실행"
+  },
+  "gitCommands": {
+    "fetch": "페치",
+    "pull": "풀",
+    "pullBehind": "{count} 뒤처짐",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "푸시",
+    "pushCommits": {"other": "커밋 {n}개"},
+    "pushCommitsUpstream": "{upstream}에 {commits}",
+    "forcePush": "강제 푸시",
+    "forcePushNoUpstream": "강제 푸시할 수 없음: {branch}에 업스트림이 설정되지 않았습니다.",
+    "commit": "커밋",
+    "stageAll": "전체 스테이징",
+    "unstageAll": "전체 스테이징 해제",
+    "discardAll": "전체 버리기",
+    "createBranch": "브랜치 생성",
+    "deleteBranch": "브랜치 삭제",
+    "renameBranch": "브랜치 이름 변경",
+    "stash": "스태시",
+    "stashPop": "스태시 팝",
+    "stashApply": "스태시 적용",
+    "stashDrop": "스태시 버리기",
+    "createTag": "태그 생성",
+    "cherryPick": "체리픽",
+    "revert": "되돌리기",
+    "stashConflictMessage": "충돌과 함께 스태시가 적용됐습니다. 변경사항 페이지에서 해결하세요."
+  },
+  "pr": {
+    "create": "PR 생성",
+    "merge": "PR 병합",
+    "markReady": "PR 준비 완료 표시"
+  },
+  "ai": {
+    "generateCommit": "커밋 생성",
+    "reviewChanges": "변경 검토",
+    "runMuse": "Muse 실행",
+    "debugRepo": "{name} 디버그",
+    "describeSymptom": "증상 설명",
+    "viewResult": "{kind} 보기",
+    "unseenResult": "확인 안 한 결과",
+    "runningResult": "AI: {kind}…",
+    "running": "실행 중",
+    "kindCommitMessage": "커밋 메시지",
+    "kindCodeReview": "코드 리뷰",
+    "kindMuseResult": "Muse 결과",
+    "kindPresentation": "프레젠테이션",
+    "kindDebugResult": "디버그 결과"
+  },
+  "undo": {
+    "cancel": "취소: {label}"
+  },
+  "navigation": {
+    "changes": "변경사항",
+    "history": "히스토리",
+    "branches": "브랜치",
+    "xray": "엑스레이",
+    "settings": "설정",
+    "refresh": "새로고침"
+  },
+  "settings": {
+    "reduceMotion": "모션 줄이기",
+    "animateLogoUnfocused": "포커스 해제 시 로고 애니메이션",
+    "instantBlameHover": "즉시 blame 호버",
+    "autoSelectChanges": "변경 자동 선택",
+    "fetchOnlineIssues": "온라인 이슈 가져오기",
+    "rememberWip": "작업 중인 내용 기억",
+    "hideAiFeatures": "AI 기능 숨기기",
+    "crashReporting": "크래시 보고",
+    "aiReadOnly": "AI 읽기 전용",
+    "stashCabinetExpanded": "스태시 캐비닛 펼침",
+    "fileSortInverted": "파일 정렬 반전"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "엔진 상태",
+    "engineStatusSubtitle": "LogosGit 스펙트럴 엔진 진단",
+    "fileCoupling": "파일 결합",
+    "fileCouplingSubtitle": "스테이징된 파일의 가장 가까운 공동 변경 이웃",
+    "themeSpecimen": "테마 견본",
+    "themeSpecimenSubtitle": "모든 색상, 아이콘, 텍스트 계층, 지오메트리"
+  },
+  "dev": {
+    "testMergeEditor": "병합 편집기 테스트",
+    "testHistorySurgery": "히스토리 수술 테스트",
+    "back": "뒤로",
+    "cancel": "취소",
+    "buildingConflicts": "히스토리에서 테스트 충돌 생성 중…"
+  },
+  "historySurgery": {
+    "label": "히스토리 수술",
+    "subtitle": "히스토리를 재작성하여 파일을 영구 제거"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "매니폴드를 통해 저장소의 구조적 히스토리를 스크럽"
+  },
+  "command": {
+    "complete": "{label} 완료",
+    "failed": "{label} 실패: {message}",
+    "copy": "복사"
+  },
+  "search": {
+    "hintDefault": "전체 검색...",
+    "hintElevated": "확장 — 모든 동작",
+    "emptyTypeToSearch": "검색하려면 입력하세요",
+    "emptyNoResults": "결과 없음"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "결합됨"
+  },
+  "gitCache": {
+    "current": "현재",
+    "staged": "스테이징됨",
+    "modified": "수정됨"
+  }
+}

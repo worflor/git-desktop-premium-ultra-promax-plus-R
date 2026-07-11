@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/logos_git_state.dart';
 import '../../backend/history_surgery.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -151,7 +152,7 @@ class _SurgeryChrome extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            'History Surgery',
+            context.t.historySurgery.chrome.title,
             style: TextStyle(
               color: t.textStrong,
               fontSize: 13,
@@ -161,7 +162,7 @@ class _SurgeryChrome extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            'alpha',
+            context.t.historySurgery.chrome.alphaBadge,
             style: TextStyle(
               color: t.textFaint,
               fontSize: 9,
@@ -179,7 +180,7 @@ class _SurgeryChrome extends StatelessWidget {
                     color: t.stateModified.withValues(alpha: 0.3)),
               ),
               child: Text(
-                'DRY RUN',
+                context.t.historySurgery.chrome.dryRunBadge,
                 style: TextStyle(
                   color: t.stateModified,
                   fontSize: 8,
@@ -335,7 +336,7 @@ class _SelectPhaseState extends State<_SelectPhase> {
           Row(
             children: [
               Text(
-                'Select files to remove from history',
+                context.t.historySurgery.select.prompt,
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 11,
@@ -345,7 +346,8 @@ class _SelectPhaseState extends State<_SelectPhase> {
               const Spacer(),
               if (state.selectedPaths.isNotEmpty)
                 Text(
-                  '${state.selectedPaths.length} selected',
+                  context.t.historySurgery.select
+                      .selectedCount(n: state.selectedPaths.length),
                   style: TextStyle(
                     color: t.stateDeleted.withValues(alpha: 0.7),
                     fontSize: 10,
@@ -363,7 +365,7 @@ class _SelectPhaseState extends State<_SelectPhase> {
                 color: t.textNormal, fontSize: 11, fontFamily: AppFonts.mono,
               ),
               decoration: InputDecoration(
-                hintText: 'search...',
+                hintText: context.t.historySurgery.select.searchHint,
                 hintStyle: TextStyle(color: t.textFaint, fontSize: 11),
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(
@@ -401,7 +403,8 @@ class _SelectPhaseState extends State<_SelectPhase> {
                 Expanded(
                   flex: 5,
                   child: _loading
-                      ? Center(child: Text('reading tree...',
+                      ? Center(child: Text(
+                          context.t.historySurgery.select.readingTree,
                           style: TextStyle(color: t.textFaint, fontSize: 11,
                               fontFamily: AppFonts.mono)))
                       : _filter.isNotEmpty
@@ -434,8 +437,8 @@ class _SelectPhaseState extends State<_SelectPhase> {
             alignment: Alignment.centerRight,
             child: _ActionBtn(
               label: state.selectedPaths.isEmpty
-                  ? 'select files to continue'
-                  : 'continue →',
+                  ? context.t.historySurgery.select.continueDisabled
+                  : context.t.historySurgery.select.continueEnabled,
               onTap: state.canAdvance() ? () => state.advance() : null,
               accent: state.canAdvance(),
               tokens: t,
@@ -659,7 +662,8 @@ class _PurgePanel extends StatelessWidget {
                   color: t.stateDeleted.withValues(alpha: 0.6)),
               const SizedBox(width: 5),
               Text(
-                '${state.selectedPaths.length} to purge',
+                context.t.historySurgery.select
+                    .toPurgeCount(n: state.selectedPaths.length),
                 style: TextStyle(
                   color: t.stateDeleted.withValues(alpha: 0.7),
                   fontSize: 10,
@@ -695,7 +699,7 @@ class _PurgePanel extends StatelessWidget {
           if (state.analyzing)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text('analyzing...',
+              child: Text(context.t.historySurgery.select.analyzing,
                 style: TextStyle(color: t.textFaint, fontSize: 9,
                     fontFamily: AppFonts.mono, fontStyle: FontStyle.italic)),
             ),
@@ -718,9 +722,10 @@ class _InlineImpact extends StatelessWidget {
         : ratio < 0.3 ? t.stateModified
         : t.stateDeleted;
 
-    final risk = ratio < 0.1 ? 'low risk'
-        : ratio < 0.3 ? 'moderate risk'
-        : 'high risk';
+    final tr = context.t.historySurgery.select;
+    final risk = ratio < 0.1 ? tr.riskLow
+        : ratio < 0.3 ? tr.riskModerate
+        : tr.riskHigh;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -734,18 +739,18 @@ class _InlineImpact extends StatelessWidget {
             fontFamily: AppFonts.mono,
           )),
         ),
-        _ImpactRow('commits', '${impact.affectedCommits}/${impact.totalCommits}', t,
+        _ImpactRow(tr.impactCommitsLabel, '${impact.affectedCommits}/${impact.totalCommits}', t,
             color: riskColor),
         if (impact.affectedBranches.isNotEmpty)
-          _ImpactRow('branches', impact.affectedBranches.length.toString(), t),
+          _ImpactRow(tr.impactBranchesLabel, impact.affectedBranches.length.toString(), t),
         if (impact.affectedWorktrees.isNotEmpty)
-          _ImpactRow('worktrees', impact.affectedWorktrees.length.toString(), t,
+          _ImpactRow(tr.impactWorktreesLabel, impact.affectedWorktrees.length.toString(), t,
               color: t.stateModified),
         if (impact.couplingNeighbors.isEmpty)
-          _ImpactRow('coupling', 'island', t, color: t.textFaint)
+          _ImpactRow(tr.impactCouplingLabel, tr.impactCouplingIsland, t, color: t.textFaint)
         else
-          _ImpactRow('coupling',
-              '${impact.couplingNeighbors.length} neighbors', t),
+          _ImpactRow(tr.impactCouplingLabel,
+              tr.impactCouplingNeighbors(n: impact.couplingNeighbors.length), t),
       ],
     );
   }
@@ -838,7 +843,7 @@ class _PurgeItemState extends State<_PurgeItem> {
                     ),
                   for (final rp in otherPaths)
                     Text(
-                      '← $rp',
+                      context.t.historySurgery.select.renameArrow(path: rp),
                       style: TextStyle(
                         color: t.stateModified.withValues(alpha: 0.5),
                         fontSize: 9,
@@ -885,7 +890,7 @@ class _UnderstandPhase extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'How this works',
+            context.t.historySurgery.understand.heading,
             style: TextStyle(
               color: t.textStrong,
               fontSize: 14,
@@ -896,38 +901,37 @@ class _UnderstandPhase extends StatelessWidget {
           const SizedBox(height: 16),
           _ExplainBlock(
             num: '1',
-            title: 'Backup',
-            body: 'Every branch and tag ref is copied to a backup namespace '
-                'before anything changes. If something goes wrong, one click '
-                'restores the original state.',
+            title: context.t.historySurgery.understand.backupTitle,
+            body: context.t.historySurgery.understand.backupBody,
             tokens: t,
           ),
           _ExplainBlock(
             num: '2',
-            title: 'Rewrite',
-            body: 'Each commit is walked from root to tip. For every commit '
-                'that contains the target files, a new commit is created with '
-                'those files removed from the tree. Parent chains are '
-                'remapped to preserve topology. '
-                '${impact != null ? '${impact.affectedCommits} of ${impact.totalCommits} commits will be rewritten.' : ''}',
+            title: context.t.historySurgery.understand.rewriteTitle,
+            body: context.t.historySurgery.understand.rewriteBody +
+                (impact != null
+                    ? context.t.historySurgery.understand.rewriteSummary(
+                        affected: impact.affectedCommits,
+                        total: impact.totalCommits,
+                      )
+                    : ''),
             tokens: t,
           ),
           _ExplainBlock(
             num: '3',
-            title: 'Update refs',
-            body: 'Branch and tag pointers are moved to the new commit SHAs. '
-                'The old objects still exist until garbage collection. '
-                '${impact != null && impact.affectedWorktrees.isNotEmpty
-                    ? 'Your ${impact.affectedWorktrees.length} worktree(s) will need re-checkout.'
-                    : 'No worktrees are affected.'}',
+            title: context.t.historySurgery.understand.updateRefsTitle,
+            body: context.t.historySurgery.understand.updateRefsBody +
+                (impact != null && impact.affectedWorktrees.isNotEmpty
+                    ? context.t.historySurgery.understand
+                        .worktreesNeedRecheckout(
+                            n: impact.affectedWorktrees.length)
+                    : context.t.historySurgery.understand.noWorktreesAffected),
             tokens: t,
           ),
           _ExplainBlock(
             num: '4',
-            title: 'Force-push',
-            body: 'After verifying the purge, you choose which branches to '
-                'force-push. Uses --force-with-lease so it fails safely if '
-                'someone else pushed in the meantime.',
+            title: context.t.historySurgery.understand.forcePushTitle,
+            body: context.t.historySurgery.understand.forcePushBody,
             tokens: t,
           ),
           const SizedBox(height: 12),
@@ -940,11 +944,7 @@ class _UnderstandPhase extends StatelessWidget {
                   color: t.chromeBorder.withValues(alpha: 0.12)),
             ),
             child: Text(
-              'Unlike filter-repo or BFG, this runs entirely through git '
-              'plumbing commands (cat-file, mktree, commit-tree, update-ref). '
-              'No external dependencies. Rename tracking follows one chain '
-              'per file — if a file was copied and both copies renamed '
-              'independently, verify the purge result after execution.',
+              context.t.historySurgery.understand.plumbingNote,
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
@@ -958,13 +958,13 @@ class _UnderstandPhase extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _ActionBtn(
-                label: '← Back',
+                label: context.t.historySurgery.understand.back,
                 onTap: () => state.goBack(),
                 tokens: t,
                 geo: geo,
               ),
               _ActionBtn(
-                label: 'I understand, continue →',
+                label: context.t.historySurgery.understand.continueLabel,
                 onTap: () => state.advance(),
                 accent: true,
                 tokens: t,
@@ -1059,15 +1059,16 @@ class _ConfirmPhase extends StatelessWidget {
     }
     final geo = context.surfaceShader.geometry;
 
+    final confirmT = context.t.historySurgery.confirm;
     final items = <String>[
-      '${impact.affectedCommits} commits will be rewritten',
-      'Force-push will be required for remote branches',
+      confirmT.commitsRewritten(n: impact.affectedCommits),
+      confirmT.forcePushRequired,
     ];
     if (impact.affectedWorktrees.isNotEmpty) {
-      items.add('${impact.affectedWorktrees.length} worktrees will need re-checkout');
+      items.add(confirmT.worktreesRecheckout(n: impact.affectedWorktrees.length));
     }
     if (impact.affectedStashIndices.isNotEmpty) {
-      items.add('${impact.affectedStashIndices.length} stashes may become invalid');
+      items.add(confirmT.stashesInvalid(n: impact.affectedStashIndices.length));
     }
 
     return Center(
@@ -1080,7 +1081,7 @@ class _ConfirmPhase extends StatelessWidget {
                 color: t.stateDeleted.withValues(alpha: 0.7)),
             const SizedBox(height: 12),
             Text(
-              'This operation rewrites git history',
+              confirmT.heading,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 14,
@@ -1090,7 +1091,7 @@ class _ConfirmPhase extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'It cannot be automatically undone after force-pushing.',
+              confirmT.subheading,
               style: TextStyle(color: t.textMuted, fontSize: 11),
             ),
             const SizedBox(height: 20),
@@ -1152,7 +1153,12 @@ class _ConfirmPhase extends StatelessWidget {
                 ),
                 textAlign: TextAlign.center,
                 decoration: InputDecoration(
-                  hintText: 'type PURGE',
+                  // The compared literal ('PURGE', checked against
+                  // SurgeryState.confirmationComplete) is passed as an
+                  // English literal parameter, never localized — only the
+                  // surrounding prompt template is translated. Do not
+                  // localize the word itself; the gate compares it exactly.
+                  hintText: confirmT.typeHint(word: 'PURGE'),
                   hintStyle: TextStyle(
                     color: t.textFaint.withValues(alpha: 0.5),
                     fontSize: 12,
@@ -1184,14 +1190,14 @@ class _ConfirmPhase extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _ActionBtn(
-                  label: 'Go Back',
+                  label: confirmT.goBack,
                   onTap: () => state.goBack(),
                   tokens: t,
                   geo: geo,
                 ),
                 const SizedBox(width: 12),
                 _ActionBtn(
-                  label: 'Begin Surgery',
+                  label: confirmT.begin,
                   onTap: state.confirmationComplete
                       ? () => state.advance()
                       : null,
@@ -1232,7 +1238,7 @@ class _ExecutePhase extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              progress?.phase ?? 'Preparing...',
+              progress?.phase ?? context.t.historySurgery.execute.preparing,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 13,
@@ -1317,7 +1323,9 @@ class _VerifyPhaseState extends State<_VerifyPhase> {
               ),
               const SizedBox(width: 8),
               Text(
-                result.success ? 'Surgery Complete' : 'Surgery Failed',
+                result.success
+                    ? context.t.historySurgery.verify.complete
+                    : context.t.historySurgery.verify.failed,
                 style: TextStyle(
                   color: result.success ? t.stateAdded : t.stateDeleted,
                   fontSize: 14,
@@ -1334,19 +1342,23 @@ class _VerifyPhaseState extends State<_VerifyPhase> {
             )),
           ],
           const SizedBox(height: 16),
-          _ReportLine('Commits rewritten', '${result.commitsRewritten}', t),
-          _ReportLine('Refs updated', '${result.refsUpdated}', t),
-          _ReportLine('Old HEAD', result.oldHead.length > 7
+          _ReportLine(context.t.historySurgery.verify.commitsRewrittenLabel,
+              '${result.commitsRewritten}', t),
+          _ReportLine(context.t.historySurgery.verify.refsUpdatedLabel,
+              '${result.refsUpdated}', t),
+          _ReportLine(context.t.historySurgery.verify.oldHeadLabel, result.oldHead.length > 7
               ? result.oldHead.substring(0, 7) : result.oldHead, t),
-          _ReportLine('New HEAD', result.newHead.length > 7
+          _ReportLine(context.t.historySurgery.verify.newHeadLabel, result.newHead.length > 7
               ? result.newHead.substring(0, 7) : result.newHead, t),
           if (state.purgeVerified != null)
-            _ReportLine('Purge verified',
-                state.purgeVerified! ? 'clean' : 'TRACES REMAIN', t,
+            _ReportLine(context.t.historySurgery.verify.purgeVerifiedLabel,
+                state.purgeVerified!
+                    ? context.t.historySurgery.verify.purgeClean
+                    : context.t.historySurgery.verify.purgeTracesRemain, t,
                 color: state.purgeVerified! ? t.stateAdded : t.stateDeleted),
           const SizedBox(height: 16),
           if (result.displacedWorktrees.isNotEmpty) ...[
-            Text('Displaced Worktrees', style: TextStyle(
+            Text(context.t.historySurgery.verify.displacedWorktrees, style: TextStyle(
               color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w700,
               fontFamily: AppFonts.mono,
             )),
@@ -1363,7 +1375,7 @@ class _VerifyPhaseState extends State<_VerifyPhase> {
               children: [
                 _ForcePushGate(state: state, tokens: t, geo: geo),
                 _ActionBtn(
-                  label: 'Undo Surgery',
+                  label: context.t.historySurgery.verify.undoSurgery,
                   onTap: () => state.rollback(),
                   tokens: t,
                   geo: geo,
@@ -1373,12 +1385,12 @@ class _VerifyPhaseState extends State<_VerifyPhase> {
             const SizedBox(height: 12),
           ],
           if (state.rolledBack)
-            Text('Rolled back to backup refs.', style: TextStyle(
+            Text(context.t.historySurgery.verify.rolledBack, style: TextStyle(
               color: t.stateModified, fontSize: 11, fontFamily: AppFonts.mono,
             )),
           const SizedBox(height: 16),
           _ActionBtn(
-            label: 'Done',
+            label: context.t.historySurgery.verify.done,
             onTap: () => Navigator.of(context).pop(),
             accent: true,
             tokens: t,
@@ -1447,7 +1459,7 @@ class _ForcePushGateState extends State<_ForcePushGate> {
     final state = widget.state;
 
     if (_pushing) {
-      return Text('pushing...', style: TextStyle(
+      return Text(context.t.historySurgery.forcePush.pushing, style: TextStyle(
         color: t.stateDeleted.withValues(alpha: 0.6),
         fontSize: 10, fontFamily: AppFonts.mono,
       ));
@@ -1455,7 +1467,7 @@ class _ForcePushGateState extends State<_ForcePushGate> {
 
     if (!_armed) {
       return _ActionBtn(
-        label: 'Force Push All',
+        label: context.t.historySurgery.forcePush.forcePushAll,
         onTap: () => setState(() => _armed = true),
         danger: true,
         tokens: t,
@@ -1468,14 +1480,17 @@ class _ForcePushGateState extends State<_ForcePushGate> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          '${branches.length} branch${branches.length == 1 ? '' : 'es'} → ',
+          // Reuses the existing common.branchCount plural (already
+          // "{n} branch"/"{n} branches") instead of duplicating the
+          // irregular "branch(es)" pluralization in this namespace.
+          '${context.t.common.branchCount(n: branches.length)} → ',
           style: TextStyle(
             color: t.stateDeleted.withValues(alpha: 0.5),
             fontSize: 9, fontFamily: AppFonts.mono,
           ),
         ),
         _ActionBtn(
-          label: 'confirm push',
+          label: context.t.historySurgery.forcePush.confirmPush,
           onTap: () async {
             setState(() => _pushing = true);
             for (final b in branches) {
@@ -1493,7 +1508,7 @@ class _ForcePushGateState extends State<_ForcePushGate> {
           onTap: () => setState(() => _armed = false),
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: Text('cancel', style: TextStyle(
+            child: Text(context.t.historySurgery.forcePush.cancel, style: TextStyle(
               color: t.textFaint, fontSize: 9, fontFamily: AppFonts.mono,
             )),
           ),

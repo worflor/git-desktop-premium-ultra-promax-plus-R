@@ -1,0 +1,523 @@
+{
+  "@@locale": "ja",
+  "usage": {
+    "caption": "入力 {input} · 出力 {output}",
+    "captionCached": "入力 {fresh} · キャッシュ {cached} · 出力 {out}",
+    "inWord": "入力",
+    "cachedWord": "キャッシュ",
+    "outWord": "出力",
+    "tipIn": "{value}  入力",
+    "tipCacheRead": "{value}  キャッシュ読み取り",
+    "tipCacheWrite": "{value}  キャッシュ書き込み",
+    "tipOut": "{value}  出力",
+    "tipReasoning": "{value}  推論",
+    "tipWallClock": "{value}秒  実時間"
+  },
+  "tabs": {
+    "defaultLabel": "変更",
+    "empty": "空"
+  },
+  "tabStrip": {
+    "newDiffTab": "新しい差分タブ"
+  },
+  "select": {
+    "selectAll": "すべて選択",
+    "deselectAll": "すべて選択解除"
+  },
+  "constellationToggle": {
+    "backToList": "リストに戻る",
+    "atlas": "アトラス、コミット候補を見る"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\n{anchor}と結合 · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "新規",
+    "roleBridge": "橋",
+    "roleHub": "ハブ",
+    "roleLeaf": "葉",
+    "roleConnected": "接続済み",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "{name}と共に変わる",
+    "newFile": "新規ファイル",
+    "nearOtherChanges": "{dir} 内の他 {count} 件の変更の近く",
+    "usuallyChangesWithFile": "{name}は通常このファイルと共に変わります"
+  },
+  "tagInput": {
+    "hint": "タグ…"
+  },
+  "composer": {
+    "hintPlaceholder": "コミットメッセージ…",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "変更をコミット",
+    "primaryCommitChangesDetail": "分離 HEAD：同期せずにローカルでコミットします。",
+    "primaryPublish": "コミット＆公開",
+    "primaryPublishDetail": "コミットを作成し、このブランチを一度に公開します。",
+    "primarySync": "コミット＆同期",
+    "primarySyncDetail": "コミットを作成し、ブランチを調整して送り出します。",
+    "primaryPush": "コミット＆プッシュ",
+    "primaryPushDetail": "コミットを作成し、すぐにプッシュします。",
+    "amendLast": "直前のコミットをアメンド",
+    "amendAnd": "アメンド＆{action}",
+    "chooseFile": "次のコミットに少なくとも 1 ファイルを選んでください。",
+    "writeMessage": "先にコミットメッセージを書いてください。",
+    "committing": "コミット中",
+    "committingSync": "コミットして同期中",
+    "committed": "コミットしました。",
+    "undoFailed": "取り消しに失敗しました。",
+    "working": "処理中…",
+    "commitOnly": "コミットのみ",
+    "noRuntimeModels": "コミットメッセージに使えるランタイム検出モデルがありません。",
+    "restoreFailedRetry": "{err}\n除外ファイルのステージを復元できませんでした。再試行の前にインデックスを確認してください。",
+    "committedSummary": "{summary}をコミットしました（{hash}）。",
+    "restoreFailedSync": "除外ファイルの選択を再ステージできませんでした。同期はスキップされました。同期の前にインデックスを確認してください。",
+    "noModelLabel": "モデルなし",
+    "chooseBeforeGenerate": "生成の前に少なくとも 1 ファイルを選んでください。",
+    "aiUnavailable": "コミットメッセージ AI はまだ利用できません。",
+    "generateFailed": "生成に失敗しました。",
+    "stageFailed": "ファイルのステージに失敗しました。",
+    "commitFailed": "コミットに失敗しました。",
+    "committedAndRan": "{summary}をコミットし（{hash}）、{operation}を実行しました。",
+    "committedResolved": {
+      "other": "{summary}をコミットしました（{hash}）。コンフリクトを {n} 件解決しました。"
+    },
+    "conflictsLeft": {
+      "other": "解決すべきコンフリクトが {n} 件残っています。"
+    },
+    "syncBlocked": {
+      "other": "コミットは成功しましたが、未コミットのファイル {n} 件により同期がブロックされました。"
+    },
+    "syncStalled": "コミットは成功しましたが、同期が停滞しました：{message}",
+    "syncFailed": "コミットは成功しましたが、同期に失敗しました：{message}"
+  },
+  "rebase": {
+    "continueFailed": "リベースを続行できませんでした。"
+  },
+  "editor": {
+    "closeBarrier": "エディターを閉じる"
+  },
+  "editorTitles": {
+    "any": [
+      "親愛なる git log へ",
+      "コミットせよ、我に安らぎを…",
+      "この瞬間に名前を",
+      "さあ、語って",
+      "話せ！",
+      "お前の母はぶら下がり参照、父はセミコロン臭かった"
+    ],
+    "short": [
+      "おや？",
+      "やあ:)",
+      "ところで：",
+      "ひとこと",
+      "丁寧に言うと",
+      "メモを残して",
+      "何か言いかけた？",
+      "そうそう、吐き出して"
+    ],
+    "mid": [
+      "記録のために",
+      "未来の自分に伝えて",
+      "でもその前に？",
+      "どうだった",
+      "自分の言葉で",
+      "え、何したって？",
+      "しかと承った",
+      "聞いているよ"
+    ],
+    "long": [
+      "あなたの夢を、どうぞ",
+      "何かいいことを",
+      "…そして私はこう言った：",
+      "後世が待っている",
+      "たくさん書くとバグが消える",
+      "おお、すごい",
+      "聖なる書"
+    ]
+  },
+  "askHint": {
+    "round": "ラウンド {n} — 絞り込むか、文脈を追加。",
+    "symptom": "症状を記述。",
+    "broken": "何が壊れている？",
+    "bug": "バグを記述。",
+    "error": "エラーを貼り付け。"
+  },
+  "fileMenu": {
+    "ripple": "波及",
+    "includeCoChanges": "共変更を含める",
+    "deleteFile": "{name}を削除…",
+    "discardChangesTo": "{name}への変更を破棄…",
+    "ignore": "無視",
+    "diffTabFromSelection": "選択から差分タブ",
+    "addSelectedToTab": "選択を{name}に追加",
+    "diffTabFromFile": "{name}から差分タブ",
+    "addFileToTab": "{file}を{tab}に追加",
+    "copyFilePath": "ファイルパスをコピー",
+    "showInExplorer": "エクスプローラーで表示"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "密に結合",
+    "cohesionLoose": "緩やかに関連",
+    "cohesionScattered": "構造的に散在",
+    "clusterOne": "すべて一つのクラスター",
+    "clusterSpansDetailed": "{count} クラスターにまたがる（{parts} ファイル）",
+    "clusterSpans": "{count} クラスターにまたがる",
+    "roleLine": "{count} ファイル · {cohesion}",
+    "usuallyChangesWithGroup": "{file}は通常このグループと共に変わります",
+    "splitToNewTab": "新しいタブに分割",
+    "copyPaths": "{count} 件のパスをコピー"
+  },
+  "ignoreMenu": {
+    "extension": ".{ext} 拡張子",
+    "allSelected": "選択中の {count} 件すべて",
+    "couplesWith": {
+      "other": "含まれる {n} ファイルと結合"
+    },
+    "updateFailed": ".gitignore の更新に失敗しました。"
+  },
+  "discard": {
+    "deleteTitle": "{name}を削除しますか？",
+    "discardTitle": "{name}への変更を破棄しますか？",
+    "deleteBody": "{path}がディスクから削除されます。アプリ内からは元に戻せません。",
+    "discardBody": "{path}へのすべての変更が HEAD の状態に戻されます。元に戻せません。",
+    "discard": "破棄",
+    "deletingFile": "{name}を削除中",
+    "discardingFile": "{name}を破棄中",
+    "discardFailed": "変更の破棄に失敗しました。",
+    "discardManyTitle": "{count} ファイルへの変更を破棄しますか？",
+    "discardManyBody": "追跡中のファイルは HEAD の状態に戻され、追跡外のファイルはディスクから削除されます。元に戻せません。",
+    "discardManyConfirm": "{count} 件を破棄",
+    "discardingManyFiles": "{count} ファイルを破棄中",
+    "failedOpenExplorer": "ファイルエクスプローラーを開けませんでした：{error}",
+    "someFailed": "一部の破棄に失敗しました。"
+  },
+  "snack": {
+    "sameWorktree": "同じ作業ツリー — 移すものがありません。",
+    "diffFailed": "差分に失敗しました：{error}",
+    "deskEmpty": "デスクにはあなたより先行するものがありません — 空の移動です。",
+    "sourceDesk": "デスク {label}",
+    "shelfReadFailed": "棚の読み込みに失敗しました：{error}",
+    "shelfEmpty": "空の棚 — 移すものがありません。",
+    "sourceShelf": "棚 {label}",
+    "noModelConfigured": "「{label}」に設定されたモデルがありません。",
+    "fetchFailed": "フェッチに失敗しました：{error}"
+  },
+  "trace": {
+    "title": "検証トレース",
+    "draftReview": "レビューの下書き"
+  },
+  "cleanTree": {
+    "title": "作業ツリーはクリーン",
+    "subtitle": "ステージ済み・未ステージの変更は検出されませんでした。",
+    "noUpstream": "  ·  上流なし",
+    "ahead": " 先行",
+    "behind": " 遅延",
+    "refreshing": "更新中…",
+    "refresh": "更新",
+    "check": "チェック",
+    "checkTooltip": "フェッチしてローカルを更新。",
+    "sync": "＆同期"
+  },
+  "guardrail": {
+    "loose": "緩め",
+    "balanced": "バランス",
+    "strict": "厳格",
+    "paranoid": "偏執"
+  },
+  "dropHint": {
+    "fromShelf": "ドロップしてこの棚の変更をここに取り込む",
+    "fromDesk": "ドロップしてこのデスクの変更をここに取り込む"
+  },
+  "diffEmpty": {
+    "title": "ファイルが未選択",
+    "message": "差分を確認するには変更されたファイルを選択してください。"
+  },
+  "shelvePill": {
+    "shelveN": "↓ {count} 件を棚上げ",
+    "shelve": "↓ 棚上げ",
+    "shelvedCount": "{count} 件棚上げ {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "取り出す",
+    "peek": "覗く",
+    "toss": "捨てる"
+  },
+  "stashContents": {
+    "reading": "棚を読み込み中…",
+    "empty": "空の棚"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "ステージ済みの行のみコミット",
+    "doubleClickToggle": "ダブルクリック：グループ全体を切り替え",
+    "repoRoot": "リポジトリのルート"
+  },
+  "resolveStrip": {
+    "reading": {
+      "other": "{n} ファイルを読み込み中 · 解決を作成中…"
+    },
+    "conflictsAcross": {
+      "other": "{files} にわたるコンフリクト {n} 件"
+    },
+    "resolve": "解決",
+    "orWith": "または",
+    "resolveWith": "{label}で解決",
+    "resolveWithModel": "{label}で解決  ·  {model}",
+    "resolving": "解決中…",
+    "resolveWithGlyph": "↵  {label}で解決",
+    "orWithAnother": "または別のモデルで"
+  },
+  "badge": {
+    "stagedEdit": "ステージ済み編集",
+    "edited": "編集済み",
+    "stagedAdd": "ステージ済み追加",
+    "added": "追加済み",
+    "stagedDelete": "ステージ済み削除",
+    "deleted": "削除済み",
+    "stagedRename": "ステージ済みリネーム",
+    "renamed": "リネーム済み",
+    "stagedCopy": "ステージ済みコピー",
+    "copied": "コピー済み",
+    "conflict": "コンフリクト",
+    "stagedTypeChange": "ステージ済み型変更",
+    "typeChanged": "型変更済み",
+    "untracked": "追跡外"
+  },
+  "review": {
+    "title": "コードレビュー",
+    "includedFiles": {
+      "other": "含まれる {n} ファイル"
+    },
+    "hunkCount": {
+      "other": "{n} ハンク"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "レビューを取得できません",
+    "backToDiff": "差分に戻る",
+    "verified": "検証済み",
+    "draftOnly": "下書きのみ",
+    "runAgain": "再実行",
+    "draftShownBelow": "{error} 下にレビューの下書きを表示します。",
+    "hideTrace": "トレースを隠す",
+    "showTrace": "トレースを表示",
+    "showVerificationTrace": "検証トレースを表示",
+    "whyLanded": "このレビューがここに至った理由",
+    "noFindings": "指摘なし",
+    "findings": "指摘",
+    "noEvidenceIssues": "このコミット範囲で、証拠に裏付けられた問題は見つかりませんでした。",
+    "observations": "所見",
+    "chooseBeforeReview": "レビューの前に少なくとも 1 ファイルを選んでください。",
+    "aiUnavailable": "レビュー AI はまだ利用できません。",
+    "failed": "レビューに失敗しました。",
+    "noRuntimeModels": "コミットレビューに使えるランタイム検出モデルがありません。"
+  },
+  "commitBtn": {
+    "switchTo": "切り替え：{label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "{cat}で質問中…",
+    "askWith": "{cat}で質問",
+    "noModel": "AI モデルが設定されていません",
+    "nextTooltip": "次：{cat}  ·  shift クリックで前へ",
+    "onlyOne": "AI カテゴリが一つしか設定されていません"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "other": "{pct}% デジャヴ — 破棄されたタイムラインからの {n} 本のゴーストエッジがこの差分に触れています"
+    },
+    "label": "デジャヴ"
+  },
+  "identity": {
+    "none": "コミットの識別情報が設定されていません",
+    "asName": "{name}として",
+    "asNameEmail": "{name} <{email}> として",
+    "asNameSpace": "{name} として",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\nこのリポジトリでの最初のコミット",
+    "newToRepo": "\nこのリポジトリは初めて"
+  },
+  "staleScope": {
+    "message": "実行後に選択が変わりました",
+    "rerun": "再実行"
+  },
+  "finding": {
+    "openDiff": "差分を開く",
+    "recorded": "記録済み",
+    "dismiss": "閉じる"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "あなたが引き出した",
+    "fromIdea": "アイデアから：「{text}」",
+    "foothold": "足がかり — ",
+    "brainstormSpew": "ブレインストームの噴出",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "{count} 件をコピー",
+    "clear": "クリア",
+    "chooseBeforeMuse": "Muse を呼ぶ前に少なくとも 1 ファイルを選んでください。",
+    "aiUnavailable": "Muse AI はまだ利用できません。",
+    "failed": "Muse に失敗しました。",
+    "noRuntimeModels": "Muse に使えるランタイム検出モデルがありません。",
+    "needsModel": "Muse には少なくとも 1 つの設定済みモデルが必要です。",
+    "dreaming": "Muse が夢を見ています…"
+  },
+  "debug": {
+    "title": "デバッグ",
+    "round": "· ラウンド {n}",
+    "clear": "クリア",
+    "close": "閉じる",
+    "analyzing": "症状を解析中…",
+    "describeSymptom": "症状を記述してデバッグを押してください。",
+    "evidenceFor": "根拠",
+    "evidenceAgainst": "しかし",
+    "narrowDown": "絞り込みに役立つもの：",
+    "failed": "デバッグに失敗しました。",
+    "refinementFailed": "デバッグの絞り込みに失敗しました。"
+  },
+  "includeSummary": {
+    "none": "なし",
+    "stagedSuffix": " · {count} 件ステージ済み",
+    "full": {
+      "other": "全 {n} ファイル{staged}"
+    },
+    "partial": "{n} 件中 {count}{staged}",
+    "shortAll": "全 {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "リポジトリの状態を取得できません",
+    "loadingTitle": "リポジトリの状態を読み込み中",
+    "loadingMessage": "作業ツリーを読み込んでいます。"
+  },
+  "stash": {
+    "appliedWithConflicts": "スタッシュをコンフリクト付きで適用しました — 変更ページで解決してください（スタッシュエントリは保持されました）。",
+    "couldNotPop": "スタッシュを取り出せませんでした。",
+    "listChanged": "スタッシュリストが変わりました。破棄をスキップしました。もう一度お試しください。",
+    "droppingStash": "スタッシュを破棄中"
+  },
+  "tooltips": {
+    "commitGenerating": "コミットメッセージを生成中…",
+    "commitPreparing": "コミットメッセージを準備中…",
+    "commitSelectFile": "コミットメッセージを生成するには少なくとも 1 ファイルを選んでください。",
+    "commitConfigure": "コミットメッセージは 設定 > 挙動のダイナミクス > コミットメッセージ で設定します。",
+    "fastFallback": "高速",
+    "commitGenerateWith": "{label}モデルでコミットメッセージを生成",
+    "museConsulting": "Muse に相談中…",
+    "showMuse": "Muse を表示",
+    "museSelectFile": "Muse のために少なくとも 1 ファイルを選んでください。",
+    "showMuseError": "Muse のエラーを表示",
+    "museAsk": "Muse に方向性を尋ねる",
+    "museAskWithModels": "Muse に方向性を尋ねる\n{brainstorm} → {synthesis}",
+    "qualityFallback": "品質",
+    "reviewing": "レビュー中…",
+    "showReview": "レビューを表示",
+    "reviewPreparing": "コミットレビューを準備中…",
+    "reviewSelectFile": "レビューするには少なくとも 1 ファイルを選んでください。",
+    "reviewConfigure": "レビュー AI は設定で構成します。",
+    "viewingReview": "レビューを表示中",
+    "reviewWith": "{label}モデルで{guardrail}レビュー"
+  },
+  "mergeEditor": {
+    "resolutionYours": "あなたの側",
+    "resolutionTheirs": "相手の側",
+    "resolutionCustom": "カスタム",
+    "keepBoth": "両方を保持",
+    "trust": {
+      "manual": "手動",
+      "safe": "安全",
+      "guided": "ガイド付き",
+      "assisted": "補助付き",
+      "full": "全面",
+      "label": "信頼：{label}"
+    },
+    "allResolved": "すべて解決",
+    "resolveEasy": "簡単なコンフリクトを解決",
+    "base": "ベース",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "complete": "完了",
+    "nextFile": "次のファイル",
+    "edit": "編集",
+    "auto": "自動",
+    "undo": "取り消し",
+    "keyHints": {
+      "accept": "採用",
+      "other": "相手",
+      "both": "両方",
+      "navigate": "移動",
+      "jumpNext": "次へジャンプ"
+    },
+    "favoredTooltip": "結合解析により構造的に優先",
+    "newOnBothSides": "（両側とも新規）",
+    "writeFailed": "解決したファイルの書き込みに失敗しました：{error}",
+    "neighborsCoChanged": "{total} 件中 {changed} 件の隣接が共変更",
+    "integrity": "整合性 {pct}%",
+    "reviewer": "レビュアー：{name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "「{category}」に設定されたモデルがありません。設定 → AI で設定してください。",
+    "sensitiveFilesSkipped": {
+      "other": "{n} 件の機微なファイルをスキップしました — 手動で解決してください。"
+    },
+    "couldNotReadFiles": "コンフリクトしたファイルを一つも読み込めませんでした。",
+    "blockedSecret": "ブロックしました — コンフリクトしたファイルに {secret} が含まれているようです。手動で解決してください。",
+    "resolutionFailed": "解決に失敗しました：{error}",
+    "mergeResolutionLabel": "◇ マージ解決 · {total} ファイル中 {resolved} · {category}",
+    "conflictSummary": "{op} · {files} にわたる {conflicts}",
+    "conflictCount": {
+      "other": "{n} 件のコンフリクト"
+    },
+    "mergeEditorButton": "⇋ マージエディター",
+    "noAiModel": "AI モデルなし",
+    "later": "あとで",
+    "discard": "破棄",
+    "resolveWithAi": "◇ AI で解決",
+    "otherModel": "別のモデル",
+    "withModel": "{model}で"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "マージ",
+      "cherryPick": "チェリーピック",
+      "revert": "リバート",
+      "resolve": "解決",
+      "switchOp": "切り替え",
+      "pull": "プル",
+      "rebase": "リベース",
+      "rebaseOnto": "{branch}を{base}にリベース"
+    },
+    "pushFailed": "プッシュに失敗しました",
+    "rebasedAndPushed": "リベースしてプッシュしました。",
+    "switchedTo": "{name}に切り替えました。",
+    "switchFailed": "切り替えに失敗しました。",
+    "switchedToCarried": "{name}に切り替えました（変更を引き継ぎました）。",
+    "alreadyUpToDate": "すでに最新です。",
+    "merged": "{upstream}をマージしました（{n} ファイル）。",
+    "rebaseNotConverge": "リベースが収束しませんでした — 手動で解決してください。",
+    "rebased": "リベースしました。",
+    "rebasedResolved": {
+      "other": "リベースしました（{n} ファイルを解決）。"
+    },
+    "detachedHead": "同期できません：分離 HEAD の状態です。まずブランチをチェックアウトしてください。",
+    "publishFailed": "公開に失敗しました。",
+    "noRemote": "リモートが設定されていません。このブランチを公開するには追加してください。",
+    "failed": "失敗"
+  },
+  "constellation": {
+    "axisStructure": "構造",
+    "axisCoChange": "共変更",
+    "axisSpectralProfile": "スペクトルプロファイル",
+    "axisPathSiblings": "パスの兄弟",
+    "axisDiffStructure": "差分構造",
+    "axisSpectral": "スペクトル",
+    "titleUnsorted": "未整列",
+    "titleSingleton": "単独",
+    "titleMixed": "混在",
+    "untie": "ほどく",
+    "bind": "結ぶ",
+    "emptyClusters": "まだクラスターがありません"
+  }
+}

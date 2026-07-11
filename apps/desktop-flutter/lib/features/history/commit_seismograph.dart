@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_lifecycle.dart';
 import '../../backend/git.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -284,8 +285,10 @@ class _CommitSeismographState extends State<CommitSeismograph>
       label: seg.isLeaf
           ? seg.pathKey
           : (seg.isDrillable
-              ? '${seg.containedFileCount} files in ${seg.pathKey}/'
-              : '${seg.containedFileCount} more files'),
+              ? context.t.history.seismograph
+                  .filesInDir(n: seg.containedFileCount, path: seg.pathKey)
+              : context.t.history.seismograph
+                  .moreFilesCount(n: seg.containedFileCount)),
       additions: seg.additions,
       deletions: seg.deletions,
       fileCount: seg.containedFileCount,
@@ -755,7 +758,8 @@ class _Breadcrumb extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = tokens;
     final crumbs = <Widget>[
-      _crumb('all', () => onTap(const []), isLast: focusPath.isEmpty, t: t),
+      _crumb(context.t.history.seismograph.breadcrumbAll, () => onTap(const []),
+          isLast: focusPath.isEmpty, t: t, context: context),
     ];
     for (var i = 0; i < focusPath.length; i++) {
       crumbs.add(Padding(
@@ -766,7 +770,7 @@ class _Breadcrumb extends StatelessWidget {
       ));
       final upto = focusPath.sublist(0, i + 1);
       crumbs.add(_crumb(focusPath[i], () => onTap(upto),
-          isLast: i == focusPath.length - 1, t: t));
+          isLast: i == focusPath.length - 1, t: t, context: context));
     }
     return Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: crumbs);
   }
@@ -774,14 +778,15 @@ class _Breadcrumb extends StatelessWidget {
   Widget _crumb(String label, VoidCallback onTap,
       {required bool isLast,
       required AppTokens t,
+      required BuildContext context,
       bool accentWhenAction = false}) {
     return Semantics(
       button: !isLast,
       label: isLast
-          ? 'Current focus: $label'
+          ? context.t.history.seismograph.breadcrumbCurrentFocus(target: label)
           : (accentWhenAction
-              ? 'View all changes in this commit'
-              : 'Drill up to $label'),
+              ? context.t.history.seismograph.breadcrumbViewAllChanges
+              : context.t.history.seismograph.breadcrumbDrillUpTo(target: label)),
       child: MouseRegion(
         cursor: isLast ? SystemMouseCursors.basic : SystemMouseCursors.click,
         child: GestureDetector(
@@ -1059,8 +1064,8 @@ class _TrackHeaderState extends State<_TrackHeader> {
                       ? SystemMouseCursors.click
                       : SystemMouseCursors.basic,
                   child: Text(
-                    '$fileCount file${fileCount == 1 ? "" : "s"}  '
-                    '+$adds  -$dels',
+                    context.t.history.seismograph
+                        .trackStats(n: fileCount, adds: adds, dels: dels),
                     style: TextStyle(
                       color: widget.onStatTap != null
                           ? t.textMuted
@@ -1455,16 +1460,24 @@ class _SegmentState extends State<_Segment> {
     final hunkCount = widget.hunks?.length ?? 0;
 
     // Build a screen-reader narration that doesn't rely on color.
+    final seismoT = context.t.history.seismograph;
+    final listSep = context.t.common.listSeparator;
     final semanticLabel = seg.isLeaf
-        ? '${seg.pathKey}, '
-            '${seg.additions} added, ${seg.deletions} deleted'
-            '${hunkCount > 0 ? ', $hunkCount hunk${hunkCount == 1 ? '' : 's'}' : ''}'
-            '${widget.isHero ? ', largest change in this view' : ''}'
-            '${notch?.label == 'U' ? ', conflicted' : ''}'
-            '${widget.isDirty ? ', dirty' : ''}'
-        : '${seg.containedFileCount} files, '
-            '${seg.additions} added, ${seg.deletions} deleted'
-            '${seg.isDrillable ? ', drill in' : ''}';
+        ? [
+            seismoT.segmentLeafSummary(
+                path: seg.pathKey, adds: seg.additions, dels: seg.deletions),
+            if (hunkCount > 0) seismoT.hunkCount(n: hunkCount),
+            if (widget.isHero) seismoT.largestChangeInView,
+            if (notch?.label == 'U') seismoT.conflictedTag,
+            if (widget.isDirty) seismoT.dirtyTag,
+          ].join(listSep)
+        : [
+            seismoT.segmentContainerSummary(
+                n: seg.containedFileCount,
+                adds: seg.additions,
+                dels: seg.deletions),
+            if (seg.isDrillable) seismoT.drillInTag,
+          ].join(listSep);
 
     return Semantics(
       label: semanticLabel,
@@ -1713,19 +1726,20 @@ class _InspectorStrip extends StatelessWidget {
   /// Plain-word extras appended to a leaf's inspector line. Order:
   /// change-type story (renames etc. — the bar can't narrate those),
   /// lifecycle standing, hunk count. Containers/folds contribute none.
-  List<String> _leafExtras() {
+  List<String> _leafExtras(BuildContext context) {
     final h = hover;
     if (h == null || !h.isLeaf) return const [];
+    final tr = context.t.history.seismograph;
     final out = <String>[];
     switch (h.changeType) {
       case 'R':
-        out.add('renamed');
+        out.add(tr.changeTypeRenamed);
       case 'C':
-        out.add('copied');
+        out.add(tr.changeTypeCopied);
       case 'T':
-        out.add('typechange');
+        out.add(tr.changeTypeTypechange);
       case 'U':
-        out.add('conflict');
+        out.add(tr.changeTypeConflict);
     }
     // Lifecycle standing, translated to plain speech. "canonical" is
     // engine jargon for "top decile of touch counts" — in a one-word
@@ -1735,12 +1749,12 @@ class _InspectorStrip extends StatelessWidget {
     final lc = h.lifecycle;
     if (lc != null) {
       if (lc.promotion == FilePromotion.canonical) {
-        out.add('core file');
+        out.add(tr.coreFile);
       }
-      if (lc.decay == FileDecay.stale) out.add('stale');
+      if (lc.decay == FileDecay.stale) out.add(tr.staleFile);
     }
     if (h.hunkCount > 0) {
-      out.add('${h.hunkCount} hunk${h.hunkCount == 1 ? '' : 's'}');
+      out.add(tr.hunkCount(n: h.hunkCount));
     }
     return out;
   }
@@ -1782,7 +1796,7 @@ class _InspectorStrip extends StatelessWidget {
                 // plain mono word after the ` · ` idiom: the change-type
                 // story (only when the bar can't say it), lifecycle
                 // standing, and hunk count.
-                for (final extra in _leafExtras())
+                for (final extra in _leafExtras(context))
                   Text(' · $extra',
                       style: style.copyWith(color: t.textFaint)),
               ],
@@ -1795,15 +1809,14 @@ class _InspectorStrip extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  '${idleSummary.fileCount} '
-                  'file${idleSummary.fileCount == 1 ? '' : 's'}',
+                  context.t.common.fileCount(n: idleSummary.fileCount),
                   style: style.copyWith(color: t.textMuted),
                 ),
                 if (idleSummary.directSubdirs > 0) ...[
                   Text(' · ', style: style.copyWith(color: t.textFaint)),
                   Text(
-                    '${idleSummary.directSubdirs} '
-                    'subdir${idleSummary.directSubdirs == 1 ? '' : 's'}',
+                    context.t.history.seismograph
+                        .subdirCount(n: idleSummary.directSubdirs),
                     style: style.copyWith(color: t.textMuted),
                   ),
                 ],
@@ -2590,7 +2603,7 @@ class _FilterBar extends StatelessWidget {
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              hintText: 'filter path',
+              hintText: context.t.history.seismograph.filterPathHint,
               hintStyle: style.copyWith(color: t.textFaint),
               contentPadding: EdgeInsets.zero,
             ),
@@ -2600,7 +2613,7 @@ class _FilterBar extends StatelessWidget {
           onTap: onClose,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
-            child: Text('esc',
+            child: Text(context.t.history.seismograph.escHint,
                 style: style.copyWith(color: t.textFaint)),
           ),
         ),

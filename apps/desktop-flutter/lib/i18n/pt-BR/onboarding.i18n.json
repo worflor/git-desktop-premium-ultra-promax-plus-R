@@ -1,0 +1,96 @@
+{
+  "@@locale": "pt-BR",
+  "nav": {
+    "back": "Voltar",
+    "continueLabel": "Continuar",
+    "letsGo": "Bora"
+  },
+  "naming": {
+    "question": "o que isto é pra você?",
+    "questionEmphasis": "isto",
+    "iAmPrefix": "Eu sou o ",
+    "iAmSuffix": " , seu Cliente Git pessoal."
+  },
+  "theme": {
+    "title": "vista o {name}.",
+    "themesHeader": "TEMAS",
+    "keybindingsHeader": "ATALHOS",
+    "previewBadge": "prévia",
+    "useDefaults": "usar padrões"
+  },
+  "repo": {
+    "title": "aponte o {name} pra algo.",
+    "later": "faço isso depois",
+    "doors": {
+      "open": {
+        "title": "Abrir",
+        "subtitle": "existente",
+        "hint": "um que você já tem"
+      },
+      "clone": {
+        "title": "Clonar",
+        "subtitle": "de uma URL",
+        "hint": "cole uma URL remota"
+      },
+      "create": {
+        "title": "Criar",
+        "subtitle": "novo",
+        "hint": "comece algo do zero"
+      }
+    },
+    "cloneForm": {
+      "title": "Clonar de uma URL",
+      "urlLabel": "URL do repositório",
+      "targetLabel": "Pasta de destino",
+      "browse": "Procurar…",
+      "clone": "Clonar",
+      "cloning": "Clonando…"
+    },
+    "pickers": {
+      "openRepository": "Abrir Repositório",
+      "createRepository": "Criar Repositório",
+      "cloneTarget": "Destino do Clone"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL e caminho de destino obrigatórios.",
+      "createFailed": "Falha ao criar o repositório.",
+      "cloneFailed": "Falha ao clonar o repositório."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "raio-x do repo",
+      "settings": "configurações"
+    },
+    "sidebar": {
+      "projectsHeader": "Projetos"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} de {total} arquivos",
+      "stagedCount": "{n} em stage",
+      "commitMessageHint": "Mensagem do commit…",
+      "commitAndPush": "Commit e push"
+    },
+    "history": {
+      "header": "Histórico",
+      "viewingLast": "vendo os últimos 20 commits",
+      "inFlight": "EM VOO",
+      "you": "você",
+      "commit1": "ensinar a raposa a farejar antes de engolir",
+      "commit2": "âmbar: segurar o cheiro durante a noite",
+      "commit3": "aposentar o repolho em favor de âmbar + espinho",
+      "commit4": "o espinho guarda o portão"
+    },
+    "branches": {
+      "lensBranches": "BRANCHES",
+      "lensPRs": "PRs",
+      "absorbed": "absorvido",
+      "desk": "mesa",
+      "head": "HEAD",
+      "tracking": "→ rastreando: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Seu cliente Git pessoal."
+    }
+  }
+}

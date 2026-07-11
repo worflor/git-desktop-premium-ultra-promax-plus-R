@@ -1,0 +1,51 @@
+{
+  "@@locale": "es",
+  "actions": {
+    "syncLabel": "Sincronizar",
+    "syncOpenRepoDetail": "Abre un repositorio para gestionar operaciones de push y pull.",
+    "detachedHeadLabel": "HEAD desacoplado",
+    "detachedHeadDetail": "Cambia a una rama antes de hacer push o pull.",
+    "publishBranchLabel": "Publicar rama",
+    "publishBranchDetail": "Haz push de {branch} y define su rama de seguimiento upstream.",
+    "publishButtonLabel": "Publicar",
+    "syncBranchLabel": "Sincronizar rama",
+    "syncBranchDetail": "Haz pull de {behindCount} con rebase, luego push de {aheadCount}.",
+    "syncBranchButtonLabel": "Pull (rebase) y luego push",
+    "pushBranchLabel": "Hacer push de la rama",
+    "pushBranchDetail": "Haz push de {count} a {upstream}.",
+    "pushBranchButtonLabel": "Hacer push de los commits",
+    "pullUpdatesLabel": "Traer actualizaciones",
+    "pullUpdatesDetail": "Haz pull de {count} desde {upstream}.",
+    "syncUpToDateDetail": "Haz fetch desde {upstream} y actualiza el estado del upstream."
+  },
+  "panel": {
+    "loadingTitle": "Cargando estado remoto",
+    "loadingMessage": "Verificando la información de seguimiento de la rama.",
+    "remoteStatusUnavailable": "Estado remoto no disponible",
+    "noUpstream": "sin upstream",
+    "aheadLabel": "Adelante",
+    "behindLabel": "Atrás",
+    "treeLabel": "Árbol",
+    "runningSync": "Sincronizando…",
+    "fetching": "Haciendo fetch…",
+    "fetchOnly": "Solo fetch",
+    "syncFailed": "Falló la sincronización",
+    "forcePushRecoveryLabel": "Push forzado (con lease)",
+    "conflictsToResolveTitle": "Conflictos por resolver",
+    "conflictsToResolveBody": "{count} necesitan resolverse: {list}",
+    "resolveConflicts": "Resolver conflictos",
+    "workingEllipsis": "Trabajando…",
+    "lastActivity": "Última actividad: {operation}",
+    "noOutput": "Sin salida.",
+    "resolvedConflicts": "Se resolvieron {count}.",
+    "cancelledUnchanged": "Cancelado, árbol de trabajo sin cambios.",
+    "uncommittedEditsBlocked": "{count} tienen cambios sin commit, haz commit primero para sincronizar con rebase ({list}).",
+    "noUpstreamForForcePush": "No se puede hacer push forzado: no hay upstream configurado para \"{branch}\"."
+  },
+  "forcePush": {
+    "confirmTitle": "¿Push forzado (con lease)?",
+    "target": "Destino: {remote}/{branch}",
+    "warning": "Esto reescribe la rama remota con tu historial local. Con lease se aborta si alguien hizo push al remoto después de tu último fetch, pero los cambios ya traídos igual se sobrescribirán. Úsalo solo cuando hayas hecho un rebase o amend a propósito que divergió la rama.",
+    "confirmButton": "Push forzado"
+  }
+}

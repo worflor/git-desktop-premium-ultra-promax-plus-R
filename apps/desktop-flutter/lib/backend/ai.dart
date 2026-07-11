@@ -428,6 +428,7 @@ Future<GitResult<AiProviderListData>> listAiProviders({
             available: availability.ready,
             binary: provider.binary,
             planName: availability.auth.planName,
+            planStatus: availability.auth.plan,
             resolvedBinary: availability.resolution?.command,
             detectionSource: availability.resolution?.source,
             healthCheck: _formatProviderHealth(availability),
@@ -12533,6 +12534,7 @@ _ProviderAuthStatus _codexAuthStatus() {
             : 'codex auth ok'
         : 'codex token missing',
     planName: planName,
+    plan: modelCount != null ? AiPlanModelCount(modelCount) : null,
   );
 }
 
@@ -12583,6 +12585,7 @@ _ProviderAuthStatus _cursorAuthStatus() {
     ok: true,
     detail: 'managed by Cursor CLI',
     planName: 'CLI-managed',
+    plan: AiPlanCliManaged(),
   );
 }
 
@@ -12596,6 +12599,7 @@ _ProviderAuthStatus _copilotAuthStatus() {
     ok: true,
     detail: 'managed by GitHub Copilot CLI',
     planName: 'CLI-managed',
+    plan: AiPlanCliManaged(),
   );
 }
 
@@ -12615,6 +12619,7 @@ _ProviderAuthStatus _antigravityAuthStatus() {
     ok: true,
     detail: 'managed by Antigravity CLI',
     planName: 'CLI-managed',
+    plan: AiPlanCliManaged(),
   );
 }
 
@@ -12634,6 +12639,7 @@ _ProviderAuthStatus _openCodeAuthStatus() {
         ok: true,
         detail: 'opencode connected: ${names.join(', ')}',
         planName: '$count provider${count == 1 ? '' : 's'}',
+        plan: AiPlanProviderCount(count),
       );
     }
 
@@ -12641,6 +12647,7 @@ _ProviderAuthStatus _openCodeAuthStatus() {
       ok: true,
       detail: 'opencode auth file present',
       planName: 'Connected',
+      plan: AiPlanConnected(),
     );
   }
 
@@ -12648,6 +12655,7 @@ _ProviderAuthStatus _openCodeAuthStatus() {
     ok: true,
     detail: 'opencode auth managed by CLI',
     planName: 'Connected',
+    plan: AiPlanConnected(),
   );
 }
 
@@ -12863,10 +12871,14 @@ class _ProviderAuthStatus {
   final bool ok;
   final String detail;
   final String? planName;
+  // Structured, display-only mirror of [planName] for the settings UI to
+  // localize. [planName] and [detail] stay byte-identical for diagnostics.
+  final AiPlanStatus? plan;
   const _ProviderAuthStatus({
     required this.ok,
     required this.detail,
     this.planName,
+    this.plan,
   });
 }
 

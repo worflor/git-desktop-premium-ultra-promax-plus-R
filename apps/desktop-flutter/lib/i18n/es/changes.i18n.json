@@ -1,0 +1,536 @@
+{
+  "@@locale": "es",
+  "usage": {
+    "caption": "{input} entrada · {output} salida",
+    "captionCached": "{fresh} entrada · {cached} en caché · {out} salida",
+    "inWord": "entrada",
+    "cachedWord": "en caché",
+    "outWord": "salida",
+    "tipIn": "{value}  entrada",
+    "tipCacheRead": "{value}  lectura de caché",
+    "tipCacheWrite": "{value}  escritura de caché",
+    "tipOut": "{value}  salida",
+    "tipReasoning": "{value}  razonamiento",
+    "tipWallClock": "{value}s  tiempo real"
+  },
+  "tabs": {
+    "defaultLabel": "Cambios",
+    "empty": "Vacío"
+  },
+  "tabStrip": {
+    "newDiffTab": "Nueva pestaña de diff"
+  },
+  "select": {
+    "selectAll": "Seleccionar todo",
+    "deselectAll": "Deseleccionar todo"
+  },
+  "constellationToggle": {
+    "backToList": "volver a la lista",
+    "atlas": "atlas, ver candidatos a commit"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\nse acopla con {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "nuevo",
+    "roleBridge": "puente",
+    "roleHub": "hub",
+    "roleLeaf": "hoja",
+    "roleConnected": "conectado",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "cambia con {name}",
+    "newFile": "archivo nuevo",
+    "nearOtherChanges": "cerca de {count} otros cambios en {dir}",
+    "usuallyChangesWithFile": "{name} suele cambiar con este archivo"
+  },
+  "tagInput": {
+    "hint": "etiqueta..."
+  },
+  "composer": {
+    "hintPlaceholder": "mensaje de commit...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Hacer commit de los cambios",
+    "primaryCommitChangesDetail": "HEAD desacoplado: haz commit localmente sin sincronizar.",
+    "primaryPublish": "Commit y publicar",
+    "primaryPublishDetail": "Crea el commit y publica esta rama en un solo paso.",
+    "primarySync": "Commit y sincronizar",
+    "primarySyncDetail": "Crea el commit, luego reconcilia y envía la rama.",
+    "primaryPush": "Commit y push",
+    "primaryPushDetail": "Crea el commit y hazle push de inmediato.",
+    "amendLast": "Enmendar el último commit",
+    "amendAnd": "Enmendar y {action}",
+    "chooseFile": "Elige al menos un archivo para el siguiente commit.",
+    "writeMessage": "Escribe primero un mensaje de commit.",
+    "committing": "Haciendo commit",
+    "committingSync": "Haciendo commit y sincronizando",
+    "committed": "Commit hecho.",
+    "undoFailed": "Falló el deshacer.",
+    "working": "Trabajando…",
+    "commitOnly": "Solo commit",
+    "noRuntimeModels": "No hay modelos descubiertos en tiempo de ejecución disponibles para mensajes de commit.",
+    "restoreFailedRetry": "{err}\nNo se pudo restaurar el stage de los archivos excluidos; revisa el índice antes de reintentar.",
+    "committedSummary": "Commit de {summary} ({hash}).",
+    "restoreFailedSync": "No se pudo volver a poner en stage las selecciones de los archivos excluidos; se omitió la sincronización. Revisa el índice antes de sincronizar.",
+    "noModelLabel": "Sin modelo",
+    "chooseBeforeGenerate": "Elige al menos un archivo antes de generar.",
+    "aiUnavailable": "La IA de mensajes de commit aún no está disponible.",
+    "generateFailed": "Falló la generación.",
+    "stageFailed": "No se pudieron poner los archivos en stage.",
+    "commitFailed": "Falló el commit.",
+    "committedAndRan": "Commit de {summary} ({hash}) y se ejecutó {operation}.",
+    "committedResolved": {
+      "one": "Commit de {summary} ({hash}); se resolvió {n} conflicto.",
+      "other": "Commit de {summary} ({hash}); se resolvieron {n} conflictos."
+    },
+    "conflictsLeft": {
+      "one": "queda {n} conflicto por resolver.",
+      "other": "quedan {n} conflictos por resolver."
+    },
+    "syncBlocked": {
+      "one": "El commit se hizo, pero la sincronización quedó bloqueada por {n} archivo sin commit.",
+      "other": "El commit se hizo, pero la sincronización quedó bloqueada por {n} archivos sin commit."
+    },
+    "syncStalled": "El commit se hizo, pero la sincronización se estancó: {message}",
+    "syncFailed": "El commit se hizo, pero la sincronización falló: {message}"
+  },
+  "rebase": {
+    "continueFailed": "No se pudo continuar el rebase."
+  },
+  "editor": {
+    "closeBarrier": "Cerrar editor"
+  },
+  "editorTitles": {
+    "any": [
+      "querido git log",
+      "for-git me, cielos, que he pecado…",
+      "ponle nombre a este momento",
+      "suéltalo ya",
+      "¡habla!",
+      "tu madre era una referencia colgante y tu padre olía a puntos y comas"
+    ],
+    "short": [
+      "¿ah?",
+      "hola qué tal :)",
+      "por cierto:",
+      "unas palabras",
+      "la versión educada",
+      "deja una nota",
+      "¿decías..?",
+      "eso, suéltalo"
+    ],
+    "mid": [
+      "para que conste",
+      "díselo al tú del futuro",
+      "pero antes…",
+      "cómo salió",
+      "con tus propias palabras",
+      "¿que hiciste QUÉ?",
+      "debidamente anotado",
+      "tienes mi atención"
+    ],
+    "long": [
+      "tus sueños, por favor",
+      "di algo bonito",
+      "... y entonces dije:",
+      "la posteridad espera",
+      "escribir más hace desaparecer tus bugs",
+      "vaya, vaya",
+      "los textos sagrados"
+    ]
+  },
+  "askHint": {
+    "round": "ronda {n} — refina o añade contexto.",
+    "symptom": "describe el síntoma.",
+    "broken": "¿qué está roto?",
+    "bug": "describe el bug.",
+    "error": "pega el error."
+  },
+  "fileMenu": {
+    "ripple": "Onda",
+    "includeCoChanges": "Incluir co-cambios",
+    "deleteFile": "Eliminar {name}…",
+    "discardChangesTo": "Descartar cambios en {name}…",
+    "ignore": "Ignorar",
+    "diffTabFromSelection": "Pestaña de diff desde la selección",
+    "addSelectedToTab": "Añadir seleccionados a {name}",
+    "diffTabFromFile": "Pestaña de diff desde {name}",
+    "addFileToTab": "Añadir {file} a {tab}",
+    "copyFilePath": "Copiar ruta del archivo",
+    "showInExplorer": "Mostrar en el explorador"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "fuertemente acoplados",
+    "cohesionLoose": "poco relacionados",
+    "cohesionScattered": "estructuralmente dispersos",
+    "clusterOne": "todos en un clúster",
+    "clusterSpansDetailed": "abarca {count} clústeres ({parts} archivos)",
+    "clusterSpans": "abarca {count} clústeres",
+    "roleLine": "{count} archivos · {cohesion}",
+    "usuallyChangesWithGroup": "{file} suele cambiar con este grupo",
+    "splitToNewTab": "Dividir en una pestaña nueva",
+    "copyPaths": "Copiar {count} rutas"
+  },
+  "ignoreMenu": {
+    "extension": "extensión .{ext}",
+    "allSelected": "Los {count} seleccionados",
+    "couplesWith": {
+      "one": "Se acopla con {n} archivo incluido",
+      "other": "Se acopla con {n} archivos incluidos"
+    },
+    "updateFailed": "No se pudo actualizar el .gitignore."
+  },
+  "discard": {
+    "deleteTitle": "¿Eliminar {name}?",
+    "discardTitle": "¿Descartar los cambios en {name}?",
+    "deleteBody": "{path} se eliminará del disco. Esto no se puede deshacer desde dentro de la app.",
+    "discardBody": "Todos los cambios en {path} se revertirán a su estado en HEAD. Esto no se puede deshacer.",
+    "discard": "Descartar",
+    "deletingFile": "Eliminando {name}",
+    "discardingFile": "Descartando {name}",
+    "discardFailed": "No se pudieron descartar los cambios.",
+    "discardManyTitle": "¿Descartar los cambios en {count} archivos?",
+    "discardManyBody": "Los archivos rastreados se revertirán a su estado en HEAD; los no rastreados se eliminarán del disco. Esto no se puede deshacer.",
+    "discardManyConfirm": "Descartar {count}",
+    "discardingManyFiles": "Descartando {count} archivos",
+    "failedOpenExplorer": "No se pudo abrir el explorador de archivos: {error}",
+    "someFailed": "Algunos descartes fallaron."
+  },
+  "snack": {
+    "sameWorktree": "Mismo árbol de trabajo — no hay nada que volcar.",
+    "diffFailed": "Falló el diff: {error}",
+    "deskEmpty": "El escritorio no tiene nada por delante de ti — volcado vacío.",
+    "sourceDesk": "escritorio {label}",
+    "shelfReadFailed": "Falló la lectura del estante: {error}",
+    "shelfEmpty": "Estante vacío — no hay nada que volcar.",
+    "sourceShelf": "estante {label}",
+    "noModelConfigured": "No hay modelo configurado para \"{label}\".",
+    "fetchFailed": "Falló el fetch: {error}"
+  },
+  "trace": {
+    "title": "Traza de verificación",
+    "draftReview": "Borrador de revisión"
+  },
+  "cleanTree": {
+    "title": "Árbol de trabajo limpio",
+    "subtitle": "No se detectaron cambios en stage ni fuera de él.",
+    "noUpstream": "  ·  sin upstream",
+    "ahead": " por delante",
+    "behind": " por detrás",
+    "refreshing": "Actualizando...",
+    "refresh": "Actualizar",
+    "check": "comprobar",
+    "checkTooltip": "Fetch y actualización local.",
+    "sync": "& sincronizar"
+  },
+  "guardrail": {
+    "loose": "Relajado",
+    "balanced": "Equilibrado",
+    "strict": "Estricto",
+    "paranoid": "Paranoico"
+  },
+  "dropHint": {
+    "fromShelf": "suelta para traer los cambios de este estante aquí",
+    "fromDesk": "suelta para traer los cambios de este escritorio aquí"
+  },
+  "diffEmpty": {
+    "title": "Ningún archivo seleccionado",
+    "message": "Selecciona un archivo modificado para inspeccionar su diff."
+  },
+  "shelvePill": {
+    "shelveN": "↓ guardar {count}",
+    "shelve": "↓ guardar",
+    "shelvedCount": "{count} guardados {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "recoger",
+    "peek": "asomar",
+    "toss": "tirar"
+  },
+  "stashContents": {
+    "reading": "leyendo el estante…",
+    "empty": "estante vacío"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "hace commit solo de las líneas en stage",
+    "doubleClickToggle": "doble clic: alternar todo el grupo",
+    "repoRoot": "Raíz del repositorio"
+  },
+  "resolveStrip": {
+    "reading": {
+      "one": "leyendo {n} archivo · redactando resolución…",
+      "other": "leyendo {n} archivos · redactando resolución…"
+    },
+    "conflictsAcross": {
+      "one": "{n} conflicto en {files}",
+      "other": "{n} conflictos en {files}"
+    },
+    "resolve": "Resolver",
+    "orWith": "O CON",
+    "resolveWith": "resolver con {label}",
+    "resolveWithModel": "resolver con {label}  ·  {model}",
+    "resolving": "resolviendo…",
+    "resolveWithGlyph": "↵  resolver con {label}",
+    "orWithAnother": "o con otro modelo"
+  },
+  "badge": {
+    "stagedEdit": "Edición en stage",
+    "edited": "Editado",
+    "stagedAdd": "Adición en stage",
+    "added": "Añadido",
+    "stagedDelete": "Eliminación en stage",
+    "deleted": "Eliminado",
+    "stagedRename": "Renombrado en stage",
+    "renamed": "Renombrado",
+    "stagedCopy": "Copia en stage",
+    "copied": "Copiado",
+    "conflict": "Conflicto",
+    "stagedTypeChange": "Cambio de tipo en stage",
+    "typeChanged": "Tipo cambiado",
+    "untracked": "Sin rastrear"
+  },
+  "review": {
+    "title": "Revisión de código",
+    "includedFiles": {
+      "one": "{n} archivo incluido",
+      "other": "{n} archivos incluidos"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunks"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "Revisión no disponible",
+    "backToDiff": "Volver al diff",
+    "verified": "Verificado",
+    "draftOnly": "Solo borrador",
+    "runAgain": "Ejecutar de nuevo",
+    "draftShownBelow": "{error} El borrador de revisión se muestra abajo.",
+    "hideTrace": "Ocultar traza",
+    "showTrace": "Mostrar traza",
+    "showVerificationTrace": "Mostrar traza de verificación",
+    "whyLanded": "Por qué esta revisión aterrizó aquí",
+    "noFindings": "Sin hallazgos",
+    "findings": "Hallazgos",
+    "noEvidenceIssues": "No se detectaron problemas respaldados por evidencia en el alcance de este commit.",
+    "observations": "Observaciones",
+    "chooseBeforeReview": "Elige al menos un archivo antes de revisar.",
+    "aiUnavailable": "La IA de revisión aún no está disponible.",
+    "failed": "Falló la revisión.",
+    "noRuntimeModels": "No hay modelos descubiertos en tiempo de ejecución disponibles para la revisión de commits."
+  },
+  "commitBtn": {
+    "switchTo": "Cambiar a: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "preguntando con {cat}…",
+    "askWith": "preguntar con {cat}",
+    "noModel": "no hay modelo de IA configurado",
+    "nextTooltip": "siguiente: {cat}  ·  shift-clic para el anterior",
+    "onlyOne": "solo hay una categoría de IA configurada"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "one": "{pct}% déjà vu — {n} arista fantasma de líneas temporales descartadas toca este diff",
+      "other": "{pct}% déjà vu — {n} aristas fantasma de líneas temporales descartadas tocan este diff"
+    },
+    "label": "déjà vu"
+  },
+  "identity": {
+    "none": "no hay identidad de commit configurada",
+    "asName": "como {name}",
+    "asNameEmail": "como {name} <{email}>",
+    "asNameSpace": "como {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\nprimer commit en este repo",
+    "newToRepo": "\nnuevo en este repo"
+  },
+  "staleScope": {
+    "message": "la selección cambió desde que esto se ejecutó",
+    "rerun": "reejecutar"
+  },
+  "finding": {
+    "openDiff": "Abrir diff",
+    "recorded": "registrado",
+    "dismiss": "Descartar"
+  },
+  "muse": {
+    "title": "Musa",
+    "youPulledThis": "tú sacaste esto",
+    "fromIdea": "de la idea: \"{text}\"",
+    "foothold": "punto de apoyo — ",
+    "brainstormSpew": "chorro de lluvia de ideas",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "Copiar {count}",
+    "clear": "Limpiar",
+    "chooseBeforeMuse": "Elige al menos un archivo antes de invocar a la musa.",
+    "aiUnavailable": "La IA de la Musa aún no está disponible.",
+    "failed": "Falló la Musa.",
+    "noRuntimeModels": "No hay modelos descubiertos en tiempo de ejecución disponibles para la musa.",
+    "needsModel": "La Musa necesita al menos un modelo configurado.",
+    "dreaming": "la musa está soñando..."
+  },
+  "debug": {
+    "title": "Depurar",
+    "round": "· ronda {n}",
+    "clear": "limpiar",
+    "close": "cerrar",
+    "analyzing": "analizando el síntoma…",
+    "describeSymptom": "describe un síntoma, luego pulsa depurar.",
+    "evidenceFor": "a favor",
+    "evidenceAgainst": "pero",
+    "narrowDown": "qué ayudaría a acotarlo:",
+    "failed": "Falló la depuración.",
+    "refinementFailed": "Falló el refinamiento de la depuración."
+  },
+  "includeSummary": {
+    "none": "Ninguno",
+    "stagedSuffix": " · {count} en stage",
+    "full": {
+      "one": "Los {n} archivo{staged}",
+      "other": "Los {n} archivos{staged}"
+    },
+    "partial": "{count} de {n}{staged}",
+    "shortAll": "Los {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "Estado del repositorio no disponible",
+    "loadingTitle": "Cargando el estado del repositorio",
+    "loadingMessage": "Leyendo el árbol de trabajo."
+  },
+  "stash": {
+    "appliedWithConflicts": "Stash aplicado con conflictos — resuélvelos en la página de Cambios (la entrada del stash se conservó).",
+    "couldNotPop": "No se pudo hacer pop del stash.",
+    "listChanged": "La lista de stash cambió; se omitió el drop. Inténtalo de nuevo.",
+    "droppingStash": "Haciendo drop del stash"
+  },
+  "tooltips": {
+    "commitGenerating": "generando el mensaje de commit...",
+    "commitPreparing": "preparando el mensaje de commit...",
+    "commitSelectFile": "selecciona al menos un archivo para generar un mensaje de commit.",
+    "commitConfigure": "configura los mensajes de commit en Ajustes > Dinámicas de comportamiento > Mensajes de commit.",
+    "fastFallback": "rápido",
+    "commitGenerateWith": "generar el mensaje de commit con el modelo {label}",
+    "museConsulting": "consultando a la musa...",
+    "showMuse": "mostrar la musa",
+    "museSelectFile": "selecciona al menos un archivo para la musa.",
+    "showMuseError": "mostrar error de la musa",
+    "museAsk": "pide dirección a la musa",
+    "museAskWithModels": "pide dirección a la musa\n{brainstorm} → {synthesis}",
+    "qualityFallback": "calidad",
+    "reviewing": "revisando...",
+    "showReview": "mostrar la revisión",
+    "reviewPreparing": "preparando la revisión del commit...",
+    "reviewSelectFile": "selecciona al menos un archivo para revisar.",
+    "reviewConfigure": "configura la IA de revisión en los ajustes.",
+    "viewingReview": "viendo la revisión",
+    "reviewWith": "revisión {guardrail} con el modelo {label}"
+  },
+  "mergeEditor": {
+    "resolutionYours": "los tuyos",
+    "resolutionTheirs": "los suyos",
+    "resolutionCustom": "personalizado",
+    "keepBoth": "conservar ambos",
+    "trust": {
+      "manual": "manual",
+      "safe": "seguro",
+      "guided": "guiado",
+      "assisted": "asistido",
+      "full": "total",
+      "label": "confianza: {label}"
+    },
+    "allResolved": "todo resuelto",
+    "resolveEasy": "resolver los conflictos fáciles",
+    "base": "base",
+    "cancel": "cancelar",
+    "save": "guardar",
+    "complete": "completar",
+    "nextFile": "siguiente archivo",
+    "edit": "editar",
+    "auto": "auto",
+    "undo": "deshacer",
+    "keyHints": {
+      "accept": "aceptar",
+      "other": "otro",
+      "both": "ambos",
+      "navigate": "navegar",
+      "jumpNext": "saltar al siguiente"
+    },
+    "favoredTooltip": "favorecido estructuralmente por el análisis de acoplamiento",
+    "newOnBothSides": "(nuevo en ambos lados)",
+    "writeFailed": "No se pudieron escribir los archivos resueltos: {error}",
+    "neighborsCoChanged": "{changed}/{total} vecinos co-cambiaron",
+    "integrity": "integridad {pct}%",
+    "reviewer": "revisor: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "No hay modelo configurado para \"{category}\". Define uno en Ajustes → IA.",
+    "sensitiveFilesSkipped": {
+      "one": "{n} archivo sensible omitido — resuélvelo a mano.",
+      "other": "{n} archivos sensibles omitidos — resuélvelos a mano."
+    },
+    "couldNotReadFiles": "No se pudo leer ningún archivo en conflicto.",
+    "blockedSecret": "Bloqueado — un archivo en conflicto parece contener un {secret}. Resuélvelo a mano.",
+    "resolutionFailed": "Falló la resolución: {error}",
+    "mergeResolutionLabel": "◇ resolución de merge · {resolved}/{total} archivos · {category}",
+    "conflictSummary": "{op} · {conflicts} en {files}",
+    "conflictCount": {
+      "one": "{n} conflicto",
+      "other": "{n} conflictos"
+    },
+    "mergeEditorButton": "⇋ editor de merge",
+    "noAiModel": "sin modelo de IA",
+    "later": "más tarde",
+    "discard": "descartar",
+    "resolveWithAi": "◇ resolver con IA",
+    "otherModel": "otro modelo",
+    "withModel": "con {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "merge",
+      "cherryPick": "cherry-pick",
+      "revert": "revert",
+      "resolve": "resolver",
+      "switchOp": "cambiar",
+      "pull": "pull",
+      "rebase": "rebase",
+      "rebaseOnto": "rebasar {branch} sobre {base}"
+    },
+    "pushFailed": "Falló el push",
+    "rebasedAndPushed": "Rebasado y con push.",
+    "switchedTo": "Cambiado a {name}.",
+    "switchFailed": "Falló el cambio.",
+    "switchedToCarried": "Cambiado a {name} (los cambios se llevaron consigo).",
+    "alreadyUpToDate": "Ya está al día.",
+    "merged": "Fusionado {upstream} ({n} archivos).",
+    "rebaseNotConverge": "El rebase no convergió — resuélvelo manualmente.",
+    "rebased": "Rebasado.",
+    "rebasedResolved": {
+      "one": "Rebasado (se resolvió {n} archivo).",
+      "other": "Rebasado (se resolvieron {n} archivos)."
+    },
+    "detachedHead": "No se puede sincronizar: estado de HEAD desacoplado. Cambia a una rama primero.",
+    "publishFailed": "Falló la publicación.",
+    "noRemote": "No hay remoto configurado. Añade uno para publicar esta rama.",
+    "failed": "falló"
+  },
+  "constellation": {
+    "axisStructure": "ESTRUCTURA",
+    "axisCoChange": "CO-CAMBIO",
+    "axisSpectralProfile": "PERFIL ESPECTRAL",
+    "axisPathSiblings": "HERMANOS DE RUTA",
+    "axisDiffStructure": "ESTRUCTURA DEL DIFF",
+    "axisSpectral": "ESPECTRAL",
+    "titleUnsorted": "SIN ORDENAR",
+    "titleSingleton": "SINGLETÓN",
+    "titleMixed": "MIXTO",
+    "untie": "desatar",
+    "bind": "atar",
+    "emptyClusters": "aún no hay clústeres"
+  }
+}

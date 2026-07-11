@@ -1,0 +1,101 @@
+{
+  "@@locale": "en",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Scrub",
+    "modeCompare": "Compare",
+    "lodModules": "Modules",
+    "lodFiles": "Files"
+  },
+  "status": {
+    "loading": "Tracing the manifold through history…",
+    "loadError": "Could not read this repo’s history.",
+    "notEnoughHistory": "Not enough history yet to plot a trajectory.",
+    "notEnoughHistoryDetail": "The Orrery needs a few commits to chart."
+  },
+  "legend": {
+    "central": "central",
+    "peripheral": "peripheral"
+  },
+  "node": {
+    "module": "module",
+    "moduleWithCount": "{path} · {n} files",
+    "fileFallback": "file #{id}",
+    "nodeFallback": "node #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "genesis",
+    "now": "now",
+    "reorganized": "reorganized",
+    "becameArchetype": "became {archetype}",
+    "snapshot": "snapshot"
+  },
+  "structure": {
+    "forming": "forming…",
+    "canonical": "canonical",
+    "connectivity": "connectivity",
+    "rigidity": "rigidity",
+    "entropy": "entropy"
+  },
+  "rail": {
+    "structureLabel": "STRUCTURE",
+    "fieldLabel": "FIELD",
+    "findingsLabel": "FINDINGS",
+    "selectedLabel": "SELECTED",
+    "noFindings": "No structural events detected in this history."
+  },
+  "selection": {
+    "notPresent": "Not present at this point in history.",
+    "roleCentral": "Coupling-central — changes here ripple across the system.",
+    "rolePeripheral": "Peripheral — loosely coupled, mostly changes on its own.",
+    "roleMid": "Mid-structure — moderately coupled.",
+    "driftOutward": " Drifting outward — decoupling.",
+    "driftInward": " Drifting inward — integrating.",
+    "driftHolding": " Holding its position."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "DRIFTING OUT",
+    "driftIn": "DRIFTING IN",
+    "tangle": "TANGLING",
+    "clarify": "CLARIFYING",
+    "regime": "REORG",
+    "thrash": "THRASHING",
+    "reshuffle": "RESHUFFLE",
+    "forecast": "FORECAST"
+  },
+  "findings": {
+    "forecastSplit": "Connectivity has been falling and is near its lowest — if this holds, the codebase is heading toward splitting into loosely-coupled halves. Decide now whether that’s the intent.",
+    "forecastConsolidate": "Connectivity has been climbing toward its peak — if this holds, the codebase is consolidating into one tightly-coupled mass. Watch for it hardening into a monolith.",
+    "thrash": "{name} keeps getting reorganised back and forth — lots of structural churn, little net movement. Settle its coupling or stop touching it.",
+    "reshuffle": "This commit looked routine but quietly moved which files are central — the overall shape held while the structure reshuffled underneath. Review it carefully.",
+    "hub": "{name} sits at the structural core — the system reorganises around it. Treat changes here as high blast-radius.",
+    "driftOut": "{name} has drifted from the core toward the edge — it’s decoupling from the system. Either it’s being retired, or it’s quietly rotting.",
+    "driftIn": "{name} has migrated toward the core — it’s becoming load-bearing. Make sure it’s well-tested before more depends on it.",
+    "regime": "The codebase reorganized sharply here — its connectivity jumped. Review what split off or merged.",
+    "tangleTrend": "Over its history the codebase has trended toward a more tangled structure — its connectivity is getting denser and less modular.",
+    "clarifyTrend": "Over its history the codebase has trended toward a cleaner structure — it’s separating into clearer modules."
+  },
+  "anchor": {
+    "core": "core",
+    "drift": "drift",
+    "trend": "trend",
+    "thrash": "thrash"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "CHANGE",
+    "movers": "MOVERS",
+    "noMovers": "No files moved between these frames.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "files",
+    "deltaConnectivity": "connectivity",
+    "deltaRigidity": "rigidity",
+    "deltaEntropy": "entropy",
+    "wayOutward": "outward",
+    "wayInward": "inward",
+    "wayShifted": "shifted"
+  }
+}

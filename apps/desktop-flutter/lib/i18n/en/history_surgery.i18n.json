@@ -1,0 +1,83 @@
+{
+  "@@locale": "en",
+  "chrome": {
+    "title": "History Surgery",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "DRY RUN"
+  },
+  "select": {
+    "prompt": "Select files to remove from history",
+    "selectedCount": "{n} selected",
+    "searchHint": "search...",
+    "readingTree": "reading tree...",
+    "continueDisabled": "select files to continue",
+    "continueEnabled": "continue →",
+    "toPurgeCount": "{n} to purge",
+    "analyzing": "analyzing...",
+    "riskLow": "low risk",
+    "riskModerate": "moderate risk",
+    "riskHigh": "high risk",
+    "impactCommitsLabel": "commits",
+    "impactBranchesLabel": "branches",
+    "impactWorktreesLabel": "worktrees",
+    "impactCouplingLabel": "coupling",
+    "impactCouplingIsland": "island",
+    "impactCouplingNeighbors": "{n} neighbors",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "How this works",
+    "backupTitle": "Backup",
+    "backupBody": "Every branch and tag ref is copied to a backup namespace before anything changes. If something goes wrong, one click restores the original state.",
+    "rewriteTitle": "Rewrite",
+    "rewriteBody": "Each commit is walked from root to tip. For every commit that contains the target files, a new commit is created with those files removed from the tree. Parent chains are remapped to preserve topology. ",
+    "rewriteSummary": "{affected} of {total} commits will be rewritten.",
+    "updateRefsTitle": "Update refs",
+    "updateRefsBody": "Branch and tag pointers are moved to the new commit SHAs. The old objects still exist until garbage collection. ",
+    "worktreesNeedRecheckout": "Your {n} worktree(s) will need re-checkout.",
+    "noWorktreesAffected": "No worktrees are affected.",
+    "forcePushTitle": "Force-push",
+    "forcePushBody": "After verifying the purge, you choose which branches to force-push. Uses --force-with-lease so it fails safely if someone else pushed in the meantime.",
+    "plumbingNote": "Unlike filter-repo or BFG, this runs entirely through git plumbing commands (cat-file, mktree, commit-tree, update-ref). No external dependencies. Rename tracking follows one chain per file — if a file was copied and both copies renamed independently, verify the purge result after execution.",
+    "back": "← Back",
+    "continueLabel": "I understand, continue →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commits will be rewritten",
+    "forcePushRequired": "Force-push will be required for remote branches",
+    "worktreesRecheckout": "{n} worktrees will need re-checkout",
+    "stashesInvalid": "{n} stashes may become invalid",
+    "heading": "This operation rewrites git history",
+    "subheading": "It cannot be automatically undone after force-pushing.",
+    "typeHint": "type {word}",
+    "goBack": "Go Back",
+    "begin": "Begin Surgery"
+  },
+  "execute": {
+    "preparing": "Preparing...",
+    "backingUpRefs": "Backing up refs...",
+    "rewritingCommits": "Rewriting commits...",
+    "updatingRefs": "Updating refs..."
+  },
+  "verify": {
+    "complete": "Surgery Complete",
+    "failed": "Surgery Failed",
+    "commitsRewrittenLabel": "Commits rewritten",
+    "refsUpdatedLabel": "Refs updated",
+    "oldHeadLabel": "Old HEAD",
+    "newHeadLabel": "New HEAD",
+    "purgeVerifiedLabel": "Purge verified",
+    "purgeClean": "clean",
+    "purgeTracesRemain": "TRACES REMAIN",
+    "displacedWorktrees": "Displaced Worktrees",
+    "undoSurgery": "Undo Surgery",
+    "rolledBack": "Rolled back to backup refs.",
+    "done": "Done"
+  },
+  "forcePush": {
+    "pushing": "pushing...",
+    "forcePushAll": "Force Push All",
+    "confirmPush": "confirm push",
+    "cancel": "cancel"
+  }
+}

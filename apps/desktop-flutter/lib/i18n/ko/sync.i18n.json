@@ -1,0 +1,51 @@
+{
+  "@@locale": "ko",
+  "actions": {
+    "syncLabel": "동기화",
+    "syncOpenRepoDetail": "푸시와 풀 작업을 관리하려면 저장소를 여세요.",
+    "detachedHeadLabel": "분리된 HEAD",
+    "detachedHeadDetail": "푸시나 풀 전에 브랜치를 체크아웃하세요.",
+    "publishBranchLabel": "브랜치 게시",
+    "publishBranchDetail": "{branch} 푸시 후 업스트림 추적 브랜치를 설정합니다.",
+    "publishButtonLabel": "게시",
+    "syncBranchLabel": "브랜치 동기화",
+    "syncBranchDetail": "리베이스로 {behindCount} 풀한 뒤 {aheadCount} 푸시합니다.",
+    "syncBranchButtonLabel": "풀(리베이스) 후 푸시",
+    "pushBranchLabel": "브랜치 푸시",
+    "pushBranchDetail": "{upstream}에 {count} 푸시합니다.",
+    "pushBranchButtonLabel": "커밋 푸시",
+    "pullUpdatesLabel": "업데이트 풀",
+    "pullUpdatesDetail": "{upstream}에서 {count} 풀합니다.",
+    "syncUpToDateDetail": "{upstream}에서 페치하고 업스트림 상태를 새로고침합니다."
+  },
+  "panel": {
+    "loadingTitle": "원격 상태 불러오는 중",
+    "loadingMessage": "브랜치 추적 정보를 확인하는 중.",
+    "remoteStatusUnavailable": "원격 상태를 사용할 수 없음",
+    "noUpstream": "업스트림 없음",
+    "aheadLabel": "앞섬",
+    "behindLabel": "뒤처짐",
+    "treeLabel": "트리",
+    "runningSync": "동기화 실행 중…",
+    "fetching": "페치 중…",
+    "fetchOnly": "페치만",
+    "syncFailed": "동기화 실패",
+    "forcePushRecoveryLabel": "강제 푸시(리스 사용)",
+    "conflictsToResolveTitle": "해결할 충돌",
+    "conflictsToResolveBody": "{count} 해결 필요: {list}",
+    "resolveConflicts": "충돌 해결",
+    "workingEllipsis": "작업 중…",
+    "lastActivity": "마지막 활동: {operation}",
+    "noOutput": "출력 없음.",
+    "resolvedConflicts": "{count} 해결됨.",
+    "cancelledUnchanged": "취소됨, 작업 트리 변경 없음.",
+    "uncommittedEditsBlocked": "{count}에 커밋되지 않은 변경이 있습니다. 리베이스 동기화하려면 먼저 커밋하세요 ({list}).",
+    "noUpstreamForForcePush": "강제 푸시할 수 없음: \"{branch}\"에 업스트림이 구성되어 있지 않습니다."
+  },
+  "forcePush": {
+    "confirmTitle": "강제 푸시(리스 사용)?",
+    "target": "대상: {remote}/{branch}",
+    "warning": "원격 브랜치를 로컬 히스토리로 덮어씁니다. 리스 사용 시 마지막 페치 이후 누군가 원격에 푸시했다면 중단되지만, 이미 페치한 변경은 여전히 덮어써집니다. 브랜치를 갈라지게 한 리베이스나 amend를 의도한 경우에만 사용하세요.",
+    "confirmButton": "강제 푸시"
+  }
+}

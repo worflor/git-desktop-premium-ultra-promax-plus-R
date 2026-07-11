@@ -1,0 +1,274 @@
+{
+  "@@locale": "fr",
+  "board": {
+    "movesWithModule": "bouge avec un autre module",
+    "reviewerCount": {
+      "one": "{n} relecteur",
+      "other": "{n} relecteurs"
+    },
+    "territory": "Territoire",
+    "unreviewed": "non relu"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commits · {days} jours\n{lines}",
+    "burstTooltipSingle": "{n} commits le {label}",
+    "gapTooltip": "écart de {n} jours · {label}",
+    "reflogTooltip": "{n} événements reflog le {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "Le dépôt a assez de surface de branches pour rendre la navigation par branche payante.",
+      "broadTitle": "Le modèle de branches a de la surface",
+      "localBranchesDetail": "{count} branches locales.",
+      "localBranchesLabel": "Branches locales",
+      "remoteBranchesDetail": "{count} branches distantes.",
+      "remoteBranchesLabel": "Branches distantes",
+      "simpleClaim": "Le modèle de branches visible est étroit.",
+      "simpleTitle": "Modèle de branches simple"
+    },
+    "bursty": {
+      "claim": "Le travail arrive par rafales concentrées plutôt qu'à un rythme quotidien régulier.",
+      "title": "Cadence de développement par rafales"
+    },
+    "hiddenRefs": {
+      "claim": "{count} réfs vivent hors de l'espace normal branches/étiquettes.",
+      "evidenceDetail": "{count} réfs hors heads/remotes/tags.",
+      "evidenceLabel": "Réfs cachées",
+      "namespacesLabel": "Espaces de noms",
+      "title": "Espaces de noms Git cachés"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Un fichier porte un poids de co-changement disproportionné par rapport à son nombre de touches.",
+        "other": "Un petit ensemble de fichiers porte un poids de co-changement disproportionné par rapport à leur nombre de touches."
+      },
+      "evidenceDetail": {
+        "one": "{n} touche · attraction φ={score}",
+        "other": "{n} touches · attraction φ={score}"
+      },
+      "title": {
+        "one": "Fichier-pont clé de voûte",
+        "other": "{n} fichiers-ponts clés de voûte"
+      }
+    },
+    "machineHistory": {
+      "claim": "Les commits de type point de contrôle faussent matériellement les métriques d'historique naïves.",
+      "machineCommitsDetail": "{count} commits correspondaient à des motifs machine/session.",
+      "machineCommitsLabel": "Commits machine",
+      "rawVsFilteredDetail": "{raw} commits bruts contre {filtered} commits filtrés.",
+      "rawVsFilteredLabel": "Bruts vs filtrés",
+      "title": "L'historique machine domine les métriques brutes"
+    },
+    "migration": {
+      "claim": "L'historique glisse de `{older}` vers `{newer}`, ce qui suggère une transition de pile ou de surface.",
+      "stratumDetail": "{touches} touches, dernière activité {lastActive}.",
+      "title": "Migration d'architecture visible"
+    },
+    "narrowHotspot": {
+      "claim": "Un petit ensemble de fichiers et de dossiers absorbe une part disproportionnée des changements.",
+      "title": "La concentration des points chauds est étroite",
+      "topHotspotDetail": "{path} représente {pct}% de l'ensemble des points chauds visibles.",
+      "topHotspotLabel": "Point chaud principal",
+      "visibleAuthorsDetail": "{count} auteurs dans cette tranche d'historique.",
+      "visibleAuthorsLabel": "Auteurs visibles"
+    },
+    "noTags": {
+      "claim": "Les étiquettes Git ne servent pas de couche visible de version ou de jalon.",
+      "remoteEndpointsDetail": "{count} points de terminaison distants configurés.",
+      "remoteEndpointsLabel": "Points de terminaison distants",
+      "tagCountDetail": "0 étiquette trouvée.",
+      "tagCountLabel": "Nombre d'étiquettes",
+      "title": "Aucune piste formelle de version/étiquette"
+    },
+    "reflog": {
+      "claim": "Le volume du reflog suggère une itération locale concentrée au-delà des commits publiés.",
+      "peakReflogDayLabel": "Jour de pic du reflog",
+      "title": "Sessions d'édition locale intenses"
+    },
+    "singleOwner": {
+      "claim": "`{path}` est un {kind} fortement touché avec un seul auteur visible distinct.",
+      "ownerCountDetail": "{count} auteurs distincts.",
+      "ownerCountLabel": "Nombre de propriétaires",
+      "title": "Point chaud à propriétaire unique",
+      "touchCountLabel": "Nombre de touches",
+      "touchDetailFiltered": "{count} touches dans l'historique filtré.",
+      "touchDetailRaw": "{count} touches dans l'historique brut."
+    }
+  },
+  "cardTitle": {
+    "branches": "branches",
+    "bursty": "par rafales",
+    "hiddenRefs": "réfs cachées",
+    "machineHeavy": "machine-lourd",
+    "migration": "migration",
+    "narrowHotspot": "point chaud étroit",
+    "noTags": "aucune étiquette",
+    "reflog": "reflog",
+    "singleOwner": "propriétaire unique"
+  },
+  "grain": {
+    "coarsest": "le plus grossier — modules de premier niveau",
+    "finest": "grain le plus fin",
+    "mid": "grain moyen",
+    "oneCharacteristic": "une échelle caractéristique"
+  },
+  "header": {
+    "dirtyBadge": "sale",
+    "machineChip": "machine",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation...",
+    "title": "Radiographie du dépôt"
+  },
+  "hotspot": {
+    "clusterPeers": "pairs de grappe",
+    "coChangers": "co-changeurs",
+    "keystone": "clé de voûte",
+    "keystoneScore": "clé de voûte  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "branche",
+    "commitsHumanMachine": "humains · {n} machine",
+    "commitsLabel": "commits",
+    "confidenceLabel": "confiance",
+    "curlLabel": "curl",
+    "engineSection": "moteur",
+    "gradientLabel": "gradient",
+    "harmonicLabel": "harmonique",
+    "headLabel": "head",
+    "hiddenRefsLabel": "réfs cachées",
+    "mergeCount": {
+      "one": "{n} fusion",
+      "other": "{n} fusions"
+    },
+    "noTags": "aucune étiquette",
+    "notesLabel": "notes",
+    "openCommit": "Ouvrir le commit",
+    "pathLabel": "chemin",
+    "remoteCount": "{n} distant",
+    "renamesLabel": "renommages",
+    "scannedAt": "scanné {time}",
+    "selectedCount": "{n} sélectionnés",
+    "shapeLinear": "linéaire",
+    "shapeMergeHeavy": "riche en fusions",
+    "shapeMostlyLinear": "quasi linéaire",
+    "stashCount": {
+      "one": "{n} remisage",
+      "other": "{n} remisages"
+    },
+    "stressLabel": "contrainte",
+    "tagCount": {
+      "one": "{n} étiquette",
+      "other": "{n} étiquettes"
+    },
+    "worktreeCount": {
+      "one": "{n} arbre de travail",
+      "other": "{n} arbres de travail"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Sondage de l'historique Git, des réfs, de la cadence et des points chauds.",
+    "buildingTitle": "Construction de la radiographie du dépôt",
+    "idleMessage": "Rouvrez le panneau pour sonder le dépôt actuel.",
+    "idleTitle": "Radiographie du dépôt",
+    "unavailableTitle": "Radiographie du dépôt indisponible"
+  },
+  "metabolism": {
+    "halfLife": "demi-vie de {n} j"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} grappe",
+      "other": "{n} grappes"
+    },
+    "clusterSingle": "grappe {id}",
+    "couplingSuffix": "couplage {parts}",
+    "externalCount": "{n} externe",
+    "mutualCount": "{n} mutuel"
+  },
+  "recency": {
+    "days": "{n} j",
+    "months": "{n} mois",
+    "today": "aujourd'hui",
+    "weeks": "{n} sem",
+    "years": "{n} an"
+  },
+  "rings": {
+    "hintOneBlended": "une structure fondue",
+    "hintSelfSimilar": "auto-similaire",
+    "oneBlendedBody": "Une structure fondue — aucune échelle de module séparable ne se distingue encore.",
+    "overHistory": "Au fil de l'histoire",
+    "parts": "parties",
+    "readingHint": "lecture de la structure…",
+    "scaleCount": {
+      "one": "{n} échelle",
+      "other": "{n} échelles"
+    },
+    "scaleDissolved": "une échelle structurelle s'est dissoute",
+    "scaleEmerged": "une échelle structurelle a émergé",
+    "scaleSpectrum": "spectre d'échelles",
+    "selfSimilarBody": "Auto-similaire — la structure se répète à travers les échelles, sans niveau caractéristique unique.",
+    "shiftInHistory": {
+      "one": "{n} basculement dans l'histoire",
+      "other": "{n} basculements dans l'histoire"
+    },
+    "structuralShiftCount": {
+      "one": "{n} basculement structurel",
+      "other": "{n} basculements structurels"
+    },
+    "title": "Anneaux de croissance",
+    "unavailable": "indisponible"
+  },
+  "stats": {
+    "alive": "vivant",
+    "files": "fichiers",
+    "lastTouched": "dernière touche",
+    "owner": {
+      "one": "propriétaire",
+      "other": "propriétaires"
+    },
+    "touches": "touches"
+  },
+  "stratumLabel": {
+    "current": "actuel",
+    "legacy": "hérité",
+    "zone": "zone du dépôt"
+  },
+  "summary": {
+    "analysisFailed": "Échec de l'analyse : {error}",
+    "analyze": "Analyser",
+    "copied": "Résumé copié dans le presse-papiers.",
+    "directionHint": "direction",
+    "download": "Télécharger",
+    "emptyState": "Lancez l'analyse Logos pour cartographier la structure et les régions de ce dépôt.\n(tw : de la bouillie pour l'instant)",
+    "exit": "Quitter",
+    "generating": "Lecture du dépôt et regroupement des caractéristiques…",
+    "noModel": "Aucun modèle IA configuré.",
+    "noModelConfigured": "aucun modèle IA configuré",
+    "presentWith": "présenter avec {label}",
+    "presentingWith": "présentation avec {label}…",
+    "reanalyze": "Ré-analyser",
+    "saveDialogTitle": "Enregistrer le résumé du dépôt",
+    "saveFailed": "Échec de l'enregistrement : {error}",
+    "savePresentationDialogTitle": "Enregistrer la présentation",
+    "savedTo": "Enregistré dans {path}"
+  },
+  "tabs": {
+    "map": "Carte",
+    "signals": "Signaux",
+    "summary": "Résumé",
+    "time": "Temps"
+  },
+  "trajectory": {
+    "connectivity": "connectivité",
+    "events": "{n} événements",
+    "openInOrrery": "Ouvrir dans l'Orrery",
+    "readingHint": "lecture de l'historique…",
+    "snapshots": "{n} instantanés",
+    "steady": "Stable — aucun événement structurel dans cette fenêtre.",
+    "title": "Trajectoire structurelle"
+  },
+  "verdict": {
+    "canonical": "{pct}% canonique",
+    "tooltip": "{archetype} · {canonical}% canonique · {decisive}% décisif"
+  }
+}

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../backend/git.dart' as git;
 import '../../backend/history_surgery.dart';
 import '../../backend/logos_git.dart';
+import '../../i18n/gen/strings.g.dart';
 
 enum SurgeryPhase { select, understand, confirm, execute, verify }
 
@@ -187,10 +188,10 @@ class SurgeryState extends ChangeNotifier {
     final total = impact?.affectedCommits ?? 42;
     for (var i = 0; i <= total; i++) {
       final phase = i == 0
-          ? 'Backing up refs...'
+          ? t.historySurgery.execute.backingUpRefs
           : i < total
-              ? 'Rewriting commits...'
-              : 'Updating refs...';
+              ? t.historySurgery.execute.rewritingCommits
+              : t.historySurgery.execute.updatingRefs;
       progress = SurgeryProgress(
         processed: i,
         total: total,

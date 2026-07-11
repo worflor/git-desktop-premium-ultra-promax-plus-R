@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../app/app_identity.dart';
 import '../../../app/theme_state.dart';
+import '../../../i18n/gen/strings.g.dart';
 import '../../../ui/design_primitives.dart';
 import '../../../ui/material_surface.dart';
 import '../../../ui/motion.dart';
@@ -114,7 +115,7 @@ class _ThemeStepPageState extends State<ThemeStepPage> {
           const SizedBox(height: 4),
           Center(
             child: Text(
-              'dress ${identity.shortName} up.',
+              context.t.onboarding.theme.title(name: identity.shortName),
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 22,
@@ -148,7 +149,7 @@ class _ThemeStepPageState extends State<ThemeStepPage> {
           OnboardingNavRow(
             onPrimary: _onContinue,
             middle: OnboardingQuietLink(
-              label: 'use defaults',
+              label: context.t.onboarding.theme.useDefaults,
               onTap: _useDefaults,
             ),
           ),
@@ -191,7 +192,8 @@ class _PickerColumnState extends State<_PickerColumn> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _SectionLabel(text: 'THEMES', tokens: t),
+          _SectionLabel(
+              text: context.t.onboarding.theme.themesHeader, tokens: t),
           const SizedBox(height: 6),
           // The preview/commit split lives here: moving the mouse inside
           // the theme list previews on hover; leaving the list restores
@@ -231,7 +233,8 @@ class _PickerColumnState extends State<_PickerColumn> {
           const SizedBox(height: 10),
           Divider(color: t.chromeBorder.withValues(alpha: 0.5), height: 1),
           const SizedBox(height: 10),
-          _SectionLabel(text: 'KEYBINDINGS', tokens: t),
+          _SectionLabel(
+              text: context.t.onboarding.theme.keybindingsHeader, tokens: t),
           const SizedBox(height: 6),
           for (final profile in KeybindingProfile.values)
             _ProfileRow(
@@ -365,7 +368,7 @@ class _ThemeRowState extends State<_ThemeRow> {
                     duration: context.motion(AppMotion.snap),
                     opacity: widget.previewing ? 1 : 0,
                     child: Text(
-                      'preview',
+                      context.t.onboarding.theme.previewBadge,
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 9,

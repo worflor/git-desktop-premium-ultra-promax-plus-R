@@ -1,0 +1,261 @@
+{
+  "@@locale": "ja",
+  "board": {
+    "movesWithModule": "別のモジュールと共に動く",
+    "reviewerCount": {
+      "other": "{n} 名のレビュアー"
+    },
+    "territory": "テリトリー",
+    "unreviewed": "未レビュー"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} コミット · {days} 日\n{lines}",
+    "burstTooltipSingle": "{label}に {n} コミット",
+    "gapTooltip": "{n} 日の空白 · {label}",
+    "reflogTooltip": "{label}に {n} 件の reflog イベント"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "このリポジトリには、ブランチを意識したナビゲーションが報われるだけのブランチの広がりがあります。",
+      "broadTitle": "ブランチモデルに広がりがある",
+      "localBranchesDetail": "ローカルブランチ {count} 件。",
+      "localBranchesLabel": "ローカルブランチ",
+      "remoteBranchesDetail": "リモートブランチ {count} 件。",
+      "remoteBranchesLabel": "リモートブランチ",
+      "simpleClaim": "見えているブランチモデルは狭いです。",
+      "simpleTitle": "シンプルなブランチモデル"
+    },
+    "bursty": {
+      "claim": "作業は平坦な日々のリズムではなく、集中したバーストで着地しています。",
+      "title": "バースト型の開発ペース"
+    },
+    "hiddenRefs": {
+      "claim": "{count} 件の ref が通常のブランチ／タグ空間の外に存在します。",
+      "evidenceDetail": "heads/remotes/tags の外に {count} 件の ref。",
+      "evidenceLabel": "隠れた ref",
+      "namespacesLabel": "名前空間",
+      "title": "隠れた Git 名前空間"
+    },
+    "keystone": {
+      "claim": {
+        "other": "少数のファイルが、タッチ回数に比べて不釣り合いな共変更の重みを担っています。"
+      },
+      "evidenceDetail": {
+        "other": "{n} 回タッチ · pull φ={score}"
+      },
+      "title": {
+        "other": "{n} 件のキーストーン橋ファイル"
+      }
+    },
+    "machineHistory": {
+      "claim": "チェックポイント型のコミットが、素朴な履歴指標を大きく歪めています。",
+      "machineCommitsDetail": "{count} コミットがマシン／セッションのパターンに一致しました。",
+      "machineCommitsLabel": "マシンコミット",
+      "rawVsFilteredDetail": "生 {raw} コミット 対 フィルター済み {filtered} コミット。",
+      "rawVsFilteredLabel": "生 対 フィルター済み",
+      "title": "マシン履歴が生の指標を支配"
+    },
+    "migration": {
+      "claim": "履歴が `{older}` から `{newer}` へ移行しており、スタックや表層の移行を示唆しています。",
+      "stratumDetail": "{touches} 回タッチ、最終アクティブ {lastActive}。",
+      "title": "アーキテクチャの移行が見える"
+    },
+    "narrowHotspot": {
+      "claim": "少数のファイルとディレクトリが、不釣り合いな割合の変更を吸収しています。",
+      "title": "ホットスポットの集中が狭い",
+      "topHotspotDetail": "{path}は、見えているホットスポット集合の {pct}% を占めます。",
+      "topHotspotLabel": "トップホットスポット",
+      "visibleAuthorsDetail": "この履歴スライスに {count} 名の作者。",
+      "visibleAuthorsLabel": "見えている作者"
+    },
+    "noTags": {
+      "claim": "Git タグが、可視のリリースやマイルストーンの層として使われていません。",
+      "remoteEndpointsDetail": "{count} 件のリモートエンドポイントが設定されています。",
+      "remoteEndpointsLabel": "リモートエンドポイント",
+      "tagCountDetail": "タグは 0 件です。",
+      "tagCountLabel": "タグ数",
+      "title": "正式なリリース／タグの跡がない"
+    },
+    "reflog": {
+      "claim": "reflog の量は、公開されたコミット以上に局所的な反復が集中していることを示唆しています。",
+      "peakReflogDayLabel": "reflog のピーク日",
+      "title": "激しいローカル編集セッション"
+    },
+    "singleOwner": {
+      "claim": "`{path}` は、明確に見える作者が一人だけの、頻繁にタッチされる{kind}です。",
+      "ownerCountDetail": "{count} 名の異なる作者。",
+      "ownerCountLabel": "所有者数",
+      "title": "単独所有者のホットスポット",
+      "touchCountLabel": "タッチ回数",
+      "touchDetailFiltered": "フィルター済み履歴で {count} 回タッチ。",
+      "touchDetailRaw": "生履歴で {count} 回タッチ。"
+    }
+  },
+  "cardTitle": {
+    "branches": "ブランチ",
+    "bursty": "バースト型",
+    "hiddenRefs": "隠れた ref",
+    "machineHeavy": "マシン主体",
+    "migration": "移行",
+    "narrowHotspot": "狭いホットスポット",
+    "noTags": "タグなし",
+    "reflog": "reflog",
+    "singleOwner": "単独所有者"
+  },
+  "grain": {
+    "coarsest": "最も粗い — トップレベルのモジュール",
+    "finest": "最も細かい粒度",
+    "mid": "中間の粒度",
+    "oneCharacteristic": "一つの特徴的なスケール"
+  },
+  "header": {
+    "dirtyBadge": "ダーティ",
+    "machineChip": "マシン",
+    "refresh": "更新",
+    "refreshing": "更新中…",
+    "title": "リポジトリ X 線"
+  },
+  "hotspot": {
+    "clusterPeers": "クラスターの仲間",
+    "coChangers": "共変更するもの",
+    "keystone": "キーストーン",
+    "keystoneScore": "キーストーン  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "ブランチ",
+    "commitsHumanMachine": "人間 · マシン {n}",
+    "commitsLabel": "コミット",
+    "confidenceLabel": "確信度",
+    "curlLabel": "curl",
+    "engineSection": "エンジン",
+    "gradientLabel": "勾配",
+    "harmonicLabel": "調和",
+    "headLabel": "head",
+    "hiddenRefsLabel": "隠れた ref",
+    "mergeCount": {
+      "other": "{n} マージ"
+    },
+    "noTags": "タグなし",
+    "notesLabel": "ノート",
+    "openCommit": "コミットを開く",
+    "pathLabel": "パス",
+    "remoteCount": "{n} リモート",
+    "renamesLabel": "リネーム",
+    "scannedAt": "{time}にスキャン",
+    "selectedCount": "{n} 件選択",
+    "shapeLinear": "線形",
+    "shapeMergeHeavy": "マージ主体",
+    "shapeMostlyLinear": "ほぼ線形",
+    "stashCount": {
+      "other": "{n} スタッシュ"
+    },
+    "stressLabel": "ストレス",
+    "tagCount": {
+      "other": "{n} タグ"
+    },
+    "worktreeCount": {
+      "other": "{n} 作業ツリー"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Git 履歴、ref、ペース、ホットスポットを調査中。",
+    "buildingTitle": "リポジトリ X 線を構築中",
+    "idleMessage": "パネルを再度開くと現在のリポジトリを調査します。",
+    "idleTitle": "リポジトリ X 線",
+    "unavailableTitle": "リポジトリ X 線を取得できません"
+  },
+  "metabolism": {
+    "halfLife": "半減期 {n} 日"
+  },
+  "multi": {
+    "clusterCount": {
+      "other": "{n} クラスター"
+    },
+    "clusterSingle": "クラスター {id}",
+    "couplingSuffix": "{parts} の結合",
+    "externalCount": "{n} 外部",
+    "mutualCount": "{n} 相互"
+  },
+  "recency": {
+    "days": "{n}日",
+    "months": "{n}か月",
+    "today": "今日",
+    "weeks": "{n}週",
+    "years": "{n}年"
+  },
+  "rings": {
+    "hintOneBlended": "一つに溶け合った構造",
+    "hintSelfSimilar": "自己相似",
+    "oneBlendedBody": "一つに溶け合った構造 — まだ分離できるモジュールのスケールが解像されていません。",
+    "overHistory": "履歴を通して",
+    "parts": "パーツ",
+    "readingHint": "構造を読み込み中…",
+    "scaleCount": {
+      "other": "{n} スケール"
+    },
+    "scaleDissolved": "構造スケールが一つ消滅",
+    "scaleEmerged": "構造スケールが一つ出現",
+    "scaleSpectrum": "スケールスペクトル",
+    "selfSimilarBody": "自己相似 — 構造がスケールをまたいで繰り返し、単一の特徴的なレベルがありません。",
+    "shiftInHistory": {
+      "other": "履歴上 {n} 回のシフト"
+    },
+    "structuralShiftCount": {
+      "other": "{n} 回の構造的シフト"
+    },
+    "title": "成長リング",
+    "unavailable": "利用不可"
+  },
+  "stats": {
+    "alive": "生存",
+    "files": "ファイル",
+    "lastTouched": "最終タッチ",
+    "owner": {
+      "other": "所有者"
+    },
+    "touches": "タッチ"
+  },
+  "stratumLabel": {
+    "current": "現在",
+    "legacy": "レガシー",
+    "zone": "リポジトリゾーン"
+  },
+  "summary": {
+    "analysisFailed": "解析に失敗しました：{error}",
+    "analyze": "解析",
+    "copied": "サマリーをクリップボードにコピーしました。",
+    "directionHint": "方向",
+    "download": "ダウンロード",
+    "emptyState": "Logos 解析を実行して、このリポジトリの構造と領域をマッピングします。\n(tw: slop rn)",
+    "exit": "終了",
+    "generating": "リポジトリを読み込み、特徴をクラスタリング中…",
+    "noModel": "AI モデルが設定されていません。",
+    "noModelConfigured": "AI モデルが設定されていません",
+    "presentWith": "{label}でプレゼント",
+    "presentingWith": "{label}でプレゼント中…",
+    "reanalyze": "再解析",
+    "saveDialogTitle": "リポジトリサマリーを保存",
+    "saveFailed": "保存に失敗しました：{error}",
+    "savePresentationDialogTitle": "プレゼンテーションを保存",
+    "savedTo": "{path}に保存しました"
+  },
+  "tabs": {
+    "map": "マップ",
+    "signals": "シグナル",
+    "summary": "サマリー",
+    "time": "時間"
+  },
+  "trajectory": {
+    "connectivity": "連結性",
+    "events": "{n} イベント",
+    "openInOrrery": "オーラリーで開く",
+    "readingHint": "履歴を読み込み中…",
+    "snapshots": "{n} スナップショット",
+    "steady": "安定 — このウィンドウに構造的イベントはありません。",
+    "title": "構造の軌道"
+  },
+  "verdict": {
+    "canonical": "{pct}% 正準",
+    "tooltip": "{archetype} · {canonical}% 正準 · {decisive}% 決定的"
+  }
+}

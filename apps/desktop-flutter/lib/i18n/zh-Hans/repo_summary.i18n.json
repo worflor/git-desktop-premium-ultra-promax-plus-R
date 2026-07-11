@@ -1,0 +1,60 @@
+{
+  "@@locale": "zh-Hans",
+  "backbone": {
+    "entry": "`{path}`（{lines}）— {region}",
+    "lineCount": {
+      "other": "{n} 行"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "other": "{n} 个文件。"
+    },
+    "lines": {
+      "other": "{n} 行（{bytes}）。"
+    },
+    "roles": "角色 — {parts}。",
+    "showingNofM": "正在显示 {total} 个文件中的 {active} 个，按结构中心性排序。"
+  },
+  "heading": {
+    "atAGlance": "一览",
+    "core": "核心",
+    "gettingStarted": "入门",
+    "regions": "区域",
+    "shape": "形态"
+  },
+  "historyStarvedCaveat": "排序受限：耦合图没有边（全新克隆或提交太少）。文件顺序反映的是大小，而非结构中心性。",
+  "pitch": {
+    "empty": "一个没有可读文本文件的仓库{detail}。",
+    "emptyBinary": "{n} 个二进制",
+    "emptyUnreadable": "{n} 个不可读",
+    "noRegions": {
+      "other": "一个包含 {n} 个活跃文件的仓库。"
+    },
+    "withRegions": {
+      "other": "一个包含 {n} 个活跃文件的仓库 — {regions}。"
+    }
+  },
+  "region": {
+    "bodyCommonDir": "全部位于 `{dir}` 下。",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "other": "{n} 个核心"
+    },
+    "bodyCoreSeparator": "、",
+    "bodyFiles": {
+      "other": "{n} 个文件"
+    },
+    "connectsTo": "连接到：{linked}。",
+    "filesLabel": "文件："
+  },
+  "shape": {
+    "bulk": "密集互联的代码库：多数文件参与同一个大型共变邻域。",
+    "crystalline": "晶格状代码库：文件间耦合均匀规整，局部结构可预测。",
+    "goe": "高度互联的代码库：耦合遍布各文件，无主导脊柱。",
+    "modular": "模块化代码库：若干内聚区域，跨耦合有限。在一个区域内工作很少扰动另一个。",
+    "poisson": "松散耦合的代码库：文件大多各自演进，偶有共变。",
+    "tree": "树状代码库：一条主导脊柱带着依附分支。改动通常从核心向外传播。"
+  }
+}

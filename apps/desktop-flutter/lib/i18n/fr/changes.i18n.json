@@ -1,0 +1,536 @@
+{
+  "@@locale": "fr",
+  "usage": {
+    "caption": "{input} entrée · {output} sortie",
+    "captionCached": "{fresh} entrée · {cached} en cache · {out} sortie",
+    "inWord": "entrée",
+    "cachedWord": "cache",
+    "outWord": "sortie",
+    "tipIn": "{value}  entrée",
+    "tipCacheRead": "{value}  lecture cache",
+    "tipCacheWrite": "{value}  écriture cache",
+    "tipOut": "{value}  sortie",
+    "tipReasoning": "{value}  raisonnement",
+    "tipWallClock": "{value}s  temps réel"
+  },
+  "tabs": {
+    "defaultLabel": "Modifications",
+    "empty": "Vide"
+  },
+  "tabStrip": {
+    "newDiffTab": "Nouvel onglet de diff"
+  },
+  "select": {
+    "selectAll": "Tout sélectionner",
+    "deselectAll": "Tout désélectionner"
+  },
+  "constellationToggle": {
+    "backToList": "retour à la liste",
+    "atlas": "atlas, voir les candidats au commit"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\nse couple avec {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "nouveau",
+    "roleBridge": "pont",
+    "roleHub": "pivot",
+    "roleLeaf": "feuille",
+    "roleConnected": "connecté",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "change avec {name}",
+    "newFile": "nouveau fichier",
+    "nearOtherChanges": "près de {count} autres modifications dans {dir}",
+    "usuallyChangesWithFile": "{name} change habituellement avec ce fichier"
+  },
+  "tagInput": {
+    "hint": "tag..."
+  },
+  "composer": {
+    "hintPlaceholder": "message de commit...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Valider les modifications",
+    "primaryCommitChangesDetail": "HEAD détachée : validez localement sans synchroniser.",
+    "primaryPublish": "Valider et publier",
+    "primaryPublishDetail": "Créer le commit et publier cette branche d'un coup.",
+    "primarySync": "Valider et synchroniser",
+    "primarySyncDetail": "Créer le commit, puis réconcilier et livrer la branche.",
+    "primaryPush": "Valider et pousser",
+    "primaryPushDetail": "Créer le commit et le pousser immédiatement.",
+    "amendLast": "Amender le dernier commit",
+    "amendAnd": "Amender et {action}",
+    "chooseFile": "Choisissez au moins un fichier pour le prochain commit.",
+    "writeMessage": "Écrivez d'abord un message de commit.",
+    "committing": "Validation",
+    "committingSync": "Validation et synchronisation",
+    "committed": "Validé.",
+    "undoFailed": "Échec de l'annulation.",
+    "working": "En cours…",
+    "commitOnly": "Valider seulement",
+    "noRuntimeModels": "Aucun modèle découvert à l'exécution n'est disponible pour les messages de commit.",
+    "restoreFailedRetry": "{err}\nImpossible de restaurer l'indexation des fichiers exclus ; vérifiez l'index avant de réessayer.",
+    "committedSummary": "Validé {summary} ({hash}).",
+    "restoreFailedSync": "Impossible de réindexer les sélections des fichiers exclus ; synchronisation ignorée. Vérifiez l'index avant de synchroniser.",
+    "noModelLabel": "Aucun modèle",
+    "chooseBeforeGenerate": "Choisissez au moins un fichier avant de générer.",
+    "aiUnavailable": "L'IA de message de commit n'est pas encore disponible.",
+    "generateFailed": "Échec de la génération.",
+    "stageFailed": "Échec de l'indexation des fichiers.",
+    "commitFailed": "Échec de la validation.",
+    "committedAndRan": "Validé {summary} ({hash}) et exécuté {operation}.",
+    "committedResolved": {
+      "one": "Validé {summary} ({hash}) ; {n} conflit résolu.",
+      "other": "Validé {summary} ({hash}) ; {n} conflits résolus."
+    },
+    "conflictsLeft": {
+      "one": "{n} conflit restant à résoudre.",
+      "other": "{n} conflits restants à résoudre."
+    },
+    "syncBlocked": {
+      "one": "Validation réussie, mais la synchronisation a été bloquée par {n} fichier non validé.",
+      "other": "Validation réussie, mais la synchronisation a été bloquée par {n} fichiers non validés."
+    },
+    "syncStalled": "Validation réussie, mais la synchronisation a calé : {message}",
+    "syncFailed": "Validation réussie, mais la synchronisation a échoué : {message}"
+  },
+  "rebase": {
+    "continueFailed": "Impossible de poursuivre le rebasage."
+  },
+  "editor": {
+    "closeBarrier": "Fermer l'éditeur"
+  },
+  "editorTitles": {
+    "any": [
+      "cher journal git",
+      "par-git-donnez-moi car j'ai fauté…",
+      "nommez cet instant",
+      "jactez",
+      "parlez !",
+      "ta mère était une référence pendante et ton père sentait le point-virgule"
+    ],
+    "short": [
+      "oh ?",
+      "bonjour :)",
+      "au fait :",
+      "quelques mots",
+      "la version polie",
+      "laissez une note",
+      "vous disiez… ?",
+      "allez, crachez le morceau"
+    ],
+    "mid": [
+      "pour mémoire",
+      "dites au vous du futur",
+      "mais d'abord ?",
+      "comment ça s'est passé",
+      "dans vos propres mots",
+      "vous avez fait QUOI ?",
+      "bien noté",
+      "vous avez toute mon attention"
+    ],
+    "long": [
+      "vos rêves, s'il vous plaît",
+      "dites quelque chose de gentil",
+      "... et là j'ai dit :",
+      "la postérité vous attend",
+      "écrire plus fait disparaître vos bugs",
+      "oh wow",
+      "les textes sacrés"
+    ]
+  },
+  "askHint": {
+    "round": "manche {n} — affinez ou ajoutez du contexte.",
+    "symptom": "décrivez le symptôme.",
+    "broken": "qu'est-ce qui est cassé ?",
+    "bug": "décrivez le bug.",
+    "error": "collez l'erreur."
+  },
+  "fileMenu": {
+    "ripple": "Onde",
+    "includeCoChanges": "Inclure les co-changements",
+    "deleteFile": "Supprimer {name}…",
+    "discardChangesTo": "Abandonner les modifications de {name}…",
+    "ignore": "Ignorer",
+    "diffTabFromSelection": "Onglet de diff depuis la sélection",
+    "addSelectedToTab": "Ajouter la sélection à {name}",
+    "diffTabFromFile": "Onglet de diff depuis {name}",
+    "addFileToTab": "Ajouter {file} à {tab}",
+    "copyFilePath": "Copier le chemin du fichier",
+    "showInExplorer": "Afficher dans l'explorateur"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "fortement couplé",
+    "cohesionLoose": "faiblement lié",
+    "cohesionScattered": "structurellement dispersé",
+    "clusterOne": "tout dans une grappe",
+    "clusterSpansDetailed": "couvre {count} grappes ({parts} fichiers)",
+    "clusterSpans": "couvre {count} grappes",
+    "roleLine": "{count} fichiers · {cohesion}",
+    "usuallyChangesWithGroup": "{file} change habituellement avec ce groupe",
+    "splitToNewTab": "Scinder vers un nouvel onglet",
+    "copyPaths": "Copier {count} chemins"
+  },
+  "ignoreMenu": {
+    "extension": "extension .{ext}",
+    "allSelected": "Tous les {count} sélectionnés",
+    "couplesWith": {
+      "one": "Se couple avec {n} fichier inclus",
+      "other": "Se couple avec {n} fichiers inclus"
+    },
+    "updateFailed": "Échec de la mise à jour de .gitignore."
+  },
+  "discard": {
+    "deleteTitle": "Supprimer {name} ?",
+    "discardTitle": "Abandonner les modifications de {name} ?",
+    "deleteBody": "{path} sera supprimé du disque. Ceci ne peut pas être annulé depuis l'application.",
+    "discardBody": "Toutes les modifications de {path} seront ramenées à leur état dans HEAD. Ceci est irréversible.",
+    "discard": "Abandonner",
+    "deletingFile": "Suppression de {name}",
+    "discardingFile": "Abandon de {name}",
+    "discardFailed": "Échec de l'abandon des modifications.",
+    "discardManyTitle": "Abandonner les modifications de {count} fichiers ?",
+    "discardManyBody": "Les fichiers suivis seront ramenés à leur état dans HEAD ; les fichiers non suivis seront supprimés du disque. Ceci est irréversible.",
+    "discardManyConfirm": "Abandonner {count}",
+    "discardingManyFiles": "Abandon de {count} fichiers",
+    "failedOpenExplorer": "Échec de l'ouverture de l'explorateur de fichiers : {error}",
+    "someFailed": "Certains abandons ont échoué."
+  },
+  "snack": {
+    "sameWorktree": "Même arbre de travail — rien à déverser.",
+    "diffFailed": "Échec du diff : {error}",
+    "deskEmpty": "Le bureau n'a rien en avance sur vous — déversement vide.",
+    "sourceDesk": "bureau {label}",
+    "shelfReadFailed": "Échec de lecture de l'étagère : {error}",
+    "shelfEmpty": "Étagère vide — rien à déverser.",
+    "sourceShelf": "étagère {label}",
+    "noModelConfigured": "Aucun modèle configuré pour « {label} ».",
+    "fetchFailed": "Échec de la récupération : {error}"
+  },
+  "trace": {
+    "title": "Trace de vérification",
+    "draftReview": "Revue brouillon"
+  },
+  "cleanTree": {
+    "title": "Arbre de travail propre",
+    "subtitle": "Aucune modification indexée ou non indexée détectée.",
+    "noUpstream": "  ·  aucun amont",
+    "ahead": " en avance",
+    "behind": " en retard",
+    "refreshing": "Actualisation...",
+    "refresh": "Actualiser",
+    "check": "vérifier",
+    "checkTooltip": "Récupérer et actualiser en local.",
+    "sync": "& sync"
+  },
+  "guardrail": {
+    "loose": "Souple",
+    "balanced": "Équilibré",
+    "strict": "Strict",
+    "paranoid": "Paranoïaque"
+  },
+  "dropHint": {
+    "fromShelf": "déposez pour amener ici les changements de cette étagère",
+    "fromDesk": "déposez pour amener ici les changements de ce bureau"
+  },
+  "diffEmpty": {
+    "title": "Aucun fichier sélectionné",
+    "message": "Sélectionnez un fichier modifié pour inspecter son diff."
+  },
+  "shelvePill": {
+    "shelveN": "↓ ranger {count}",
+    "shelve": "↓ ranger",
+    "shelvedCount": "{count} rangés {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "récupérer",
+    "peek": "aperçu",
+    "toss": "jeter"
+  },
+  "stashContents": {
+    "reading": "lecture de l'étagère…",
+    "empty": "étagère vide"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "valide seulement les lignes indexées",
+    "doubleClickToggle": "double-clic : basculer tout le groupe",
+    "repoRoot": "Racine du dépôt"
+  },
+  "resolveStrip": {
+    "reading": {
+      "one": "lecture de {n} fichier · rédaction de la résolution…",
+      "other": "lecture de {n} fichiers · rédaction de la résolution…"
+    },
+    "conflictsAcross": {
+      "one": "{n} conflit dans {files}",
+      "other": "{n} conflits dans {files}"
+    },
+    "resolve": "Résoudre",
+    "orWith": "OU AVEC",
+    "resolveWith": "résoudre avec {label}",
+    "resolveWithModel": "résoudre avec {label}  ·  {model}",
+    "resolving": "résolution…",
+    "resolveWithGlyph": "↵  résoudre avec {label}",
+    "orWithAnother": "ou avec un autre modèle"
+  },
+  "badge": {
+    "stagedEdit": "Modif. indexée",
+    "edited": "Modifié",
+    "stagedAdd": "Ajout indexé",
+    "added": "Ajouté",
+    "stagedDelete": "Suppr. indexée",
+    "deleted": "Supprimé",
+    "stagedRename": "Renommage indexé",
+    "renamed": "Renommé",
+    "stagedCopy": "Copie indexée",
+    "copied": "Copié",
+    "conflict": "Conflit",
+    "stagedTypeChange": "Chgt de type indexé",
+    "typeChanged": "Type changé",
+    "untracked": "Non suivi"
+  },
+  "review": {
+    "title": "Revue de code",
+    "includedFiles": {
+      "one": "{n} fichier inclus",
+      "other": "{n} fichiers inclus"
+    },
+    "hunkCount": {
+      "one": "{n} section",
+      "other": "{n} sections"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "Revue indisponible",
+    "backToDiff": "Retour au diff",
+    "verified": "Vérifiée",
+    "draftOnly": "Brouillon seulement",
+    "runAgain": "Relancer",
+    "draftShownBelow": "{error} La revue brouillon est affichée ci-dessous.",
+    "hideTrace": "Masquer la trace",
+    "showTrace": "Afficher la trace",
+    "showVerificationTrace": "Afficher la trace de vérification",
+    "whyLanded": "Pourquoi cette revue a abouti ici",
+    "noFindings": "Aucun constat",
+    "findings": "Constats",
+    "noEvidenceIssues": "Aucun problème étayé n'a été relevé pour ce périmètre de commit.",
+    "observations": "Observations",
+    "chooseBeforeReview": "Choisissez au moins un fichier avant de relire.",
+    "aiUnavailable": "L'IA de revue n'est pas encore disponible.",
+    "failed": "Échec de la revue.",
+    "noRuntimeModels": "Aucun modèle découvert à l'exécution n'est disponible pour la revue de commit."
+  },
+  "commitBtn": {
+    "switchTo": "Basculer vers : {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "demande avec {cat}…",
+    "askWith": "demander avec {cat}",
+    "noModel": "aucun modèle IA configuré",
+    "nextTooltip": "suivant : {cat}  ·  maj-clic pour précédent",
+    "onlyOne": "une seule catégorie IA configurée"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "one": "{pct}% déjà-vu — {n} arête fantôme de chronologies écartées touche ce diff",
+      "other": "{pct}% déjà-vu — {n} arêtes fantômes de chronologies écartées touchent ce diff"
+    },
+    "label": "déjà-vu"
+  },
+  "identity": {
+    "none": "aucune identité de commit configurée",
+    "asName": "en tant que {name}",
+    "asNameEmail": "en tant que {name} <{email}>",
+    "asNameSpace": "en tant que {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\npremier commit dans ce dépôt",
+    "newToRepo": "\nnouveau dans ce dépôt"
+  },
+  "staleScope": {
+    "message": "la sélection a changé depuis cette exécution",
+    "rerun": "relancer"
+  },
+  "finding": {
+    "openDiff": "Ouvrir le diff",
+    "recorded": "enregistré",
+    "dismiss": "Ignorer"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "vous avez tiré ceci",
+    "fromIdea": "depuis l'idée : « {text} »",
+    "foothold": "point d'appui — ",
+    "brainstormSpew": "jet de remue-méninges",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "Copier {count}",
+    "clear": "Effacer",
+    "chooseBeforeMuse": "Choisissez au moins un fichier avant d'invoquer la muse.",
+    "aiUnavailable": "L'IA de la Muse n'est pas encore disponible.",
+    "failed": "Échec de la Muse.",
+    "noRuntimeModels": "Aucun modèle découvert à l'exécution n'est disponible pour la muse.",
+    "needsModel": "La Muse a besoin d'au moins un modèle configuré.",
+    "dreaming": "la muse rêve..."
+  },
+  "debug": {
+    "title": "Débogage",
+    "round": "· manche {n}",
+    "clear": "effacer",
+    "close": "fermer",
+    "analyzing": "analyse du symptôme…",
+    "describeSymptom": "décrivez un symptôme, puis appuyez sur déboguer.",
+    "evidenceFor": "pour",
+    "evidenceAgainst": "mais",
+    "narrowDown": "ce qui aiderait à cerner :",
+    "failed": "Échec du débogage.",
+    "refinementFailed": "Échec de l'affinage du débogage."
+  },
+  "includeSummary": {
+    "none": "Aucun",
+    "stagedSuffix": " · {count} indexés",
+    "full": {
+      "one": "Tous les {n} fichier{staged}",
+      "other": "Tous les {n} fichiers{staged}"
+    },
+    "partial": "{count} sur {n}{staged}",
+    "shortAll": "Tous les {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "État du dépôt indisponible",
+    "loadingTitle": "Chargement de l'état du dépôt",
+    "loadingMessage": "Lecture de l'arbre de travail."
+  },
+  "stash": {
+    "appliedWithConflicts": "Remisage appliqué avec des conflits — résolvez-les sur la page Modifications (l'entrée de remisage a été conservée).",
+    "couldNotPop": "Impossible de dépiler le remisage.",
+    "listChanged": "La liste des remisages a changé ; suppression ignorée. Réessayez.",
+    "droppingStash": "Suppression du remisage"
+  },
+  "tooltips": {
+    "commitGenerating": "génération du message de commit...",
+    "commitPreparing": "préparation du message de commit...",
+    "commitSelectFile": "sélectionnez au moins un fichier pour générer un message de commit.",
+    "commitConfigure": "configurez le message de commit dans Paramètres > Dynamiques comportementales > Messages de commit.",
+    "fastFallback": "rapide",
+    "commitGenerateWith": "générer le message de commit avec le modèle {label}",
+    "museConsulting": "consultation de la muse...",
+    "showMuse": "afficher la muse",
+    "museSelectFile": "sélectionnez au moins un fichier pour la muse.",
+    "showMuseError": "afficher l'erreur de la muse",
+    "museAsk": "demander une direction à la muse",
+    "museAskWithModels": "demander une direction à la muse\n{brainstorm} → {synthesis}",
+    "qualityFallback": "qualité",
+    "reviewing": "revue en cours...",
+    "showReview": "afficher la revue",
+    "reviewPreparing": "préparation de la revue de commit...",
+    "reviewSelectFile": "sélectionnez au moins un fichier à relire.",
+    "reviewConfigure": "configurez l'IA de revue dans les paramètres.",
+    "viewingReview": "affichage de la revue",
+    "reviewWith": "revue {guardrail} avec le modèle {label}"
+  },
+  "mergeEditor": {
+    "resolutionYours": "vôtre",
+    "resolutionTheirs": "leur",
+    "resolutionCustom": "personnalisé",
+    "keepBoth": "garder les deux",
+    "trust": {
+      "manual": "manuel",
+      "safe": "sûr",
+      "guided": "guidé",
+      "assisted": "assisté",
+      "full": "complet",
+      "label": "confiance : {label}"
+    },
+    "allResolved": "tout résolu",
+    "resolveEasy": "résoudre les conflits faciles",
+    "base": "base",
+    "cancel": "annuler",
+    "save": "enregistrer",
+    "complete": "terminer",
+    "nextFile": "fichier suivant",
+    "edit": "modifier",
+    "auto": "auto",
+    "undo": "annuler",
+    "keyHints": {
+      "accept": "accepter",
+      "other": "autre",
+      "both": "les deux",
+      "navigate": "naviguer",
+      "jumpNext": "aller au suivant"
+    },
+    "favoredTooltip": "structurellement favorisé par l'analyse de couplage",
+    "newOnBothSides": "(nouveau des deux côtés)",
+    "writeFailed": "Échec de l'écriture des fichiers résolus : {error}",
+    "neighborsCoChanged": "{changed}/{total} voisins co-changés",
+    "integrity": "intégrité {pct}%",
+    "reviewer": "relecteur : {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "Aucun modèle configuré pour « {category} ». Définissez-en un dans Paramètres → IA.",
+    "sensitiveFilesSkipped": {
+      "one": "{n} fichier sensible ignoré — résolvez à la main.",
+      "other": "{n} fichiers sensibles ignorés — résolvez à la main."
+    },
+    "couldNotReadFiles": "Impossible de lire les fichiers en conflit.",
+    "blockedSecret": "Bloqué — un fichier en conflit semble contenir un {secret}. Résolvez à la main.",
+    "resolutionFailed": "Échec de la résolution : {error}",
+    "mergeResolutionLabel": "◇ résolution de fusion · {resolved}/{total} fichiers · {category}",
+    "conflictSummary": "{op} · {conflicts} dans {files}",
+    "conflictCount": {
+      "one": "{n} conflit",
+      "other": "{n} conflits"
+    },
+    "mergeEditorButton": "⇋ éditeur de fusion",
+    "noAiModel": "aucun modèle IA",
+    "later": "plus tard",
+    "discard": "abandonner",
+    "resolveWithAi": "◇ résoudre avec l'IA",
+    "otherModel": "autre modèle",
+    "withModel": "avec {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "fusion",
+      "cherryPick": "picorage",
+      "revert": "annulation",
+      "resolve": "résolution",
+      "switchOp": "bascule",
+      "pull": "tirage",
+      "rebase": "rebasage",
+      "rebaseOnto": "rebaser {branch} sur {base}"
+    },
+    "pushFailed": "Échec de la poussée",
+    "rebasedAndPushed": "Rebasé et poussé.",
+    "switchedTo": "Basculé vers {name}.",
+    "switchFailed": "Échec de la bascule.",
+    "switchedToCarried": "Basculé vers {name} (changements reportés).",
+    "alreadyUpToDate": "Déjà à jour.",
+    "merged": "{upstream} fusionné ({n} fichiers).",
+    "rebaseNotConverge": "Le rebasage n'a pas convergé — résolvez manuellement.",
+    "rebased": "Rebasé.",
+    "rebasedResolved": {
+      "one": "Rebasé (résolu {n} fichier).",
+      "other": "Rebasé (résolu {n} fichiers)."
+    },
+    "detachedHead": "Impossible de synchroniser : état HEAD détachée. Basculez d'abord sur une branche.",
+    "publishFailed": "Échec de la publication.",
+    "noRemote": "Aucun distant configuré. Ajoutez-en un pour publier cette branche.",
+    "failed": "échec"
+  },
+  "constellation": {
+    "axisStructure": "STRUCTURE",
+    "axisCoChange": "CO-CHANGEMENT",
+    "axisSpectralProfile": "PROFIL SPECTRAL",
+    "axisPathSiblings": "FRÈRES DE CHEMIN",
+    "axisDiffStructure": "STRUCTURE DU DIFF",
+    "axisSpectral": "SPECTRAL",
+    "titleUnsorted": "NON TRIÉ",
+    "titleSingleton": "SINGLETON",
+    "titleMixed": "MIXTE",
+    "untie": "délier",
+    "bind": "lier",
+    "emptyClusters": "aucune grappe pour l'instant"
+  }
+}

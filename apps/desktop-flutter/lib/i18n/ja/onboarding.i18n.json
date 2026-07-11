@@ -1,0 +1,96 @@
+{
+  "@@locale": "ja",
+  "nav": {
+    "back": "戻る",
+    "continueLabel": "続ける",
+    "letsGo": "はじめよう"
+  },
+  "naming": {
+    "question": "これはあなたにとって何ですか？",
+    "questionEmphasis": "これ",
+    "iAmPrefix": "私は ",
+    "iAmSuffix": " 、あなた専用の Git クライアントです。"
+  },
+  "theme": {
+    "title": "{name}を着飾ろう。",
+    "themesHeader": "テーマ",
+    "keybindingsHeader": "キーバインド",
+    "previewBadge": "プレビュー",
+    "useDefaults": "既定を使う"
+  },
+  "repo": {
+    "title": "{name}に対象を指定しよう。",
+    "later": "あとでやる",
+    "doors": {
+      "open": {
+        "title": "開く",
+        "subtitle": "既存",
+        "hint": "すでにあるもの"
+      },
+      "clone": {
+        "title": "クローン",
+        "subtitle": "URL から",
+        "hint": "リモート URL を貼り付け"
+      },
+      "create": {
+        "title": "作成",
+        "subtitle": "新規",
+        "hint": "新しく始める"
+      }
+    },
+    "cloneForm": {
+      "title": "URL からクローン",
+      "urlLabel": "リポジトリ URL",
+      "targetLabel": "保存先フォルダー",
+      "browse": "参照…",
+      "clone": "クローン",
+      "cloning": "クローン中…"
+    },
+    "pickers": {
+      "openRepository": "リポジトリを開く",
+      "createRepository": "リポジトリを作成",
+      "cloneTarget": "クローン先"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL と保存先パスが必要です。",
+      "createFailed": "リポジトリの作成に失敗しました。",
+      "cloneFailed": "リポジトリのクローンに失敗しました。"
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "リポジトリ X 線",
+      "settings": "設定"
+    },
+    "sidebar": {
+      "projectsHeader": "プロジェクト"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} / {total} ファイル",
+      "stagedCount": "{n} ステージ済み",
+      "commitMessageHint": "コミットメッセージ…",
+      "commitAndPush": "コミット＆プッシュ"
+    },
+    "history": {
+      "header": "履歴",
+      "viewingLast": "直近 20 コミットを表示中",
+      "inFlight": "進行中",
+      "you": "あなた",
+      "commit1": "飲み込む前に嗅ぐようキツネに教える",
+      "commit2": "アンバー：香りを一晩保つ",
+      "commit3": "キャベツを引退させアンバー＋ソーンに置き換える",
+      "commit4": "ソーンが門を守る"
+    },
+    "branches": {
+      "lensBranches": "ブランチ",
+      "lensPRs": "PR",
+      "absorbed": "吸収済み",
+      "desk": "デスク",
+      "head": "HEAD",
+      "tracking": "→ 追跡：{ref}"
+    },
+    "diff": {
+      "readmeTagline": "あなた専用の Git クライアント。"
+    }
+  }
+}

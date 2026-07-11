@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../app/app_identity.dart';
+import '../../../i18n/gen/strings.g.dart';
 import '../../../ui/motion.dart';
 import '../../../ui/tokens.dart';
 import '../onboarding_flow.dart';
@@ -92,23 +93,15 @@ class _NamingStepPageState extends State<NamingStepPage>
           FadeTransition(
             opacity: _questionFade,
             child: Center(
-              child: RichText(
-                text: TextSpan(
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: 0.2,
-                    height: 1.2,
-                  ),
-                  children: const [
-                    TextSpan(text: 'what is '),
-                    TextSpan(
-                      text: 'this',
-                      style: TextStyle(fontStyle: FontStyle.italic),
-                    ),
-                    TextSpan(text: ' to you?'),
-                  ],
+              child: _EmphasizedQuestion(
+                text: context.t.onboarding.naming.question,
+                emphasis: context.t.onboarding.naming.questionEmphasis,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.2,
+                  height: 1.2,
                 ),
               ),
             ),
@@ -127,6 +120,46 @@ class _NamingStepPageState extends State<NamingStepPage>
           ),
           const Spacer(flex: 2),
           OnboardingNavRow(onPrimary: _onContinue),
+        ],
+      ),
+    );
+  }
+}
+
+/// Renders [text] with the first occurrence of [emphasis] italicized —
+/// keeps the sentence a single translatable unit (word order can differ
+/// per locale) while still preserving the em-word styling for whichever
+/// substring the translator marks as the emphasis.
+class _EmphasizedQuestion extends StatelessWidget {
+  final String text;
+  final String emphasis;
+  final TextStyle style;
+
+  const _EmphasizedQuestion({
+    required this.text,
+    required this.emphasis,
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final idx = emphasis.isEmpty ? -1 : text.indexOf(emphasis);
+    if (idx < 0) {
+      return RichText(text: TextSpan(text: text, style: style));
+    }
+    final before = text.substring(0, idx);
+    final match = text.substring(idx, idx + emphasis.length);
+    final after = text.substring(idx + emphasis.length);
+    return RichText(
+      text: TextSpan(
+        style: style,
+        children: [
+          TextSpan(text: before),
+          TextSpan(
+            text: match,
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ),
+          TextSpan(text: after),
         ],
       ),
     );
@@ -162,7 +195,10 @@ class _InlineSentence extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         alignment: WrapAlignment.center,
         children: [
-          Text('I am ', style: sentenceStyle.copyWith(color: t.textNormal)),
+          Text(
+            context.t.onboarding.naming.iAmPrefix,
+            style: sentenceStyle.copyWith(color: t.textNormal),
+          ),
           _NameField(
             controller: controller,
             focusNode: focusNode,
@@ -175,7 +211,7 @@ class _InlineSentence extends StatelessWidget {
             underlineColor: t.accentBright.withValues(alpha: 0.55),
           ),
           Text(
-            '\u2009, your personal Git Client.',
+            context.t.onboarding.naming.iAmSuffix,
             style: sentenceStyle.copyWith(color: t.textNormal),
           ),
         ],

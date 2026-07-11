@@ -1,0 +1,201 @@
+{
+  "active": "aktiv",
+  "prefixes": {
+    "askHint": "frag: [frage]",
+    "nearHint": "nah: [datei]",
+    "whoHint": "wer: [datei]",
+    "logHint": "log: [nachricht]",
+    "runHint": "starte: [tool]",
+    "askLabel": "Frag {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} Reviewer · {touches} Berührungen",
+    "whoTouchesLabel": "{name} — {touches} Berührungen",
+    "whoTouchesSubtitle": "{path} · keine Reviewer erfasst"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NAH",
+    "who": "WER",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HEISS",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "TISCH",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "WEG",
+    "remote": "REMOTE",
+    "local": "LOKAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% Momentum"
+  },
+  "topTouched": {
+    "subtitle": "{count} Berührungen · {path}"
+  },
+  "coherence": {
+    "label": "Staging-Kohärenz: {percent}%",
+    "subtitle": "{count} Dateien"
+  },
+  "keystone": {
+    "subtitle": "{path} · Schlussstein {score}"
+  },
+  "repoSub": {
+    "changes": "Änderungen in {name}",
+    "history": "Verlauf in {name}",
+    "branches": "Branches in {name}",
+    "terminal": "Terminal in {name}",
+    "generateCommit": "Commit generieren · {name}",
+    "reviewChanges": "Änderungen prüfen in {name}",
+    "muse": "Muse in {name}"
+  },
+  "desks": {
+    "mainWorktree": "Haupt-Worktree",
+    "detached": "detached",
+    "dirty": "{count} unsauber"
+  },
+  "actions": {
+    "openInBrowser": "Im Browser öffnen",
+    "terminal": "Terminal",
+    "revealInFiles": "Im Dateimanager zeigen",
+    "copyPath": "Pfad kopieren",
+    "copyBranch": "Branch kopieren"
+  },
+  "tools": {
+    "launch": "{label} starten"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} zurück",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} Commit", "other": "{n} Commits"},
+    "pushCommitsUpstream": "{commits} nach {upstream}",
+    "forcePush": "Force-Push",
+    "forcePushNoUpstream": "Force-Push nicht möglich: kein Upstream für {branch} gesetzt.",
+    "commit": "Commit",
+    "stageAll": "Alles stagen",
+    "unstageAll": "Alles unstagen",
+    "discardAll": "Alles verwerfen",
+    "createBranch": "Branch erstellen",
+    "deleteBranch": "Branch löschen",
+    "renameBranch": "Branch umbenennen",
+    "stash": "Stash",
+    "stashPop": "Stash Pop",
+    "stashApply": "Stash Apply",
+    "stashDrop": "Stash Drop",
+    "createTag": "Tag erstellen",
+    "cherryPick": "Cherry-Pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash mit Konflikten angewendet. Löse sie auf der Änderungen-Seite."
+  },
+  "pr": {
+    "create": "PR erstellen",
+    "merge": "PR mergen",
+    "markReady": "PR als bereit markieren"
+  },
+  "ai": {
+    "generateCommit": "Commit generieren",
+    "reviewChanges": "Änderungen prüfen",
+    "runMuse": "Muse starten",
+    "debugRepo": "{name} debuggen",
+    "describeSymptom": "beschreibe ein Symptom",
+    "viewResult": "{kind} ansehen",
+    "unseenResult": "ungesehenes Ergebnis",
+    "runningResult": "AI: {kind}…",
+    "running": "läuft",
+    "kindCommitMessage": "Commit-Nachricht",
+    "kindCodeReview": "Code-Review",
+    "kindMuseResult": "Muse-Ergebnis",
+    "kindPresentation": "Präsentation",
+    "kindDebugResult": "Debug-Ergebnis"
+  },
+  "undo": {
+    "cancel": "Abbrechen: {label}"
+  },
+  "navigation": {
+    "changes": "Änderungen",
+    "history": "Verlauf",
+    "branches": "Branches",
+    "xray": "Röntgen",
+    "settings": "Einstellungen",
+    "refresh": "Aktualisieren"
+  },
+  "settings": {
+    "reduceMotion": "Bewegung reduzieren",
+    "animateLogoUnfocused": "Logo unfokussiert animieren",
+    "instantBlameHover": "Sofort-Blame beim Hovern",
+    "autoSelectChanges": "Änderungen auto-auswählen",
+    "fetchOnlineIssues": "Online-Issues abrufen",
+    "rememberWip": "Work in Progress merken",
+    "hideAiFeatures": "AI-Funktionen ausblenden",
+    "crashReporting": "Absturzberichte",
+    "aiReadOnly": "AI schreibgeschützt",
+    "stashCabinetExpanded": "Stash-Schrank ausgeklappt",
+    "fileSortInverted": "Dateisortierung umgekehrt"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Engine-Status",
+    "engineStatusSubtitle": "LogosGit Spektral-Engine-Diagnostik",
+    "fileCoupling": "Datei-Kopplung",
+    "fileCouplingSubtitle": "Nächste Co-Change-Nachbarn für gestagte Dateien",
+    "themeSpecimen": "Theme-Muster",
+    "themeSpecimenSubtitle": "Alle Farben, Icons, Text-Tiers und Geometrie"
+  },
+  "dev": {
+    "testMergeEditor": "Merge-Editor testen",
+    "testHistorySurgery": "Historien-Chirurgie testen",
+    "back": "zurück",
+    "cancel": "abbrechen",
+    "buildingConflicts": "baue Testkonflikte aus der Historie…"
+  },
+  "historySurgery": {
+    "label": "Historien-Chirurgie",
+    "subtitle": "Historie neu schreiben, um Dateien dauerhaft zu entfernen"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Scrubbe die strukturelle Historie des Repos durch die Mannigfaltigkeit"
+  },
+  "command": {
+    "complete": "{label} abgeschlossen",
+    "failed": "{label} fehlgeschlagen: {message}",
+    "copy": "Kopieren"
+  },
+  "search": {
+    "hintDefault": "alles durchsuchen...",
+    "hintElevated": "erhöht — alle Aktionen",
+    "emptyTypeToSearch": "tippen zum Suchen",
+    "emptyNoResults": "keine Ergebnisse"
+  },
+  "wick": {
+    "label": "docht",
+    "coupledFallback": "gekoppelt"
+  },
+  "gitCache": {
+    "current": "aktuell",
+    "staged": "gestaged",
+    "modified": "geändert"
+  }
+}

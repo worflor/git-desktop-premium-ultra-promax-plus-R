@@ -1,0 +1,68 @@
+{
+  "_comment": "Translation provenance manifest. Source of truth for the in-app language disclosure — the language picker renders these facts verbatim, so this file must stay honest. 'source' is one of: source (the authored language), ai (machine translated; 'model' names the exact model), human (community translation). 'humanReviewedPercent' is the share of keys a named reviewer has vetted; reviewers list who, with a self-claimed credential. Translation PRs that touch a locale's keys must update its entry.",
+  "locales": {
+    "en": {
+      "source": "source",
+      "generated": null,
+      "model": null,
+      "reviewers": [],
+      "humanReviewedPercent": 100
+    },
+    "de": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "es": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "fr": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "ja": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "ko": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "pt-BR": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "ru": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    },
+    "zh-Hans": {
+      "source": "ai",
+      "model": "Claude Opus 4.8",
+      "generated": "2026-07-11",
+      "reviewers": [],
+      "humanReviewedPercent": 0
+    }
+  }
+}

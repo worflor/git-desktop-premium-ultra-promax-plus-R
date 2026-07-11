@@ -1,0 +1,261 @@
+{
+  "@@locale": "ko",
+  "board": {
+    "movesWithModule": "다른 모듈과 함께 움직임",
+    "reviewerCount": {
+      "other": "리뷰어 {n}명"
+    },
+    "territory": "영역",
+    "unreviewed": "미리뷰"
+  },
+  "cadence": {
+    "burstTooltipMulti": "커밋 {sum}개 · {days}일\n{lines}",
+    "burstTooltipSingle": "{label}에 커밋 {n}개",
+    "gapTooltip": "{n}일 공백 · {label}",
+    "reflogTooltip": "{label}에 reflog 이벤트 {n}개"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "이 저장소는 브랜치 인식 탐색이 유용할 만큼 충분한 브랜치 표면을 가지고 있습니다.",
+      "broadTitle": "브랜치 모델에 표면적이 있음",
+      "localBranchesDetail": "로컬 브랜치 {count}개.",
+      "localBranchesLabel": "로컬 브랜치",
+      "remoteBranchesDetail": "원격 브랜치 {count}개.",
+      "remoteBranchesLabel": "원격 브랜치",
+      "simpleClaim": "보이는 브랜치 모델이 좁습니다.",
+      "simpleTitle": "단순한 브랜치 모델"
+    },
+    "bursty": {
+      "claim": "작업이 평탄한 일일 리듬보다 집중된 폭발로 이루어집니다.",
+      "title": "폭발적 개발 리듬"
+    },
+    "hiddenRefs": {
+      "claim": "정상적인 브랜치/태그 공간 밖에 ref {count}개가 있습니다.",
+      "evidenceDetail": "heads/remotes/tags 밖에 ref {count}개.",
+      "evidenceLabel": "숨겨진 ref",
+      "namespacesLabel": "네임스페이스",
+      "title": "숨겨진 Git 네임스페이스"
+    },
+    "keystone": {
+      "claim": {
+        "other": "소수의 파일이 터치 횟수에 비해 불균형하게 큰 공동 변경 비중을 지닙니다."
+      },
+      "evidenceDetail": {
+        "other": "{n}회 터치 · pull φ={score}"
+      },
+      "title": {
+        "other": "키스톤 브리지 파일 {n}개"
+      }
+    },
+    "machineHistory": {
+      "claim": "체크포인트 방식의 커밋이 단순 히스토리 지표를 크게 왜곡합니다.",
+      "machineCommitsDetail": "커밋 {count}개가 머신/세션 패턴과 일치했습니다.",
+      "machineCommitsLabel": "머신 커밋",
+      "rawVsFilteredDetail": "원본 커밋 {raw}개 대 필터링된 커밋 {filtered}개.",
+      "rawVsFilteredLabel": "원본 대 필터링",
+      "title": "머신 히스토리가 원본 지표를 지배함"
+    },
+    "migration": {
+      "claim": "히스토리가 `{older}` → `{newer}` 방향으로 이동하여, 스택 또는 표면 전환을 시사합니다.",
+      "stratumDetail": "{touches}회 터치, 마지막 활동 {lastActive}.",
+      "title": "아키텍처 마이그레이션이 보임"
+    },
+    "narrowHotspot": {
+      "claim": "소수의 파일과 디렉터리가 불균형하게 큰 변경 비중을 흡수합니다.",
+      "title": "핫스폿 집중이 좁음",
+      "topHotspotDetail": "{path} — 보이는 핫스폿 집합의 {pct}% 차지.",
+      "topHotspotLabel": "최상위 핫스폿",
+      "visibleAuthorsDetail": "이 히스토리 구간에 작성자 {count}명.",
+      "visibleAuthorsLabel": "보이는 작성자"
+    },
+    "noTags": {
+      "claim": "Git 태그가 눈에 보이는 릴리스나 마일스톤 계층으로 사용되지 않고 있습니다.",
+      "remoteEndpointsDetail": "원격 엔드포인트 {count}개 구성됨.",
+      "remoteEndpointsLabel": "원격 엔드포인트",
+      "tagCountDetail": "태그 0개 발견.",
+      "tagCountLabel": "태그 수",
+      "title": "공식 릴리스/태그 자취 없음"
+    },
+    "reflog": {
+      "claim": "reflog 양이 게시된 커밋 너머의 집중된 로컬 반복을 시사합니다.",
+      "peakReflogDayLabel": "reflog 최다일",
+      "title": "집중적인 로컬 편집 세션"
+    },
+    "singleOwner": {
+      "claim": "`{path}` — 뚜렷한 작성자 한 명이 보이는, 많이 터치된 {kind}.",
+      "ownerCountDetail": "뚜렷한 작성자 {count}명.",
+      "ownerCountLabel": "소유자 수",
+      "title": "단일 소유자 핫스폿",
+      "touchCountLabel": "터치 수",
+      "touchDetailFiltered": "필터링된 히스토리에서 {count}회 터치.",
+      "touchDetailRaw": "원본 히스토리에서 {count}회 터치."
+    }
+  },
+  "cardTitle": {
+    "branches": "브랜치",
+    "bursty": "폭발적",
+    "hiddenRefs": "숨겨진 ref",
+    "machineHeavy": "머신 과다",
+    "migration": "마이그레이션",
+    "narrowHotspot": "좁은 핫스폿",
+    "noTags": "태그 없음",
+    "reflog": "reflog",
+    "singleOwner": "단일 소유자"
+  },
+  "grain": {
+    "coarsest": "가장 거침 — 최상위 모듈",
+    "finest": "가장 미세한 결",
+    "mid": "중간 결",
+    "oneCharacteristic": "하나의 특징적 스케일"
+  },
+  "header": {
+    "dirtyBadge": "더러움",
+    "machineChip": "머신",
+    "refresh": "새로고침",
+    "refreshing": "새로고침 중...",
+    "title": "저장소 엑스레이"
+  },
+  "hotspot": {
+    "clusterPeers": "클러스터 동료",
+    "coChangers": "공동 변경자",
+    "keystone": "키스톤",
+    "keystoneScore": "키스톤  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "브랜치",
+    "commitsHumanMachine": "사람 · 머신 {n}개",
+    "commitsLabel": "커밋",
+    "confidenceLabel": "신뢰도",
+    "curlLabel": "curl",
+    "engineSection": "엔진",
+    "gradientLabel": "그래디언트",
+    "harmonicLabel": "하모닉",
+    "headLabel": "head",
+    "hiddenRefsLabel": "숨겨진 ref",
+    "mergeCount": {
+      "other": "병합 {n}개"
+    },
+    "noTags": "태그 없음",
+    "notesLabel": "노트",
+    "openCommit": "커밋 열기",
+    "pathLabel": "경로",
+    "remoteCount": "원격 {n}개",
+    "renamesLabel": "이름 변경",
+    "scannedAt": "{time}에 스캔됨",
+    "selectedCount": "{n}개 선택됨",
+    "shapeLinear": "선형",
+    "shapeMergeHeavy": "병합 과다",
+    "shapeMostlyLinear": "대체로 선형",
+    "stashCount": {
+      "other": "스태시 {n}개"
+    },
+    "stressLabel": "stress",
+    "tagCount": {
+      "other": "태그 {n}개"
+    },
+    "worktreeCount": {
+      "other": "작업 트리 {n}개"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Git 히스토리, ref, 리듬, 핫스폿을 조사하는 중.",
+    "buildingTitle": "저장소 엑스레이 생성 중",
+    "idleMessage": "현재 저장소를 조사하려면 패널을 다시 여세요.",
+    "idleTitle": "저장소 엑스레이",
+    "unavailableTitle": "저장소 엑스레이를 사용할 수 없음"
+  },
+  "metabolism": {
+    "halfLife": "반감기 {n}일"
+  },
+  "multi": {
+    "clusterCount": {
+      "other": "클러스터 {n}개"
+    },
+    "clusterSingle": "클러스터 {id}",
+    "couplingSuffix": "{parts} 결합",
+    "externalCount": "외부 {n}개",
+    "mutualCount": "상호 {n}개"
+  },
+  "recency": {
+    "days": "{n}일",
+    "months": "{n}개월",
+    "today": "오늘",
+    "weeks": "{n}주",
+    "years": "{n}년"
+  },
+  "rings": {
+    "hintOneBlended": "하나의 혼합 구조",
+    "hintSelfSimilar": "자기 유사",
+    "oneBlendedBody": "하나의 혼합 구조 — 아직 분리 가능한 모듈 스케일이 드러나지 않습니다.",
+    "overHistory": "히스토리 전반",
+    "parts": "부분",
+    "readingHint": "구조 읽는 중…",
+    "scaleCount": {
+      "other": "스케일 {n}개"
+    },
+    "scaleDissolved": "구조적 스케일 하나가 해체됨",
+    "scaleEmerged": "구조적 스케일 하나가 출현함",
+    "scaleSpectrum": "스케일 스펙트럼",
+    "selfSimilarBody": "자기 유사 — 구조가 스케일 전반에 걸쳐 반복되며, 단일한 특징적 수준이 없습니다.",
+    "shiftInHistory": {
+      "other": "히스토리에서 {n}번 변화"
+    },
+    "structuralShiftCount": {
+      "other": "구조적 변화 {n}회"
+    },
+    "title": "성장 나이테",
+    "unavailable": "사용 불가"
+  },
+  "stats": {
+    "alive": "활성",
+    "files": "파일",
+    "lastTouched": "마지막 터치",
+    "owner": {
+      "other": "소유자"
+    },
+    "touches": "터치"
+  },
+  "stratumLabel": {
+    "current": "현재",
+    "legacy": "레거시",
+    "zone": "저장소 존"
+  },
+  "summary": {
+    "analysisFailed": "분석 실패: {error}",
+    "analyze": "분석",
+    "copied": "요약을 클립보드에 복사했습니다.",
+    "directionHint": "방향",
+    "download": "다운로드",
+    "emptyState": "Logos 분석을 실행하여 이 저장소의 구조와 영역을 매핑하세요.\n(tw: slop rn)",
+    "exit": "종료",
+    "generating": "저장소를 읽고 특징을 클러스터링하는 중…",
+    "noModel": "구성된 AI 모델이 없습니다.",
+    "noModelConfigured": "구성된 AI 모델 없음",
+    "presentWith": "{label} 발표",
+    "presentingWith": "{label} 발표 중…",
+    "reanalyze": "재분석",
+    "saveDialogTitle": "저장소 요약 저장",
+    "saveFailed": "저장 실패: {error}",
+    "savePresentationDialogTitle": "프레젠테이션 저장",
+    "savedTo": "{path}에 저장됨"
+  },
+  "tabs": {
+    "map": "맵",
+    "signals": "신호",
+    "summary": "요약",
+    "time": "시간"
+  },
+  "trajectory": {
+    "connectivity": "연결성",
+    "events": "이벤트 {n}개",
+    "openInOrrery": "Orrery에서 열기",
+    "readingHint": "히스토리 읽는 중…",
+    "snapshots": "스냅샷 {n}개",
+    "steady": "안정 — 이 구간에 구조적 이벤트 없음.",
+    "title": "구조적 궤적"
+  },
+  "verdict": {
+    "canonical": "{pct}% 정준",
+    "tooltip": "{archetype} · {canonical}% 정준 · {decisive}% 결정적"
+  }
+}

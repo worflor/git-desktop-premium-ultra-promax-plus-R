@@ -8,6 +8,7 @@
 // every line is a physics-to-English hand-off.
 
 import '../logos_spectrogeometry.dart';
+import 'strings.dart';
 
 /// One-line plain-English description of the repo's overall structure,
 /// derived from the spectrogeometry archetype. The 6 archetype names
@@ -16,29 +17,26 @@ import '../logos_spectrogeometry.dart';
 /// categories, not repo-specific heuristics.
 ///
 /// Returns empty string when [geometry] is null (spectral basis failed).
-String shapeDescription(SpectroGeometry? geometry) {
+String shapeDescription(
+  SpectroGeometry? geometry, {
+  RepoSummaryStrings strings = const EnglishRepoSummaryStrings(),
+}) {
   if (geometry == null) return '';
   final nearest = geometry.universality.nearest;
   final archetype = nearest.name;
   switch (archetype) {
     case 'tree':
-      return 'Tree-shaped codebase: one dominant spine with dependent '
-          'branches. Change usually propagates outward from the core.';
+      return strings.shapeTree;
     case 'modular':
-      return 'Modular codebase: several cohesive regions with limited '
-          'cross-coupling. Work in one region rarely disturbs another.';
+      return strings.shapeModular;
     case 'bulk':
-      return 'Densely interconnected codebase: most files participate '
-          'in one large neighbourhood of shared change.';
+      return strings.shapeBulk;
     case 'crystalline':
-      return 'Lattice-shaped codebase: uniform, regular coupling across '
-          'files with predictable local structure.';
+      return strings.shapeCrystalline;
     case 'goe':
-      return 'Richly interconnected codebase: couplings spread across '
-          'files without a dominant spine.';
+      return strings.shapeGoe;
     case 'poisson':
-      return 'Loosely coupled codebase: files evolve mostly on their '
-          'own, with occasional shared change.';
+      return strings.shapePoisson;
     default:
       return '';
   }

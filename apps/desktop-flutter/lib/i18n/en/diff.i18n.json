@@ -1,0 +1,145 @@
+{
+  "@@locale": "en",
+  "status": {
+    "loadingTitle": "Loading diff",
+    "loadingMessage": "Reading file changes.",
+    "unavailableTitle": "Diff unavailable",
+    "noChangesTitle": "No changes",
+    "noChangesMessage": "This file has no diff content to display."
+  },
+  "toolbar": {
+    "searchHint": "search diff...",
+    "lineCount": {
+      "one": "{n} line",
+      "other": "{n} lines"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "wear · on",
+    "wearMapOnHint": "wear map on — click to hide",
+    "wearMapOffHint": "show wear map (activity heatmap)",
+    "trailBadge": "· trail"
+  },
+  "hunkDropdown": {
+    "tooltip": "Jump to change block. Git calls these hunks.",
+    "changeCount": {
+      "one": "{n} change",
+      "other": "{n} changes"
+    }
+  },
+  "stagingFailed": "Partial stage failed: {error}",
+  "trail": {
+    "loading": "loading trail...",
+    "noHistory": "no history found",
+    "nowWorkingCopy": "now · working copy",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "loading pinned context",
+    "pageManifold": "Manifold",
+    "pageSignals": "Signals",
+    "echoesTitle": "Echoes",
+    "technicalLedger": "Technical Ledger",
+    "noSecondaryCues": "No secondary cues detected.",
+    "linkedPaths": "Linked Paths",
+    "moreCount": "+{n} more",
+    "localSeam": "Local seam",
+    "sharedOwnership": "shared ownership",
+    "historyWarmingUp": "History warming up",
+    "echoesTotal": "{n} TOTAL",
+    "noEchoes": "No echoes in this diff.",
+    "openRelatedFile": "Open related file {name}",
+    "inspectFile": "inspect {name}",
+    "jumpEcho": "jump echo",
+    "copyLine": "copy line",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "Recent movement with one strong owner nearby.",
+      "activeSeam": "Recent movement from multiple hands nearby.",
+      "stableOwnerLane": "Long-lived lane with one dominant owner.",
+      "sharedLongLivedSeam": "Shared seam that has accumulated over time.",
+      "sharedLane": "Shared lane with no single dominant owner.",
+      "resolving": "History is still resolving around this line."
+    },
+    "tone": {
+      "hot": "Hot",
+      "novel": "Novel",
+      "contested": "Contested",
+      "spreading": "Spreading",
+      "stable": "Stable"
+    },
+    "summary": {
+      "livesIn": "Lives in {concept}",
+      "sitsInLocalSeam": "Sits in a local seam",
+      "workedMostlyBy": "worked mostly by {owner} nearby",
+      "echoesInSpots": {
+        "one": "echoes in {n} other spot",
+        "other": "echoes in {n} other spots"
+      },
+      "inspectNext": "inspect {path} next{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "tight fit",
+      "close": "close fit",
+      "loose": "loose fit"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Why this matters",
+    "storyConfidence": "Confidence",
+    "storySecondarySignal": "Secondary signal",
+    "storyNeighbourhood": "Neighbourhood",
+    "neighbourhoodDetail": "This line sits close to {name} in the current codebase field.",
+    "propagationLane": "Propagation lane",
+    "propagationLaneNamed": "Propagation lane: {lane}",
+    "witness": {
+      "nearbySupport": "Nearby support · {label}",
+      "localizedMove": "Localized move · {label}",
+      "surprisingMove": "Surprising move · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Stable structure",
+      "conflictingSignals": "Conflicting signals",
+      "novelShape": "Novel shape"
+    },
+    "related": {
+      "testMirror": "Test mirror",
+      "semanticHistorySibling": "Semantic + history sibling",
+      "recentCoChange": "Recent co-change",
+      "semanticSibling": "Semantic sibling",
+      "relatedStructure": "Related structure",
+      "tightlyBound": "tightly bound",
+      "orbiting": "orbiting",
+      "weaklyCoupled": "weakly coupled",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "history trail",
+      "testMirrorLane": "test mirror lane",
+      "structuralLane": "structural lane",
+      "semanticNeighbourhood": "semantic neighbourhood"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} hidden",
+    "landing": "landing"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (too large to preview)",
+    "unableToLoadBlob": "Unable to load blob",
+    "omittedKindMedia": "media",
+    "omittedKindBinary": "binary",
+    "omittedStub": "{kind} · hidden"
+  },
+  "media": {
+    "unableToDecodeImage": "Unable to decode image",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "added",
+    "stateDeleted": "deleted",
+    "stateModified": "modified",
+    "fallbackFormatName": "Binary"
+  }
+}

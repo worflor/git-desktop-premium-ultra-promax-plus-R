@@ -1,0 +1,101 @@
+{
+  "@@locale": "pt-BR",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Percorrer",
+    "modeCompare": "Comparar",
+    "lodModules": "Módulos",
+    "lodFiles": "Arquivos"
+  },
+  "status": {
+    "loading": "Traçando o manifold através do histórico…",
+    "loadError": "Não foi possível ler o histórico deste repo.",
+    "notEnoughHistory": "Histórico ainda insuficiente para plotar uma trajetória.",
+    "notEnoughHistoryDetail": "O Orrery precisa de alguns commits para desenhar."
+  },
+  "legend": {
+    "central": "central",
+    "peripheral": "periférico"
+  },
+  "node": {
+    "module": "módulo",
+    "moduleWithCount": "{path} · {n} arquivos",
+    "fileFallback": "arquivo #{id}",
+    "nodeFallback": "nó #{id}",
+    "rootModule": "(raiz)"
+  },
+  "milestone": {
+    "genesis": "gênese",
+    "now": "agora",
+    "reorganized": "reorganizado",
+    "becameArchetype": "virou {archetype}",
+    "snapshot": "snapshot"
+  },
+  "structure": {
+    "forming": "formando…",
+    "canonical": "canônico",
+    "connectivity": "conectividade",
+    "rigidity": "rigidez",
+    "entropy": "entropia"
+  },
+  "rail": {
+    "structureLabel": "ESTRUTURA",
+    "fieldLabel": "CAMPO",
+    "findingsLabel": "ACHADOS",
+    "selectedLabel": "SELECIONADO",
+    "noFindings": "Nenhum evento estrutural detectado neste histórico."
+  },
+  "selection": {
+    "notPresent": "Não presente neste ponto do histórico.",
+    "roleCentral": "Central no acoplamento — mudanças aqui repercutem por todo o sistema.",
+    "rolePeripheral": "Periférico — frouxamente acoplado, muda quase sempre por conta própria.",
+    "roleMid": "Estrutura intermediária — moderadamente acoplado.",
+    "driftOutward": " Derivando para fora — desacoplando.",
+    "driftInward": " Derivando para dentro — integrando.",
+    "driftHolding": " Mantendo a posição."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "DERIVANDO PRA FORA",
+    "driftIn": "DERIVANDO PRA DENTRO",
+    "tangle": "EMARANHANDO",
+    "clarify": "CLAREANDO",
+    "regime": "REORG",
+    "thrash": "DEBATENDO",
+    "reshuffle": "REEMBARALHO",
+    "forecast": "PREVISÃO"
+  },
+  "findings": {
+    "forecastSplit": "A conectividade vem caindo e está perto do mínimo — se isso se mantiver, a base de código caminha para se dividir em metades frouxamente acopladas. Decida agora se essa é a intenção.",
+    "forecastConsolidate": "A conectividade vem subindo rumo ao pico — se isso se mantiver, a base de código está consolidando numa massa fortemente acoplada. Fique de olho para não endurecer num monólito.",
+    "thrash": "{name} vive sendo reorganizado de um lado pro outro — muita agitação estrutural, pouco movimento líquido. Estabilize o acoplamento ou pare de mexer nele.",
+    "reshuffle": "Este commit parecia rotineiro, mas mudou discretamente quais arquivos são centrais — a forma geral se manteve enquanto a estrutura se reembaralhava por baixo. Revise com atenção.",
+    "hub": "{name} fica no núcleo estrutural — o sistema se reorganiza em torno dele. Trate mudanças aqui como de alto raio de explosão.",
+    "driftOut": "{name} derivou do núcleo em direção à borda — está se desacoplando do sistema. Ou está sendo aposentado, ou apodrecendo em silêncio.",
+    "driftIn": "{name} migrou em direção ao núcleo — está virando peça de sustentação. Garanta que esteja bem testado antes que mais coisas dependam dele.",
+    "regime": "A base de código se reorganizou bruscamente aqui — a conectividade deu um salto. Revise o que se separou ou se fundiu.",
+    "tangleTrend": "Ao longo do histórico, a base de código tendeu a uma estrutura mais emaranhada — a conectividade está ficando mais densa e menos modular.",
+    "clarifyTrend": "Ao longo do histórico, a base de código tendeu a uma estrutura mais limpa — está se separando em módulos mais claros."
+  },
+  "anchor": {
+    "core": "núcleo",
+    "drift": "deriva",
+    "trend": "tendência",
+    "thrash": "debate"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "MUDANÇA",
+    "movers": "QUEM SE MOVEU",
+    "noMovers": "Nenhum arquivo se moveu entre esses quadros.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "arquivos",
+    "deltaConnectivity": "conectividade",
+    "deltaRigidity": "rigidez",
+    "deltaEntropy": "entropia",
+    "wayOutward": "para fora",
+    "wayInward": "para dentro",
+    "wayShifted": "deslocado"
+  }
+}

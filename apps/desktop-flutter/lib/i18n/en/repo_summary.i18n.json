@@ -1,0 +1,67 @@
+{
+  "@@locale": "en",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} line",
+      "other": "{n} lines"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} file.",
+      "other": "{n} files."
+    },
+    "lines": {
+      "one": "{n} line ({bytes}).",
+      "other": "{n} lines ({bytes})."
+    },
+    "roles": "Roles — {parts}.",
+    "showingNofM": "Showing {active} of {total} files, ranked by structural centrality."
+  },
+  "heading": {
+    "atAGlance": "At a glance",
+    "core": "Core",
+    "gettingStarted": "Getting started",
+    "regions": "Regions",
+    "shape": "Shape"
+  },
+  "historyStarvedCaveat": "Ranking is limited: the coupling graph had no edges (fresh clone or too few commits). File order reflects size, not structural centrality.",
+  "pitch": {
+    "empty": "A repository with no readable text files{detail}.",
+    "emptyBinary": "{n} binary",
+    "emptyUnreadable": "{n} unreadable",
+    "noRegions": {
+      "one": "A repository of {n} active file.",
+      "other": "A repository of {n} active files."
+    },
+    "withRegions": {
+      "one": "A repository of {n} active file — {regions}.",
+      "other": "A repository of {n} active files — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "All under `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 core",
+      "other": "{n} core"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "One file",
+      "other": "{n} files"
+    },
+    "connectsTo": "Connects to: {linked}.",
+    "filesLabel": "Files:"
+  },
+  "shape": {
+    "bulk": "Densely interconnected codebase: most files participate in one large neighbourhood of shared change.",
+    "crystalline": "Lattice-shaped codebase: uniform, regular coupling across files with predictable local structure.",
+    "goe": "Richly interconnected codebase: couplings spread across files without a dominant spine.",
+    "modular": "Modular codebase: several cohesive regions with limited cross-coupling. Work in one region rarely disturbs another.",
+    "poisson": "Loosely coupled codebase: files evolve mostly on their own, with occasional shared change.",
+    "tree": "Tree-shaped codebase: one dominant spine with dependent branches. Change usually propagates outward from the core."
+  }
+}

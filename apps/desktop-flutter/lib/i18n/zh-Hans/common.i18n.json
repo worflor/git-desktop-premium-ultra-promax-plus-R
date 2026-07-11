@@ -1,0 +1,74 @@
+{
+  "@@locale": "zh-Hans",
+  "listSeparator": "、",
+  "cancel": "取消",
+  "close": "关闭",
+  "save": "保存",
+  "delete": "删除",
+  "retry": "重试",
+  "copy": "复制",
+  "copied": "已复制",
+  "done": "完成",
+  "loading": "加载中…",
+  "fileCount": {
+    "other": "{n} 个文件"
+  },
+  "commitCount": {
+    "other": "{n} 个提交"
+  },
+  "branchCount": {
+    "other": "{n} 个分支"
+  },
+  "localCommitCount": {
+    "other": "{n} 个本地提交"
+  },
+  "remoteCommitCount": {
+    "other": "{n} 个远程提交"
+  },
+  "conflictedFileCount": {
+    "other": "{n} 个冲突文件"
+  },
+  "time": {
+    "now": "现在",
+    "justNow": "刚刚",
+    "today": "今天",
+    "minutesAgo": "{n} 分钟前",
+    "hoursAgo": "{n} 小时前",
+    "daysAgo": "{n} 天前",
+    "weeksAgo": "{n} 周前",
+    "monthsAgo": "{n} 个月前",
+    "yearsAgo": "{n} 年前",
+    "minutesShort": "{n} 分",
+    "hoursShort": "{n} 时",
+    "daysShort": "{n} 天",
+    "weeksShort": "{n} 周",
+    "monthsShort": "{n} 月",
+    "yearsShort": "{n} 年",
+    "commitMonthsShort": "{n} 月",
+    "idle": "闲置",
+    "idleDays": "闲置 {n} 天",
+    "idleYears": {
+      "other": "闲置 {n} 年"
+    },
+    "monthAbbrevs(slang=list)": [
+      "1月",
+      "2月",
+      "3月",
+      "4月",
+      "5月",
+      "6月",
+      "7月",
+      "8月",
+      "9月",
+      "10月",
+      "11月",
+      "12月"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

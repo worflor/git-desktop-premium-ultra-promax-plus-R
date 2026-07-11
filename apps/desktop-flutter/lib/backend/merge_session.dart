@@ -89,29 +89,10 @@ class MergeNeedsCheckout extends MergeOutcome {
   });
 }
 
-/// One-line, user-facing summary of a [MergeOutcome] — the single source of
-/// truth so the wording never drifts between the branch pill, the clean-tree
-/// dashboard, and the sync panel. [op] names the action ("Pull", "Sync").
-/// Conflict outcomes point at the Changes page, which always carries the
-/// resolve affordance, so a deferred conflict never dead-ends in a snackbar.
-String mergeOutcomeMessage(MergeOutcome outcome, {String op = 'Sync'}) =>
-    switch (outcome) {
-      MergeClean(:final data) =>
-        data.output.isNotEmpty ? data.output : '$op complete.',
-      MergeConflicted(:final paths, :final resolved) => resolved
-          ? 'Resolved ${paths.length} conflict${paths.length == 1 ? '' : 's'}.'
-          : paths.isEmpty
-              // Discarded/cancelled before anything was written.
-              ? '$op cancelled.'
-              : '${paths.length} conflict${paths.length == 1 ? '' : 's'} left — '
-                  'resolve them on the Changes page.',
-      MergeBlockedByLocalChanges(:final paths) =>
-        '${paths.length} file${paths.length == 1 ? '' : 's'} have uncommitted '
-            'edits — commit them first.',
-      MergeNeedsCheckout(:final message) => message,
-      MergeFailed(:final message) => message,
-    };
-
+/// The one-line, user-facing summary of a [MergeOutcome] lives in the UI
+/// layer (`lib/ui/merge_outcome_text.dart` → `mergeOutcomeMessage`) so its
+/// localized wording resolves via slang without importing flutter/widgets
+/// into this pure-Dart backend file.
 extension MergeOutcomeX on MergeOutcome {
   bool get isClean => this is MergeClean;
 

@@ -159,7 +159,7 @@ void main() {
       if (pattern.hasMatch(f.readAsStringSync())) offenders.add(relPath(f));
     }
     offenders.sort();
-    const baseline = 18; // measured 2026-07-09
+    const baseline = 19; // measured 2026-07-11; atomic fsync capability probed
     if (offenders.length < baseline) {
       // ignore: avoid_print
       print('Platform.is* offender count dropped to ${offenders.length} '

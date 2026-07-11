@@ -3,6 +3,7 @@ import 'dart:ui' as ui show FontFeature;
 
 import 'package:flutter/material.dart';
 
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/tokens.dart';
@@ -674,7 +675,7 @@ class _TimelinePainter extends CustomPainter {
     // The one persistent axis label, replacing the old external column.
     _paintCaption(
       canvas,
-      'connectivity',
+      t.orrery.structure.connectivity,
       anchorX: 0,
       y: _kMarkerBandH + 1,
       laneWidth: w,
@@ -754,19 +755,6 @@ class _TimelinePainter extends CustomPainter {
 /// genesis/present captions and the readout read identically to the page.
 String _fmtDate(DateTime? d) {
   if (d == null) return '—';
-  const m = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
+  final m = t.common.time.monthAbbrevs;
   return '${m[d.month - 1]} ${d.day}, ${d.year}';
 }

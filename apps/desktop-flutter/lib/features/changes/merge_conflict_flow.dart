@@ -10,6 +10,7 @@ import '../../backend/dtos.dart';
 import '../../backend/git.dart';
 import '../../backend/git_result.dart';
 import '../../backend/merge_session.dart';
+import '../../i18n/gen/strings.g.dart';
 import 'conflict_resolution.dart';
 import 'merge_conflict_editor.dart';
 
@@ -99,10 +100,10 @@ Future<bool> presentConflicts(
 }
 
 String _opLabel(SequencerKind kind) => switch (kind) {
-      SequencerKind.merge => 'merge',
-      SequencerKind.cherryPick => 'cherry-pick',
-      SequencerKind.revert => 'revert',
-      SequencerKind.plain => 'resolve',
+      SequencerKind.merge => t.changes.mergeFlow.op.merge,
+      SequencerKind.cherryPick => t.changes.mergeFlow.op.cherryPick,
+      SequencerKind.revert => t.changes.mergeFlow.op.revert,
+      SequencerKind.plain => t.changes.mergeFlow.op.resolve,
     };
 
 /// Enriches [files] with Logos signal (best-effort), pushes the shared
@@ -230,11 +231,13 @@ Future<MergeOutcome> resumeConflicts(BuildContext context, String repoPath,
     if (pushAfterRebase && outcome is MergeClean) {
       final remote = await trackingRemote(repoPath);
       final push = await pushRemote(repoPath, remote: remote);
-      if (!push.ok) return MergeFailed(push.error ?? 'Push failed');
+      if (!push.ok) {
+        return MergeFailed(push.error ?? t.changes.mergeFlow.pushFailed);
+      }
       return MergeClean(SyncData(
           operation: 'sync',
           remote: remote,
-          output: 'Rebased and pushed.'));
+          output: t.changes.mergeFlow.rebasedAndPushed));
     }
     return outcome;
   }
@@ -265,8 +268,10 @@ Future<MergeOutcome> resolveCheckout(
     BuildContext context, String repoPath, String name) async {
   final r = await checkoutBranch(repoPath, name);
   if (r.ok) {
-    return MergeClean(
-        SyncData(operation: 'checkout', remote: '', output: 'Switched to $name.'));
+    return MergeClean(SyncData(
+        operation: 'checkout',
+        remote: '',
+        output: t.changes.mergeFlow.switchedTo(name: name)));
   }
   // A plain switch only fails when an edit would be overwritten (the dirty
   // overlap), or for a structural reason (no such branch, detached issues).
@@ -276,8 +281,9 @@ Future<MergeOutcome> resolveCheckout(
   // same way, and we surface the ORIGINAL error (more specific than `-m`'s).
   final m = await checkoutMerge(repoPath, name);
   if (!m.ok) {
-    final err = r.error ?? m.error ?? 'Switch failed.';
-    return MergeFailed(err.isEmpty ? 'Switch failed.' : err);
+    final err = r.error ?? m.error ?? t.changes.mergeFlow.switchFailed;
+    return MergeFailed(
+        err.isEmpty ? t.changes.mergeFlow.switchFailed : err);
   }
   if (!context.mounted) return const MergeConflicted([]);
   await context.read<RepositoryState>().refreshStatus();
@@ -291,12 +297,12 @@ Future<MergeOutcome> resolveCheckout(
     return MergeClean(SyncData(
         operation: 'checkout',
         remote: '',
-        output: 'Switched to $name (changes carried over).'));
+        output: t.changes.mergeFlow.switchedToCarried(name: name)));
   }
   final files = await gatherConflictFiles(repoPath, uu);
   if (files.isEmpty || !context.mounted) return MergeConflicted(uu);
   final resolved = await presentConflicts(context, repoPath,
-      files: files, opLabel: 'switch');
+      files: files, opLabel: t.changes.mergeFlow.op.switchOp);
   if (!resolved) return MergeConflicted(uu, resolved: false);
   if (!context.mounted) return MergeConflicted(uu, resolved: true);
   // Same gate the sequencer/rebase paths use: gatherConflictFiles skips
@@ -341,7 +347,8 @@ Future<MergeOutcome> resolveLocalPrMerge(
 
   if (result.rebasePaused) {
     final loop = await _resolveRebaseLoop(context, wt, outcome.paths,
-        replayLabel: 'rebase $branch onto $baseRef');
+        replayLabel: t.changes.mergeFlow.op
+            .rebaseOnto(branch: branch, base: baseRef));
     // The rebase only landed if the loop completed; a paused/cancelled loop
     // surfaces as-is, and the deferred base fast-forward waits for a resume.
     if (loop is! MergeClean) return loop;
@@ -369,7 +376,7 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
     return MergeClean(SyncData(
         operation: 'pull',
         remote: await trackingRemote(repoPath),
-        output: 'Already up to date.'));
+        output: t.changes.mergeFlow.alreadyUpToDate));
   }
 
   // ── Clean working tree: native merge is robust (renames, modes, binary).
@@ -381,12 +388,14 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
       // oursLabel = local branch, theirsLabel = upstream ref — the exact
       // "replay <local> onto <upstream>" the header needs.
       return _resolveRebaseLoop(context, repoPath, outcome.paths,
-          replayLabel: 'rebase ${prep.oursLabel} onto ${prep.theirsLabel}');
+          replayLabel: t.changes.mergeFlow.op.rebaseOnto(
+              branch: prep.oursLabel, base: prep.theirsLabel));
     }
     final files = await gatherConflictFiles(repoPath, outcome.paths);
     if (!context.mounted) return outcome;
     final resolved = files.isNotEmpty &&
-        await presentConflicts(context, repoPath, files: files, opLabel: 'pull');
+        await presentConflicts(context, repoPath,
+            files: files, opLabel: t.changes.mergeFlow.op.pull);
     if (!resolved) return MergeConflicted(outcome.paths);
     // Non-text UU left unresolved would make the merge commit fail — leave
     // the merge in progress rather than half-concluding it.
@@ -447,8 +456,9 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
       ? MergeClean(SyncData(
           operation: 'pull',
           remote: prep.remote,
-          output:
-              'Merged ${prep.upstream} (${prep.incomingPaths.length} files).'))
+          output: t.changes.mergeFlow.merged(
+              upstream: prep.upstream,
+              n: prep.incomingPaths.length)))
       : MergeConflicted(conflictPaths, resolved: true);
 }
 
@@ -459,7 +469,8 @@ Future<MergeOutcome> resolvePull(BuildContext context, String repoPath,
 /// `rebase main onto origin/main`) instead of a bare "rebase".
 Future<MergeOutcome> _resolveRebaseLoop(
     BuildContext context, String repoPath, List<String> firstPaths,
-    {String replayLabel = 'rebase'}) async {
+    {String? replayLabel}) async {
+  final replay = replayLabel ?? t.changes.mergeFlow.op.rebase;
   // Accumulate every path resolved across all rebase steps so the reported
   // count reflects reality — the resume entry point hands in an empty
   // firstPaths, so without this the UI would always say "0 conflicts".
@@ -467,7 +478,7 @@ Future<MergeOutcome> _resolveRebaseLoop(
   var guard = 0;
   while (await isRebaseInProgress(repoPath)) {
     if (guard++ > 256) {
-      return const MergeFailed('Rebase did not converge — resolve manually.');
+      return MergeFailed(t.changes.mergeFlow.rebaseNotConverge);
     }
     if (!context.mounted) return MergeConflicted(touched.toList());
     await context.read<RepositoryState>().refreshStatus();
@@ -500,7 +511,7 @@ Future<MergeOutcome> _resolveRebaseLoop(
     // leaves the rebase cleanly paused. (Was openConflictEditor directly,
     // which marched the user straight into the editor.)
     final resolved = await presentConflicts(context, repoPath,
-        files: files, opLabel: replayLabel);
+        files: files, opLabel: replay);
     if (!resolved) return MergeConflicted(touched.toList());
     if (!context.mounted) return MergeConflicted(touched.toList());
     // Same gate the sequencer/checkout paths use: gatherConflictFiles skips
@@ -531,9 +542,8 @@ Future<MergeOutcome> _resolveRebaseLoop(
       operation: 'pull',
       remote: remote,
       output: touched.isEmpty
-          ? 'Rebased.'
-          : 'Rebased (resolved ${touched.length} '
-              'file${touched.length == 1 ? '' : 's'}).'));
+          ? t.changes.mergeFlow.rebased
+          : t.changes.mergeFlow.rebasedResolved(n: touched.length)));
 }
 
 /// Smart sync mirroring the legacy smart-sync decision tree (publish / pull /
@@ -544,8 +554,7 @@ Future<MergeOutcome> resolveSync(
     BuildContext context, String repoPath, RepositoryStatus status) async {
   final branch = status.branch;
   if (branch == 'HEAD' || branch.startsWith('(')) {
-    return const MergeFailed(
-        'Cannot sync: detached HEAD state. Check out a branch first.');
+    return MergeFailed(t.changes.mergeFlow.detachedHead);
   }
   if (status.upstream == null) {
     // Publish leg: resolve the ACTUAL remote first. A bare pushRemote
@@ -553,11 +562,12 @@ Future<MergeOutcome> resolveSync(
     // another name and produces a raw fatal on a repo with none — the
     // fresh-`git init` case deserves a sentence, not a stack of git noise.
     final remote = await primaryRemoteName(repoPath);
-    if (!remote.ok) return MergeFailed(remote.error ?? 'Publish failed.');
+    if (!remote.ok) {
+      return MergeFailed(remote.error ?? t.changes.mergeFlow.publishFailed);
+    }
     final remoteName = remote.data;
     if (remoteName == null) {
-      return const MergeFailed(
-          'No remote configured. Add one to publish this branch.');
+      return MergeFailed(t.changes.mergeFlow.noRemote);
     }
     return _wrapPush(
         await pushRemote(repoPath, remote: remoteName, setUpstream: true));
@@ -571,9 +581,11 @@ Future<MergeOutcome> resolveSync(
     if (pull is! MergeClean) return pull;
     final remote = await trackingRemote(repoPath);
     final push = await pushRemote(repoPath, remote: remote);
-    if (!push.ok) return MergeFailed(push.error ?? 'Push failed');
+    if (!push.ok) return MergeFailed(push.error ?? t.changes.mergeFlow.pushFailed);
     return MergeClean(SyncData(
-        operation: 'sync', remote: remote, output: 'Rebased and pushed.'));
+        operation: 'sync',
+        remote: remote,
+        output: t.changes.mergeFlow.rebasedAndPushed));
   }
   if (status.ahead > 0) {
     return _wrapPush(
@@ -585,7 +597,7 @@ Future<MergeOutcome> resolveSync(
 }
 
 MergeOutcome _wrapPush(GitResult<SyncData> r) =>
-    r.ok ? MergeClean(r.data!) : MergeFailed(r.error ?? 'failed');
+    r.ok ? MergeClean(r.data!) : MergeFailed(r.error ?? t.changes.mergeFlow.failed);
 
 /// Conflict window for a dirty pull, whose markers live in [files] (in
 /// memory) rather than as UU entries. The merge editor consumes them
@@ -598,7 +610,10 @@ Future<bool> _resolveDirtyConflicts(
   final paths = files.map((f) => f.path).toList();
   final blocks = files.fold<int>(0, (n, f) => n + f.blocks.length);
   final choice = await showConflictWindow(context,
-      opLabel: 'pull', paths: paths, blockCount: blocks, canDefer: false);
+      opLabel: t.changes.mergeFlow.op.pull,
+      paths: paths,
+      blockCount: blocks,
+      canDefer: false);
   if (choice == null || !context.mounted) return false;
   switch (choice.action) {
     case ConflictAction.manual:

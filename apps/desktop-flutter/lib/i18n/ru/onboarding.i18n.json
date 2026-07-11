@@ -1,0 +1,96 @@
+{
+  "@@locale": "ru",
+  "nav": {
+    "back": "Назад",
+    "continueLabel": "Продолжить",
+    "letsGo": "Поехали"
+  },
+  "naming": {
+    "question": "чем это станет для вас?",
+    "questionEmphasis": "это",
+    "iAmPrefix": "Я — ",
+    "iAmSuffix": " , ваш личный git-клиент."
+  },
+  "theme": {
+    "title": "приоденьте {name}.",
+    "themesHeader": "ТЕМЫ",
+    "keybindingsHeader": "ГОРЯЧИЕ КЛАВИШИ",
+    "previewBadge": "превью",
+    "useDefaults": "по умолчанию"
+  },
+  "repo": {
+    "title": "наведите {name} на что-нибудь.",
+    "later": "сделаю это позже",
+    "doors": {
+      "open": {
+        "title": "Открыть",
+        "subtitle": "существующий",
+        "hint": "тот, что у вас уже есть"
+      },
+      "clone": {
+        "title": "Клонировать",
+        "subtitle": "из URL",
+        "hint": "вставьте удалённый URL"
+      },
+      "create": {
+        "title": "Создать",
+        "subtitle": "новый",
+        "hint": "начните с чистого листа"
+      }
+    },
+    "cloneForm": {
+      "title": "Клонировать из URL",
+      "urlLabel": "URL репозитория",
+      "targetLabel": "Целевая папка",
+      "browse": "Обзор…",
+      "clone": "Клонировать",
+      "cloning": "Клонирование…"
+    },
+    "pickers": {
+      "openRepository": "Открыть репозиторий",
+      "createRepository": "Создать репозиторий",
+      "cloneTarget": "Цель клонирования"
+    },
+    "errors": {
+      "urlAndTargetRequired": "Нужны URL и целевой путь.",
+      "createFailed": "Не удалось создать репозиторий.",
+      "cloneFailed": "Не удалось клонировать репозиторий."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "рентген репозитория",
+      "settings": "настройки"
+    },
+    "sidebar": {
+      "projectsHeader": "Проекты"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} из {total} файлов",
+      "stagedCount": "{n} в индексе",
+      "commitMessageHint": "Сообщение коммита…",
+      "commitAndPush": "Коммит и отправка"
+    },
+    "history": {
+      "header": "История",
+      "viewingLast": "показаны последние 20 коммитов",
+      "inFlight": "В РАБОТЕ",
+      "you": "вы",
+      "commit1": "научить лиса принюхиваться, прежде чем глотать",
+      "commit2": "янтарь: держать запах всю ночь",
+      "commit3": "заменить капусту на янтарь и шип",
+      "commit4": "шип стережёт вход"
+    },
+    "branches": {
+      "lensBranches": "ВЕТКИ",
+      "lensPRs": "PR",
+      "absorbed": "поглощена",
+      "desk": "стол",
+      "head": "HEAD",
+      "tracking": "→ слежение: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Ваш личный git-клиент."
+    }
+  }
+}

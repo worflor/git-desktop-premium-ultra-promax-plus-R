@@ -1,0 +1,26 @@
+base_locale: en
+fallback_strategy: base_locale
+# Desktop app: all locales ship in the one binary, so deferred (lazy)
+# locale libraries buy nothing and break every synchronous locale API
+# (buildSync/setLocaleRawSync throw "Deferred library not loaded").
+lazy: false
+input_directory: lib/i18n
+input_file_pattern: .i18n.json
+output_directory: lib/i18n/gen
+output_file_name: strings.g.dart
+translate_var: t
+enum_name: AppLocale
+class_name: Translations
+namespaces: true
+key_case: camel
+key_map_case: camel
+param_case: camel
+string_interpolation: braces
+flat_map: false
+timestamp: false
+statistics: false
+pluralization:
+  auto: cardinal
+  default_parameter: n
+format:
+  enabled: true

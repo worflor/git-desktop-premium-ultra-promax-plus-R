@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../backend/spectral_trajectory_builder.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
@@ -57,13 +58,13 @@ class _OrreryPageState extends State<OrreryPage> {
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
             return _OrreryStatus(
-              message: 'Tracing the manifold through history…',
+              message: context.t.orrery.status.loading,
               onClose: () => Navigator.of(context).pop(),
             );
           }
           if (snap.hasError) {
             return _OrreryStatus(
-              message: 'Could not read this repo’s history.',
+              message: context.t.orrery.status.loadError,
               detail: '${snap.error}',
               onClose: () => Navigator.of(context).pop(),
             );
@@ -71,8 +72,8 @@ class _OrreryPageState extends State<OrreryPage> {
           final model = snap.data ?? OrreryModel.emptyModel;
           if (model.stepCount < 2) {
             return _OrreryStatus(
-              message: 'Not enough history yet to plot a trajectory.',
-              detail: 'The Orrery needs a few commits to chart.',
+              message: context.t.orrery.status.notEnoughHistory,
+              detail: context.t.orrery.status.notEnoughHistoryDetail,
               onClose: () => Navigator.of(context).pop(),
             );
           }
@@ -407,12 +408,14 @@ class _OrreryViewState extends State<OrreryView>
   /// Short caption for a milestone — what changed at that step.
   String _milestoneLabel(int i) {
     final steps = widget.model.steps;
-    if (i == 0) return 'genesis';
-    if (i == steps.length - 1) return 'now';
+    if (i == 0) return context.t.orrery.milestone.genesis;
+    if (i == steps.length - 1) return context.t.orrery.milestone.now;
     final s = steps[i];
-    if (s.regimeChange) return 'reorganized';
-    if (s.archetypeShift) return 'became ${s.archetype}';
-    return s.archetype.isEmpty ? 'snapshot' : s.archetype;
+    if (s.regimeChange) return context.t.orrery.milestone.reorganized;
+    if (s.archetypeShift) {
+      return context.t.orrery.milestone.becameArchetype(archetype: s.archetype);
+    }
+    return s.archetype.isEmpty ? context.t.orrery.milestone.snapshot : s.archetype;
   }
 
   /// A tap on the disk: drill into the nearest module, pin the nearest file, or
@@ -478,8 +481,11 @@ class _OrreryViewState extends State<OrreryView>
       _hoverInfo.value = null;
     } else {
       final label = bestNode.memberCount > 1
-          ? '${bestNode.path ?? 'module'} · ${bestNode.memberCount} files'
-          : (bestNode.path ?? 'file #${bestNode.id}');
+          ? context.t.orrery.node.moduleWithCount(
+              path: bestNode.path ?? context.t.orrery.node.module,
+              n: bestNode.memberCount)
+          : (bestNode.path ??
+              context.t.orrery.node.fileFallback(id: bestNode.id));
       _hoverInfo.value = _HoverInfo(bestScreen, label);
     }
   }
@@ -499,14 +505,14 @@ class _OrreryViewState extends State<OrreryView>
     if (pinned < 0 || pinned >= nodes.length) return null;
     final node = nodes[pinned];
     return (
-      path: node.path ?? 'node #${node.id}',
+      path: node.path ?? context.t.orrery.node.nodeFallback(id: node.id),
       story: _positionStory(node, head),
     );
   }
 
   String _positionStory(OrreryNode node, double head) {
     final pos = OrreryModel.sampleNode(node, head);
-    if (pos == null) return 'Not present at this point in history.';
+    if (pos == null) return context.t.orrery.selection.notPresent;
     final double r = pos.distance.clamp(0.0, 1.0);
 
     double? birthR;
@@ -519,22 +525,22 @@ class _OrreryViewState extends State<OrreryView>
 
     final String role;
     if (r < 0.45) {
-      role = 'Coupling-central — changes here ripple across the system.';
+      role = context.t.orrery.selection.roleCentral;
     } else if (r > 0.72) {
-      role = 'Peripheral — loosely coupled, mostly changes on its own.';
+      role = context.t.orrery.selection.rolePeripheral;
     } else {
-      role = 'Mid-structure — moderately coupled.';
+      role = context.t.orrery.selection.roleMid;
     }
 
     String drift = '';
     if (birthR != null) {
       final d = r - birthR;
       if (d > 0.15) {
-        drift = ' Drifting outward — decoupling.';
+        drift = context.t.orrery.selection.driftOutward;
       } else if (d < -0.15) {
-        drift = ' Drifting inward — integrating.';
+        drift = context.t.orrery.selection.driftInward;
       } else {
-        drift = ' Holding its position.';
+        drift = context.t.orrery.selection.driftHolding;
       }
     }
     return '$role$drift';
@@ -800,7 +806,7 @@ class _OrreryHeader extends StatelessWidget {
           final bool showRepo = repoLabel.isNotEmpty && c.maxWidth > 560;
           return Row(
             children: [
-              Text('Orrery',
+              Text(context.t.orrery.header.title,
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 14,
@@ -819,9 +825,9 @@ class _OrreryHeader extends StatelessWidget {
               const SizedBox(width: 14),
               _SegToggle<OrreryMode>(
                 value: mode,
-                options: const [
-                  ('Scrub', OrreryMode.scrub),
-                  ('Compare', OrreryMode.compare),
+                options: [
+                  (context.t.orrery.header.modeScrub, OrreryMode.scrub),
+                  (context.t.orrery.header.modeCompare, OrreryMode.compare),
                 ],
                 onChanged: onMode,
               ),
@@ -829,9 +835,9 @@ class _OrreryHeader extends StatelessWidget {
                 const SizedBox(width: 8),
                 _SegToggle<OrreryLod>(
                   value: lod,
-                  options: const [
-                    ('Modules', OrreryLod.modules),
-                    ('Files', OrreryLod.files),
+                  options: [
+                    (context.t.orrery.header.lodModules, OrreryLod.modules),
+                    (context.t.orrery.header.lodFiles, OrreryLod.files),
                   ],
                   onChanged: onLod,
                 ),
@@ -996,9 +1002,9 @@ class _DiskLegend extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          row(filled: true, label: 'central'),
+          row(filled: true, label: context.t.orrery.legend.central),
           const SizedBox(height: 5),
-          row(filled: false, label: 'peripheral'),
+          row(filled: false, label: context.t.orrery.legend.peripheral),
         ],
       ),
     );
@@ -1133,7 +1139,9 @@ class _OrreryCompare extends StatelessWidget {
                           stepOf(milestones[k - 1]).gap,
                   badge: !selected.contains(milestones[k])
                       ? null
-                      : (selected.indexOf(milestones[k]) == 0 ? 'A' : 'B'),
+                      : (selected.indexOf(milestones[k]) == 0
+                          ? context.t.orrery.compare.badgeA
+                          : context.t.orrery.compare.badgeB),
                   onTap: () => onToggle(milestones[k]),
                 ),
             ],
@@ -1342,7 +1350,7 @@ class _CompareBench extends StatelessWidget {
       step: a,
       stepData: sa,
       label: labelOf(a),
-      badge: 'A',
+      badge: context.t.orrery.compare.badgeA,
       colors: colors,
       onTap: () => onOpen(a),
     );
@@ -1351,13 +1359,13 @@ class _CompareBench extends StatelessWidget {
       step: b,
       stepData: sb,
       label: labelOf(b),
-      badge: 'B',
+      badge: context.t.orrery.compare.badgeB,
       colors: colors,
       onTap: () => onOpen(b),
     );
     final header = Row(
       children: [
-        const _CompareLabel('A → B'),
+        _CompareLabel(context.t.orrery.compare.header),
         const Spacer(),
         ChromeButton(
           onTap: onClose,
@@ -1399,11 +1407,11 @@ class _CompareBench extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ..._changeRows(t, sa, sb, filesDelta),
+                            ..._changeRows(context, t, sa, sb, filesDelta),
                             const SizedBox(height: 12),
-                            _moversHeader(t, movers),
+                            _moversHeader(context, t, movers),
                             const SizedBox(height: 6),
-                            Expanded(child: _moversList(t, movers)),
+                            Expanded(child: _moversList(context, t, movers)),
                           ],
                         ),
                       ),
@@ -1440,7 +1448,7 @@ class _CompareBench extends StatelessWidget {
                       width: 180,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: _changeRows(t, sa, sb, filesDelta),
+                        children: _changeRows(context, t, sa, sb, filesDelta),
                       ),
                     ),
                     const SizedBox(width: 22),
@@ -1448,9 +1456,9 @@ class _CompareBench extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _moversHeader(t, movers),
+                          _moversHeader(context, t, movers),
                           const SizedBox(height: 6),
-                          Expanded(child: _moversList(t, movers)),
+                          Expanded(child: _moversList(context, t, movers)),
                         ],
                       ),
                     ),
@@ -1464,8 +1472,8 @@ class _CompareBench extends StatelessWidget {
     );
   }
 
-  List<Widget> _changeRows(
-      AppTokens t, OrreryStep sa, OrreryStep sb, int filesDelta) {
+  List<Widget> _changeRows(BuildContext context, AppTokens t, OrreryStep sa,
+      OrreryStep sb, int filesDelta) {
     Widget deltaRow(String label, String value) => Row(
           children: [
             Text(label, style: TextStyle(color: t.textMuted, fontSize: 11)),
@@ -1482,23 +1490,26 @@ class _CompareBench extends StatelessWidget {
         );
     String fixed(double d, int digits) =>
         d.isFinite ? _signedFixed(d, digits) : '—';
+    final compare = context.t.orrery.compare;
     return [
-      const _CompareLabel('CHANGE'),
+      _CompareLabel(compare.change),
       const SizedBox(height: 6),
-      deltaRow('files', filesDelta >= 0 ? '+$filesDelta' : '$filesDelta'),
+      deltaRow(
+          compare.deltaFiles, filesDelta >= 0 ? '+$filesDelta' : '$filesDelta'),
       const SizedBox(height: 4),
-      deltaRow('connectivity', fixed(sb.gap - sa.gap, 3)),
+      deltaRow(compare.deltaConnectivity, fixed(sb.gap - sa.gap, 3)),
       const SizedBox(height: 4),
-      deltaRow('rigidity', fixed(sb.rigidity - sa.rigidity, 3)),
+      deltaRow(compare.deltaRigidity, fixed(sb.rigidity - sa.rigidity, 3)),
       const SizedBox(height: 4),
-      deltaRow('entropy', fixed(sb.vonNeumann - sa.vonNeumann, 2)),
+      deltaRow(compare.deltaEntropy, fixed(sb.vonNeumann - sa.vonNeumann, 2)),
     ];
   }
 
-  Widget _moversHeader(AppTokens t, List<OrreryMover> movers) {
+  Widget _moversHeader(
+      BuildContext context, AppTokens t, List<OrreryMover> movers) {
     return Row(
       children: [
-        const _CompareLabel('MOVERS'),
+        _CompareLabel(context.t.orrery.compare.movers),
         if (movers.isNotEmpty) ...[
           const SizedBox(width: 6),
           Text('${movers.length}',
@@ -1513,9 +1524,10 @@ class _CompareBench extends StatelessWidget {
     );
   }
 
-  Widget _moversList(AppTokens t, List<OrreryMover> movers) {
+  Widget _moversList(
+      BuildContext context, AppTokens t, List<OrreryMover> movers) {
     if (movers.isEmpty) {
-      return Text('No files moved between these frames.',
+      return Text(context.t.orrery.compare.noMovers,
           style: TextStyle(color: t.textFaint, fontSize: 11.5, height: 1.3));
     }
     return SingleChildScrollView(
@@ -1639,14 +1651,16 @@ class _MoverRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final path = mover.path ?? 'node #${mover.id}';
+    final path =
+        mover.path ?? context.t.orrery.node.nodeFallback(id: mover.id);
     final segs = path.split('/');
     final filename = segs.isEmpty ? path : segs.last;
     final dir =
         segs.length > 1 ? segs.sublist(0, segs.length - 1).join('/') : '';
+    final compare = context.t.orrery.compare;
     final String way = mover.radialDelta > 0.08
-        ? 'outward'
-        : (mover.radialDelta < -0.08 ? 'inward' : 'shifted');
+        ? compare.wayOutward
+        : (mover.radialDelta < -0.08 ? compare.wayInward : compare.wayShifted);
     return HoverableTap(
       onTap: onTap,
       borderRadius: AppRadii.xsAll,
@@ -1729,19 +1743,6 @@ String _shortPath(String path) {
 
 String _fmtDate(DateTime? d) {
   if (d == null) return '—';
-  const m = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
+  final m = t.common.time.monthAbbrevs;
   return '${m[d.month - 1]} ${d.day}, ${d.year}';
 }

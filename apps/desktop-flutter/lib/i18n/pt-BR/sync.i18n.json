@@ -1,0 +1,51 @@
+{
+  "@@locale": "pt-BR",
+  "actions": {
+    "syncLabel": "Sincronizar",
+    "syncOpenRepoDetail": "Abra um repositório para gerenciar operações de push e pull.",
+    "detachedHeadLabel": "HEAD desanexado",
+    "detachedHeadDetail": "Faça checkout de um branch antes de push ou pull.",
+    "publishBranchLabel": "Publicar branch",
+    "publishBranchDetail": "Faz push de {branch} e define o branch de rastreamento upstream.",
+    "publishButtonLabel": "Publicar",
+    "syncBranchLabel": "Sincronizar branch",
+    "syncBranchDetail": "Puxa {behindCount} com rebase, depois faz push de {aheadCount}.",
+    "syncBranchButtonLabel": "Pull (rebase) e push",
+    "pushBranchLabel": "Push do branch",
+    "pushBranchDetail": "Faz push de {count} para {upstream}.",
+    "pushBranchButtonLabel": "Push dos commits",
+    "pullUpdatesLabel": "Puxar atualizações",
+    "pullUpdatesDetail": "Puxa {count} de {upstream}.",
+    "syncUpToDateDetail": "Busca de {upstream} e atualiza o status do upstream."
+  },
+  "panel": {
+    "loadingTitle": "Carregando status remoto",
+    "loadingMessage": "Verificando informações de rastreamento do branch.",
+    "remoteStatusUnavailable": "Status remoto indisponível",
+    "noUpstream": "sem upstream",
+    "aheadLabel": "À frente",
+    "behindLabel": "Atrás",
+    "treeLabel": "Árvore",
+    "runningSync": "Sincronizando…",
+    "fetching": "Buscando…",
+    "fetchOnly": "Só buscar",
+    "syncFailed": "Falha na sincronização",
+    "forcePushRecoveryLabel": "Force push (com lease)",
+    "conflictsToResolveTitle": "Conflitos a resolver",
+    "conflictsToResolveBody": "{count} precisam de resolução: {list}",
+    "resolveConflicts": "Resolver conflitos",
+    "workingEllipsis": "Trabalhando…",
+    "lastActivity": "Última atividade: {operation}",
+    "noOutput": "Sem saída.",
+    "resolvedConflicts": "{count} resolvidos.",
+    "cancelledUnchanged": "Cancelado, árvore de trabalho inalterada.",
+    "uncommittedEditsBlocked": "{count} têm edições sem commit; faça commit primeiro para sincronizar com rebase ({list}).",
+    "noUpstreamForForcePush": "Não é possível fazer force-push: nenhum upstream configurado para \"{branch}\"."
+  },
+  "forcePush": {
+    "confirmTitle": "Force push (com lease)?",
+    "target": "Destino: {remote}/{branch}",
+    "warning": "Isto reescreve o branch remoto com o seu histórico local. Com lease, aborta se alguém fez push para o remoto depois do seu último fetch, mas mudanças já buscadas ainda serão sobrescritas. Use só quando você pretendia um rebase ou amend que divergiu o branch.",
+    "confirmButton": "Force push"
+  }
+}

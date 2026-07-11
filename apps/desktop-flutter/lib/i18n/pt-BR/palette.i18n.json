@@ -1,0 +1,201 @@
+{
+  "active": "ativo",
+  "prefixes": {
+    "askHint": "ask: [pergunta]",
+    "nearHint": "near: [arquivo]",
+    "whoHint": "who: [arquivo]",
+    "logHint": "log: [mensagem]",
+    "runHint": "run: [ferramenta]",
+    "askLabel": "Perguntar ao {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} revisores · {touches} toques",
+    "whoTouchesLabel": "{name} — {touches} toques",
+    "whoTouchesSubtitle": "{path} · nenhum revisor registrado"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NEAR",
+    "who": "WHO",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HOT",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "GONE",
+    "remote": "REMOTE",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% de embalo"
+  },
+  "topTouched": {
+    "subtitle": "{count} toques · {path}"
+  },
+  "coherence": {
+    "label": "Coerência em stage: {percent}%",
+    "subtitle": "{count} arquivos"
+  },
+  "keystone": {
+    "subtitle": "{path} · pedra-chave {score}"
+  },
+  "repoSub": {
+    "changes": "Mudanças em {name}",
+    "history": "Histórico em {name}",
+    "branches": "Branches em {name}",
+    "terminal": "Terminal em {name}",
+    "generateCommit": "Gerar Commit · {name}",
+    "reviewChanges": "Revisar Mudanças em {name}",
+    "muse": "Muse em {name}"
+  },
+  "desks": {
+    "mainWorktree": "worktree principal",
+    "detached": "desanexado",
+    "dirty": "{count} sujos"
+  },
+  "actions": {
+    "openInBrowser": "Abrir no Navegador",
+    "terminal": "Terminal",
+    "revealInFiles": "Mostrar nos Arquivos",
+    "copyPath": "Copiar Caminho",
+    "copyBranch": "Copiar Branch"
+  },
+  "tools": {
+    "launch": "Abrir {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} atrás",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
+    "pushCommitsUpstream": "{commits} para {upstream}",
+    "forcePush": "Force Push",
+    "forcePushNoUpstream": "Não é possível fazer force-push: nenhum upstream definido para {branch}.",
+    "commit": "Commit",
+    "stageAll": "Fazer Stage de Tudo",
+    "unstageAll": "Tirar Tudo do Stage",
+    "discardAll": "Descartar Tudo",
+    "createBranch": "Criar Branch",
+    "deleteBranch": "Excluir Branch",
+    "renameBranch": "Renomear Branch",
+    "stash": "Stash",
+    "stashPop": "Stash Pop",
+    "stashApply": "Stash Apply",
+    "stashDrop": "Stash Drop",
+    "createTag": "Criar Tag",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash aplicado com conflitos. Resolva na página de Mudanças."
+  },
+  "pr": {
+    "create": "Criar PR",
+    "merge": "Fazer Merge do PR",
+    "markReady": "Marcar PR como Pronto"
+  },
+  "ai": {
+    "generateCommit": "Gerar Commit",
+    "reviewChanges": "Revisar Mudanças",
+    "runMuse": "Rodar a Muse",
+    "debugRepo": "Depurar {name}",
+    "describeSymptom": "descreva um sintoma",
+    "viewResult": "Ver {kind}",
+    "unseenResult": "resultado não visto",
+    "runningResult": "AI: {kind}…",
+    "running": "rodando",
+    "kindCommitMessage": "Mensagem de Commit",
+    "kindCodeReview": "Code Review",
+    "kindMuseResult": "Resultado da Muse",
+    "kindPresentation": "Apresentação",
+    "kindDebugResult": "Resultado do Debug"
+  },
+  "undo": {
+    "cancel": "Cancelar: {label}"
+  },
+  "navigation": {
+    "changes": "Mudanças",
+    "history": "Histórico",
+    "branches": "Branches",
+    "xray": "Raio-X",
+    "settings": "Configurações",
+    "refresh": "Atualizar"
+  },
+  "settings": {
+    "reduceMotion": "Reduzir Movimento",
+    "animateLogoUnfocused": "Animar Logo Fora de Foco",
+    "instantBlameHover": "Blame Instantâneo no Hover",
+    "autoSelectChanges": "Selecionar Mudanças Automaticamente",
+    "fetchOnlineIssues": "Buscar Issues Online",
+    "rememberWip": "Lembrar Trabalho em Andamento",
+    "hideAiFeatures": "Ocultar Recursos de AI",
+    "crashReporting": "Relatório de Falhas",
+    "aiReadOnly": "AI Só Leitura",
+    "stashCabinetExpanded": "Armário de Stash Expandido",
+    "fileSortInverted": "Ordenação de Arquivos Invertida"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Status do Motor",
+    "engineStatusSubtitle": "Diagnóstico do motor espectral LogosGit",
+    "fileCoupling": "Acoplamento de Arquivos",
+    "fileCouplingSubtitle": "Vizinhos de co-mudança mais próximos dos arquivos em stage",
+    "themeSpecimen": "Amostra de Tema",
+    "themeSpecimenSubtitle": "Todas as cores, ícones, níveis de texto e geometria"
+  },
+  "dev": {
+    "testMergeEditor": "Testar Editor de Merge",
+    "testHistorySurgery": "Testar Cirurgia de Histórico",
+    "back": "voltar",
+    "cancel": "cancelar",
+    "buildingConflicts": "montando conflitos de teste a partir do histórico…"
+  },
+  "historySurgery": {
+    "label": "Cirurgia de Histórico",
+    "subtitle": "Reescreve o histórico para remover arquivos permanentemente"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Percorra o histórico estrutural do repo pelo manifold"
+  },
+  "command": {
+    "complete": "{label} concluído",
+    "failed": "{label} falhou: {message}",
+    "copy": "Copiar"
+  },
+  "search": {
+    "hintDefault": "buscar tudo...",
+    "hintElevated": "elevado — todas as ações",
+    "emptyTypeToSearch": "digite para buscar",
+    "emptyNoResults": "sem resultados"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "acoplado"
+  },
+  "gitCache": {
+    "current": "atual",
+    "staged": "em stage",
+    "modified": "modificado"
+  }
+}

@@ -1,0 +1,300 @@
+{
+  "@@locale": "ru",
+  "board": {
+    "movesWithModule": "движется с другим модулем",
+    "reviewerCount": {
+      "one": "{n} ревьюер",
+      "few": "{n} ревьюера",
+      "many": "{n} ревьюеров",
+      "other": "{n} ревьюеров"
+    },
+    "territory": "Территория",
+    "unreviewed": "без ревью"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} коммитов · {days} дней\n{lines}",
+    "burstTooltipSingle": "{n} коммитов {label}",
+    "gapTooltip": "разрыв {n} дн · {label}",
+    "reflogTooltip": "{n} событий reflog {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "У репозитория достаточно ветвевой поверхности, чтобы навигация с учётом веток окупалась.",
+      "broadTitle": "У модели веток есть площадь",
+      "localBranchesDetail": "{count} локальных веток.",
+      "localBranchesLabel": "Локальные ветки",
+      "remoteBranchesDetail": "{count} удалённых веток.",
+      "remoteBranchesLabel": "Удалённые ветки",
+      "simpleClaim": "Видимая модель веток узкая.",
+      "simpleTitle": "Простая модель веток"
+    },
+    "bursty": {
+      "claim": "Работа приходит концентрированными всплесками, а не ровным дневным ритмом.",
+      "title": "Всплесковый ритм разработки"
+    },
+    "hiddenRefs": {
+      "claim": "{count} ссылок живут вне обычного пространства веток/меток.",
+      "evidenceDetail": "{count} ссылок вне heads/remotes/tags.",
+      "evidenceLabel": "Скрытые ссылки",
+      "namespacesLabel": "Пространства имён",
+      "title": "Скрытые пространства имён Git"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Один файл несёт непропорциональный вес совместных изменений относительно числа касаний.",
+        "few": "Небольшой набор файлов несёт непропорциональный вес совместных изменений относительно числа касаний.",
+        "many": "Небольшой набор файлов несёт непропорциональный вес совместных изменений относительно числа касаний.",
+        "other": "Небольшой набор файлов несёт непропорциональный вес совместных изменений относительно числа касаний."
+      },
+      "evidenceDetail": {
+        "one": "{n} касание · тяга φ={score}",
+        "few": "{n} касания · тяга φ={score}",
+        "many": "{n} касаний · тяга φ={score}",
+        "other": "{n} касаний · тяга φ={score}"
+      },
+      "title": {
+        "one": "Краеугольный файл-мост",
+        "few": "{n} краеугольных файла-моста",
+        "many": "{n} краеугольных файлов-мостов",
+        "other": "{n} краеугольных файлов-мостов"
+      }
+    },
+    "machineHistory": {
+      "claim": "Коммиты-контрольные точки существенно искажают наивные метрики истории.",
+      "machineCommitsDetail": "{count} коммитов совпали с машинными/сессионными паттернами.",
+      "machineCommitsLabel": "Машинные коммиты",
+      "rawVsFilteredDetail": "{raw} сырых коммитов против {filtered} отфильтрованных.",
+      "rawVsFilteredLabel": "Сырые против отфильтрованных",
+      "title": "Машинная история доминирует в сырых метриках"
+    },
+    "migration": {
+      "claim": "История смещается с `{older}` на `{newer}`, что указывает на переход стека или поверхности.",
+      "stratumDetail": "{touches} касаний, последняя активность {lastActive}.",
+      "title": "Видна миграция архитектуры"
+    },
+    "narrowHotspot": {
+      "claim": "Небольшой набор файлов и каталогов поглощает непропорциональную долю изменений.",
+      "title": "Концентрация горячих точек узкая",
+      "topHotspotDetail": "{path} составляет {pct}% видимого набора горячих точек.",
+      "topHotspotLabel": "Главная горячая точка",
+      "visibleAuthorsDetail": "{count} авторов в этом срезе истории.",
+      "visibleAuthorsLabel": "Видимые авторы"
+    },
+    "noTags": {
+      "claim": "Метки git не используются как видимый слой релизов или вех.",
+      "remoteEndpointsDetail": "{count} удалённых точек настроено.",
+      "remoteEndpointsLabel": "Удалённые точки",
+      "tagCountDetail": "Найдено 0 меток.",
+      "tagCountLabel": "Число меток",
+      "title": "Нет формального следа релизов/меток"
+    },
+    "reflog": {
+      "claim": "Объём reflog указывает на концентрированную локальную итерацию сверх опубликованных коммитов.",
+      "peakReflogDayLabel": "Пиковый день reflog",
+      "title": "Интенсивные сессии локальной правки"
+    },
+    "singleOwner": {
+      "claim": "`{path}` — активно правимый {kind} с одним отчётливым видимым автором.",
+      "ownerCountDetail": "{count} отчётливых авторов.",
+      "ownerCountLabel": "Число владельцев",
+      "title": "Горячая точка одного владельца",
+      "touchCountLabel": "Число касаний",
+      "touchDetailFiltered": "{count} касаний в отфильтрованной истории.",
+      "touchDetailRaw": "{count} касаний в сырой истории."
+    }
+  },
+  "cardTitle": {
+    "branches": "ветки",
+    "bursty": "всплесковый",
+    "hiddenRefs": "скрытые ссылки",
+    "machineHeavy": "машинно-тяжёлый",
+    "migration": "миграция",
+    "narrowHotspot": "узкая горячая точка",
+    "noTags": "нет меток",
+    "reflog": "reflog",
+    "singleOwner": "один владелец"
+  },
+  "grain": {
+    "coarsest": "крупнейшая — модули верхнего уровня",
+    "finest": "мельчайшая зернистость",
+    "mid": "средняя зернистость",
+    "oneCharacteristic": "один характерный масштаб"
+  },
+  "header": {
+    "dirtyBadge": "грязный",
+    "machineChip": "машинный",
+    "refresh": "Обновить",
+    "refreshing": "Обновление...",
+    "title": "Рентген репозитория"
+  },
+  "hotspot": {
+    "clusterPeers": "соседи по кластеру",
+    "coChangers": "со-изменители",
+    "keystone": "краеугольный",
+    "keystoneScore": "краеугольный  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "ветка",
+    "commitsHumanMachine": "человек · {n} машина",
+    "commitsLabel": "коммиты",
+    "confidenceLabel": "уверенность",
+    "curlLabel": "curl",
+    "engineSection": "движок",
+    "gradientLabel": "градиент",
+    "harmonicLabel": "гармоника",
+    "headLabel": "head",
+    "hiddenRefsLabel": "скрытые ссылки",
+    "mergeCount": {
+      "one": "{n} слияние",
+      "few": "{n} слияния",
+      "many": "{n} слияний",
+      "other": "{n} слияний"
+    },
+    "noTags": "нет меток",
+    "notesLabel": "заметки",
+    "openCommit": "Открыть коммит",
+    "pathLabel": "путь",
+    "remoteCount": "{n} удалённых",
+    "renamesLabel": "переименования",
+    "scannedAt": "просканировано {time}",
+    "selectedCount": "{n} выбрано",
+    "shapeLinear": "линейный",
+    "shapeMergeHeavy": "много слияний",
+    "shapeMostlyLinear": "в основном линейный",
+    "stashCount": {
+      "one": "{n} стэш",
+      "few": "{n} стэша",
+      "many": "{n} стэшей",
+      "other": "{n} стэшей"
+    },
+    "stressLabel": "напряжение",
+    "tagCount": {
+      "one": "{n} метка",
+      "few": "{n} метки",
+      "many": "{n} меток",
+      "other": "{n} меток"
+    },
+    "worktreeCount": {
+      "one": "{n} рабочий каталог",
+      "few": "{n} рабочих каталога",
+      "many": "{n} рабочих каталогов",
+      "other": "{n} рабочих каталогов"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Зондирую историю Git, ссылки, ритм и горячие точки.",
+    "buildingTitle": "Строю рентген репозитория",
+    "idleMessage": "Откройте панель снова, чтобы прозондировать текущий репозиторий.",
+    "idleTitle": "Рентген репозитория",
+    "unavailableTitle": "Рентген репозитория недоступен"
+  },
+  "metabolism": {
+    "halfLife": "период полураспада {n} дн"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} кластер",
+      "few": "{n} кластера",
+      "many": "{n} кластеров",
+      "other": "{n} кластеров"
+    },
+    "clusterSingle": "кластер {id}",
+    "couplingSuffix": "связность {parts}",
+    "externalCount": "{n} внешних",
+    "mutualCount": "{n} взаимных"
+  },
+  "recency": {
+    "days": "{n} дн",
+    "months": "{n} мес",
+    "today": "сегодня",
+    "weeks": "{n} нед",
+    "years": "{n} г"
+  },
+  "rings": {
+    "hintOneBlended": "одна смешанная структура",
+    "hintSelfSimilar": "самоподобная",
+    "oneBlendedBody": "Одна смешанная структура — отдельные масштабы модулей пока не разрешаются.",
+    "overHistory": "За историю",
+    "parts": "части",
+    "readingHint": "читаю структуру…",
+    "scaleCount": {
+      "one": "{n} масштаб",
+      "few": "{n} масштаба",
+      "many": "{n} масштабов",
+      "other": "{n} масштабов"
+    },
+    "scaleDissolved": "структурный масштаб растворился",
+    "scaleEmerged": "структурный масштаб проявился",
+    "scaleSpectrum": "спектр масштабов",
+    "selfSimilarBody": "Самоподобная — структура повторяется на всех масштабах, без единственного характерного уровня.",
+    "shiftInHistory": {
+      "one": "{n} сдвиг в истории",
+      "few": "{n} сдвига в истории",
+      "many": "{n} сдвигов в истории",
+      "other": "{n} сдвигов в истории"
+    },
+    "structuralShiftCount": {
+      "one": "{n} структурный сдвиг",
+      "few": "{n} структурных сдвига",
+      "many": "{n} структурных сдвигов",
+      "other": "{n} структурных сдвигов"
+    },
+    "title": "Кольца роста",
+    "unavailable": "недоступно"
+  },
+  "stats": {
+    "alive": "живой",
+    "files": "файлы",
+    "lastTouched": "последнее касание",
+    "owner": {
+      "one": "владелец",
+      "few": "владельца",
+      "many": "владельцев",
+      "other": "владельцев"
+    },
+    "touches": "касания"
+  },
+  "stratumLabel": {
+    "current": "текущий",
+    "legacy": "легаси",
+    "zone": "зона репозитория"
+  },
+  "summary": {
+    "analysisFailed": "Анализ не удался: {error}",
+    "analyze": "Анализ",
+    "copied": "Сводка скопирована в буфер обмена.",
+    "directionHint": "направление",
+    "download": "Скачать",
+    "emptyState": "Запустите анализ Logos, чтобы отобразить структуру и регионы этого репозитория.\n(tw: пока сыровато)",
+    "exit": "Выход",
+    "generating": "Читаю репозиторий и кластеризую признаки…",
+    "noModel": "AI-модель не настроена.",
+    "noModelConfigured": "AI-модель не настроена",
+    "presentWith": "презентовать с {label}",
+    "presentingWith": "презентую с {label}…",
+    "reanalyze": "Переанализировать",
+    "saveDialogTitle": "Сохранить сводку репозитория",
+    "saveFailed": "Не удалось сохранить: {error}",
+    "savePresentationDialogTitle": "Сохранить презентацию",
+    "savedTo": "Сохранено в {path}"
+  },
+  "tabs": {
+    "map": "Карта",
+    "signals": "Сигналы",
+    "summary": "Сводка",
+    "time": "Время"
+  },
+  "trajectory": {
+    "connectivity": "связность",
+    "events": "{n} событий",
+    "openInOrrery": "Открыть в Оррери",
+    "readingHint": "читаю историю…",
+    "snapshots": "{n} снимков",
+    "steady": "Ровно — структурных событий в этом окне нет.",
+    "title": "Структурная траектория"
+  },
+  "verdict": {
+    "canonical": "{pct}% канонично",
+    "tooltip": "{archetype} · {canonical}% канонично · {decisive}% решительно"
+  }
+}

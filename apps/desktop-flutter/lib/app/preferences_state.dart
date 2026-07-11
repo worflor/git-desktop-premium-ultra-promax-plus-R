@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../backend/commit_format.dart';
+import '../i18n/gen/strings.g.dart';
 import '../backend/file_coupling.dart';
 import '../backend/settings_store.dart';
 import '../backend/undo_controller.dart';
@@ -55,6 +56,7 @@ class PreferencesState extends ChangeNotifier {
   double _logosPadX = 0.5;
   double _logosPadY = 0.5;
   int _changesPanelWidthPx = 320;
+  String _localeOverride = '';
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -155,6 +157,7 @@ class PreferencesState extends ChangeNotifier {
     _logosPadX = settings.logosPadX;
     _logosPadY = settings.logosPadY;
     _changesPanelWidthPx = settings.changesPanelWidthPx;
+    _localeOverride = settings.localeOverride;
     _loaded = true;
     notifyListeners();
   }
@@ -192,6 +195,7 @@ class PreferencesState extends ChangeNotifier {
     double? logosPadX,
     double? logosPadY,
     int? changesPanelWidthPx,
+    String? localeOverride,
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
@@ -225,8 +229,29 @@ class PreferencesState extends ChangeNotifier {
         logosPadX: logosPadX,
         logosPadY: logosPadY,
         changesPanelWidthPx: changesPanelWidthPx,
+        localeOverride: localeOverride,
       ),
     );
+  }
+
+  /// The persisted UI-language override tag ('' = follow the OS locale).
+  String get localeOverride => _localeOverride;
+
+  /// Set (or clear, with '') the UI-language override. Applies to the
+  /// live slang locale immediately — TranslationProvider rebuilds every
+  /// context.t consumer — then persists. Unknown tags are persisted but
+  /// not applied (same guard as startup), so the UI can never enter a
+  /// locale the binary doesn't bundle.
+  Future<void> setLocaleOverride(String tag) async {
+    if (_localeOverride == tag) return;
+    _localeOverride = tag;
+    if (tag.isEmpty) {
+      LocaleSettings.useDeviceLocaleSync();
+    } else if (AppLocaleUtils.supportedLocalesRaw.contains(tag)) {
+      LocaleSettings.setLocaleRawSync(tag);
+    }
+    notifyListeners();
+    await _persistWith(localeOverride: tag);
   }
 
   Future<void> setChangesPanelWidth(int px) async {

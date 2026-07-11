@@ -13,8 +13,10 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/animated_icons.dart';
 import '../../ui/context_menu.dart';
+import '../../ui/format.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/dream_hint.dart';
@@ -33,6 +35,7 @@ import '../sync/sync_actions.dart' show describeSyncAction;
 import 'verdict_badge.dart';
 import 'conflict_resolution.dart' show resolveConflictsWithAi;
 import '../../backend/merge_session.dart';
+import '../../ui/merge_outcome_text.dart';
 import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
 import '../../backend/git.dart';
 import '../../backend/git_result.dart';
@@ -81,13 +84,13 @@ import 'file_constellation.dart';
 String _guardrailLabelForStage(int stage) {
   switch (stage.clamp(0, 3)) {
     case 0:
-      return 'Loose';
+      return t.changes.guardrail.loose;
     case 1:
-      return 'Balanced';
+      return t.changes.guardrail.balanced;
     case 2:
-      return 'Strict';
+      return t.changes.guardrail.strict;
     default:
-      return 'Paranoid';
+      return t.changes.guardrail.paranoid;
   }
 }
 
@@ -182,10 +185,11 @@ String? _usageCaption(AiUsage u) {
   if (cr > 0 && cr <= u.inputTokens) {
     final fresh = u.inputTokens - cr;
     final freshLabel = fresh == 0 ? '0' : _realTokens(fresh);
-    return '$freshLabel in · ${_realTokens(cr)} cached · '
-        '${_realTokens(u.outputTokens)} out';
+    return t.changes.usage.captionCached(
+        fresh: freshLabel, cached: _realTokens(cr), out: _realTokens(u.outputTokens));
   }
-  return '${_realTokens(u.inputTokens)} in · ${_realTokens(u.outputTokens)} out';
+  return t.changes.usage.caption(
+      input: _realTokens(u.inputTokens), output: _realTokens(u.outputTokens));
 }
 
 // A multi-line usage breakdown for hover — ONLY what the provider reported
@@ -204,15 +208,16 @@ String? _usageTooltip(AiUsage u) {
   final cw = u.cacheWriteTokens ?? 0;
   final fresh =
       (cr > 0 && cr <= u.inputTokens) ? u.inputTokens - cr : u.inputTokens;
-  lines.add('${_realTokens(fresh)}  in');
-  if (cr > 0) lines.add('${_realTokens(cr)}  cache read');
-  if (cw > 0) lines.add('${_realTokens(cw)}  cache write');
-  lines.add('${_realTokens(u.outputTokens)}  out');
+  lines.add(t.changes.usage.tipIn(value: _realTokens(fresh)));
+  if (cr > 0) lines.add(t.changes.usage.tipCacheRead(value: _realTokens(cr)));
+  if (cw > 0) lines.add(t.changes.usage.tipCacheWrite(value: _realTokens(cw)));
+  lines.add(t.changes.usage.tipOut(value: _realTokens(u.outputTokens)));
   final rt = u.reasoningTokens ?? 0;
-  if (rt > 0) lines.add('${_realTokens(rt)}  reasoning');
+  if (rt > 0) lines.add(t.changes.usage.tipReasoning(value: _realTokens(rt)));
   final d = u.duration;
   if (d != null) {
-    lines.add('${(d.inMilliseconds / 1000).toStringAsFixed(1)}s  wall clock');
+    lines.add(t.changes.usage
+        .tipWallClock(value: (d.inMilliseconds / 1000).toStringAsFixed(1)));
   }
   return lines.join('\n');
 }
@@ -252,14 +257,16 @@ Text _usageCaptionRich(
   final spans = <TextSpan>[];
   if (cr > 0 && cr <= u.inputTokens) {
     final fresh = u.inputTokens - cr;
-    spans.add(TextSpan(text: '${fresh == 0 ? '0' : _realTokens(fresh)} in'));
     spans.add(TextSpan(
-        text: ' · ${_realTokens(cr)} cached', style: style.copyWith(color: faint)));
+        text: '${fresh == 0 ? '0' : _realTokens(fresh)} ${t.changes.usage.inWord}'));
+    spans.add(TextSpan(
+        text: ' · ${_realTokens(cr)} ${t.changes.usage.cachedWord}',
+        style: style.copyWith(color: faint)));
   } else {
-    spans.add(TextSpan(text: '${_realTokens(u.inputTokens)} in'));
+    spans.add(TextSpan(text: '${_realTokens(u.inputTokens)} ${t.changes.usage.inWord}'));
   }
   spans.add(TextSpan(
-      text: ' · ${_realTokens(u.outputTokens)} out',
+      text: ' · ${_realTokens(u.outputTokens)} ${t.changes.usage.outWord}',
       style: style.copyWith(color: out, fontWeight: FontWeight.w600)));
   return Text.rich(TextSpan(children: spans, style: style));
 }
@@ -289,7 +296,7 @@ class _DiffTab {
 
 class _ChangesPageState extends State<ChangesPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
-  final List<_DiffTab> _tabs = [_DiffTab(label: 'Changes')];
+  final List<_DiffTab> _tabs = [_DiffTab(label: t.changes.tabs.defaultLabel)];
   int _activeTabIndex = 0;
   _DiffTab get _activeTab {
     assert(_activeTabIndex >= 0 && _activeTabIndex < _tabs.length,
@@ -331,10 +338,10 @@ class _ChangesPageState extends State<ChangesPage> {
   /// is trivial; phrase ·  character otherwise.
   String _composeHint() {
     final dream = _commitDream.value;
-    final hint = dream?.phrase ?? 'commit message...';
+    final hint = dream?.phrase ?? t.changes.composer.hintPlaceholder;
     final char = dream?.character;
     if (char == null || char == LogosFieldCharacter.silent) return hint;
-    return '$hint  ·  ${char.label}';
+    return t.changes.composer.hintWithChar(hint: hint, char: char.label);
   }
 
   String? _draftKey;
@@ -1380,7 +1387,7 @@ class _ChangesPageState extends State<ChangesPage> {
     _draftKey = null;
     _tabs
       ..clear()
-      ..add(_DiffTab(label: 'Changes'));
+      ..add(_DiffTab(label: t.changes.tabs.defaultLabel));
     _activeTabIndex = 0;
     _includedByContextKey.clear();
     _tabsByContextKey.clear();
@@ -1455,7 +1462,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _draftKey = null;
       _tabs
         ..clear()
-        ..add(_DiffTab(label: 'Changes'));
+        ..add(_DiffTab(label: t.changes.tabs.defaultLabel));
       _activeTabIndex = 0;
       _includedByContextKey
         ..clear()
@@ -2239,7 +2246,7 @@ class _ChangesPageState extends State<ChangesPage> {
     } else {
       _tabs
         ..clear()
-        ..add(_DiffTab(label: 'Changes'));
+        ..add(_DiffTab(label: t.changes.tabs.defaultLabel));
       _activeTabIndex = 0;
     }
     if (restored != null) {
@@ -2402,29 +2409,29 @@ class _ChangesPageState extends State<ChangesPage> {
   _PrimaryCommitAction _primaryActionFor(RepositoryStatus status) {
     final branch = status.branch;
     if (branch == 'HEAD' || branch.startsWith('(')) {
-      return const _PrimaryCommitAction(
-        label: 'Commit changes',
-        detail: 'Detached HEAD: commit locally without syncing.',
+      return _PrimaryCommitAction(
+        label: t.changes.commit.primaryCommitChanges,
+        detail: t.changes.commit.primaryCommitChangesDetail,
         syncAfterCommit: false,
       );
     }
     if (status.upstream == null) {
-      return const _PrimaryCommitAction(
-        label: 'Commit & publish',
-        detail: 'Create the commit and publish this branch in one step.',
+      return _PrimaryCommitAction(
+        label: t.changes.commit.primaryPublish,
+        detail: t.changes.commit.primaryPublishDetail,
         syncAfterCommit: true,
       );
     }
     if (status.ahead > 0 || status.behind > 0) {
-      return const _PrimaryCommitAction(
-        label: 'Commit & sync',
-        detail: 'Create the commit, then reconcile and ship the branch.',
+      return _PrimaryCommitAction(
+        label: t.changes.commit.primarySync,
+        detail: t.changes.commit.primarySyncDetail,
         syncAfterCommit: true,
       );
     }
-    return const _PrimaryCommitAction(
-      label: 'Commit & push',
-      detail: 'Create the commit and push it immediately.',
+    return _PrimaryCommitAction(
+      label: t.changes.commit.primaryPush,
+      detail: t.changes.commit.primaryPushDetail,
       syncAfterCommit: true,
     );
   }
@@ -3171,7 +3178,7 @@ class _ChangesPageState extends State<ChangesPage> {
   String _tabLabel(_DiffTab tab) {
     if (tab.label != null) return tab.label!;
     final paths = tab.includedPaths;
-    if (paths.isEmpty) return 'Empty';
+    if (paths.isEmpty) return t.changes.tabs.empty;
     if (paths.length == 1) return paths.first.split('/').last;
     final segments = paths.map((pp) => pp.split('/')).toList();
     var depth = 0;
@@ -3277,14 +3284,14 @@ class _ChangesPageState extends State<ChangesPage> {
           if (rippleItems.isNotEmpty)
             AppContextMenuItem(
               icon: Icons.waves_outlined,
-              label: 'Ripple',
+              label: context.t.changes.fileMenu.ripple,
               onTap: () {},
               submenuBuilder: () => rippleItems,
             ),
           if (likely.isNotEmpty)
             AppContextMenuItem(
               icon: Icons.hub_outlined,
-              label: 'Include co-changes',
+              label: context.t.changes.fileMenu.includeCoChanges,
               onTap: () {
                 if (checkedLikely.isEmpty) return;
                 setState(() => _includedPaths.addAll(checkedLikely));
@@ -3320,8 +3327,8 @@ class _ChangesPageState extends State<ChangesPage> {
         AppContextMenuItem(
           icon: isUntracked ? Icons.delete_outline : Icons.history_outlined,
           label: isUntracked
-              ? 'Delete $basename…'
-              : 'Discard changes to $basename…',
+              ? context.t.changes.fileMenu.deleteFile(name: basename)
+              : context.t.changes.fileMenu.discardChangesTo(name: basename),
           destructive: true,
           onTap: () {
             if (multi && _discardBatchMode) {
@@ -3343,7 +3350,7 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.block_outlined,
-          label: 'Ignore',
+          label: context.t.changes.fileMenu.ignore,
           onTap: () => _ignorePattern(context, repoPath, file.path),
           submenuBuilder: () => _ignoreSubmenu(
             context, t, file, repoPath, basename, ext,
@@ -3355,7 +3362,7 @@ class _ChangesPageState extends State<ChangesPage> {
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.splitscreen_outlined,
-            label: 'Diff Tab from selection',
+            label: context.t.changes.fileMenu.diffTabFromSelection,
             onTap: () => _splitToNewTab(Set<String>.from(_includedPaths)),
             submenuBuilder: _tabs.length > 1
                 ? () {
@@ -3366,7 +3373,7 @@ class _ChangesPageState extends State<ChangesPage> {
                       final name = _tabLabel(tab);
                       items.add(AppContextMenuItem(
                         icon: Icons.input_outlined,
-                        label: 'Add selected to $name',
+                        label: context.t.changes.fileMenu.addSelectedToTab(name: name),
                         trailing: Text(
                           '${tab.includedPaths.length}',
                           style: TextStyle(
@@ -3379,7 +3386,7 @@ class _ChangesPageState extends State<ChangesPage> {
                     }
                     items.add(AppContextMenuItem(
                       icon: Icons.splitscreen_outlined,
-                      label: 'Diff Tab from selection',
+                      label: context.t.changes.fileMenu.diffTabFromSelection,
                       onTap: () => _splitToNewTab(Set<String>.from(_includedPaths)),
                     ));
                     return items;
@@ -3391,7 +3398,7 @@ class _ChangesPageState extends State<ChangesPage> {
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.splitscreen_outlined,
-            label: 'Diff Tab from $basename',
+            label: context.t.changes.fileMenu.diffTabFromFile(name: basename),
             onTap: () => _splitToNewTab({file.path}),
             submenuBuilder: _tabs.length > 1
                 ? () {
@@ -3402,7 +3409,7 @@ class _ChangesPageState extends State<ChangesPage> {
                       final name = _tabLabel(tab);
                       items.add(AppContextMenuItem(
                         icon: Icons.input_outlined,
-                        label: 'Add $basename to $name',
+                        label: context.t.changes.fileMenu.addFileToTab(file: basename, tab: name),
                         trailing: Text(
                           '${tab.includedPaths.length}',
                           style: TextStyle(
@@ -3415,7 +3422,7 @@ class _ChangesPageState extends State<ChangesPage> {
                     }
                     items.add(AppContextMenuItem(
                       icon: Icons.splitscreen_outlined,
-                      label: 'Diff Tab from $basename',
+                      label: context.t.changes.fileMenu.diffTabFromFile(name: basename),
                       onTap: () => _splitToNewTab({file.path}),
                     ));
                     return items;
@@ -3426,14 +3433,14 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: 'Copy file path',
+          label: context.t.changes.fileMenu.copyFilePath,
           onTap: () => _copyToClipboard(file.path),
         ),
       ]),
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.folder_open_outlined,
-          label: 'Show in Explorer',
+          label: context.t.changes.fileMenu.showInExplorer,
           onTap: () => _revealInExplorer(repoPath, file.path),
         ),
       ]),
@@ -3476,11 +3483,11 @@ class _ChangesPageState extends State<ChangesPage> {
     final coherence = matrix?.coherenceFor(selected) ?? 0.0;
     String cohesionLabel;
     if (coherence > 0.6) {
-      cohesionLabel = 'tightly coupled';
+      cohesionLabel = context.t.changes.multiFileMenu.cohesionTight;
     } else if (coherence > 0.25) {
-      cohesionLabel = 'loosely related';
+      cohesionLabel = context.t.changes.multiFileMenu.cohesionLoose;
     } else {
-      cohesionLabel = 'structurally scattered';
+      cohesionLabel = context.t.changes.multiFileMenu.cohesionScattered;
     }
 
     // Cluster distribution.
@@ -3499,14 +3506,15 @@ class _ChangesPageState extends State<ChangesPage> {
           }
         }
         if (clusterCounts.length == 1) {
-          clusterLine = 'all in one cluster';
+          clusterLine = context.t.changes.multiFileMenu.clusterOne;
         } else if (clusterCounts.length <= 3) {
           final parts = clusterCounts.values.toList()
             ..sort((a, b) => b.compareTo(a));
-          clusterLine = 'spans ${clusterCounts.length} clusters '
-              '(${parts.join(' + ')} files)';
+          clusterLine = context.t.changes.multiFileMenu.clusterSpansDetailed(
+              count: clusterCounts.length, parts: parts.join(' + '));
         } else {
-          clusterLine = 'spans ${clusterCounts.length} clusters';
+          clusterLine = context.t.changes.multiFileMenu
+              .clusterSpans(count: clusterCounts.length);
         }
       }
     }
@@ -3540,7 +3548,8 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     // Build the card.
-    final roleLine = '${selected.length} files · $cohesionLabel';
+    final roleLine = context.t.changes.multiFileMenu
+        .roleLine(count: selected.length, cohesion: cohesionLabel);
 
     final lines = <Widget>[
       Text(
@@ -3569,7 +3578,8 @@ class _ChangesPageState extends State<ChangesPage> {
     for (final e in topMissing) {
       lines.add(const SizedBox(height: 3));
       lines.add(_MinimapHoverLine(
-        text: '${p.basename(e.key)} usually changes with this group',
+        text: context.t.changes.multiFileMenu
+            .usuallyChangesWithGroup(file: p.basename(e.key)),
         color: t.textMuted.withValues(alpha: 0.9),
         hoverColor: t.accentBright.withValues(alpha: 0.15),
         onTap: () {
@@ -3607,14 +3617,14 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.tab_outlined,
-          label: 'Split to new tab',
+          label: context.t.changes.multiFileMenu.splitToNewTab,
           onTap: () => _splitToNewTab(Set<String>.from(_includedPaths)),
         ),
       ]),
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: 'Copy ${selected.length} paths',
+          label: context.t.changes.multiFileMenu.copyPaths(count: selected.length),
           onTap: () => _copyToClipboard(selected.join('\n')),
         ),
       ]),
@@ -3783,7 +3793,7 @@ class _ChangesPageState extends State<ChangesPage> {
       if (ext != null)
         AppContextMenuItem(
           icon: Icons.code_outlined,
-          label: '.$ext extension',
+          label: context.t.changes.ignoreMenu.extension(ext: ext),
           trailing: Text('*.$ext', style: patternStyle),
           onTap: () => _ignorePattern(context, repoPath, '*.$ext'),
         ),
@@ -3797,7 +3807,7 @@ class _ChangesPageState extends State<ChangesPage> {
       if (multi)
         AppContextMenuItem(
           icon: Icons.checklist_outlined,
-          label: 'All ${selectedFiles.length} selected',
+          label: context.t.changes.ignoreMenu.allSelected(count: selectedFiles.length),
           onTap: () {
             for (final f in selectedFiles) {
               _ignorePattern(context, repoPath, f.path);
@@ -3807,9 +3817,7 @@ class _ChangesPageState extends State<ChangesPage> {
       if (coupled.isNotEmpty)
         AppContextMenuItem(
           icon: Icons.hub_outlined,
-          label:
-              'Couples with ${coupled.length} included '
-              'file${coupled.length == 1 ? '' : 's'}',
+          label: context.t.changes.ignoreMenu.couplesWith(n: coupled.length),
           iconColor: t.stateModified,
           onTap: () {},
           inert: true,
@@ -3840,7 +3848,7 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     if (!result.ok) {
       setState(() {
-        _actionError = result.error ?? 'Failed to update .gitignore.';
+        _actionError = result.error ?? t.changes.ignoreMenu.updateFailed;
       });
       return;
     }
@@ -3859,7 +3867,7 @@ class _ChangesPageState extends State<ChangesPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _actionError = 'Failed to open file explorer: $e';
+        _actionError = t.changes.discard.failedOpenExplorer(error: '$e');
       });
     }
   }
@@ -3887,26 +3895,26 @@ class _ChangesPageState extends State<ChangesPage> {
         return AlertDialog(
           backgroundColor: t.surface1,
           title: Text(
-            isUntracked ? 'Delete $basename?' : 'Discard changes to $basename?',
+            isUntracked
+                ? ctx.t.changes.discard.deleteTitle(name: basename)
+                : ctx.t.changes.discard.discardTitle(name: basename),
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
           content: Text(
             isUntracked
-                ? '${file.path} will be removed from disk. '
-                    'This cannot be undone from inside the app.'
-                : 'All changes to ${file.path} will be reverted to '
-                    'their state in HEAD. This cannot be undone.',
+                ? ctx.t.changes.discard.deleteBody(path: file.path)
+                : ctx.t.changes.discard.discardBody(path: file.path),
             style: TextStyle(color: t.textNormal, fontSize: 12),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
               child: Text(
-                isUntracked ? 'Delete' : 'Discard',
+                isUntracked ? ctx.t.common.delete : ctx.t.changes.discard.discard,
                 style: TextStyle(color: t.stateDeleted),
               ),
             ),
@@ -3924,14 +3932,16 @@ class _ChangesPageState extends State<ChangesPage> {
     // every other destructive action in the app.
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
-      label: isUntracked ? 'Deleting $basename' : 'Discarding $basename',
+      label: isUntracked
+          ? t.changes.discard.deletingFile(name: basename)
+          : t.changes.discard.discardingFile(name: basename),
       window: Duration(seconds: windowSec),
       run: () async {
         final result = await discardFile(repoPath, file);
         if (!mounted) return;
         if (!result.ok) {
           setState(() {
-            _actionError = result.error ?? 'Failed to discard changes.';
+            _actionError = result.error ?? t.changes.discard.discardFailed;
           });
           return;
         }
@@ -3968,7 +3978,7 @@ class _ChangesPageState extends State<ChangesPage> {
         return AlertDialog(
           backgroundColor: t.surface1,
           title: Text(
-            'Discard changes to ${files.length} files?',
+            ctx.t.changes.discard.discardManyTitle(count: files.length),
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
           content: SizedBox(
@@ -3978,9 +3988,7 @@ class _ChangesPageState extends State<ChangesPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tracked files will be reverted to their state in '
-                  'HEAD; untracked files will be removed from disk. '
-                  'This cannot be undone.',
+                  ctx.t.changes.discard.discardManyBody,
                   style: TextStyle(color: t.textNormal, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
@@ -4009,12 +4017,12 @@ class _ChangesPageState extends State<ChangesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
               child: Text(
-                'Discard ${files.length}',
+                ctx.t.changes.discard.discardManyConfirm(count: files.length),
                 style: TextStyle(color: t.stateDeleted),
               ),
             ),
@@ -4029,7 +4037,7 @@ class _ChangesPageState extends State<ChangesPage> {
     // user cancels mid-window, nothing in the batch runs.
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
-      label: 'Discarding ${files.length} files',
+      label: t.changes.discard.discardingManyFiles(count: files.length),
       window: Duration(seconds: windowSec),
       run: () async {
         int failed = 0;
@@ -4048,7 +4056,7 @@ class _ChangesPageState extends State<ChangesPage> {
         setState(() {
           _includedPaths.removeAll(discarded);
           _actionError =
-              failed > 0 ? (firstErr ?? 'Some discards failed.') : null;
+              failed > 0 ? (firstErr ?? t.changes.discard.someFailed) : null;
         });
         await repoState.refreshStatus();
       },
@@ -4072,7 +4080,7 @@ class _ChangesPageState extends State<ChangesPage> {
     // to dump, and the UI would just spin. Soft-fail with a hint.
     if (p.equals(deskPath, repoPath)) {
       ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(content: Text('Same worktree — nothing to dump.')),
+        SnackBar(content: Text(t.changes.snack.sameWorktree)),
       );
       return;
     }
@@ -4084,15 +4092,15 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     if (!result.ok) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Diff failed: ${result.error}')),
+        SnackBar(content: Text(t.changes.snack.diffFailed(error: '${result.error}'))),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(
-            content: Text('Desk has nothing ahead of you — empty dump.')),
+        SnackBar(
+            content: Text(t.changes.snack.deskEmpty)),
       );
       return;
     }
@@ -4100,7 +4108,7 @@ class _ChangesPageState extends State<ChangesPage> {
       context,
       repoPath: repoPath,
       rawPatch: diff,
-      sourceLabel: 'desk $label',
+      sourceLabel: t.changes.snack.sourceDesk(label: label),
       onApplied: () async {
         if (!mounted) return;
         await repoState.refreshStatus();
@@ -4123,14 +4131,14 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     if (!result.ok) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Shelf read failed: ${result.error}')),
+        SnackBar(content: Text(t.changes.snack.shelfReadFailed(error: '${result.error}'))),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Empty shelf — nothing to dump.')),
+        SnackBar(content: Text(t.changes.snack.shelfEmpty)),
       );
       return;
     }
@@ -4138,7 +4146,7 @@ class _ChangesPageState extends State<ChangesPage> {
       context,
       repoPath: repoPath,
       rawPatch: diff,
-      sourceLabel: 'shelf $label',
+      sourceLabel: t.changes.snack.sourceShelf(label: label),
       onApplied: () async {
         if (!mounted) return;
         await repoState.refreshStatus();
@@ -4187,17 +4195,17 @@ class _ChangesPageState extends State<ChangesPage> {
 
   String _commitAiTooltip(AiSettingsState aiSettings, int includedCount) {
     if (_generateRunning) {
-      return 'generating commit message...';
+      return t.changes.tooltips.commitGenerating;
     }
     if (_commitAiLoading) {
-      return 'preparing commit-message...';
+      return t.changes.tooltips.commitPreparing;
     }
     if (includedCount == 0) {
-      return 'select at least one file to generate a commit message.';
+      return t.changes.tooltips.commitSelectFile;
     }
     if (!_hasCommitAiSelection(aiSettings)) {
       return _commitAiError ??
-          'configure commit-message in Settings > Behavioural Dynamics > Commit Messages.';
+          t.changes.tooltips.commitConfigure;
     }
     // The second category is "Fast" — the typical default for commit gen.
     final commitLabel = aiSettings
@@ -4205,19 +4213,19 @@ class _ChangesPageState extends State<ChangesPage> {
           aiSettings.commitMessageModelCategoryId,
           _commitAiCategories.length > 1
               ? _commitAiCategories[1].label
-              : 'fast',
+              : t.changes.tooltips.fastFallback,
         )
         .toLowerCase();
-    return 'generate commit message with $commitLabel model';
+    return t.changes.tooltips.commitGenerateWith(label: commitLabel);
   }
 
   String _museTooltip(AiSettingsState aiSettings, int includedCount) {
     if (_museRunning) {
-      return _isMuseDrawerOpen ? 'consulting the muse...' : 'show muse';
+      return _isMuseDrawerOpen ? t.changes.tooltips.museConsulting : t.changes.tooltips.showMuse;
     }
-    if (includedCount == 0) return 'select at least one file for the muse.';
-    if (_museResult != null) return 'show muse';
-    if (_museError != null) return 'show muse error';
+    if (includedCount == 0) return t.changes.tooltips.museSelectFile;
+    if (_museResult != null) return t.changes.tooltips.showMuse;
+    if (_museError != null) return t.changes.tooltips.showMuseError;
     // Resolve the actual slots the pipeline will use and render their
     // current display labels — if the user renamed "Fast" to "Cheapo
     // Spew", the tooltip follows. Routing keys off the tag id under the
@@ -4235,9 +4243,10 @@ class _ChangesPageState extends State<ChangesPage> {
     final brainstormLabel = labelOf(aiSettings.museBrainstormModelCategoryId);
     final synthesisLabel = labelOf(aiSettings.museSynthesisModelCategoryId);
     if (brainstormLabel == null || synthesisLabel == null) {
-      return 'ask the muse for direction';
+      return t.changes.tooltips.museAsk;
     }
-    return 'ask the muse for direction\n$brainstormLabel → $synthesisLabel';
+    return t.changes.tooltips
+        .museAskWithModels(brainstorm: brainstormLabel, synthesis: synthesisLabel);
   }
 
   String _reviewAiTooltip(
@@ -4249,30 +4258,30 @@ class _ChangesPageState extends State<ChangesPage> {
           aiSettings.reviewCommitModelCategoryId,
           _commitAiCategories.isNotEmpty
               ? _commitAiCategories.first.label
-              : 'quality',
+              : t.changes.tooltips.qualityFallback,
         )
         .toLowerCase();
     final guardrail = _guardrailLabelForStage(guardrailStage).toLowerCase();
     if (_reviewRunning) {
-      return _isReviewDrawerOpen ? 'reviewing...' : 'show review';
+      return _isReviewDrawerOpen ? t.changes.tooltips.reviewing : t.changes.tooltips.showReview;
     }
     if (_commitAiLoading) {
-      return 'preparing commit review...';
+      return t.changes.tooltips.reviewPreparing;
     }
     if (includedCount == 0) {
-      return 'select at least one file to review.';
+      return t.changes.tooltips.reviewSelectFile;
     }
     if (!_hasReviewAiSelection(aiSettings)) {
-      return _commitAiError ?? 'configure review AI in settings.';
+      return _commitAiError ?? t.changes.tooltips.reviewConfigure;
     }
     if (hasPersistentReview) {
       if (_isReviewDrawerOpen) {
         final verdict = _reviewResult?.verdict;
-        return verdict != null ? verdict.toLowerCase() : 'viewing review';
+        return verdict != null ? verdict.toLowerCase() : t.changes.tooltips.viewingReview;
       }
-      return 'show review';
+      return t.changes.tooltips.showReview;
     }
-    return '$guardrail review with $reviewLabel model';
+    return t.changes.tooltips.reviewWith(guardrail: guardrail, label: reviewLabel);
   }
 
   bool _hasReviewStateForCurrentSelection() {
@@ -4353,7 +4362,7 @@ class _ChangesPageState extends State<ChangesPage> {
             .where((category) => category.models.isNotEmpty)
             .firstOrNull;
     if (selectedCategory == null) {
-      return 'No model';
+      return t.changes.commit.noModelLabel;
     }
     final selectedModel = selectedCategory.models
             .where(
@@ -4484,7 +4493,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // `rebase --continue` can still fail (an empty commit needing --skip, a
       // hook rejecting, etc.). Surface it instead of silently leaving the
       // rebase paused behind a clean-looking tree.
-      setState(() => _actionError = r.error ?? 'Could not continue the rebase.');
+      setState(() => _actionError = r.error ?? t.changes.rebase.continueFailed);
       return;
     }
     await context.read<RepositoryState>().refreshStatus();
@@ -4531,8 +4540,8 @@ class _ChangesPageState extends State<ChangesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              'No model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}".'),
+          content: Text(context.t.changes.snack.noModelConfigured(
+              label: aiSettings.labelForCategory(categoryId, categoryId))),
         ),
       );
       return;
@@ -4565,7 +4574,7 @@ class _ChangesPageState extends State<ChangesPage> {
           repoPath: repoPath,
           kind: AiActivityKind.debug,
           scopeKey: scopeKey,
-          error: r.error ?? 'Debug failed.',
+          error: r.error ?? t.changes.debug.failed,
         );
         return;
       }
@@ -4625,7 +4634,7 @@ class _ChangesPageState extends State<ChangesPage> {
           repoPath: repoPath,
           kind: AiActivityKind.debug,
           scopeKey: scopeKey,
-          error: r.error ?? 'Debug refinement failed.',
+          error: r.error ?? t.changes.debug.refinementFailed,
         );
         return;
       }
@@ -4653,17 +4662,17 @@ class _ChangesPageState extends State<ChangesPage> {
     final existing = _debugResult;
     if (existing != null && existing.hypotheses.isNotEmpty) {
       final nextRound = existing.round + 1;
-      return 'round $nextRound — refine or add context.';
+      return t.changes.askHint.round(n: nextRound);
     }
     switch (stage) {
       case 0:
-        return 'describe the symptom.';
+        return t.changes.askHint.symptom;
       case 1:
-        return 'what\'s broken?';
+        return t.changes.askHint.broken;
       case 2:
-        return 'describe the bug.';
+        return t.changes.askHint.bug;
       default:
-        return 'paste the error.';
+        return t.changes.askHint.error;
     }
   }
 
@@ -4699,7 +4708,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .toList();
     if (included.isEmpty) {
       setState(() {
-        _actionError = 'Choose at least one file before generating.';
+        _actionError = t.changes.commit.chooseBeforeGenerate;
       });
       return;
     }
@@ -4723,12 +4732,12 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.generate,
         scopeKey: scopeKey,
-        error: _commitAiError ?? 'Commit-message AI is not available yet.',
+        error: _commitAiError ?? t.changes.commit.aiUnavailable,
       );
       if (mounted) {
         setState(() {
           _actionError =
-              _commitAiError ?? 'Commit-message AI is not available yet.';
+              _commitAiError ?? t.changes.commit.aiUnavailable;
         });
       }
       return;
@@ -4751,12 +4760,10 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.generate,
         scopeKey: scopeKey,
-        error:
-            'No runtime-discovered models are available for commit messages.',
+        error: t.changes.commit.noRuntimeModels,
       );
       setState(() {
-        _actionError =
-            'No runtime-discovered models are available for commit messages.';
+        _actionError = t.changes.commit.noRuntimeModels;
       });
       return;
     }
@@ -4839,7 +4846,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.generate,
         scopeKey: scopeKey,
-        error: result.error ?? 'Generate failed.',
+        error: result.error ?? t.changes.commit.generateFailed,
       );
       if (!mounted) return;
       if (context.read<RepositoryState>().activePath == repoPath) {
@@ -4859,7 +4866,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .toList();
     if (included.isEmpty) {
       setState(() {
-        _actionError = 'Choose at least one file before reviewing.';
+        _actionError = t.changes.review.chooseBeforeReview;
       });
       return;
     }
@@ -4897,7 +4904,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.review,
         scopeKey: scopeKey,
-        error: _commitAiError ?? 'Review AI is not available yet.',
+        error: _commitAiError ?? t.changes.review.aiUnavailable,
       );
       return;
     }
@@ -4919,7 +4926,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.review,
         scopeKey: scopeKey,
-        error: 'No runtime-discovered models are available for commit review.',
+        error: t.changes.review.noRuntimeModels,
       );
       return;
     }
@@ -4983,7 +4990,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.review,
         scopeKey: scopeKey,
-        error: result.error ?? 'Review failed.',
+        error: result.error ?? t.changes.review.failed,
       );
     }
     if (!mounted) return;
@@ -5030,7 +5037,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .toList();
     if (included.isEmpty) {
       setState(() {
-        _actionError = 'Choose at least one file before invoking the muse.';
+        _actionError = t.changes.muse.chooseBeforeMuse;
       });
       return;
     }
@@ -5066,7 +5073,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.muse,
         scopeKey: scopeKey,
-        error: _commitAiError ?? 'Muse AI is not available yet.',
+        error: _commitAiError ?? t.changes.muse.aiUnavailable,
       );
       return;
     }
@@ -5109,7 +5116,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.muse,
         scopeKey: scopeKey,
-        error: 'No runtime-discovered models are available for the muse.',
+        error: t.changes.muse.noRuntimeModels,
       );
       return;
     }
@@ -5120,7 +5127,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.muse,
         scopeKey: scopeKey,
-        error: 'Muse needs at least one configured model.',
+        error: t.changes.muse.needsModel,
       );
       return;
     }
@@ -5174,7 +5181,7 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.muse,
         scopeKey: scopeKey,
-        error: result.error ?? 'Muse failed.',
+        error: result.error ?? t.changes.muse.failed,
       );
     }
     if (!mounted) return;
@@ -5263,7 +5270,7 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.edit_note_outlined,
-          label: 'Amend last commit',
+          label: context.t.changes.commit.amendLast,
           onTap: () => _commit(
             repoPath,
             status,
@@ -5274,7 +5281,7 @@ class _ChangesPageState extends State<ChangesPage> {
         if (primaryAction.syncAfterCommit)
           AppContextMenuItem(
             icon: Icons.merge_type_outlined,
-            label: 'Amend & ${primaryAction.label.toLowerCase()}',
+            label: context.t.changes.commit.amendAnd(action: primaryAction.label.toLowerCase()),
             onTap: () => _commit(
               repoPath,
               status,
@@ -5300,14 +5307,14 @@ class _ChangesPageState extends State<ChangesPage> {
 
     if (included.isEmpty) {
       setState(
-          () => _actionError = 'Choose at least one file for the next commit.');
+          () => _actionError = t.changes.commit.chooseFile);
       return;
     }
     // Amend allows empty message — `git commit --amend` keeps the
     // previous commit's message when no new one is supplied. Regular
     // commits still require a message.
     if (message.isEmpty && !amend) {
-      setState(() => _actionError = 'Write a commit message first.');
+      setState(() => _actionError = t.changes.commit.writeMessage);
       return;
     }
     // Captured before the tags suffix so an undone commit restores the
@@ -5329,7 +5336,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final isSync = mode == _CommitRunMode.commitAndSync;
     final kind = isSync ? UndoActionKind.commitAndPush : UndoActionKind.commit;
     final windowSec = context.read<PreferencesState>().undoWindowFor(kind);
-    final label = isSync ? 'Committing and syncing' : 'Committing';
+    final label = isSync ? t.changes.commit.committingSync : t.changes.commit.committing;
 
     final outcome = await coord.schedule<_CommitOutcome>(
       kind: kind,
@@ -5380,7 +5387,7 @@ class _ChangesPageState extends State<ChangesPage> {
       final repoState = context.read<RepositoryState>();
       coord.announce(
         kind: kind,
-        label: outcome.successMessage ?? 'Committed.',
+        label: outcome.successMessage ?? t.changes.commit.committed,
         undo: !canUndo
             ? null
             : () async {
@@ -5393,7 +5400,7 @@ class _ChangesPageState extends State<ChangesPage> {
                   // Changes page happens to still be mounted.
                   coord.announce(
                     kind: kind,
-                    label: r.error ?? 'Undo failed.',
+                    label: r.error ?? t.changes.commit.undoFailed,
                     isError: true,
                   );
                   if (mounted) setState(() => _actionError = r.error);
@@ -5458,7 +5465,7 @@ class _ChangesPageState extends State<ChangesPage> {
     // selections are captured and restored after the commit.
     final planResult = await prepareCommitStaging(repoPath, included);
     if (!planResult.ok) {
-      return _CommitOutcome.err(planResult.error ?? 'Failed to stage files.');
+      return _CommitOutcome.err(planResult.error ?? t.changes.commit.stageFailed);
     }
     final plan = planResult.data!;
 
@@ -5485,7 +5492,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // the commit error and letting the user assume their index is intact.
       final restore = await finalizeCommitStaging(repoPath, plan, commitResult);
       await _refreshAndReadStatus();
-      var commitErr = commitResult.error ?? 'Commit failed.';
+      var commitErr = commitResult.error ?? t.changes.commit.commitFailed;
       // Non-fatal, same "commit is fine/absent but check the index" family
       // as the success-path reconcileWarning below: a pre-commit hook's
       // staging couldn't be replayed back onto the live index after the
@@ -5497,8 +5504,7 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       if (!restore.ok) {
         return _CommitOutcome.err(
-            '$commitErr\nCould not restore the staging of excluded files; '
-            'check the index before retrying.');
+            t.changes.commit.restoreFailedRetry(err: commitErr));
       }
       return _CommitOutcome.err(commitErr);
     }
@@ -5507,7 +5513,8 @@ class _ChangesPageState extends State<ChangesPage> {
     final shortHash = committed.commitHash.length >= 8
         ? committed.commitHash.substring(0, 8)
         : committed.commitHash;
-    var successMessage = 'Committed ${committed.summary} ($shortHash).';
+    var successMessage =
+        t.changes.commit.committedSummary(summary: committed.summary, hash: shortHash);
     // Non-fatal: the commit landed either way. A reconcile warning here
     // means only the live-index tidiness step after the commit hiccuped —
     // see [CommitAttemptResult.reconcileWarning] — never that anything
@@ -5528,8 +5535,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return _CommitOutcome.ok(
         committed,
         successMessage,
-        'Could not re-stage the selections of excluded files; '
-        'sync skipped. Check the index before syncing.',
+        t.changes.commit.restoreFailedSync,
       );
     }
 
@@ -5539,27 +5545,25 @@ class _ChangesPageState extends State<ChangesPage> {
       final outcome = await resolveSync(context, repoPath, refreshed);
       switch (outcome) {
         case MergeClean(:final data):
-          successMessage = 'Committed ${committed.summary} ($shortHash) '
-              'and ran ${data.operation}.';
+          successMessage = t.changes.commit.committedAndRan(
+              summary: committed.summary,
+              hash: shortHash,
+              operation: data.operation);
         case MergeConflicted(:final paths, :final resolved):
           if (resolved) {
-            successMessage = 'Committed ${committed.summary} ($shortHash); '
-                'resolved ${paths.length} '
-                'conflict${paths.length == 1 ? '' : 's'}.';
+            successMessage = t.changes.commit.committedResolved(
+                summary: committed.summary, hash: shortHash, n: paths.length);
           } else {
-            syncError = '${paths.length} '
-                'conflict${paths.length == 1 ? '' : 's'} left to resolve.';
+            syncError = t.changes.commit.conflictsLeft(n: paths.length);
           }
         case MergeBlockedByLocalChanges(:final paths):
-          syncError = 'Commit succeeded, but sync was blocked by '
-              '${paths.length} uncommitted '
-              'file${paths.length == 1 ? '' : 's'}.';
+          syncError = t.changes.commit.syncBlocked(n: paths.length);
         case MergeNeedsCheckout(:final message):
           // Sync operates on the checked-out branch, so this outcome never
           // originates here; kept for exhaustiveness.
-          syncError = 'Commit succeeded, but sync stalled: $message';
+          syncError = t.changes.commit.syncStalled(message: message);
         case MergeFailed(:final message):
-          syncError = 'Commit succeeded, but sync failed: $message';
+          syncError = t.changes.commit.syncFailed(message: message);
       }
       if (mounted) await _refreshAndReadStatus();
     }
@@ -5718,9 +5722,8 @@ class _ChangesPageState extends State<ChangesPage> {
               const <RepositoryStatusFile>[])
           .any((f) => f.isConflicted);
       setState(() => _actionError = stillConflicted
-          ? 'Stash applied with conflicts — resolve them on the Changes page '
-              '(the stash entry was kept).'
-          : (result.error ?? 'Could not pop stash.'));
+          ? t.changes.stash.appliedWithConflicts
+          : (result.error ?? t.changes.stash.couldNotPop));
       return;
     }
     setState(() {
@@ -5745,13 +5748,12 @@ class _ChangesPageState extends State<ChangesPage> {
     final hash = await stashHashAt(repo, index);
     if (!mounted) return;
     if (hash == null) {
-      setState(() => _actionError =
-          'The stash list changed; drop skipped. Try again.');
+      setState(() => _actionError = t.changes.stash.listChanged);
       return;
     }
     final result = await coord.schedule<GitResult<void>>(
       kind: UndoActionKind.stashDrop,
-      label: 'Dropping stash',
+      label: t.changes.stash.droppingStash,
       window: Duration(seconds: windowSec),
       run: () => stashDropByHash(repo, hash),
     );
@@ -6027,14 +6029,14 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     if (statusError != null) {
       return AppStatusView.error(
-        title: 'Repository status unavailable',
+        title: context.t.changes.status.unavailableTitle,
         message: statusError,
       );
     }
     if (status == null) {
-      return const AppStatusView.loading(
-        title: 'Loading repository status',
-        message: 'Reading the working tree.',
+      return AppStatusView.loading(
+        title: context.t.changes.status.loadingTitle,
+        message: context.t.changes.status.loadingMessage,
       );
     }
 
@@ -6101,8 +6103,8 @@ class _ChangesPageState extends State<ChangesPage> {
                         child: Text(
                           candidateData.isNotEmpty &&
                                   candidateData.first?.isStash == true
-                              ? 'drop to bring changes from this shelf here'
-                              : 'drop to bring changes from this desk here',
+                              ? context.t.changes.dropHint.fromShelf
+                              : context.t.changes.dropHint.fromDesk,
                           style: TextStyle(
                             color: t.textStrong,
                             fontSize: 12,
@@ -6425,16 +6427,19 @@ class _ChangesPageState extends State<ChangesPage> {
                                     fontWeight: FontWeight.w500,
                                   );
                                   if (includedCount == 0) {
-                                    return Text('None', style: style,
-                                        maxLines: 1);
+                                    return Text(context.t.changes.includeSummary.none,
+                                        style: style, maxLines: 1);
                                   }
                                   final n = status.files.length;
                                   final staged = stagedCount > 0
-                                      ? ' · $stagedCount staged'
+                                      ? context.t.changes.includeSummary
+                                          .stagedSuffix(count: stagedCount)
                                       : '';
                                   final full = includedCount == n
-                                      ? 'All $n file${n == 1 ? "" : "s"}$staged'
-                                      : '$includedCount of $n$staged';
+                                      ? context.t.changes.includeSummary
+                                          .full(n: n, staged: staged)
+                                      : context.t.changes.includeSummary
+                                          .partial(count: includedCount, n: n, staged: staged);
                                   final tp = TextPainter(
                                     text: TextSpan(text: full, style: style),
                                     maxLines: 1,
@@ -6448,8 +6453,10 @@ class _ChangesPageState extends State<ChangesPage> {
                                         maxLines: 1);
                                   }
                                   final short = includedCount == n
-                                      ? 'All $n$staged'
-                                      : '$includedCount of $n$staged';
+                                      ? context.t.changes.includeSummary
+                                          .shortAll(n: n, staged: staged)
+                                      : context.t.changes.includeSummary
+                                          .partial(count: includedCount, n: n, staged: staged);
                                   return Text(short, style: style,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis);
@@ -7220,13 +7227,13 @@ class _ChangesPageState extends State<ChangesPage> {
                                     ),
                                     child: _SplitCommitBtn(
                                       label: _actionRunning
-                                          ? 'Working…'
+                                          ? context.t.changes.commit.working
                                           : (commitOnlyMode
-                                              ? 'Commit only'
+                                              ? context.t.changes.commit.commitOnly
                                               : primaryAction.label),
                                       alternateLabel: commitOnlyMode
                                           ? primaryAction.label
-                                          : 'Commit only',
+                                          : context.t.changes.commit.commitOnly,
                                       commitOnlyMode: commitOnlyMode,
                                       t: t,
                                       enabled: commitEnabled,
@@ -7621,10 +7628,9 @@ class _ChangesPageState extends State<ChangesPage> {
                         borderAlpha: 0,
                         elevated: false,
                         child: _selectedDiffPath == null
-                            ? const AppStatusView(
-                                title: 'No file selected',
-                                message:
-                                    'Select a changed file to inspect its diff.',
+                            ? AppStatusView(
+                                title: context.t.changes.diffEmpty.title,
+                                message: context.t.changes.diffEmpty.message,
                                 compact: true,
                               )
                             : DiffShell(
@@ -7718,7 +7724,7 @@ class _ChangesPageState extends State<ChangesPage> {
                         border: Border.all(color: t.accentBright, width: 1),
                       ),
                       child: Text(
-                        'drop to bring changes from this desk here',
+                        context.t.changes.dropHint.fromDesk,
                         style: TextStyle(
                           color: t.textStrong,
                           fontSize: 12,
@@ -8249,7 +8255,7 @@ class _MusePaneState extends State<_MusePane> {
             children: [
               Icon(Icons.bubble_chart_outlined, size: 14, color: t.textFaint),
               const SizedBox(width: 6),
-              Text('Muse',
+              Text(context.t.changes.muse.title,
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 11.5,
@@ -8276,10 +8282,10 @@ class _MusePaneState extends State<_MusePane> {
                   // tokens are the expensive ones, they get the ink.
                   return Text.rich(TextSpan(style: style, children: [
                     TextSpan(
-                        text: '${_realTokens(r.totalInputTokens)} in'),
+                        text: '${_realTokens(r.totalInputTokens)} ${context.t.changes.usage.inWord}'),
                     TextSpan(
                       text:
-                          ' · ${_realTokens(r.totalOutputTokens)} out',
+                          ' · ${_realTokens(r.totalOutputTokens)} ${context.t.changes.usage.outWord}',
                       style: style.copyWith(
                         color:
                             t.accentBright.withValues(alpha: 0.75),
@@ -8380,10 +8386,12 @@ class _MusePaneState extends State<_MusePane> {
               _GhostActionBar(
                 tokens: t,
                 actions: [
-                  _GhostAction('Back to diff', widget.onBack),
+                  _GhostAction(context.t.changes.review.backToDiff, widget.onBack),
                   if (widget.onCopy != null)
                     _GhostAction(
-                      _selected.isEmpty ? 'Copy' : 'Copy ${_selected.length}',
+                      _selected.isEmpty
+                          ? context.t.common.copy
+                          : context.t.changes.muse.copyN(count: _selected.length),
                       () {
                         if (_selected.isEmpty) {
                           widget.onCopy!(null);
@@ -8397,10 +8405,10 @@ class _MusePaneState extends State<_MusePane> {
                     ),
                   if (widget.onCopy != null && _selected.isNotEmpty)
                     _GhostAction(
-                      'Clear',
+                      context.t.changes.muse.clear,
                       () => setState(() => _selected.clear()),
                     ),
-                  _GhostAction('Run again', widget.onRerun),
+                  _GhostAction(context.t.changes.review.runAgain, widget.onRerun),
                 ],
               ),
             ],
@@ -8423,7 +8431,7 @@ class _MusePaneState extends State<_MusePane> {
             padding: const EdgeInsets.only(top: 20, bottom: 4),
             child: Center(
               child: _DreamingText(
-                text: 'the muse is dreaming...',
+                text: context.t.changes.muse.dreaming,
                 style: TextStyle(color: t.textFaint, fontSize: 12),
               ),
             ),
@@ -8689,7 +8697,7 @@ class _MusePaneState extends State<_MusePane> {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text('you pulled this',
+                          Text(context.t.changes.muse.youPulledThis,
                               style: TextStyle(
                                 color: t.accentBright.withValues(alpha: 0.9),
                                 fontSize: 10,
@@ -8747,7 +8755,7 @@ class _MusePaneState extends State<_MusePane> {
                             fontSize: 10.5,
                             fontStyle: FontStyle.italic,
                           ),
-                          child: Text('from idea: "${idea.text}"'),
+                          child: Text(context.t.changes.muse.fromIdea(text: idea.text)),
                         ),
                       ),
                     ],
@@ -8795,7 +8803,7 @@ class _MusePaneState extends State<_MusePane> {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Text(
-              'foothold — ',
+              context.t.changes.muse.foothold,
               style: footholdStyle.copyWith(
                 color: t.textFaint.withValues(alpha: 0.7),
                 fontStyle: FontStyle.normal,
@@ -8868,7 +8876,7 @@ class _MusePaneState extends State<_MusePane> {
                       fontSize: 10,
                       letterSpacing: 1.2,
                     ),
-                    child: const Text('brainstorm spew'),
+                    child: Text(context.t.changes.muse.brainstormSpew),
                   ),
                 ],
               );
@@ -8937,7 +8945,7 @@ class _DebugPane extends StatelessWidget {
             children: [
               Icon(Icons.bug_report_outlined, size: 16, color: t.textFaint),
               const SizedBox(width: 8),
-              Text('Debug',
+              Text(context.t.changes.debug.title,
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 13.5,
@@ -8945,7 +8953,7 @@ class _DebugPane extends StatelessWidget {
                   )),
               if (result != null) ...[
                 const SizedBox(width: 6),
-                Text('· round ${result!.round}',
+                Text(context.t.changes.debug.round(n: result!.round),
                     style: TextStyle(color: t.textFaint, fontSize: 11)),
                 if (result!.inputTokens > 0 || result!.promptCharacters > 0) ...[
                   const Spacer(),
@@ -8954,7 +8962,7 @@ class _DebugPane extends StatelessWidget {
                     Text(
                       _usageCaption(result!.usage) ??
                           (result!.inputTokens > 0
-                              ? '${_realTokens(result!.inputTokens)} in · ${_realTokens(result!.outputTokens)} out'
+                              ? context.t.changes.usage.caption(input: _realTokens(result!.inputTokens), output: _realTokens(result!.outputTokens))
                               : '${_tokensLabel(result!.promptCharacters)} →'),
                       style: TextStyle(
                         fontFamily: AppFonts.mono,
@@ -8975,7 +8983,7 @@ class _DebugPane extends StatelessWidget {
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Text('clear',
+                    child: Text(context.t.changes.debug.clear,
                         style: TextStyle(color: t.textFaint, fontSize: 11)),
                   ),
                 ),
@@ -8987,7 +8995,7 @@ class _DebugPane extends StatelessWidget {
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Text('close',
+                  child: Text(context.t.changes.debug.close,
                       style: TextStyle(color: t.textMuted, fontSize: 11)),
                 ),
               ),
@@ -9011,7 +9019,7 @@ class _DebugPane extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'analyzing symptom…',
+                      context.t.changes.debug.analyzing,
                       style: TextStyle(color: t.textMuted, fontSize: 11),
                     ),
                   ],
@@ -9081,7 +9089,7 @@ class _DebugPane extends StatelessWidget {
             Expanded(
               child: Center(
                 child: Text(
-                  'describe a symptom, then press debug.',
+                  context.t.changes.debug.describeSymptom,
                   style: TextStyle(color: t.textMuted, fontSize: 11),
                   textAlign: TextAlign.center,
                 ),
@@ -9194,9 +9202,9 @@ class _HypothesisCard extends StatelessWidget {
           if (h.evidenceFor.isNotEmpty || h.evidenceAgainst.isNotEmpty)
             const SizedBox(height: 6),
           for (final e in h.evidenceFor)
-            _buildCiteLine(t, e, t.stateAdded, 'for'),
+            _buildCiteLine(t, e, t.stateAdded, context.t.changes.debug.evidenceFor),
           for (final e in h.evidenceAgainst)
-            _buildCiteLine(t, e, t.stateDeleted, 'but'),
+            _buildCiteLine(t, e, t.stateDeleted, context.t.changes.debug.evidenceAgainst),
           // Falsifier: thin accent strip
           if (h.falsifier.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -9314,7 +9322,7 @@ class _PressureQuestionSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('what would help narrow it down:',
+        Text(context.t.changes.debug.narrowDown,
             style: TextStyle(
               fontSize: 9,
               color: t.textFaint,
@@ -9427,7 +9435,7 @@ class _CommitReviewPane extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Code review',
+                    context.t.changes.review.title,
                     style: TextStyle(
                       color: tokens.textStrong,
                       fontSize: 11.5,
@@ -9439,8 +9447,7 @@ class _CommitReviewPane extends StatelessWidget {
                     TextSpan(
                       children: [
                         TextSpan(
-                            text:
-                                '$includedCount included file${includedCount == 1 ? '' : 's'}'),
+                            text: context.t.changes.review.includedFiles(n: includedCount)),
                         if (diffAdds != null &&
                             diffDels != null &&
                             diffHunks != null) ...[
@@ -9457,8 +9464,7 @@ class _CommitReviewPane extends StatelessWidget {
                                   fontWeight: FontWeight.w600)),
                           const TextSpan(text: ' • '),
                           TextSpan(
-                              text:
-                                  '$diffHunks hunk${diffHunks == 1 ? '' : 's'}',
+                              text: context.t.changes.review.hunkCount(n: diffHunks!),
                               style: TextStyle(
                                   color: tokens.accentBright,
                                   fontWeight: FontWeight.w600)),
@@ -9475,7 +9481,7 @@ class _CommitReviewPane extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          '$guardrailLabel | $modelLabel',
+                          context.t.changes.review.guardrailModel(guardrail: guardrailLabel, model: modelLabel),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -9532,7 +9538,7 @@ class _CommitReviewPane extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Review unavailable',
+                  context.t.changes.review.unavailable,
                   style: TextStyle(
                     color: tokens.textStrong,
                     fontSize: 12,
@@ -9552,7 +9558,7 @@ class _CommitReviewPane extends StatelessWidget {
                 const SizedBox(height: 14),
                 _GhostActionChip(
                   tokens: tokens,
-                  label: 'Back to diff',
+                  label: context.t.changes.review.backToDiff,
                   onTap: onBack,
                 ),
               ],
@@ -9594,7 +9600,7 @@ class _CommitReviewPane extends StatelessWidget {
                           Row(
                             children: [
                               Text(
-                                'Code review',
+                                context.t.changes.review.title,
                                 style: TextStyle(
                                   color: tokens.textStrong,
                                   fontSize: 11.5,
@@ -9610,7 +9616,7 @@ class _CommitReviewPane extends StatelessWidget {
                                       .withValues(alpha: 0.5),
                                   usage: review.usage,
                                   fallback: review.inputTokens > 0
-                                      ? '${_realTokens(review.inputTokens)} in · ${_realTokens(review.outputTokens)} out'
+                                      ? context.t.changes.usage.caption(input: _realTokens(review.inputTokens), output: _realTokens(review.outputTokens))
                                       : '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
                                 ),
                               ),
@@ -9622,7 +9628,7 @@ class _CommitReviewPane extends StatelessWidget {
                               children: [
                                 TextSpan(
                                     text:
-                                        '$includedCount included file${includedCount == 1 ? '' : 's'}'),
+                                        context.t.changes.review.includedFiles(n: includedCount)),
                                 if (diffAdds != null &&
                                     diffDels != null &&
                                     diffHunks != null) ...[
@@ -9640,7 +9646,7 @@ class _CommitReviewPane extends StatelessWidget {
                                   const TextSpan(text: ' • '),
                                   TextSpan(
                                       text:
-                                          '$diffHunks hunk${diffHunks == 1 ? '' : 's'}',
+                                          context.t.changes.review.hunkCount(n: diffHunks!),
                                       style: TextStyle(
                                           color: tokens.accentBright,
                                           fontWeight: FontWeight.w600)),
@@ -9665,7 +9671,7 @@ class _CommitReviewPane extends StatelessWidget {
                       const SizedBox(width: 6),
                       _ReviewMetaChip(
                         tokens: tokens,
-                        label: 'Verified',
+                        label: context.t.changes.review.verified,
                         color: tokens.stateAdded,
                       ),
                     ] else if (review.twoStepEnabled &&
@@ -9673,7 +9679,7 @@ class _CommitReviewPane extends StatelessWidget {
                       const SizedBox(width: 6),
                       _ReviewMetaChip(
                         tokens: tokens,
-                        label: 'Draft only',
+                        label: context.t.changes.review.draftOnly,
                         color: tokens.stateModified,
                       ),
                     ],
@@ -9710,9 +9716,9 @@ class _CommitReviewPane extends StatelessWidget {
                     _GhostActionBar(
                       tokens: tokens,
                       actions: [
-                        _GhostAction('Back to diff', onBack),
-                        if (onCopy != null) _GhostAction('Copy', onCopy!),
-                        _GhostAction('Run again', onRerun),
+                        _GhostAction(context.t.changes.review.backToDiff, onBack),
+                        if (onCopy != null) _GhostAction(context.t.common.copy, onCopy!),
+                        _GhostAction(context.t.changes.review.runAgain, onRerun),
                       ],
                     ),
                   ],
@@ -9741,7 +9747,7 @@ class _CommitReviewPane extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            '${review.verificationError} Draft review is shown below.',
+                            context.t.changes.review.draftShownBelow(error: '${review.verificationError}'),
                             style: TextStyle(
                               color: tokens.textStrong,
                               fontSize: 11,
@@ -9752,7 +9758,7 @@ class _CommitReviewPane extends StatelessWidget {
                         const SizedBox(width: 10),
                         _GhostActionChip(
                           tokens: tokens,
-                          label: traceExpanded ? 'Hide trace' : 'Show trace',
+                          label: traceExpanded ? context.t.changes.review.hideTrace : context.t.changes.review.showTrace,
                           onTap: onToggleTrace,
                         ),
                       ],
@@ -9767,7 +9773,7 @@ class _CommitReviewPane extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: _GhostActionChip(
                       tokens: tokens,
-                      label: 'Show verification trace',
+                      label: context.t.changes.review.showVerificationTrace,
                       onTap: onToggleTrace,
                     ),
                   ),
@@ -9790,7 +9796,7 @@ class _CommitReviewPane extends StatelessWidget {
                   const SizedBox(height: 10),
                   _ReviewDisclosureCard(
                     tokens: tokens,
-                    label: 'Why this review landed here',
+                    label: context.t.changes.review.whyLanded,
                     expanded: reasoningExpanded,
                     preview: review.reasoningReport,
                     onToggle: onToggleReasoning,
@@ -9809,7 +9815,7 @@ class _CommitReviewPane extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      review.findings.isEmpty ? 'No findings' : 'Findings',
+                      review.findings.isEmpty ? context.t.changes.review.noFindings : context.t.changes.review.findings,
                       style: TextStyle(
                         color: tokens.textStrong,
                         fontSize: 11,
@@ -9828,7 +9834,7 @@ class _CommitReviewPane extends StatelessWidget {
                 const SizedBox(height: 8),
                 if (review.findings.isEmpty)
                   Text(
-                    'No evidence-backed issues were surfaced for this commit scope.',
+                    context.t.changes.review.noEvidenceIssues,
                     style: TextStyle(
                       color: tokens.textMuted,
                       fontSize: 11.5,
@@ -9858,7 +9864,7 @@ class _CommitReviewPane extends StatelessWidget {
                 if (review.observations.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'Observations',
+                    context.t.changes.review.observations,
                     style: TextStyle(
                       color: tokens.textMuted,
                       fontSize: 11,
@@ -9983,7 +9989,7 @@ class _StaleScopeBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'selection changed since this ran',
+              context.t.changes.staleScope.message,
               style: TextStyle(
                 color: tokens.textMuted,
                 fontSize: 11,
@@ -9995,7 +10001,7 @@ class _StaleScopeBanner extends StatelessWidget {
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: Text(
-                'rerun',
+                context.t.changes.staleScope.rerun,
                 style: TextStyle(
                   color: tokens.accentBright,
                   fontSize: 11,
@@ -10247,7 +10253,7 @@ class _ReviewFindingCard extends StatelessWidget {
                             const SizedBox(width: 8),
                             _InlineActionLink(
                               tokens: tokens,
-                              label: 'Open diff',
+                              label: context.t.changes.finding.openDiff,
                               onTap: onOpenDiff!,
                             ),
                           ],
@@ -10301,7 +10307,7 @@ class _ReviewFindingCard extends StatelessWidget {
                       const SizedBox(height: 10),
                       if (actioned)
                         Text(
-                          'recorded',
+                          context.t.changes.finding.recorded,
                           style: TextStyle(
                             color: tokens.textMuted.withValues(alpha: 0.55),
                             fontSize: 10,
@@ -10320,7 +10326,7 @@ class _ReviewFindingCard extends StatelessWidget {
                         // user editing the flagged hunk — so it stays unbiased.
                         _InlineActionLink(
                           tokens: tokens,
-                          label: 'Dismiss',
+                          label: context.t.changes.finding.dismiss,
                           onTap: () => onOutcome!(false),
                         ),
                     ],
@@ -10508,7 +10514,7 @@ class _TracePanel extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        'Verification trace',
+                        context.t.changes.trace.title,
                         style: TextStyle(
                           color: tokens.textStrong,
                           fontSize: 11,
@@ -10557,7 +10563,7 @@ class _TracePanel extends StatelessWidget {
                   if (draftSummary != null &&
                       draftSummary!.trim().isNotEmpty) ...[
                     Text(
-                      'Draft review',
+                      context.t.changes.trace.draftReview,
                       style: TextStyle(
                         color: tokens.textMuted,
                         fontSize: 10,
@@ -10648,7 +10654,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
       final r = await fetchRemote(widget.repoPath, prune: true);
       if (mounted && !r.ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Fetch failed: ${r.error}')));
+            SnackBar(content: Text(context.t.changes.snack.fetchFailed(error: '${r.error}'))));
       }
       await widget.onRefresh();
     } finally {
@@ -10671,7 +10677,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
         // still reads as "done" instead of nothing.
         final clean = outcome is MergeClean;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(mergeOutcomeMessage(outcome, op: 'Sync')),
+          content: Text(mergeOutcomeMessage(outcome, op: context.t.backend.ops.sync)),
           duration: clean
               ? const Duration(milliseconds: 1600)
               : const Duration(seconds: 4),
@@ -10717,7 +10723,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Working tree clean',
+              context.t.changes.cleanTree.title,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 12,
@@ -10726,7 +10732,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
             ),
             const SizedBox(height: 4),
             Text(
-              'No staged or unstaged changes detected.',
+              context.t.changes.cleanTree.subtitle,
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 11.5,
@@ -10753,8 +10759,8 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                     ),
                     TextSpan(text: s.upstream),
                   ] else
-                    const TextSpan(
-                      text: '  ·  no upstream',
+                    TextSpan(
+                      text: context.t.changes.cleanTree.noUpstream,
                     ),
                 ],
               ),
@@ -10774,7 +10780,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                   ),
                 ),
                 Text(
-                  ' ahead',
+                  context.t.changes.cleanTree.ahead,
                   style: TextStyle(color: t.textMuted, fontSize: 11),
                 ),
                 Text(
@@ -10791,7 +10797,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                   ),
                 ),
                 Text(
-                  ' behind',
+                  context.t.changes.cleanTree.behind,
                   style: TextStyle(color: t.textMuted, fontSize: 11),
                 ),
               ],
@@ -10808,7 +10814,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
             else
               _GhostActionChip(
                 tokens: t,
-                label: _running ? 'Refreshing...' : 'Refresh',
+                label: _running ? context.t.changes.cleanTree.refreshing : context.t.changes.cleanTree.refresh,
                 fetching: _running,
                 onTap: _refreshOnly,
               ),
@@ -10851,15 +10857,15 @@ class _CheckSyncSplitButton extends StatelessWidget {
       enabled: busy == _CleanTreeBusy.none,
       segments: [
         SplitPillSegment(
-          label: 'check',
-          tooltip: 'Fetch and local refresh.',
+          label: context.t.changes.cleanTree.check,
+          tooltip: context.t.changes.cleanTree.checkTooltip,
           restColor: t.textMuted,
           hoverColor: t.textNormal,
           loading: busy == _CleanTreeBusy.check,
           onTap: onCheck,
         ),
         SplitPillSegment(
-          label: '& sync',
+          label: context.t.changes.cleanTree.sync,
           tooltip: action.detail,
           restColor: t.textNormal,
           hoverColor: t.accentBright,
@@ -11033,9 +11039,8 @@ class _MuseHeaderStrandLinkState extends State<_MuseHeaderStrandLink> {
       // Tooltip carries the label when it's hidden — and adds the
       // count context when it's shown — so the strand's identity is
       // always recoverable on hover, regardless of strip density.
-      message: widget.showLabel
-          ? '${widget.label} · ${widget.count}'
-          : '${widget.label} · ${widget.count}',
+      message: context.t.changes.muse
+          .strandTooltip(label: widget.label, count: widget.count),
       waitDuration: const Duration(milliseconds: 350),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -11155,7 +11160,7 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
     if (id == null) {
       return [
         TextSpan(
-            text: 'no commit identity configured',
+            text: context.t.changes.identity.none,
             style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: _chevronHovered ? 10 : null)),
@@ -11166,28 +11171,34 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
     switch (widget.identityGrade) {
       case IdentityFamiliarity.resident:
         // Known-here email: the calm minimum. Name only, no email noise.
-        return [TextSpan(text: 'as ${id.name}', style: dim)];
+        return [TextSpan(text: context.t.changes.identity.asName(name: id.name), style: dim)];
       case IdentityFamiliarity.knownElsewhere:
         // An author from the user's OWN workspace, first time in this
         // repo — a greeting in the normal tone, never caution.
         return [
-          TextSpan(text: 'as ${id.name} <${id.email}>', style: dim),
           TextSpan(
-            text: '\nfirst commit in this repo',
+              text: context.t.changes.identity
+                  .asNameEmail(name: id.name, email: id.email),
+              style: dim),
+          TextSpan(
+            text: context.t.changes.identity.firstCommit,
             style: TextStyle(color: t.textMuted, fontSize: 10),
           ),
         ];
       case IdentityFamiliarity.newEmail:
         // Familiar name, never-seen email — the email is the news.
         return [
-          TextSpan(text: 'as ${id.name} ', style: dim),
-          TextSpan(text: '<${id.email}>', style: caution),
+          TextSpan(text: context.t.changes.identity.asNameSpace(name: id.name), style: dim),
+          TextSpan(text: context.t.changes.identity.emailAngle(email: id.email), style: caution),
         ];
       case IdentityFamiliarity.stranger:
         return [
-          TextSpan(text: 'as ${id.name} <${id.email}>', style: caution),
           TextSpan(
-            text: '\nnew to this repo',
+              text: context.t.changes.identity
+                  .asNameEmail(name: id.name, email: id.email),
+              style: caution),
+          TextSpan(
+            text: context.t.changes.identity.newToRepo,
             style: TextStyle(
                 color: t.stateModified.withValues(alpha: 0.75),
                 fontSize: 10),
@@ -11195,7 +11206,10 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
         ];
       case IdentityFamiliarity.unknown:
         return [
-          TextSpan(text: 'as ${id.name} <${id.email}>', style: dim),
+          TextSpan(
+              text: context.t.changes.identity
+                  .asNameEmail(name: id.name, email: id.email),
+              style: dim),
         ];
     }
   }
@@ -11338,8 +11352,8 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                         children: [
                           if (_chevronHovered)
                             TextSpan(
-                                text:
-                                    'Switch to: ${widget.alternateLabel}\n'),
+                                text: context.t.changes.commitBtn
+                                    .switchTo(label: widget.alternateLabel)),
                           ..._identitySpans(t),
                         ],
                       ),
@@ -11533,9 +11547,11 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                             child: Text(
                               hasCats
                                   ? widget.busy
-                                      ? 'asking with $activeCat…'
-                                      : 'ask with $activeCat'
-                                  : 'no AI model configured',
+                                      ? context.t.changes.shapeBtn
+                                          .askingWith(cat: activeCat)
+                                      : context.t.changes.shapeBtn
+                                          .askWith(cat: activeCat)
+                                  : context.t.changes.shapeBtn.noModel,
                               key: ValueKey('${widget.busy}|$activeCat'),
                               style: TextStyle(
                                 color: mainEnabled ? t.btnText : t.textMuted,
@@ -11607,8 +11623,10 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
         const SizedBox(width: 1), // divider slot — no hit target
         Tooltip(
           message: chevEnabled
-              ? 'next: ${widget.categories[(widget.categoryIndex + 1) % widget.categories.length]}  ·  shift-click for previous'
-              : 'only one AI category configured',
+              ? context.t.changes.shapeBtn.nextTooltip(
+                  cat: widget.categories[
+                      (widget.categoryIndex + 1) % widget.categories.length])
+              : context.t.changes.shapeBtn.onlyOne,
           waitDuration: const Duration(milliseconds: 600),
           child: SizedBox(
             width: 32,
@@ -11692,9 +11710,8 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
         duration: context.motion(const Duration(milliseconds: 150)),
         curve: Curves.easeOutCubic,
         child: Tooltip(
-          message: '$pct% déjà vu — ${widget.ghostCount} ghost '
-              '${widget.ghostCount == 1 ? "edge" : "edges"} from '
-              'discarded timelines touch this diff',
+          message: context.t.changes.dejaVu
+              .tooltip(pct: pct, n: widget.ghostCount),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             decoration: BoxDecoration(
@@ -11720,7 +11737,7 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  'déjà vu',
+                  context.t.changes.dejaVu.label,
                   style: TextStyle(
                     color: t.textMuted.withValues(
                         alpha: _hovered ? 0.9 : 0.6),
@@ -12225,8 +12242,8 @@ class _ShelfControlState extends State<_ShelfControl> {
       return pill(
         segment(
           text: widget.selectedCount > 0
-              ? '↓ shelve ${widget.selectedCount}'
-              : '↓ shelve',
+              ? context.t.changes.shelvePill.shelveN(count: widget.selectedCount)
+              : context.t.changes.shelvePill.shelve,
           onTap: widget.canShelve ? widget.onShelve : null,
           id: 2,
           baseColor: t.textMuted,
@@ -12245,7 +12262,9 @@ class _ShelfControlState extends State<_ShelfControl> {
             segment(
               text: widget.loading
                   ? '…'
-                  : '${widget.count} shelved ${widget.expanded ? '▾' : '▸'}',
+                  : context.t.changes.shelvePill.shelvedCount(
+                      count: widget.count,
+                      glyph: widget.expanded ? '▾' : '▸'),
               onTap: widget.onToggleExpanded,
               id: 1,
               baseColor: t.chromeAccent.withValues(alpha: 0.85),
@@ -12448,21 +12467,6 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
     return raw;
   }
 
-  static String _relativeAge(String iso) {
-    try {
-      final t = DateTime.parse(iso).toLocal();
-      final diff = DateTime.now().difference(t);
-      if (diff.inMinutes < 1) return 'just now';
-      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-      if (diff.inHours < 24) return '${diff.inHours}h ago';
-      if (diff.inDays < 30) return '${diff.inDays}d ago';
-      if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}mo ago';
-      return '${(diff.inDays / 365).floor()}y ago';
-    } catch (_) {
-      return '';
-    }
-  }
-
   // Map StashOrientation → accent color used for the resonance bar and
   // card border tint.
   static Color _orientationColor(StashOrientation o, AppTokens t) {
@@ -12479,7 +12483,7 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
     final t = widget.tokens;
     final stash = widget.stash;
     final label = _displayLabel(stash.message);
-    final age = _relativeAge(stash.createdAt);
+    final age = relativeAge(stash.createdAt);
     final shape = widget.shape;
     final hasShape = shape != null;
 
@@ -12570,7 +12574,7 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                                   Row(
                                     children: [
                                       Text(
-                                        '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}'
+                                        '${context.t.common.fileCount(n: stash.fileCount)}'
                                         '${age.isEmpty ? '' : ' · $age'}',
                                         style: TextStyle(
                                           color: t.textMuted,
@@ -12596,21 +12600,21 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                                 widget.isOpen) ...[
                               _StashAction(
                                 icon: '↑',
-                                tooltip: 'pick up',
+                                tooltip: context.t.changes.stashAction.pickUp,
                                 color: t.accentBright,
                                 onTap: widget.onPickUp,
                               ),
                               const SizedBox(width: 6),
                               _StashAction(
                                 icon: widget.isPeeking ? '◉' : '◎',
-                                tooltip: 'peek',
+                                tooltip: context.t.changes.stashAction.peek,
                                 color: t.chromeAccent,
                                 onTap: widget.onPeek,
                               ),
                               const SizedBox(width: 6),
                               _StashAction(
                                 icon: '×',
-                                tooltip: 'toss',
+                                tooltip: context.t.changes.stashAction.toss,
                                 color: t.textMuted,
                                 onTap: widget.onToss,
                               ),
@@ -12671,7 +12675,7 @@ class _StashDrawerContents extends StatelessWidget {
       body = Padding(
         padding: const EdgeInsets.fromLTRB(14, 8, 12, 10),
         child: Text(
-          'reading shelf…',
+          context.t.changes.stashContents.reading,
           style: TextStyle(color: t.textMuted, fontSize: 10),
         ),
       );
@@ -12679,7 +12683,7 @@ class _StashDrawerContents extends StatelessWidget {
       body = Padding(
         padding: const EdgeInsets.fromLTRB(14, 8, 12, 10),
         child: Text(
-          'empty shelf',
+          context.t.changes.stashContents.empty,
           style: TextStyle(color: t.textMuted, fontSize: 10),
         ),
       );
@@ -12811,7 +12815,7 @@ class _StashFileRow extends StatelessWidget {
                 const SizedBox(width: 8),
                 if (file.binary)
                   Text(
-                    'bin',
+                    context.t.changes.stashFile.binary,
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 9,
@@ -13105,9 +13109,9 @@ class _FileRowState extends State<_FileRow> {
                       Tooltip(
                         message: [
                           if (widget.included && widget.partialStaged)
-                            'commits staged lines only',
+                            context.t.changes.fileRow.stagedLinesOnly,
                           if (widget.onClusterToggle != null)
-                            'double-click: toggle whole group',
+                            context.t.changes.fileRow.doubleClickToggle,
                         ].join('\n'),
                         waitDuration: const Duration(milliseconds: 550),
                         child: GestureDetector(
@@ -13173,7 +13177,7 @@ class _FileRowState extends State<_FileRow> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                dir.isEmpty ? 'Repository root' : dir,
+                                dir.isEmpty ? context.t.changes.fileRow.repoRoot : dir,
                                 style: TextStyle(
                                   color: t.textMuted,
                                   fontSize: 10,
@@ -13233,7 +13237,7 @@ class _FileRowState extends State<_FileRow> {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  '${drag.length} file${drag.length == 1 ? '' : 's'}',
+                  context.t.common.fileCount(n: drag.length),
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 11,
@@ -13379,42 +13383,42 @@ _ChangeBadgeSpec? _describeGitChange(
   switch (code.trim()) {
     case 'M':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged edit' : 'Edited',
+        label: staged ? t.changes.badge.stagedEdit : t.changes.badge.edited,
         color: staged ? tokens.stateStaged : tokens.stateModified,
       );
     case 'A':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged add' : 'Added',
+        label: staged ? t.changes.badge.stagedAdd : t.changes.badge.added,
         color: tokens.stateAdded,
       );
     case 'D':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged delete' : 'Deleted',
+        label: staged ? t.changes.badge.stagedDelete : t.changes.badge.deleted,
         color: tokens.stateDeleted,
       );
     case 'R':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged rename' : 'Renamed',
+        label: staged ? t.changes.badge.stagedRename : t.changes.badge.renamed,
         color: tokens.accentBright,
       );
     case 'C':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged copy' : 'Copied',
+        label: staged ? t.changes.badge.stagedCopy : t.changes.badge.copied,
         color: tokens.accentBright,
       );
     case 'U':
       return _ChangeBadgeSpec(
-        label: 'Conflict',
+        label: t.changes.badge.conflict,
         color: tokens.stateConflicted,
       );
     case 'T':
       return _ChangeBadgeSpec(
-        label: staged ? 'Staged type change' : 'Type changed',
+        label: staged ? t.changes.badge.stagedTypeChange : t.changes.badge.typeChanged,
         color: tokens.accentBright,
       );
     case '?':
       return _ChangeBadgeSpec(
-        label: 'Untracked',
+        label: t.changes.badge.untracked,
         color: tokens.stateAdded,
       );
     default:
@@ -13456,7 +13460,7 @@ class _CommitComposerField extends StatefulWidget {
 
   /// Hint shown when the bound `controller` is empty. Parent picks based
   /// on mode (commit message vs shape input).
-  final String hintText;
+  final String? hintText;
   final bool aiEnabled;
   final bool aiLoading;
 
@@ -13533,7 +13537,7 @@ class _CommitComposerField extends StatefulWidget {
     required this.focusNode,
     required this.enabled,
     required this.onChanged,
-    this.hintText = 'commit message...',
+    this.hintText,
     required this.aiEnabled,
     required this.aiLoading,
     this.aiSuccess = false,
@@ -13634,57 +13638,26 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     ]);
   }
 
-  static const _titlesAny = <String>[
-    'dear git log',
-    'for-git me heaven for i hath…',
-    'name this moment',
-    'yap on',
-    'speak!',
-    'your mother was a dangling reference and your father smelt of semicolons',
-  ];
-  static const _titlesShort = <String>[
-    'oh?',
-    'hello there:)',
-    'btw:',
-    'a few words',
-    'the polite version',
-    'leave a note',
-    'you were saying..?',
-    'oh yeah, get it out',
-  ];
-  static const _titlesMid = <String>[
-    'for the record',
-    'tell the future you',
-    'but first?',
-    'how it went',
-    'in your own words',
-    'you did WHAT now?',
-    'duly noted',
-    'you have my attention',
-  ];
-  static const _titlesLong = <String>[
-    'your dreams, please',
-    'say something nice',
-    '... and then I said:',
-    'posterity awaits',
-    'writing more makes your bugs disappear',
-    'oh wow',
-    'the sacred texts',
-  ];
   static final _titleRng = math.Random();
   static List<String> _titleHat = [];
   static int _titleHatCursor = 0;
-  static List<String>? _titleHatSource;
+  static int? _titleHatTier;
 
   static String _pickEditorTitle(int charCount) {
+    final titles = t.changes.editorTitles;
     final tier = charCount > 600
-        ? _titlesLong
+        ? 2
         : charCount > 300
-            ? _titlesMid
-            : _titlesShort;
-    if (!identical(tier, _titleHatSource) || _titleHatCursor >= _titleHat.length) {
-      _titleHatSource = tier;
-      _titleHat = [...tier, ..._titlesAny]..shuffle(_titleRng);
+            ? 1
+            : 0;
+    final tierList = tier == 2
+        ? titles.long
+        : tier == 1
+            ? titles.mid
+            : titles.short;
+    if (tier != _titleHatTier || _titleHatCursor >= _titleHat.length) {
+      _titleHatTier = tier;
+      _titleHat = [...tierList, ...titles.any]..shuffle(_titleRng);
       _titleHatCursor = 0;
     }
     return _titleHat[_titleHatCursor++];
@@ -13704,7 +13677,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     await showGeneralDialog(
       context: context,
       barrierDismissible: true,
-      barrierLabel: 'Close editor',
+      barrierLabel: context.t.changes.editor.closeBarrier,
       barrierColor: Colors.black54,
       transitionDuration: dur,
       transitionBuilder: (ctx, anim, secondAnim, child) {
@@ -13957,8 +13930,10 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               // how carefully the Positioned is tuned. Italic-when-dream
               // + alpha fade on `thinking` give the same feel.
               hintText: widget.shapeMode
-                  ? widget.hintText
-                  : (widget.dreamHint ?? widget.hintText),
+                  ? (widget.hintText ?? context.t.changes.composer.hintPlaceholder)
+                  : (widget.dreamHint ??
+                      widget.hintText ??
+                      context.t.changes.composer.hintPlaceholder),
               hintStyle: TextStyle(
                 color: tokens.textMuted.withValues(
                   alpha: widget.dreamHint != null &&
@@ -14241,7 +14216,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                                         .symmetric(
                                                         horizontal: 4,
                                                         vertical: 3),
-                                                hintText: 'tag...',
+                                                hintText: context.t.changes.tagInput.hint,
                                                 hintStyle: TextStyle(
                                                   color: tokens.textMuted
                                                       .withValues(
@@ -15056,7 +15031,7 @@ class _DiffTabStripState extends State<_DiffTabStrip>
           ),
           child: Center(
             child: Text(
-              'New Diff Tab',
+              context.t.changes.tabStrip.newDiffTab,
               style: TextStyle(
                 color: hovering
                     ? t.hyperChromatic1
@@ -15312,7 +15287,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                 _splitHalf(
                   t,
                   icon: Icons.check_box_outline_blank_rounded,
-                  tooltip: 'Deselect all',
+                  tooltip: context.t.changes.select.deselectAll,
                   hovered: _hoveredDeselect,
                   onEnter: () => setState(() => _hoveredDeselect = true),
                   onExit: () => setState(() => _hoveredDeselect = false),
@@ -15325,7 +15300,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                 _splitHalf(
                   t,
                   icon: Icons.check_box_rounded,
-                  tooltip: 'Select all',
+                  tooltip: context.t.changes.select.selectAll,
                   hovered: _hoveredSelectAll,
                   onEnter: () => setState(() => _hoveredSelectAll = true),
                   onExit: () => setState(() => _hoveredSelectAll = false),
@@ -15376,7 +15351,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    isSelectAll ? 'Select all' : 'Deselect all',
+                    isSelectAll ? context.t.changes.select.selectAll : context.t.changes.select.deselectAll,
                     style: TextStyle(
                       color: widget.enabled ? t.textNormal : t.textMuted,
                       fontSize: 10.5,
@@ -15475,7 +15450,9 @@ class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
             ? t.textNormal.withValues(alpha: 0.80)
             : t.textMuted.withValues(alpha: 0.40));
     return Tooltip(
-      message: widget.active ? 'back to list' : 'atlas, see commit candidates',
+      message: widget.active
+          ? context.t.changes.constellationToggle.backToList
+          : context.t.changes.constellationToggle.atlas,
       waitDuration: const Duration(milliseconds: 300),
       child: MouseRegion(
         cursor: widget.enabled
@@ -15661,9 +15638,11 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
             '${r.lineA > 0 && r.lineB > 0 ? ' · L${nudgeIsLo ? r.lineA : r.lineB}↔L${nudgeIsLo ? r.lineB : r.lineA}' : ''}',
     ].join('\n');
     return Tooltip(
-      message:
-          '${widget.nudge.path}\ncouples with ${pathBasename(widget.nudge.anchor)} · ${(score * 100).round()}%'
-          '${receiptLines.isEmpty ? '' : '\n$receiptLines'}',
+      message: context.t.changes.nudgeChip.tooltip(
+          path: widget.nudge.path,
+          anchor: pathBasename(widget.nudge.anchor),
+          pct: (score * 100).round(),
+          receipts: receiptLines.isEmpty ? '' : '\n$receiptLines'),
       waitDuration: const Duration(milliseconds: 400),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -15910,8 +15889,9 @@ class _MergeResolveStrip extends StatelessWidget {
           Expanded(
             child: Text(
               busy
-                  ? 'reading $count file${count == 1 ? '' : 's'} · drafting resolution…'
-                  : '$count conflict${count == 1 ? '' : 's'} across $count file${count == 1 ? '' : 's'}',
+                  ? context.t.changes.resolveStrip.reading(n: count)
+                  : context.t.changes.resolveStrip.conflictsAcross(
+                      n: count, files: context.t.common.fileCount(n: count)),
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 12,
@@ -15936,7 +15916,7 @@ class _MergeResolveStrip extends StatelessWidget {
                 baseBorderColor:
                     t.chromeBorder.withValues(alpha: 0.3),
               ),
-              child: Text('Resolve',
+              child: Text(context.t.changes.resolveStrip.resolve,
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 11,
@@ -15946,7 +15926,7 @@ class _MergeResolveStrip extends StatelessWidget {
             const SizedBox(width: 6),
           ],
           if (defaultCategory.isEmpty)
-            Text('no AI model configured',
+            Text(context.t.changes.shapeBtn.noModel,
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 10.5,
@@ -16018,7 +15998,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                  child: Text('OR WITH',
+                  child: Text(context.t.changes.resolveStrip.orWith,
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 9,
@@ -16090,8 +16070,8 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                     : () => widget.onResolve(widget.defaultCategoryId),
                 child: Tooltip(
                   message: modelDisplay.isEmpty
-                      ? 'resolve with $label'
-                      : 'resolve with $label  ·  $modelDisplay',
+                      ? context.t.changes.resolveStrip.resolveWith(label: label)
+                      : context.t.changes.resolveStrip.resolveWithModel(label: label, model: modelDisplay),
                   child: AnimatedContainer(
                     duration: context.motion(shader.duration),
                     curve: shader.safeCurve,
@@ -16112,7 +16092,9 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                       ),
                     ),
                     child: Text(
-                      widget.busy ? 'resolving…' : '↵  resolve with $label',
+                      widget.busy
+                          ? context.t.changes.resolveStrip.resolving
+                          : context.t.changes.resolveStrip.resolveWithGlyph(label: label),
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 11,
@@ -16134,7 +16116,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                 behavior: HitTestBehavior.opaque,
                 onTap: widget.busy ? null : _openMenu,
                 child: Tooltip(
-                  message: 'or with another model',
+                  message: context.t.changes.resolveStrip.orWithAnother,
                   child: AnimatedContainer(
                     duration: context.motion(shader.duration),
                     curve: shader.safeCurve,
@@ -16512,7 +16494,7 @@ _MinimapData _computeMinimapData({
   String roleLabel;
 
   if (nodeId == null || basis == null) {
-    roleLabel = well ?? 'new';
+    roleLabel = well ?? t.changes.minimap.roleNew;
   } else {
     final fiedler = basis.fiedlerVector;
     final fiedlerMag = fiedler != null && nodeId < fiedler.length
@@ -16520,17 +16502,17 @@ _MinimapData _computeMinimapData({
         : 1.0;
 
     if (fiedlerMag < 0.15 && degree > 0.12) {
-      roleLabel = 'bridge';
+      roleLabel = t.changes.minimap.roleBridge;
     } else if (degree > 0.45) {
-      roleLabel = 'hub';
+      roleLabel = t.changes.minimap.roleHub;
     } else if (degree < 0.08) {
-      roleLabel = 'leaf';
+      roleLabel = t.changes.minimap.roleLeaf;
     } else {
-      roleLabel = well ?? 'connected';
+      roleLabel = well ?? t.changes.minimap.roleConnected;
     }
 
     if (well != null && roleLabel != well) {
-      roleLabel = '$roleLabel · $well';
+      roleLabel = t.changes.minimap.roleWithWell(role: roleLabel, well: well);
     }
   }
 
@@ -16549,11 +16531,11 @@ _MinimapData _computeMinimapData({
     }
     if (bestPartner != null) {
       final bn = p.basename(bestPartner);
-      provenance = 'changes with $bn';
+      provenance = t.changes.minimap.changesWith(name: bn);
     }
   }
   if (provenance == null && nodeId == null) {
-    provenance = 'new file';
+    provenance = t.changes.minimap.newFile;
   }
   if (provenance == null) {
     final dir = p.dirname(filePath);
@@ -16561,7 +16543,7 @@ _MinimapData _computeMinimapData({
         .where((cp) => cp != filePath && p.dirname(cp) == dir)
         .length;
     if (sameDir > 1) {
-      provenance = 'near $sameDir other changes in ${p.basename(dir)}';
+      provenance = t.changes.minimap.nearOtherChanges(count: sameDir, dir: p.basename(dir));
     }
   }
 
@@ -16574,7 +16556,7 @@ _MinimapData _computeMinimapData({
       if (changedPaths.contains(e.key)) continue;
       if (e.key == filePath) continue;
       if (e.value >= 0.30) {
-        missing = '${p.basename(e.key)} usually changes with this file';
+        missing = t.changes.minimap.usuallyChangesWithFile(name: p.basename(e.key));
         missingPath = e.key;
         break;
       }

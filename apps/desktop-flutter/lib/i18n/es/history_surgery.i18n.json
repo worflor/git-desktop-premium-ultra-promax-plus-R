@@ -1,0 +1,83 @@
+{
+  "@@locale": "es",
+  "chrome": {
+    "title": "Cirugía de historial",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "SIMULACIÓN"
+  },
+  "select": {
+    "prompt": "Selecciona los archivos a eliminar del historial",
+    "selectedCount": "{n} seleccionados",
+    "searchHint": "buscar...",
+    "readingTree": "leyendo el árbol...",
+    "continueDisabled": "selecciona archivos para continuar",
+    "continueEnabled": "continuar →",
+    "toPurgeCount": "{n} para purgar",
+    "analyzing": "analizando...",
+    "riskLow": "riesgo bajo",
+    "riskModerate": "riesgo moderado",
+    "riskHigh": "riesgo alto",
+    "impactCommitsLabel": "commits",
+    "impactBranchesLabel": "ramas",
+    "impactWorktreesLabel": "árboles de trabajo",
+    "impactCouplingLabel": "acoplamiento",
+    "impactCouplingIsland": "isla",
+    "impactCouplingNeighbors": "{n} vecinos",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Cómo funciona",
+    "backupTitle": "Copia de seguridad",
+    "backupBody": "Cada ref de rama y etiqueta se copia a un espacio de nombres de respaldo antes de cambiar nada. Si algo sale mal, un clic restaura el estado original.",
+    "rewriteTitle": "Reescritura",
+    "rewriteBody": "Cada commit se recorre desde la raíz hasta la punta. Por cada commit que contenga los archivos objetivo, se crea un commit nuevo con esos archivos eliminados del árbol. Las cadenas de padres se remapean para preservar la topología. ",
+    "rewriteSummary": "Se reescribirán {affected} de {total} commits.",
+    "updateRefsTitle": "Actualizar refs",
+    "updateRefsBody": "Los punteros de ramas y etiquetas se mueven a los nuevos SHA de commit. Los objetos antiguos siguen existiendo hasta la recolección de basura. ",
+    "worktreesNeedRecheckout": "Tus {n} árbol(es) de trabajo necesitarán un nuevo checkout.",
+    "noWorktreesAffected": "No hay árboles de trabajo afectados.",
+    "forcePushTitle": "Push forzado",
+    "forcePushBody": "Tras verificar la purga, eliges qué ramas hacer push forzado. Usa --force-with-lease para que falle de forma segura si alguien más hizo push mientras tanto.",
+    "plumbingNote": "A diferencia de filter-repo o BFG, esto corre por completo mediante comandos de plumbing de git (cat-file, mktree, commit-tree, update-ref). Sin dependencias externas. El seguimiento de renombres sigue una cadena por archivo — si un archivo se copió y ambas copias se renombraron por separado, verifica el resultado de la purga tras la ejecución.",
+    "back": "← Atrás",
+    "continueLabel": "Entiendo, continuar →"
+  },
+  "confirm": {
+    "commitsRewritten": "Se reescribirán {n} commits",
+    "forcePushRequired": "Se requerirá push forzado para las ramas remotas",
+    "worktreesRecheckout": "{n} árboles de trabajo necesitarán un nuevo checkout",
+    "stashesInvalid": "{n} stashes podrían volverse inválidos",
+    "heading": "Esta operación reescribe el historial de git",
+    "subheading": "No se puede deshacer automáticamente tras el push forzado.",
+    "typeHint": "escribe {word}",
+    "goBack": "Volver",
+    "begin": "Comenzar cirugía"
+  },
+  "execute": {
+    "preparing": "Preparando...",
+    "backingUpRefs": "Respaldando refs...",
+    "rewritingCommits": "Reescribiendo commits...",
+    "updatingRefs": "Actualizando refs..."
+  },
+  "verify": {
+    "complete": "Cirugía completada",
+    "failed": "Cirugía fallida",
+    "commitsRewrittenLabel": "Commits reescritos",
+    "refsUpdatedLabel": "Refs actualizadas",
+    "oldHeadLabel": "HEAD anterior",
+    "newHeadLabel": "HEAD nuevo",
+    "purgeVerifiedLabel": "Purga verificada",
+    "purgeClean": "limpio",
+    "purgeTracesRemain": "QUEDAN RASTROS",
+    "displacedWorktrees": "Árboles de trabajo desplazados",
+    "undoSurgery": "Deshacer cirugía",
+    "rolledBack": "Revertido a las refs de respaldo.",
+    "done": "Listo"
+  },
+  "forcePush": {
+    "pushing": "haciendo push...",
+    "forcePushAll": "Push forzado a todo",
+    "confirmPush": "confirmar push",
+    "cancel": "cancelar"
+  }
+}

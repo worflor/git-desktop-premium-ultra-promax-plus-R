@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../../backend/dtos.dart';
+import '../../i18n/gen/strings.g.dart';
 
 /// Pure layout for the commit-detail seismograph.
 /// The panel is a recursively-subdivided view of the directory tree of a
@@ -477,7 +478,9 @@ class _HereTrack implements _TrackInput {
       // Loose-files-at-focus-dir track. Show the focus dir's name in
       // parens so first-time readers see "(backend)" rather than the
       // cryptic "./".
-      label: path.isEmpty ? '(root)' : '(${path.last})',
+      label: path.isEmpty
+          ? t.history.seismograph.rootTrackLabel
+          : t.history.seismograph.dirTrackLabel(name: path.last),
       top: top, height: height,
       segments: segments,
     );
@@ -526,7 +529,7 @@ class _OverflowTrack implements _TrackInput {
     );
     return SeismographTrack(
       path: parentPath,
-      label: '+${children.length} more',
+      label: t.history.seismograph.moreLabel(n: children.length),
       top: top, height: height,
       segments: segments,
       isOverflowBucket: true,
@@ -578,7 +581,7 @@ List<SeismographSegment> _layoutLeafSegments({
       segments.add(SeismographSegment(
         path: foldDrillPath ?? trackPath,
         // "+5 more" instead of "+5" so it can't read as "+5 lines added".
-        label: '+${tail.length} more',
+        label: t.history.seismograph.moreLabel(n: tail.length),
         left: x, width: remaining,
         additions: tailAdd, deletions: tailDel,
         containedFileCount: tail.length,

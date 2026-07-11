@@ -13,7 +13,9 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../app/preferences_state.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
+import '../../ui/format.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/motion.dart';
 import '../../ui/material_surface.dart';
@@ -3465,23 +3467,23 @@ class _DiffShellState extends State<DiffShell> {
     final toolbarActive = widget.toolbarActive ?? _trailVisible;
 
     if (widget.loading && !hasContent) {
-      return const AppStatusView.loading(
-        title: 'Loading diff',
-        message: 'Reading file changes.',
+      return AppStatusView.loading(
+        title: context.t.diff.status.loadingTitle,
+        message: context.t.diff.status.loadingMessage,
         compact: true,
       );
     }
     if (widget.error != null && !hasContent) {
       return AppStatusView.error(
-        title: 'Diff unavailable',
+        title: context.t.diff.status.unavailableTitle,
         message: widget.error!,
         compact: true,
       );
     }
     if (!hasContent) {
-      return const AppStatusView(
-        title: 'No changes',
-        message: 'This file has no diff content to display.',
+      return AppStatusView(
+        title: context.t.diff.status.noChangesTitle,
+        message: context.t.diff.status.noChangesMessage,
         compact: true,
       );
     }
@@ -3550,7 +3552,7 @@ class _DiffShellState extends State<DiffShell> {
                   autofocus: true,
                   height: 24,
                   fontSize: 12,
-                  hintText: 'search diff...',
+                  hintText: context.t.diff.toolbar.searchHint,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   onChanged: (v) => setState(() {
@@ -3564,7 +3566,7 @@ class _DiffShellState extends State<DiffShell> {
               if (_searchTerm.isNotEmpty) ...[
                 const SizedBox(width: 4),
                 Text(
-                  '${displayLines.length} line${displayLines.length == 1 ? "" : "s"}',
+                  context.t.diff.toolbar.lineCount(n: displayLines.length),
                   style: TextStyle(color: t.textMuted, fontSize: 10),
                 ),
               ],
@@ -3599,7 +3601,7 @@ class _DiffShellState extends State<DiffShell> {
               Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
-                  'blame...',
+                  context.t.diff.toolbar.blameLoading,
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
@@ -3610,8 +3612,8 @@ class _DiffShellState extends State<DiffShell> {
             if (_canShowInlineBlame && _blameFetchingFiles.isEmpty)
               Tooltip(
                 message: _wearMapVisible
-                    ? 'wear map on — click to hide'
-                    : 'show wear map (activity heatmap)',
+                    ? context.t.diff.toolbar.wearMapOnHint
+                    : context.t.diff.toolbar.wearMapOffHint,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: GestureDetector(
@@ -3619,7 +3621,9 @@ class _DiffShellState extends State<DiffShell> {
                     child: Padding(
                       padding: const EdgeInsets.only(left: 8),
                       child: Text(
-                        _wearMapVisible ? 'wear · on' : 'blame',
+                        _wearMapVisible
+                            ? context.t.diff.toolbar.wearMapOn
+                            : context.t.diff.toolbar.blame,
                         style: TextStyle(
                           color: _wearMapVisible
                               ? t.hyperChromatic1
@@ -4010,7 +4014,7 @@ class _DiffShellState extends State<DiffShell> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             color: t.stateDeleted.withValues(alpha: 0.12),
             child: Text(
-              'Partial stage failed: $_stagingError',
+              context.t.diff.stagingFailed(error: _stagingError!),
               style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: 10.5,
@@ -5541,20 +5545,6 @@ class _TrailStrip extends StatelessWidget {
     required this.onSelectNow,
   });
 
-  String _relativeDate(String isoDate) {
-    try {
-      final date = DateTime.parse(isoDate);
-      final diff = DateTime.now().difference(date);
-      if (diff.inDays > 365) return '${diff.inDays ~/ 365}y';
-      if (diff.inDays > 30) return '${diff.inDays ~/ 30}mo';
-      if (diff.inDays > 0) return '${diff.inDays}d';
-      if (diff.inHours > 0) return '${diff.inHours}h';
-      return '${diff.inMinutes}m';
-    } catch (_) {
-      return '';
-    }
-  }
-
   int get _currentIndex {
     if (selectedHash == null) return 0; // "now"
     final idx = history.indexWhere((e) => e.commit.commitHash == selectedHash);
@@ -5562,16 +5552,21 @@ class _TrailStrip extends StatelessWidget {
   }
 
   String? _currentLabel() {
-    if (loading) return 'loading trail...';
-    if (history.isEmpty) return 'no history found';
-    if (selectedHash == null) return 'now · working copy';
+    if (loading) return t.diff.trail.loading;
+    if (history.isEmpty) return t.diff.trail.noHistory;
+    if (selectedHash == null) return t.diff.trail.nowWorkingCopy;
     final entry = history.firstWhere(
       (e) => e.commit.commitHash == selectedHash,
       orElse: () => history.first,
     );
     final c = entry.commit;
-    final rel = _relativeDate(c.authoredAt);
-    return '${c.shortHash} · ${c.authorName} · $rel · ${c.subject}';
+    final rel = relativeDateShort(c.authoredAt);
+    return t.diff.trail.stopLabel(
+      hash: c.shortHash,
+      author: c.authorName,
+      time: rel,
+      subject: c.subject,
+    );
   }
 
   void _selectByIndex(int index) {
@@ -5886,7 +5881,7 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
             if (widget.trailActive) ...[
               const SizedBox(width: 6),
               Text(
-                '· trail',
+                context.t.diff.toolbar.trailBadge,
                 style: TextStyle(
                   color: t.accentBright.withValues(alpha: 0.6),
                   fontSize: 9,
@@ -5911,7 +5906,7 @@ class _HunkDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<int>(
-      tooltip: 'Jump to change block. Git calls these hunks.',
+      tooltip: context.t.diff.hunkDropdown.tooltip,
       offset: const Offset(0, 28),
       // No color/shape override — let popupMenuTheme drive the chrome
       // so this menu matches the keybinding and theme dropdowns. The
@@ -5933,7 +5928,7 @@ class _HunkDropdown extends StatelessWidget {
         fillColor: t.itemHoverBg,
         borderColor: t.secondaryBtnBorder,
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text('${hunks.length} change${hunks.length == 1 ? "" : "s"}',
+          Text(context.t.diff.hunkDropdown.changeCount(n: hunks.length),
               style: TextStyle(color: t.textMuted, fontSize: 10)),
           const SizedBox(width: 4),
           AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
@@ -6333,7 +6328,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         ),
         const SizedBox(width: 10),
         Text(
-          'loading pinned context',
+          context.t.diff.pinned.loadingContext,
           style: TextStyle(
             color: t.textFaint,
             fontSize: 11,
@@ -6423,9 +6418,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _pageChip(t, page: 0, label: 'Manifold'),
+          _pageChip(t, page: 0, label: context.t.diff.pinned.pageManifold),
           const SizedBox(width: 2),
-          _pageChip(t, page: 1, label: 'Signals'),
+          _pageChip(t, page: 1, label: context.t.diff.pinned.pageSignals),
         ],
       ),
     );
@@ -6515,7 +6510,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           accent,
           c.rhymePreviews,
           compact: compact,
-          title: 'Echoes',
+          title: context.t.diff.pinned.echoesTitle,
         ),
       ],
     );
@@ -6544,7 +6539,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         if (hasStories) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
-            child: _microLabel(t, 'Technical Ledger'),
+            child: _microLabel(t, context.t.diff.pinned.technicalLedger),
           ),
           ...stories.map(
             (s) => Padding(
@@ -6585,7 +6580,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 10, 10, 0),
             child: Text(
-              'No secondary cues detected.',
+              context.t.diff.pinned.noSecondaryCues,
               style: TextStyle(color: t.textFaint, fontSize: 10.5),
             ),
           ),
@@ -6602,9 +6597,11 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
               children: [
                 _moduleTitleRow(
                   t,
-                  'Linked Paths',
+                  context.t.diff.pinned.linkedPaths,
                   accent: accent,
-                  badge: remainingLinked > 0 ? '+$remainingLinked more' : null,
+                  badge: remainingLinked > 0
+                      ? context.t.diff.pinned.moreCount(n: remainingLinked)
+                      : null,
                 ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -6635,7 +6632,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     Color accent, {
     required bool compact,
   }) {
-    final concept = _conceptLabel(c) ?? 'Local seam';
+    final concept = _conceptLabel(c) ?? context.t.diff.pinned.localSeam;
     return SizedBox(
       width: double.infinity,
       child: Padding(
@@ -6692,7 +6689,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final past = widget.past;
     final owner = (past?.nearbyAuthors.isNotEmpty ?? false)
         ? past!.nearbyAuthors.first.name
-        : 'shared ownership';
+        : context.t.diff.pinned.sharedOwnership;
     final secondary = past?.lastTouchLabel != null
         ? _compactLastTouch(past!.lastTouchLabel!)
         : owner;
@@ -6718,7 +6715,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                past == null ? 'History warming up' : _tempoTagline(past),
+                past == null
+                    ? context.t.diff.pinned.historyWarmingUp
+                    : _tempoTagline(past),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -6764,7 +6763,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           _moduleTitleRow(
             t,
             title,
-            badge: echoes.isEmpty ? null : '${echoes.length} TOTAL',
+            badge: echoes.isEmpty
+                ? null
+                : context.t.diff.pinned.echoesTotal(n: echoes.length),
             accent: accent,
             onBadgeTap: echoes.isEmpty
                 ? null
@@ -6772,7 +6773,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           ),
           const SizedBox(height: 10),
           if (visibleEchoes.isEmpty)
-            Text('No echoes in this diff.',
+            Text(context.t.diff.pinned.noEchoes,
                 style: TextStyle(color: t.textFaint, fontSize: 10.0))
           else
             Row(
@@ -6863,11 +6864,11 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final reach = _reachStrength(c);
     final row = Row(
       children: [
-        _signalMeter(t, 'T', history, accent),
+        _signalMeter(t, context.t.diff.pinned.signalTempo, history, accent),
         const SizedBox(width: 8),
-        _signalMeter(t, 'N', novelty, accent),
+        _signalMeter(t, context.t.diff.pinned.signalNovelty, novelty, accent),
         const SizedBox(width: 8),
-        _signalMeter(t, 'R', reach, accent),
+        _signalMeter(t, context.t.diff.pinned.signalReach, reach, accent),
       ],
     );
     return width == null ? row : SizedBox(width: width, child: row);
@@ -7093,7 +7094,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       return child;
     }
     return Tooltip(
-      message: 'Open related file ${_diffDisplayName(path)}',
+      message: context.t.diff.pinned.openRelatedFile(
+        name: _diffDisplayName(path),
+      ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -7109,17 +7112,17 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _tempoTagline(_PinnedPastContext past) {
     switch (past.tempoLabel) {
       case 'hot owner lane':
-        return 'Recent movement with one strong owner nearby.';
+        return context.t.diff.pinned.tempo.hotOwnerLane;
       case 'active seam':
-        return 'Recent movement from multiple hands nearby.';
+        return context.t.diff.pinned.tempo.activeSeam;
       case 'stable owner lane':
-        return 'Long-lived lane with one dominant owner.';
+        return context.t.diff.pinned.tempo.stableOwnerLane;
       case 'shared long-lived seam':
-        return 'Shared seam that has accumulated over time.';
+        return context.t.diff.pinned.tempo.sharedLongLivedSeam;
       case 'shared lane':
-        return 'Shared lane with no single dominant owner.';
+        return context.t.diff.pinned.tempo.sharedLane;
       default:
-        return 'History is still resolving around this line.';
+        return context.t.diff.pinned.tempo.resolving;
     }
   }
 
@@ -7147,20 +7150,24 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           _quickActionChip(
             t,
             icon: Icons.north_east,
-            label: 'inspect ${_diffDisplayName(nextPath)}',
+            label: context.t.diff.pinned.inspectFile(
+              name: _diffDisplayName(nextPath),
+            ),
             onTap: () => widget.onOpenRelatedPath?.call(nextPath),
           ),
         if (firstEcho != null)
           _quickActionChip(
             t,
             icon: Icons.alt_route,
-            label: 'jump echo',
+            label: context.t.diff.pinned.jumpEcho,
             onTap: () => widget.onRhymeTap(firstEcho),
           ),
         _quickActionChip(
           t,
           icon: _copiedLine ? Icons.check : Icons.content_copy_outlined,
-          label: _copiedLine ? 'copied' : 'copy line',
+          label: _copiedLine
+              ? context.t.common.copied
+              : context.t.diff.pinned.copyLine,
           onTap: () => _copyPinnedLine(c),
         ),
       ],
@@ -7308,15 +7315,15 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _toneLabel(_PinnedPanelTone tone) {
     switch (tone) {
       case _PinnedPanelTone.hot:
-        return 'Hot';
+        return context.t.diff.pinned.tone.hot;
       case _PinnedPanelTone.novel:
-        return 'Novel';
+        return context.t.diff.pinned.tone.novel;
       case _PinnedPanelTone.contested:
-        return 'Contested';
+        return context.t.diff.pinned.tone.contested;
       case _PinnedPanelTone.spreading:
-        return 'Spreading';
+        return context.t.diff.pinned.tone.spreading;
       case _PinnedPanelTone.stable:
-        return 'Stable';
+        return context.t.diff.pinned.tone.stable;
     }
   }
 
@@ -7335,20 +7342,25 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final nextReason = future.isNotEmpty ? future.first.$2 : null;
     final fragments = <String>[];
     if (concept != null) {
-      fragments.add('Lives in $concept');
+      fragments.add(context.t.diff.pinned.summary.livesIn(concept: concept));
     } else {
-      fragments.add('Sits in a local seam');
+      fragments.add(context.t.diff.pinned.summary.sitsInLocalSeam);
     }
     if (owner != null) {
-      fragments.add('worked mostly by $owner nearby');
+      fragments.add(context.t.diff.pinned.summary.workedMostlyBy(owner: owner));
     }
     if (echoes > 0) {
-      fragments.add(
-          'echoes in $echoes ${echoes == 1 ? 'other spot' : 'other spots'}');
+      fragments.add(context.t.diff.pinned.summary.echoesInSpots(n: echoes));
     }
     if (nextPath != null) {
-      final detail = nextReason == null ? '' : ' (${nextReason.toLowerCase()})';
-      fragments.add('inspect $nextPath next$detail');
+      final detail = nextReason == null
+          ? ''
+          : context.t.diff.pinned.summary.inspectDetail(
+              reason: nextReason.toLowerCase(),
+            );
+      fragments.add(
+        context.t.diff.pinned.summary.inspectNext(path: nextPath, detail: detail),
+      );
     }
     return '${fragments.join(', ')}.';
   }
@@ -7357,7 +7369,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     if (c.wellName != null && c.wellName!.trim().isNotEmpty) {
       final tightness = _wellTightnessLabel(c.wellDistance);
       final concept = _friendlySignalLabel(c.wellName!);
-      return tightness == null ? concept : '$concept ($tightness)';
+      return tightness == null
+          ? concept
+          : context.t.diff.pinned.conceptWithTightness(
+              concept: concept,
+              tightness: tightness,
+            );
     }
     if (c.dominantAxis != null && c.dominantAxis!.trim().isNotEmpty) {
       return _axisStory(c.dominantAxis!);
@@ -7367,9 +7384,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
 
   String? _wellTightnessLabel(double? distance) {
     if (distance == null) return null;
-    if (distance <= 0.35) return 'tight fit';
-    if (distance <= 0.7) return 'close fit';
-    return 'loose fit';
+    if (distance <= 0.35) return context.t.diff.pinned.tightness.tight;
+    if (distance <= 0.7) return context.t.diff.pinned.tightness.close;
+    return context.t.diff.pinned.tightness.loose;
   }
 
   List<(String, String)> _presentStories(DiffPinnedContextModel c) {
@@ -7377,23 +7394,27 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     if (c.witnesses.isNotEmpty) {
       final translated = _translateWitness(c.witnesses.first);
       if (translated.isNotEmpty) {
-        stories.add(('Why this matters', translated));
+        stories.add((context.t.diff.pinned.storyWhyThisMatters, translated));
       }
     }
     if (c.integrityReasons.isNotEmpty) {
-      stories
-          .add(('Confidence', _translateIntegrity(c.integrityReasons.first)));
+      stories.add((
+        context.t.diff.pinned.storyConfidence,
+        _translateIntegrity(c.integrityReasons.first),
+      ));
     }
     if (c.witnesses.length > 1) {
       final translated = _translateWitness(c.witnesses[1]);
       if (translated.isNotEmpty) {
-        stories.add(('Secondary signal', translated));
+        stories.add((context.t.diff.pinned.storySecondarySignal, translated));
       }
     }
     if (stories.isEmpty && c.relatedFiles.isNotEmpty) {
       stories.add((
-        'Neighbourhood',
-        'This line sits close to ${_diffDisplayName(c.relatedFiles.first.path)} in the current codebase field.',
+        context.t.diff.pinned.storyNeighbourhood,
+        context.t.diff.pinned.neighbourhoodDetail(
+          name: _diffDisplayName(c.relatedFiles.first.path),
+        ),
       ));
     }
     return stories.take(3).toList();
@@ -7413,8 +7434,10 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       }
       final lane = edge.laneLabel?.trim();
       final reason = lane == null || lane.isEmpty
-          ? 'Propagation lane'
-          : 'Propagation lane: ${_friendlySignalLabel(lane)}';
+          ? context.t.diff.pinned.propagationLane
+          : context.t.diff.pinned.propagationLaneNamed(
+              lane: _friendlySignalLabel(lane),
+            );
       destinations.add((candidate, reason));
     }
     for (final related in c.relatedFiles) {
@@ -7427,17 +7450,25 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _translateWitness(String raw) {
     final normalized = _normalizedSignal(raw);
     if (normalized.contains('multiscale') && normalized.contains('support')) {
-      return 'Nearby support · ${_friendlySignalLabel(raw)}';
+      return context.t.diff.pinned.witness.nearbySupport(
+        label: _friendlySignalLabel(raw),
+      );
     }
     if (normalized.contains('high-frequency') &&
         normalized.contains('residual')) {
-      return 'Localized move · ${_friendlySignalLabel(raw)}';
+      return context.t.diff.pinned.witness.localizedMove(
+        label: _friendlySignalLabel(raw),
+      );
     }
     if (normalized.contains('residual')) {
-      return 'Surprising move · ${_friendlySignalLabel(raw)}';
+      return context.t.diff.pinned.witness.surprisingMove(
+        label: _friendlySignalLabel(raw),
+      );
     }
     if (normalized.contains('support')) {
-      return 'Nearby support · ${_friendlySignalLabel(raw)}';
+      return context.t.diff.pinned.witness.nearbySupport(
+        label: _friendlySignalLabel(raw),
+      );
     }
     return _friendlySignalLabel(raw);
   }
@@ -7445,13 +7476,13 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _translateIntegrity(String raw) {
     final normalized = _normalizedSignal(raw);
     if (normalized.contains('stable')) {
-      return 'Stable structure';
+      return context.t.diff.pinned.integrity.stableStructure;
     }
     if (normalized.contains('contested') || normalized.contains('tension')) {
-      return 'Conflicting signals';
+      return context.t.diff.pinned.integrity.conflictingSignals;
     }
     if (normalized.contains('novel')) {
-      return 'Novel shape';
+      return context.t.diff.pinned.integrity.novelShape;
     }
     return _friendlySignalLabel(raw);
   }
@@ -7459,15 +7490,15 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _relatedReason(DiffPinnedRelatedFile related, String currentPath) {
     final String base;
     if (_looksLikeTestPair(currentPath, related.path)) {
-      base = 'Test mirror';
+      base = context.t.diff.pinned.related.testMirror;
     } else if (related.semantic && related.coupled) {
-      base = 'Semantic + history sibling';
+      base = context.t.diff.pinned.related.semanticHistorySibling;
     } else if (related.coupled) {
-      base = 'Recent co-change';
+      base = context.t.diff.pinned.related.recentCoChange;
     } else if (related.semantic) {
-      base = 'Semantic sibling';
+      base = context.t.diff.pinned.related.semanticSibling;
     } else {
-      base = 'Related structure';
+      base = context.t.diff.pinned.related.relatedStructure;
     }
     // Append the gravitational strength — the Wentzell-Freidlin
     // effective action V(a, b, β) = -log K / β between anchor and this
@@ -7477,13 +7508,13 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     if (grav == null || !grav.isFinite) return base;
     final String tier;
     if (grav < 1.5) {
-      tier = 'tightly bound';
+      tier = context.t.diff.pinned.related.tightlyBound;
     } else if (grav < 4.0) {
-      tier = 'orbiting';
+      tier = context.t.diff.pinned.related.orbiting;
     } else {
-      tier = 'weakly coupled';
+      tier = context.t.diff.pinned.related.weaklyCoupled;
     }
-    return '$base · $tier';
+    return context.t.diff.pinned.related.baseWithTier(base: base, tier: tier);
   }
 
   bool _looksLikeTestPair(String a, String b) {
@@ -7505,16 +7536,16 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   String _axisStory(String raw) {
     final normalized = _normalizedSignal(raw);
     if (normalized.contains('history')) {
-      return 'history trail';
+      return context.t.diff.pinned.axis.historyTrail;
     }
     if (normalized.contains('test')) {
-      return 'test mirror lane';
+      return context.t.diff.pinned.axis.testMirrorLane;
     }
     if (normalized.contains('topology') || normalized.contains('structure')) {
-      return 'structural lane';
+      return context.t.diff.pinned.axis.structuralLane;
     }
     if (normalized.contains('semantic')) {
-      return 'semantic neighbourhood';
+      return context.t.diff.pinned.axis.semanticNeighbourhood;
     }
     return _friendlySignalLabel(raw);
   }
@@ -7777,7 +7808,7 @@ class _HunkInlineHint extends StatelessWidget {
         // sees "12 lines hidden" and decides whether to investigate.
         if (collapsed && hiddenLineCount > 0) ...[
           Text(
-            '$hiddenLineCount hidden',
+            context.t.diff.hunkHint.hiddenCount(n: hiddenLineCount),
             style: textStyle.copyWith(
               fontSize: 9.5,
               color: baseColor.withValues(alpha: baseAlpha * 0.75),
@@ -7795,7 +7826,7 @@ class _HunkInlineHint extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text('landing', style: textStyle),
+          Text(context.t.diff.hunkHint.landing, style: textStyle),
           const SizedBox(width: 8),
         ],
         if (tag != null && tag!.isNotEmpty) ...[

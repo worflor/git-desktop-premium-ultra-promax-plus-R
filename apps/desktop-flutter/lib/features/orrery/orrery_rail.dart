@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
@@ -142,10 +143,12 @@ class _OrreryRailState extends State<OrreryRail> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _RailLabel('STRUCTURE'),
+          _RailLabel(context.t.orrery.rail.structureLabel),
           const SizedBox(height: 4),
           Text(
-            step.archetype.isEmpty ? 'forming…' : step.archetype,
+            step.archetype.isEmpty
+                ? context.t.orrery.structure.forming
+                : step.archetype,
             style: TextStyle(
               color: t.accentBright,
               fontSize: 15,
@@ -159,7 +162,7 @@ class _OrreryRailState extends State<OrreryRail> {
           // room even on short windows.
           Row(
             children: [
-              Text('canonical',
+              Text(context.t.orrery.structure.canonical,
                   style: TextStyle(color: t.textMuted, fontSize: 11)),
               const SizedBox(width: 8),
               Expanded(
@@ -181,24 +184,24 @@ class _OrreryRailState extends State<OrreryRail> {
             ],
           ),
           const SizedBox(height: 11),
-          const _RailLabel('FIELD'),
+          _RailLabel(context.t.orrery.rail.fieldLabel),
           const SizedBox(height: 6),
           _FieldInstrument(
-            label: 'connectivity',
+            label: context.t.orrery.structure.connectivity,
             value: _fmtScalar(step.gap, 3),
             curve: gapCurve,
             head: head,
           ),
           const SizedBox(height: 7),
           _FieldInstrument(
-            label: 'rigidity',
+            label: context.t.orrery.structure.rigidity,
             value: _fmtScalar(step.rigidity, 3),
             curve: rigidityCurve,
             head: head,
           ),
           const SizedBox(height: 7),
           _FieldInstrument(
-            label: 'entropy',
+            label: context.t.orrery.structure.entropy,
             value: _fmtScalar(step.vonNeumann, 2),
             curve: entropyCurve,
             head: head,
@@ -206,7 +209,7 @@ class _OrreryRailState extends State<OrreryRail> {
           const SizedBox(height: 11),
           Row(
             children: [
-              const _RailLabel('FINDINGS'),
+              _RailLabel(context.t.orrery.rail.findingsLabel),
               if (findings.isNotEmpty) ...[
                 const SizedBox(width: 6),
                 Text('${findings.length}',
@@ -257,7 +260,7 @@ class _OrreryRailState extends State<OrreryRail> {
 
   Widget _ledger(AppTokens t, int index) {
     return findings.isEmpty
-        ? Text('No structural events detected in this history.',
+        ? Text(context.t.orrery.rail.noFindings,
             style: TextStyle(color: t.textFaint, fontSize: 11.5, height: 1.3))
         : ValueListenableBuilder<int?>(
             valueListenable: widget.hoveredFinding,
@@ -718,7 +721,7 @@ class _Inspector extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text('SELECTED',
+                    Text(context.t.orrery.rail.selectedLabel,
                         style: TextStyle(
                           color: t.accentBright,
                           fontSize: 9.5,

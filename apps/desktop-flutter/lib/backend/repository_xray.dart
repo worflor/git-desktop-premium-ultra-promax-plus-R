@@ -13,6 +13,7 @@ import 'logos_core.dart' show SpectralBasis, SpectralHeat, SpectralThermo;
 import 'logos_git.dart';
 import 'logos_git_resolver.dart' show resolveLogosGit;
 import 'logos_spectrogeometry.dart' show SpectroGeometry;
+import 'repository_xray_strings.dart';
 
 typedef XrayGitProbe = Future<ProcessResult> Function(
   String workingDir,
@@ -86,6 +87,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
   bool forceRefresh = false,
   required XrayStatusLoader statusLoader,
   required XrayGitProbe probe,
+  XrayCardStrings cardStrings = const EnglishXrayCardStrings(),
 }) async {
   final stopwatch = Stopwatch()..start();
   final cachedProbe = _SnapshotProbeCache(repo, probe);
@@ -472,6 +474,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         migrationPair: migrationPair,
         remoteCount: _remoteCount(futures[18].stdout.toString()),
         usingRawMetrics: false,
+        strings: cardStrings,
       ),
       rawCards: _buildCards(
         signalIntegrity: signalIntegrity,
@@ -483,6 +486,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         migrationPair: migrationPair,
         remoteCount: _remoteCount(futures[18].stdout.toString()),
         usingRawMetrics: true,
+        strings: cardStrings,
       ),
       hotspots: filteredHotspots,
       rawHotspots: rawHotspots,
@@ -2055,6 +2059,7 @@ List<RepositoryXrayCardData> _buildCards({
   required _MigrationPair? migrationPair,
   required int remoteCount,
   required bool usingRawMetrics,
+  XrayCardStrings strings = const EnglishXrayCardStrings(),
 }) {
   final cards = <RepositoryXrayCardData>[];
   final topHotspot = hotspots.isEmpty ? null : hotspots.first;
@@ -2074,21 +2079,20 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'hidden-refs',
-        title: 'Hidden Git namespaces',
-        claim:
-            '${signalIntegrity.hiddenRefCount} refs live outside normal branch/tag space.',
+        title: strings.hiddenRefsTitle,
+        claim: strings.hiddenRefsClaim(signalIntegrity.hiddenRefCount),
         verdict: 'hard-fact',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
-            label: 'Hidden refs',
+            label: strings.hiddenRefsEvidenceLabel,
             detail:
-                '${signalIntegrity.hiddenRefCount} refs outside heads/remotes/tags.',
+                strings.hiddenRefsEvidenceDetail(signalIntegrity.hiddenRefCount),
             kind: 'ref',
             count: signalIntegrity.hiddenRefCount,
           ),
           RepositoryXrayEvidenceData(
-            label: 'Namespaces',
+            label: strings.namespacesLabel,
             detail: refSummary.hiddenNamespaces.join(', '),
             kind: 'ref',
           ),
@@ -2101,22 +2105,23 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'machine-history',
-        title: 'Machine history dominates raw metrics',
-        claim:
-            'Checkpoint-style commits materially distort naive history metrics.',
+        title: strings.machineHistoryTitle,
+        claim: strings.machineHistoryClaim,
         verdict: 'strong-pattern',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
-            label: 'Raw vs filtered',
-            detail:
-                '${signalIntegrity.rawCommitCount} raw commits vs ${signalIntegrity.filteredCommitCount} filtered commits.',
+            label: strings.rawVsFilteredLabel,
+            detail: strings.rawVsFilteredDetail(
+              raw: signalIntegrity.rawCommitCount,
+              filtered: signalIntegrity.filteredCommitCount,
+            ),
             kind: 'history',
           ),
           RepositoryXrayEvidenceData(
-            label: 'Machine commits',
+            label: strings.machineCommitsLabel,
             detail:
-                '${signalIntegrity.machineCommitCount} commits matched machine/session patterns.',
+                strings.machineCommitsDetail(signalIntegrity.machineCommitCount),
             kind: 'history',
             count: signalIntegrity.machineCommitCount,
           ),
@@ -2129,23 +2134,29 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'migration',
-        title: 'Architecture migration visible',
-        claim:
-            'History shifts from `${migrationPair.older.pathPrefix}` to `${migrationPair.newer.pathPrefix}`, suggesting a stack or surface transition.',
+        title: strings.migrationTitle,
+        claim: strings.migrationClaim(
+          older: migrationPair.older.pathPrefix,
+          newer: migrationPair.newer.pathPrefix,
+        ),
         verdict: 'strong-pattern',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
             label: migrationPair.older.pathPrefix,
-            detail:
-                '${migrationPair.older.touchCount} touches, last active ${migrationPair.older.lastTouchedAt}.',
+            detail: strings.migrationStratumDetail(
+              touches: migrationPair.older.touchCount,
+              lastActive: migrationPair.older.lastTouchedAt,
+            ),
             kind: 'path',
             path: migrationPair.older.pathPrefix,
           ),
           RepositoryXrayEvidenceData(
             label: migrationPair.newer.pathPrefix,
-            detail:
-                '${migrationPair.newer.touchCount} touches, last active ${migrationPair.newer.lastTouchedAt}.',
+            detail: strings.migrationStratumDetail(
+              touches: migrationPair.newer.touchCount,
+              lastActive: migrationPair.newer.lastTouchedAt,
+            ),
             kind: 'path',
             path: migrationPair.newer.pathPrefix,
           ),
@@ -2160,22 +2171,26 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'single-owner-hotspot',
-        title: 'Single-owner hotspot',
-        claim:
-            '`${topHotspot.path}` is a heavily touched ${topHotspot.kind} with one distinct visible author.',
+        title: strings.singleOwnerTitle,
+        claim: strings.singleOwnerClaim(
+          path: topHotspot.path,
+          kind: topHotspot.kind,
+        ),
         verdict: 'strong-pattern',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
-            label: 'Touch count',
-            detail:
-                '${topHotspot.touchCount} touches in ${usingRawMetrics ? 'raw' : 'filtered'} history.',
+            label: strings.touchCountLabel,
+            detail: strings.singleOwnerTouchDetail(
+              count: topHotspot.touchCount,
+              raw: usingRawMetrics,
+            ),
             kind: 'path',
             path: topHotspot.path,
           ),
           RepositoryXrayEvidenceData(
-            label: 'Owner count',
-            detail: '${topHotspot.ownerCount} distinct authors.',
+            label: strings.ownerCountLabel,
+            detail: strings.ownerCountDetail(topHotspot.ownerCount),
             kind: 'author',
             count: topHotspot.ownerCount,
           ),
@@ -2190,20 +2205,19 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'no-tags',
-        title: 'No formal release/tag trail',
-        claim:
-            'Git tags are not being used as a visible release or milestone layer.',
+        title: strings.noTagsTitle,
+        claim: strings.noTagsClaim,
         verdict: 'hard-fact',
         confidence: 'high',
         evidence: [
-          const RepositoryXrayEvidenceData(
-            label: 'Tag count',
-            detail: '0 tags found.',
+          RepositoryXrayEvidenceData(
+            label: strings.tagCountLabel,
+            detail: strings.tagCountDetail,
             kind: 'ref',
           ),
           RepositoryXrayEvidenceData(
-            label: 'Remote endpoints',
-            detail: '$remoteCount remote endpoints configured.',
+            label: strings.remoteEndpointsLabel,
+            detail: strings.remoteEndpointsDetail(remoteCount),
             kind: 'ref',
           ),
         ],
@@ -2215,9 +2229,8 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'bursty-cadence',
-        title: 'Bursty development cadence',
-        claim:
-            'Work lands in concentrated bursts rather than a flat daily rhythm.',
+        title: strings.burstyTitle,
+        claim: strings.burstyClaim,
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: cadence
@@ -2240,22 +2253,22 @@ List<RepositoryXrayCardData> _buildCards({
     RepositoryXrayCardData(
       id: 'branch-model',
       title: refSummary.localBranchCount + refSummary.remoteBranchCount <= 3
-          ? 'Simple branch model'
-          : 'Branch model has surface area',
+          ? strings.branchModelSimpleTitle
+          : strings.branchModelBroadTitle,
       claim: refSummary.localBranchCount + refSummary.remoteBranchCount <= 3
-          ? 'The visible branch model is narrow.'
-          : 'The repository has enough branch surface to reward branch-aware navigation.',
+          ? strings.branchModelSimpleClaim
+          : strings.branchModelBroadClaim,
       verdict: 'hard-fact',
       confidence: 'high',
       evidence: [
         RepositoryXrayEvidenceData(
-          label: 'Local branches',
-          detail: '${refSummary.localBranchCount} local branches.',
+          label: strings.localBranchesLabel,
+          detail: strings.localBranchesDetail(refSummary.localBranchCount),
           kind: 'ref',
         ),
         RepositoryXrayEvidenceData(
-          label: 'Remote branches',
-          detail: '${refSummary.remoteBranchCount} remote branches.',
+          label: strings.remoteBranchesLabel,
+          detail: strings.remoteBranchesDetail(refSummary.remoteBranchCount),
           kind: 'ref',
         ),
       ],
@@ -2266,14 +2279,13 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'reflog-intense',
-        title: 'Intense local editing sessions',
-        claim:
-            'Reflog volume suggests concentrated local iteration beyond published commits.',
+        title: strings.reflogTitle,
+        claim: strings.reflogClaim,
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: [
           RepositoryXrayEvidenceData(
-            label: 'Peak reflog day',
+            label: strings.peakReflogDayLabel,
             detail: cadence.firstWhere((item) => item.kind == 'reflog').detail,
             kind: 'reflog',
             count: peakReflog,
@@ -2296,20 +2308,18 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'keystone-files',
-        title: keystones.length == 1
-            ? 'Keystone bridge-file'
-            : '${keystones.length} keystone bridge-files',
-        claim: keystones.length == 1
-            ? 'One file carries disproportionate co-change weight relative to its touch count.'
-            : 'A small set of files carry disproportionate co-change weight relative to their touch counts.',
+        title: strings.keystoneTitle(keystones.length),
+        claim: strings.keystoneClaim(keystones.length),
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: [
           for (final k in keystones.take(_signalCardEvidenceCap))
             RepositoryXrayEvidenceData(
               label: k.path,
-              detail: '${k.touchCount} touch${k.touchCount == 1 ? '' : 'es'} · '
-                  'pull φ=${(k.keystoneScore ?? 0).toStringAsFixed(2)}',
+              detail: strings.keystoneEvidenceDetail(
+                touchCount: k.touchCount,
+                score: (k.keystoneScore ?? 0).toStringAsFixed(2),
+              ),
               kind: 'file',
               count: k.touchCount,
             ),
@@ -2322,22 +2332,23 @@ List<RepositoryXrayCardData> _buildCards({
     cards.add(
       RepositoryXrayCardData(
         id: 'narrow-hotspot',
-        title: 'Hotspot concentration is narrow',
-        claim:
-            'A small set of files and directories absorbs a disproportionate share of changes.',
+        title: strings.narrowHotspotTitle,
+        claim: strings.narrowHotspotClaim,
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: [
           RepositoryXrayEvidenceData(
-            label: 'Top hotspot',
-            detail:
-                '${topHotspot.path} accounts for ${(topShare * 100).toStringAsFixed(0)}% of the visible hotspot set.',
+            label: strings.topHotspotLabel,
+            detail: strings.topHotspotDetail(
+              path: topHotspot.path,
+              pct: (topShare * 100).toStringAsFixed(0),
+            ),
             kind: 'path',
             path: topHotspot.path,
           ),
           RepositoryXrayEvidenceData(
-            label: 'Visible authors',
-            detail: '${authors.length} authors in this history slice.',
+            label: strings.visibleAuthorsLabel,
+            detail: strings.visibleAuthorsDetail(authors.length),
             kind: 'author',
           ),
         ],

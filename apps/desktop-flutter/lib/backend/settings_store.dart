@@ -129,6 +129,12 @@ class AppSettingsSnapshot {
   final int changesPanelWidthPx;
   final String wickExePath;
   final String alphaMathPath;
+  /// UI language override as a raw locale tag (e.g. 'de', 'zh-Hans',
+  /// 'pt-BR'). Empty string = follow the OS locale (the default). Only
+  /// tags matching a bundled AppLocale are honored; anything else falls
+  /// back to OS resolution at startup, so a downgrade to a build without
+  /// that locale degrades silently instead of crashing.
+  final String localeOverride;
   /// Per-host Gitea/Forgejo personal access tokens, keyed by lowercase
   /// hostname (e.g. 'codeberg.org', 'git.mycompany.com:3000' when a
   /// non-default port is part of the host). Empty by default. The
@@ -182,6 +188,7 @@ class AppSettingsSnapshot {
     required this.changesPanelWidthPx,
     this.wickExePath = '',
     this.alphaMathPath = '',
+    this.localeOverride = '',
     this.giteaTokens = const {},
   });
 
@@ -230,6 +237,7 @@ class AppSettingsSnapshot {
         'changesPanelWidthPx': changesPanelWidthPx,
         'wickExePath': wickExePath,
         'alphaMathPath': alphaMathPath,
+        'localeOverride': localeOverride,
         'giteaTokens': giteaTokens,
       };
 
@@ -480,6 +488,9 @@ class AppSettingsSnapshot {
       alphaMathPath: json['alphaMathPath'] is String
           ? json['alphaMathPath'] as String
           : '',
+      localeOverride: json['localeOverride'] is String
+          ? json['localeOverride'] as String
+          : '',
       giteaTokens: SettingsStore._stringMapOr(json['giteaTokens']),
     );
   }
@@ -529,6 +540,7 @@ class AppSettingsSnapshot {
     int? changesPanelWidthPx,
     String? wickExePath,
     String? alphaMathPath,
+    String? localeOverride,
     Map<String, String>? giteaTokens,
   }) {
     return AppSettingsSnapshot(
@@ -589,6 +601,7 @@ class AppSettingsSnapshot {
       changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
       wickExePath: wickExePath ?? this.wickExePath,
       alphaMathPath: alphaMathPath ?? this.alphaMathPath,
+      localeOverride: localeOverride ?? this.localeOverride,
       giteaTokens: giteaTokens ?? this.giteaTokens,
     );
   }

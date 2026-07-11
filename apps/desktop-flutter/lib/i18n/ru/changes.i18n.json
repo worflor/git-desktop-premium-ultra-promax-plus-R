@@ -1,0 +1,562 @@
+{
+  "@@locale": "ru",
+  "usage": {
+    "caption": "{input} вход · {output} выход",
+    "captionCached": "{fresh} вход · {cached} из кэша · {out} выход",
+    "inWord": "вход",
+    "cachedWord": "из кэша",
+    "outWord": "выход",
+    "tipIn": "{value}  вход",
+    "tipCacheRead": "{value}  чтение кэша",
+    "tipCacheWrite": "{value}  запись кэша",
+    "tipOut": "{value}  выход",
+    "tipReasoning": "{value}  рассуждение",
+    "tipWallClock": "{value} с  реальное время"
+  },
+  "tabs": {
+    "defaultLabel": "Изменения",
+    "empty": "Пусто"
+  },
+  "tabStrip": {
+    "newDiffTab": "Новая вкладка diff"
+  },
+  "select": {
+    "selectAll": "Выбрать всё",
+    "deselectAll": "Снять выбор"
+  },
+  "constellationToggle": {
+    "backToList": "назад к списку",
+    "atlas": "атлас, смотреть кандидатов на коммит"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\nсвязан с {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "новый",
+    "roleBridge": "мост",
+    "roleHub": "узел",
+    "roleLeaf": "лист",
+    "roleConnected": "связан",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "меняется с {name}",
+    "newFile": "новый файл",
+    "nearOtherChanges": "рядом с {count} другими изменениями в {dir}",
+    "usuallyChangesWithFile": "{name} обычно меняется вместе с этим файлом"
+  },
+  "tagInput": {
+    "hint": "метка..."
+  },
+  "composer": {
+    "hintPlaceholder": "сообщение коммита...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Закоммитить изменения",
+    "primaryCommitChangesDetail": "Отсоединённый HEAD: коммит локально без синхронизации.",
+    "primaryPublish": "Коммит и публикация",
+    "primaryPublishDetail": "Создать коммит и опубликовать эту ветку за один шаг.",
+    "primarySync": "Коммит и синхронизация",
+    "primarySyncDetail": "Создать коммит, затем согласовать и отправить ветку.",
+    "primaryPush": "Коммит и отправка",
+    "primaryPushDetail": "Создать коммит и сразу его отправить.",
+    "amendLast": "Дополнить последний коммит",
+    "amendAnd": "Дополнить и {action}",
+    "chooseFile": "Выберите хотя бы один файл для следующего коммита.",
+    "writeMessage": "Сначала напишите сообщение коммита.",
+    "committing": "Коммичу",
+    "committingSync": "Коммичу и синхронизирую",
+    "committed": "Закоммичено.",
+    "undoFailed": "Не удалось отменить.",
+    "working": "Работаю…",
+    "commitOnly": "Только коммит",
+    "noRuntimeModels": "Для сообщений коммитов нет обнаруженных в рантайме моделей.",
+    "restoreFailedRetry": "{err}\nНе удалось восстановить индексацию исключённых файлов; проверьте индекс перед повтором.",
+    "committedSummary": "Закоммичено {summary} ({hash}).",
+    "restoreFailedSync": "Не удалось переиндексировать выборки исключённых файлов; синхронизация пропущена. Проверьте индекс перед синхронизацией.",
+    "noModelLabel": "Нет модели",
+    "chooseBeforeGenerate": "Выберите хотя бы один файл перед генерацией.",
+    "aiUnavailable": "AI для сообщений коммитов пока недоступен.",
+    "generateFailed": "Не удалось сгенерировать.",
+    "stageFailed": "Не удалось проиндексировать файлы.",
+    "commitFailed": "Не удалось создать коммит.",
+    "committedAndRan": "Закоммичено {summary} ({hash}) и выполнено {operation}.",
+    "committedResolved": {
+      "one": "Закоммичено {summary} ({hash}); устранён {n} конфликт.",
+      "few": "Закоммичено {summary} ({hash}); устранено {n} конфликта.",
+      "many": "Закоммичено {summary} ({hash}); устранено {n} конфликтов.",
+      "other": "Закоммичено {summary} ({hash}); устранено {n} конфликтов."
+    },
+    "conflictsLeft": {
+      "one": "Осталось устранить {n} конфликт.",
+      "few": "Осталось устранить {n} конфликта.",
+      "many": "Осталось устранить {n} конфликтов.",
+      "other": "Осталось устранить {n} конфликтов."
+    },
+    "syncBlocked": {
+      "one": "Коммит удался, но синхронизацию заблокировал {n} незакоммиченный файл.",
+      "few": "Коммит удался, но синхронизацию заблокировали {n} незакоммиченных файла.",
+      "many": "Коммит удался, но синхронизацию заблокировали {n} незакоммиченных файлов.",
+      "other": "Коммит удался, но синхронизацию заблокировали {n} незакоммиченных файлов."
+    },
+    "syncStalled": "Коммит удался, но синхронизация застопорилась: {message}",
+    "syncFailed": "Коммит удался, но синхронизация не удалась: {message}"
+  },
+  "rebase": {
+    "continueFailed": "Не удалось продолжить rebase."
+  },
+  "editor": {
+    "closeBarrier": "Закрыть редактор"
+  },
+  "editorTitles": {
+    "any": [
+      "дорогой git log",
+      "прости меня, git, ибо я согрешил…",
+      "назовите этот момент",
+      "болтай",
+      "говори!",
+      "твоя мать была висячей ссылкой, а отец пах точками с запятой"
+    ],
+    "short": [
+      "о?",
+      "привет:)",
+      "кстати:",
+      "пара слов",
+      "вежливая версия",
+      "оставьте записку",
+      "вы говорили..?",
+      "ну давай, выкладывай"
+    ],
+    "mid": [
+      "для протокола",
+      "расскажите себе будущему",
+      "но сначала?",
+      "как всё прошло",
+      "своими словами",
+      "ты сделал ЧТО?",
+      "принято к сведению",
+      "я весь внимание"
+    ],
+    "long": [
+      "ваши мечты, пожалуйста",
+      "скажите что-нибудь приятное",
+      "…и тогда я сказал:",
+      "потомки ждут",
+      "чем больше пишешь, тем больше багов исчезает",
+      "ого",
+      "священные тексты"
+    ]
+  },
+  "askHint": {
+    "round": "раунд {n} — уточните или добавьте контекст.",
+    "symptom": "опишите симптом.",
+    "broken": "что сломалось?",
+    "bug": "опишите баг.",
+    "error": "вставьте ошибку."
+  },
+  "fileMenu": {
+    "ripple": "Рябь",
+    "includeCoChanges": "Включить совместные изменения",
+    "deleteFile": "Удалить {name}…",
+    "discardChangesTo": "Отбросить изменения в {name}…",
+    "ignore": "Игнорировать",
+    "diffTabFromSelection": "Вкладка diff из выбора",
+    "addSelectedToTab": "Добавить выбранное в {name}",
+    "diffTabFromFile": "Вкладка diff из {name}",
+    "addFileToTab": "Добавить {file} в {tab}",
+    "copyFilePath": "Копировать путь файла",
+    "showInExplorer": "Показать в проводнике"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "тесно связаны",
+    "cohesionLoose": "слабо связаны",
+    "cohesionScattered": "структурно разрознены",
+    "clusterOne": "всё в одном кластере",
+    "clusterSpansDetailed": "охватывает {count} кластеров ({parts} файлов)",
+    "clusterSpans": "охватывает {count} кластеров",
+    "roleLine": "{count} файлов · {cohesion}",
+    "usuallyChangesWithGroup": "{file} обычно меняется вместе с этой группой",
+    "splitToNewTab": "Вынести в новую вкладку",
+    "copyPaths": "Копировать {count} путей"
+  },
+  "ignoreMenu": {
+    "extension": "расширение .{ext}",
+    "allSelected": "Все {count} выбранных",
+    "couplesWith": {
+      "one": "Связан с {n} включённым файлом",
+      "few": "Связан с {n} включёнными файлами",
+      "many": "Связан с {n} включёнными файлами",
+      "other": "Связан с {n} включёнными файлами"
+    },
+    "updateFailed": "Не удалось обновить .gitignore."
+  },
+  "discard": {
+    "deleteTitle": "Удалить {name}?",
+    "discardTitle": "Отбросить изменения в {name}?",
+    "deleteBody": "{path} будет удалён с диска. Это нельзя отменить из приложения.",
+    "discardBody": "Все изменения в {path} будут возвращены к состоянию в HEAD. Это нельзя отменить.",
+    "discard": "Отбросить",
+    "deletingFile": "Удаляю {name}",
+    "discardingFile": "Отбрасываю {name}",
+    "discardFailed": "Не удалось отбросить изменения.",
+    "discardManyTitle": "Отбросить изменения в {count} файлах?",
+    "discardManyBody": "Отслеживаемые файлы вернутся к состоянию в HEAD; неотслеживаемые будут удалены с диска. Это нельзя отменить.",
+    "discardManyConfirm": "Отбросить {count}",
+    "discardingManyFiles": "Отбрасываю {count} файлов",
+    "failedOpenExplorer": "Не удалось открыть проводник: {error}",
+    "someFailed": "Некоторые отбрасывания не удались."
+  },
+  "snack": {
+    "sameWorktree": "Тот же рабочий каталог — сбрасывать нечего.",
+    "diffFailed": "Сбой diff: {error}",
+    "deskEmpty": "У стола нет ничего впереди вас — пустой сброс.",
+    "sourceDesk": "стол {label}",
+    "shelfReadFailed": "Не удалось прочитать полку: {error}",
+    "shelfEmpty": "Пустая полка — сбрасывать нечего.",
+    "sourceShelf": "полка {label}",
+    "noModelConfigured": "Для «{label}» модель не настроена.",
+    "fetchFailed": "Сбой получения: {error}"
+  },
+  "trace": {
+    "title": "След верификации",
+    "draftReview": "Черновое ревью"
+  },
+  "cleanTree": {
+    "title": "Рабочий каталог чист",
+    "subtitle": "Изменений в индексе и вне него не обнаружено.",
+    "noUpstream": "  ·  нет upstream",
+    "ahead": " впереди",
+    "behind": " позади",
+    "refreshing": "Обновление...",
+    "refresh": "Обновить",
+    "check": "проверить",
+    "checkTooltip": "Получить и локально обновить.",
+    "sync": "& синхр"
+  },
+  "guardrail": {
+    "loose": "Свободно",
+    "balanced": "Сбалансировано",
+    "strict": "Строго",
+    "paranoid": "Параноидально"
+  },
+  "dropHint": {
+    "fromShelf": "бросьте, чтобы принести изменения с этой полки сюда",
+    "fromDesk": "бросьте, чтобы принести изменения с этого стола сюда"
+  },
+  "diffEmpty": {
+    "title": "Файл не выбран",
+    "message": "Выберите изменённый файл, чтобы изучить его diff."
+  },
+  "shelvePill": {
+    "shelveN": "↓ отложить {count}",
+    "shelve": "↓ отложить",
+    "shelvedCount": "{count} отложено {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "взять",
+    "peek": "заглянуть",
+    "toss": "выбросить"
+  },
+  "stashContents": {
+    "reading": "читаю полку…",
+    "empty": "пустая полка"
+  },
+  "stashFile": {
+    "binary": "бин"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "коммитит только строки из индекса",
+    "doubleClickToggle": "двойной клик: переключить всю группу",
+    "repoRoot": "Корень репозитория"
+  },
+  "resolveStrip": {
+    "reading": {
+      "one": "читаю {n} файл · черновик решения…",
+      "few": "читаю {n} файла · черновик решения…",
+      "many": "читаю {n} файлов · черновик решения…",
+      "other": "читаю {n} файлов · черновик решения…"
+    },
+    "conflictsAcross": {
+      "one": "{n} конфликт в {files}",
+      "few": "{n} конфликта в {files}",
+      "many": "{n} конфликтов в {files}",
+      "other": "{n} конфликтов в {files}"
+    },
+    "resolve": "Устранить",
+    "orWith": "ИЛИ С",
+    "resolveWith": "устранить с {label}",
+    "resolveWithModel": "устранить с {label}  ·  {model}",
+    "resolving": "устраняю…",
+    "resolveWithGlyph": "↵  устранить с {label}",
+    "orWithAnother": "или с другой моделью"
+  },
+  "badge": {
+    "stagedEdit": "Правка в индексе",
+    "edited": "Изменён",
+    "stagedAdd": "Добавление в индексе",
+    "added": "Добавлен",
+    "stagedDelete": "Удаление в индексе",
+    "deleted": "Удалён",
+    "stagedRename": "Переименование в индексе",
+    "renamed": "Переименован",
+    "stagedCopy": "Копия в индексе",
+    "copied": "Скопирован",
+    "conflict": "Конфликт",
+    "stagedTypeChange": "Смена типа в индексе",
+    "typeChanged": "Тип изменён",
+    "untracked": "Не отслеживается"
+  },
+  "review": {
+    "title": "Ревью кода",
+    "includedFiles": {
+      "one": "{n} включённый файл",
+      "few": "{n} включённых файла",
+      "many": "{n} включённых файлов",
+      "other": "{n} включённых файлов"
+    },
+    "hunkCount": {
+      "one": "{n} ханк",
+      "few": "{n} ханка",
+      "many": "{n} ханков",
+      "other": "{n} ханков"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "Ревью недоступно",
+    "backToDiff": "Назад к diff",
+    "verified": "Проверено",
+    "draftOnly": "Только черновик",
+    "runAgain": "Запустить снова",
+    "draftShownBelow": "{error} Черновое ревью показано ниже.",
+    "hideTrace": "Скрыть след",
+    "showTrace": "Показать след",
+    "showVerificationTrace": "Показать след верификации",
+    "whyLanded": "Почему это ревью пришло сюда",
+    "noFindings": "Находок нет",
+    "findings": "Находки",
+    "noEvidenceIssues": "Для этого объёма коммита не всплыло проблем, подкреплённых доказательствами.",
+    "observations": "Наблюдения",
+    "chooseBeforeReview": "Выберите хотя бы один файл перед ревью.",
+    "aiUnavailable": "AI-ревью пока недоступно.",
+    "failed": "Сбой ревью.",
+    "noRuntimeModels": "Для ревью коммитов нет обнаруженных в рантайме моделей."
+  },
+  "commitBtn": {
+    "switchTo": "Переключить на: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "спрашиваю через {cat}…",
+    "askWith": "спросить через {cat}",
+    "noModel": "AI-модель не настроена",
+    "nextTooltip": "далее: {cat}  ·  shift-клик для предыдущего",
+    "onlyOne": "настроена лишь одна AI-категория"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "one": "{pct}% дежавю — {n} призрачное ребро из отброшенных временных линий задевает этот diff",
+      "few": "{pct}% дежавю — {n} призрачных ребра из отброшенных временных линий задевают этот diff",
+      "many": "{pct}% дежавю — {n} призрачных рёбер из отброшенных временных линий задевают этот diff",
+      "other": "{pct}% дежавю — {n} призрачных рёбер из отброшенных временных линий задевают этот diff"
+    },
+    "label": "дежавю"
+  },
+  "identity": {
+    "none": "личность для коммита не настроена",
+    "asName": "как {name}",
+    "asNameEmail": "как {name} <{email}>",
+    "asNameSpace": "как {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\nпервый коммит в этом репозитории",
+    "newToRepo": "\nновичок в этом репозитории"
+  },
+  "staleScope": {
+    "message": "выбор изменился с момента запуска",
+    "rerun": "перезапустить"
+  },
+  "finding": {
+    "openDiff": "Открыть diff",
+    "recorded": "записано",
+    "dismiss": "Отклонить"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "вы вытянули это",
+    "fromIdea": "из идеи: «{text}»",
+    "foothold": "опора — ",
+    "brainstormSpew": "поток мозгового штурма",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "Копировать {count}",
+    "clear": "Очистить",
+    "chooseBeforeMuse": "Выберите хотя бы один файл перед вызовом музы.",
+    "aiUnavailable": "AI для Muse пока недоступен.",
+    "failed": "Сбой Muse.",
+    "noRuntimeModels": "Для музы нет обнаруженных в рантайме моделей.",
+    "needsModel": "Музе нужна хотя бы одна настроенная модель.",
+    "dreaming": "муза грезит..."
+  },
+  "debug": {
+    "title": "Отладка",
+    "round": "· раунд {n}",
+    "clear": "очистить",
+    "close": "закрыть",
+    "analyzing": "анализирую симптом…",
+    "describeSymptom": "опишите симптом, затем нажмите «отладка».",
+    "evidenceFor": "за",
+    "evidenceAgainst": "но",
+    "narrowDown": "что помогло бы сузить круг:",
+    "failed": "Сбой отладки.",
+    "refinementFailed": "Не удалось уточнить отладку."
+  },
+  "includeSummary": {
+    "none": "Ничего",
+    "stagedSuffix": " · {count} в индексе",
+    "full": {
+      "one": "Все {n} файл{staged}",
+      "few": "Все {n} файла{staged}",
+      "many": "Все {n} файлов{staged}",
+      "other": "Все {n} файлов{staged}"
+    },
+    "partial": "{count} из {n}{staged}",
+    "shortAll": "Все {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "Статус репозитория недоступен",
+    "loadingTitle": "Загрузка статуса репозитория",
+    "loadingMessage": "Читаю рабочий каталог."
+  },
+  "stash": {
+    "appliedWithConflicts": "Стэш применён с конфликтами — устраните их на странице «Изменения» (запись стэша сохранена).",
+    "couldNotPop": "Не удалось извлечь стэш.",
+    "listChanged": "Список стэшей изменился; сброс пропущен. Попробуйте снова.",
+    "droppingStash": "Сбрасываю стэш"
+  },
+  "tooltips": {
+    "commitGenerating": "генерирую сообщение коммита...",
+    "commitPreparing": "готовлю сообщение коммита...",
+    "commitSelectFile": "выберите хотя бы один файл, чтобы сгенерировать сообщение коммита.",
+    "commitConfigure": "настройте сообщения коммитов в «Настройки» > «Динамика поведения» > «Сообщения коммитов».",
+    "fastFallback": "быстро",
+    "commitGenerateWith": "сгенерировать сообщение коммита моделью {label}",
+    "museConsulting": "советуюсь с музой...",
+    "showMuse": "показать музу",
+    "museSelectFile": "выберите хотя бы один файл для музы.",
+    "showMuseError": "показать ошибку музы",
+    "museAsk": "спросить у музы направление",
+    "museAskWithModels": "спросить у музы направление\n{brainstorm} → {synthesis}",
+    "qualityFallback": "качество",
+    "reviewing": "делаю ревью...",
+    "showReview": "показать ревью",
+    "reviewPreparing": "готовлю ревью коммита...",
+    "reviewSelectFile": "выберите хотя бы один файл для ревью.",
+    "reviewConfigure": "настройте AI-ревью в настройках.",
+    "viewingReview": "просмотр ревью",
+    "reviewWith": "{guardrail} ревью моделью {label}"
+  },
+  "mergeEditor": {
+    "resolutionYours": "ваши",
+    "resolutionTheirs": "их",
+    "resolutionCustom": "свой",
+    "keepBoth": "оставить оба",
+    "trust": {
+      "manual": "вручную",
+      "safe": "безопасно",
+      "guided": "с подсказками",
+      "assisted": "с помощью",
+      "full": "полное",
+      "label": "доверие: {label}"
+    },
+    "allResolved": "всё устранено",
+    "resolveEasy": "устранить простые конфликты",
+    "base": "база",
+    "cancel": "отмена",
+    "save": "сохранить",
+    "complete": "завершить",
+    "nextFile": "след. файл",
+    "edit": "правка",
+    "auto": "авто",
+    "undo": "отмена",
+    "keyHints": {
+      "accept": "принять",
+      "other": "другой",
+      "both": "оба",
+      "navigate": "навигация",
+      "jumpNext": "к следующему"
+    },
+    "favoredTooltip": "структурно предпочтён анализом связности",
+    "newOnBothSides": "(новое с обеих сторон)",
+    "writeFailed": "Не удалось записать устранённые файлы: {error}",
+    "neighborsCoChanged": "{changed}/{total} соседей со-изменились",
+    "integrity": "целостность {pct}%",
+    "reviewer": "ревьюер: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "Для «{category}» модель не настроена. Задайте её в «Настройки» → «AI».",
+    "sensitiveFilesSkipped": {
+      "one": "{n} чувствительный файл пропущен — устраните вручную.",
+      "few": "{n} чувствительных файла пропущено — устраните вручную.",
+      "many": "{n} чувствительных файлов пропущено — устраните вручную.",
+      "other": "{n} чувствительных файлов пропущено — устраните вручную."
+    },
+    "couldNotReadFiles": "Не удалось прочитать ни один конфликтный файл.",
+    "blockedSecret": "Заблокировано — конфликтный файл, похоже, содержит {secret}. Устраните вручную.",
+    "resolutionFailed": "Не удалось устранить: {error}",
+    "mergeResolutionLabel": "◇ устранение слияния · {resolved}/{total} файлов · {category}",
+    "conflictSummary": "{op} · {conflicts} в {files}",
+    "conflictCount": {
+      "one": "{n} конфликт",
+      "few": "{n} конфликта",
+      "many": "{n} конфликтов",
+      "other": "{n} конфликтов"
+    },
+    "mergeEditorButton": "⇋ редактор слияния",
+    "noAiModel": "нет AI-модели",
+    "later": "позже",
+    "discard": "отбросить",
+    "resolveWithAi": "◇ устранить с AI",
+    "otherModel": "другая модель",
+    "withModel": "с {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "слияние",
+      "cherryPick": "cherry-pick",
+      "revert": "откат",
+      "resolve": "устранение",
+      "switchOp": "переключение",
+      "pull": "получение",
+      "rebase": "rebase",
+      "rebaseOnto": "rebase {branch} на {base}"
+    },
+    "pushFailed": "Не удалось отправить",
+    "rebasedAndPushed": "Сделан rebase и отправлено.",
+    "switchedTo": "Переключено на {name}.",
+    "switchFailed": "Не удалось переключить.",
+    "switchedToCarried": "Переключено на {name} (изменения перенесены).",
+    "alreadyUpToDate": "Уже актуально.",
+    "merged": "Слито {upstream} ({n} файлов).",
+    "rebaseNotConverge": "Rebase не сошёлся — устраните вручную.",
+    "rebased": "Сделан rebase.",
+    "rebasedResolved": {
+      "one": "Сделан rebase (устранён {n} файл).",
+      "few": "Сделан rebase (устранено {n} файла).",
+      "many": "Сделан rebase (устранено {n} файлов).",
+      "other": "Сделан rebase (устранено {n} файлов)."
+    },
+    "detachedHead": "Синхронизация невозможна: отсоединённый HEAD. Сначала переключитесь на ветку.",
+    "publishFailed": "Не удалось опубликовать.",
+    "noRemote": "Удалённый не настроен. Добавьте один, чтобы опубликовать эту ветку.",
+    "failed": "сбой"
+  },
+  "constellation": {
+    "axisStructure": "СТРУКТУРА",
+    "axisCoChange": "СОВМ. ИЗМЕНЕНИЯ",
+    "axisSpectralProfile": "СПЕКТРАЛЬНЫЙ ПРОФИЛЬ",
+    "axisPathSiblings": "РОДИЧИ ПО ПУТИ",
+    "axisDiffStructure": "СТРУКТУРА DIFF",
+    "axisSpectral": "СПЕКТРАЛЬНЫЙ",
+    "titleUnsorted": "БЕЗ СОРТИРОВКИ",
+    "titleSingleton": "ОДИНОЧКА",
+    "titleMixed": "СМЕШАННЫЙ",
+    "untie": "развязать",
+    "bind": "связать",
+    "emptyClusters": "пока нет кластеров"
+  }
+}

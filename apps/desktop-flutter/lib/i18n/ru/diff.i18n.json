@@ -1,0 +1,151 @@
+{
+  "@@locale": "ru",
+  "status": {
+    "loadingTitle": "Загрузка diff",
+    "loadingMessage": "Читаю изменения файла.",
+    "unavailableTitle": "Diff недоступен",
+    "noChangesTitle": "Нет изменений",
+    "noChangesMessage": "У этого файла нет содержимого diff для показа."
+  },
+  "toolbar": {
+    "searchHint": "поиск по diff...",
+    "lineCount": {
+      "one": "{n} строка",
+      "few": "{n} строки",
+      "many": "{n} строк",
+      "other": "{n} строк"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "износ · вкл",
+    "wearMapOnHint": "карта износа вкл — нажмите, чтобы скрыть",
+    "wearMapOffHint": "показать карту износа (тепловая карта активности)",
+    "trailBadge": "· след"
+  },
+  "hunkDropdown": {
+    "tooltip": "Перейти к блоку изменений. Git называет их ханками.",
+    "changeCount": {
+      "one": "{n} изменение",
+      "few": "{n} изменения",
+      "many": "{n} изменений",
+      "other": "{n} изменений"
+    }
+  },
+  "stagingFailed": "Не удалось частично проиндексировать: {error}",
+  "trail": {
+    "loading": "загрузка следа...",
+    "noHistory": "история не найдена",
+    "nowWorkingCopy": "сейчас · рабочая копия",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "загрузка закреплённого контекста",
+    "pageManifold": "Manifold",
+    "pageSignals": "Сигналы",
+    "echoesTitle": "Отголоски",
+    "technicalLedger": "Технический реестр",
+    "noSecondaryCues": "Вторичные признаки не обнаружены.",
+    "linkedPaths": "Связанные пути",
+    "moreCount": "+{n} ещё",
+    "localSeam": "Локальный шов",
+    "sharedOwnership": "совместное владение",
+    "historyWarmingUp": "История прогревается",
+    "echoesTotal": "{n} ВСЕГО",
+    "noEchoes": "В этом diff отголосков нет.",
+    "openRelatedFile": "Открыть связанный файл {name}",
+    "inspectFile": "изучить {name}",
+    "jumpEcho": "к отголоску",
+    "copyLine": "копировать строку",
+    "signalTempo": "Т",
+    "signalNovelty": "Н",
+    "signalReach": "О",
+    "tempo": {
+      "hotOwnerLane": "Недавнее движение с одним сильным владельцем поблизости.",
+      "activeSeam": "Недавнее движение от нескольких рук поблизости.",
+      "stableOwnerLane": "Долгоживущая дорожка с одним доминирующим владельцем.",
+      "sharedLongLivedSeam": "Общий шов, накопившийся со временем.",
+      "sharedLane": "Общая дорожка без единственного доминирующего владельца.",
+      "resolving": "История вокруг этой строки ещё проясняется."
+    },
+    "tone": {
+      "hot": "Горячо",
+      "novel": "Ново",
+      "contested": "Спорно",
+      "spreading": "Расходится",
+      "stable": "Стабильно"
+    },
+    "summary": {
+      "livesIn": "Живёт в {concept}",
+      "sitsInLocalSeam": "Расположен в локальном шве",
+      "workedMostlyBy": "в основном правил {owner} поблизости",
+      "echoesInSpots": {
+        "one": "отголосок в {n} другом месте",
+        "few": "отголоски в {n} других местах",
+        "many": "отголоски в {n} других местах",
+        "other": "отголоски в {n} других местах"
+      },
+      "inspectNext": "далее изучить {path}{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "плотная посадка",
+      "close": "тесная посадка",
+      "loose": "свободная посадка"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Почему это важно",
+    "storyConfidence": "Уверенность",
+    "storySecondarySignal": "Вторичный сигнал",
+    "storyNeighbourhood": "Окрестность",
+    "neighbourhoodDetail": "Эта строка расположена близко к {name} в текущем поле кодовой базы.",
+    "propagationLane": "Дорожка распространения",
+    "propagationLaneNamed": "Дорожка распространения: {lane}",
+    "witness": {
+      "nearbySupport": "Поддержка рядом · {label}",
+      "localizedMove": "Локальное движение · {label}",
+      "surprisingMove": "Неожиданное движение · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Стабильная структура",
+      "conflictingSignals": "Противоречивые сигналы",
+      "novelShape": "Новая форма"
+    },
+    "related": {
+      "testMirror": "Тест-зеркало",
+      "semanticHistorySibling": "Семантический и исторический родич",
+      "recentCoChange": "Недавнее совместное изменение",
+      "semanticSibling": "Семантический родич",
+      "relatedStructure": "Связанная структура",
+      "tightlyBound": "тесно связан",
+      "orbiting": "на орбите",
+      "weaklyCoupled": "слабо связан",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "след истории",
+      "testMirrorLane": "дорожка тест-зеркала",
+      "structuralLane": "структурная дорожка",
+      "semanticNeighbourhood": "семантическая окрестность"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} скрыто",
+    "landing": "посадка"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} МБ (слишком велик для превью)",
+    "unableToLoadBlob": "Не удалось загрузить blob",
+    "omittedKindMedia": "медиа",
+    "omittedKindBinary": "бинарный",
+    "omittedStub": "{kind} · скрыт"
+  },
+  "media": {
+    "unableToDecodeImage": "Не удалось декодировать изображение",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "добавлено",
+    "stateDeleted": "удалено",
+    "stateModified": "изменено",
+    "fallbackFormatName": "Бинарный"
+  }
+}

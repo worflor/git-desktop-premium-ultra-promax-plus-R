@@ -1,0 +1,142 @@
+{
+  "@@locale": "ja",
+  "status": {
+    "loadingTitle": "差分を読み込み中",
+    "loadingMessage": "ファイルの変更を読み込んでいます。",
+    "unavailableTitle": "差分を取得できません",
+    "noChangesTitle": "変更なし",
+    "noChangesMessage": "このファイルには表示する差分がありません。"
+  },
+  "toolbar": {
+    "searchHint": "差分を検索…",
+    "lineCount": {
+      "other": "{n} 行"
+    },
+    "blameLoading": "ブレーム…",
+    "blame": "ブレーム",
+    "wearMapOn": "摩耗 · オン",
+    "wearMapOnHint": "摩耗マップ表示中 — クリックで非表示",
+    "wearMapOffHint": "摩耗マップを表示（アクティビティのヒートマップ）",
+    "trailBadge": "· トレイル"
+  },
+  "hunkDropdown": {
+    "tooltip": "変更ブロックへジャンプ。Git ではこれをハンクと呼びます。",
+    "changeCount": {
+      "other": "{n} 件の変更"
+    }
+  },
+  "stagingFailed": "部分ステージに失敗しました：{error}",
+  "trail": {
+    "loading": "トレイルを読み込み中…",
+    "noHistory": "履歴が見つかりません",
+    "nowWorkingCopy": "現在 · 作業コピー",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "ピン留めした文脈を読み込み中",
+    "pageManifold": "マニフォールド",
+    "pageSignals": "シグナル",
+    "echoesTitle": "エコー",
+    "technicalLedger": "技術台帳",
+    "noSecondaryCues": "副次的な手がかりは検出されませんでした。",
+    "linkedPaths": "リンクされたパス",
+    "moreCount": "+{n} 件",
+    "localSeam": "ローカルの継ぎ目",
+    "sharedOwnership": "共有された所有",
+    "historyWarmingUp": "履歴を準備中",
+    "echoesTotal": "合計 {n} 件",
+    "noEchoes": "この差分にエコーはありません。",
+    "openRelatedFile": "関連ファイル {name} を開く",
+    "inspectFile": "{name} を検査",
+    "jumpEcho": "エコーへジャンプ",
+    "copyLine": "行をコピー",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "近くに強い所有者が一人いる、最近の動き。",
+      "activeSeam": "近くの複数の手による、最近の動き。",
+      "stableOwnerLane": "支配的な所有者が一人いる、長寿命のレーン。",
+      "sharedLongLivedSeam": "時間をかけて積み重なった、共有の継ぎ目。",
+      "sharedLane": "単独の支配的な所有者がいない、共有レーン。",
+      "resolving": "この行の周辺で履歴がまだ確定していません。"
+    },
+    "tone": {
+      "hot": "活発",
+      "novel": "新規",
+      "contested": "競合",
+      "spreading": "拡散",
+      "stable": "安定"
+    },
+    "summary": {
+      "livesIn": "{concept}に属します",
+      "sitsInLocalSeam": "ローカルの継ぎ目に位置します",
+      "workedMostlyBy": "近くで主に {owner} が手がけています",
+      "echoesInSpots": {
+        "other": "他 {n} 箇所にエコーします"
+      },
+      "inspectNext": "次に {path} を検査{detail}",
+      "inspectDetail": "（{reason}）"
+    },
+    "tightness": {
+      "tight": "密着",
+      "close": "近接",
+      "loose": "緩やか"
+    },
+    "conceptWithTightness": "{concept}（{tightness}）",
+    "storyWhyThisMatters": "なぜこれが重要か",
+    "storyConfidence": "確信度",
+    "storySecondarySignal": "副次シグナル",
+    "storyNeighbourhood": "近傍",
+    "neighbourhoodDetail": "この行は現在のコードベースフィールドで {name} の近くに位置します。",
+    "propagationLane": "伝播レーン",
+    "propagationLaneNamed": "伝播レーン：{lane}",
+    "witness": {
+      "nearbySupport": "近傍の裏付け · {label}",
+      "localizedMove": "局所的な動き · {label}",
+      "surprisingMove": "意外な動き · {label}"
+    },
+    "integrity": {
+      "stableStructure": "安定した構造",
+      "conflictingSignals": "相反するシグナル",
+      "novelShape": "新規の形状"
+    },
+    "related": {
+      "testMirror": "テストの鏡像",
+      "semanticHistorySibling": "意味＋履歴の兄弟",
+      "recentCoChange": "最近の共変更",
+      "semanticSibling": "意味的な兄弟",
+      "relatedStructure": "関連する構造",
+      "tightlyBound": "密に結合",
+      "orbiting": "周回中",
+      "weaklyCoupled": "弱く結合",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "履歴トレイル",
+      "testMirrorLane": "テスト鏡像レーン",
+      "structuralLane": "構造レーン",
+      "semanticNeighbourhood": "意味的近傍"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} 件非表示",
+    "landing": "着地"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB（大きすぎてプレビューできません）",
+    "unableToLoadBlob": "blob を読み込めません",
+    "omittedKindMedia": "メディア",
+    "omittedKindBinary": "バイナリ",
+    "omittedStub": "{kind} · 非表示"
+  },
+  "media": {
+    "unableToDecodeImage": "画像をデコードできません",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  （{sign}{delta}）",
+    "stateAdded": "追加",
+    "stateDeleted": "削除",
+    "stateModified": "変更",
+    "fallbackFormatName": "バイナリ"
+  }
+}

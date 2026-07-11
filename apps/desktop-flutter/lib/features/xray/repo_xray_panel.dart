@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/ai_activity_state.dart';
 import '../../app/ai_settings_state.dart';
+import '../../ui/format.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../backend/dtos.dart';
@@ -33,8 +34,12 @@ import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
+import '../../ui/repo_summary_text.dart'
+    show SlangRepoSummaryStrings, localizedRepoDocToMarkdown;
+import '../../ui/xray_card_text.dart' show SlangXrayCardStrings;
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
+import '../../i18n/gen/strings.g.dart';
 
 enum _XrayView { map, time, signals, summary }
 
@@ -103,7 +108,10 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       context.read<RepositoryXrayState>().invalidateAllExcept(repoPath);
-      context.read<RepositoryXrayState>().loadForRepo(repoPath);
+      context.read<RepositoryXrayState>().loadForRepo(
+            repoPath,
+            cardStrings: const SlangXrayCardStrings(),
+          );
     });
   }
 
@@ -130,23 +138,23 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     final error = xray.errorFor(repoPath);
     final snapshot = xray.snapshotFor(repoPath);
     if (snapshot == null && loading) {
-      return const AppStatusView.loading(
-        title: 'Building Repo X-Ray',
-        message: 'Probing Git history, refs, cadence, and hotspots.',
+      return AppStatusView.loading(
+        title: context.t.xray.loadingCard.buildingTitle,
+        message: context.t.xray.loadingCard.buildingMessage,
         compact: true,
       );
     }
     if (snapshot == null && error != null) {
       return AppStatusView.error(
-        title: 'Repo X-Ray unavailable',
+        title: context.t.xray.loadingCard.unavailableTitle,
         message: error,
         compact: true,
       );
     }
     if (snapshot == null) {
-      return const AppStatusView(
-        title: 'Repo X-Ray',
-        message: 'Open the panel again to probe the current repository.',
+      return AppStatusView(
+        title: context.t.xray.loadingCard.idleTitle,
+        message: context.t.xray.loadingCard.idleMessage,
         compact: true,
       );
     }
@@ -179,6 +187,7 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
             context.read<RepositoryXrayState>().loadForRepo(
                   repoPath,
                   forceRefresh: true,
+                  cardStrings: const SlangXrayCardStrings(),
                 );
           },
           onClose: widget.onClose,
@@ -517,7 +526,7 @@ class _Header extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          'Repo X-Ray',
+                          context.t.xray.header.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -530,7 +539,7 @@ class _Header extends StatelessWidget {
                       const SizedBox(width: 8),
                       _DenseBadge(
                         value: '${snapshot.header.dirtyFileCount}',
-                        label: 'dirty',
+                        label: context.t.xray.header.dirtyBadge,
                       ),
                     ],
                   ),
@@ -563,7 +572,7 @@ class _Header extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             _ChromeChip(
-              label: 'machine',
+              label: context.t.xray.header.machineChip,
               leading: Container(
                 width: 7,
                 height: 7,
@@ -581,14 +590,19 @@ class _Header extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             _MiniButton(
-              label: loading ? 'Refreshing...' : 'Refresh',
+              label: loading
+                  ? context.t.xray.header.refreshing
+                  : context.t.xray.header.refresh,
               icon: 'search',
               enabled: !loading,
               onTap: onRefresh,
             ),
             const SizedBox(width: 8),
             _MiniButton(
-                label: 'Close', icon: 'x', enabled: true, onTap: onClose),
+                label: context.t.common.close,
+                icon: 'x',
+                enabled: true,
+                onTap: onClose),
           ],
         );
 
@@ -693,25 +707,25 @@ class _ViewTabs extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         _TabChip(
-            label: 'Map',
+            label: context.t.xray.tabs.map,
             icon: 'app-logo',
             active: current == _XrayView.map,
             onTap: () => onChanged(_XrayView.map)),
         const SizedBox(width: 8),
         _TabChip(
-            label: 'Time',
+            label: context.t.xray.tabs.time,
             icon: 'history',
             active: current == _XrayView.time,
             onTap: () => onChanged(_XrayView.time)),
         const SizedBox(width: 8),
         _TabChip(
-            label: 'Signals',
+            label: context.t.xray.tabs.signals,
             icon: 'search',
             active: current == _XrayView.signals,
             onTap: () => onChanged(_XrayView.signals)),
         const SizedBox(width: 8),
         _TabChip(
-            label: 'Summary',
+            label: context.t.xray.tabs.summary,
             icon: 'repo-summary',
             active: current == _XrayView.summary,
             onTap: () => onChanged(_XrayView.summary)),
@@ -1007,7 +1021,8 @@ class _InspectorPanel extends StatelessWidget {
     switch (view) {
       case _XrayView.map:
         if (selectedHotspots.length > 1) {
-          inspectorTitle = '${selectedHotspots.length} selected';
+          inspectorTitle =
+              context.t.xray.inspector.selectedCount(n: selectedHotspots.length);
           inspectorAccent = t.accentBright;
         } else if (hotspot != null) {
           inspectorTitle = _shortPath(hotspot.path);
@@ -1234,32 +1249,33 @@ class _OverviewInspector extends StatelessWidget {
         ? rs.mergeCommitCount / si.filteredCommitCount
         : 0.0;
     final shapeHint = rs.mergeCommitCount == 0
-        ? 'linear'
+        ? context.t.xray.inspector.shapeLinear
         : linearRatio > 0.15
-            ? 'merge-heavy'
-            : 'mostly linear';
+            ? context.t.xray.inspector.shapeMergeHeavy
+            : context.t.xray.inspector.shapeMostlyLinear;
     final mergeLabel = rs.mergeCommitCount == 0
         ? ''
-        : ' · ${rs.mergeCommitCount} merge${rs.mergeCommitCount == 1 ? '' : 's'}';
+        : ' · ${context.t.xray.inspector.mergeCount(n: rs.mergeCommitCount)}';
 
     // Structure line: branches · remotes · tags
     final structParts = <String>[
-      '${rs.localBranchCount} branch${rs.localBranchCount == 1 ? '' : 'es'}',
+      context.t.common.branchCount(n: rs.localBranchCount),
       if (rs.remoteBranchCount > 0)
-        '${rs.remoteBranchCount} remote',
+        context.t.xray.inspector.remoteCount(n: rs.remoteBranchCount),
       if (rs.tagCount > 0)
-        '${rs.tagCount} tag${rs.tagCount == 1 ? '' : 's'}'
+        context.t.xray.inspector.tagCount(n: rs.tagCount)
       else
-        'no tags',
+        context.t.xray.inspector.noTags,
     ];
     final structLine = structParts.join(' · ');
 
     // Shape line: shape · worktrees · stashes
     final shapeParts = <String>[
       '$shapeHint$mergeLabel',
-      if (rs.worktreeCount > 1) '${rs.worktreeCount} worktrees',
+      if (rs.worktreeCount > 1)
+        context.t.xray.inspector.worktreeCount(n: rs.worktreeCount),
       if (rs.stashCount > 0)
-        '${rs.stashCount} stash${rs.stashCount == 1 ? '' : 'es'}',
+        context.t.xray.inspector.stashCount(n: rs.stashCount),
     ];
     final shapeLine = shapeParts.join(' · ');
 
@@ -1290,8 +1306,8 @@ class _OverviewInspector extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
               machineCount > 0
-                  ? 'human · $machineCount machine'
-                  : 'commits',
+                  ? context.t.xray.inspector.commitsHumanMachine(n: machineCount)
+                  : context.t.xray.inspector.commitsLabel,
               style: TextStyle(color: t.textMuted, fontSize: 11)),
         ],
       ),
@@ -1306,56 +1322,61 @@ class _OverviewInspector extends StatelessWidget {
       const SizedBox(height: 12),
 
       // Reference
-      _InspectorRow(label: 'branch', value: h.branch),
+      _InspectorRow(label: context.t.xray.inspector.branchLabel, value: h.branch),
       const SizedBox(height: 5),
-      _InspectorRow(label: 'head', value: h.headShortHash),
+      _InspectorRow(
+          label: context.t.xray.inspector.headLabel, value: h.headShortHash),
       if (rs.renameCommitCount > 0) ...[
         const SizedBox(height: 5),
         _InspectorRow(
-            label: 'renames', value: '${rs.renameCommitCount}'),
+            label: context.t.xray.inspector.renamesLabel,
+            value: '${rs.renameCommitCount}'),
       ],
       if (rs.noteCount > 0) ...[
         const SizedBox(height: 5),
-        _InspectorRow(label: 'notes', value: '${rs.noteCount}'),
+        _InspectorRow(
+            label: context.t.xray.inspector.notesLabel,
+            value: '${rs.noteCount}'),
       ],
 
       // Engine internals — full depth for power users
       const SizedBox(height: 14),
-      Text('engine', style: labelStyle),
+      Text(context.t.xray.inspector.engineSection, style: labelStyle),
       const SizedBox(height: 6),
       _InspectorRow(
-        label: 'gradient',
+        label: context.t.xray.inspector.gradientLabel,
         value: flow.gradientMass.toStringAsFixed(2),
       ),
       const SizedBox(height: 3),
       _InspectorRow(
-        label: 'curl',
+        label: context.t.xray.inspector.curlLabel,
         value: flow.curlMass.toStringAsFixed(2),
       ),
       const SizedBox(height: 3),
       _InspectorRow(
-        label: 'harmonic',
+        label: context.t.xray.inspector.harmonicLabel,
         value: flow.harmonicMass.toStringAsFixed(2),
       ),
       const SizedBox(height: 3),
       _InspectorRow(
-        label: 'stress',
+        label: context.t.xray.inspector.stressLabel,
         value: flow.structuralStress.toStringAsFixed(2),
       ),
       const SizedBox(height: 3),
       _InspectorRow(
-        label: 'confidence',
+        label: context.t.xray.inspector.confidenceLabel,
         value: flow.confidence.toStringAsFixed(2),
       ),
       if (si.hiddenRefCount > 0) ...[
         const SizedBox(height: 3),
         _InspectorRow(
-            label: 'hidden refs', value: '${si.hiddenRefCount}'),
+            label: context.t.xray.inspector.hiddenRefsLabel,
+            value: '${si.hiddenRefCount}'),
       ],
 
       const SizedBox(height: 14),
       Text(
-        'scanned ${_relativeTime(h.computedAt)}',
+        context.t.xray.inspector.scannedAt(time: relativeTimeCapped(h.computedAt)),
         style: TextStyle(
           color: t.textFaint,
           fontSize: 9.5,
@@ -1394,12 +1415,13 @@ class _SignalInspector extends StatelessWidget {
       ],
       if (card.primaryPath != null) ...[
         const SizedBox(height: 5),
-        _InspectorRow(label: 'path', value: card.primaryPath!),
+        _InspectorRow(
+            label: context.t.xray.inspector.pathLabel, value: card.primaryPath!),
       ],
       if (card.primaryCommitHash != null && onCommitSelected != null) ...[
         const SizedBox(height: 12),
         _MiniButton(
-            label: 'Open commit',
+            label: context.t.xray.inspector.openCommit,
             icon: 'history',
             enabled: true,
             onTap: () => onCommitSelected!(card.primaryCommitHash!)),
@@ -1443,12 +1465,12 @@ class _HotspotInspector extends StatelessWidget {
       const SizedBox(height: 12),
       Row(children: [
         _InspectorStat(
-            value: '${hotspot.touchCount}', label: 'touches'),
+            value: '${hotspot.touchCount}',
+            label: context.t.xray.stats.touches),
         const SizedBox(width: 20),
         _InspectorStat(
             value: '${hotspot.ownerCount}',
-            label:
-                'owner${hotspot.ownerCount == 1 ? '' : 's'}'),
+            label: context.t.xray.stats.owner(n: hotspot.ownerCount)),
       ]),
       if (hotspot.isKeystone) ...[
         const SizedBox(height: 10),
@@ -1457,8 +1479,9 @@ class _HotspotInspector extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             hotspot.keystoneScore == null
-                ? 'keystone'
-                : 'keystone  φ=${hotspot.keystoneScore!.toStringAsFixed(2)}',
+                ? context.t.xray.hotspot.keystone
+                : context.t.xray.hotspot.keystoneScore(
+                    score: hotspot.keystoneScore!.toStringAsFixed(2)),
             style: TextStyle(
               color: t.accentBright,
               fontSize: 9.5,
@@ -1470,14 +1493,15 @@ class _HotspotInspector extends StatelessWidget {
       ],
       const SizedBox(height: 10),
       _InspectorRow(
-          label: 'last touched', value: hotspot.lastTouchedAt),
+          label: context.t.xray.stats.lastTouched,
+          value: hotspot.lastTouchedAt),
       if (aliveRatio < 0.95)
         _InspectorRow(
-            label: 'alive',
+            label: context.t.xray.stats.alive,
             value: '${(aliveRatio * 100).round()}%'),
       if (communityPeers.isNotEmpty) ...[
         const SizedBox(height: 12),
-        Text('cluster peers',
+        Text(context.t.xray.hotspot.clusterPeers,
             style: TextStyle(
               color: t.textFaint,
               fontSize: 9,
@@ -1516,7 +1540,7 @@ class _HotspotInspector extends StatelessWidget {
       ],
       if (hotspot.coupledTo.isNotEmpty) ...[
         const SizedBox(height: 12),
-        Text('co-changers',
+        Text(context.t.xray.hotspot.coChangers,
             style: TextStyle(
               color: t.textFaint,
               fontSize: 9,
@@ -1555,7 +1579,7 @@ class _HotspotInspector extends StatelessWidget {
       if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
         const SizedBox(height: 12),
         _MiniButton(
-            label: hotspot.latestShortHash ?? 'Open commit',
+            label: hotspot.latestShortHash ?? context.t.xray.inspector.openCommit,
             icon: 'history',
             enabled: true,
             onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
@@ -1592,21 +1616,22 @@ class _MultiHotspotInspector extends StatelessWidget {
     // Prose summary of coupling + community structure
     final couplingParts = <String>[
       if (internalCoupled.isNotEmpty)
-        '${internalCoupled.length} mutual',
-      if (externalCount > 0) '$externalCount external',
+        context.t.xray.multi.mutualCount(n: internalCoupled.length),
+      if (externalCount > 0)
+        context.t.xray.multi.externalCount(n: externalCount),
     ];
     final communityLabel = communities.length == 1
-        ? 'cluster ${communities.first}'
+        ? context.t.xray.multi.clusterSingle(id: communities.first)
         : communities.length > 1
-            ? '${communities.length} clusters'
+            ? context.t.xray.multi.clusterCount(n: communities.length)
             : null;
 
     return ListView(children: [
       Row(children: [
-        _InspectorStat(value: '$totalTouches', label: 'touches'),
+        _InspectorStat(value: '$totalTouches', label: context.t.xray.stats.touches),
         const SizedBox(width: 20),
         _InspectorStat(
-            value: '${hotspots.length}', label: 'files'),
+            value: '${hotspots.length}', label: context.t.xray.stats.files),
       ]),
       if (couplingParts.isNotEmpty || communityLabel != null) ...[
         const SizedBox(height: 10),
@@ -1614,7 +1639,7 @@ class _MultiHotspotInspector extends StatelessWidget {
           [
             if (communityLabel != null) communityLabel,
             if (couplingParts.isNotEmpty)
-              '${couplingParts.join(' · ')} coupling',
+              context.t.xray.multi.couplingSuffix(parts: couplingParts.join(' · ')),
           ].join(' · '),
           style: TextStyle(
             color: t.chromeAccent,
@@ -1687,18 +1712,19 @@ class _StratumInspector extends StatelessWidget {
       const SizedBox(height: 12),
       Row(children: [
         _InspectorStat(
-            value: '${stratum.touchCount}', label: 'touches'),
+            value: '${stratum.touchCount}', label: context.t.xray.stats.touches),
         const SizedBox(width: 20),
         _InspectorStat(
             value: '${stratum.ownerCount}',
-            label: 'owner${stratum.ownerCount == 1 ? '' : 's'}'),
+            label: context.t.xray.stats.owner(n: stratum.ownerCount)),
       ]),
       const SizedBox(height: 6),
       _InspectorRow(
-          label: 'last touched', value: stratum.lastTouchedAt),
+          label: context.t.xray.stats.lastTouched,
+          value: stratum.lastTouchedAt),
       if (stratum.aliveRatio < 0.95)
         _InspectorRow(
-            label: 'alive',
+            label: context.t.xray.stats.alive,
             value: '${(stratum.aliveRatio * 100).round()}%'),
     ]);
   }
@@ -1761,7 +1787,7 @@ class _PivotInspector extends StatelessWidget {
                 fontFamily: AppFonts.mono)),
         const SizedBox(width: 10),
         Text(
-            '${pivot.filesChanged} file${pivot.filesChanged == 1 ? '' : 's'}',
+            context.t.common.fileCount(n: pivot.filesChanged),
             style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
@@ -1770,7 +1796,7 @@ class _PivotInspector extends StatelessWidget {
       if (onCommitSelected != null) ...[
         const SizedBox(height: 14),
         _MiniButton(
-            label: 'Open commit',
+            label: context.t.xray.inspector.openCommit,
             icon: 'history',
             enabled: true,
             onTap: () => onCommitSelected!(pivot.commitHash)),
@@ -2031,8 +2057,10 @@ class _VerdictLine extends StatelessWidget {
             : t.accentBright;
     final pct = (verdict.canonicality * 100).round();
     return Tooltip(
-      message: '$a · $pct% canonical · '
-          '${(verdict.decisiveness * 100).round()}% decisive',
+      message: context.t.xray.verdict.tooltip(
+          archetype: a,
+          canonical: pct,
+          decisive: (verdict.decisiveness * 100).round()),
       waitDuration: const Duration(milliseconds: 400),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2061,7 +2089,7 @@ class _VerdictLine extends StatelessWidget {
           ),
           const SizedBox(width: 7),
           Text(
-            '$pct% canonical',
+            context.t.xray.verdict.canonical(pct: pct),
             style: TextStyle(
               color: t.textMuted,
               fontSize: 10.5,
@@ -2090,7 +2118,7 @@ class _MetabolismLine extends StatelessWidget {
     final tooltipParts = [
       if (trajectory.isNotEmpty) trajectory,
       '|λ|=${metabolism.spectralRadius.toStringAsFixed(2)}',
-      if (hl != null) '${hl.round()}d half-life',
+      if (hl != null) context.t.xray.metabolism.halfLife(n: hl.round()),
     ];
     return Tooltip(
       message: tooltipParts.join(' · '),
@@ -2585,11 +2613,11 @@ class _TerritoryBoard extends StatelessWidget {
     }
     String? recencyLabelOf(String iso) {
       final age = ageDaysFor(iso);
-      if (age < 1.5) return 'today';
-      if (age < 7) return '${age.round()}d';
-      if (age < 60) return '${(age / 7).round()}w';
-      if (age < 730) return '${(age / 30).round()}mo';
-      return '${(age / 365).round()}y';
+      if (age < 1.5) return context.t.xray.recency.today;
+      if (age < 7) return context.t.xray.recency.days(n: age.round());
+      if (age < 60) return context.t.xray.recency.weeks(n: (age / 7).round());
+      if (age < 730) return context.t.xray.recency.months(n: (age / 30).round());
+      return context.t.xray.recency.years(n: (age / 365).round());
     }
 
     // Map every hotspot to a parent stratum (or null = orphan)
@@ -2674,7 +2702,7 @@ class _TerritoryBoard extends StatelessWidget {
         accent: accent,
         value: h.touchCount.toDouble(),
         count: h.touchCount,
-        tagText: h.isKeystone ? 'keystone' : null,
+        tagText: h.isKeystone ? context.t.xray.hotspot.keystone : null,
         selected: selectedHotspotPaths.contains(h.path),
         isChild: isChild,
         onTap: ({bool additive = false}) =>
@@ -2733,7 +2761,7 @@ class _TerritoryBoard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              const _BoardHeader(label: 'Territory'),
+              _BoardHeader(label: context.t.xray.board.territory),
               const Spacer(),
               Text(
                 '${topLevel.length}',
@@ -2904,8 +2932,8 @@ class _TerritoryCell extends StatelessWidget {
           },
           child: Tooltip(
             message: '${parcel.label}  ·  ${parcel.count}×'
-                '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${parcel.observerCount} reviewer${parcel.observerCount == 1 ? '' : 's'}' : '  ·  unreviewed') : ''}'
-                '${parcel.isStranger ? '  ·  moves with another module' : ''}',
+                '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${context.t.xray.board.reviewerCount(n: parcel.observerCount!)}' : '  ·  ${context.t.xray.board.unreviewed}') : ''}'
+                '${parcel.isStranger ? '  ·  ${context.t.xray.board.movesWithModule}' : ''}',
             waitDuration: const Duration(milliseconds: 400),
             child: AnimatedContainer(
               duration: context.motion(context.surfaceShader.duration),
@@ -3363,7 +3391,8 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 child: Tooltip(
                   message: item.detail.isNotEmpty
                       ? item.detail
-                      : '${item.count}-day gap · ${item.label}',
+                      : context.t.xray.cadence
+                          .gapTooltip(n: item.count, label: item.label),
                   waitDuration: const Duration(milliseconds: 400),
                   child: Container(
                     decoration: BoxDecoration(
@@ -3494,7 +3523,8 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 child: Tooltip(
                   message: item.detail.isNotEmpty
                       ? item.detail
-                      : '${item.count} reflog events on ${item.label}',
+                      : context.t.xray.cadence
+                          .reflogTooltip(n: item.count, label: item.label),
                   waitDuration: const Duration(milliseconds: 400),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -3611,14 +3641,15 @@ class _BurstBucket {
       final item = items.first;
       return item.detail.isNotEmpty
           ? item.detail
-          : '${item.count} commits on ${item.label}';
+          : t.xray.cadence.burstTooltipSingle(n: item.count, label: item.label);
     }
     // Multi-day bucket — list per-day breakdown so the tooltip still
     // carries the full data under the coalesced bar.
     final lines = items
         .map((i) => '${i.label}: ${i.count}')
         .join('\n');
-    return '$sumCount commits · ${items.length} days\n$lines';
+    return t.xray.cadence
+        .burstTooltipMulti(sum: sumCount, days: items.length, lines: lines);
   }
 }
 
@@ -3903,29 +3934,35 @@ String _shortPath(String path) {
 
 String _compactCardTitle(String title) {
   final lower = title.toLowerCase();
-  if (lower.contains('hidden git namespaces')) return 'hidden refs';
-  if (lower.contains('machine history dominates')) return 'machine-heavy';
-  if (lower.contains('architecture migration')) return 'migration';
-  if (lower.contains('single-owner hotspot')) return 'single-owner';
-  if (lower.contains('no formal release/tag trail')) return 'no tags';
-  if (lower.contains('bursty development cadence')) return 'bursty';
-  if (lower.contains('branch model')) return 'branches';
+  if (lower.contains('hidden git namespaces')) return t.xray.cardTitle.hiddenRefs;
+  if (lower.contains('machine history dominates')) {
+    return t.xray.cardTitle.machineHeavy;
+  }
+  if (lower.contains('architecture migration')) return t.xray.cardTitle.migration;
+  if (lower.contains('single-owner hotspot')) {
+    return t.xray.cardTitle.singleOwner;
+  }
+  if (lower.contains('no formal release/tag trail')) {
+    return t.xray.cardTitle.noTags;
+  }
+  if (lower.contains('bursty development cadence')) return t.xray.cardTitle.bursty;
+  if (lower.contains('branch model')) return t.xray.cardTitle.branches;
   if (lower.contains('reflog') ||
       lower.contains('intense local editing')) {
-    return 'reflog';
+    return t.xray.cardTitle.reflog;
   }
   if (lower.contains('hotspot concentration') ||
       lower.contains('narrow')) {
-    return 'narrow hotspot';
+    return t.xray.cardTitle.narrowHotspot;
   }
   return title.toLowerCase();
 }
 
 String _compactStratumLabel(StratumRole role) {
   return switch (role) {
-    StratumRole.current => 'current',
-    StratumRole.legacy => 'legacy',
-    StratumRole.zone => 'repo zone',
+    StratumRole.current => t.xray.stratumLabel.current,
+    StratumRole.legacy => t.xray.stratumLabel.legacy,
+    StratumRole.zone => t.xray.stratumLabel.zone,
   };
 }
 
@@ -3980,23 +4017,8 @@ DateTime? _cadenceDateEnd(RepositoryXrayCadenceData item) {
 }
 
 String _fmtDateMD(DateTime date) {
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
+  final months = t.common.time.monthAbbrevs;
   return '${months[date.month - 1]} ${date.day}';
-}
-
-String _relativeTime(String iso) {
-  final d = DateTime.tryParse(iso);
-  if (d == null) return iso;
-  final diff = DateTime.now().difference(d);
-  if (diff.isNegative) return 'just now';
-  if (diff.inSeconds < 45) return 'just now';
-  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-  if (diff.inHours < 24) return '${diff.inHours}h ago';
-  if (diff.inDays < 30) return '${diff.inDays}d ago';
-  return iso.length >= 10 ? iso.substring(0, 10) : iso;
 }
 
 String _fmtDateCompact(String isoDate) {
@@ -4004,10 +4026,7 @@ String _fmtDateCompact(String isoDate) {
   if (d == null) {
     return isoDate.length > 5 ? isoDate.substring(5) : isoDate;
   }
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
+  final months = t.common.time.monthAbbrevs;
   return '${months[d.month - 1]} ${d.day}';
 }
 
@@ -4146,8 +4165,9 @@ class _TrajectorySectionState extends State<_TrajectorySection> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionHeader(
-              label: 'Structural trajectory', hint: 'reading history…'),
+          _SectionHeader(
+              label: context.t.xray.trajectory.title,
+              hint: context.t.xray.trajectory.readingHint),
           const SizedBox(height: 8),
           Container(
             height: 4,
@@ -4184,9 +4204,9 @@ class _TrajectorySectionState extends State<_TrajectorySection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _SectionHeader(
-          label: 'Structural trajectory',
-          hint: '${model.stepCount} snapshots'
-              '${findings.isEmpty ? '' : ' · ${findings.length} events'}',
+          label: context.t.xray.trajectory.title,
+          hint: '${context.t.xray.trajectory.snapshots(n: model.stepCount)}'
+              '${findings.isEmpty ? '' : ' · ${context.t.xray.trajectory.events(n: findings.length)}'}',
         ),
         const SizedBox(height: 8),
         Row(
@@ -4194,7 +4214,7 @@ class _TrajectorySectionState extends State<_TrajectorySection> {
             _Sparkline(
                 values: spark, color: t.accentBright, width: 96, height: 14),
             const SizedBox(width: 8),
-            Text('connectivity',
+            Text(context.t.xray.trajectory.connectivity,
                 style: TextStyle(
                   color: t.textFaint,
                   fontSize: 10.5,
@@ -4211,14 +4231,14 @@ class _TrajectorySectionState extends State<_TrajectorySection> {
             ),
         ] else ...[
           const SizedBox(height: 8),
-          Text('Steady — no structural events in this window.',
+          Text(context.t.xray.trajectory.steady,
               style: TextStyle(color: t.textMuted, fontSize: 11)),
         ],
         const SizedBox(height: 4),
         Align(
           alignment: Alignment.centerLeft,
           child: _MiniButton(
-            label: 'Open in Orrery',
+            label: context.t.xray.trajectory.openInOrrery,
             icon: 'history',
             enabled: true,
             onTap: _openOrrery,
@@ -4317,8 +4337,10 @@ class _RingsSectionState extends State<_RingsSection> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _SectionHeader(
-              label: 'Growth rings',
-              hint: _loading ? 'reading structure…' : 'unavailable'),
+              label: context.t.xray.rings.title,
+              hint: _loading
+                  ? context.t.xray.rings.readingHint
+                  : context.t.xray.rings.unavailable),
           if (_loading) ...[
             const SizedBox(height: 8),
             Container(
@@ -4354,14 +4376,15 @@ class _RingsSectionState extends State<_RingsSection> {
       ..sort((a, b) => b.tau.compareTo(a.tau));
 
     final hint = scales.isEmpty
-        ? (profile.scaleInvariant ? 'self-similar' : 'one blended structure')
-        : '${scales.length} scale${scales.length == 1 ? '' : 's'}'
-            '${history.events.isEmpty ? '' : ' · ${history.events.length} shift'
-                '${history.events.length == 1 ? '' : 's'} in history'}';
+        ? (profile.scaleInvariant
+            ? context.t.xray.rings.hintSelfSimilar
+            : context.t.xray.rings.hintOneBlended)
+        : '${context.t.xray.rings.scaleCount(n: scales.length)}'
+            '${history.events.isEmpty ? '' : ' · ${context.t.xray.rings.shiftInHistory(n: history.events.length)}'}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionHeader(label: 'Growth rings', hint: hint),
+        _SectionHeader(label: context.t.xray.rings.title, hint: hint),
         if (profile.specificHeat.length > 2) ...[
           const SizedBox(height: 10),
           // The scale spectrum — the network specific heat C(τ) across diffusion
@@ -4376,7 +4399,7 @@ class _RingsSectionState extends State<_RingsSection> {
                 height: 16,
               ),
               const SizedBox(width: 8),
-              Text('scale spectrum',
+              Text(context.t.xray.rings.scaleSpectrum,
                   style: TextStyle(
                     color: t.textFaint,
                     fontSize: 10.5,
@@ -4389,8 +4412,8 @@ class _RingsSectionState extends State<_RingsSection> {
         if (scales.isEmpty)
           Text(
             profile.scaleInvariant
-                ? 'Self-similar — structure repeats across scales, with no single characteristic level.'
-                : 'One blended structure — no separable module scales resolve yet.',
+                ? context.t.xray.rings.selfSimilarBody
+                : context.t.xray.rings.oneBlendedBody,
             style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
           )
         else
@@ -4406,9 +4429,9 @@ class _RingsSectionState extends State<_RingsSection> {
         if (history.events.isNotEmpty) ...[
           const SizedBox(height: 14),
           _SectionSubHeader(
-              label: 'Over history',
-              hint: '${history.events.length} structural shift'
-                  '${history.events.length == 1 ? '' : 's'}'),
+              label: context.t.xray.rings.overHistory,
+              hint: context.t.xray.rings
+                  .structuralShiftCount(n: history.events.length)),
           const SizedBox(height: 6),
           for (final e in history.events)
             Padding(
@@ -4421,10 +4444,10 @@ class _RingsSectionState extends State<_RingsSection> {
   }
 
   String _grainLabel(int index, int total) {
-    if (total == 1) return 'one characteristic scale';
-    if (index == 0) return 'coarsest — top-level modules';
-    if (index == total - 1) return 'finest grain';
-    return 'mid grain';
+    if (total == 1) return context.t.xray.grain.oneCharacteristic;
+    if (index == 0) return context.t.xray.grain.coarsest;
+    if (index == total - 1) return context.t.xray.grain.finest;
+    return context.t.xray.grain.mid;
   }
 }
 
@@ -4477,7 +4500,8 @@ class _ScaleRow extends StatelessWidget {
               fontWeight: FontWeight.w700,
             )),
         const SizedBox(width: 4),
-        Text('parts', style: TextStyle(color: t.textMuted, fontSize: 11)),
+        Text(context.t.xray.rings.parts,
+            style: TextStyle(color: t.textMuted, fontSize: 11)),
         const SizedBox(width: 8),
         Expanded(
           child: Text(grain,
@@ -4505,8 +4529,8 @@ class _ScaleEventRow extends StatelessWidget {
         ? event.timestamp.toIso8601String().substring(0, 10)
         : null;
     final label = emerged
-        ? 'a structural scale emerged'
-        : 'a structural scale dissolved';
+        ? context.t.xray.rings.scaleEmerged
+        : context.t.xray.rings.scaleDissolved;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4683,7 +4707,11 @@ class _SummaryViewState extends State<_SummaryView> {
       final rootToken = RootIsolateToken.instance!;
       final doc = await compute<_SummaryJob, rs.RepoDoc>(
         _runSummaryJob,
-        _SummaryJob(rootToken: rootToken, repoPath: repoPath),
+        _SummaryJob(
+          rootToken: rootToken,
+          repoPath: repoPath,
+          localeTag: LocaleSettings.currentLocale.languageTag,
+        ),
       );
       if (!mounted) return;
       if (widget.repoPath != repoPath) {
@@ -4692,7 +4720,7 @@ class _SummaryViewState extends State<_SummaryView> {
       }
       setState(() {
         _doc = doc;
-        _markdown = repoDocToMarkdown(doc);
+        _markdown = localizedRepoDocToMarkdown(doc);
         _generating = false;
       });
       _pushState();
@@ -4703,7 +4731,7 @@ class _SummaryViewState extends State<_SummaryView> {
         return;
       }
       setState(() {
-        _error = 'Analysis failed: $e';
+        _error = context.t.xray.summary.analysisFailed(error: '$e');
         _generating = false;
       });
       _pushState();
@@ -4715,9 +4743,9 @@ class _SummaryViewState extends State<_SummaryView> {
     if (md == null) return;
     await Clipboard.setData(ClipboardData(text: md));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('Summary copied to clipboard.'),
-      duration: Duration(seconds: 2),
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(context.t.xray.summary.copied),
+      duration: const Duration(seconds: 2),
     ));
   }
 
@@ -4727,7 +4755,7 @@ class _SummaryViewState extends State<_SummaryView> {
     final defaultName = '${_doc?.repoName ?? 'repo'}-summary.md';
     try {
       final path = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save repository summary',
+        dialogTitle: context.t.xray.summary.saveDialogTitle,
         fileName: defaultName,
         type: FileType.custom,
         allowedExtensions: const ['md'],
@@ -4736,13 +4764,13 @@ class _SummaryViewState extends State<_SummaryView> {
       await File(path).writeAsString(md);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Saved to $path'),
+        content: Text(context.t.xray.summary.savedTo(path: path)),
         duration: const Duration(seconds: 3),
       ));
     } on Object catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Save failed: $e'),
+        content: Text(context.t.xray.summary.saveFailed(error: '$e')),
         duration: const Duration(seconds: 4),
       ));
     }
@@ -4760,9 +4788,9 @@ class _SummaryViewState extends State<_SummaryView> {
     final categoryId = aiSettings.presentModelCategoryId;
     final modelValue = aiSettings.modelSelections[categoryId] ?? '';
     if (modelValue.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('No AI model configured.'),
-        duration: Duration(seconds: 3),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(context.t.xray.summary.noModel),
+        duration: const Duration(seconds: 3),
       ));
       return;
     }
@@ -4942,7 +4970,7 @@ class _SummaryViewState extends State<_SummaryView> {
     final defaultName = '${_doc?.repoName ?? 'repo'}-presentation.html';
     try {
       final path = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save presentation',
+        dialogTitle: context.t.xray.summary.savePresentationDialogTitle,
         fileName: defaultName,
         type: FileType.custom,
         allowedExtensions: const ['html'],
@@ -4951,13 +4979,13 @@ class _SummaryViewState extends State<_SummaryView> {
       await File(path).writeAsString(html);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Saved to $path'),
+        content: Text(context.t.xray.summary.savedTo(path: path)),
         duration: const Duration(seconds: 3),
       ));
     } on Object catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Save failed: $e'),
+        content: Text(context.t.xray.summary.saveFailed(error: '$e')),
         duration: const Duration(seconds: 4),
       ));
     }
@@ -5033,7 +5061,7 @@ class _SummaryViewState extends State<_SummaryView> {
             ),
             const SizedBox(height: 10),
             Text(
-              'Reading the repo and clustering features…',
+              context.t.xray.summary.generating,
               style: TextStyle(color: t.textMuted, fontSize: 12),
             ),
           ],
@@ -5056,7 +5084,7 @@ class _SummaryViewState extends State<_SummaryView> {
     if (md == null) {
       return Center(
         child: Text(
-          'Run Logos analysis to map this repository\'s structure and regions.\n(tw: slop rn)',
+          context.t.xray.summary.emptyState,
           style: TextStyle(color: t.textMuted, fontSize: 12),
           textAlign: TextAlign.center,
         ),
@@ -5160,27 +5188,31 @@ class _SummaryToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final submitLabel = presenting
-        ? 'presenting with $presentCategoryLabel…'
-        : 'present with $presentCategoryLabel';
+        ? context.t.xray.summary.presentingWith(label: presentCategoryLabel)
+        : context.t.xray.summary.presentWith(label: presentCategoryLabel);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
       child: Row(
         children: [
           _SummaryActionButton(
-            label: hasDoc ? 'Re-analyze' : 'Analyze',
+            label: hasDoc
+                ? context.t.xray.summary.reanalyze
+                : context.t.xray.summary.analyze,
             icon: 'sync',
             primary: true,
             loading: generating,
             onTap: generating ? null : onGenerate,
           ),
           const SizedBox(width: 6),
-          _SummaryActionButton(label: 'Copy', icon: 'check', onTap: onCopy),
+          _SummaryActionButton(
+              label: context.t.common.copy, icon: 'check', onTap: onCopy),
           const SizedBox(width: 6),
-          _SummaryActionButton(label: 'Save', icon: 'fetch', onTap: onSave),
+          _SummaryActionButton(
+              label: context.t.common.save, icon: 'fetch', onTap: onSave),
           if (hasPresentation && presentMode) ...[
             const SizedBox(width: 6),
             _SummaryActionButton(
-              label: 'Download',
+              label: context.t.xray.summary.download,
               icon: 'fetch',
               onTap: onDownloadPresentation,
             ),
@@ -5188,7 +5220,7 @@ class _SummaryToolbar extends StatelessWidget {
           const Spacer(),
           if (presentMode) ...[
             _SummaryActionButton(
-              label: 'Exit',
+              label: context.t.xray.summary.exit,
               icon: 'check',
               onTap: onPresentDismiss,
             ),
@@ -5199,7 +5231,7 @@ class _SummaryToolbar extends StatelessWidget {
                 child: AppTextField(
                   controller: presentController,
                   focusNode: presentFocusNode,
-                  hintText: 'direction',
+                  hintText: context.t.xray.summary.directionHint,
                   height: 28,
                   fontSize: 11.5,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -5230,8 +5262,8 @@ class _SummaryToolbar extends StatelessWidget {
           ] else ...[
             _SummaryActionButton(
               label: !hasModel
-                  ? 'no AI model configured'
-                  : 'present with $presentCategoryLabel',
+                  ? context.t.xray.summary.noModelConfigured
+                  : context.t.xray.summary.presentWith(label: presentCategoryLabel),
               icon: 'push',
               onTap: onPresentTap,
             ),
@@ -5314,9 +5346,18 @@ class _SummaryActionButton extends StatelessWidget {
 /// channels so `runGit`, diagnostics writers, and path-provider
 /// calls all succeed from inside `compute`.
 class _SummaryJob {
-  const _SummaryJob({required this.rootToken, required this.repoPath});
+  const _SummaryJob({
+    required this.rootToken,
+    required this.repoPath,
+    required this.localeTag,
+  });
   final RootIsolateToken rootToken;
   final String repoPath;
+
+  /// Viewer's locale tag, forwarded so the background isolate renders the
+  /// summary's baked prose (region bodies, pitch, shape) in the same
+  /// locale the main isolate will render the assembled chrome in.
+  final String localeTag;
 }
 
 /// Top-level worker entry for `compute`. Initialises the binary
@@ -5325,6 +5366,13 @@ class _SummaryJob {
 /// background isolate.
 Future<rs.RepoDoc> _runSummaryJob(_SummaryJob job) async {
   BackgroundIsolateBinaryMessenger.ensureInitialized(job.rootToken);
-  return generateRepoSummary(job.repoPath);
+  // Fresh isolate: slang's locale state initialises to base (English).
+  // Adopt the viewer's locale so the synthesised prose baked into the
+  // doc matches the chrome the main isolate localizes on return.
+  LocaleSettings.setLocaleRawSync(job.localeTag);
+  return generateRepoSummary(
+    job.repoPath,
+    strings: const SlangRepoSummaryStrings(),
+  );
 }
 

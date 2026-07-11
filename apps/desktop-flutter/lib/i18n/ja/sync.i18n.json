@@ -1,0 +1,51 @@
+{
+  "@@locale": "ja",
+  "actions": {
+    "syncLabel": "同期",
+    "syncOpenRepoDetail": "リポジトリを開いてプッシュ・プル操作を管理します。",
+    "detachedHeadLabel": "分離 HEAD",
+    "detachedHeadDetail": "プッシュ・プルの前にブランチをチェックアウトしてください。",
+    "publishBranchLabel": "ブランチを公開",
+    "publishBranchDetail": "{branch}をプッシュして上流の追跡ブランチを設定します。",
+    "publishButtonLabel": "公開",
+    "syncBranchLabel": "ブランチを同期",
+    "syncBranchDetail": "{behindCount}をリベースでプルしてから{aheadCount}をプッシュします。",
+    "syncBranchButtonLabel": "プル（リベース）してプッシュ",
+    "pushBranchLabel": "ブランチをプッシュ",
+    "pushBranchDetail": "{count}を{upstream}へプッシュします。",
+    "pushBranchButtonLabel": "コミットをプッシュ",
+    "pullUpdatesLabel": "更新をプル",
+    "pullUpdatesDetail": "{count}を{upstream}からプルします。",
+    "syncUpToDateDetail": "{upstream}からフェッチして上流の状態を更新します。"
+  },
+  "panel": {
+    "loadingTitle": "リモートの状態を読み込み中",
+    "loadingMessage": "ブランチの追跡情報を確認しています。",
+    "remoteStatusUnavailable": "リモートの状態を取得できません",
+    "noUpstream": "上流なし",
+    "aheadLabel": "先行",
+    "behindLabel": "遅延",
+    "treeLabel": "ツリー",
+    "runningSync": "同期を実行中…",
+    "fetching": "フェッチ中…",
+    "fetchOnly": "フェッチのみ",
+    "syncFailed": "同期に失敗しました",
+    "forcePushRecoveryLabel": "強制プッシュ（リース付き）",
+    "conflictsToResolveTitle": "解決が必要なコンフリクト",
+    "conflictsToResolveBody": "{count} 件の解決が必要です：{list}",
+    "resolveConflicts": "コンフリクトを解決",
+    "workingEllipsis": "処理中…",
+    "lastActivity": "最終アクティビティ：{operation}",
+    "noOutput": "出力なし。",
+    "resolvedConflicts": "{count} 件解決しました。",
+    "cancelledUnchanged": "キャンセルしました。作業ツリーは変更されていません。",
+    "uncommittedEditsBlocked": "{count} 件に未コミットの編集があります。リベース同期するには先にコミットしてください（{list}）。",
+    "noUpstreamForForcePush": "強制プッシュできません：「{branch}」に上流が設定されていません。"
+  },
+  "forcePush": {
+    "confirmTitle": "強制プッシュ（リース付き）しますか？",
+    "target": "対象：{remote}/{branch}",
+    "warning": "リモートブランチをローカルの履歴で書き換えます。リース付きなので、前回のフェッチ以降に誰かがリモートへプッシュしていれば中止されますが、すでにフェッチ済みの変更は上書きされます。ブランチが分岐するリベースやアメンドを意図したときにのみ使用してください。",
+    "confirmButton": "強制プッシュ"
+  }
+}

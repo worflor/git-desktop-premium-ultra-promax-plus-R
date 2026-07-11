@@ -1,0 +1,201 @@
+{
+  "active": "actif",
+  "prefixes": {
+    "askHint": "ask : [question]",
+    "nearHint": "near : [fichier]",
+    "whoHint": "who : [fichier]",
+    "logHint": "log : [message]",
+    "runHint": "run : [outil]",
+    "askLabel": "Demander à {name} : {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} relecteurs · {touches} touches",
+    "whoTouchesLabel": "{name} — {touches} touches",
+    "whoTouchesSubtitle": "{path} · aucun relecteur enregistré"
+  },
+  "chips": {
+    "ai": "IA",
+    "near": "PROCHE",
+    "who": "QUI",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DÉBOG",
+    "alpha": "ALPHA",
+    "hot": "CHAUD",
+    "key": "CLÉ",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "BROUILLON",
+    "undo": "ANNULER",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "BUREAU",
+    "det": "DÉT",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "PARTIE",
+    "remote": "DISTANT",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% d'élan"
+  },
+  "topTouched": {
+    "subtitle": "{count} touches · {path}"
+  },
+  "coherence": {
+    "label": "Cohérence indexée : {percent}%",
+    "subtitle": "{count} fichiers"
+  },
+  "keystone": {
+    "subtitle": "{path} · clé de voûte {score}"
+  },
+  "repoSub": {
+    "changes": "Modifications dans {name}",
+    "history": "Historique dans {name}",
+    "branches": "Branches dans {name}",
+    "terminal": "Terminal dans {name}",
+    "generateCommit": "Générer un commit · {name}",
+    "reviewChanges": "Relire les modifications dans {name}",
+    "muse": "Muse dans {name}"
+  },
+  "desks": {
+    "mainWorktree": "arbre de travail principal",
+    "detached": "détachée",
+    "dirty": "{count} sales"
+  },
+  "actions": {
+    "openInBrowser": "Ouvrir dans le navigateur",
+    "terminal": "Terminal",
+    "revealInFiles": "Afficher dans les fichiers",
+    "copyPath": "Copier le chemin",
+    "copyBranch": "Copier la branche"
+  },
+  "tools": {
+    "launch": "Lancer {label}"
+  },
+  "gitCommands": {
+    "fetch": "Récupérer",
+    "pull": "Tirer",
+    "pullBehind": "{count} en retard",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Pousser",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
+    "pushCommitsUpstream": "{commits} vers {upstream}",
+    "forcePush": "Poussée forcée",
+    "forcePushNoUpstream": "Impossible de forcer la poussée : aucun amont défini pour {branch}.",
+    "commit": "Valider",
+    "stageAll": "Tout indexer",
+    "unstageAll": "Tout désindexer",
+    "discardAll": "Tout abandonner",
+    "createBranch": "Créer une branche",
+    "deleteBranch": "Supprimer la branche",
+    "renameBranch": "Renommer la branche",
+    "stash": "Remiser",
+    "stashPop": "Dépiler le remisage",
+    "stashApply": "Appliquer le remisage",
+    "stashDrop": "Supprimer le remisage",
+    "createTag": "Créer une étiquette",
+    "cherryPick": "Picorer",
+    "revert": "Annuler",
+    "stashConflictMessage": "Remisage appliqué avec des conflits. Résolvez-les sur la page Modifications."
+  },
+  "pr": {
+    "create": "Créer une PR",
+    "merge": "Fusionner la PR",
+    "markReady": "Marquer la PR prête"
+  },
+  "ai": {
+    "generateCommit": "Générer un commit",
+    "reviewChanges": "Relire les modifications",
+    "runMuse": "Lancer la Muse",
+    "debugRepo": "Déboguer {name}",
+    "describeSymptom": "décrivez un symptôme",
+    "viewResult": "Voir {kind}",
+    "unseenResult": "résultat non vu",
+    "runningResult": "IA : {kind}…",
+    "running": "en cours",
+    "kindCommitMessage": "Message de commit",
+    "kindCodeReview": "Revue de code",
+    "kindMuseResult": "Résultat de la Muse",
+    "kindPresentation": "Présentation",
+    "kindDebugResult": "Résultat du débogage"
+  },
+  "undo": {
+    "cancel": "Annuler : {label}"
+  },
+  "navigation": {
+    "changes": "Modifications",
+    "history": "Historique",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "settings": "Paramètres",
+    "refresh": "Actualiser"
+  },
+  "settings": {
+    "reduceMotion": "Réduire les animations",
+    "animateLogoUnfocused": "Animer le logo hors focus",
+    "instantBlameHover": "Survol blame instantané",
+    "autoSelectChanges": "Sélection auto des modifications",
+    "fetchOnlineIssues": "Récupérer les tickets en ligne",
+    "rememberWip": "Mémoriser le travail en cours",
+    "hideAiFeatures": "Masquer les fonctions IA",
+    "crashReporting": "Rapports de plantage",
+    "aiReadOnly": "IA en lecture seule",
+    "stashCabinetExpanded": "Armoire de remisage déployée",
+    "fileSortInverted": "Tri des fichiers inversé"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "État du moteur",
+    "engineStatusSubtitle": "Diagnostics du moteur spectral LogosGit",
+    "fileCoupling": "Couplage de fichiers",
+    "fileCouplingSubtitle": "Voisins de co-changement les plus proches pour les fichiers indexés",
+    "themeSpecimen": "Spécimen de thème",
+    "themeSpecimenSubtitle": "Toutes les couleurs, icônes, niveaux de texte et géométrie"
+  },
+  "dev": {
+    "testMergeEditor": "Tester l'éditeur de fusion",
+    "testHistorySurgery": "Tester la chirurgie de l'historique",
+    "back": "retour",
+    "cancel": "annuler",
+    "buildingConflicts": "construction de conflits de test à partir de l'historique…"
+  },
+  "historySurgery": {
+    "label": "Chirurgie de l'historique",
+    "subtitle": "Réécrire l'historique pour supprimer définitivement des fichiers"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Parcourir l'histoire structurelle du dépôt à travers le manifold"
+  },
+  "command": {
+    "complete": "{label} terminé",
+    "failed": "{label} échoué : {message}",
+    "copy": "Copier"
+  },
+  "search": {
+    "hintDefault": "tout rechercher...",
+    "hintElevated": "élevé — toutes les actions",
+    "emptyTypeToSearch": "tapez pour rechercher",
+    "emptyNoResults": "aucun résultat"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "couplé"
+  },
+  "gitCache": {
+    "current": "actuel",
+    "staged": "indexé",
+    "modified": "modifié"
+  }
+}

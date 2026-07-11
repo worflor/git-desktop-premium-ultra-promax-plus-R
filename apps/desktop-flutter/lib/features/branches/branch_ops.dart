@@ -8,6 +8,7 @@ import 'dart:io' show Platform;
 
 import '../../backend/desk_pr.dart';
 import '../../backend/dtos.dart';
+import '../../i18n/gen/strings.g.dart';
 
 /// Resolved cross-links for a single branch: an open desk (worktree),
 /// a desk PR, and how many issues that PR links. Seeds the branch-card
@@ -117,7 +118,7 @@ String _humanizeDeleteError(String raw) {
   if (firstLine.toLowerCase().startsWith('error:')) {
     return firstLine.substring(6).trim();
   }
-  return firstLine.isEmpty ? 'delete failed' : firstLine;
+  return firstLine.isEmpty ? t.branches.deleteFailed : firstLine;
 }
 
 /// Every way a branch delete can fail, and what the UI owes the user for

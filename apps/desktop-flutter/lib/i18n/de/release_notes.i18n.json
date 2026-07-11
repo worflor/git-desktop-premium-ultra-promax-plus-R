@@ -1,0 +1,18 @@
+{
+  "@@locale": "de",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "WARUM FLUTTER?",
+      "body": "Die erste Version davon war eine Tauri-App (Rust + TypeScript). Ich wusste schon, dass sie sich träge anfühlte. Dann hörte ich einen Streamer in einem Stream, den ich sonst nicht schaue, dasselbe sagen, und das war der Anstoß, endlich zu wechseln. Er hat kein Flutter vorgeschlagen; ganz im Gegenteil. Dart habe ich selbst gefunden, einen Prototyp zusammengeschustert, und die Startzeit ging von etwa 15 Sekunden auf unter eine Sekunde. Tag und Nacht. Leb wohl, Tauri-Ära.\n\nFlutters Rendering-Pipeline liegt näher an einer Game-Engine als an einem DOM, und für eine Desktop-App, bei der die UI das Produkt ist, ist das alles. Dart entpuppte sich obendrein als richtig gute Sprache. Die Mathematik hinter der Spektral-Engine wurde zuerst in Rust prototypisiert, also ließ sich diese Arbeit problemlos übertragen.\n\nFlutter ist von Haus aus plattformübergreifend, was großartig ist, aber es ist von Natur aus googlig, also gibt es ein paar Macken."
+    },
+    "spectralEngine": {
+      "question": "WAS IST DIE SPEKTRAL-ENGINE?",
+      "body": "Jedes Mal, wenn du committest, bilden die Dateien, die du zusammen änderst, über die Zeit Muster. Die Spektral-Engine liest deinen Commit-Graphen und zerlegt diese Co-Change-Muster in Signale: welche Dateien gekoppelt sind, wie eng, und welche strukturelle Rolle sie im Repo spielen. Im Grunde Spektralanalyse deiner Entwicklungshistorie. In einem Git-Client. Mit Absicht.\n\nDie Mathematik ist neu, also behandle ich sie wie Game-Feel: einstellen, testen, nachjustieren und weitermachen, bis sich die Signale richtig anfühlen.\n\nDiese Signale fließen in alles ein. Der Seismograph im Verlauf, die gemalten Balken unter den Commit-Betreffs, das Review-System, Muse, die Datei-Konstellation. Die ganze App denkt von dieser Schicht nach unten, nicht andersherum."
+    },
+    "whereGoing": {
+      "question": "WOHIN GEHT DAS?",
+      "body": "Der erste Meilenstein ist volle Ebenbürtigkeit mit GitHub Desktop, SourceTree und GitKraken. Ein plattformübergreifender Git-Client, der sich schnell anfühlt und die Grundlagen besser beherrscht als alles andere. Das ist größtenteils da. Die Spektral-Engine verschafft uns schon jetzt einen Vorteil bei Operationen, die dich andere Clients manuell durchdenken lassen.\n\nDarüber hinaus ist das Ziel, jeden anderen Git-Client in Geschwindigkeit, Zugänglichkeit, Intelligenz und der Gesamt-UX zu übertreffen. In der Pipeline steckt mehr, als hier angekündigt ist."
+    }
+  }
+}

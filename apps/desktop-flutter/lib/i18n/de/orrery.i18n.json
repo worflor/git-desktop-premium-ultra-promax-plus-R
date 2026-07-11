@@ -1,0 +1,101 @@
+{
+  "@@locale": "de",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Scrubben",
+    "modeCompare": "Vergleichen",
+    "lodModules": "Module",
+    "lodFiles": "Dateien"
+  },
+  "status": {
+    "loading": "Verfolge die Mannigfaltigkeit durch die Historie…",
+    "loadError": "Die Historie dieses Repos konnte nicht gelesen werden.",
+    "notEnoughHistory": "Noch nicht genug Historie, um eine Trajektorie zu zeichnen.",
+    "notEnoughHistoryDetail": "Die Orrery braucht ein paar Commits zum Kartieren."
+  },
+  "legend": {
+    "central": "zentral",
+    "peripheral": "peripher"
+  },
+  "node": {
+    "module": "modul",
+    "moduleWithCount": "{path} · {n} Dateien",
+    "fileFallback": "Datei #{id}",
+    "nodeFallback": "Knoten #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "genesis",
+    "now": "jetzt",
+    "reorganized": "reorganisiert",
+    "becameArchetype": "wurde zu {archetype}",
+    "snapshot": "schnappschuss"
+  },
+  "structure": {
+    "forming": "bildet sich…",
+    "canonical": "kanonisch",
+    "connectivity": "konnektivität",
+    "rigidity": "starrheit",
+    "entropy": "entropie"
+  },
+  "rail": {
+    "structureLabel": "STRUKTUR",
+    "fieldLabel": "FELD",
+    "findingsLabel": "FUNDE",
+    "selectedLabel": "AUSGEWÄHLT",
+    "noFindings": "Keine strukturellen Ereignisse in dieser Historie erkannt."
+  },
+  "selection": {
+    "notPresent": "An diesem Punkt der Historie nicht vorhanden.",
+    "roleCentral": "Kopplungs-zentral — Änderungen hier wirken sich auf das ganze System aus.",
+    "rolePeripheral": "Peripher — lose gekoppelt, ändert sich meist eigenständig.",
+    "roleMid": "Mittelstruktur — mäßig gekoppelt.",
+    "driftOutward": " Driftet nach außen — entkoppelt sich.",
+    "driftInward": " Driftet nach innen — integriert sich.",
+    "driftHolding": " Hält seine Position."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "DRIFTET RAUS",
+    "driftIn": "DRIFTET REIN",
+    "tangle": "VERKNOTUNG",
+    "clarify": "KLÄRUNG",
+    "regime": "REORG",
+    "thrash": "GESTAMPFE",
+    "reshuffle": "UMSCHICHTUNG",
+    "forecast": "PROGNOSE"
+  },
+  "findings": {
+    "forecastSplit": "Die Konnektivität ist gefallen und nahe ihrem Tiefpunkt — hält das an, steuert die Codebasis auf eine Aufspaltung in lose gekoppelte Hälften zu. Entscheide jetzt, ob das so gewollt ist.",
+    "forecastConsolidate": "Die Konnektivität steigt auf ihren Höchststand zu — hält das an, verdichtet sich die Codebasis zu einer eng gekoppelten Masse. Achte darauf, dass sie nicht zum Monolithen erstarrt.",
+    "thrash": "{name} wird ständig hin und her reorganisiert — viel struktureller Wirbel, kaum Nettobewegung. Kläre seine Kopplung oder lass es in Ruhe.",
+    "reshuffle": "Dieser Commit sah routinemäßig aus, verschob aber still, welche Dateien zentral sind — die Gesamtform hielt, während sich die Struktur darunter umschichtete. Prüfe ihn sorgfältig.",
+    "hub": "{name} sitzt im strukturellen Kern — das System reorganisiert sich um ihn herum. Behandle Änderungen hier als hoch-explosiv.",
+    "driftOut": "{name} ist vom Kern zum Rand gedriftet — es entkoppelt sich vom System. Entweder wird es ausgemustert oder es verrottet still.",
+    "driftIn": "{name} ist zum Kern gewandert — es wird tragend. Stelle sicher, dass es gut getestet ist, bevor mehr davon abhängt.",
+    "regime": "Die Codebasis hat sich hier stark reorganisiert — ihre Konnektivität sprang. Prüfe, was sich abspaltete oder verschmolz.",
+    "tangleTrend": "Über ihre Historie hinweg tendierte die Codebasis zu einer verknoteteren Struktur — ihre Konnektivität wird dichter und weniger modular.",
+    "clarifyTrend": "Über ihre Historie hinweg tendierte die Codebasis zu einer saubereren Struktur — sie trennt sich in klarere Module."
+  },
+  "anchor": {
+    "core": "kern",
+    "drift": "drift",
+    "trend": "trend",
+    "thrash": "gestampfe"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "ÄNDERUNG",
+    "movers": "BEWEGER",
+    "noMovers": "Keine Dateien zwischen diesen Frames bewegt.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "dateien",
+    "deltaConnectivity": "konnektivität",
+    "deltaRigidity": "starrheit",
+    "deltaEntropy": "entropie",
+    "wayOutward": "nach außen",
+    "wayInward": "nach innen",
+    "wayShifted": "verschoben"
+  }
+}

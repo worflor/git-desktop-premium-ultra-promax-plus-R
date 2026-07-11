@@ -1,0 +1,67 @@
+{
+  "@@locale": "de",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} Zeile",
+      "other": "{n} Zeilen"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} Datei.",
+      "other": "{n} Dateien."
+    },
+    "lines": {
+      "one": "{n} Zeile ({bytes}).",
+      "other": "{n} Zeilen ({bytes})."
+    },
+    "roles": "Rollen — {parts}.",
+    "showingNofM": "Zeige {active} von {total} Dateien, nach struktureller Zentralität sortiert."
+  },
+  "heading": {
+    "atAGlance": "Auf einen Blick",
+    "core": "Kern",
+    "gettingStarted": "Erste Schritte",
+    "regions": "Regionen",
+    "shape": "Form"
+  },
+  "historyStarvedCaveat": "Sortierung eingeschränkt: der Kopplungsgraph hatte keine Kanten (frischer Klon oder zu wenige Commits). Die Dateireihenfolge spiegelt die Größe wider, nicht die strukturelle Zentralität.",
+  "pitch": {
+    "empty": "Ein Repository ohne lesbare Textdateien{detail}.",
+    "emptyBinary": "{n} binär",
+    "emptyUnreadable": "{n} unlesbar",
+    "noRegions": {
+      "one": "Ein Repository mit {n} aktiven Datei.",
+      "other": "Ein Repository mit {n} aktiven Dateien."
+    },
+    "withRegions": {
+      "one": "Ein Repository mit {n} aktiven Datei — {regions}.",
+      "other": "Ein Repository mit {n} aktiven Dateien — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Alles unter `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 Kern",
+      "other": "{n} Kern"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Eine Datei",
+      "other": "{n} Dateien"
+    },
+    "connectsTo": "Verbindet sich mit: {linked}.",
+    "filesLabel": "Dateien:"
+  },
+  "shape": {
+    "bulk": "Dicht vernetzte Codebasis: die meisten Dateien gehören zu einer großen Nachbarschaft gemeinsamer Änderungen.",
+    "crystalline": "Gitterförmige Codebasis: gleichmäßige, regelmäßige Kopplung über Dateien hinweg mit vorhersehbarer lokaler Struktur.",
+    "goe": "Reich vernetzte Codebasis: Kopplungen verteilen sich über Dateien ohne dominantes Rückgrat.",
+    "modular": "Modulare Codebasis: mehrere zusammenhängende Regionen mit begrenzter Querkopplung. Arbeit in einer Region stört selten eine andere.",
+    "poisson": "Locker gekoppelte Codebasis: Dateien entwickeln sich meist eigenständig, mit gelegentlicher gemeinsamer Änderung.",
+    "tree": "Baumförmige Codebasis: ein dominantes Rückgrat mit abhängigen Zweigen. Änderungen breiten sich meist vom Kern nach außen aus."
+  }
+}

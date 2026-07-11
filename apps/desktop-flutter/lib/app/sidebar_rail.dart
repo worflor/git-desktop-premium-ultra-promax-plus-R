@@ -21,6 +21,7 @@ import '../components/icons/app_icons.dart';
 import '../ui/context_menu.dart';
 import '../ui/control_chrome.dart';
 import '../ui/design_primitives.dart';
+import '../ui/format.dart';
 import '../ui/form_controls.dart';
 import '../ui/hover_lift.dart';
 import '../ui/interaction_feedback.dart';
@@ -32,6 +33,7 @@ import 'window_activity.dart';
 import 'external_tools_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
+import '../i18n/gen/strings.g.dart';
 
 bool _isGitUrl(String value) {
   final trimmed = value.trim();
@@ -127,7 +129,7 @@ class _SidebarRailState extends State<SidebarRail> {
       final repo = context.read<RepositoryState>();
       var path = _pathController.text.trim();
       if (path.isEmpty) {
-        final picked = await pickDirectory('Open Repository');
+        final picked = await pickDirectory(context.t.app.openRepositoryDialogTitle);
         if (picked == null) return;
         path = picked;
         _pathController.text = path;
@@ -143,7 +145,7 @@ class _SidebarRailState extends State<SidebarRail> {
       if (err != null) {
         setState(() {
           _error = err.toLowerCase().contains('not a git')
-              ? 'Not a git repository. Initialize one here?'
+              ? context.t.app.notAGitRepoInitConfirm
               : err;
         });
         return;
@@ -170,11 +172,11 @@ class _SidebarRailState extends State<SidebarRail> {
       final url = _pathController.text.trim();
       var target = _cloneTargetController.text.trim();
       if (url.isEmpty) {
-        setState(() => _error = 'Repository URL required.');
+        setState(() => _error = context.t.app.repositoryUrlRequired);
         return;
       }
       if (target.isEmpty || !p.isAbsolute(target)) {
-        final picked = await pickDirectory('Clone to');
+        final picked = await pickDirectory(context.t.app.cloneToDialogTitle);
         if (picked == null) return;
         final repoName = target.isNotEmpty
             ? target
@@ -204,7 +206,7 @@ class _SidebarRailState extends State<SidebarRail> {
           _running = false;
           _cloningEntry = null;
           _cloneProgress = null;
-          _error = result.error ?? 'Failed to clone repository.';
+          _error = result.error ?? context.t.app.failedToCloneRepository;
         });
         return;
       }
@@ -247,7 +249,7 @@ class _SidebarRailState extends State<SidebarRail> {
     try {
       var path = _pathController.text.trim();
       if (path.isEmpty || !p.isAbsolute(path)) {
-        final picked = await pickDirectory('Create Repository');
+        final picked = await pickDirectory(context.t.app.createRepositoryDialogTitle);
         if (picked == null) return;
         if (path.isNotEmpty && !p.isAbsolute(path)) {
           path = p.join(picked, path);
@@ -267,7 +269,7 @@ class _SidebarRailState extends State<SidebarRail> {
       if (!result.ok || result.data == null) {
         setState(() {
           _running = false;
-          _error = result.error ?? 'Failed to create repository.';
+          _error = result.error ?? context.t.app.failedToCreateRepository;
         });
         return;
       }
@@ -351,7 +353,7 @@ class _SidebarRailState extends State<SidebarRail> {
               }),
               onOpen: _onOpen,
               onBrowseTarget: () async {
-                final picked = await pickDirectory('Clone Target');
+                final picked = await pickDirectory(context.t.app.cloneTargetDialogTitle);
                 if (picked == null || !mounted) return;
                 setState(() => _cloneTargetController.text = picked);
               },
@@ -376,7 +378,7 @@ class _SidebarRailState extends State<SidebarRail> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          'Cloning $_cloningEntry...',
+                          context.t.app.cloningEllipsis(name: _cloningEntry ?? ''),
                           style: TextStyle(color: t.textMuted, fontSize: 11),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -389,7 +391,7 @@ class _SidebarRailState extends State<SidebarRail> {
                             _running = false;
                             _cloningEntry = null;
                             _cloneProgress = null;
-                            _error = 'Clone cancelled.';
+                            _error = context.t.app.cloneCancelled;
                           });
                         },
                         child: MouseRegion(
@@ -428,7 +430,7 @@ class _SidebarRailState extends State<SidebarRail> {
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
                   child: Text(
-                    'No projects yet',
+                    context.t.app.noProjectsYet,
                     style: TextStyle(color: t.textMuted, fontSize: 11),
                   ),
                 );
@@ -946,7 +948,7 @@ class _GroupHeaderState extends State<_GroupHeader> {
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: Tooltip(
-                          message: 'Dissolve group',
+                          message: context.t.app.dissolveGroup,
                           child: SizedBox(
                             width: 18,
                             height: 18,
@@ -1001,7 +1003,7 @@ class _ProjectsHeader extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            'Projects',
+            context.t.app.projectsHeader,
             style: TextStyle(
               color: t.textMuted,
               fontSize: 10.4,
@@ -1046,10 +1048,10 @@ class _PathEntry extends StatelessWidget {
     final isCloneMode = mode == _RepositoryEntryMode.clone;
     final isCreateMode = mode == _RepositoryEntryMode.create;
     final primaryLabel =
-        isCloneMode ? 'Clone' : (isCreateMode ? 'Create' : 'Open');
+        isCloneMode ? context.t.app.cloneLabel : (isCreateMode ? context.t.app.createLabel : context.t.app.openLabel);
     final pathPlaceholder = isCloneMode
-        ? 'Repository URL'
-        : (isCreateMode ? 'project-name or full path' : '/path/to/project');
+        ? context.t.app.repositoryUrlPlaceholder
+        : (isCreateMode ? context.t.app.projectNameOrFullPathPlaceholder : context.t.app.pathToProjectPlaceholder);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1060,7 +1062,7 @@ class _PathEntry extends StatelessWidget {
             children: [
               Expanded(
                 child: _ModeChoiceBtn(
-                  label: 'Open',
+                  label: context.t.app.openLabel,
                   active: mode == _RepositoryEntryMode.open,
                   onTap: () => onModeChanged(_RepositoryEntryMode.open),
                 ),
@@ -1068,7 +1070,7 @@ class _PathEntry extends StatelessWidget {
               const SizedBox(width: 4),
               Expanded(
                 child: _ModeChoiceBtn(
-                  label: 'Clone',
+                  label: context.t.app.cloneLabel,
                   active: isCloneMode,
                   onTap: () => onModeChanged(_RepositoryEntryMode.clone),
                 ),
@@ -1076,7 +1078,7 @@ class _PathEntry extends StatelessWidget {
               const SizedBox(width: 4),
               Expanded(
                 child: _ModeChoiceBtn(
-                  label: 'Create',
+                  label: context.t.app.createLabel,
                   active: isCreateMode,
                   onTap: () => onModeChanged(_RepositoryEntryMode.create),
                 ),
@@ -1113,7 +1115,7 @@ class _PathEntry extends StatelessWidget {
                 Expanded(
                   child: _StyledInput(
                     controller: cloneTargetController,
-                    placeholder: 'Clone to folder path',
+                    placeholder: context.t.app.cloneToFolderPathPlaceholder,
                     fontSize: 11,
                     onSubmitted: (_) => onOpen(),
                   ),
@@ -1146,7 +1148,7 @@ class _PathEntry extends StatelessWidget {
           if (error != null) ...[
             const SizedBox(height: 4),
             Text(error!, style: TextStyle(color: t.stateDeleted, fontSize: 11)),
-            if (error!.contains('Initialize'))
+            if (error == context.t.app.notAGitRepoInitConfirm)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: HoverableTap(
@@ -1164,7 +1166,7 @@ class _PathEntry extends StatelessWidget {
                           : TextDecoration.none,
                       decorationColor: t.accentBright,
                     ),
-                    child: const Text('Switch to Create repo'),
+                    child: Text(context.t.app.switchToCreateRepo),
                   ),
                 ),
               ),
@@ -1204,13 +1206,21 @@ class _ModeChoiceBtn extends StatelessWidget {
       ),
       child: SizedBox(
         height: 24,
+        // Three equal Expanded columns (Open/Clone/Create). A longer
+        // locale ('Clonar', 'Criar') would wrap mid-word in its narrow
+        // third; scaleDown keeps it one line and shrinks to fit. English
+        // fits, so scale is 1.0 — pixel-identical.
         child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: active ? t.textStrong : t.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                color: active ? t.textStrong : t.textMuted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1283,12 +1293,19 @@ class _PrimaryButton extends StatelessWidget {
         enabled: enabled,
       ),
       child: Center(
-        child: Text(
-          label,
-          style: TextStyle(
-            color: enabled ? t.btnText : t.textMuted,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
+        // Fixed 56/58px slot next to the path field. A longer locale
+        // ('Clonar', 'Criar') would wrap mid-word; scaleDown keeps one
+        // line and shrinks to fit. English fits at scale 1.0.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            maxLines: 1,
+            style: TextStyle(
+              color: enabled ? t.btnText : t.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ),
@@ -1494,13 +1511,13 @@ class _ProjectItemState extends State<_ProjectItem>
             .firstMatch(results[1].stdout.toString());
         if (sizeMatch != null) {
           final kb = int.tryParse(sizeMatch.group(1)!);
-          if (kb != null) repoSize = _compactSize(kb);
+          if (kb != null) repoSize = compactSize(kb);
         }
       }
       String? lastActive;
       if (results[2].exitCode == 0) {
         final ts = int.tryParse(results[2].stdout.toString().trim());
-        if (ts != null) lastActive = _compactAge(ts);
+        if (ts != null) lastActive = compactAge(ts);
       }
       setState(() {
         _cachedContributorCount = contribCount;
@@ -1508,25 +1525,6 @@ class _ProjectItemState extends State<_ProjectItem>
         _cachedLastActive = lastActive;
       });
     } catch (_) {/* silent — broken repo */}
-  }
-
-  static String _compactSize(int kb) {
-    if (kb < 1024) return '$kb KB';
-    final mb = kb / 1024;
-    if (mb < 1024) return '${mb.round()} MB';
-    final gb = mb / 1024;
-    return '${gb.toStringAsFixed(1)} GB';
-  }
-
-  static String _compactAge(int unixSeconds) {
-    final delta = DateTime.now().difference(
-        DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000));
-    if (delta.inMinutes < 1) return 'now';
-    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
-    if (delta.inHours < 24) return '${delta.inHours}h ago';
-    if (delta.inDays < 30) return '${delta.inDays}d ago';
-    if (delta.inDays < 365) return '${delta.inDays ~/ 30}mo ago';
-    return '${delta.inDays ~/ 365}y ago';
   }
 
   /// Open the project's web page in the system browser. No-op if
@@ -1586,7 +1584,7 @@ class _ProjectItemState extends State<_ProjectItem>
 
   Future<void> _exportAsZip() async {
     try {
-      final picked = await pickDirectory('Export to');
+      final picked = await pickDirectory(context.t.app.exportToDialogTitle);
       if (picked == null) return;
       final repoName = widget.path
           .replaceAll('\\', '/')
@@ -1603,7 +1601,7 @@ class _ProjectItemState extends State<_ProjectItem>
 
   Future<void> _duplicateRepo() async {
     try {
-      final picked = await pickDirectory('Clone to');
+      final picked = await pickDirectory(context.t.app.cloneToDialogTitle);
       if (picked == null) return;
       final repoName = widget.path
           .replaceAll('\\', '/')
@@ -1619,7 +1617,7 @@ class _ProjectItemState extends State<_ProjectItem>
 
   Future<void> _templateFromRepo() async {
     try {
-      final picked = await pickDirectory('Create from template in');
+      final picked = await pickDirectory(context.t.app.createFromTemplateInDialogTitle);
       if (picked == null) return;
       final repoName = widget.path
           .replaceAll('\\', '/')
@@ -1678,25 +1676,25 @@ class _ProjectItemState extends State<_ProjectItem>
     final tiles = <AppContextMenuItem>[
       AppContextMenuItem(
         icon: Icons.folder_open_outlined,
-        label: 'Explorer',
+        label: context.t.app.explorer,
         onTap: _openInFileManager,
       ),
       AppContextMenuItem(
         icon: Icons.terminal,
-        label: 'Terminal',
+        label: context.t.app.terminal,
         onTap: _openInTerminal,
       ),
       if (showCloneUrl)
         AppContextMenuItem(
           icon: Icons.link,
-          label: 'Clone URL',
+          label: context.t.app.cloneUrl,
           onTap: _copyCloneUrl,
           iconColor: shiftTint,
         )
       else
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: 'Copy path',
+          label: context.t.app.copyPath,
           onTap: _copyPath,
         ),
     ];
@@ -1709,13 +1707,13 @@ class _ProjectItemState extends State<_ProjectItem>
         ),
       AppContextMenuItem(
         icon: Icons.archive_outlined,
-        label: 'Export',
+        label: context.t.app.export,
         onTap: _exportAsZip,
       ),
       if (readmePath != null)
         AppContextMenuItem(
           icon: Icons.description_outlined,
-          label: 'README',
+          label: context.t.app.readme,
           onTap: _openReadme,
         ),
     ];
@@ -1723,14 +1721,14 @@ class _ProjectItemState extends State<_ProjectItem>
       if (shiftHeld)
         AppContextMenuItem(
           icon: Icons.file_copy_outlined,
-          label: 'Duplicate',
+          label: context.t.app.duplicate,
           onTap: _duplicateRepo,
           iconColor: shiftTint,
         ),
       if (shiftHeld)
         AppContextMenuItem(
           icon: Icons.auto_awesome_outlined,
-          label: 'Template',
+          label: context.t.app.template,
           onTap: _templateFromRepo,
           iconColor: shiftTint,
         ),
@@ -1781,7 +1779,7 @@ class _ProjectItemState extends State<_ProjectItem>
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.close,
-            label: 'Forget this project',
+            label: context.t.app.forgetThisProject,
             destructive: true,
             onTap: widget.onForget!,
           ),
@@ -2044,16 +2042,17 @@ class _AiKindBadge extends StatelessWidget {
   }
 
   String get _tooltipMessage {
+    final tt = t.app;
     final kind = switch (record.kind) {
-      AiActivityKind.generate => 'commit message',
-      AiActivityKind.review => 'review',
-      AiActivityKind.muse => 'muse',
-      AiActivityKind.present => 'present',
-      AiActivityKind.debug => 'debug',
+      AiActivityKind.generate => tt.aiKindCommitMessage,
+      AiActivityKind.review => tt.aiKindReview,
+      AiActivityKind.muse => tt.aiKindMuse,
+      AiActivityKind.present => tt.aiKindPresent,
+      AiActivityKind.debug => tt.aiKindDebug,
     };
-    if (record.isRunning) return '$kind running';
-    if (record.isError) return '$kind failed (unread)';
-    return '$kind ready (unread)';
+    if (record.isRunning) return tt.aiStatusRunning(kind: kind);
+    if (record.isError) return tt.aiStatusFailedUnread(kind: kind);
+    return tt.aiStatusReadyUnread(kind: kind);
   }
 
   /// Icon body, picked to match the same glyph the composer toolbar
@@ -2322,7 +2321,7 @@ class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
     final cells = <Widget>[];
     final fc = widget.fileCount;
     if (fc != null && fc > 0) {
-      cells.add(_cell(_compact(fc), 'files', numStyle, labelStyle));
+      cells.add(_cell(_compact(fc), context.t.app.filesLower, numStyle, labelStyle));
     }
 
     if (_page2.value) {
@@ -2343,7 +2342,7 @@ class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
     } else {
       final cc = widget.commitCount;
       if (cc != null && cc > 0) {
-        cells.add(_cell(_compact(cc), 'commits', numStyle, labelStyle));
+        cells.add(_cell(_compact(cc), context.t.app.commitsLower, numStyle, labelStyle));
       }
       final contrib = widget.contributorCount;
       if (contrib != null && contrib > 0) {

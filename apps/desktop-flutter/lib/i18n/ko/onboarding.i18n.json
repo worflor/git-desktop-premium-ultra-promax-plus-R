@@ -1,0 +1,96 @@
+{
+  "@@locale": "ko",
+  "nav": {
+    "back": "뒤로",
+    "continueLabel": "계속",
+    "letsGo": "가보죠"
+  },
+  "naming": {
+    "question": "당신에게 이건 무엇인가요?",
+    "questionEmphasis": "이건",
+    "iAmPrefix": "저는 ",
+    "iAmSuffix": ", 당신의 개인 Git 클라이언트입니다."
+  },
+  "theme": {
+    "title": "{name} 단장하기.",
+    "themesHeader": "테마",
+    "keybindingsHeader": "키 바인딩",
+    "previewBadge": "미리보기",
+    "useDefaults": "기본값 사용"
+  },
+  "repo": {
+    "title": "{name} 방향 잡기.",
+    "later": "나중에 할게요",
+    "doors": {
+      "open": {
+        "title": "열기",
+        "subtitle": "기존",
+        "hint": "이미 가지고 있는 것"
+      },
+      "clone": {
+        "title": "클론",
+        "subtitle": "URL에서",
+        "hint": "원격 URL 붙여넣기"
+      },
+      "create": {
+        "title": "생성",
+        "subtitle": "새로",
+        "hint": "새롭게 시작하기"
+      }
+    },
+    "cloneForm": {
+      "title": "URL에서 클론",
+      "urlLabel": "저장소 URL",
+      "targetLabel": "대상 폴더",
+      "browse": "찾아보기…",
+      "clone": "클론",
+      "cloning": "클론 중…"
+    },
+    "pickers": {
+      "openRepository": "저장소 열기",
+      "createRepository": "저장소 생성",
+      "cloneTarget": "클론 대상"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL과 대상 경로가 필요합니다.",
+      "createFailed": "저장소 생성에 실패했습니다.",
+      "cloneFailed": "저장소 클론에 실패했습니다."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "저장소 엑스레이",
+      "settings": "설정"
+    },
+    "sidebar": {
+      "projectsHeader": "프로젝트"
+    },
+    "changes": {
+      "filesStagedCount": "{total}개 중 {staged}개 파일",
+      "stagedCount": "{n}개 스테이징됨",
+      "commitMessageHint": "커밋 메시지…",
+      "commitAndPush": "커밋 & 푸시"
+    },
+    "history": {
+      "header": "히스토리",
+      "viewingLast": "최근 커밋 20개 보는 중",
+      "inFlight": "진행 중",
+      "you": "나",
+      "commit1": "여우에게 삼키기 전에 냄새 맡는 법 가르치기",
+      "commit2": "앰버: 밤새 향 붙잡아 두기",
+      "commit3": "양배추 은퇴, 앰버 + 가시로 교체",
+      "commit4": "가시가 문을 지킨다"
+    },
+    "branches": {
+      "lensBranches": "브랜치",
+      "lensPRs": "PR",
+      "absorbed": "흡수됨",
+      "desk": "데스크",
+      "head": "HEAD",
+      "tracking": "→ 추적: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "당신의 개인 Git 클라이언트."
+    }
+  }
+}

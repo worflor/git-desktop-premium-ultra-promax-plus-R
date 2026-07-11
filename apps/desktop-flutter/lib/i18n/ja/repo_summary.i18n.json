@@ -1,0 +1,60 @@
+{
+  "@@locale": "ja",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "other": "{n} 行"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "other": "{n} ファイル。"
+    },
+    "lines": {
+      "other": "{n} 行（{bytes}）。"
+    },
+    "roles": "役割 — {parts}。",
+    "showingNofM": "{total} ファイル中 {active} を、構造的な中心性順で表示中。"
+  },
+  "heading": {
+    "atAGlance": "ひと目で",
+    "core": "コア",
+    "gettingStarted": "はじめに",
+    "regions": "領域",
+    "shape": "形状"
+  },
+  "historyStarvedCaveat": "ランキングは限定的です：結合グラフにエッジがありませんでした（新規クローンか、コミットが少なすぎます）。ファイル順は構造的中心性ではなくサイズを反映しています。",
+  "pitch": {
+    "empty": "読み取り可能なテキストファイルのないリポジトリ{detail}。",
+    "emptyBinary": "バイナリ {n} 件",
+    "emptyUnreadable": "読み取り不可 {n} 件",
+    "noRegions": {
+      "other": "アクティブなファイル {n} 件のリポジトリ。"
+    },
+    "withRegions": {
+      "other": "アクティブなファイル {n} 件のリポジトリ — {regions}。"
+    }
+  },
+  "region": {
+    "bodyCommonDir": "すべて `{dir}` 配下。",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "other": "コア {n} 件"
+    },
+    "bodyCoreSeparator": "、",
+    "bodyFiles": {
+      "other": "{n} ファイル"
+    },
+    "connectsTo": "接続先：{linked}。",
+    "filesLabel": "ファイル："
+  },
+  "shape": {
+    "bulk": "密に相互接続したコードベース：ほとんどのファイルが、共有された変更の一つの大きな近傍に参加しています。",
+    "crystalline": "格子状のコードベース：ファイル間の結合が均一で規則的、局所構造も予測しやすい。",
+    "goe": "豊かに相互接続したコードベース：支配的な背骨を持たず、結合がファイル全体に広がっています。",
+    "modular": "モジュール型のコードベース：交差結合の少ない、いくつかの凝集した領域。ある領域での作業が別の領域を乱すことはめったにありません。",
+    "poisson": "疎に結合したコードベース：ファイルはおおむね独立して進化し、ときおり共有された変更が起こります。",
+    "tree": "木構造のコードベース：一つの支配的な背骨と、それに依存する枝。変更は通常コアから外へと伝播します。"
+  }
+}

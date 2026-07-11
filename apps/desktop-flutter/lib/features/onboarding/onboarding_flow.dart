@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/brand_lockup.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
@@ -177,7 +178,7 @@ class _BackButton extends StatelessWidget {
                       size: 14, color: t.textMuted),
                   const SizedBox(width: 6),
                   Text(
-                    'Back',
+                    context.t.onboarding.nav.back,
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 12,
@@ -209,8 +210,10 @@ class OnboardingPrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final onboarding = context.watch<OnboardingState>();
-    final label =
-        labelOverride ?? (onboarding.isLastStep ? "Let's go" : 'Continue');
+    final label = labelOverride ??
+        (onboarding.isLastStep
+            ? context.t.onboarding.nav.letsGo
+            : context.t.onboarding.nav.continueLabel);
     final enabled = onTap != null;
     final radius = _primaryButtonRadius(t);
     return MouseRegion(

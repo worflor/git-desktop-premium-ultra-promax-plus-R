@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/tokens.dart';
 import 'orrery_findings.dart';
 
@@ -31,13 +32,13 @@ IconData findingIcon(OrreryFindingKind kind) => switch (kind) {
     };
 
 String findingLabel(OrreryFindingKind kind) => switch (kind) {
-      OrreryFindingKind.hub => 'HUB',
-      OrreryFindingKind.driftOut => 'DRIFTING OUT',
-      OrreryFindingKind.driftIn => 'DRIFTING IN',
-      OrreryFindingKind.tangle => 'TANGLING',
-      OrreryFindingKind.clarify => 'CLARIFYING',
-      OrreryFindingKind.regime => 'REORG',
-      OrreryFindingKind.thrash => 'THRASHING',
-      OrreryFindingKind.reshuffle => 'RESHUFFLE',
-      OrreryFindingKind.forecast => 'FORECAST',
+      OrreryFindingKind.hub => t.orrery.findingKind.hub,
+      OrreryFindingKind.driftOut => t.orrery.findingKind.driftOut,
+      OrreryFindingKind.driftIn => t.orrery.findingKind.driftIn,
+      OrreryFindingKind.tangle => t.orrery.findingKind.tangle,
+      OrreryFindingKind.clarify => t.orrery.findingKind.clarify,
+      OrreryFindingKind.regime => t.orrery.findingKind.regime,
+      OrreryFindingKind.thrash => t.orrery.findingKind.thrash,
+      OrreryFindingKind.reshuffle => t.orrery.findingKind.reshuffle,
+      OrreryFindingKind.forecast => t.orrery.findingKind.forecast,
     };

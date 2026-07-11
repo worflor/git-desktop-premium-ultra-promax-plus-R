@@ -1,0 +1,23 @@
+{
+  "@@locale": "zh-Hans",
+  "ops": {
+    "merge": "合并",
+    "pull": "拉取",
+    "apply": "应用",
+    "switchOp": "切换",
+    "sync": "同步"
+  },
+  "mergeOutcome": {
+    "cancelled": "已取消{op}。",
+    "complete": "{op}完成。",
+    "conflictsLeft": {
+      "other": "还剩 {n} 个冲突 — 请在“更改”页面解决。"
+    },
+    "resolvedConflicts": {
+      "other": "已解决 {n} 个冲突。"
+    },
+    "uncommittedEdits": {
+      "other": "{n} 个文件有未提交的改动 — 请先提交。"
+    }
+  }
+}

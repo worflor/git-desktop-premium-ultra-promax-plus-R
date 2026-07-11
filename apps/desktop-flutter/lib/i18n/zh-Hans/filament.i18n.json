@@ -1,0 +1,23 @@
+{
+  "@@locale": "zh-Hans",
+  "noRepositoryOpen": "未打开仓库。",
+  "scanningProgress": "正在扫描 {scanned} / {total} 个文件…",
+  "findingsAcrossFiles": "{files} 个文件中共 {count} 项发现",
+  "copiedFindings": "已复制 {count} 项发现",
+  "copy": "复制",
+  "noFindings": "无执行流发现。",
+  "severity": {
+    "critical": "严重",
+    "warn": "警告",
+    "info": "信息",
+    "joint": "联合"
+  },
+  "kind": {
+    "staleValue": "陈旧值",
+    "temporalShift": "时序偏移",
+    "contextInversion": "上下文倒置",
+    "contradictoryFlow": "矛盾流"
+  },
+  "lineLabel": "L{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

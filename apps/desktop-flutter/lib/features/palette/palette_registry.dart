@@ -24,7 +24,8 @@ import '../changes/merge_conflict_editor.dart';
 import '../changes/merge_conflict_flow.dart' as merge_flow;
 import '../sync/force_push_guard.dart';
 import '../sync/sync_actions.dart';
-import '../../backend/merge_session.dart' show MergeClean, mergeOutcomeMessage;
+import '../../backend/merge_session.dart' show MergeClean;
+import '../../ui/merge_outcome_text.dart';
 import '../history_surgery/history_surgery_page.dart';
 import '../orrery/orrery_page.dart';
 import '../../backend/logos_git.dart';
@@ -34,6 +35,7 @@ import '../../backend/undo_controller.dart';
 import '../../components/icons/app_icons.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/tokens.dart';
+import '../../i18n/gen/strings.g.dart';
 import 'palette_entry.dart';
 
 typedef PaletteCallbacks = ({
@@ -91,9 +93,9 @@ List<PaletteEntry> buildStaticEntries(
     if (repoPath != null)
       PaletteEntry(
         id: 'dev.test-merge-editor',
-        label: 'Test Merge Editor',
+        label: context.t.palette.dev.testMergeEditor,
         keywords: const ['conflict', 'merge', 'resolve', 'debug', 'dev'],
-        chipLabel: 'DEV',
+        chipLabel: context.t.palette.chips.dev,
         chipTone: ChipTone.chromatic2,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
@@ -108,10 +110,10 @@ List<PaletteEntry> buildStaticEntries(
       ),
     PaletteEntry(
       id: 'debug.theme-specimen',
-      label: 'Theme Specimen',
-      subtitle: 'All colors, icons, text tiers, and geometry',
+      label: context.t.palette.debug.themeSpecimen,
+      subtitle: context.t.palette.debug.themeSpecimenSubtitle,
       keywords: const ['debug', 'theme', 'specimen', 'colors', 'icons', 'tokens', 'palette'],
-      chipLabel: 'DEBUG',
+      chipLabel: context.t.palette.chips.debug,
       chipTone: ChipTone.muted,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -124,9 +126,9 @@ List<PaletteEntry> buildStaticEntries(
     if (repoPath != null)
       PaletteEntry(
         id: 'dev.test-history-surgery',
-        label: 'Test History Surgery',
+        label: context.t.palette.dev.testHistorySurgery,
         keywords: const ['test', 'surgery', 'rewrite', 'history', 'dry', 'dev'],
-        chipLabel: 'DEV',
+        chipLabel: context.t.palette.chips.dev,
         chipTone: ChipTone.chromatic2,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
@@ -143,13 +145,13 @@ List<PaletteEntry> buildStaticEntries(
     if (repoPath != null)
       PaletteEntry(
         id: 'cmd.history-surgery',
-        label: 'History Surgery',
-        subtitle: 'Rewrite history to permanently remove files',
+        label: context.t.palette.historySurgery.label,
+        subtitle: context.t.palette.historySurgery.subtitle,
         keywords: const [
           'rewrite', 'history', 'purge', 'remove', 'filter',
           'clean', 'sensitive', 'surgery',
         ],
-        chipLabel: 'ALPHA',
+        chipLabel: context.t.palette.chips.alpha,
         chipTone: ChipTone.muted,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
@@ -163,8 +165,8 @@ List<PaletteEntry> buildStaticEntries(
     if (repoPath != null)
       PaletteEntry(
         id: 'cmd.orrery',
-        label: 'Orrery',
-        subtitle: 'Scrub the repo’s structural history through the manifold',
+        label: context.t.palette.orrery.label,
+        subtitle: context.t.palette.orrery.subtitle,
         keywords: const [
           'orrery', 'history', 'trajectory', 'evolution', 'timeline',
           'manifold', 'spectral', 'replay', 'scrub', 'animate',
@@ -181,10 +183,10 @@ List<PaletteEntry> buildStaticEntries(
     if (engine != null)
       PaletteEntry(
         id: 'debug.engine',
-        label: 'Engine Status',
-        subtitle: 'LogosGit spectral engine diagnostics',
+        label: context.t.palette.debug.engineStatus,
+        subtitle: context.t.palette.debug.engineStatusSubtitle,
         keywords: const ['debug', 'engine', 'logos', 'spectral', 'coupling', 'diagnostics'],
-        chipLabel: 'DEBUG',
+        chipLabel: context.t.palette.chips.debug,
         chipTone: ChipTone.muted,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
@@ -193,10 +195,10 @@ List<PaletteEntry> buildStaticEntries(
     if (engine != null && status != null)
       PaletteEntry(
         id: 'debug.coupling',
-        label: 'File Coupling',
-        subtitle: 'Nearest co-change neighbors for staged files',
+        label: context.t.palette.debug.fileCoupling,
+        subtitle: context.t.palette.debug.fileCouplingSubtitle,
         keywords: const ['debug', 'coupling', 'jaccard', 'neighbors', 'co-change'],
-        chipLabel: 'DEBUG',
+        chipLabel: context.t.palette.chips.debug,
         chipTone: ChipTone.muted,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
@@ -253,7 +255,7 @@ void _showEngineStatus(BuildContext context, LogosGit engine) {
   showDialog<void>(
     context: context,
     builder: (ctx) => _DebugPanel(
-      title: 'Engine Status',
+      title: context.t.palette.debug.engineStatus,
       body: lines.toString(),
       tokens: t,
     ),
@@ -299,7 +301,7 @@ void _showCouplingInspector(
   showDialog<void>(
     context: context,
     builder: (ctx) => _DebugPanel(
-      title: 'File Coupling',
+      title: context.t.palette.debug.fileCoupling,
       body: lines.toString(),
       tokens: t,
     ),
@@ -454,7 +456,7 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text('back',
+                child: Text(context.t.palette.dev.back,
                     style: TextStyle(color: t.textMuted, fontSize: 11)),
               ),
             ],
@@ -469,7 +471,7 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('building test conflicts from history…',
+              Text(context.t.palette.dev.buildingConflicts,
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 11,
@@ -478,7 +480,7 @@ class _TestMergeEditorLoaderState extends State<_TestMergeEditorLoader> {
               const SizedBox(height: 16),
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text('cancel',
+                child: Text(context.t.palette.dev.cancel,
                     style: TextStyle(color: t.textFaint, fontSize: 11)),
               ),
             ],
@@ -678,7 +680,7 @@ List<PaletteEntry> _predictiveEntries(LogosGit engine) {
       subtitle: [
         path,
         if (community != null) community,
-        '${(momentum * 100).round()}% momentum',
+        t.palette.predictive.momentumSuffix(percent: (momentum * 100).round()),
       ].join(' · '),
       category: PaletteCategory.file,
       actionType: PaletteActionType.execute,
@@ -702,10 +704,10 @@ List<PaletteEntry> _topTouchedEntries(LogosGit engine) {
     return PaletteEntry(
       id: 'hot.${e.key}',
       label: name,
-      subtitle: '${e.value} touches · ${e.key}',
+      subtitle: t.palette.topTouched.subtitle(count: e.value, path: e.key),
       category: PaletteCategory.file,
       actionType: PaletteActionType.execute,
-      chipLabel: 'HOT',
+      chipLabel: t.palette.chips.hot,
       chipTone: ChipTone.chromatic2,
       refPath: e.key,
     );
@@ -725,8 +727,8 @@ List<PaletteEntry> _coherenceEntry(LogosGit engine, RepositoryStatus status) {
   return [
     PaletteEntry(
       id: 'info.coherence',
-      label: 'Staged coherence: $pct%',
-      subtitle: '${staged.length} files',
+      label: t.palette.coherence.label(percent: pct),
+      subtitle: t.palette.coherence.subtitle(count: staged.length),
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: '$pct%',
@@ -758,10 +760,10 @@ List<PaletteEntry> _keystoneEntries(
     return PaletteEntry(
       id: 'keystone.${k.path}',
       label: name,
-      subtitle: '${k.path} · keystone ${(ks * 100).round()}',
+      subtitle: t.palette.keystone.subtitle(path: k.path, score: (ks * 100).round()),
       category: PaletteCategory.file,
       actionType: PaletteActionType.execute,
-      chipLabel: 'KEY',
+      chipLabel: t.palette.chips.key,
       chipTone: ChipTone.chromatic1,
       refPath: k.path,
     );
@@ -783,7 +785,7 @@ List<PaletteEntry> _repoEntries(
     return PaletteEntry(
       id: 'repo.$path',
       label: name,
-      subtitle: isActive ? 'active' : path,
+      subtitle: isActive ? t.palette.active : path,
       category: PaletteCategory.repo,
       actionType: PaletteActionType.execute,
       chipLabel: forge,
@@ -808,7 +810,7 @@ List<PaletteEntry> _repoSubEntries(
     entries.addAll([
       PaletteEntry(
         id: 'repo.sub.changes.$path',
-        label: 'Changes in $name',
+        label: t.palette.repoSub.changes(name: name),
         subtitle: path,
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -822,7 +824,7 @@ List<PaletteEntry> _repoSubEntries(
       ),
       PaletteEntry(
         id: 'repo.sub.history.$path',
-        label: 'History in $name',
+        label: t.palette.repoSub.history(name: name),
         subtitle: path,
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -836,7 +838,7 @@ List<PaletteEntry> _repoSubEntries(
       ),
       PaletteEntry(
         id: 'repo.sub.branches.$path',
-        label: 'Branches in $name',
+        label: t.palette.repoSub.branches(name: name),
         subtitle: path,
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -850,22 +852,22 @@ List<PaletteEntry> _repoSubEntries(
       ),
       PaletteEntry(
         id: 'repo.sub.terminal.$path',
-        label: 'Terminal in $name',
+        label: t.palette.repoSub.terminal(name: name),
         subtitle: path,
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'TERM',
+        chipLabel: t.palette.chips.term,
         tags: const {EntryTag.repoChild},
         onExecute: () => openTerminalAt(path),
       ),
       if (!hideAi) ...[
         PaletteEntry(
           id: 'repo.sub.generate.$path',
-          label: 'Generate Commit · $name',
+          label: t.palette.repoSub.generateCommit(name: name),
           subtitle: path,
           category: PaletteCategory.action,
           actionType: PaletteActionType.execute,
-          chipLabel: 'AI',
+          chipLabel: t.palette.chips.ai,
           chipTone: ChipTone.chromatic1,
           tags: const {EntryTag.repoChild, EntryTag.needsEngine},
           refPath: path,
@@ -877,11 +879,11 @@ List<PaletteEntry> _repoSubEntries(
         ),
         PaletteEntry(
           id: 'repo.sub.review.$path',
-          label: 'Review Changes in $name',
+          label: t.palette.repoSub.reviewChanges(name: name),
           subtitle: path,
           category: PaletteCategory.action,
           actionType: PaletteActionType.execute,
-          chipLabel: 'AI',
+          chipLabel: t.palette.chips.ai,
           chipTone: ChipTone.chromatic1,
           tags: const {EntryTag.repoChild, EntryTag.needsEngine},
           refPath: path,
@@ -893,11 +895,11 @@ List<PaletteEntry> _repoSubEntries(
         ),
         PaletteEntry(
           id: 'repo.sub.muse.$path',
-          label: 'Muse in $name',
+          label: t.palette.repoSub.muse(name: name),
           subtitle: path,
           category: PaletteCategory.action,
           actionType: PaletteActionType.execute,
-          chipLabel: 'AI',
+          chipLabel: t.palette.chips.ai,
           chipTone: ChipTone.chromatic1,
           tags: const {EntryTag.repoChild, EntryTag.needsEngine},
           refPath: path,
@@ -923,24 +925,27 @@ List<PaletteEntry> _deskEntries(
 ) {
   final activePath = repo.activePath;
   return worktrees.desks.map((d) {
-    final branchLabel = d.branch ?? (d.isMain ? 'main worktree' : 'detached');
+    final branchLabel = d.branch ??
+        (d.isMain ? t.palette.desks.mainWorktree : t.palette.desks.detached);
     final isActive =
         activePath != null && _normPath(activePath) == _normPath(d.path);
     final activity = worktrees.activityFor(d.path);
     final parts = <String>[];
-    if (isActive) parts.add('active');
-    if (d.dirtyFileCount > 0) parts.add('${d.dirtyFileCount} dirty');
+    if (isActive) parts.add(t.palette.active);
+    if (d.dirtyFileCount > 0) {
+      parts.add(t.palette.desks.dirty(count: d.dirtyFileCount));
+    }
     if (activity != null) {
       if (activity.ahead > 0) parts.add('${activity.ahead}↑');
       if (activity.behind > 0) parts.add('${activity.behind}↓');
     }
     final (chip, tone) = d.isMain
-        ? ('MAIN', ChipTone.accent)
+        ? (t.palette.chips.main, ChipTone.accent)
         : d.isDetached
-            ? ('DET', ChipTone.conflicted)
+            ? (t.palette.chips.det, ChipTone.conflicted)
             : activity != null && activity.ahead > 0
                 ? ('${activity.ahead}↑', ChipTone.positive)
-                : ('DESK', ChipTone.muted);
+                : (t.palette.chips.desk, ChipTone.muted);
     return PaletteEntry(
       id: 'desk.${d.path}',
       label: branchLabel,
@@ -967,11 +972,11 @@ List<PaletteEntry> _actionEntries(
   return [
     PaletteEntry(
       id: 'act.open-browser',
-      label: 'Open in Browser',
+      label: t.palette.actions.openInBrowser,
       keywords: const ['github', 'gitlab', 'web', 'remote'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'WEB',
+      chipLabel: t.palette.chips.web,
       chipTone: ChipTone.chromatic2,
       onExecute: () async {
         try {
@@ -988,42 +993,42 @@ List<PaletteEntry> _actionEntries(
     ),
     PaletteEntry(
       id: 'act.terminal',
-      label: 'Terminal',
+      label: t.palette.actions.terminal,
       keywords: const ['shell', 'console', 'cmd', 'bash', 'powershell'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'SYS',
+      chipLabel: t.palette.chips.sys,
       onExecute: () => openTerminalAt(repoPath),
     ),
     PaletteEntry(
       id: 'act.reveal',
-      label: 'Reveal in Files',
+      label: t.palette.actions.revealInFiles,
       keywords: const ['explorer', 'finder', 'folder', 'open'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'SYS',
+      chipLabel: t.palette.chips.sys,
       onExecute: () => revealInFileManager(repoPath),
     ),
     PaletteEntry(
       id: 'act.copy-path',
-      label: 'Copy Path',
+      label: t.palette.actions.copyPath,
       subtitle: repoPath,
       keywords: const ['clipboard', 'repo'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'CLIP',
+      chipLabel: t.palette.chips.clip,
       refPath: repoPath,
       onExecute: () => Clipboard.setData(ClipboardData(text: repoPath)),
     ),
     if (branch.isNotEmpty)
       PaletteEntry(
         id: 'act.copy-branch',
-        label: 'Copy Branch',
+        label: t.palette.actions.copyBranch,
         subtitle: branch,
         keywords: const ['clipboard', 'ref'],
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'CLIP',
+        chipLabel: t.palette.chips.clip,
         onExecute: () => Clipboard.setData(ClipboardData(text: branch)),
       ),
   ];
@@ -1037,11 +1042,12 @@ List<PaletteEntry> _externalToolEntries(
 ) {
   if (!toolsState.isLoaded || toolsState.isEmpty) return [];
   return toolsState.tools.map((tool) {
-    final chip =
-        tool.mode == ToolLaunchMode.newTerminal ? 'TERM' : 'GUI';
+    final chip = tool.mode == ToolLaunchMode.newTerminal
+        ? t.palette.chips.term
+        : t.palette.chips.gui;
     return PaletteEntry(
       id: 'tool.${tool.id}',
-      label: 'Launch ${tool.displayLabel}',
+      label: t.palette.tools.launch(label: tool.displayLabel),
       subtitle: tool.executable,
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
@@ -1083,16 +1089,18 @@ void _surfaceGitOutcome(
   required String label,
 }) {
   final messenger = ScaffoldMessenger.maybeOf(context);
+  final loc = context.t;
   if (ok) {
-    messenger?.showSnackBar(SnackBar(content: Text('$label complete')));
+    messenger?.showSnackBar(
+        SnackBar(content: Text(loc.palette.command.complete(label: label))));
     return;
   }
   final f = git.classifyGitError(error ?? '');
   messenger?.showSnackBar(SnackBar(
-    content: Text('$label failed: ${f.message}'),
+    content: Text(loc.palette.command.failed(label: label, message: f.message)),
     action: f.detail.isNotEmpty && f.detail != f.message
         ? SnackBarAction(
-            label: 'Copy',
+            label: loc.palette.command.copy,
             onPressed: () => Clipboard.setData(ClipboardData(text: f.detail)),
           )
         : null,
@@ -1116,9 +1124,9 @@ List<PaletteEntry> _gitCommandEntries(
   return [
     PaletteEntry(
       id: 'cmd.fetch',
-      label: 'Fetch',
+      label: context.t.palette.gitCommands.fetch,
       keywords: const ['sync', 'download', 'update'],
-      chipLabel: 'SYNC',
+      chipLabel: context.t.palette.chips.sync,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncFetch},
@@ -1127,9 +1135,13 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.pull',
-      label: 'Pull',
+      label: context.t.palette.gitCommands.pull,
       subtitle: behind > 0
-          ? '$behind behind${upstream != null ? ' $upstream' : ''}'
+          ? (upstream != null
+              ? context.t.palette.gitCommands.pullBehindUpstream(
+                  behind: context.t.palette.gitCommands.pullBehind(count: behind),
+                  upstream: upstream)
+              : context.t.palette.gitCommands.pullBehind(count: behind))
           : null,
       keywords: const ['sync', 'download', 'merge', 'update'],
       chipLabel: behind > 0 ? '$behind↓' : null,
@@ -1144,7 +1156,11 @@ List<PaletteEntry> _gitCommandEntries(
         if (!context.mounted) return;
         if (outcome is! MergeClean) {
           ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-            SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Pull'))),
+            SnackBar(
+              content: Text(
+                mergeOutcomeMessage(outcome, op: context.t.backend.ops.pull),
+              ),
+            ),
           );
         }
         // Clean or not, git moved — refresh the repo this pull actually
@@ -1156,9 +1172,13 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.push',
-      label: 'Push',
+      label: context.t.palette.gitCommands.push,
       subtitle: ahead > 0
-          ? '$ahead commit${ahead > 1 ? 's' : ''}${upstream != null ? ' to $upstream' : ''}'
+          ? (upstream != null
+              ? context.t.palette.gitCommands.pushCommitsUpstream(
+                  commits: context.t.palette.gitCommands.pushCommits(n: ahead),
+                  upstream: upstream)
+              : context.t.palette.gitCommands.pushCommits(n: ahead))
           : null,
       keywords: const ['sync', 'upload', 'publish'],
       chipLabel: ahead > 0 ? '$ahead↑' : null,
@@ -1170,9 +1190,9 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.force-push',
-      label: 'Force Push',
+      label: context.t.palette.gitCommands.forcePush,
       keywords: const ['overwrite', 'push force'],
-      chipLabel: 'FORCE',
+      chipLabel: context.t.palette.chips.force,
       chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1187,7 +1207,8 @@ List<PaletteEntry> _gitCommandEntries(
         final target = resolveUpstream(st);
         if (target == null) {
           ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-            content: Text('Cannot force-push: no upstream set for ${st.branch}.'),
+            content: Text(context.t.palette.gitCommands
+                .forcePushNoUpstream(branch: st.branch)),
           ));
           return;
         }
@@ -1208,7 +1229,10 @@ List<PaletteEntry> _gitCommandEntries(
           forceWithLease: true,
         );
         if (!context.mounted) return;
-        _surfaceGitOutcome(context, ok: r.ok, error: r.error, label: 'Force Push');
+        _surfaceGitOutcome(context,
+            ok: r.ok,
+            error: r.error,
+            label: context.t.palette.gitCommands.forcePush);
         // Refresh only if the pushed repo is still active — the confirm dialog
         // may have sat open while the user switched repos.
         await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
@@ -1216,7 +1240,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.commit',
-      label: 'Commit',
+      label: context.t.palette.gitCommands.commit,
       keywords: const ['save', 'snapshot'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1226,7 +1250,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.stage-all',
-      label: 'Stage All',
+      label: context.t.palette.gitCommands.stageAll,
       keywords: const ['add all', 'track'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1236,7 +1260,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.unstage-all',
-      label: 'Unstage All',
+      label: context.t.palette.gitCommands.unstageAll,
       keywords: const ['reset', 'remove staged'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1246,7 +1270,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.discard-all',
-      label: 'Discard All',
+      label: context.t.palette.gitCommands.discardAll,
       keywords: const ['clean', 'reset', 'undo changes'],
       chipTone: ChipTone.negative,
       category: PaletteCategory.command,
@@ -1256,7 +1280,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.create-branch',
-      label: 'Create Branch',
+      label: context.t.palette.gitCommands.createBranch,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.branchCreate},
@@ -1264,7 +1288,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.delete-branch',
-      label: 'Delete Branch',
+      label: context.t.palette.gitCommands.deleteBranch,
       chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1273,7 +1297,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.rename-branch',
-      label: 'Rename Branch',
+      label: context.t.palette.gitCommands.renameBranch,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.branchRename},
@@ -1281,7 +1305,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.stash-push',
-      label: 'Stash',
+      label: context.t.palette.gitCommands.stash,
       keywords: const ['shelve', 'park', 'save state'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1291,7 +1315,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.stash-pop',
-      label: 'Stash Pop',
+      label: context.t.palette.gitCommands.stashPop,
       keywords: const ['unshelve', 'restore'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1303,7 +1327,8 @@ List<PaletteEntry> _gitCommandEntries(
         final r = await git.stashPop(repoPath);
         if (!context.mounted) return;
         if (r.ok) {
-          _surfaceGitOutcome(context, ok: true, label: 'Stash Pop');
+          _surfaceGitOutcome(context,
+              ok: true, label: context.t.palette.gitCommands.stashPop);
           await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
           return;
         }
@@ -1332,9 +1357,8 @@ List<PaletteEntry> _gitCommandEntries(
         final stillConflicted = await git.hasUnmergedPaths(repoPath);
         if (!context.mounted) return;
         if (stillConflicted) {
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
-            content: Text(
-                'Stash applied with conflicts. Resolve them on the Changes page.'),
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(context.t.palette.gitCommands.stashConflictMessage),
           ));
           // The worktree/index DID mutate (UU entries) — refresh so the
           // Changes page the user was just sent to shows the conflicts,
@@ -1344,13 +1368,13 @@ List<PaletteEntry> _gitCommandEntries(
               .refreshStatusIfActive(repoPath);
         } else {
           _surfaceGitOutcome(context,
-              ok: false, error: r.error, label: 'Stash Pop');
+              ok: false, error: r.error, label: context.t.palette.gitCommands.stashPop);
         }
       },
     ),
     PaletteEntry(
       id: 'cmd.stash-apply',
-      label: 'Stash Apply',
+      label: context.t.palette.gitCommands.stashApply,
       keywords: const ['restore', 'unshelve'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1359,7 +1383,8 @@ List<PaletteEntry> _gitCommandEntries(
         final r = await git.stashApply(repoPath);
         if (!context.mounted) return;
         if (r.ok) {
-          _surfaceGitOutcome(context, ok: true, label: 'Stash Apply');
+          _surfaceGitOutcome(context,
+              ok: true, label: context.t.palette.gitCommands.stashApply);
           await context.read<RepositoryState>().refreshStatusIfActive(repoPath);
           return;
         }
@@ -1376,9 +1401,8 @@ List<PaletteEntry> _gitCommandEntries(
         final stillConflicted = await git.hasUnmergedPaths(repoPath);
         if (!context.mounted) return;
         if (stillConflicted) {
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
-            content: Text(
-                'Stash applied with conflicts. Resolve them on the Changes page.'),
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(context.t.palette.gitCommands.stashConflictMessage),
           ));
           // Mutated worktree — refresh so Changes shows the conflicts.
           await context
@@ -1386,13 +1410,13 @@ List<PaletteEntry> _gitCommandEntries(
               .refreshStatusIfActive(repoPath);
         } else {
           _surfaceGitOutcome(context,
-              ok: false, error: r.error, label: 'Stash Apply');
+              ok: false, error: r.error, label: context.t.palette.gitCommands.stashApply);
         }
       },
     ),
     PaletteEntry(
       id: 'cmd.stash-drop',
-      label: 'Stash Drop',
+      label: context.t.palette.gitCommands.stashDrop,
       keywords: const ['delete stash', 'remove stash'],
       chipTone: ChipTone.negative,
       category: PaletteCategory.command,
@@ -1413,7 +1437,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.create-tag',
-      label: 'Create Tag',
+      label: context.t.palette.gitCommands.createTag,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.tagCreate},
@@ -1421,7 +1445,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.cherry-pick',
-      label: 'Cherry-pick',
+      label: context.t.palette.gitCommands.cherryPick,
       keywords: const ['pick commit', 'graft'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -1430,7 +1454,7 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.revert',
-      label: 'Revert',
+      label: context.t.palette.gitCommands.revert,
       keywords: const ['undo commit', 'rollback'],
       chipTone: ChipTone.negative,
       category: PaletteCategory.command,
@@ -1454,11 +1478,11 @@ List<PaletteEntry> _prEntries(
     return [
       PaletteEntry(
         id: 'pr.create',
-        label: 'Create PR',
+        label: t.palette.pr.create,
         subtitle: branch,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
-        chipLabel: 'PR',
+        chipLabel: t.palette.chips.pr,
         tags: const {EntryTag.prAction},
         onExecute: () => cb.onModeChanged(2),
       ),
@@ -1468,21 +1492,21 @@ List<PaletteEntry> _prEntries(
   if (pr.state == 'OPEN') {
     entries.add(PaletteEntry(
       id: 'pr.merge',
-      label: 'Merge PR',
+      label: t.palette.pr.merge,
       subtitle: pr.title,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
-      chipLabel: 'PR',
+      chipLabel: t.palette.chips.pr,
       tags: const {EntryTag.prAction},
       onExecute: () => cb.onModeChanged(2),
     ));
     if (pr.isDraft) {
       entries.add(PaletteEntry(
         id: 'pr.ready',
-        label: 'Mark PR Ready',
+        label: t.palette.pr.markReady,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
-        chipLabel: 'DRAFT',
+        chipLabel: t.palette.chips.draft,
         tags: const {EntryTag.prAction},
         onExecute: () => cb.onModeChanged(2),
       ));
@@ -1507,10 +1531,10 @@ List<PaletteEntry> _aiEntries(
   entries.addAll([
     PaletteEntry(
       id: 'ai.trigger.generate',
-      label: 'Generate Commit',
+      label: t.palette.ai.generateCommit,
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'AI',
+      chipLabel: t.palette.chips.ai,
       chipTone: ChipTone.chromatic1,
       onExecute: () {
         aiActivity.requestDrawerOpen(repoPath, AiActivityKind.generate);
@@ -1519,10 +1543,10 @@ List<PaletteEntry> _aiEntries(
     ),
     PaletteEntry(
       id: 'ai.trigger.review',
-      label: 'Review Changes',
+      label: t.palette.ai.reviewChanges,
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'AI',
+      chipLabel: t.palette.chips.ai,
       chipTone: ChipTone.chromatic1,
       onExecute: () {
         aiActivity.requestDrawerOpen(repoPath, AiActivityKind.review);
@@ -1531,10 +1555,10 @@ List<PaletteEntry> _aiEntries(
     ),
     PaletteEntry(
       id: 'ai.trigger.muse',
-      label: 'Run Muse',
+      label: t.palette.ai.runMuse,
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'AI',
+      chipLabel: t.palette.chips.ai,
       chipTone: ChipTone.chromatic1,
       onExecute: () {
         aiActivity.requestDrawerOpen(repoPath, AiActivityKind.muse);
@@ -1543,11 +1567,12 @@ List<PaletteEntry> _aiEntries(
     ),
     PaletteEntry(
       id: 'ai.trigger.debug',
-      label: 'Debug ${repoPath.split('/').last.split('\\').last}',
-      subtitle: 'describe a symptom',
+      label: t.palette.ai
+          .debugRepo(name: repoPath.split('/').last.split('\\').last),
+      subtitle: t.palette.ai.describeSymptom,
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
-      chipLabel: 'AI',
+      chipLabel: t.palette.chips.ai,
       chipTone: ChipTone.chromatic1,
       onExecute: () {
         aiActivity.requestDrawerOpen(repoPath, AiActivityKind.debug);
@@ -1560,19 +1585,19 @@ List<PaletteEntry> _aiEntries(
   for (final r in active) {
     if (r.isTerminal && !r.seen) {
       final kindLabel = switch (r.kind) {
-        AiActivityKind.generate => 'Commit Message',
-        AiActivityKind.review => 'Code Review',
-        AiActivityKind.muse => 'Muse Result',
-        AiActivityKind.present => 'Presentation',
-        AiActivityKind.debug => 'Debug Result',
+        AiActivityKind.generate => t.palette.ai.kindCommitMessage,
+        AiActivityKind.review => t.palette.ai.kindCodeReview,
+        AiActivityKind.muse => t.palette.ai.kindMuseResult,
+        AiActivityKind.present => t.palette.ai.kindPresentation,
+        AiActivityKind.debug => t.palette.ai.kindDebugResult,
       };
       entries.add(PaletteEntry(
         id: 'ai.view.${r.kind.name}',
-        label: 'View $kindLabel',
-        subtitle: 'unseen result',
+        label: t.palette.ai.viewResult(kind: kindLabel),
+        subtitle: t.palette.ai.unseenResult,
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'AI',
+        chipLabel: t.palette.chips.ai,
         chipTone: ChipTone.positive,
         onExecute: () {
           aiActivity.requestDrawerOpen(repoPath, r.kind);
@@ -1582,11 +1607,11 @@ List<PaletteEntry> _aiEntries(
     } else if (r.isRunning) {
       entries.add(PaletteEntry(
         id: 'ai.running.${r.kind.name}',
-        label: 'AI: ${r.kind.name}…',
-        subtitle: 'running',
+        label: t.palette.ai.runningResult(kind: r.kind.name),
+        subtitle: t.palette.ai.running,
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'AI',
+        chipLabel: t.palette.chips.ai,
         chipTone: ChipTone.muted,
       ));
     }
@@ -1602,10 +1627,10 @@ List<PaletteEntry> _undoEntry(UndoCoordinator undo, PaletteCallbacks cb) {
   return [
     PaletteEntry(
       id: 'undo.cancel',
-      label: 'Cancel: ${pending.label}',
+      label: t.palette.undo.cancel(label: pending.label),
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
-      chipLabel: 'UNDO',
+      chipLabel: t.palette.chips.undo,
       onExecute: cb.onUndo,
     ),
   ];
@@ -1616,7 +1641,7 @@ List<PaletteEntry> _undoEntry(UndoCoordinator undo, PaletteCallbacks cb) {
 List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       PaletteEntry(
         id: 'nav.changes',
-        label: 'Changes',
+        label: t.palette.navigation.changes,
         keywords: const ['diff', 'modified', 'staged', 'status'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1626,7 +1651,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.history',
-        label: 'History',
+        label: t.palette.navigation.history,
         keywords: const ['log', 'commits', 'timeline'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1636,7 +1661,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.branches',
-        label: 'Branches',
+        label: t.palette.navigation.branches,
         keywords: const ['refs', 'checkout', 'switch'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1646,7 +1671,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.xray',
-        label: 'X-Ray',
+        label: t.palette.navigation.xray,
         keywords: const ['analysis', 'hotspots', 'insights'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1654,7 +1679,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.settings',
-        label: 'Settings',
+        label: t.palette.navigation.settings,
         keywords: const ['preferences', 'config', 'options'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1662,7 +1687,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.refresh',
-        label: 'Refresh',
+        label: t.palette.navigation.refresh,
         keywords: const ['reload', 'rescan'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
@@ -1676,7 +1701,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
 List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       PaletteEntry(
         id: 'setting.reduce-motion',
-        label: 'Reduce Motion',
+        label: t.palette.settings.reduceMotion,
         keywords: const ['animation', 'accessibility'],
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
@@ -1685,7 +1710,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.logo-animates-unfocused',
-        label: 'Animate Logo Unfocused',
+        label: t.palette.settings.animateLogoUnfocused,
         keywords: const ['background', 'idle'],
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
@@ -1694,7 +1719,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.instant-blame',
-        label: 'Instant Blame Hover',
+        label: t.palette.settings.instantBlameHover,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.instantBlameHover,
@@ -1702,7 +1727,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.auto-select-changes',
-        label: 'Auto-select Changes',
+        label: t.palette.settings.autoSelectChanges,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.autoSelectNewChanges,
@@ -1710,7 +1735,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.fetch-online-issues',
-        label: 'Fetch Online Issues',
+        label: t.palette.settings.fetchOnlineIssues,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.fetchOnlineIssuesOnBranchLoad,
@@ -1718,7 +1743,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.remember-wip',
-        label: 'Remember Work in Progress',
+        label: t.palette.settings.rememberWip,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.rememberWorkInProgress,
@@ -1726,7 +1751,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.hide-ai',
-        label: 'Hide AI Features',
+        label: t.palette.settings.hideAiFeatures,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.hideAiFeatures,
@@ -1734,7 +1759,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.crash-reporting',
-        label: 'Crash Reporting',
+        label: t.palette.settings.crashReporting,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.crashReportingEnabled,
@@ -1743,7 +1768,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       if (!prefs.hideAiFeatures)
         PaletteEntry(
           id: 'setting.ai-read-only',
-          label: 'AI Read-only',
+          label: t.palette.settings.aiReadOnly,
           category: PaletteCategory.setting,
           actionType: PaletteActionType.toggle,
           readBool: () => prefs.aiReadOnlyDefault,
@@ -1751,7 +1776,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
         ),
       PaletteEntry(
         id: 'setting.stash-cabinet',
-        label: 'Stash Cabinet Expanded',
+        label: t.palette.settings.stashCabinetExpanded,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.stashCabinetDefaultExpanded,
@@ -1759,7 +1784,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.file-sort-inverted',
-        label: 'File Sort Inverted',
+        label: t.palette.settings.fileSortInverted,
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.fileSortInverted,
@@ -1775,11 +1800,11 @@ List<PaletteEntry> _themeEntries(ThemeState theme) => AppThemeId.values.map(
         return PaletteEntry(
           id: 'theme.${id.name}',
           label: _themeLabel(id),
-          subtitle: current ? 'active' : null,
+          subtitle: current ? t.palette.active : null,
           keywords: const ['theme'],
           category: PaletteCategory.setting,
           actionType: PaletteActionType.execute,
-          chipLabel: 'THM',
+          chipLabel: t.palette.chips.thm,
           onExecute: () => theme.setTheme(id),
         );
       },
@@ -1790,11 +1815,11 @@ List<PaletteEntry> _themeEntries(ThemeState theme) => AppThemeId.values.map(
 List<PaletteEntry> _infoEntries() => [
       PaletteEntry(
         id: 'info.version',
-        label: 'Manifold ${BuildInfo.versionDisplay}',
+        label: t.palette.info.version(version: BuildInfo.versionDisplay),
         keywords: const ['version', 'about'],
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'VER',
+        chipLabel: t.palette.chips.ver,
         onExecute: () => Clipboard.setData(
           ClipboardData(text: BuildInfo.versionDisplay),
         ),

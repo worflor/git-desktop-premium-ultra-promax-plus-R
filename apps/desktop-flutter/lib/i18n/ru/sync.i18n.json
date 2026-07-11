@@ -1,0 +1,51 @@
+{
+  "@@locale": "ru",
+  "actions": {
+    "syncLabel": "Синхронизировать",
+    "syncOpenRepoDetail": "Откройте репозиторий, чтобы управлять отправкой и получением.",
+    "detachedHeadLabel": "Отсоединённый HEAD",
+    "detachedHeadDetail": "Переключитесь на ветку перед отправкой или получением.",
+    "publishBranchLabel": "Опубликовать ветку",
+    "publishBranchDetail": "Отправить {branch} и задать её upstream-ветку слежения.",
+    "publishButtonLabel": "Опубликовать",
+    "syncBranchLabel": "Синхронизировать ветку",
+    "syncBranchDetail": "Забрать {behindCount} с rebase, затем отправить {aheadCount}.",
+    "syncBranchButtonLabel": "Забрать (rebase), затем отправить",
+    "pushBranchLabel": "Отправить ветку",
+    "pushBranchDetail": "Отправить {count} в {upstream}.",
+    "pushBranchButtonLabel": "Отправить коммиты",
+    "pullUpdatesLabel": "Забрать обновления",
+    "pullUpdatesDetail": "Забрать {count} из {upstream}.",
+    "syncUpToDateDetail": "Получить из {upstream} и обновить статус upstream."
+  },
+  "panel": {
+    "loadingTitle": "Загрузка статуса удалённого",
+    "loadingMessage": "Проверка данных слежения за веткой.",
+    "remoteStatusUnavailable": "Статус удалённого недоступен",
+    "noUpstream": "нет upstream",
+    "aheadLabel": "Впереди",
+    "behindLabel": "Позади",
+    "treeLabel": "Дерево",
+    "runningSync": "Синхронизация…",
+    "fetching": "Получение…",
+    "fetchOnly": "Только получить",
+    "syncFailed": "Сбой синхронизации",
+    "forcePushRecoveryLabel": "Принудительная отправка (with lease)",
+    "conflictsToResolveTitle": "Конфликты к устранению",
+    "conflictsToResolveBody": "{count} требуют устранения: {list}",
+    "resolveConflicts": "Устранить конфликты",
+    "workingEllipsis": "Работаю…",
+    "lastActivity": "Последнее действие: {operation}",
+    "noOutput": "Нет вывода.",
+    "resolvedConflicts": "Устранено: {count}.",
+    "cancelledUnchanged": "Отменено, рабочий каталог без изменений.",
+    "uncommittedEditsBlocked": "{count} с незакоммиченными правками, сначала закоммитьте их для rebase-синхронизации ({list}).",
+    "noUpstreamForForcePush": "Принудительная отправка невозможна: для «{branch}» не настроен upstream."
+  },
+  "forcePush": {
+    "confirmTitle": "Принудительная отправка (with lease)?",
+    "target": "Цель: {remote}/{branch}",
+    "warning": "Это перезапишет удалённую ветку вашей локальной историей. Режим with lease прервётся, если кто-то отправил в удалённый после вашего последнего fetch, но уже полученные изменения всё равно будут перезаписаны. Используйте только когда вы намеренно сделали rebase или amend, разошедшийся с веткой.",
+    "confirmButton": "Принудительно отправить"
+  }
+}

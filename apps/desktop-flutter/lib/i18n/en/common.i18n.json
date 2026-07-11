@@ -1,0 +1,81 @@
+{
+  "@@locale": "en",
+  "listSeparator": ", ",
+  "cancel": "Cancel",
+  "close": "Close",
+  "save": "Save",
+  "delete": "Delete",
+  "retry": "Retry",
+  "copy": "Copy",
+  "copied": "Copied",
+  "done": "Done",
+  "loading": "Loading…",
+  "fileCount": {
+    "one": "{n} file",
+    "other": "{n} files"
+  },
+  "commitCount": {
+    "one": "{n} commit",
+    "other": "{n} commits"
+  },
+  "branchCount": {
+    "one": "{n} branch",
+    "other": "{n} branches"
+  },
+  "localCommitCount": {
+    "one": "{n} local commit",
+    "other": "{n} local commits"
+  },
+  "remoteCommitCount": {
+    "one": "{n} remote commit",
+    "other": "{n} remote commits"
+  },
+  "conflictedFileCount": {
+    "one": "{n} conflicted file",
+    "other": "{n} conflicted files"
+  },
+  "time": {
+    "now": "now",
+    "justNow": "just now",
+    "today": "TODAY",
+    "minutesAgo": "{n}m ago",
+    "hoursAgo": "{n}h ago",
+    "daysAgo": "{n}d ago",
+    "weeksAgo": "{n}w ago",
+    "monthsAgo": "{n}mo ago",
+    "yearsAgo": "{n}y ago",
+    "minutesShort": "{n}m",
+    "hoursShort": "{n}h",
+    "daysShort": "{n}d",
+    "weeksShort": "{n}w",
+    "monthsShort": "{n}mo",
+    "yearsShort": "{n}y",
+    "commitMonthsShort": "{n}m",
+    "idle": "idle",
+    "idleDays": "idle {n} days",
+    "idleYears": {
+      "one": "idle {n} year",
+      "other": "idle {n} years"
+    },
+    "monthAbbrevs(slang=list)": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

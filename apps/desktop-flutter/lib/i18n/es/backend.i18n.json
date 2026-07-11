@@ -1,0 +1,26 @@
+{
+  "@@locale": "es",
+  "ops": {
+    "merge": "Merge",
+    "pull": "Pull",
+    "apply": "Aplicar",
+    "switchOp": "Cambiar",
+    "sync": "Sincronizar"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} cancelado.",
+    "complete": "{op} completado.",
+    "conflictsLeft": {
+      "one": "queda {n} conflicto — resuélvelo en la página de Cambios.",
+      "other": "quedan {n} conflictos — resuélvelos en la página de Cambios."
+    },
+    "resolvedConflicts": {
+      "one": "Se resolvió {n} conflicto.",
+      "other": "Se resolvieron {n} conflictos."
+    },
+    "uncommittedEdits": {
+      "one": "{n} archivo tiene cambios sin commit — haz commit primero.",
+      "other": "{n} archivos tienen cambios sin commit — haz commit primero."
+    }
+  }
+}
