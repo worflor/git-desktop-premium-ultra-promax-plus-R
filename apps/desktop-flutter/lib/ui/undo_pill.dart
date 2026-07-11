@@ -9,6 +9,7 @@ import 'design_primitives.dart';
 import 'morph_text.dart';
 import 'motion.dart';
 import 'tokens.dart';
+import '../i18n/gen/strings.g.dart';
 
 /// Global "action-pending" pill. Lives in an app-shell overlay slot
 /// so a destructive action scheduled on any page shows its cancel
@@ -235,7 +236,7 @@ class _UndoPillState extends State<UndoPill>
                     foregroundColor: tokens.accentBright,
                   ),
                   child: Text(
-                    hasPending ? 'Cancel' : 'Undo',
+                    hasPending ? context.t.common.cancel : context.t.app.undoLabel,
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -305,7 +306,9 @@ class _GoCountdownState extends State<_GoCountdown>
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final text = widget.hovered ? 'go' : '${widget.remainingSec}s';
+    final text = widget.hovered
+        ? context.t.app.goLabel
+        : context.t.app.countdownSeconds(n: widget.remainingSec);
     if (widget.hovered) {
       return ThemeMorphText(
         text,

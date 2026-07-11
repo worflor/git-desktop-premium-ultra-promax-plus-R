@@ -1,0 +1,125 @@
+{
+  "@@locale": "ja",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "重要度：高",
+      "importanceModerate": "重要度：中",
+      "mostlyAdditions": "ほぼ追加",
+      "mostlyDeletions": "ほぼ削除",
+      "tightlyCoupled": "密に結合したファイル",
+      "overlapsWorkingTree": "作業ツリーと重複"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(root)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} 件",
+    "filesInDir": {
+      "other": "{path}/ 内 {n} ファイル"
+    },
+    "moreFilesCount": {
+      "other": "他 {n} ファイル"
+    },
+    "breadcrumbAll": "すべて",
+    "breadcrumbCurrentFocus": "現在の焦点：{target}",
+    "breadcrumbViewAllChanges": "このコミットの全変更を表示",
+    "breadcrumbDrillUpTo": "{target}へ上がる",
+    "trackStats": {
+      "other": "{n} ファイル  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "other": "{n} サブディレクトリ"
+    },
+    "segmentLeafSummary": "{path}、{adds} 追加、{dels} 削除",
+    "segmentContainerSummary": {
+      "other": "{n} ファイル、{adds} 追加、{dels} 削除"
+    },
+    "hunkCount": {
+      "other": "{n} ハンク"
+    },
+    "largestChangeInView": "このビューで最大の変更",
+    "conflictedTag": "コンフリクト",
+    "dirtyTag": "ダーティ",
+    "drillInTag": "掘り下げる",
+    "changeTypeRenamed": "リネーム",
+    "changeTypeCopied": "コピー",
+    "changeTypeTypechange": "型変更",
+    "changeTypeConflict": "コンフリクト",
+    "coreFile": "コアファイル",
+    "staleFile": "古い",
+    "filterPathHint": "パスを絞り込み",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "世界線を閉じる",
+    "dragToOpenWorldline": "ドラッグして世界線を開く"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "現在のブランチ",
+    "applyCommitOnto": "コミットの変更を{branch}へ適用",
+    "revertCommitOn": "{branch}上でコミットの変更をリバート"
+  },
+  "cherryPick": {
+    "paused": "チェリーピックを一時停止しました。残りのコンフリクトを変更ページで解決してください。",
+    "failed": "チェリーピックに失敗しました：{error}",
+    "pickedResolved": "{short}をチェリーピックしました（コンフリクトを解決）",
+    "picked": "{short}をチェリーピックしました"
+  },
+  "revert": {
+    "paused": "リバートを一時停止しました。残りのコンフリクトを変更ページで解決してください。",
+    "failed": "リバートに失敗しました：{error}",
+    "revertedResolved": "{short}をリバートしました（コンフリクトを解決）",
+    "reverted": "{short}をリバートしました"
+  },
+  "reflog": {
+    "createBranchFromHere": "ここからブランチを作成…",
+    "copyCommitHash": "コミットハッシュをコピー",
+    "createBranchDialogTitle": "reflog エントリからブランチを作成",
+    "anchorLine": "アンカー：{short}  ·  {summary}",
+    "branchNameHint": "ブランチ名",
+    "createAction": "作成",
+    "createBranchFailed": "ブランチの作成に失敗しました：{error}",
+    "branchCreatedAt": "ブランチ「{name}」を {short} に作成しました。"
+  },
+  "revealCeilingExceeded": {
+    "other": "そのコミットは、読み込まれた {n} コミットよりも深くにあります。"
+  },
+  "deleteTagFailed": "タグの削除に失敗しました：{error}",
+  "loadingTitle": "履歴を読み込み中",
+  "loadingMessage": "最近のコミットを読み込んでいます。",
+  "unavailableTitle": "履歴を取得できません",
+  "toggleWorldline": "世界線を切り替え",
+  "pageTitle": "履歴",
+  "viewingLast": "直近を表示中",
+  "commitsUnit": "コミット",
+  "noCommitSelectedTitle": "コミットが未選択",
+  "noCommitSelectedMessage": "変更を確認するにはコミットを選択してください。",
+  "loadingCommitTitle": "コミットを読み込み中",
+  "loadingCommitMessage": "コミットの詳細を読み込んでいます。",
+  "commitUnavailableTitle": "コミットを取得できません",
+  "couldNotLoadCommit": "コミットを読み込めませんでした。",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "reflog を読み込む",
+  "createTag": "タグを作成",
+  "newTagName": "新しいタグ名",
+  "newTagNameError": "新しいタグ名 — {error}",
+  "allFilesHeader": {
+    "other": "{n} ファイル · 全変更"
+  },
+  "allChangesLabel": "全変更",
+  "rebase": {
+    "firstCommitCannotBe": "最初のコミットは{action}にできません",
+    "rebaseCommitCount": {
+      "other": "{n} コミットをリベース"
+    },
+    "resetLabel": "リセット",
+    "dragToReorderHint": "ドラッグで並べ替え、コミットごとにアクションを選択",
+    "newMessageHint": "新しいメッセージ",
+    "runningEllipsis": "…",
+    "startRebase": "リベースを開始"
+  },
+  "inFlight": {
+    "header": "進行中",
+    "deskFallbackLabel": "デスク"
+  }
+}

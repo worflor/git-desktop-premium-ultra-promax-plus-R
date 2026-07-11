@@ -1,0 +1,83 @@
+{
+  "@@locale": "fr",
+  "chrome": {
+    "title": "Chirurgie de l'historique",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "À BLANC"
+  },
+  "select": {
+    "prompt": "Sélectionnez les fichiers à retirer de l'historique",
+    "selectedCount": "{n} sélectionnés",
+    "searchHint": "rechercher...",
+    "readingTree": "lecture de l'arbre...",
+    "continueDisabled": "sélectionnez des fichiers pour continuer",
+    "continueEnabled": "continuer →",
+    "toPurgeCount": "{n} à purger",
+    "analyzing": "analyse...",
+    "riskLow": "risque faible",
+    "riskModerate": "risque modéré",
+    "riskHigh": "risque élevé",
+    "impactCommitsLabel": "commits",
+    "impactBranchesLabel": "branches",
+    "impactWorktreesLabel": "arbres de travail",
+    "impactCouplingLabel": "couplage",
+    "impactCouplingIsland": "îlot",
+    "impactCouplingNeighbors": "{n} voisins",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Comment ça marche",
+    "backupTitle": "Sauvegarde",
+    "backupBody": "Chaque réf de branche et d'étiquette est copiée dans un espace de noms de sauvegarde avant tout changement. En cas de problème, un clic restaure l'état d'origine.",
+    "rewriteTitle": "Réécriture",
+    "rewriteBody": "Chaque commit est parcouru de la racine à la pointe. Pour chaque commit contenant les fichiers ciblés, un nouveau commit est créé avec ces fichiers retirés de l'arbre. Les chaînes de parents sont remappées pour préserver la topologie. ",
+    "rewriteSummary": "{affected} des {total} commits seront réécrits.",
+    "updateRefsTitle": "Mise à jour des réfs",
+    "updateRefsBody": "Les pointeurs de branche et d'étiquette sont déplacés vers les nouveaux SHA de commits. Les anciens objets subsistent jusqu'au ramasse-miettes. ",
+    "worktreesNeedRecheckout": "Vos {n} arbre(s) de travail devront être re-extraits.",
+    "noWorktreesAffected": "Aucun arbre de travail n'est affecté.",
+    "forcePushTitle": "Poussée forcée",
+    "forcePushBody": "Après vérification de la purge, vous choisissez les branches à forcer. Utilise --force-with-lease pour échouer sans risque si quelqu'un d'autre a poussé entre-temps.",
+    "plumbingNote": "Contrairement à filter-repo ou BFG, ceci passe entièrement par les commandes de plomberie git (cat-file, mktree, commit-tree, update-ref). Aucune dépendance externe. Le suivi des renommages suit une chaîne par fichier — si un fichier a été copié et les deux copies renommées indépendamment, vérifiez le résultat de la purge après exécution.",
+    "back": "← Retour",
+    "continueLabel": "J'ai compris, continuer →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commits seront réécrits",
+    "forcePushRequired": "Une poussée forcée sera nécessaire pour les branches distantes",
+    "worktreesRecheckout": "{n} arbres de travail devront être re-extraits",
+    "stashesInvalid": "{n} remisages peuvent devenir invalides",
+    "heading": "Cette opération réécrit l'historique git",
+    "subheading": "Elle ne peut pas être annulée automatiquement après une poussée forcée.",
+    "typeHint": "tapez {word}",
+    "goBack": "Revenir",
+    "begin": "Commencer la chirurgie"
+  },
+  "execute": {
+    "preparing": "Préparation...",
+    "backingUpRefs": "Sauvegarde des réfs...",
+    "rewritingCommits": "Réécriture des commits...",
+    "updatingRefs": "Mise à jour des réfs..."
+  },
+  "verify": {
+    "complete": "Chirurgie terminée",
+    "failed": "Chirurgie échouée",
+    "commitsRewrittenLabel": "Commits réécrits",
+    "refsUpdatedLabel": "Réfs mises à jour",
+    "oldHeadLabel": "Ancien HEAD",
+    "newHeadLabel": "Nouveau HEAD",
+    "purgeVerifiedLabel": "Purge vérifiée",
+    "purgeClean": "propre",
+    "purgeTracesRemain": "DES TRACES SUBSISTENT",
+    "displacedWorktrees": "Arbres de travail déplacés",
+    "undoSurgery": "Annuler la chirurgie",
+    "rolledBack": "Retour aux réfs de sauvegarde effectué.",
+    "done": "Terminé"
+  },
+  "forcePush": {
+    "pushing": "poussée...",
+    "forcePushAll": "Tout forcer",
+    "confirmPush": "confirmer la poussée",
+    "cancel": "annuler"
+  }
+}

@@ -26,6 +26,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../i18n/gen/strings.g.dart';
 import '../../backend/logos_core.dart' show filamentSat;
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
@@ -65,20 +66,22 @@ class _Candidate {
 /// 6–12 characters so the pill stays compact. Paired with a glyph
 /// that hints at the axis's flavour (◈ history, ◇ vocabulary, ▣
 /// structure, ⌂ path).
-({String glyph, String label}) _axisPill(RelatednessAxis axis) {
+({String glyph, String label}) _axisPill(
+    BuildContext context, RelatednessAxis axis) {
+  final c = context.t.changes.constellation;
   switch (axis) {
     case RelatednessAxis.transport:
-      return (glyph: '▣', label: 'STRUCTURE');
+      return (glyph: '▣', label: c.axisStructure);
     case RelatednessAxis.coChange:
-      return (glyph: '◈', label: 'CO-CHANGE');
+      return (glyph: '◈', label: c.axisCoChange);
     case RelatednessAxis.spectralProfile:
-      return (glyph: '◇', label: 'SPECTRAL PROFILE');
+      return (glyph: '◇', label: c.axisSpectralProfile);
     case RelatednessAxis.pathAffinity:
-      return (glyph: '⌂', label: 'PATH SIBLINGS');
+      return (glyph: '⌂', label: c.axisPathSiblings);
     case RelatednessAxis.hunk:
-      return (glyph: '⧖', label: 'DIFF STRUCTURE');
+      return (glyph: '⧖', label: c.axisDiffStructure);
     case RelatednessAxis.spectral:
-      return (glyph: '◉', label: 'SPECTRAL');
+      return (glyph: '◉', label: c.axisSpectral);
   }
 }
 
@@ -312,7 +315,7 @@ class _Hairline extends StatelessWidget {
 /// prefix, handles the common dart-project shape `lib/<domain>/<area>`
 /// by preferring 1–2 meaningful segments over the full path.
 (String, String?) _autoName(List<String> paths) {
-  if (paths.isEmpty) return ('UNSORTED', null);
+  if (paths.isEmpty) return (t.changes.constellation.titleUnsorted, null);
   final norm = paths.map((p) => p.replaceAll('\\', '/')).toList();
 
   // --- Shared directory segments (exclude basename).
@@ -373,7 +376,10 @@ class _Hairline extends StatelessWidget {
     sharedStem = stems.first;
   }
 
-  final title = (locus ?? (paths.length == 1 ? 'SINGLETON' : 'MIXED'))
+  final title = (locus ??
+          (paths.length == 1
+              ? t.changes.constellation.titleSingleton
+              : t.changes.constellation.titleMixed))
       .replaceAll('_', ' ')
       .replaceAll('-', ' ')
       .toUpperCase();
@@ -554,7 +560,9 @@ class _CandidateCardState extends State<_CandidateCard>
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Tooltip(
-                      message: _isCarvedFromProps() ? 'untie' : 'bind',
+                      message: _isCarvedFromProps()
+                          ? context.t.changes.constellation.untie
+                          : context.t.changes.constellation.bind,
                       waitDuration: const Duration(milliseconds: 350),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
@@ -974,7 +982,7 @@ class _AxisPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final geo = context.surfaceShader.geometry;
-    final pill = _axisPill(axis);
+    final pill = _axisPill(context, axis);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
@@ -1286,7 +1294,7 @@ class _EmptyCandidates extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 36),
       child: Center(
         child: Text(
-          'no clusters yet',
+          context.t.changes.constellation.emptyClusters,
           style: TextStyle(
             color: tokens.textMuted.withValues(alpha: 0.55),
             fontSize: 10.5,

@@ -6,19 +6,25 @@
 
 import 'package:flutter/material.dart';
 import 'package:git_desktop/app/preferences_state.dart';
+import 'package:git_desktop/i18n/gen/strings.g.dart';
 import 'package:git_desktop/ui/tokens.dart';
 import 'package:provider/provider.dart';
 
 Widget orreryTestApp({required AppThemeId theme, required Widget home}) {
   final tokens = AppTokens.fromId(theme);
-  return ChangeNotifierProvider<PreferencesState>(
-    create: (_) => PreferencesState(),
-    child: MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[
-        AppThemeExtension(tokens),
-      ]),
-      home: home,
+  // TranslationProvider mirrors main.dart's outermost wrapper — the orrery
+  // chrome reads `context.t` and throws without it. Base locale (en) is
+  // compiled in, so this adds no I/O to the harness.
+  return TranslationProvider(
+    child: ChangeNotifierProvider<PreferencesState>(
+      create: (_) => PreferencesState(),
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          extensions: <ThemeExtension<dynamic>>[AppThemeExtension(tokens)],
+        ),
+        home: home,
+      ),
     ),
   );
 }

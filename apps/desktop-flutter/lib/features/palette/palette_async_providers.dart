@@ -1,6 +1,8 @@
 import '../../backend/dtos.dart';
 import '../../backend/git.dart';
+import '../../ui/format.dart';
 import '../../backend/git_result.dart';
+import '../../i18n/gen/strings.g.dart';
 import 'palette_entry.dart';
 
 class PaletteGitCache {
@@ -57,16 +59,16 @@ Future<List<PaletteEntry>> _filterBranches(
         (b) => PaletteEntry(
           id: 'branch.${b.name}',
           label: b.name,
-          subtitle: b.current ? 'current' : b.upstream,
+          subtitle: b.current ? t.palette.gitCache.current : b.upstream,
           category: PaletteCategory.branch,
           actionType: PaletteActionType.execute,
           chipLabel: b.current
-              ? 'HEAD'
+              ? t.palette.chips.head
               : b.gone
-                  ? 'GONE'
+                  ? t.palette.chips.gone
                   : b.upstream != null
-                      ? 'REMOTE'
-                      : 'LOCAL',
+                      ? t.palette.chips.remote
+                      : t.palette.chips.local,
         ),
       )
       .toList();
@@ -88,24 +90,11 @@ Future<List<PaletteEntry>> _searchCommits(
           subtitle: '${c.shortHash} — ${c.authorName}',
           category: PaletteCategory.commit,
           actionType: PaletteActionType.execute,
-          chipLabel: _commitAgeChip(c.authoredAt),
+          chipLabel: commitAgeChip(c.authoredAt),
           refPath: c.commitHash,
         ),
       )
       .toList();
-}
-
-String _commitAgeChip(String authoredAt) {
-  try {
-    final age = DateTime.now().difference(DateTime.parse(authoredAt));
-    if (age.inDays == 0) return 'TODAY';
-    if (age.inDays < 7) return '${age.inDays}d';
-    if (age.inDays < 30) return '${(age.inDays / 7).round()}w';
-    if (age.inDays < 365) return '${(age.inDays / 30).round()}m';
-    return '${(age.inDays / 365).round()}y';
-  } catch (_) {
-    return '';
-  }
 }
 
 Future<List<PaletteEntry>> _filterFiles(
@@ -123,7 +112,9 @@ Future<List<PaletteEntry>> _filterFiles(
         (f) => PaletteEntry(
           id: 'file.${f.path}',
           label: f.path,
-          subtitle: f.hasStagedChange ? 'staged' : 'modified',
+          subtitle: f.hasStagedChange
+              ? t.palette.gitCache.staged
+              : t.palette.gitCache.modified,
           category: PaletteCategory.file,
           actionType: PaletteActionType.execute,
           chipLabel: _fileStatusChip(f),
@@ -172,16 +163,18 @@ Future<List<PaletteEntry>> _filterTags(
   if (tags == null) return [];
   final q = query.toLowerCase();
   return tags
-      .where((t) => t.name.toLowerCase().contains(q))
+      .where((tag) => tag.name.toLowerCase().contains(q))
       .take(15)
       .map(
-        (t) => PaletteEntry(
-          id: 'tag.${t.name}',
-          label: t.name,
-          subtitle: t.subject,
+        (tag) => PaletteEntry(
+          id: 'tag.${tag.name}',
+          label: tag.name,
+          subtitle: tag.subject,
           category: PaletteCategory.tag,
           actionType: PaletteActionType.execute,
-          chipLabel: t.tagType == 'tag' ? 'AN' : 'LW',
+          chipLabel: tag.tagType == 'tag'
+              ? t.palette.chips.an
+              : t.palette.chips.lw,
         ),
       )
       .toList();

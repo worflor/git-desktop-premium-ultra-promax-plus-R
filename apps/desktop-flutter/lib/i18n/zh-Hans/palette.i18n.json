@@ -1,0 +1,201 @@
+{
+  "active": "活跃",
+  "prefixes": {
+    "askHint": "ask: [问题]",
+    "nearHint": "near: [文件]",
+    "whoHint": "who: [文件]",
+    "logHint": "log: [信息]",
+    "runHint": "run: [工具]",
+    "askLabel": "询问 {name}：{body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} 位审查者 · {touches} 次改动",
+    "whoTouchesLabel": "{name} — {touches} 次改动",
+    "whoTouchesSubtitle": "{path} · 无审查者记录"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NEAR",
+    "who": "WHO",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HOT",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "GONE",
+    "remote": "REMOTE",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% 动量"
+  },
+  "topTouched": {
+    "subtitle": "{count} 次改动 · {path}"
+  },
+  "coherence": {
+    "label": "暂存内聚度：{percent}%",
+    "subtitle": "{count} 个文件"
+  },
+  "keystone": {
+    "subtitle": "{path} · 关键石 {score}"
+  },
+  "repoSub": {
+    "changes": "{name} 中的更改",
+    "history": "{name} 中的历史",
+    "branches": "{name} 中的分支",
+    "terminal": "{name} 中的终端",
+    "generateCommit": "生成提交 · {name}",
+    "reviewChanges": "审查 {name} 中的更改",
+    "muse": "{name} 中的 Muse"
+  },
+  "desks": {
+    "mainWorktree": "主工作树",
+    "detached": "游离",
+    "dirty": "{count} 个脏改动"
+  },
+  "actions": {
+    "openInBrowser": "在浏览器中打开",
+    "terminal": "终端",
+    "revealInFiles": "在文件管理器中显示",
+    "copyPath": "复制路径",
+    "copyBranch": "复制分支"
+  },
+  "tools": {
+    "launch": "启动 {label}"
+  },
+  "gitCommands": {
+    "fetch": "抓取",
+    "pull": "拉取",
+    "pullBehind": "落后 {count}",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "推送",
+    "pushCommits": {"other": "{n} 个提交"},
+    "pushCommitsUpstream": "{commits} 到 {upstream}",
+    "forcePush": "强制推送",
+    "forcePushNoUpstream": "无法强制推送：{branch} 未设置上游。",
+    "commit": "提交",
+    "stageAll": "全部暂存",
+    "unstageAll": "全部取消暂存",
+    "discardAll": "全部丢弃",
+    "createBranch": "创建分支",
+    "deleteBranch": "删除分支",
+    "renameBranch": "重命名分支",
+    "stash": "储藏",
+    "stashPop": "弹出储藏",
+    "stashApply": "应用储藏",
+    "stashDrop": "丢弃储藏",
+    "createTag": "创建标签",
+    "cherryPick": "拣选",
+    "revert": "还原",
+    "stashConflictMessage": "储藏应用时产生冲突。请在“更改”页面解决。"
+  },
+  "pr": {
+    "create": "创建 PR",
+    "merge": "合并 PR",
+    "markReady": "将 PR 标记为就绪"
+  },
+  "ai": {
+    "generateCommit": "生成提交",
+    "reviewChanges": "审查更改",
+    "runMuse": "运行 Muse",
+    "debugRepo": "调试 {name}",
+    "describeSymptom": "描述一个症状",
+    "viewResult": "查看 {kind}",
+    "unseenResult": "未查看的结果",
+    "runningResult": "AI：{kind}…",
+    "running": "运行中",
+    "kindCommitMessage": "提交信息",
+    "kindCodeReview": "代码审查",
+    "kindMuseResult": "Muse 结果",
+    "kindPresentation": "演示",
+    "kindDebugResult": "调试结果"
+  },
+  "undo": {
+    "cancel": "取消：{label}"
+  },
+  "navigation": {
+    "changes": "更改",
+    "history": "历史",
+    "branches": "分支",
+    "xray": "透视",
+    "settings": "设置",
+    "refresh": "刷新"
+  },
+  "settings": {
+    "reduceMotion": "减弱动效",
+    "animateLogoUnfocused": "失焦时动画 Logo",
+    "instantBlameHover": "即时 blame 悬停",
+    "autoSelectChanges": "自动选择更改",
+    "fetchOnlineIssues": "抓取在线议题",
+    "rememberWip": "记住进行中的工作",
+    "hideAiFeatures": "隐藏 AI 功能",
+    "crashReporting": "崩溃报告",
+    "aiReadOnly": "AI 只读",
+    "stashCabinetExpanded": "储藏柜展开",
+    "fileSortInverted": "文件排序反转"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "引擎状态",
+    "engineStatusSubtitle": "LogosGit 谱引擎诊断",
+    "fileCoupling": "文件耦合",
+    "fileCouplingSubtitle": "暂存文件最近的共变邻居",
+    "themeSpecimen": "主题样本",
+    "themeSpecimenSubtitle": "所有颜色、图标、文本层级与几何"
+  },
+  "dev": {
+    "testMergeEditor": "测试合并编辑器",
+    "testHistorySurgery": "测试历史手术",
+    "back": "返回",
+    "cancel": "取消",
+    "buildingConflicts": "正在从历史构建测试冲突…"
+  },
+  "historySurgery": {
+    "label": "历史手术",
+    "subtitle": "重写历史以永久移除文件"
+  },
+  "orrery": {
+    "label": "天象仪",
+    "subtitle": "沿流形拖拽仓库的结构历史"
+  },
+  "command": {
+    "complete": "{label}完成",
+    "failed": "{label}失败：{message}",
+    "copy": "复制"
+  },
+  "search": {
+    "hintDefault": "搜索一切…",
+    "hintElevated": "已提升 — 全部操作",
+    "emptyTypeToSearch": "输入以搜索",
+    "emptyNoResults": "无结果"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "已耦合"
+  },
+  "gitCache": {
+    "current": "当前",
+    "staged": "已暂存",
+    "modified": "已修改"
+  }
+}

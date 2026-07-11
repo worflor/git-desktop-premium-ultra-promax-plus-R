@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../ui/design_primitives.dart';
 import '../../ui/tokens.dart';
+import '../../i18n/gen/strings.g.dart' as i18n;
 
 /// The one confirm every force-push in the app funnels through. Force-with-
 /// lease is safe relative to bare `--force` (it won't overwrite commits the
@@ -22,7 +23,7 @@ Future<bool> confirmForcePush(
     context: context,
     builder: (ctx) => AlertDialog(
       title: Text(
-        'Force push (with lease)?',
+        i18n.t.sync.forcePush.confirmTitle,
         style: TextStyle(color: t.textStrong, fontSize: 14),
       ),
       content: Column(
@@ -30,7 +31,7 @@ Future<bool> confirmForcePush(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Target: $remote/$branch',
+            i18n.t.sync.forcePush.target(remote: remote, branch: branch),
             style: TextStyle(
               color: t.textStrong,
               fontSize: 11.5,
@@ -39,11 +40,7 @@ Future<bool> confirmForcePush(
           ),
           const SizedBox(height: 8),
           Text(
-            'This rewrites the remote branch with your local history. '
-            'With lease aborts if someone pushed to the remote after your '
-            'last fetch, but already-fetched changes will still be '
-            'overwritten. Use only when you intended a rebase or amend that '
-            'diverged the branch.',
+            i18n.t.sync.forcePush.warning,
             style: TextStyle(color: t.textNormal, fontSize: 12, height: 1.45),
           ),
         ],
@@ -51,11 +48,11 @@ Future<bool> confirmForcePush(
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('Cancel'),
+          child: Text(i18n.t.common.cancel),
         ),
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Force push'),
+          child: Text(i18n.t.sync.forcePush.confirmButton),
         ),
       ],
     ),

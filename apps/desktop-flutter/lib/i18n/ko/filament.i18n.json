@@ -1,0 +1,23 @@
+{
+  "@@locale": "ko",
+  "noRepositoryOpen": "열린 저장소가 없습니다.",
+  "scanningProgress": "파일 스캔 중 {scanned} / {total}…",
+  "findingsAcrossFiles": "파일 {files}개에서 발견 {count}건",
+  "copiedFindings": "발견 {count}건 복사됨",
+  "copy": "복사",
+  "noFindings": "실행 흐름 관련 발견 없음.",
+  "severity": {
+    "critical": "심각",
+    "warn": "경고",
+    "info": "정보",
+    "joint": "결합"
+  },
+  "kind": {
+    "staleValue": "오래된 값",
+    "temporalShift": "시간적 이동",
+    "contextInversion": "컨텍스트 반전",
+    "contradictoryFlow": "모순된 흐름"
+  },
+  "lineLabel": "L{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

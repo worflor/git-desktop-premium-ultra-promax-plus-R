@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../backend/dtos.dart';
 import '../backend/git.dart';
+import '../backend/repository_xray_strings.dart';
 
 class RepositoryXrayState extends ChangeNotifier {
   final Map<String, RepositoryXraySnapshotData> _snapshots = {};
@@ -44,7 +45,11 @@ class RepositoryXrayState extends ChangeNotifier {
     }
   }
 
-  Future<void> loadForRepo(String repoPath, {bool forceRefresh = false}) async {
+  Future<void> loadForRepo(
+    String repoPath, {
+    bool forceRefresh = false,
+    XrayCardStrings cardStrings = const EnglishXrayCardStrings(),
+  }) async {
     if (_loading.contains(repoPath)) {
       return;
     }
@@ -63,8 +68,11 @@ class RepositoryXrayState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final result =
-          await getRepositoryXray(repoPath, forceRefresh: forceRefresh);
+      final result = await getRepositoryXray(
+        repoPath,
+        forceRefresh: forceRefresh,
+        cardStrings: cardStrings,
+      );
       if (result.ok && result.data != null) {
         _snapshots[repoPath] = result.data!;
         _fingerprints[repoPath] = result.data!.header.fingerprint;

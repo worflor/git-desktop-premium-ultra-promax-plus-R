@@ -1,0 +1,83 @@
+{
+  "@@locale": "ko",
+  "chrome": {
+    "title": "히스토리 수술",
+    "alphaBadge": "알파",
+    "dryRunBadge": "드라이 런"
+  },
+  "select": {
+    "prompt": "히스토리에서 제거할 파일 선택",
+    "selectedCount": "{n}개 선택됨",
+    "searchHint": "검색...",
+    "readingTree": "트리 읽는 중...",
+    "continueDisabled": "계속하려면 파일을 선택하세요",
+    "continueEnabled": "계속 →",
+    "toPurgeCount": "제거 대상 {n}개",
+    "analyzing": "분석 중...",
+    "riskLow": "낮은 위험",
+    "riskModerate": "보통 위험",
+    "riskHigh": "높은 위험",
+    "impactCommitsLabel": "커밋",
+    "impactBranchesLabel": "브랜치",
+    "impactWorktreesLabel": "작업 트리",
+    "impactCouplingLabel": "결합",
+    "impactCouplingIsland": "고립",
+    "impactCouplingNeighbors": "이웃 {n}개",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "작동 방식",
+    "backupTitle": "백업",
+    "backupBody": "무엇이든 변경되기 전에 모든 브랜치와 태그 ref가 백업 네임스페이스로 복사됩니다. 문제가 생기면 한 번의 클릭으로 원래 상태를 복원합니다.",
+    "rewriteTitle": "재작성",
+    "rewriteBody": "각 커밋을 루트에서 팁까지 순회합니다. 대상 파일을 포함한 모든 커밋에 대해, 트리에서 해당 파일을 제거한 새 커밋을 생성합니다. 위상을 보존하도록 부모 체인을 다시 매핑합니다. ",
+    "rewriteSummary": "{total}개 커밋 중 {affected}개가 재작성됩니다.",
+    "updateRefsTitle": "ref 업데이트",
+    "updateRefsBody": "브랜치와 태그 포인터가 새 커밋 SHA로 이동합니다. 이전 객체는 가비지 컬렉션 전까지 남아 있습니다. ",
+    "worktreesNeedRecheckout": "작업 트리 {n}개를 다시 체크아웃해야 합니다.",
+    "noWorktreesAffected": "영향받는 작업 트리가 없습니다.",
+    "forcePushTitle": "강제 푸시",
+    "forcePushBody": "제거를 검증한 뒤, 강제 푸시할 브랜치를 선택합니다. --force-with-lease를 사용하므로 그사이 다른 사람이 푸시했다면 안전하게 실패합니다.",
+    "plumbingNote": "filter-repo나 BFG와 달리, 이 작업은 전적으로 git 플러밍 명령(cat-file, mktree, commit-tree, update-ref)으로 실행됩니다. 외부 의존성이 없습니다. 이름 변경 추적은 파일당 하나의 체인을 따릅니다 — 파일이 복사되고 두 복사본이 각각 이름 변경된 경우, 실행 후 제거 결과를 검증하세요.",
+    "back": "← 뒤로",
+    "continueLabel": "이해했습니다, 계속 →"
+  },
+  "confirm": {
+    "commitsRewritten": "커밋 {n}개가 재작성됩니다",
+    "forcePushRequired": "원격 브랜치에는 강제 푸시가 필요합니다",
+    "worktreesRecheckout": "작업 트리 {n}개를 다시 체크아웃해야 합니다",
+    "stashesInvalid": "스태시 {n}개가 무효가 될 수 있습니다",
+    "heading": "이 작업은 git 히스토리를 재작성합니다",
+    "subheading": "강제 푸시 후에는 자동으로 되돌릴 수 없습니다.",
+    "typeHint": "{word} 입력",
+    "goBack": "뒤로 가기",
+    "begin": "수술 시작"
+  },
+  "execute": {
+    "preparing": "준비 중...",
+    "backingUpRefs": "ref 백업 중...",
+    "rewritingCommits": "커밋 재작성 중...",
+    "updatingRefs": "ref 업데이트 중..."
+  },
+  "verify": {
+    "complete": "수술 완료",
+    "failed": "수술 실패",
+    "commitsRewrittenLabel": "재작성된 커밋",
+    "refsUpdatedLabel": "업데이트된 ref",
+    "oldHeadLabel": "이전 HEAD",
+    "newHeadLabel": "새 HEAD",
+    "purgeVerifiedLabel": "제거 검증됨",
+    "purgeClean": "깨끗함",
+    "purgeTracesRemain": "흔적 남음",
+    "displacedWorktrees": "밀려난 작업 트리",
+    "undoSurgery": "수술 취소",
+    "rolledBack": "백업 ref로 롤백했습니다.",
+    "done": "완료"
+  },
+  "forcePush": {
+    "pushing": "푸시 중...",
+    "forcePushAll": "전체 강제 푸시",
+    "confirmPush": "푸시 확인",
+    "cancel": "취소"
+  }
+}

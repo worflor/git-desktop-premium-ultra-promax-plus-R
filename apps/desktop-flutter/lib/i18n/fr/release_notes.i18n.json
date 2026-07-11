@@ -1,0 +1,18 @@
+{
+  "@@locale": "fr",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "POURQUOI FLUTTER ?",
+      "body": "La première version était une application Tauri (Rust + TypeScript). Je la trouvais déjà lente. Puis j'ai entendu un streamer dire exactement la même chose, sur un stream que je ne regarde pas d'habitude, et ça a été le déclic pour enfin changer. Il ne suggérait pas Flutter, loin de là. J'ai découvert Dart de mon côté, bricolé un prototype, et le démarrage est passé d'environ 15 secondes à moins d'une seconde. Le jour et la nuit. Adieu l'ère Tauri.\n\nLe pipeline de rendu de Flutter tient plus du moteur de jeu que du DOM, et pour une application de bureau où l'interface est le produit, c'est tout ce qui compte. Dart s'est aussi révélé être un très bon langage. Les maths derrière le moteur spectral avaient d'abord été prototypées en Rust, donc ce travail s'est reporté sans souci.\n\nFlutter est multiplateforme par défaut, ce qui est génial, mais c'est du Google dans l'âme, alors il y a quelques bizarreries."
+    },
+    "spectralEngine": {
+      "question": "QU'EST-CE QUE LE MOTEUR SPECTRAL ?",
+      "body": "Chaque fois que vous validez, les fichiers que vous modifiez ensemble forment des motifs au fil du temps. Le moteur spectral lit votre graphe de commits et décompose ces motifs de co-changement en signaux : quels fichiers sont couplés, à quel point, et quel rôle structurel ils jouent dans le dépôt. En gros, de l'analyse spectrale sur votre historique de développement. Dans un client git. Volontairement.\n\nLes maths sont nouvelles, alors je les traite comme le game feel : régler, tester, ajuster, et continuer jusqu'à ce que les signaux sonnent juste.\n\nCes signaux alimentent tout. Le sismographe dans l'historique, les barres peintes sous les intitulés de commits, le système de revue, la Muse, la constellation de fichiers. Toute l'application raisonne depuis cette couche vers le haut, jamais l'inverse."
+    },
+    "whereGoing": {
+      "question": "OÙ EST-CE QUE ÇA VA ?",
+      "body": "Le premier jalon, c'est la parité complète avec GitHub Desktop, SourceTree et GitKraken. Un client git multiplateforme qui donne une impression de rapidité et gère les fondamentaux mieux que tout le reste. C'est en grande partie fait. Le moteur spectral nous donne déjà un avantage sur les opérations que les autres clients vous forcent à réfléchir à la main.\n\nAu-delà, l'objectif est de surpasser tous les autres clients git en vitesse, en accessibilité, en intelligence et en UX globale. Il y a plus dans les tuyaux que ce qui est annoncé ici."
+    }
+  }
+}

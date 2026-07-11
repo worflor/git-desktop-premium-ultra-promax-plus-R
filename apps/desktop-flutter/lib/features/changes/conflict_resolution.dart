@@ -8,6 +8,7 @@ import '../../app/ai_settings_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/ai.dart';
 import '../../backend/git.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
@@ -36,9 +37,9 @@ Future<void> resolveConflictsWithAi(
   if (modelValue.isEmpty) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            'No model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}". '
-            'Set one in Settings → AI.')));
+        content: Text(context.t.changes.conflictResolution.noModelConfigured(
+            category:
+                aiSettings.labelForCategory(categoryId, categoryId)))));
     return;
   }
 
@@ -62,9 +63,9 @@ Future<void> resolveConflictsWithAi(
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(skippedSensitive > 0
-            ? '$skippedSensitive sensitive file${skippedSensitive == 1 ? '' : 's'} '
-                'skipped — resolve by hand.'
-            : 'Could not read any conflicted files.')));
+            ? context.t.changes.conflictResolution
+                .sensitiveFilesSkipped(n: skippedSensitive)
+            : context.t.changes.conflictResolution.couldNotReadFiles)));
     return;
   }
 
@@ -73,9 +74,8 @@ Future<void> resolveConflictsWithAi(
   if (secretHit != null) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            'Blocked — a conflicted file looks like it contains a $secretHit. '
-            'Resolve by hand.')));
+        content: Text(context.t.changes.conflictResolution
+            .blockedSecret(secret: secretHit))));
     return;
   }
 
@@ -87,8 +87,9 @@ Future<void> resolveConflictsWithAi(
   );
   if (!context.mounted) return;
   if (!r.ok) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Resolution failed: ${r.error}')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(context.t.changes.conflictResolution
+            .resolutionFailed(error: '${r.error}'))));
     return;
   }
 
@@ -103,8 +104,10 @@ Future<void> resolveConflictsWithAi(
     context,
     repoPath: repoPath,
     rawPatch: r.data!.patch,
-    sourceLabel: '◇ merge resolution · ${intersect.length}/${expectedPaths.length} '
-        'files · ${aiSettings.labelForCategory(categoryId, categoryId)}',
+    sourceLabel: context.t.changes.conflictResolution.mergeResolutionLabel(
+        resolved: intersect.length,
+        total: expectedPaths.length,
+        category: aiSettings.labelForCategory(categoryId, categoryId)),
     expectedPaths: expectedPaths,
     onApplied: () async {
       // Only stage the files the patch ACTUALLY touched — any skipped UU
@@ -310,9 +313,12 @@ class _ConflictWindow extends StatelessWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '$opLabel · $blockCount '
-                      'conflict${blockCount == 1 ? '' : 's'} across $fileCount '
-                      'file${fileCount == 1 ? '' : 's'}',
+                      context.t.changes.conflictResolution.conflictSummary(
+                        op: opLabel,
+                        conflicts: context.t.changes.conflictResolution
+                            .conflictCount(n: blockCount),
+                        files: context.t.common.fileCount(n: fileCount),
+                      ),
                       style: TextStyle(
                         color: t.textStrong,
                         fontSize: 13,
@@ -362,7 +368,7 @@ class _ConflictWindow extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                 child: Row(children: [
                   _WindowButton(
-                    label: '⇋ merge editor',
+                    label: context.t.changes.conflictResolution.mergeEditorButton,
                     accent: t.accentBright,
                     onTap: () => Navigator.of(context)
                         .pop(const ConflictChoice(ConflictAction.manual)),
@@ -377,7 +383,7 @@ class _ConflictWindow extends StatelessWidget {
                           ConflictChoice(ConflictAction.ai, aiCategory: c)),
                     )
                   else
-                    Text('no AI model',
+                    Text(context.t.changes.conflictResolution.noAiModel,
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 10.5,
@@ -391,7 +397,9 @@ class _ConflictWindow extends StatelessWidget {
                   // the merge away. Give discard the delete tier so its danger
                   // is legible; keep later muted.
                   _WindowButton(
-                    label: canDefer ? 'later' : 'discard',
+                    label: canDefer
+                        ? context.t.changes.conflictResolution.later
+                        : context.t.changes.conflictResolution.discard,
                     accent: canDefer ? t.textMuted : t.stateDeleted,
                     subdued: canDefer,
                     onTap: () => Navigator.of(context)
@@ -465,13 +473,13 @@ class _AiResolveButton extends StatelessWidget {
     final t = context.tokens;
     return Row(mainAxisSize: MainAxisSize.min, children: [
       _WindowButton(
-        label: '◇ resolve with AI',
+        label: context.t.changes.conflictResolution.resolveWithAi,
         accent: t.stateConflicted,
         onTap: () => onPick(defaultCategory),
       ),
       if (alternates.isNotEmpty)
         PopupMenuButton<String>(
-          tooltip: 'other model',
+          tooltip: context.t.changes.conflictResolution.otherModel,
           padding: EdgeInsets.zero,
           position: PopupMenuPosition.under,
           color: t.bg1,
@@ -480,7 +488,9 @@ class _AiResolveButton extends StatelessWidget {
             for (final e in alternates)
               PopupMenuItem<String>(
                 value: e.key,
-                child: Text('with ${labelFor(e.key)}',
+                child: Text(
+                    context.t.changes.conflictResolution
+                        .withModel(model: labelFor(e.key)),
                     style: TextStyle(color: t.textNormal, fontSize: 12)),
               ),
           ],

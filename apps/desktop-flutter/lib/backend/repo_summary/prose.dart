@@ -6,6 +6,8 @@
 // profile averaged over the region; the reader sees a short list of
 // Alexandria's learned topics, not a distance vector.
 
+import 'strings.dart';
+
 /// One-line body for a region. Summarises size + core share, and
 /// surfaces a common directory when every file in the region lives
 /// under one — the reader can orient at a glance ("9 files under
@@ -16,20 +18,19 @@ String regionBody({
   required int backboneFileCount,
   required List<String> themes,
   String? commonDirectory,
+  RepoSummaryStrings strings = const EnglishRepoSummaryStrings(),
 }) {
   if (fileCount == 0) return '';
   final buf = StringBuffer();
-  if (fileCount == 1) {
-    buf.write('One file');
-  } else {
-    buf.write(_plural(fileCount, 'file', 'files'));
-  }
+  buf.write(strings.regionBodyFiles(fileCount));
   if (backboneFileCount > 0) {
-    buf.write(', ${backboneFileCount == 1 ? '1 core' : '$backboneFileCount core'}');
+    buf.write(strings.regionBodyCoreSeparator);
+    buf.write(strings.regionBodyCore(backboneFileCount));
   }
   buf.write('.');
   if (commonDirectory != null && commonDirectory.isNotEmpty) {
-    buf.write(' All under `$commonDirectory`.');
+    buf.write(strings.regionBodyCommonDirSeparator);
+    buf.write(strings.regionBodyCommonDir(commonDirectory));
   }
   return buf.toString();
 }
@@ -73,16 +74,11 @@ String synthesiseElevatorPitch({
   required String repoName,
   required List<String> topRegionNames,
   required int activeFileCount,
+  RepoSummaryStrings strings = const EnglishRepoSummaryStrings(),
 }) {
   if (topRegionNames.isEmpty) {
-    return 'A repository of '
-        '${_plural(activeFileCount, 'active file', 'active files')}.';
+    return strings.synthPitchNoRegions(activeFileCount);
   }
   final joined = topRegionNames.map((n) => '**$n**').join(', ');
-  return 'A repository of '
-      '${_plural(activeFileCount, 'active file', 'active files')} — $joined.';
-}
-
-String _plural(int n, String singular, String plural) {
-  return n == 1 ? '$n $singular' : '$n $plural';
+  return strings.synthPitchWithRegions(n: activeFileCount, regions: joined);
 }

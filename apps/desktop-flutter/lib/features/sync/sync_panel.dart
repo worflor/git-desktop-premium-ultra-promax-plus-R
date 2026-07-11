@@ -14,6 +14,7 @@ import '../changes/merge_conflict_flow.dart';
 import '../../components/icons/app_icons.dart';
 import 'force_push_guard.dart';
 import 'sync_actions.dart';
+import '../../i18n/gen/strings.g.dart' as i18n;
 
 /// The sync flyout — the detail surface the topbar sync control opens. Slimmed
 /// from the original standalone panel into an anchored overlay body: a counts
@@ -56,24 +57,26 @@ class _SyncPanelState extends State<SyncPanel> {
           _lastResult = SyncData(
             operation: 'merge',
             remote: 'origin',
-            output: 'Resolved ${pluralize(paths.length, 'conflicted file')}.',
+            output: i18n.t.sync.panel.resolvedConflicts(
+              count: i18n.t.common.conflictedFileCount(n: paths.length),
+            ),
           );
         } else if (paths.isEmpty) {
           // Cancelled / discarded dirty pull — nothing changed. Neutral
           // confirmation instead of a phantom "N conflicts" recovery.
-          _lastResult = const SyncData(
+          _lastResult = SyncData(
             operation: 'sync',
             remote: 'origin',
-            output: 'Cancelled, working tree unchanged.',
+            output: i18n.t.sync.panel.cancelledUnchanged,
           );
         } else {
           _pendingConflicts = paths;
         }
       case MergeBlockedByLocalChanges(:final paths):
-        _actionError =
-            '${pluralize(paths.length, 'file')} have uncommitted edits, '
-            'commit them first to rebase-sync '
-            '(${paths.take(3).join(', ')}${paths.length > 3 ? '…' : ''}).';
+        _actionError = i18n.t.sync.panel.uncommittedEditsBlocked(
+          count: i18n.t.common.fileCount(n: paths.length),
+          list: '${paths.take(3).join(', ')}${paths.length > 3 ? '…' : ''}',
+        );
       case MergeNeedsCheckout(:final message):
         // Sync never produces this (it always operates on the checked-out
         // branch); handled for exhaustiveness — surface the guidance if it
@@ -136,7 +139,7 @@ class _SyncPanelState extends State<SyncPanel> {
     if (target == null) {
       setState(() {
         _actionError =
-            'Cannot force-push: no upstream is configured for "${status.branch}".';
+            i18n.t.sync.panel.noUpstreamForForcePush(branch: status.branch);
       });
       return;
     }
@@ -242,23 +245,23 @@ class _SyncPanelState extends State<SyncPanel> {
       return const AppStatusView.noRepository(compact: true);
     }
     if (status == null && loading) {
-      return const AppStatusView.loading(
-        title: 'Loading remote status',
-        message: 'Checking branch tracking information.',
+      return AppStatusView.loading(
+        title: i18n.t.sync.panel.loadingTitle,
+        message: i18n.t.sync.panel.loadingMessage,
         compact: true,
       );
     }
     if (status == null && error != null) {
       return AppStatusView.error(
-        title: 'Remote status unavailable',
+        title: i18n.t.sync.panel.remoteStatusUnavailable,
         message: error,
         compact: true,
       );
     }
     if (status == null) {
-      return const AppStatusView.loading(
-        title: 'Loading remote status',
-        message: 'Checking branch tracking information.',
+      return AppStatusView.loading(
+        title: i18n.t.sync.panel.loadingTitle,
+        message: i18n.t.sync.panel.loadingMessage,
         compact: true,
       );
     }
@@ -356,7 +359,7 @@ class _SyncBody extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              status.upstream ?? 'no upstream',
+              status.upstream ?? i18n.t.sync.panel.noUpstream,
               style: TextStyle(
                   color: status.upstream != null ? t.textMuted : t.textFaint,
                   fontSize: 11,
@@ -372,19 +375,19 @@ class _SyncBody extends StatelessWidget {
         // Counts hero — git-status coloured (ahead = added, behind = modified).
         Row(children: [
           _SummaryPill(
-              label: 'Ahead',
+              label: i18n.t.sync.panel.aheadLabel,
               value: '${status.ahead}',
               color: status.ahead > 0 ? t.stateAdded : t.textMuted,
               t: t),
           const SizedBox(width: 6),
           _SummaryPill(
-              label: 'Behind',
+              label: i18n.t.sync.panel.behindLabel,
               value: '${status.behind}',
               color: status.behind > 0 ? t.stateModified : t.textMuted,
               t: t),
           const SizedBox(width: 6),
           _SummaryPill(
-              label: 'Tree',
+              label: i18n.t.sync.panel.treeLabel,
               value: '${status.files.length}',
               color: t.textMuted,
               t: t),
@@ -401,7 +404,9 @@ class _SyncBody extends StatelessWidget {
         Row(children: [
           Expanded(
             child: _PrimaryBtn(
-              label: syncRunning ? 'Running sync…' : action.buttonLabel,
+              label: syncRunning
+                  ? i18n.t.sync.panel.runningSync
+                  : action.buttonLabel,
               t: t,
               enabled: !busy && !action.disabled,
               onTap: onSync,
@@ -409,7 +414,9 @@ class _SyncBody extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           _GhostBtn(
-            label: fetchRunning ? 'Fetching…' : 'Fetch only',
+            label: fetchRunning
+                ? i18n.t.sync.panel.fetching
+                : i18n.t.sync.panel.fetchOnly,
             t: t,
             enabled: !busy,
             onTap: onFetch,
@@ -423,11 +430,11 @@ class _SyncBody extends StatelessWidget {
           const SizedBox(height: 12),
           _InlineSyncError(
             t: t,
-            title: 'Sync failed',
+            title: i18n.t.sync.panel.syncFailed,
             body: actionError!,
             recoveryLabel:
                 isNonFastForwardError(actionError) && onForcePushRecovery != null
-                    ? 'Force push (with lease)'
+                    ? i18n.t.sync.panel.forcePushRecoveryLabel
                     : null,
             onRecovery:
                 isNonFastForwardError(actionError) ? onForcePushRecovery : null,
@@ -440,12 +447,16 @@ class _SyncBody extends StatelessWidget {
           const SizedBox(height: 12),
           _InlineSyncError(
             t: t,
-            title: 'Conflicts to resolve',
-            body: '${pluralize(pendingConflicts!.length, 'file')} need '
-                'resolving: ${pendingConflicts!.take(3).join(', ')}'
-                '${pendingConflicts!.length > 3 ? '…' : ''}',
+            title: i18n.t.sync.panel.conflictsToResolveTitle,
+            body: i18n.t.sync.panel.conflictsToResolveBody(
+              count: i18n.t.common.fileCount(n: pendingConflicts!.length),
+              list: '${pendingConflicts!.take(3).join(', ')}'
+                  '${pendingConflicts!.length > 3 ? '…' : ''}',
+            ),
             recoveryLabel:
-                onResolveConflicts != null ? 'Resolve conflicts' : null,
+                onResolveConflicts != null
+                    ? i18n.t.sync.panel.resolveConflicts
+                    : null,
             onRecovery: onResolveConflicts,
             recoveryRunning: syncRunning,
           ),
@@ -642,7 +653,7 @@ class _RecoveryButtonState extends State<_RecoveryButton> {
             ),
           ),
           child: Text(
-            widget.running ? 'Working…' : widget.label,
+            widget.running ? i18n.t.sync.panel.workingEllipsis : widget.label,
             style: TextStyle(
               color: t.stateConflicted,
               fontSize: 11,
@@ -671,7 +682,7 @@ class _ActivityLog extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Text(
-            'Last activity: ${result.operation}',
+            i18n.t.sync.panel.lastActivity(operation: result.operation),
             style: TextStyle(
                 color: t.textMuted, fontSize: 11, fontWeight: FontWeight.w600),
           ),
@@ -680,7 +691,7 @@ class _ActivityLog extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.all(12),
           child: Text(
-            result.output.isEmpty ? 'No output.' : result.output,
+            result.output.isEmpty ? i18n.t.sync.panel.noOutput : result.output,
             style: TextStyle(
                 color: t.textNormal,
                 fontSize: 11,

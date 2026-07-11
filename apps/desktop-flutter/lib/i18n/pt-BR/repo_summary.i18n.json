@@ -1,0 +1,67 @@
+{
+  "@@locale": "pt-BR",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} linha",
+      "other": "{n} linhas"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} arquivo.",
+      "other": "{n} arquivos."
+    },
+    "lines": {
+      "one": "{n} linha ({bytes}).",
+      "other": "{n} linhas ({bytes})."
+    },
+    "roles": "Papéis — {parts}.",
+    "showingNofM": "Mostrando {active} de {total} arquivos, ordenados por centralidade estrutural."
+  },
+  "heading": {
+    "atAGlance": "Num relance",
+    "core": "Núcleo",
+    "gettingStarted": "Primeiros passos",
+    "regions": "Regiões",
+    "shape": "Forma"
+  },
+  "historyStarvedCaveat": "A ordenação é limitada: o grafo de acoplamento não tinha arestas (clone recente ou poucos commits). A ordem dos arquivos reflete o tamanho, não a centralidade estrutural.",
+  "pitch": {
+    "empty": "Um repositório sem arquivos de texto legíveis{detail}.",
+    "emptyBinary": "{n} binário",
+    "emptyUnreadable": "{n} ilegível",
+    "noRegions": {
+      "one": "Um repositório de {n} arquivo ativo.",
+      "other": "Um repositório de {n} arquivos ativos."
+    },
+    "withRegions": {
+      "one": "Um repositório de {n} arquivo ativo — {regions}.",
+      "other": "Um repositório de {n} arquivos ativos — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Tudo em `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 núcleo",
+      "other": "{n} núcleo"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Um arquivo",
+      "other": "{n} arquivos"
+    },
+    "connectsTo": "Conecta a: {linked}.",
+    "filesLabel": "Arquivos:"
+  },
+  "shape": {
+    "bulk": "Base de código densamente interconectada: a maioria dos arquivos participa de uma grande vizinhança de mudança compartilhada.",
+    "crystalline": "Base de código em forma de rede: acoplamento uniforme e regular entre arquivos, com estrutura local previsível.",
+    "goe": "Base de código ricamente interconectada: acoplamentos espalhados pelos arquivos sem uma espinha dominante.",
+    "modular": "Base de código modular: várias regiões coesas com acoplamento cruzado limitado. Trabalhar numa região raramente perturba outra.",
+    "poisson": "Base de código frouxamente acoplada: os arquivos evoluem em grande parte por conta própria, com mudança compartilhada ocasional.",
+    "tree": "Base de código em forma de árvore: uma espinha dominante com branches dependentes. A mudança normalmente se propaga do núcleo para fora."
+  }
+}

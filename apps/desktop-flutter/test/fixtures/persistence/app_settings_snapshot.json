@@ -54,6 +54,7 @@
   "changesPanelWidthPx": 520,
   "wickExePath": "C:\\tools\\wick ünïcode.exe",
   "alphaMathPath": "",
+  "localeOverride": "",
   "giteaTokens": {
     "codeberg.org": "tok_ünïcode_123"
   }

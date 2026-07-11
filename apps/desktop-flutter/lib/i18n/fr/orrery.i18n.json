@@ -1,0 +1,101 @@
+{
+  "@@locale": "fr",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Défiler",
+    "modeCompare": "Comparer",
+    "lodModules": "Modules",
+    "lodFiles": "Fichiers"
+  },
+  "status": {
+    "loading": "Traçage du manifold à travers l'historique…",
+    "loadError": "Impossible de lire l'historique de ce dépôt.",
+    "notEnoughHistory": "Pas encore assez d'historique pour tracer une trajectoire.",
+    "notEnoughHistoryDetail": "L'Orrery a besoin de quelques commits pour tracer."
+  },
+  "legend": {
+    "central": "central",
+    "peripheral": "périphérique"
+  },
+  "node": {
+    "module": "module",
+    "moduleWithCount": "{path} · {n} fichiers",
+    "fileFallback": "fichier n°{id}",
+    "nodeFallback": "nœud n°{id}",
+    "rootModule": "(racine)"
+  },
+  "milestone": {
+    "genesis": "genèse",
+    "now": "maintenant",
+    "reorganized": "réorganisé",
+    "becameArchetype": "devenu {archetype}",
+    "snapshot": "instantané"
+  },
+  "structure": {
+    "forming": "en formation…",
+    "canonical": "canonique",
+    "connectivity": "connectivité",
+    "rigidity": "rigidité",
+    "entropy": "entropie"
+  },
+  "rail": {
+    "structureLabel": "STRUCTURE",
+    "fieldLabel": "CHAMP",
+    "findingsLabel": "CONSTATS",
+    "selectedLabel": "SÉLECTION",
+    "noFindings": "Aucun événement structurel détecté dans cet historique."
+  },
+  "selection": {
+    "notPresent": "Absent à ce point de l'historique.",
+    "roleCentral": "Central au couplage — les changements ici se propagent à tout le système.",
+    "rolePeripheral": "Périphérique — faiblement couplé, change surtout de son côté.",
+    "roleMid": "Structure intermédiaire — modérément couplé.",
+    "driftOutward": " Dérive vers l'extérieur — découplage.",
+    "driftInward": " Dérive vers l'intérieur — intégration.",
+    "driftHolding": " Maintient sa position."
+  },
+  "findingKind": {
+    "hub": "PIVOT",
+    "driftOut": "DÉRIVE SORTANTE",
+    "driftIn": "DÉRIVE ENTRANTE",
+    "tangle": "EMMÊLEMENT",
+    "clarify": "CLARIFICATION",
+    "regime": "RÉORG",
+    "thrash": "AGITATION",
+    "reshuffle": "REMANIEMENT",
+    "forecast": "PRÉVISION"
+  },
+  "findings": {
+    "forecastSplit": "La connectivité baisse depuis un moment et frôle son minimum — si ça continue, la base de code s'achemine vers une scission en deux moitiés faiblement couplées. Décidez maintenant si c'est bien l'intention.",
+    "forecastConsolidate": "La connectivité grimpe vers son sommet — si ça continue, la base de code se consolide en une masse fortement couplée. Surveillez qu'elle ne se fige pas en monolithe.",
+    "thrash": "{name} n'arrête pas d'être réorganisé dans un sens puis dans l'autre — beaucoup de remous structurels, peu de mouvement net. Fixez son couplage ou cessez d'y toucher.",
+    "reshuffle": "Ce commit semblait ordinaire mais a discrètement déplacé quels fichiers sont centraux — la forme d'ensemble a tenu pendant que la structure se remaniait en dessous. À revoir attentivement.",
+    "hub": "{name} occupe le cœur structurel — le système se réorganise autour de lui. Traitez les changements ici comme à fort rayon d'impact.",
+    "driftOut": "{name} a dérivé du cœur vers le bord — il se découple du système. Soit on le retire, soit il pourrit en silence.",
+    "driftIn": "{name} a migré vers le cœur — il devient porteur. Assurez-vous qu'il est bien testé avant que d'autres n'en dépendent.",
+    "regime": "La base de code s'est fortement réorganisée ici — sa connectivité a bondi. Voyez ce qui s'est séparé ou fusionné.",
+    "tangleTrend": "Au fil de son histoire, la base de code a tendu vers une structure plus emmêlée — sa connectivité se densifie et se fait moins modulaire.",
+    "clarifyTrend": "Au fil de son histoire, la base de code a tendu vers une structure plus nette — elle se sépare en modules plus clairs."
+  },
+  "anchor": {
+    "core": "cœur",
+    "drift": "dérive",
+    "trend": "tendance",
+    "thrash": "agitation"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "CHANGEMENT",
+    "movers": "MOUVEMENTS",
+    "noMovers": "Aucun fichier n'a bougé entre ces images.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "fichiers",
+    "deltaConnectivity": "connectivité",
+    "deltaRigidity": "rigidité",
+    "deltaEntropy": "entropie",
+    "wayOutward": "sortant",
+    "wayInward": "entrant",
+    "wayShifted": "déplacé"
+  }
+}

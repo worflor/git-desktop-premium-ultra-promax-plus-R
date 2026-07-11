@@ -1,0 +1,96 @@
+{
+  "@@locale": "en",
+  "nav": {
+    "back": "Back",
+    "continueLabel": "Continue",
+    "letsGo": "Let's go"
+  },
+  "naming": {
+    "question": "what is this to you?",
+    "questionEmphasis": "this",
+    "iAmPrefix": "I am ",
+    "iAmSuffix": " , your personal Git Client."
+  },
+  "theme": {
+    "title": "dress {name} up.",
+    "themesHeader": "THEMES",
+    "keybindingsHeader": "KEYBINDINGS",
+    "previewBadge": "preview",
+    "useDefaults": "use defaults"
+  },
+  "repo": {
+    "title": "point {name} at something.",
+    "later": "i'll do this later",
+    "doors": {
+      "open": {
+        "title": "Open",
+        "subtitle": "existing",
+        "hint": "one you already have"
+      },
+      "clone": {
+        "title": "Clone",
+        "subtitle": "from URL",
+        "hint": "paste a remote URL"
+      },
+      "create": {
+        "title": "Create",
+        "subtitle": "new",
+        "hint": "start something fresh"
+      }
+    },
+    "cloneForm": {
+      "title": "Clone from URL",
+      "urlLabel": "Repository URL",
+      "targetLabel": "Target folder",
+      "browse": "Browse…",
+      "clone": "Clone",
+      "cloning": "Cloning…"
+    },
+    "pickers": {
+      "openRepository": "Open Repository",
+      "createRepository": "Create Repository",
+      "cloneTarget": "Clone Target"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL and target path required.",
+      "createFailed": "Failed to create repository.",
+      "cloneFailed": "Failed to clone repository."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "repo x-ray",
+      "settings": "settings"
+    },
+    "sidebar": {
+      "projectsHeader": "Projects"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} of {total} files",
+      "stagedCount": "{n} staged",
+      "commitMessageHint": "Commit message…",
+      "commitAndPush": "Commit & push"
+    },
+    "history": {
+      "header": "History",
+      "viewingLast": "viewing last 20 commits",
+      "inFlight": "IN FLIGHT",
+      "you": "you",
+      "commit1": "teach fox to sniff before swallowing",
+      "commit2": "amber: hold scent overnight",
+      "commit3": "retire cabbage in favor of amber + thorn",
+      "commit4": "thorn guards the gate"
+    },
+    "branches": {
+      "lensBranches": "BRANCHES",
+      "lensPRs": "PRs",
+      "absorbed": "absorbed",
+      "desk": "desk",
+      "head": "HEAD",
+      "tracking": "→ tracking: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Your personal Git client."
+    }
+  }
+}

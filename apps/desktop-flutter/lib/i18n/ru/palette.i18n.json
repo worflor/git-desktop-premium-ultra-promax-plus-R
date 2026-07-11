@@ -1,0 +1,201 @@
+{
+  "active": "активно",
+  "prefixes": {
+    "askHint": "ask: [вопрос]",
+    "nearHint": "near: [файл]",
+    "whoHint": "who: [файл]",
+    "logHint": "log: [сообщение]",
+    "runHint": "run: [инструмент]",
+    "askLabel": "Спросить {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} ревьюеров · {touches} касаний",
+    "whoTouchesLabel": "{name} — {touches} касаний",
+    "whoTouchesSubtitle": "{path} · ревьюеры не записаны"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "РЯДОМ",
+    "who": "КТО",
+    "term": "ТЕРМ",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "ОТЛАДКА",
+    "alpha": "ALPHA",
+    "hot": "ГОР",
+    "key": "КЛАВ",
+    "web": "WEB",
+    "sys": "СИС",
+    "clip": "БУФЕР",
+    "sync": "СИНХР",
+    "force": "ФОРС",
+    "pr": "PR",
+    "draft": "ЧЕРН",
+    "undo": "ОТМЕНА",
+    "thm": "ТЕМА",
+    "ver": "ВЕР",
+    "desk": "СТОЛ",
+    "det": "ОТСЦ",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "НЕТ",
+    "remote": "УДАЛ",
+    "local": "ЛОК",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% импульса"
+  },
+  "topTouched": {
+    "subtitle": "{count} касаний · {path}"
+  },
+  "coherence": {
+    "label": "Связность индекса: {percent}%",
+    "subtitle": "{count} файлов"
+  },
+  "keystone": {
+    "subtitle": "{path} · краеугольный {score}"
+  },
+  "repoSub": {
+    "changes": "Изменения в {name}",
+    "history": "История в {name}",
+    "branches": "Ветки в {name}",
+    "terminal": "Терминал в {name}",
+    "generateCommit": "Сгенерировать коммит · {name}",
+    "reviewChanges": "Ревью изменений в {name}",
+    "muse": "Muse в {name}"
+  },
+  "desks": {
+    "mainWorktree": "главный рабочий каталог",
+    "detached": "отсоединён",
+    "dirty": "{count} грязных"
+  },
+  "actions": {
+    "openInBrowser": "Открыть в браузере",
+    "terminal": "Терминал",
+    "revealInFiles": "Показать в проводнике",
+    "copyPath": "Копировать путь",
+    "copyBranch": "Копировать ветку"
+  },
+  "tools": {
+    "launch": "Запустить {label}"
+  },
+  "gitCommands": {
+    "fetch": "Получить",
+    "pull": "Забрать",
+    "pullBehind": "{count} позади",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Отправить",
+    "pushCommits": {"one": "{n} коммит", "few": "{n} коммита", "many": "{n} коммитов", "other": "{n} коммитов"},
+    "pushCommitsUpstream": "{commits} в {upstream}",
+    "forcePush": "Принудительная отправка",
+    "forcePushNoUpstream": "Принудительная отправка невозможна: для {branch} не задан upstream.",
+    "commit": "Коммит",
+    "stageAll": "Всё в индекс",
+    "unstageAll": "Всё из индекса",
+    "discardAll": "Отбросить всё",
+    "createBranch": "Создать ветку",
+    "deleteBranch": "Удалить ветку",
+    "renameBranch": "Переименовать ветку",
+    "stash": "Спрятать",
+    "stashPop": "Извлечь стэш",
+    "stashApply": "Применить стэш",
+    "stashDrop": "Сбросить стэш",
+    "createTag": "Создать метку",
+    "cherryPick": "Cherry-pick",
+    "revert": "Откатить",
+    "stashConflictMessage": "Стэш применён с конфликтами. Устраните их на странице «Изменения»."
+  },
+  "pr": {
+    "create": "Создать PR",
+    "merge": "Слить PR",
+    "markReady": "Пометить PR готовым"
+  },
+  "ai": {
+    "generateCommit": "Сгенерировать коммит",
+    "reviewChanges": "Ревью изменений",
+    "runMuse": "Запустить Muse",
+    "debugRepo": "Отладить {name}",
+    "describeSymptom": "опишите симптом",
+    "viewResult": "Смотреть {kind}",
+    "unseenResult": "непросмотренный результат",
+    "runningResult": "AI: {kind}…",
+    "running": "выполняется",
+    "kindCommitMessage": "Сообщение коммита",
+    "kindCodeReview": "Ревью кода",
+    "kindMuseResult": "Результат Muse",
+    "kindPresentation": "Презентация",
+    "kindDebugResult": "Результат отладки"
+  },
+  "undo": {
+    "cancel": "Отмена: {label}"
+  },
+  "navigation": {
+    "changes": "Изменения",
+    "history": "История",
+    "branches": "Ветки",
+    "xray": "Рентген",
+    "settings": "Настройки",
+    "refresh": "Обновить"
+  },
+  "settings": {
+    "reduceMotion": "Меньше движения",
+    "animateLogoUnfocused": "Анимация логотипа вне фокуса",
+    "instantBlameHover": "Мгновенный blame при наведении",
+    "autoSelectChanges": "Автовыбор изменений",
+    "fetchOnlineIssues": "Загружать онлайн-задачи",
+    "rememberWip": "Помнить незавершённую работу",
+    "hideAiFeatures": "Скрыть AI-функции",
+    "crashReporting": "Отчёты о сбоях",
+    "aiReadOnly": "AI только для чтения",
+    "stashCabinetExpanded": "Шкаф стэшей раскрыт",
+    "fileSortInverted": "Сортировка файлов обратная"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Статус движка",
+    "engineStatusSubtitle": "Диагностика спектрального движка LogosGit",
+    "fileCoupling": "Связность файлов",
+    "fileCouplingSubtitle": "Ближайшие соседи по совместным изменениям для файлов в индексе",
+    "themeSpecimen": "Образец темы",
+    "themeSpecimenSubtitle": "Все цвета, иконки, уровни текста и геометрия"
+  },
+  "dev": {
+    "testMergeEditor": "Тест редактора слияния",
+    "testHistorySurgery": "Тест хирургии истории",
+    "back": "назад",
+    "cancel": "отмена",
+    "buildingConflicts": "строю тестовые конфликты из истории…"
+  },
+  "historySurgery": {
+    "label": "Хирургия истории",
+    "subtitle": "Переписать историю, чтобы навсегда удалить файлы"
+  },
+  "orrery": {
+    "label": "Оррери",
+    "subtitle": "Прокрутите структурную историю репозитория сквозь манифолд"
+  },
+  "command": {
+    "complete": "{label} — завершено",
+    "failed": "{label} — сбой: {message}",
+    "copy": "Копировать"
+  },
+  "search": {
+    "hintDefault": "искать везде...",
+    "hintElevated": "расширенно — все действия",
+    "emptyTypeToSearch": "печатайте для поиска",
+    "emptyNoResults": "ничего не найдено"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "связан"
+  },
+  "gitCache": {
+    "current": "текущий",
+    "staged": "в индексе",
+    "modified": "изменён"
+  }
+}

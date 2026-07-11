@@ -1,0 +1,582 @@
+{
+  "@@locale": "ja",
+  "language": {
+    "title": "言語",
+    "summary": "このアプリの UI 言語。Git の出力、ログ、診断は英語のままなので、バグ報告は検索しやすいままです。",
+    "label": "表示言語",
+    "systemDefault": "システムの既定",
+    "systemDefaultDetail": "OS の言語に従います（{resolved}）",
+    "disclosureSource": "ソース言語。開発者によって書かれています。",
+    "disclosureAi": "{model}による機械翻訳。まだ人手によるレビューはされていません。修正を歓迎します。",
+    "disclosureAiReviewed": "{model}による機械翻訳。{percent}% を人手でレビュー済み。",
+    "disclosureHuman": "人手による翻訳、コミュニティが維持しています。",
+    "reviewedBy": "{names}がレビューしました。"
+  },
+  "sectionLabels": {
+    "preferences": "環境設定",
+    "shortcuts": "ショートカット",
+    "behaviour": "挙動",
+    "aiProviders": "AI プロバイダー",
+    "modelSlots": "モデルスロット",
+    "tools": "ツール",
+    "diagnostics": "診断",
+    "offenders": "問題要因",
+    "release": "リリース"
+  },
+  "errors": {
+    "saveGuardrailProfile": "ガードレールプロファイルの保存に失敗しました。",
+    "saveRetentionPolicy": "保持ポリシーの保存に失敗しました。",
+    "saveUpdateChannel": "更新チャンネルの保存に失敗しました。",
+    "saveModelSelection": "AI モデルの選択の保存に失敗しました。",
+    "saveModelAlias": "モデルのエイリアスの保存に失敗しました。",
+    "saveCommitMessageModelSlot": "コミットメッセージのモデルスロットの保存に失敗しました。",
+    "saveReviewModelSlot": "レビューのモデルスロットの保存に失敗しました。",
+    "saveCommitMessageCustomPrompt": "コミットメッセージのカスタムプロンプトの保存に失敗しました。",
+    "saveReviewGuide": "レビューガイドの保存に失敗しました。",
+    "saveMuseNotes": "Muse のノートの保存に失敗しました。",
+    "saveReviewDoubleCheck": "レビューのダブルチェックモードの保存に失敗しました。",
+    "saveApiPiggybackCli": "API ピギーバック CLI の保存に失敗しました。",
+    "clearLocalData": "ローカルデータを消去できませんでした：{error}"
+  },
+  "promptStatus": {
+    "editing": "編集中",
+    "saving": "保存中",
+    "saveFailed": "保存に失敗しました"
+  },
+  "clearData": {
+    "dialogTitle": "ローカルデータを消去",
+    "clear": "消去",
+    "confirmDiagnostics": "ローカルの診断サンプルとパフォーマンス計測を消去しますか？",
+    "confirmAudit": "ローカルの AI 監査メタデータ記録を消去しますか？",
+    "confirmAll": "ローカルの診断サンプルと AI 監査メタデータ記録をすべて消去しますか？",
+    "confirmWipeAll": "最近のリポジトリ一覧を含む、すべてのローカルアプリデータを消去して終了しますか？ ディスク上の実際の git リポジトリには手を触れません。",
+    "confirmReset": "ローカルのアプリデータをリセットして終了しますか？\n\n設定、テーマ、オンボーディング、AI の設定、テレメトリ、エングラムキャッシュが消去されます。最近のリポジトリ一覧は残ります。"
+  },
+  "guardrailStageLabels": ["緩め", "バランス", "厳格", "偏執"],
+  "guardrailMacro": {
+    "loose": "緩め",
+    "balanced": "バランス",
+    "strict": "厳格",
+    "paranoid": "偏執"
+  },
+  "guardrails": {
+    "title": "ガードレール",
+    "summary": "体験全体を通して、自動化がどれだけ注意深いか。"
+  },
+  "appearance": {
+    "title": "外観",
+    "summary": "全体的なインターフェースのムードと雰囲気。"
+  },
+  "retention": {
+    "title": "ローカルデータの保持",
+    "summaryDiagnostics": "診断の保持ポリシー。",
+    "summaryWithAudit": "診断と AI 監査の保持ポリシー。",
+    "unitDays": "日",
+    "unitMb": "MB",
+    "includesNote": "診断、パフォーマンス計測、メタデータを含みます。"
+  },
+  "navigation": {
+    "title": "ナビゲーションとダイナミクス",
+    "summaryShortcuts": "ショートカットとインターフェースの挙動。",
+    "summaryWithAi": "ショートカット、インターフェースの挙動、AI のルーティング。"
+  },
+  "behaviour": {
+    "title": "挙動のダイナミクス"
+  },
+  "retentionClear": {
+    "diag": "診断",
+    "audit": "監査",
+    "all": "すべて",
+    "clearsHint": "<-- 消去"
+  },
+  "channels": {
+    "stable": "安定版",
+    "beta": "ベータ",
+    "dev": "開発"
+  },
+  "pollResult": {
+    "upToDate": "最新",
+    "updateAvailable": "{version}が利用可能",
+    "notConfigured": "更新サーバーなし",
+    "notFound": "{channel}のリリースなし",
+    "unreachable": "到達不可",
+    "badManifest": "不正なマニフェスト"
+  },
+  "keybindingProfile": {
+    "label": "キーバインドプロファイル",
+    "porcelain": "ポーセリン",
+    "numeric": "ニューメリック",
+    "porcelainDescription": "コードショートカット（G のあと C、H、B…）。",
+    "numericDescription": "数字キー単押しのショートカット（1、2、3…）。"
+  },
+  "apiKeys": {
+    "keyHintDefault": "API キー",
+    "endpointHint": "エンドポイント",
+    "test": "テスト",
+    "hide": "隠す",
+    "show": "表示"
+  },
+  "shortcuts": {
+    "navigate": "移動",
+    "staging": "ステージング",
+    "branchesPrs": "ブランチ＆PR",
+    "modifiers": "修飾キー",
+    "changes": "変更",
+    "history": "履歴",
+    "branches": "ブランチ",
+    "xray": "X 線",
+    "switchAlways": "切り替え（常時）",
+    "search": "検索",
+    "dismiss": "閉じる",
+    "refresh": "更新",
+    "shortcuts": "ショートカット",
+    "nextChange": "次の変更",
+    "prevChange": "前の変更",
+    "toggleLine": "行を切り替え",
+    "toggleHunk": "ハンクを切り替え",
+    "toggleFile": "ファイルを切り替え",
+    "pinContext": "文脈をピン留め",
+    "commit": "コミット",
+    "acceptHint": "ヒントを採用",
+    "undo": "取り消し",
+    "navigateRow": "移動",
+    "expand": "展開",
+    "checkout": "チェックアウト",
+    "approve": "承認",
+    "requestChanges": "変更を要求",
+    "selectRange": "範囲を選択",
+    "extendedMenu": "拡張メニュー"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI 読み取り専用モード",
+    "aiReadOnlyDescription": "AI が自動で変更を書き込んだりステージしたりするのを防ぎます。",
+    "logoMotionLabel": "タブアウト時にロゴがアニメーション",
+    "logoMotionDescriptionEnabled": "効率的に作られています。気持ちを傷つけないで",
+    "logoMotionDescriptionDisabled": "：（",
+    "rememberWipLabel": "作業中の内容を記憶",
+    "rememberWipDescription": "コミットの下書きとファイルの選択をセッション間で保持します。",
+    "stashCabinetLabel": "スタッシュ棚を展開した状態で開始",
+    "stashCabinetDescription": "リポジトリに棚があるとき、書類棚の引き出しを既定で開いた状態で表示します。",
+    "instantBlameLabel": "即時ブレームホバー",
+    "instantBlameDescription": "差分の行でブレーム情報が表示されるまでの 180ms の遅延をスキップします。",
+    "autoSelectLabel": "新しい変更を自動選択",
+    "autoSelectDescription": "新しく追跡・変更されたファイルを、自動でコミットの選択に追加します。",
+    "fetchIssuesLabel": "ブランチ読み込み時にオンラインの Issue を取得",
+    "fetchIssuesDescription": "ブランチページを開いたとき、バックグラウンドで git プロバイダーから PR と Issue の詳細を取得します。",
+    "hateAiLabel": "AI が嫌い",
+    "hateAiDescription": "LLM ベースの機能をすべて追放します。Logos はただのスペクトル数学なので動き続けます。"
+  },
+  "diffDiffability": {
+    "title": "差分の差分しやすさ"
+  },
+  "modelSlots": {
+    "loadingProviders": "プロバイダーを読み込み中…",
+    "refreshingProviders": "プロバイダーの診断を更新中…",
+    "routeDescription": "設定に名前を付け、検出された任意のプロバイダーモデルへ振り分けます。",
+    "loadingCategories": "モデルカテゴリを読み込み中…",
+    "noOptions": "利用可能なモデルの選択肢がまだありません。まず互換性のあるローカル AI CLI を検出してください。",
+    "slotsAppearWhenAvailable": "プロバイダーモデルが利用可能になると、モデルスロットの設定がここに表示されます。",
+    "effortDefault": "既定",
+    "noModelsForSlot": "このスロットのモデルは検出されませんでした。",
+    "viaProvider": "{provider}経由",
+    "customModelId": "カスタムモデル ID"
+  },
+  "modelPicker": {
+    "noMatch": "「{query}」に一致するモデルはありません",
+    "noModels": "利用可能なモデルがありません",
+    "filterHint": "モデルを絞り込み…",
+    "warming": "準備中…",
+    "detailsUnavailable": "詳細を取得できません",
+    "free": "無料"
+  },
+  "aiFeatures": {
+    "commitDescription": "あなたの構造、声、カバレッジの好みを使って、ステージ済みの変更からコミットメッセージを作成します。",
+    "reviewDescription": "コミットする前に、現在のコミット範囲をレビューします。",
+    "museDescription": "ブレインストームののち、差分の前進方向を統合する三段階の神託。"
+  },
+  "commitEditor": {
+    "styleGuide": "スタイルガイド",
+    "styleGuideHint": "任意。声／トーン／禁止事項。骨組みは上のフォーマットが扱います。"
+  },
+  "review": {
+    "additionalNotes": "レビュー時に添える追加のノート",
+    "doubleCheckLabel": "レビューをダブルチェック",
+    "doubleCheckDescription": "最終レポートを表示する前に、二度目の検証パスを実行します。"
+  },
+  "museHint": {
+    "loose": "そっと導きたい方向は？ 今日のムードは優しめ。",
+    "balanced": "何にこだわり、何を飛ばすか。正直に、でも厳しすぎず。",
+    "strict": "基準。禁止事項。Muse が見逃さないこと。",
+    "paranoid": "レンズを調整。マニフォールドはどの周波数で響くべき？"
+  },
+  "museEditor": {
+    "additionalNotes": "Muse への追加のノート"
+  },
+  "museStage": {
+    "brainstorm": "ブレインストーム",
+    "synthesize": "統合",
+    "slot": "スロット",
+    "ideaCountLoose": "約 12 個のアイデア",
+    "ideaCountBalanced": "約 16 個のアイデア",
+    "ideaCountStrict": "約 20 個のアイデア",
+    "ideaCountParanoid": "約 24 個のアイデア",
+    "guardrailHint": "{ideas}  ·  ガードレール：{macro}"
+  },
+  "lensAxis": {
+    "folder": "フォルダー",
+    "history": "履歴",
+    "far": "遠",
+    "near": "近"
+  },
+  "logosLens": {
+    "moduleMap": "モジュールマップ",
+    "repoCenters": "リポジトリの中心",
+    "neighbors": "隣接",
+    "toTouch": "次に触れるべきもの",
+    "relevanceEngine": "関連性エンジン",
+    "description": "ファイルが構造、履歴、リズムをまたいでどう共に動くかを読み取り、Manifold が単に何が変わったかではなく、何が重要かを知れるようにします。",
+    "withinReach": "手の届く範囲",
+    "gate": "ゲート",
+    "nearest": "最も近い",
+    "warming": "準備中",
+    "emptyOpenRepo": "リポジトリを開くと\nレンズがライブで見えます",
+    "emptyNoFiles": "手の届く範囲に\nファイルがありません — \n履歴の方へドラッグ"
+  },
+  "sortGuide": {
+    "title": "変更の並び順ガイド",
+    "related": "共に変わるファイルは共にまとまります。関心事が先、文脈があとに続きます。",
+    "relatedInverted": "孤立した変更が先に来ます。密に結合したクラスターは下に沈みます。",
+    "alphabetical": "パスで A → Z のシンプルな順。大文字小文字を区別せず、数値は自然な順序。",
+    "alphabeticalInverted": "パスで Z → A のシンプルな順。大文字小文字を区別せず、数値は自然な順序。",
+    "impact": "最も重い変更が先に浮上します。チャーンに重みが付き、バイナリと新規ファイルは押し上げられます。",
+    "impactInverted": "最も軽い変更が先に浮上します。手早い成果が上に、重い作業はあとに。",
+    "nearRelated": "近い関連",
+    "alphabeticalShort": "アルファベット順",
+    "byImpact": "影響度順",
+    "flipped": "反転",
+    "peek": "覗く"
+  },
+  "piggyback": {
+    "apiModelsUse": "API モデルの使用",
+    "codexNotDetected": "codex が検出されません",
+    "dormant": "休止中"
+  },
+  "diffStage": {
+    "viewer": "ビューアー",
+    "media": "メディア",
+    "binary": "バイナリ",
+    "hidden": "非表示"
+  },
+  "undoScope": {
+    "destructiveActions": "破壊的なアクション",
+    "discards": "破棄",
+    "commits": "コミット",
+    "commitPush": "コミット＋プッシュ",
+    "all": "すべて"
+  },
+  "undoWindow": {
+    "label": "取り消しウィンドウ",
+    "off": "オフ",
+    "descriptionInstant": "{scope}は即座に確定します。",
+    "descriptionDelayed": "{scope}が確定するまで {seconds} 秒。",
+    "cycleScopeTooltip": "クリックで範囲を切り替え · スライダーを上下にドラッグしても可",
+    "resetTooltip": "すべてのアクションを既定のウィンドウに戻す"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "たぶん大丈夫、なら大丈夫",
+    "proper": "きちんと読む、ロジック、統合、パターン",
+    "lookAgain": "もう一度見て。何か隠れているかも",
+    "assumeWrong": "何かが間違っていると考えて。それを見つけて"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "例：高レベルのロジックと主要なバグに集中。簡潔に、そして寛容に。",
+    "surfaceBugs": "例：潜在的なバグ、アーキテクチャの不整合、エッジケースの失敗を洗い出す。",
+    "scrutinize": "例：最適化、セキュリティ、パターン準拠のため、すべての行を精査する。",
+    "trustNothing": "例：何も信じない。あらゆる副作用を疑う。すべての行を潜在的な失敗として扱う。",
+    "optional": "レビューが何を重視すべきかについての任意の指針。"
+  },
+  "commitFormat": {
+    "title": "フォーマット",
+    "peek": "覗く",
+    "structure": "構造",
+    "voice": "声",
+    "coverage": "カバレッジ",
+    "structureTitleBody": "タイトル＋本文",
+    "structureTitleOnly": "タイトルのみ",
+    "structureFreeform": "自由形式",
+    "voiceVerbLed": "行動志向",
+    "voiceDescriptive": "説明的",
+    "voiceNarrative": "物語的",
+    "coverageEssentials": "要点",
+    "coverageBalanced": "バランス",
+    "coverageEverything": "すべて"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "キツネに、匂いのおかしいクッキーは飛ばさせる",
+        "s2": "飲み込む前に、細工されたクッキーを拒むようキツネを鍛える",
+        "s3": "門で一つ残らず精密に検分するようキツネに強いる",
+        "def": "悪いクッキーを拒むようキツネに教える"
+      },
+      "descriptive": {
+        "s0": "キツネが今クッキーを選ぶようになった",
+        "s2": "クッキー検分の手順、キツネに叩き込み済み",
+        "s3": "クッキー精査の鑑識、反復でキツネに埋め込み済み",
+        "def": "クッキー嗅ぎ分けの手順、キツネに導入済み"
+      },
+      "narrative": {
+        "s0": "キツネは匂いのおかしいクッキーを飛ばし始めた",
+        "s2": "キツネと腰を据えて、どのクッキーを拒むか一つずつ整理した",
+        "s3": "午後の大半を費やして、差し出されるクッキーがすべて善意のクッキーとは限らないとキツネを説き伏せた",
+        "def": "食べる前にクッキーを嗅ぐようキツネに頼んだ"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "キツネがちらり。おかしいものは残す。",
+        "s2": "キツネが各トークンを検分し、匂いのおかしいものを断り、その拒否をポーチに記す。",
+        "s3": "キツネが各トークンを回り込み、三つの角度から空気を確かめ、おかしいと読めたものを断り、拒否が定着するよう一拍待つ。",
+        "def": "キツネは今、各トークンを嗅いで、怪しいものを丁重に断る。"
+      },
+      "descriptive": {
+        "s0": "変なやつには、だいたい甘めの通し。",
+        "s2": "匂いのおかしい各トークンへの、ポーチから発せられ記録された、文書化された拒否。",
+        "s3": "匂いのおかしいトークンごとの、片足を上げもう片足は据えたまま、ポーチから発せられた公証済みの拒否。",
+        "def": "怪しいトークンへの、ポーチから発せられる丁重な拒否。"
+      },
+      "narrative": {
+        "s0": "キツネはなんとなく変なやつを食べるのをやめた。簡単。",
+        "s2": "以前はどのトークンもろくに考えず飲み込まれていたが、今は一拍おき、きちんと見て、しっくりこないものは断る。",
+        "s3": "以前はどのトークンも考えずに飲み込まれていた。今は、一拍。空気を吸い込む。空気を、留める。キツネはポーチの板が、何かおかしいときに時折見せる小さな震えを見つめ、そのときだけ判断が下される。",
+        "def": "以前はどのトークンも儀式なく飲み込まれていたが、今はまず一嗅ぎ。"
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " ポーチは問題なし。裏庭はどうでもいい。",
+        "s2": " 拒否のたびにポーチを掃く。裏庭の泥は定められた時間内なら許可。",
+        "s3": " ポーチは掃いて掃き直す。裏庭の泥は足跡と天気で分類され、キツネは以前より長く敷居にとどまる。",
+        "def": " ポーチはきれいに保たれ、裏庭は泥の権利を保つ。"
+      },
+      "descriptive": {
+        "s0": " ポーチはオーケー。裏庭は裏庭のことをする。",
+        "s2": " ポーチは証拠クリーンゾーンとして、裏庭は指定の泥ゾーンとして、時間は掲示済み。",
+        "s3": " ポーチは証拠級のクリーンルームとして、裏庭は分類済みの泥のアーカイブとして、敷居はキツネが立ち止まり考えすぎる場所として。",
+        "def": " きれいなポーチ、裏庭には保たれた泥の権利。"
+      },
+      "narrative": {
+        "s0": " ポーチは問題なかった。裏庭は、さあどうだか。",
+        "s2": " あとでポーチはきれいに保たれ、キツネは裏庭へ退いた。そこが考えごとの場所だ。",
+        "s3": " その晩ポーチは二度こすられた。キツネは裏庭をゆっくり歩き、いつもと同じ柵の杭で立ち止まり、ポーチが何か借りでもあるかのように振り返った。",
+        "def": " ポーチはきれいなままだが、威厳では裏庭がなお勝つ。"
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " アンバーはそこにいる。ドリフトは漂う。ソーンは必要なら刺す。だいたい何もない。",
+        "s2": " アンバーが各匂いを検分のため保持。ドリフトがその日の空気を門のソーンへ運び、ソーンが夕方の集計のため各拒否に印を付ける。",
+        "s3": " アンバーが各匂いを保持し、時刻によって異なる重みを与える。ドリフトが、どうでもいいはずなのに効いてくる角度でポーチを抜ける。門のソーンは拒否に一度、キツネがあやうく見逃したものに二度刺し、他の誰も分からなくてもキツネはその違いが分かる。",
+        "def": " アンバーが匂いを保持。ドリフトがそれを運ぶ。門のソーンが通してはならないものを捕らえる。"
+      },
+      "descriptive": {
+        "s0": " 杭にアンバー。空気にドリフト。門にソーン。問題なし。",
+        "s2": " アンバーは指定の匂いの証人として、ドリフトは記録された環境として、ソーンの印はその日の拒否記録として、夕暮れに突き合わせ。",
+        "s3": " アンバーは、その沈黙自体が一つの読み取りとなる匂いの証人として、ドリフトは、何かおかしい日にはおかしく動くパターン化された環境として、ソーンは、キツネが寝る前と夜明け前に確かめる印を刻む門の集計係として。",
+        "def": " アンバーは匂いの証人として、ドリフトは環境の文脈として、ソーンは門の静かな拒否の印として。"
+      },
+      "narrative": {
+        "s0": " アンバーはそのへんにいた。ドリフトは来ては去った。ソーンは静かに仕事をした。まあ、のんびりしたものだ。",
+        "s2": " アンバーがその日の匂いの記録をつけ、ドリフトは方向と時刻で記され、ソーンの印は集計されポーチに副署された。",
+        "s3": " アンバーが匂いの記録をつけたが、キツネは特定の朝にはそれが重く感じると言い張る。ドリフトはいつものようにポーチを抜けた、つまり肝心な日にはおかしく。門のソーンは各拒否に印を付け、キツネは夜明けに出てそれを数えた、すでに数えた階段をもう一度数えるように。",
+        "def": " アンバーが匂いの記録を保ち、ドリフトが空気を運び、門のソーンが捕らえるべきものを捕らえた。"
+      }
+    }
+  },
+  "externalTools": {
+    "title": "外部ツール",
+    "summary": "サイドバーでプロジェクトを右クリックすると、これらのいずれかで開けます。引数はプロジェクトフォルダーに \\{path} を使います。",
+    "detecting": "インストール済みのツールを検出中…",
+    "allPresetsAdded": "既知のプリセットはすべて追加済みです。さらに追加するには「+ Custom」を使ってください。",
+    "noToolsConfigured": "まだツールが設定されていません。上から追加してください。",
+    "categoryAi": "ai",
+    "categoryEditors": "エディター",
+    "categoryExplore": "探索",
+    "categoryOps": "運用",
+    "categoryGitOps": "git 運用",
+    "nameHint": "名前",
+    "commandHint": "コマンド",
+    "test": "テスト",
+    "removeTool": "ツールを削除",
+    "modeTerminal": "ターミナル",
+    "modeDetached": "デタッチ"
+  },
+  "apiUsage": {
+    "thisMonth": "今月 {used}{limit}"
+  },
+  "gitea": {
+    "title": "Gitea トークン",
+    "hostHint": "ホスト",
+    "tokenHint": "トークン",
+    "save": "保存"
+  },
+  "wick": {
+    "selectExecutable": "wick の実行ファイルを選択",
+    "connected": "wick · 接続済み",
+    "pathToExecutable": "wick · 実行ファイルへのパス"
+  },
+  "integrations": {
+    "title": "＆連携",
+    "alpha": "alpha",
+    "planned": "予定",
+    "lspComingSoon": "lsp · 近日公開",
+    "alphaMathConnected": "alpha-math · 接続済み",
+    "alphaMathComingSoon": "alpha-math · 近日公開"
+  },
+  "reduceMotion": {
+    "label": "モーションを減らす",
+    "subtitleStill": "氷のように…静か？",
+    "subtitleFlow": "水のように流れる。"
+  },
+  "resetQuit": {
+    "resetAndQuit": "リセットして終了",
+    "keepRepos": "リポジトリを保持",
+    "wipeAll": "すべて消去"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "コマンド診断",
+    "networkFlowTelemetry": "ネットワークフローのテレメトリ",
+    "clearSamples": "サンプルを消去",
+    "clearMetrics": "メトリクスを消去",
+    "clearTimings": "計測を消去",
+    "recalibrate": "再較正",
+    "ok": "ok",
+    "noCommandTimings": "まだコマンドの計測がありません。通常のアクションを実行して診断を蓄積してください。",
+    "noBackendSamples": "まだバックエンドコマンドのサンプルがありません。git や設定の操作を実行してこのログを蓄積してください。",
+    "noDiffSessions": "まだ差分レンダーのセッションがありません。ファイル差分を開いてスクロールし、このパネルを蓄積してください。",
+    "noUiSessions": "まだ UI 計測のセッションがありません。パネルを開いてルートを行き来し、このパネルを蓄積してください。",
+    "recentOperations": "最近の操作",
+    "recentBackendOperations": "最近のバックエンド操作",
+    "recentDiffSessions": "最近の差分セッション",
+    "recentUiTimings": "最近の UI 計測",
+    "uniqueCommands": {
+      "other": "{n} 個の固有コマンド"
+    },
+    "scopedCommands": {
+      "other": "{n} 個のスコープ付きコマンド"
+    },
+    "instrumentedEvents": {
+      "other": "{n} 個の計測イベント"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | ジャンク {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["コマンド", "p50", "信頼性", "範囲"],
+    "headersBackend": ["スコープ", "p50", "p95", "失敗"],
+    "headersDiff": ["レンダラー", "初回描画", "フレーム p95", "ラスター p95", "ジャンク"],
+    "headersUi": ["イベント", "p50", "失敗", "範囲"]
+  },
+  "telemetry": {
+    "samples": {
+      "other": "{n} サンプル"
+    },
+    "commands": {
+      "other": "{n} コマンド"
+    },
+    "sessions": {
+      "other": "{n} セッション"
+    },
+    "events": {
+      "other": "{n} イベント"
+    },
+    "stability": "{pct}% 安定性",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "実行フロー",
+    "description": "コード上でオシレーターをシミュレートし、脆い実行パスがバグとして結晶化する前に洗い出します。",
+    "idle": "アイドル",
+    "emptyOpenRepo": "リポジトリを開くと\nフロー解析が見えます",
+    "scanning": "スキャン中",
+    "analysing": "レンズ内のファイルを\n解析中…",
+    "fragility": "脆さ",
+    "findings": "指摘",
+    "gap": "空白",
+    "clean": "クリーン",
+    "severity": "深刻度",
+    "critical": "重大",
+    "warn": "警告",
+    "info": "情報"
+  },
+  "museStrands": {
+    "spark": "ひらめきの火花 · すぐ次の一歩",
+    "current": "水中の流れ · 現在形の拡張",
+    "horizon": "地平線の向こうを見る · 手を伸ばす方向",
+    "fever": "熱にうかされた夢からの目覚め · 挑発",
+    "echo": "峡谷を渡るこだま · 他の場所の類例",
+    "vertigo": "崖の縁でのめまい · 隣接するリスク",
+    "ghost": "かつてあったものの亡霊 · 歴史的な文脈",
+    "mirror": "静かな水面の鏡 · 反転"
+  },
+  "cliPiggyback": {
+    "title": "CLI ピギーバック",
+    "clearCacheLabel": "キャッシュを消去",
+    "clearCacheTooltip": "キャッシュされたモデルを消去して再探査します。プロバイダーが外したものを一掃します。",
+    "refreshLabel": "プロバイダーを更新",
+    "refreshTooltip": "今すぐすべてのプロバイダーを再探査します。",
+    "body": "インターフェースのメッセージをローカルのプロバイダーバイナリへ直接パイプします。"
+  },
+  "header": {
+    "title": "ワークスペースの設定",
+    "subtitle": "ワークスペース全体の、全体的な美観、インターフェースのダイナミクス、中核となる運用上の安全策を構成します。",
+    "releaseNotesTooltip": "リリースノート",
+    "replayOnboardingTooltip": "オンボーディングを再生"
+  },
+  "diagnosticsPanel": {
+    "title": "パフォーマンス診断",
+    "copyTrace": "トレースをコピー",
+    "offenderRanking": "問題要因ランキング",
+    "offenderRankingSubtitle": "各ストリームにおける遅延の要因。",
+    "noOffenders": "まだ問題要因ランキングがありません。診断アクティビティを取得してこのリストを蓄積してください。"
+  },
+  "release": {
+    "title": "リリース配信",
+    "summary": "更新に関する設定。",
+    "deploymentChannel": "配信チャンネル",
+    "captureCrashDiagnostics": "クラッシュ診断を取得",
+    "comingSoon": "近日公開。",
+    "checking": "確認中…",
+    "pollForUpdates": "更新を確認"
+  },
+  "providerStatus": {
+    "detecting": "検出中…",
+    "ready": "準備完了",
+    "notDetected": "未検出",
+    "configured": "{count} 件設定済み",
+    "notConfigured": "未設定",
+    "cliManaged": "CLI 管理",
+    "connected": "接続済み",
+    "modelCount": {
+      "other": "{n} モデル"
+    },
+    "providerCount": {
+      "other": "{n} プロバイダー"
+    }
+  },
+  "meridiem": {
+    "am": "午前",
+    "pm": "午後"
+  },
+  "offenders": {
+    "commandStream": "コマンド",
+    "diffStream": "差分レンダー",
+    "uiStream": "UI 計測",
+    "rendererName": "{mode} レンダラー",
+    "latencyFailMetric": "p95 {p95}ms | 失敗 {fail}%",
+    "jankFrameMetric": "ジャンク {jank}% | フレーム p95 {frame}ms",
+    "inStream": "{stream}内"
+  }
+}

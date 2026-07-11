@@ -12,6 +12,7 @@ import '../backend/git.dart';
 import '../backend/file_picker.dart';
 import 'ai_activity_state.dart';
 import '../backend/merge_session.dart';
+import '../ui/merge_outcome_text.dart';
 import '../features/changes/merge_conflict_flow.dart';
 import '../backend/gyat.dart' show warmGyatForRepo;
 import '../backend/release_state.dart' show warmReleaseState;
@@ -36,6 +37,7 @@ import '../features/sync/sync_actions.dart' show describeSyncAction;
 import '../features/sync/sync_panel.dart' show SyncPanel;
 import 'settings_navigation_state.dart';
 import '../features/xray/repo_xray_panel.dart';
+import '../ui/format.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
 import '../ui/design_primitives.dart';
@@ -77,6 +79,7 @@ import 'theme_state.dart';
 import 'wick_state.dart';
 import 'worktree_state.dart';
 import '../backend/undo_controller.dart';
+import '../i18n/gen/strings.g.dart';
 
 // Temporary feature flag: hides the command-palette icon from the top
 // icon bar while evaluating whether it's wanted there. Off = not
@@ -424,7 +427,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                       child: switch (_panel) {
                         _Panel.settings => _SlidePanel(
                             key: const ValueKey('settings'),
-                            title: 'Settings',
+                            title: context.t.app.panelSettings,
                             onClose: () => _setPanel(_Panel.none),
                             child: SettingsPage(
                               focusSection: _pendingSettingsFocus,
@@ -435,14 +438,14 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                           ),
                         _Panel.releaseNotes => _SlidePanel(
                             key: const ValueKey('releaseNotes'),
-                            title: 'Release Notes',
+                            title: context.t.app.panelReleaseNotes,
                             onClose: () => _setPanel(_Panel.none),
                             onBack: () => _setPanel(_Panel.settings),
                             child: const ReleaseNotesPanel(),
                           ),
                         _Panel.filamentFindings => _SlidePanel(
                             key: const ValueKey('filamentFindings'),
-                            title: 'Filament Findings',
+                            title: context.t.app.panelFilamentFindings,
                             titleWidget:
                                 const _FilamentFindingsShaderTitle(),
                             onClose: () => _setPanel(_Panel.none),
@@ -682,50 +685,51 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   void _showGlobalKeyboardCheatsheet() {
     final profile = context.read<ThemeState>().keybindingProfile;
     final isCompact = profile == KeybindingProfile.compact;
+    final tt = context.t.app.cheatsheet;
     final sections = <(String, List<(String, String)>)>[
       (
-        'navigate',
+        tt.sectionNavigate,
         [
           if (isCompact) ...[
-            ('1', 'Changes'),
-            ('2', 'History'),
-            ('3', 'Branches'),
-            ('4', 'X-Ray'),
+            ('1', tt.changes),
+            ('2', tt.history),
+            ('3', tt.branches),
+            ('4', tt.xray),
           ] else ...[
-            ('g c', 'Changes'),
-            ('g h', 'History'),
-            ('g b', 'Branches'),
-            ('g s', 'X-Ray'),
+            ('g c', tt.changes),
+            ('g h', tt.history),
+            ('g b', tt.branches),
+            ('g s', tt.xray),
           ],
-          ('⌘ 1/2/3', 'Switch (always)'),
-          ('/', 'Command Palette'),
-          ('Ctrl+/', 'Elevated Palette'),
-          ('esc', 'Dismiss'),
-          ('F5', 'Refresh'),
+          ('⌘ 1/2/3', tt.switchAlways),
+          ('/', tt.commandPalette),
+          ('Ctrl+/', tt.elevatedPalette),
+          ('esc', tt.dismiss),
+          ('F5', tt.refresh),
         ],
       ),
       (
-        'staging',
-        const [
-          ('j / k', 'Next / prev change'),
-          ('space', 'Toggle line'),
-          ('s', 'Toggle hunk'),
-          ('f', 'Toggle file'),
-          ('p', 'Pin context'),
-          ('⌘ enter', 'Commit'),
-          ('⌘ s', 'Commit'),
-          ('tab', 'Accept AI hint'),
-          ('⌘ z', 'Undo'),
+        tt.sectionStaging,
+        [
+          ('j / k', tt.nextPrevChange),
+          ('space', tt.toggleLine),
+          ('s', tt.toggleHunk),
+          ('f', tt.toggleFile),
+          ('p', tt.pinContext),
+          ('⌘ enter', tt.commit),
+          ('⌘ s', tt.commit),
+          ('tab', tt.acceptAiHint),
+          ('⌘ z', tt.undo),
         ],
       ),
       (
-        'branches & PRs',
-        const [
-          ('j / k', 'Navigate'),
-          ('enter', 'Expand'),
-          ('c', 'Checkout PR'),
-          ('a', 'Approve'),
-          ('r', 'Request changes'),
+        tt.sectionBranchesPrs,
+        [
+          ('j / k', tt.navigate),
+          ('enter', tt.expand),
+          ('c', tt.checkoutPr),
+          ('a', tt.approve),
+          ('r', tt.requestChanges),
         ],
       ),
     ];
@@ -734,7 +738,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          title: Text('Keyboard',
+          title: Text(tt.title,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 13,
@@ -789,7 +793,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                 ],
                 const SizedBox(height: 12),
                 Text(
-                  '${profile.label} profile · switch in Settings',
+                  tt.profileSwitchHint(profile: profile.label),
                   style: TextStyle(color: t.textFaint, fontSize: 10),
                 ),
               ],
@@ -798,7 +802,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: Text('Close', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.close, style: TextStyle(color: t.textMuted)),
             ),
           ],
         );
@@ -945,7 +949,7 @@ class _TopbarState extends State<_Topbar> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _RepoNameLabel(
-                    name: repoName ?? 'No repository open',
+                    name: repoName ?? context.t.app.noRepositoryOpen,
                     hasRepo: repoName != null,
                     repoPath: repo.activePath,
                     onRefresh: () => repo.userRefresh(),
@@ -991,7 +995,7 @@ class _TopbarState extends State<_Topbar> {
               // ignore: dead_code
               if (testing_cmd_pallette_icon_in_top_icons)
                 Tooltip(
-                  message: 'Command palette   /',
+                  message: context.t.app.commandPaletteTooltip,
                   child: _ModeBtn(
                     icon: 'search',
                     active: widget.panel == _Panel.palette,
@@ -1375,7 +1379,7 @@ class _DeskRow extends StatelessWidget {
                       ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 200),
                         child: Text(
-                          candidates.first?.label ?? 'new desk',
+                          candidates.first?.label ?? context.t.app.newDeskFallback,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -1495,7 +1499,7 @@ class _DeskRow extends StatelessWidget {
       final err = await worktreeState.addDesk(payload.branchName!);
       if (err != null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't open as desk: $err")),
+          SnackBar(content: Text(context.t.app.couldntOpenAsDesk(error: err))),
         );
       }
     } else if (payload.isRemotePr) {
@@ -1528,7 +1532,7 @@ class _DeskRow extends StatelessWidget {
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not detect forge: $e')),
+            SnackBar(content: Text(context.t.app.couldNotDetectForge(error: '$e'))),
           );
         }
         return;
@@ -1536,7 +1540,7 @@ class _DeskRow extends StatelessWidget {
       if (refspec.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Cannot fetch PR: forge not detected for this repo.')),
+            SnackBar(content: Text(context.t.app.cannotFetchPrNoForge)),
           );
         }
         return;
@@ -1554,17 +1558,17 @@ class _DeskRow extends StatelessWidget {
             context: context,
             builder: (ctx) => AlertDialog(
               content: Text(
-                'Overwrite $localRef with the latest from the remote?',
+                context.t.app.overwriteRefConfirm(ref: localRef),
                 style: TextStyle(color: t.textNormal, fontSize: 12),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(false),
-                  child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+                  child: Text(context.t.common.cancel, style: TextStyle(color: t.textMuted)),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(true),
-                  child: Text('Overwrite',
+                  child: Text(context.t.app.overwrite,
                       style: TextStyle(color: t.stateDeleted)),
                 ),
               ],
@@ -1583,13 +1587,13 @@ class _DeskRow extends StatelessWidget {
               return;
             case PrCheckoutFailed(:final error):
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("Couldn't fetch PR: $error")),
+                SnackBar(content: Text(context.t.app.couldntFetchPr(error: error))),
               );
               return;
           }
         case PrCheckoutFailed(:final error):
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't fetch PR: $error")),
+            SnackBar(content: Text(context.t.app.couldntFetchPr(error: error))),
           );
           return;
         case PrCheckoutOk():
@@ -1598,7 +1602,7 @@ class _DeskRow extends StatelessWidget {
       final err = await worktreeState.addDesk(localRef);
       if (err != null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't open as desk: $err")),
+          SnackBar(content: Text(context.t.app.couldntOpenAsDesk(error: err))),
         );
       }
     }
@@ -1617,7 +1621,7 @@ class _DeskRow extends StatelessWidget {
     final canPromote = branch != null && !desk.isDetached && !hasPr;
     final currentDesk = worktreeState.activeDesk;
     final currentDeskLabel = currentDesk == null
-        ? (repoState.status?.branch ?? 'current')
+        ? (repoState.status?.branch ?? context.t.app.currentDeskFallback)
         : _deskDisplayLabel(currentDesk);
     // Resolve main worktree path so we can exclude it from "Apply to
     // main" even in the edge case where a desk's path resolves to the
@@ -1646,14 +1650,14 @@ class _DeskRow extends StatelessWidget {
         if (canPromote)
           AppContextMenuItem(
             icon: Icons.rocket_launch_outlined,
-            label: 'Promote desk to PR',
+            label: context.t.app.promoteDeskToPr,
             onTap: () =>
                 _promoteDeskFlow(context, desk, repoState, deskPrState),
           ),
         if (canApply)
           AppContextMenuItem(
             icon: Icons.call_merge,
-            label: 'Apply to main',
+            label: context.t.app.applyToMain,
             onTap: () => _applyDeskToMainFlow(
                 context, desk, repoState, deskPrState, worktreeState),
           ),
@@ -1661,28 +1665,30 @@ class _DeskRow extends StatelessWidget {
         if (canUpdateCurrentFromDesk)
           AppContextMenuItem(
             icon: Icons.system_update_alt,
-            label: 'Update $currentDeskLabel from ${_deskDisplayLabel(desk)}',
+            label: context.t.app.updateDeskFrom(
+                target: currentDeskLabel, source: _deskDisplayLabel(desk)),
             onTap: () => _updateCurrentDeskFromDeskFlow(
                 context, desk, repoState, worktreeState),
           ),
         if (!canUpdateCurrentFromDesk && desk.path != repoState.activePath)
           AppContextMenuItem(
             icon: Icons.download_outlined,
-            label: 'Bring changes from ${_deskDisplayLabel(desk)} here',
+            label: context.t.app.bringChangesFromHere(
+                source: _deskDisplayLabel(desk)),
             onTap: () => _bringDeskChangesHereFlow(
                 context, desk, repoState, worktreeState),
           ),
         if (hasPr)
           AppContextMenuItem(
             icon: Icons.edit_outlined,
-            label: 'Edit local PR',
+            label: context.t.app.editLocalPr,
             onTap: () =>
                 _editLocalPrFlow(context, desk, branch, repoState, deskPrState),
           ),
         if (hasPr)
           AppContextMenuItem(
             icon: Icons.delete_outline,
-            label: 'Discard local PR',
+            label: context.t.app.discardLocalPr,
             destructive: true,
             onTap: () async {
               final repo = repoState.activePath;
@@ -1695,7 +1701,7 @@ class _DeskRow extends StatelessWidget {
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.close,
-            label: 'Close desk',
+            label: context.t.app.closeDesk,
             destructive: true,
             onTap: () => _closeDeskFlow(context, desk, worktreeState),
           ),
@@ -1719,7 +1725,7 @@ class _DeskRow extends StatelessWidget {
     );
     if (err != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't promote: $err")),
+        SnackBar(content: Text(context.t.app.couldntPromote(error: err))),
       );
     }
   }
@@ -1752,9 +1758,9 @@ class _DeskRow extends StatelessWidget {
     if (desk.dirtyFileCount > 0) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               content: Text(
-            "Commit or shelve the desk's changes before applying.",
+            context.t.app.commitOrShelveBeforeApplying,
           )),
         );
       }
@@ -1772,9 +1778,9 @@ class _DeskRow extends StatelessWidget {
     if (mainRepoPath == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               content: Text(
-            'Could not resolve the main worktree path.',
+            context.t.app.couldNotResolveMainWorktree,
           )),
         );
       }
@@ -1795,7 +1801,7 @@ class _DeskRow extends StatelessWidget {
       if (err != null) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Couldn't promote desk: $err")),
+            SnackBar(content: Text(context.t.app.couldntPromoteDesk(error: err))),
           );
         }
         return;
@@ -1805,9 +1811,9 @@ class _DeskRow extends StatelessWidget {
     if (baseRef == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
               content: Text(
-            "Couldn't determine the base branch for this desk.",
+            context.t.app.couldntDetermineBaseBranch,
           )),
         );
       }
@@ -1818,7 +1824,7 @@ class _DeskRow extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(
-            "PR base and head are the same branch ($branch) — nothing to apply.",
+            context.t.app.prBaseHeadSame(branch: branch),
           )),
         );
       }
@@ -1842,7 +1848,7 @@ class _DeskRow extends StatelessWidget {
         (outcome is MergeConflicted && outcome.resolved);
     if (!landed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Apply'))),
+        SnackBar(content: Text(mergeOutcomeMessage(outcome, op: context.t.backend.ops.apply))),
       );
       return;
     }
@@ -1854,7 +1860,7 @@ class _DeskRow extends StatelessWidget {
     await worktreeState.refreshFor(mainRepoPath);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Applied $branch to $baseRef')),
+        SnackBar(content: Text(context.t.app.appliedBranchToBase(branch: branch, base: baseRef))),
       );
     }
   }
@@ -1891,7 +1897,7 @@ class _DeskRow extends StatelessWidget {
     final messenger = ScaffoldMessenger.of(context);
     final targetDesk = worktreeState.activeDesk;
     final targetLabel = targetDesk == null
-        ? (repoState.status?.branch ?? 'current')
+        ? (repoState.status?.branch ?? context.t.app.currentDeskFallback)
         : _deskDisplayLabel(targetDesk);
     final sourceLabel = _deskDisplayLabel(desk);
     final targetPath = repoState.activePath;
@@ -1934,8 +1940,8 @@ class _DeskRow extends StatelessWidget {
         if (!stillOnTarget()) return;
         if (ff.ok) {
           final n = info.behind;
-          toast('Updated $targetLabel to $sourceLabel '
-              '($n commit${n == 1 ? '' : 's'}).');
+          toast(t.app.updatedDeskToDesk(
+              target: targetLabel, source: sourceLabel, n: n));
           await repoState.refreshStatus();
           if (!stillOnTarget()) return;
           await worktreeState.refreshFor(targetPath);
@@ -1944,20 +1950,19 @@ class _DeskRow extends StatelessWidget {
         // FF declined (hook / stale index / unexpected). Surface WHY
         // before falling through to the patch flow so the dialog isn't
         // a surprise.
-        toast("Fast-forward couldn't land cleanly — "
-            'showing a patch preview instead.');
+        toast(t.app.fastForwardFailedFallback);
       } else if (info.behind == 0) {
         toast(info.ahead > 0
-            ? '$targetLabel is ahead of $sourceLabel by '
-                '${info.ahead} commit${info.ahead == 1 ? '' : 's'}.'
-            : '$targetLabel is already up to date with $sourceLabel.');
+            ? t.app.deskAheadOfDesk(
+                target: targetLabel, source: sourceLabel, n: info.ahead)
+            : t.app.deskUpToDate(
+                target: targetLabel, source: sourceLabel));
         return;
       }
     } else if (compare.ok && !isClean) {
       // Dirty worktree — skip FF (entanglement risk) but explain the
       // choice so the patch dialog doesn't read as random.
-      toast('Uncommitted changes in $targetLabel — '
-          'previewing as a patch instead.');
+      toast(t.app.uncommittedPreviewNotice(target: targetLabel));
     }
 
     if (!stillOnTarget()) return;
@@ -1967,9 +1972,10 @@ class _DeskRow extends StatelessWidget {
       sourceDesk: desk,
       repoState: repoState,
       worktreeState: worktreeState,
-      previewLabel: 'update $targetLabel from $sourceLabel',
-      emptyMessage: 'No updates to bring from $sourceLabel.',
-      failureLabel: 'Update prep failed',
+      previewLabel: t.app.updateDeskFromLower(
+          target: targetLabel, source: sourceLabel),
+      emptyMessage: t.app.noUpdatesToBringFrom(source: sourceLabel),
+      failureLabel: t.app.updatePrepFailed,
     );
   }
 
@@ -1982,7 +1988,7 @@ class _DeskRow extends StatelessWidget {
   ) async {
     final targetDesk = worktreeState.activeDesk;
     final targetLabel = targetDesk == null
-        ? (repoState.status?.branch ?? 'current')
+        ? (repoState.status?.branch ?? context.t.app.currentDeskFallback)
         : _deskDisplayLabel(targetDesk);
     final sourceLabel = _deskDisplayLabel(desk);
     await _openDeskPatchPreviewFlow(
@@ -1990,10 +1996,11 @@ class _DeskRow extends StatelessWidget {
       sourceDesk: desk,
       repoState: repoState,
       worktreeState: worktreeState,
-      previewLabel: 'bring changes from $sourceLabel into $targetLabel',
-      emptyMessage:
-          'No patchable changes to bring from $sourceLabel into $targetLabel.',
-      failureLabel: 'Patch prep failed',
+      previewLabel: context.t.app.bringChangesFromInto(
+          source: sourceLabel, target: targetLabel),
+      emptyMessage: context.t.app.noPatchableChanges(
+          source: sourceLabel, target: targetLabel),
+      failureLabel: context.t.app.patchPrepFailed,
     );
   }
 
@@ -2014,7 +2021,8 @@ class _DeskRow extends StatelessWidget {
     if (!context.mounted) return;
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$failureLabel: ${result.error}')),
+        SnackBar(content: Text(context.t.app.failureWithError(
+            label: failureLabel, error: result.error ?? ''))),
       );
       return;
     }
@@ -2070,19 +2078,19 @@ class _DeskRow extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text('Edit local PR',
+                    Text(context.t.app.editLocalPr,
                         style: t.textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 12),
                     AppTextField(
                       controller: titleCtrl,
-                      hintText: 'title',
+                      hintText: context.t.app.titleHint,
                       autofocus: true,
                     ),
                     const SizedBox(height: 8),
                     AppMultilineTextField(
                       controller: bodyCtrl,
-                      hintText: 'body',
+                      hintText: context.t.app.bodyHint,
                       minHeight: 96,
                       maxHeight: 220,
                     ),
@@ -2094,7 +2102,7 @@ class _DeskRow extends StatelessWidget {
                           onChanged: (v) => setSt(() => isDraft = v),
                         ),
                         const SizedBox(width: 8),
-                        const Text('draft', style: TextStyle(fontSize: 12)),
+                        Text(context.t.app.draftLower, style: const TextStyle(fontSize: 12)),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -2103,12 +2111,12 @@ class _DeskRow extends StatelessWidget {
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(ctx).pop(false),
-                          child: const Text('cancel'),
+                          child: Text(context.t.app.cancelLower),
                         ),
                         const SizedBox(width: 6),
                         TextButton(
                           onPressed: () => Navigator.of(ctx).pop(true),
-                          child: const Text('save'),
+                          child: Text(context.t.app.saveLower),
                         ),
                       ],
                     ),
@@ -2130,7 +2138,7 @@ class _DeskRow extends StatelessWidget {
     );
     if (err != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't save: $err")),
+        SnackBar(content: Text(context.t.app.couldntSave(error: err))),
       );
     }
   }
@@ -2162,10 +2170,8 @@ class _DeskRow extends StatelessWidget {
       );
       if (err == null && target == null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'Changes stashed — no other desk to apply them to. '
-                'Use git stash pop to recover.'),
+          SnackBar(
+            content: Text(context.t.app.stashedNoOtherDesk),
           ),
         );
       } else if (err != null && context.mounted) {
@@ -2384,7 +2390,7 @@ class _DeskTabState extends State<_DeskTab>
     }
     final t = context.tokens;
     final d = widget.desk;
-    final label = d.branch ?? (d.isDetached ? d.head.substring(0, 7) : 'desk');
+    final label = d.branch ?? (d.isDetached ? d.head.substring(0, 7) : context.t.app.deskFallback);
     final canClose = widget.onClose != null;
     final showCloseOverDot = canClose && _hovered;
     final Color dotColor;
@@ -2640,37 +2646,28 @@ class _DeskTabState extends State<_DeskTab>
     Set<String>? driftFiles,
     bool driftIsActive = false,
   }) {
+    final tt = context.t.app;
     final parts = <String>[branch];
-    if (widget.highlightSyncTarget) parts.add('suggested source');
-    if (dirty > 0) parts.add('$dirty modified');
-    if (ahead > 0) parts.add('$ahead ahead');
-    if (behind > 0) parts.add('$behind behind');
+    if (widget.highlightSyncTarget) parts.add(tt.suggestedSource);
+    if (dirty > 0) parts.add(tt.tooltipModifiedCount(n: dirty));
+    if (ahead > 0) parts.add(tt.tooltipAheadCount(n: ahead));
+    if (behind > 0) parts.add(tt.tooltipBehindCount(n: behind));
     if (drift != null && drift > 0.01) {
       if (driftIsActive) {
-        parts.add(drift < 0.3 ? 'focused edits'
-            : drift < 0.7 ? 'edits spread across subsystems'
-            : 'edits touching many subsystems');
+        parts.add(drift < 0.3 ? tt.focusedEdits
+            : drift < 0.7 ? tt.editsSpreadAcrossSubsystems
+            : tt.editsTouchingManySubsystems);
       } else {
-        parts.add(drift < 0.3 ? 'focused branch'
-            : drift < 0.7 ? 'branch spans multiple subsystems'
-            : 'structurally divergent from mainline');
+        parts.add(drift < 0.3 ? tt.focusedBranch
+            : drift < 0.7 ? tt.branchSpansMultipleSubsystems
+            : tt.structurallyDivergentFromMainline);
       }
     }
-    if (hasLocalPr) parts.add('local PR');
+    if (hasLocalPr) parts.add(tt.localPr);
     final head = parts.join(' · ');
     final lines = <String>[head];
     if (lastActivity != null) {
-      final age = DateTime.now().difference(lastActivity);
-      final rel = age.inMinutes < 1
-          ? 'just now'
-          : age.inMinutes < 60
-              ? '${age.inMinutes}m ago'
-              : age.inHours < 24
-                  ? '${age.inHours}h ago'
-                  : age.inDays < 30
-                      ? '${age.inDays}d ago'
-                      : '${(age.inDays / 30).floor()}mo ago';
-      lines.add('last touched $rel');
+      lines.add(tt.lastTouched(time: lastTouchedRelative(lastActivity)));
     }
     if (driftFiles != null && driftFiles.isNotEmpty) {
       final groups = <String, int>{};
@@ -2685,11 +2682,11 @@ class _DeskTabState extends State<_DeskTab>
         ..sort((a, b) => b.value.compareTo(a.value));
       final shown = sorted.take(4).toList();
       final summary = shown
-          .map((e) => '${e.value} in ${e.key}')
+          .map((e) => tt.driftGroupCount(n: e.value, dir: e.key))
           .join(', ');
       final shownCount = shown.fold<int>(0, (s, e) => s + e.value);
       final remainder = driftFiles.length - shownCount;
-      lines.add(remainder > 0 ? '$summary +$remainder' : summary);
+      lines.add(remainder > 0 ? tt.driftSummaryRemainder(summary: summary, remainder: remainder) : summary);
     }
     return lines.join('\n');
   }
@@ -2702,7 +2699,7 @@ String _deskDisplayLabel(WorktreeData desk) {
   if (desk.isDetached && desk.head.isNotEmpty) {
     return desk.head.substring(0, math.min(7, desk.head.length));
   }
-  return 'desk';
+  return t.app.deskFallback;
 }
 
 /// Drag feedback chip shown while the user is dragging a desk tab to
@@ -2926,7 +2923,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
       _workingTreeDetail = CommitDetailData(
         commitHash: 'working-tree',
         shortHash: '',
-        subject: 'Uncommitted changes',
+        subject: context.t.app.uncommittedChanges,
         body: '',
         authorName: '',
         authorEmail: '',
@@ -2989,7 +2986,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
     final detail = _activeDetail;
     return AlertDialog(
       title: Text(
-        'Close desk?',
+        context.t.app.closeDeskQuestion,
         style: TextStyle(color: t.textStrong, fontSize: 14),
       ),
       content: Column(
@@ -2998,20 +2995,20 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
         children: [
           if (hasDirty)
             Text(
-              '$count uncommitted file${count == 1 ? '' : 's'}.',
+              context.t.app.uncommittedFileCount(n: count),
               style: TextStyle(color: t.textNormal, fontSize: 12),
             ),
           if (_commits.isNotEmpty)
             Padding(
               padding: EdgeInsets.only(top: hasDirty ? 2 : 0),
               child: Text(
-                '${_commits.length} commit${_commits.length == 1 ? '' : 's'} ahead of main.',
+                context.t.app.commitsAheadOfMain(n: _commits.length),
                 style: TextStyle(color: t.textNormal, fontSize: 12),
               ),
             ),
           if (!hasDirty && _commits.isEmpty)
             Text(
-              'This will remove the worktree directory.',
+              context.t.app.willRemoveWorktreeDirectory,
               style: TextStyle(color: t.textNormal, fontSize: 12),
             ),
           if (hasTimeline) ...[
@@ -3046,7 +3043,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   _selectedHash == 'working-tree'
-                      ? '${detail.filesChanged} file${detail.filesChanged == 1 ? '' : 's'} changed'
+                      ? context.t.app.filesChangedCount(n: detail.filesChanged)
                       : detail.subject,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -3072,7 +3069,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
           borderRadius: btnRadius,
           animationDuration: btnDuration,
           padding: btnPadding,
-          child: Text('Cancel',
+          child: Text(context.t.common.cancel,
               style: TextStyle(color: t.textMuted, fontSize: btnFontSize)),
         ),
         if (hasDirty)
@@ -3084,7 +3081,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
             borderRadius: btnRadius,
             animationDuration: btnDuration,
             padding: btnPadding,
-            child: Text('Shelve here',
+            child: Text(context.t.app.shelveHere,
                 style: TextStyle(color: t.btnText, fontSize: btnFontSize)),
           ),
         ChromeButton(
@@ -3099,7 +3096,7 @@ class _CloseDeskDialogState extends State<_CloseDeskDialog> {
           borderRadius: btnRadius,
           animationDuration: btnDuration,
           padding: btnPadding,
-          child: Text(hasDirty ? 'Discard & close' : 'Close',
+          child: Text(hasDirty ? context.t.app.discardAndClose : context.t.common.close,
               style: TextStyle(
                   color: t.stateDeleted, fontSize: btnFontSize)),
         ),
@@ -3549,32 +3546,32 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
     List<IssueSummary> remoteIssues,
   ) async {
     final repo = widget.repoPath;
-    if (repo == null) return 'no repository';
+    if (repo == null) return t.app.noRepository;
     final issueState = context.read<DeskIssueState>();
     String? err;
     String okMsg;
     switch (action) {
       case _SidePanelIssueAction.promote:
         err = await issueState.promoteToRemote(repoPath: repo, id: item.displayId);
-        okMsg = 'Issue promoted to remote.';
+        okMsg = t.app.issuePromotedToRemote;
       case _SidePanelIssueAction.push:
         err = await issueState.pushToRemote(repoPath: repo, id: item.displayId);
-        okMsg = 'Pushed to remote.';
+        okMsg = t.app.pushedToRemote;
       case _SidePanelIssueAction.pull:
         err = await issueState.syncFromRemote(repoPath: repo, id: item.displayId);
-        okMsg = 'Pulled from remote.';
+        okMsg = t.app.pulledFromRemote;
       case _SidePanelIssueAction.import:
         final summary = remoteIssues
             .where((r) => r.number == item.displayId)
             .firstOrNull;
-        if (summary == null) return 'remote issue not found';
+        if (summary == null) return t.app.remoteIssueNotFound;
         err = await issueState.importFromRemote(repoPath: repo, remote: summary);
-        okMsg = 'Imported #${item.displayId} locally.';
+        okMsg = t.app.importedIssueLocally(id: item.displayId);
       case _SidePanelIssueAction.abandon:
         final ok = await _confirmAbandonIssue(item.displayId);
         if (!ok) return null;
         err = await issueState.abandon(repoPath: repo, id: item.displayId);
-        okMsg = 'Issue abandoned.';
+        okMsg = t.app.issueAbandoned;
     }
     if (!mounted) return err;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3589,21 +3586,20 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          title: Text('Abandon issue',
+          title: Text(context.t.app.abandonIssue,
               style: TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
           content: Text(
-            'Permanently remove local issue #$id? This deletes its ref '
-            "and can't be undone.",
+            context.t.app.permanentlyRemoveLocalIssueConfirm(id: id),
             style: TextStyle(color: t.textNormal),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(context.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text('Abandon', style: TextStyle(color: t.danger)),
+              child: Text(context.t.app.abandon, style: TextStyle(color: t.danger)),
             ),
           ],
         );
@@ -3627,13 +3623,17 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
     // here, not silently absorbed into the generic-message arm.
     final msg = switch (outcome) {
       MergeClean() => null,
-      MergeConflicted(:final resolved) =>
-        resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
-      MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeConflicted(:final resolved) => resolved
+          ? null
+          : mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeBlockedByLocalChanges() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
       // A switch never yields this; handled for exhaustiveness so the
       // guidance is surfaced rather than swallowed if it ever arrives.
-      MergeNeedsCheckout() => mergeOutcomeMessage(outcome, op: 'Switch'),
-      MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeNeedsCheckout() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeFailed() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
     };
     if (msg != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -3719,9 +3719,9 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
       if (!mounted) return;
       final clean = outcome is MergeClean;
       final message = switch (outcome) {
-        MergeClean() => 'Published ${widget.branch}.',
+        MergeClean() => context.t.app.publishedBranch(branch: widget.branch),
         MergeFailed(:final message) => classifyGitError(message).message,
-        _ => mergeOutcomeMessage(outcome, op: 'Sync'),
+        _ => mergeOutcomeMessage(outcome, op: context.t.backend.ops.sync),
       };
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(message),
@@ -3800,14 +3800,14 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         // into an invitation when confirmed, never dims out of one.
         final canPublish = _hasRemote == true;
         shards.add(MosaicShard.text(
-          text: _publishing ? 'Publishing…' : 'Publish',
+          text: _publishing ? context.t.app.publishingEllipsis : context.t.app.publish,
           // Measure in the ambient family (serif on some themes) — a bare
           // style under-measures and crowds the label against the edge.
           style: DefaultTextStyle.of(context).style.merge(_publishStyle(t)),
           chrome: _kPublishShardChrome,
           onTap: !canPublish || _publishing ? null : () => _publish(status),
           tooltip: _hasRemote == false
-              ? 'No remote configured for this repository.'
+              ? context.t.app.noRemoteConfigured
               : action.detail,
           hoverFill: t.accentBright.withValues(alpha: 0.14),
           active: _publishing,
@@ -3902,7 +3902,7 @@ class _FusedRepoPillState extends State<_FusedRepoPill> {
         children: [
           AppIcon(name: 'sync', size: 10, color: color),
           const SizedBox(width: 5),
-          Text(_publishing ? 'Publishing…' : 'Publish',
+          Text(_publishing ? context.t.app.publishingEllipsis : context.t.app.publish,
               style: _publishStyle(t).copyWith(color: color)),
         ],
       ),
@@ -4395,7 +4395,7 @@ class _BranchRowState extends State<_BranchRow> {
                 const SizedBox(width: 6),
                 if (widget.alreadyOpenAsDesk)
                   Tooltip(
-                    message: 'Jump to desk',
+                    message: context.t.app.jumpToDesk,
                     child: HoverableTap(
                       onTap: widget.onOpenAsDesk,
                       builder: (context, hovered) =>
@@ -4409,13 +4409,13 @@ class _BranchRowState extends State<_BranchRow> {
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
                         ),
-                        child: const Text('→ open'),
+                        child: Text(context.t.app.arrowOpen),
                       ),
                     ),
                   )
                 else if (_hovered)
                   Tooltip(
-                    message: 'Open on a new desk',
+                    message: context.t.app.openOnANewDesk,
                     child: HoverableTap(
                       onTap: widget.onOpenAsDesk,
                       builder: (context, hovered) =>
@@ -4427,7 +4427,7 @@ class _BranchRowState extends State<_BranchRow> {
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
                         ),
-                        child: const Text('+ desk'),
+                        child: Text(context.t.app.plusDesk),
                       ),
                     ),
                   ),
@@ -4552,7 +4552,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Row(
           children: [
-            Text('+ ', style: TextStyle(color: t.accentBright, fontSize: 12)),
+            Text(context.t.app.plusSpace, style: TextStyle(color: t.accentBright, fontSize: 12)),
             Expanded(
               child: TextField(
                 controller: _ctrl,
@@ -4566,7 +4566,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
                 ),
                 decoration: InputDecoration(
                   isCollapsed: true,
-                  hintText: _branchDream.value ?? 'new-branch-name',
+                  hintText: _branchDream.value ?? context.t.app.newBranchNameHint,
                   hintStyle: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.6),
                     fontSize: 11,
@@ -4587,7 +4587,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
                   color: hovered ? t.textStrong : t.textMuted,
                   fontSize: 9,
                 ),
-                child: const Text('esc'),
+                child: Text(context.t.app.escLower),
               ),
             ),
           ],
@@ -4616,7 +4616,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
           child: Row(
             children: [
               Text(
-                '+ new desk',
+                context.t.app.plusNewDesk,
                 style: TextStyle(
                   color: _hovered ? t.textNormal : t.textMuted,
                   fontSize: 11,
@@ -4625,7 +4625,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
               ),
               const SizedBox(width: 6),
               Text(
-                'from HEAD...',
+                context.t.app.fromHeadEllipsis,
                 style: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.6),
                   fontSize: 10,
@@ -4676,7 +4676,7 @@ class _NavRowState extends State<_NavRow> {
           child: Row(
             children: [
               Text(
-                'View all branches',
+                context.t.app.viewAllBranches,
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 10.5,
@@ -4916,7 +4916,7 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
             child: Row(
               children: [
                 Text(
-                  'issues',
+                  context.t.app.issuesLower,
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 9.5,
@@ -4936,7 +4936,7 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
                   const SizedBox(width: 6),
                   _CompactIconButton(
                     icon: _composing ? 'x' : 'plus',
-                    tooltip: _composing ? 'cancel' : 'new issue',
+                    tooltip: _composing ? context.t.app.cancelLower : context.t.app.newIssueLower,
                     onTap: _composing ? _cancelCompose : _openCompose,
                     t: t,
                   ),
@@ -4965,7 +4965,7 @@ class _IssuesSidePanelState extends State<_IssuesSidePanel> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Text(
-                widget.hoveredBranch != null ? 'none linked' : 'no open issues',
+                widget.hoveredBranch != null ? context.t.app.noneLinked : context.t.app.noOpenIssues,
                 style: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.45),
                   fontSize: 9.5,
@@ -5086,7 +5086,7 @@ class _IssueComposeForm extends StatelessWidget {
             onSubmitted: (_) => onSubmit(),
             style: TextStyle(color: t.textNormal, fontSize: 10.5),
             decoration: InputDecoration(
-              hintText: 'title',
+              hintText: context.t.app.titleHint,
               isDense: true,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -5125,7 +5125,7 @@ class _IssueComposeForm extends StatelessWidget {
             maxLines: 4,
             style: TextStyle(color: t.textNormal, fontSize: 10),
             decoration: InputDecoration(
-              hintText: 'body (optional)',
+              hintText: context.t.app.bodyOptionalHint,
               isDense: true,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -5169,7 +5169,7 @@ class _IssueComposeForm extends StatelessWidget {
                 ),
               const Spacer(),
               _SubmitButton(
-                label: (promoteRemote && forgeUsable) ? 'create + push' : 'create',
+                label: (promoteRemote && forgeUsable) ? context.t.app.createAndPushLower : context.t.app.createLower,
                 busy: submitting,
                 onTap: onSubmit,
                 t: t,
@@ -5233,7 +5233,7 @@ class _RemoteToggle extends StatelessWidget {
             ),
             const SizedBox(width: 5),
             Text(
-              'remote',
+              context.t.app.remoteLower,
               style: TextStyle(
                 color: value ? t.accentBright : t.textMuted,
                 fontSize: 9.5,
@@ -5336,7 +5336,7 @@ class _SidePanelIssueRow extends StatelessWidget {
       if (item.isLocal && !item.isRemote && forgeUsable)
         AppContextMenuItem(
           icon: Icons.cloud_upload_outlined,
-          label: 'Promote to remote',
+          label: context.t.app.promoteToRemote,
           onTap: () => act(_SidePanelIssueAction.promote, item),
         ),
       if (item.isLocal && item.isRemote) ...[
@@ -5345,20 +5345,20 @@ class _SidePanelIssueRow extends StatelessWidget {
         if (forgeUsable)
           AppContextMenuItem(
             icon: Icons.north_outlined,
-            label: 'Push to remote',
+            label: context.t.app.pushToRemote,
             onTap: () => act(_SidePanelIssueAction.push, item),
           ),
         if (remoteAvailable)
           AppContextMenuItem(
             icon: Icons.south_outlined,
-            label: 'Pull from remote',
+            label: context.t.app.pullFromRemote,
             onTap: () => act(_SidePanelIssueAction.pull, item),
           ),
       ],
       if (!item.isLocal)
         AppContextMenuItem(
           icon: Icons.download_outlined,
-          label: 'Import',
+          label: context.t.app.importLabel,
           onTap: () => act(_SidePanelIssueAction.import, item),
         ),
     ];
@@ -5368,7 +5368,7 @@ class _SidePanelIssueRow extends StatelessWidget {
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.delete_outline,
-            label: 'Abandon',
+            label: context.t.app.abandon,
             destructive: true,
             onTap: () => act(_SidePanelIssueAction.abandon, item),
           ),
@@ -5404,7 +5404,7 @@ class _SidePanelIssueRow extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '#${item.displayId} ${item.title}',
+              context.t.app.issueHashTitle(id: item.displayId, title: item.title),
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 10,
@@ -5463,7 +5463,7 @@ class _NoRepoSurfaceState extends State<_NoRepoSurface> {
 
   Future<void> _open() async {
     if (_busy) return;
-    final picked = await pickDirectory('Open Repository');
+    final picked = await pickDirectory(context.t.app.openRepositoryDialogTitle);
     if (picked == null || !mounted) return;
     setState(() => _busy = true);
     await _activate(picked);
@@ -5471,7 +5471,7 @@ class _NoRepoSurfaceState extends State<_NoRepoSurface> {
 
   Future<void> _create() async {
     if (_busy) return;
-    final picked = await pickDirectory('Create Repository');
+    final picked = await pickDirectory(context.t.app.createRepositoryDialogTitle);
     if (picked == null || !mounted) return;
     setState(() => _busy = true);
     final r = await initRepository(picked);
@@ -5479,7 +5479,7 @@ class _NoRepoSurfaceState extends State<_NoRepoSurface> {
     if (!r.ok || r.data == null) {
       setState(() => _busy = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(r.error ?? 'Failed to create repository.')),
+        SnackBar(content: Text(r.error ?? context.t.app.failedToCreateRepository)),
       );
       return;
     }
@@ -5504,9 +5504,9 @@ class _NoRepoSurfaceState extends State<_NoRepoSurface> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _QuietAction(label: 'open repository', onTap: _open),
+              _QuietAction(label: context.t.app.openRepositoryLower, onTap: _open),
               const SizedBox(width: 26),
-              _QuietAction(label: 'new repository', onTap: _create),
+              _QuietAction(label: context.t.app.newRepositoryLower, onTap: _create),
             ],
           ),
         ),
@@ -5803,7 +5803,7 @@ class _PanelBackButtonState extends State<_PanelBackButton> {
             children: [
               Icon(Icons.arrow_back, size: 12, color: t.textMuted),
               const SizedBox(width: 4),
-              Text('Back', style: TextStyle(color: t.textNormal, fontSize: 11)),
+              Text(context.t.app.back, style: TextStyle(color: t.textNormal, fontSize: 11)),
             ],
           ),
         ),
@@ -5864,7 +5864,7 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
               child: Transform.translate(
                 offset: chrome.offset,
                 child: Text(
-                  'Close',
+                  context.t.common.close,
                   style: TextStyle(color: t.textNormal, fontSize: 11),
                 ),
               ),
@@ -5915,7 +5915,7 @@ class _FilamentFindingsShaderTitleState
       letterSpacing: 0.96,
     );
     if (dur == Duration.zero) {
-      return Text('FILAMENT FINDINGS',
+      return Text(context.t.app.filamentFindingsUpper,
           style: style.copyWith(color: t.textMuted));
     }
     final warm = Color.lerp(t.textMuted, t.accentBright, 0.5)!;
@@ -5940,7 +5940,7 @@ class _FilamentFindingsShaderTitleState
           child: child!,
         );
       },
-      child: const Text('FILAMENT FINDINGS', style: style),
+      child: Text(context.t.app.filamentFindingsUpper, style: style),
     );
   }
 }

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../backend/blob_loader.dart';
 import '../../backend/magic_bytes.dart';
+import '../../i18n/gen/strings.g.dart';
+import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 
 enum MediaDiffState { added, deleted, modified }
@@ -201,7 +203,7 @@ class ImageMediaRenderer extends StatelessWidget {
       height: 80,
       alignment: Alignment.center,
       child: Text(
-        'Unable to decode image',
+        t.diff.media.unableToDecodeImage,
         style: TextStyle(color: tokens.textMuted, fontSize: 11),
       ),
     );
@@ -209,7 +211,10 @@ class ImageMediaRenderer extends StatelessWidget {
 
   Widget _sizeLabel(BlobData blob, Color tint) {
     return Text(
-      '${blob.contentClass.formatName}  ${_fmtSize(blob.sizeBytes)}',
+      t.diff.media.sizeLabel(
+        format: blob.contentClass.formatName,
+        size: formatByteSize(blob.sizeBytes),
+      ),
       style: TextStyle(
         color: tint.withValues(alpha: 0.8),
         fontSize: 11,
@@ -221,7 +226,12 @@ class ImageMediaRenderer extends StatelessWidget {
   static String _sizeDelta(int oldSize, int newSize) {
     final delta = newSize - oldSize;
     final sign = delta >= 0 ? '+' : '−';
-    return '${_fmtSize(oldSize)} → ${_fmtSize(newSize)}  ($sign${_fmtSize(delta.abs())})';
+    return t.diff.media.sizeDelta(
+      oldSize: formatByteSize(oldSize),
+      newSize: formatByteSize(newSize),
+      sign: sign,
+      delta: formatByteSize(delta.abs()),
+    );
   }
 }
 
@@ -244,13 +254,14 @@ class MetadataOnlyRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final blob = newBlob ?? oldBlob;
-    final formatName = blob?.contentClass.formatName ?? 'Binary';
-    final size = sizeOverride ?? (blob != null ? _fmtSize(blob.sizeBytes) : '');
+    final formatName =
+        blob?.contentClass.formatName ?? context.t.diff.media.fallbackFormatName;
+    final size = sizeOverride ?? (blob != null ? formatByteSize(blob.sizeBytes) : '');
 
     final (String label, Color color) = switch (state) {
-      MediaDiffState.added => ('added', tokens.stateAdded),
-      MediaDiffState.deleted => ('deleted', tokens.stateDeleted),
-      MediaDiffState.modified => ('modified', tokens.textMuted),
+      MediaDiffState.added => (context.t.diff.media.stateAdded, tokens.stateAdded),
+      MediaDiffState.deleted => (context.t.diff.media.stateDeleted, tokens.stateDeleted),
+      MediaDiffState.modified => (context.t.diff.media.stateModified, tokens.textMuted),
     };
 
     return Padding(
@@ -354,8 +365,3 @@ class CheckerboardPainter extends CustomPainter {
       old.color1 != color1 || old.color2 != color2;
 }
 
-String _fmtSize(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-}

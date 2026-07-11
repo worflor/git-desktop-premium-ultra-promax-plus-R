@@ -3,6 +3,7 @@ import '../../app/external_tools_state.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/system_paths.dart';
+import '../../i18n/gen/strings.g.dart';
 import 'palette_entry.dart';
 import 'palette_registry.dart';
 
@@ -43,7 +44,7 @@ class AskPrefix extends PalettePrefix {
   @override
   String get trigger => 'ask:';
   @override
-  String get hint => 'ask: [question]';
+  String get hint => t.palette.prefixes.askHint;
 
   @override
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
@@ -64,10 +65,10 @@ class AskPrefix extends PalettePrefix {
       final name = rp.split('/').last.split('\\').last;
       return PaletteEntry(
         id: 'prefix.ask.$rp',
-        label: 'Ask $name: $body',
+        label: t.palette.prefixes.askLabel(name: name, body: body),
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
-        chipLabel: 'AI',
+        chipLabel: t.palette.chips.ai,
         chipTone: ChipTone.chromatic1,
         tags: rp != active ? const {EntryTag.repoChild} : const {},
         onExecute: () {
@@ -86,7 +87,7 @@ class NearPrefix extends PalettePrefix {
   @override
   String get trigger => 'near:';
   @override
-  String get hint => 'near: [file]';
+  String get hint => t.palette.prefixes.nearHint;
 
   @override
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
@@ -102,10 +103,11 @@ class NearPrefix extends PalettePrefix {
       return PaletteEntry(
         id: 'prefix.near.${s.path}',
         label: name,
-        subtitle: '${s.path} · φ=${s.phi.toStringAsFixed(3)}',
+        subtitle: t.palette.prefixes
+            .nearSubtitle(path: s.path, phi: s.phi.toStringAsFixed(3)),
         category: PaletteCategory.file,
         actionType: PaletteActionType.execute,
-        chipLabel: 'NEAR',
+        chipLabel: t.palette.chips.near,
         chipTone: ChipTone.chromatic1,
         refPath: s.path,
       );
@@ -127,7 +129,7 @@ class WhoPrefix extends PalettePrefix {
   @override
   String get trigger => 'who:';
   @override
-  String get hint => 'who: [file]';
+  String get hint => t.palette.prefixes.whoHint;
 
   @override
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
@@ -145,22 +147,24 @@ class WhoPrefix extends PalettePrefix {
       if (reviewers != null && reviewers.isNotEmpty) {
         entries.add(PaletteEntry(
           id: 'prefix.who.reviewers.$path',
-          label: '$name — ${reviewers.join(', ')}',
-          subtitle: '$path · ${reviewers.length} reviewers · $touches touches',
+          label: t.palette.prefixes
+              .whoReviewersLabel(name: name, reviewers: reviewers.join(', ')),
+          subtitle: t.palette.prefixes.whoReviewersSubtitle(
+              path: path, count: reviewers.length, touches: touches),
           category: PaletteCategory.file,
           actionType: PaletteActionType.execute,
-          chipLabel: 'WHO',
+          chipLabel: t.palette.chips.who,
           chipTone: ChipTone.chromatic2,
           refPath: path,
         ));
       } else if (touches > 0) {
         entries.add(PaletteEntry(
           id: 'prefix.who.touches.$path',
-          label: '$name — $touches touches',
-          subtitle: '$path · no reviewers recorded',
+          label: t.palette.prefixes.whoTouchesLabel(name: name, touches: touches),
+          subtitle: t.palette.prefixes.whoTouchesSubtitle(path: path),
           category: PaletteCategory.file,
           actionType: PaletteActionType.execute,
-          chipLabel: 'WHO',
+          chipLabel: t.palette.chips.who,
           chipTone: ChipTone.muted,
           refPath: path,
         ));
@@ -177,7 +181,7 @@ class LogPrefix extends PalettePrefix {
   @override
   String get trigger => 'log:';
   @override
-  String get hint => 'log: [message]';
+  String get hint => t.palette.prefixes.logHint;
 
   @override
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
@@ -194,7 +198,7 @@ class RunPrefix extends PalettePrefix {
   @override
   String get trigger => 'run:';
   @override
-  String get hint => 'run: [tool]';
+  String get hint => t.palette.prefixes.runHint;
 
   @override
   List<PaletteEntry> buildEntries(String body, PrefixContext ctx) {
@@ -219,8 +223,8 @@ class RunPrefix extends PalettePrefix {
               category: PaletteCategory.action,
               actionType: PaletteActionType.execute,
               chipLabel: tool.mode == ToolLaunchMode.newTerminal
-                  ? 'TERM'
-                  : 'GUI',
+                  ? t.palette.chips.term
+                  : t.palette.chips.gui,
               onExecute: () async {
                 final args = tool.resolveArgs(repoPath);
                 try {

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui show Gradient, Image;
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
@@ -46,6 +47,7 @@ import 'backend/undo_controller.dart';
 import 'diagnostics/diagnostics_state.dart';
 import 'features/onboarding/onboarding_flow.dart';
 import 'features/onboarding/onboarding_state.dart';
+import 'i18n/gen/strings.g.dart';
 import 'ui/design_primitives.dart';
 import 'ui/liquid_glass.dart';
 import 'ui/motion.dart';
@@ -80,12 +82,26 @@ final RouteObserver<ModalRoute<void>> manifoldRouteObserver =
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Resolve the UI locale from the OS preference list before anything
+  // renders. Synchronous — translations are compiled Dart, no I/O. A
+  // persisted in-app override (settings page) re-applies on top once
+  // settings load below.
+  LocaleSettings.useDeviceLocaleSync();
+
   await windowManager.ensureInitialized();
 
   // Settings drive identity + onboarding gate — load once up front so
   // first paint reflects persisted state (the user's chosen name and
   // whether they've already completed onboarding).
   final settings = await SettingsStore.load();
+  // Persisted UI-language override wins over the OS-resolved default.
+  // Membership check (not try/catch): a stale tag from a build that
+  // bundled more locales silently stays on the device locale instead
+  // of snapping to English via AppLocaleUtils.parse's base fallback.
+  if (settings.localeOverride.isNotEmpty &&
+      AppLocaleUtils.supportedLocalesRaw.contains(settings.localeOverride)) {
+    LocaleSettings.setLocaleRawSync(settings.localeOverride);
+  }
   final appIdentityState = AppIdentityState();
   appIdentityState.loadFromSettings(settings);
   final onboardingState = OnboardingState();
@@ -278,7 +294,8 @@ void main() async {
   runZonedGuarded(
     () {
       runApp(
-        MultiProvider(
+        TranslationProvider(
+          child: MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: themeState),
             ChangeNotifierProvider.value(value: repoState),
@@ -307,7 +324,8 @@ void main() async {
             ChangeNotifierProvider(create: (_) => PaletteState()),
             ChangeNotifierProvider.value(value: undoCoordinator),
           ],
-          child: const GitDesktopApp(),
+            child: const GitDesktopApp(),
+          ),
         ),
       );
     },
@@ -364,6 +382,9 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
     return MaterialApp(
       title: identity.shortName,
       debugShowCheckedModeBanner: false,
+      locale: TranslationProvider.of(context).flutterLocale,
+      supportedLocales: AppLocaleUtils.supportedLocales,
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: buildTheme(tokens),
       scrollBehavior: const _SmoothScrollBehavior(),
       navigatorObservers: [manifoldRouteObserver],

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' show Offset;
 
 import '../../backend/spectral_trajectory.dart';
+import '../../i18n/gen/strings.g.dart';
 
 /// View-model for the Orrery — the repo's structural history as a watchable
 /// phase-space trajectory. Deliberately decoupled from [SpectralTrajectory]
@@ -557,7 +558,7 @@ class _ModuleBucket {
   _ModuleBucket(this.prefix, this.members);
 
   /// Display label: the directory path, or '(root)' for files at the repo root.
-  String get label => prefix.isEmpty ? '(root)' : prefix.join('/');
+  String get label => prefix.isEmpty ? t.orrery.node.rootModule : prefix.join('/');
 }
 
 /// 2D orthogonal Procrustes (Kabsch, reflections allowed) — rotate/reflect each

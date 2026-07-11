@@ -14,6 +14,7 @@ import '../../backend/gyat.dart' show GyatLattice, gyatForRepo;
 import '../../backend/logos_core.dart' show FlowSseLattice, flowKGInteractionStrength;
 import '../../backend/logos_flow.dart'
     show analyzeFlowCached, analyzeInterFile, CrossFileInterference, crossFileMix, dreamAnalysis, FlowAnalysisResult, FlowBugKind, FlowFinding, InterFileResult;
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/tokens.dart';
 
 /// Stability region in the coherence × lyapunov plane.
@@ -352,7 +353,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
     if (repoPath == null) {
       return Center(
         child: Text(
-          'No repository open.',
+          context.t.filament.noRepositoryOpen,
           style: TextStyle(color: t.textMuted, fontSize: 12),
         ),
       );
@@ -391,7 +392,10 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
             children: [
               if (!_done) ...[
                 Text(
-                  'scanning $_scannedFiles / $_totalFiles files…',
+                  context.t.filament.scanningProgress(
+                    scanned: _scannedFiles,
+                    total: _totalFiles,
+                  ),
                   style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.7),
                     fontSize: 11,
@@ -417,7 +421,10 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                   children: [
                     Expanded(
                       child: Text(
-                        '$totalFindings findings across ${_results.length} files',
+                        context.t.filament.findingsAcrossFiles(
+                          count: totalFindings,
+                          files: _results.length,
+                        ),
                         style: TextStyle(
                           color: t.textMuted.withValues(alpha: 0.7),
                           fontSize: 11,
@@ -432,7 +439,8 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                               ClipboardData(text: _formatFindings()));
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('Copied $totalFindings findings'),
+                              content: Text(context.t.filament
+                                  .copiedFindings(count: totalFindings)),
                               duration: const Duration(seconds: 2),
                             ),
                           );
@@ -448,21 +456,31 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
                     children: [
                       if (critCount > 0)
                         _SeverityPill(
-                            label: 'critical', count: critCount, t: t),
+                            label: context.t.filament.severity.critical,
+                            count: critCount,
+                            t: t),
                       if (warnCount > 0) ...[
                         if (critCount > 0) const SizedBox(width: 8),
-                        _SeverityPill(label: 'warn', count: warnCount, t: t),
+                        _SeverityPill(
+                            label: context.t.filament.severity.warn,
+                            count: warnCount,
+                            t: t),
                       ],
                       if (infoCount > 0) ...[
                         if (critCount > 0 || warnCount > 0)
                           const SizedBox(width: 8),
-                        _SeverityPill(label: 'info', count: infoCount, t: t),
+                        _SeverityPill(
+                            label: context.t.filament.severity.info,
+                            count: infoCount,
+                            t: t),
                       ],
                       if (jointCount > 0) ...[
                         if (critCount > 0 || warnCount > 0 || infoCount > 0)
                           const SizedBox(width: 8),
                         _SeverityPill(
-                            label: 'joint', count: jointCount, t: t),
+                            label: context.t.filament.severity.joint,
+                            count: jointCount,
+                            t: t),
                       ],
                     ],
                   ),
@@ -486,7 +504,7 @@ class _FilamentFindingsPanelState extends State<FilamentFindingsPanel> {
           child: sortedFiles.isEmpty && _done
               ? Center(
                   child: Text(
-                    'No execution-flow findings.',
+                    context.t.filament.noFindings,
                     style: TextStyle(
                       color: t.textMuted.withValues(alpha: 0.55),
                       fontSize: 11,
@@ -548,7 +566,7 @@ class _CopyButtonState extends State<_CopyButton> {
             ),
           ),
           child: Text(
-            'COPY',
+            context.t.filament.copy,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: _hovered ? 0.8 : 0.6),
               fontSize: 9,
@@ -657,10 +675,12 @@ class _FindingRow extends StatelessWidget {
       _ => t.textMuted.withValues(alpha: 0.6),
     };
     final kind = switch (finding.kind) {
-      FlowBugKind.staleValue => 'stale value',
-      FlowBugKind.temporalShift => 'temporal shift',
-      FlowBugKind.contextInversion => 'context inversion',
-      FlowBugKind.contradictoryFlow => 'contradictory flow',
+      FlowBugKind.staleValue => context.t.filament.kind.staleValue,
+      FlowBugKind.temporalShift => context.t.filament.kind.temporalShift,
+      FlowBugKind.contextInversion =>
+        context.t.filament.kind.contextInversion,
+      FlowBugKind.contradictoryFlow =>
+        context.t.filament.kind.contradictoryFlow,
     };
     final glyph =
         _stabilityGlyph(finding.coherence, finding.lyapunov, finding.kind);
@@ -680,7 +700,7 @@ class _FindingRow extends StatelessWidget {
           ),
         ),
         Text(
-          'L${finding.sourceLine + 1}',
+          context.t.filament.lineLabel(line: finding.sourceLine + 1),
           style: TextStyle(
             color: t.textMuted.withValues(alpha: 0.5),
             fontSize: 9,
@@ -690,7 +710,8 @@ class _FindingRow extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            '${finding.sourceText} — $kind',
+            context.t.filament
+                .findingSourceWithKind(source: finding.sourceText, kind: kind),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

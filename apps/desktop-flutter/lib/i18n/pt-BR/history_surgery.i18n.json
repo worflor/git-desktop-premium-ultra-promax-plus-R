@@ -1,0 +1,83 @@
+{
+  "@@locale": "pt-BR",
+  "chrome": {
+    "title": "Cirurgia de Histórico",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "DRY RUN"
+  },
+  "select": {
+    "prompt": "Selecione arquivos para remover do histórico",
+    "selectedCount": "{n} selecionados",
+    "searchHint": "buscar...",
+    "readingTree": "lendo árvore...",
+    "continueDisabled": "selecione arquivos para continuar",
+    "continueEnabled": "continuar →",
+    "toPurgeCount": "{n} a expurgar",
+    "analyzing": "analisando...",
+    "riskLow": "risco baixo",
+    "riskModerate": "risco moderado",
+    "riskHigh": "risco alto",
+    "impactCommitsLabel": "commits",
+    "impactBranchesLabel": "branches",
+    "impactWorktreesLabel": "worktrees",
+    "impactCouplingLabel": "acoplamento",
+    "impactCouplingIsland": "ilha",
+    "impactCouplingNeighbors": "{n} vizinhos",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Como isto funciona",
+    "backupTitle": "Backup",
+    "backupBody": "Toda ref de branch e tag é copiada para um namespace de backup antes de qualquer mudança. Se algo der errado, um clique restaura o estado original.",
+    "rewriteTitle": "Reescrita",
+    "rewriteBody": "Cada commit é percorrido da raiz até a ponta. Para todo commit que contém os arquivos alvo, um novo commit é criado com esses arquivos removidos da árvore. As cadeias de pais são remapeadas para preservar a topologia. ",
+    "rewriteSummary": "{affected} de {total} commits serão reescritos.",
+    "updateRefsTitle": "Atualizar refs",
+    "updateRefsBody": "Os ponteiros de branch e tag são movidos para os novos SHAs de commit. Os objetos antigos ainda existem até o garbage collection. ",
+    "worktreesNeedRecheckout": "Seus {n} worktree(s) vão precisar de novo checkout.",
+    "noWorktreesAffected": "Nenhum worktree é afetado.",
+    "forcePushTitle": "Force-push",
+    "forcePushBody": "Depois de verificar o expurgo, você escolhe quais branches receberão force-push. Usa --force-with-lease, então falha com segurança se outra pessoa tiver feito push nesse meio-tempo.",
+    "plumbingNote": "Diferente do filter-repo ou do BFG, isto roda inteiramente por comandos plumbing do git (cat-file, mktree, commit-tree, update-ref). Sem dependências externas. O rastreamento de renomeações segue uma cadeia por arquivo — se um arquivo foi copiado e as duas cópias renomeadas de forma independente, verifique o resultado do expurgo após a execução.",
+    "back": "← Voltar",
+    "continueLabel": "Entendi, continuar →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commits serão reescritos",
+    "forcePushRequired": "Force-push será necessário para branches remotos",
+    "worktreesRecheckout": "{n} worktrees vão precisar de novo checkout",
+    "stashesInvalid": "{n} stashes podem se tornar inválidos",
+    "heading": "Esta operação reescreve o histórico do git",
+    "subheading": "Não pode ser desfeita automaticamente após o force-push.",
+    "typeHint": "digite {word}",
+    "goBack": "Voltar",
+    "begin": "Iniciar Cirurgia"
+  },
+  "execute": {
+    "preparing": "Preparando...",
+    "backingUpRefs": "Fazendo backup das refs...",
+    "rewritingCommits": "Reescrevendo commits...",
+    "updatingRefs": "Atualizando refs..."
+  },
+  "verify": {
+    "complete": "Cirurgia Concluída",
+    "failed": "Cirurgia Falhou",
+    "commitsRewrittenLabel": "Commits reescritos",
+    "refsUpdatedLabel": "Refs atualizadas",
+    "oldHeadLabel": "HEAD antigo",
+    "newHeadLabel": "HEAD novo",
+    "purgeVerifiedLabel": "Expurgo verificado",
+    "purgeClean": "limpo",
+    "purgeTracesRemain": "RESTAM VESTÍGIOS",
+    "displacedWorktrees": "Worktrees Deslocados",
+    "undoSurgery": "Desfazer Cirurgia",
+    "rolledBack": "Revertido para as refs de backup.",
+    "done": "Pronto"
+  },
+  "forcePush": {
+    "pushing": "fazendo push...",
+    "forcePushAll": "Force Push em Todos",
+    "confirmPush": "confirmar push",
+    "cancel": "cancelar"
+  }
+}

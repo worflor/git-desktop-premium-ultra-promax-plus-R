@@ -1,0 +1,591 @@
+{
+  "@@locale": "en",
+  "language": {
+    "title": "Language",
+    "summary": "UI language for this app. Git output, logs, and diagnostics stay English so bug reports remain searchable.",
+    "label": "DISPLAY LANGUAGE",
+    "systemDefault": "System default",
+    "systemDefaultDetail": "Follows your OS language ({resolved})",
+    "disclosureSource": "Source language, written by the developers.",
+    "disclosureAi": "Machine translated by {model}, not yet human reviewed. Corrections welcome.",
+    "disclosureAiReviewed": "Machine translated by {model}. {percent}% human reviewed.",
+    "disclosureHuman": "Human translation, maintained by the community.",
+    "reviewedBy": "Reviewed by {names}."
+  },
+  "sectionLabels": {
+    "preferences": "Preferences",
+    "shortcuts": "Shortcuts",
+    "behaviour": "Behaviour",
+    "aiProviders": "AI Providers",
+    "modelSlots": "Model Slots",
+    "tools": "Tools",
+    "diagnostics": "Diagnostics",
+    "offenders": "Offenders",
+    "release": "Release"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Failed to save guardrail profile.",
+    "saveRetentionPolicy": "Failed to save retention policy.",
+    "saveUpdateChannel": "Failed to save update channel.",
+    "saveModelSelection": "Failed to save AI model selection.",
+    "saveModelAlias": "Failed to save model alias.",
+    "saveCommitMessageModelSlot": "Failed to save commit message model slot.",
+    "saveReviewModelSlot": "Failed to save review model slot.",
+    "saveCommitMessageCustomPrompt": "Failed to save commit message custom prompt.",
+    "saveReviewGuide": "Failed to save review guide.",
+    "saveMuseNotes": "Failed to save muse notes.",
+    "saveReviewDoubleCheck": "Failed to save review double-check mode.",
+    "saveApiPiggybackCli": "Failed to save API piggyback CLI.",
+    "clearLocalData": "Could not clear local data: {error}"
+  },
+  "promptStatus": {
+    "editing": "Editing",
+    "saving": "Saving",
+    "saveFailed": "Save failed"
+  },
+  "clearData": {
+    "dialogTitle": "Clear local data",
+    "clear": "Clear",
+    "confirmDiagnostics": "Clear local diagnostics samples and performance timings?",
+    "confirmAudit": "Clear local AI audit metadata records?",
+    "confirmAll": "Clear all local diagnostics samples and AI audit metadata records?",
+    "confirmWipeAll": "Wipe all local app data — including the recent repos list — and quit? Your actual git repos on disk are not touched.",
+    "confirmReset": "Reset local app data and quit?\n\nSettings, theme, onboarding, AI preferences, telemetry, and engram caches are cleared. Your recent repos list survives."
+  },
+  "guardrailStageLabels": ["Loose", "Balanced", "Strict", "Paranoid"],
+  "guardrailMacro": {
+    "loose": "loose",
+    "balanced": "balanced",
+    "strict": "strict",
+    "paranoid": "paranoid"
+  },
+  "guardrails": {
+    "title": "Guardrails",
+    "summary": "How attentive automation is across the whole experience."
+  },
+  "appearance": {
+    "title": "Appearance",
+    "summary": "Global interface mood and atmosphere."
+  },
+  "retention": {
+    "title": "Local Data Retention",
+    "summaryDiagnostics": "Diagnostic retention policy.",
+    "summaryWithAudit": "Diagnostic and AI audit retention policy.",
+    "unitDays": "days",
+    "unitMb": "MB",
+    "includesNote": "Includes diagnostics, performance timings, and metadata."
+  },
+  "navigation": {
+    "title": "Navigation and Dynamics",
+    "summaryShortcuts": "Shortcuts and interface behavior.",
+    "summaryWithAi": "Shortcuts, interface behavior, and AI routing."
+  },
+  "behaviour": {
+    "title": "Behavioural Dynamics"
+  },
+  "retentionClear": {
+    "diag": "Diag",
+    "audit": "Audit",
+    "all": "All",
+    "clearsHint": "<-- clears"
+  },
+  "channels": {
+    "stable": "STABLE",
+    "beta": "BETA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "up to date",
+    "updateAvailable": "{version} available",
+    "notConfigured": "no update server",
+    "notFound": "no {channel} releases",
+    "unreachable": "unreachable",
+    "badManifest": "bad manifest"
+  },
+  "keybindingProfile": {
+    "label": "Keybinding profile",
+    "porcelain": "Porcelain",
+    "numeric": "Numeric",
+    "porcelainDescription": "Chorded shortcuts (G then C, H, B…).",
+    "numericDescription": "Single-key numeric shortcuts (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "api key",
+    "endpointHint": "endpoint",
+    "test": "Test",
+    "hide": "Hide",
+    "show": "Show"
+  },
+  "shortcuts": {
+    "navigate": "navigate",
+    "staging": "staging",
+    "branchesPrs": "branches & PRs",
+    "modifiers": "modifiers",
+    "changes": "Changes",
+    "history": "History",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "switchAlways": "Switch (always)",
+    "search": "Search",
+    "dismiss": "Dismiss",
+    "refresh": "Refresh",
+    "shortcuts": "Shortcuts",
+    "nextChange": "Next change",
+    "prevChange": "Prev change",
+    "toggleLine": "Toggle line",
+    "toggleHunk": "Toggle hunk",
+    "toggleFile": "Toggle file",
+    "pinContext": "Pin context",
+    "commit": "Commit",
+    "acceptHint": "Accept hint",
+    "undo": "Undo",
+    "navigateRow": "Navigate",
+    "expand": "Expand",
+    "checkout": "Checkout",
+    "approve": "Approve",
+    "requestChanges": "Request changes",
+    "selectRange": "Select range",
+    "extendedMenu": "Extended menu"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI read-only mode",
+    "aiReadOnlyDescription": "Prevents AI from writing or staging changes automatically.",
+    "logoMotionLabel": "Logo animates when tabbed out",
+    "logoMotionDescriptionEnabled": "It's designed to be efficient, don't hurt its feelings",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Remember work in progress",
+    "rememberWipDescription": "Keep your commit drafts and file selection between sessions.",
+    "stashCabinetLabel": "Stash cabinet starts expanded",
+    "stashCabinetDescription": "Show the filing-cabinet drawer open by default when a repo has shelves.",
+    "instantBlameLabel": "Instant blame hover",
+    "instantBlameDescription": "Skip the 180ms delay before blame info reveals on a diff line.",
+    "autoSelectLabel": "Auto select new changes",
+    "autoSelectDescription": "Newly tracked or changed files are added to the commit selection automatically.",
+    "fetchIssuesLabel": "Fetch online issues on branch load",
+    "fetchIssuesDescription": "Pull PR and issue details from your git provider in the background when the branches page opens.",
+    "hateAiLabel": "I hate AI",
+    "hateAiDescription": "Banish all LLM-backed features. Logos keeps running because it's just spectral math."
+  },
+  "diffDiffability": {
+    "title": "diff diff-ability"
+  },
+  "modelSlots": {
+    "loadingProviders": "Loading providers...",
+    "refreshingProviders": "Refreshing provider diagnostics...",
+    "routeDescription": "Rename and route configurations to any detected provider model.",
+    "loadingCategories": "Loading model categories...",
+    "noOptions": "No model options are available yet. Detect a compatible local AI CLI first.",
+    "slotsAppearWhenAvailable": "Model-slot settings will appear here once provider models are available.",
+    "effortDefault": "default",
+    "noModelsForSlot": "No models detected for this slot.",
+    "viaProvider": "via {provider}",
+    "customModelId": "custom model id"
+  },
+  "modelPicker": {
+    "noMatch": "no models match \"{query}\"",
+    "noModels": "no models available",
+    "filterHint": "filter models...",
+    "warming": "warming…",
+    "detailsUnavailable": "details unavailable",
+    "free": "free"
+  },
+  "aiFeatures": {
+    "commitDescription": "Draft commit messages from staged changes using your structure, voice, and coverage preferences.",
+    "reviewDescription": "Review the current commit scope before you commit.",
+    "museDescription": "Three-phase oracle that brainstorms then synthesizes a forward direction for the diff."
+  },
+  "commitEditor": {
+    "styleGuide": "Style Guide",
+    "styleGuideHint": "Optional. Voice / tone / bans. The format above handles skeleton."
+  },
+  "review": {
+    "additionalNotes": "Additional notes to review with",
+    "doubleCheckLabel": "Double-check review",
+    "doubleCheckDescription": "Run a second verification pass before showing the final report."
+  },
+  "museHint": {
+    "loose": "anything to gently steer toward? mood is kind today.",
+    "balanced": "what to dwell on, what to skip. honest, not harsh.",
+    "strict": "the standards. the bans. what the muse won't let slide.",
+    "paranoid": "tune the lens. what frequencies should the manifold hum at?"
+  },
+  "museEditor": {
+    "additionalNotes": "Additional notes for the muse"
+  },
+  "museStage": {
+    "brainstorm": "BRAINSTORM",
+    "synthesize": "SYNTHESIZE",
+    "slot": "slot",
+    "ideaCountLoose": "~12 ideas",
+    "ideaCountBalanced": "~16 ideas",
+    "ideaCountStrict": "~20 ideas",
+    "ideaCountParanoid": "~24 ideas",
+    "guardrailHint": "{ideas}  ·  guardrail: {macro}"
+  },
+  "lensAxis": {
+    "folder": "FOLDER",
+    "history": "HISTORY",
+    "far": "FAR",
+    "near": "NEAR"
+  },
+  "logosLens": {
+    "moduleMap": "module map",
+    "repoCenters": "repo centers",
+    "neighbors": "neighbors",
+    "toTouch": "what to touch next",
+    "relevanceEngine": "relevance engine",
+    "description": "reads how files move together across structure, history, and rhythm, so Manifold knows what matters, not just what changed.",
+    "withinReach": "within reach",
+    "gate": "gate",
+    "nearest": "nearest",
+    "warming": "warming",
+    "emptyOpenRepo": "open a repo to\nsee the lens live",
+    "emptyNoFiles": "no files within\nreach — drag\ntoward HISTORY"
+  },
+  "sortGuide": {
+    "title": "Change sort guide",
+    "related": "Files that change together cluster together. The concern comes first; context follows.",
+    "relatedInverted": "Isolated changes come first. Tightly-coupled clusters sink to the bottom.",
+    "alphabetical": "Plain A → Z by path. Case-insensitive, numbers ordered naturally.",
+    "alphabeticalInverted": "Plain Z → A by path. Case-insensitive, numbers ordered naturally.",
+    "impact": "Heaviest changes surface first. Churn is weighted; binaries and new files get boosted.",
+    "impactInverted": "Lightest changes surface first. Quick wins on top; the heavy lifts wait.",
+    "nearRelated": "near related",
+    "alphabeticalShort": "alphabetical",
+    "byImpact": "by impact",
+    "flipped": "flipped",
+    "peek": "peek"
+  },
+  "piggyback": {
+    "apiModelsUse": "API models use",
+    "codexNotDetected": "codex not detected",
+    "dormant": "DORMANT"
+  },
+  "diffStage": {
+    "viewer": "viewer",
+    "media": "media",
+    "binary": "binary",
+    "hidden": "hidden"
+  },
+  "undoScope": {
+    "destructiveActions": "destructive actions",
+    "discards": "discards",
+    "commits": "commits",
+    "commitPush": "commit + push",
+    "all": "all"
+  },
+  "undoWindow": {
+    "label": "Undo window",
+    "off": "Off",
+    "descriptionInstant": "{scope} finalize instantly.",
+    "descriptionDelayed": "{seconds}s before {scope} finalize.",
+    "cycleScopeTooltip": "Click to cycle scope · drag up/down on the slider too",
+    "resetTooltip": "Reset every action to use the default window"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "Probably fine means fine",
+    "proper": "A proper read, logic, integration, patterns",
+    "lookAgain": "Look again. Something might be hiding",
+    "assumeWrong": "Assume something is wrong. Find it"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "e.g. Focus on high-level logic and major bugs. Be brief and forgiving.",
+    "surfaceBugs": "e.g. Surface potential bugs, architectural inconsistencies, and edge case failures.",
+    "scrutinize": "e.g. Scrutinize every line for optimization, security, and pattern compliance.",
+    "trustNothing": "e.g. Trust nothing. Question every side effect. Treat every line as a potential failure.",
+    "optional": "Optional guidance for what the review should care about."
+  },
+  "commitFormat": {
+    "title": "Format",
+    "peek": "peek",
+    "structure": "Structure",
+    "voice": "Voice",
+    "coverage": "Coverage",
+    "structureTitleBody": "title + body",
+    "structureTitleOnly": "title only",
+    "structureFreeform": "freeform",
+    "voiceVerbLed": "action orientated",
+    "voiceDescriptive": "descriptive",
+    "voiceNarrative": "narrative",
+    "coverageEssentials": "essentials",
+    "coverageBalanced": "balanced",
+    "coverageEverything": "everything"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Let fox skip cookies that smell off",
+        "s2": "Train fox to refuse tampered cookies before swallowing",
+        "s3": "Compel fox to forensically vet every cookie at the gate",
+        "def": "Teach fox to refuse bad cookies"
+      },
+      "descriptive": {
+        "s0": "fox now picks the cookies",
+        "s2": "Cookie-inspection routine, drilled into fox",
+        "s3": "Cookie-vetting forensics, embedded in fox by repetition",
+        "def": "Cookie-sniff protocol, installed in fox"
+      },
+      "narrative": {
+        "s0": "the fox started skipping cookies that smelled wrong",
+        "s2": "Sat down with the fox and worked through which cookies to refuse",
+        "s3": "Spent the better part of an afternoon convincing the fox that not every cookie offered is, in good faith, a cookie",
+        "def": "Asked the fox to sniff cookies before eating them"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Fox glances. Anything off gets left.",
+        "s2": "Fox inspects each token, declines anything off-scent, and notes the refusal on the porch.",
+        "s3": "Fox circles each token, samples the air at three angles, refuses any that read wrong, and waits a beat to make sure the refusal sticks.",
+        "def": "Fox sniffs each token now and politely declines the suspicious ones."
+      },
+      "descriptive": {
+        "s0": "Soft pass on the weird ones, mostly.",
+        "s2": "A documented refusal on every off-scent token, issued from the porch and noted.",
+        "s3": "A notarized refusal per off-scent token, issued from the porch with one paw raised, the other still.",
+        "def": "A polite refusal on suspicious tokens, issued from the porch."
+      },
+      "narrative": {
+        "s0": "The fox just sort of stopped eating the weird ones. Easy.",
+        "s2": "Every token used to go down without much thought; now there’s a pause, a proper look, and a refusal for the ones that don’t sit right.",
+        "s3": "Every token used to go down without thinking. Now: a pause. The air, taken in. The air, held. The fox watches the porch boards for the small twitch they sometimes have when something is off, and only then is the call made.",
+        "def": "Every token used to be swallowed without ceremony; now there’s a whiff first."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Porch is fine. Backyard is whatever.",
+        "s2": " Porch swept after each refusal; backyard mud allowed within posted hours.",
+        "s3": " Porch swept and re-swept; backyard mud catalogued by paw-print and weather, and the fox lingers at the threshold longer than before.",
+        "def": " Porch stays clean; backyard keeps its mud rights."
+      },
+      "descriptive": {
+        "s0": " Porch okay. Backyard does backyard things.",
+        "s2": " Porch as evidence-clean zone; backyard as designated mud zone, hours posted.",
+        "s3": " Porch as evidence-grade clean room; backyard as cataloged mud archive; threshold as a place the fox stands and thinks too long.",
+        "def": " Clean porch; mud rights preserved in the backyard."
+      },
+      "narrative": {
+        "s0": " Porch was fine. Backyard, who knows.",
+        "s2": " The porch was kept clean afterward; the fox retreated to the backyard, which is where the thinking happens.",
+        "s3": " The porch was scrubbed twice that evening. The fox walked the backyard slow, paused at the same fence post as always, and looked back at the porch like the porch owed something.",
+        "def": " The porch stays clean, though the backyard still wins on dignity."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Amber’s there. Drift drifts. Thorn pricks if it has to. Mostly nothing.",
+        "s2": " Amber holds each scent for review. Drift carries the day’s air toward the gate thorn, which marks each refusal for the evening tally.",
+        "s3": " Amber holds each scent and gives a different weight depending on the hour. Drift moves through the porch at angles that should not matter but do. The gate thorn pricks once for refusals and twice for the ones the fox almost missed, and the fox knows the difference even when nobody else does.",
+        "def": " Amber holds the scent. Drift moves it on. The gate thorn catches what shouldn’t pass."
+      },
+      "descriptive": {
+        "s0": " Amber on the post. Drift in the air. Thorn at the gate. Fine.",
+        "s2": " Amber as designated scent-witness; drift as a logged ambient; thorn-marks as the day’s refusal record, reconciled at dusk.",
+        "s3": " Amber as a scent-witness whose silence is itself a reading; drift as a patterned ambient that moves wrong on the days something is wrong; thorn as the gate’s tally-keeper, whose marks the fox checks before bed and again before dawn.",
+        "def": " Amber as scent-witness; drift as ambient context; thorn as the gate’s quiet refusal-mark."
+      },
+      "narrative": {
+        "s0": " Amber was around. Drift came and went. Thorn did its quiet thing. Whatever, it was chill.",
+        "s2": " Amber kept the scent-record for the day, drift was noted by direction and hour, and the thorn’s marks were tallied and countersigned by the porch.",
+        "s3": " Amber kept the scent-record, but the fox swears it weighs heavier on certain mornings. Drift moved through the porch the way it always does, which is to say wrong on the days that matter. The gate thorn marked each refusal; the fox went out at first light to count them, the way you count stairs you have already counted.",
+        "def": " Amber held the scent-record, drift moved the air, and the gate thorn caught what needed catching."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "External Tools",
+    "summary": "Right-click a project in the sidebar to open it with one of these. Args use \\{path} for the project folder.",
+    "detecting": "Detecting installed tools…",
+    "allPresetsAdded": "All known presets are already added. Use “+ Custom” to add more.",
+    "noToolsConfigured": "No tools configured yet. Add one above.",
+    "categoryAi": "ai",
+    "categoryEditors": "editors",
+    "categoryExplore": "explore",
+    "categoryOps": "ops",
+    "categoryGitOps": "git ops",
+    "nameHint": "Name",
+    "commandHint": "command",
+    "test": "test",
+    "removeTool": "Remove tool",
+    "modeTerminal": "terminal",
+    "modeDetached": "detached"
+  },
+  "apiUsage": {
+    "thisMonth": "{used}{limit} this month"
+  },
+  "gitea": {
+    "title": "Gitea tokens",
+    "hostHint": "host",
+    "tokenHint": "token",
+    "save": "save"
+  },
+  "wick": {
+    "selectExecutable": "Select wick executable",
+    "connected": "wick · connected",
+    "pathToExecutable": "wick · path to executable"
+  },
+  "integrations": {
+    "title": "& Integrations",
+    "alpha": "alpha",
+    "planned": "planned",
+    "lspComingSoon": "lsp · coming soon",
+    "alphaMathConnected": "alpha-math · connected",
+    "alphaMathComingSoon": "alpha-math · coming soon"
+  },
+  "reduceMotion": {
+    "label": "Reduce motion",
+    "subtitleStill": "Still… like ice?",
+    "subtitleFlow": "Flow like water."
+  },
+  "resetQuit": {
+    "resetAndQuit": "RESET & QUIT",
+    "keepRepos": "KEEP REPOS",
+    "wipeAll": "WIPE ALL"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Command Diagnostics",
+    "networkFlowTelemetry": "Network Flow Telemetry",
+    "clearSamples": "Clear Samples",
+    "clearMetrics": "Clear Metrics",
+    "clearTimings": "Clear Timings",
+    "recalibrate": "RECALIBRATE",
+    "ok": "ok",
+    "noCommandTimings": "No command timings captured yet. Run normal actions to populate diagnostics.",
+    "noBackendSamples": "No backend command samples captured yet. Run git and settings actions to populate this log.",
+    "noDiffSessions": "No diff render sessions captured yet. Open and scroll file diffs to populate this panel.",
+    "noUiSessions": "No UI timing sessions captured yet. Open panels and navigate routes to populate this panel.",
+    "recentOperations": "Recent Operations",
+    "recentBackendOperations": "Recent Backend Operations",
+    "recentDiffSessions": "Recent Diff Sessions",
+    "recentUiTimings": "Recent UI Timings",
+    "uniqueCommands": {
+      "one": "{n} unique command",
+      "other": "{n} unique commands"
+    },
+    "scopedCommands": {
+      "one": "{n} scoped command",
+      "other": "{n} scoped commands"
+    },
+    "instrumentedEvents": {
+      "one": "{n} instrumented event",
+      "other": "{n} instrumented events"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | jank {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["command", "p50", "reliability", "range"],
+    "headersBackend": ["scope", "p50", "p95", "failures"],
+    "headersDiff": ["renderer", "first paint", "frame p95", "raster p95", "jank"],
+    "headersUi": ["event", "p50", "failures", "range"]
+  },
+  "telemetry": {
+    "samples": {
+      "one": "{n} sample",
+      "other": "{n} samples"
+    },
+    "commands": {
+      "one": "{n} command",
+      "other": "{n} commands"
+    },
+    "sessions": {
+      "one": "{n} session",
+      "other": "{n} sessions"
+    },
+    "events": {
+      "one": "{n} event",
+      "other": "{n} events"
+    },
+    "stability": "{pct}% stability",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "execution-flow",
+    "description": "simulate oscillators on code. surfacing fragile execution paths before they crystalize as bugs.",
+    "idle": "idle",
+    "emptyOpenRepo": "open a repo to\nsee flow analysis",
+    "scanning": "scanning",
+    "analysing": "analysing files\nin the lens…",
+    "fragility": "fragility",
+    "findings": "findings",
+    "gap": "gap",
+    "clean": "clean",
+    "severity": "severity",
+    "critical": "critical",
+    "warn": "warn",
+    "info": "info"
+  },
+  "museStrands": {
+    "spark": "spark of inspiration · the immediately next step",
+    "current": "current in the water · present-tense extensions",
+    "horizon": "look over the horizon · reaching directions",
+    "fever": "wake from a fever dream · provocations",
+    "echo": "an echo across the canyon · analogues elsewhere",
+    "vertigo": "vertigo at the cliff edge · adjacent risks",
+    "ghost": "the ghost of what was · historical context",
+    "mirror": "a mirror on still water · inversions"
+  },
+  "cliPiggyback": {
+    "title": "CLI Piggybacking",
+    "clearCacheLabel": "Clear cache",
+    "clearCacheTooltip": "Wipe cached models and re-probe. Clears out ones a provider dropped.",
+    "refreshLabel": "Refresh providers",
+    "refreshTooltip": "Re-probe every provider now.",
+    "body": "Directly pipe interface messages to local provider binaries."
+  },
+  "header": {
+    "title": "Workspace Preferences",
+    "subtitle": "Configure global aesthetics, interface dynamics, and core operational safeguards for the entire workspace.",
+    "releaseNotesTooltip": "Release notes",
+    "replayOnboardingTooltip": "Replay onboarding"
+  },
+  "diagnosticsPanel": {
+    "title": "Performance Diagnostics",
+    "copyTrace": "Copy Trace",
+    "offenderRanking": "Offender Ranking",
+    "offenderRankingSubtitle": "Latency drivers across streams.",
+    "noOffenders": "No offender ranking yet. Capture diagnostic activity to populate this list."
+  },
+  "release": {
+    "title": "Release Deployment",
+    "summary": "Update related settings.",
+    "deploymentChannel": "DEPLOYMENT CHANNEL",
+    "captureCrashDiagnostics": "Capture crash diagnostics",
+    "comingSoon": "Coming soon.",
+    "checking": "CHECKING…",
+    "pollForUpdates": "POLL FOR UPDATES"
+  },
+  "providerStatus": {
+    "detecting": "Detecting...",
+    "ready": "Ready",
+    "notDetected": "Not detected",
+    "configured": "{count} configured",
+    "notConfigured": "Not configured",
+    "cliManaged": "CLI-managed",
+    "connected": "Connected",
+    "modelCount": {
+      "one": "{n} model",
+      "other": "{n} models"
+    },
+    "providerCount": {
+      "one": "{n} provider",
+      "other": "{n} providers"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Command",
+    "diffStream": "Diff Render",
+    "uiStream": "UI Timing",
+    "rendererName": "{mode} renderer",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% fail",
+    "jankFrameMetric": "{jank}% jank | {frame}ms frame p95",
+    "inStream": "in {stream}"
+  }
+}

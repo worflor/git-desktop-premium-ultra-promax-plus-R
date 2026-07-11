@@ -979,11 +979,49 @@ class RepositoryXraySnapshotData {
   });
 }
 
+/// Structured provider-plan status carried out of the pure-Dart backend so the
+/// settings UI can render a localized status label instead of a backend-assembled
+/// English string. This is display-only structure: the diagnostic [planName] and
+/// [AiProviderStatus.healthCheck] strings are produced and preserved unchanged
+/// alongside it (see `ai.dart`), so bug reports stay greppable and byte-identical.
+///
+/// Left null when the plan is opaque account data (e.g. a humanized subscription
+/// tier like "Max 20x") that is not translatable copy and renders verbatim via
+/// [AiProviderStatus.planName].
+sealed class AiPlanStatus {
+  const AiPlanStatus();
+}
+
+/// Auth is owned and persisted by the provider's own CLI (Cursor, Copilot,
+/// Antigravity). Rendered as the localized equivalent of "CLI-managed".
+class AiPlanCliManaged extends AiPlanStatus {
+  const AiPlanCliManaged();
+}
+
+/// Connected via a CLI-managed auth file with no finer detail. Rendered as the
+/// localized equivalent of "Connected".
+class AiPlanConnected extends AiPlanStatus {
+  const AiPlanConnected();
+}
+
+/// [count] models are available (codex). Rendered with a localized plural.
+class AiPlanModelCount extends AiPlanStatus {
+  final int count;
+  const AiPlanModelCount(this.count);
+}
+
+/// [count] upstream providers are connected (opencode). Localized plural.
+class AiPlanProviderCount extends AiPlanStatus {
+  final int count;
+  const AiPlanProviderCount(this.count);
+}
+
 class AiProviderStatus {
   final String id;
   final bool available;
   final String binary;
   final String? planName;
+  final AiPlanStatus? planStatus;
   final String? resolvedBinary;
   final String? detectionSource;
   final String? healthCheck;
@@ -992,6 +1030,7 @@ class AiProviderStatus {
     required this.available,
     required this.binary,
     this.planName,
+    this.planStatus,
     this.resolvedBinary,
     this.detectionSource,
     this.healthCheck,

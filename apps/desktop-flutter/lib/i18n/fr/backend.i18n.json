@@ -1,0 +1,26 @@
+{
+  "@@locale": "fr",
+  "ops": {
+    "merge": "Fusion",
+    "pull": "Tirage",
+    "apply": "Application",
+    "switchOp": "Bascule",
+    "sync": "Synchronisation"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} : annulé.",
+    "complete": "{op} : terminé.",
+    "conflictsLeft": {
+      "one": "{n} conflit restant — résolvez-le sur la page Modifications.",
+      "other": "{n} conflits restants — résolvez-les sur la page Modifications."
+    },
+    "resolvedConflicts": {
+      "one": "{n} conflit résolu.",
+      "other": "{n} conflits résolus."
+    },
+    "uncommittedEdits": {
+      "one": "{n} fichier a des modifications non validées — validez-le d'abord.",
+      "other": "{n} fichiers ont des modifications non validées — validez-les d'abord."
+    }
+  }
+}

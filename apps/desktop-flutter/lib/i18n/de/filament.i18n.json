@@ -1,0 +1,23 @@
+{
+  "@@locale": "de",
+  "noRepositoryOpen": "Kein Repository geöffnet.",
+  "scanningProgress": "scanne {scanned} / {total} Dateien…",
+  "findingsAcrossFiles": "{count} Funde in {files} Dateien",
+  "copiedFindings": "{count} Funde kopiert",
+  "copy": "KOPIEREN",
+  "noFindings": "Keine Funde im Ausführungsfluss.",
+  "severity": {
+    "critical": "kritisch",
+    "warn": "warnung",
+    "info": "info",
+    "joint": "gelenk"
+  },
+  "kind": {
+    "staleValue": "veralteter wert",
+    "temporalShift": "zeitliche verschiebung",
+    "contextInversion": "kontext-inversion",
+    "contradictoryFlow": "widersprüchlicher fluss"
+  },
+  "lineLabel": "Z{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

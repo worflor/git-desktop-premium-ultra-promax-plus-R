@@ -60,6 +60,7 @@ import 'package:git_desktop/backend/undo_controller.dart';
 import 'package:git_desktop/diagnostics/diagnostics_state.dart';
 import 'package:git_desktop/features/onboarding/onboarding_state.dart';
 import 'package:git_desktop/features/palette/palette_state.dart';
+import 'package:git_desktop/i18n/gen/strings.g.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
 /// Loads the app's real body font (`DMSans-Variable.ttf`) so widget tests
@@ -75,8 +76,10 @@ Future<void> loadTestFonts() async {
   final file = File('assets/fonts/DMSans-Variable.ttf');
   if (!file.existsSync()) {
     // ignore: avoid_print
-    print('widget_harness: assets/fonts/DMSans-Variable.ttf not found '
-        '(cwd=${Directory.current.path}) — skipping font load');
+    print(
+      'widget_harness: assets/fonts/DMSans-Variable.ttf not found '
+      '(cwd=${Directory.current.path}) — skipping font load',
+    );
     return;
   }
   final bytes = file.readAsBytesSync();
@@ -98,9 +101,9 @@ Future<void> loadTestFonts() async {
 void installSharedPreferencesMock() {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(
-    const MethodChannel('plugins.flutter.io/shared_preferences'),
-    (call) async => call.method == 'getAll' ? <String, Object>{} : null,
-  );
+        const MethodChannel('plugins.flutter.io/shared_preferences'),
+        (call) async => call.method == 'getAll' ? <String, Object>{} : null,
+      );
 }
 
 /// Installs the hermetic storage/refresh seams AND registers their reset with
@@ -131,7 +134,9 @@ Future<Directory> installHermeticStorageSeams() async {
     StoragePaths.debugOverrideDir = null;
     try {
       await dir.delete(recursive: true);
-    } catch (_) {/* best-effort; a lingering handle must not fail teardown */}
+    } catch (_) {
+      /* best-effort; a lingering handle must not fail teardown */
+    }
   });
   return dir;
 }
@@ -157,61 +162,85 @@ Widget harnessApp({
   Widget Function(BuildContext context, Widget app)? wrapAboveNavigator,
 }) {
   final tokens = AppTokens.fromId(theme);
-  return MultiProvider(
-    providers: [
-      ChangeNotifierProvider<ThemeState>(create: (_) => ThemeState()),
-      ChangeNotifierProvider<RepositoryState>(create: (_) => RepositoryState()),
-      ChangeNotifierProvider<RepositoryXrayState>(
-          create: (_) => RepositoryXrayState()),
-      ChangeNotifierProvider<FileCouplingState>(
-          create: (_) => FileCouplingState()),
-      ChangeNotifierProvider<RepoEmbeddingState>(
-          create: (_) => RepoEmbeddingState()),
-      ChangeNotifierProvider<LogosGitState>(create: (_) => LogosGitState()),
-      ChangeNotifierProvider<PreferencesState>(
-          create: (_) => PreferencesState()),
-      ChangeNotifierProvider<AiSettingsState>(
-          create: (_) => AiSettingsState()),
-      ChangeNotifierProvider<AiActivityState>(
-          create: (_) => AiActivityState()),
-      ChangeNotifierProvider<ExternalToolsState>(
-          create: (_) => ExternalToolsState()),
-      ChangeNotifierProvider<SidebarOrgState>(
-          create: (_) => SidebarOrgState()),
-      ChangeNotifierProvider<CommitModeState>(
-          create: (_) => CommitModeState()),
-      ChangeNotifierProvider<ToolDetectionState>(
-          create: (_) => ToolDetectionState()),
-      ChangeNotifierProvider<WickState>(create: (_) => WickState()),
-      ChangeNotifierProvider<AlphaMathState>(
-          create: (_) => AlphaMathState()),
-      ChangeNotifierProvider<SettingsNavigationState>(
-          create: (_) => SettingsNavigationState()),
-      // Singleton — a fresh instance per test would defeat the point of
-      // `.instance`, and other production code reads the same singleton.
-      ChangeNotifierProvider<DiagnosticsState>.value(
-          value: DiagnosticsState.instance),
-      ChangeNotifierProvider<AppIdentityState>(
-          create: (_) => AppIdentityState()),
-      ChangeNotifierProvider<OnboardingState>(
-          create: (_) => OnboardingState()),
-      ChangeNotifierProvider<HyperReactivity>(
-          create: (_) => HyperReactivity()),
-      ChangeNotifierProvider<PaletteState>(create: (_) => PaletteState()),
-      ChangeNotifierProvider<UndoCoordinator>(
-          create: (_) => UndoCoordinator()),
-    ],
-    child: Builder(builder: (context) {
-      final app = MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          fontFamily: 'DMSans',
-          extensions: <ThemeExtension<dynamic>>[AppThemeExtension(tokens)],
+  // TranslationProvider mirrors main.dart's outermost wrapper: any widget
+  // using `context.t` throws without it. Base locale (en) is compiled in,
+  // so this adds no I/O or locale state to the harness.
+  return TranslationProvider(
+    child: MultiProvider(
+      providers: [
+        ChangeNotifierProvider<ThemeState>(create: (_) => ThemeState()),
+        ChangeNotifierProvider<RepositoryState>(
+          create: (_) => RepositoryState(),
         ),
-        home: home,
-      );
-      return wrapAboveNavigator?.call(context, app) ?? app;
-    }),
+        ChangeNotifierProvider<RepositoryXrayState>(
+          create: (_) => RepositoryXrayState(),
+        ),
+        ChangeNotifierProvider<FileCouplingState>(
+          create: (_) => FileCouplingState(),
+        ),
+        ChangeNotifierProvider<RepoEmbeddingState>(
+          create: (_) => RepoEmbeddingState(),
+        ),
+        ChangeNotifierProvider<LogosGitState>(create: (_) => LogosGitState()),
+        ChangeNotifierProvider<PreferencesState>(
+          create: (_) => PreferencesState(),
+        ),
+        ChangeNotifierProvider<AiSettingsState>(
+          create: (_) => AiSettingsState(),
+        ),
+        ChangeNotifierProvider<AiActivityState>(
+          create: (_) => AiActivityState(),
+        ),
+        ChangeNotifierProvider<ExternalToolsState>(
+          create: (_) => ExternalToolsState(),
+        ),
+        ChangeNotifierProvider<SidebarOrgState>(
+          create: (_) => SidebarOrgState(),
+        ),
+        ChangeNotifierProvider<CommitModeState>(
+          create: (_) => CommitModeState(),
+        ),
+        ChangeNotifierProvider<ToolDetectionState>(
+          create: (_) => ToolDetectionState(),
+        ),
+        ChangeNotifierProvider<WickState>(create: (_) => WickState()),
+        ChangeNotifierProvider<AlphaMathState>(create: (_) => AlphaMathState()),
+        ChangeNotifierProvider<SettingsNavigationState>(
+          create: (_) => SettingsNavigationState(),
+        ),
+        // Singleton — a fresh instance per test would defeat the point of
+        // `.instance`, and other production code reads the same singleton.
+        ChangeNotifierProvider<DiagnosticsState>.value(
+          value: DiagnosticsState.instance,
+        ),
+        ChangeNotifierProvider<AppIdentityState>(
+          create: (_) => AppIdentityState(),
+        ),
+        ChangeNotifierProvider<OnboardingState>(
+          create: (_) => OnboardingState(),
+        ),
+        ChangeNotifierProvider<HyperReactivity>(
+          create: (_) => HyperReactivity(),
+        ),
+        ChangeNotifierProvider<PaletteState>(create: (_) => PaletteState()),
+        ChangeNotifierProvider<UndoCoordinator>(
+          create: (_) => UndoCoordinator(),
+        ),
+      ],
+      child: Builder(
+        builder: (context) {
+          final app = MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              fontFamily: 'DMSans',
+              extensions: <ThemeExtension<dynamic>>[AppThemeExtension(tokens)],
+            ),
+            home: home,
+          );
+          return wrapAboveNavigator?.call(context, app) ?? app;
+        },
+      ),
+    ),
   );
 }
 
@@ -230,10 +259,12 @@ Future<void> pumpHarness(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(harnessApp(
-    home: home,
-    theme: theme,
-    wrapAboveNavigator: wrapAboveNavigator,
-  ));
+  await tester.pumpWidget(
+    harnessApp(
+      home: home,
+      theme: theme,
+      wrapAboveNavigator: wrapAboveNavigator,
+    ),
+  );
   await tester.pump();
 }

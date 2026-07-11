@@ -1,0 +1,83 @@
+{
+  "@@locale": "ru",
+  "chrome": {
+    "title": "Хирургия истории",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "СУХОЙ ПРОГОН"
+  },
+  "select": {
+    "prompt": "Выберите файлы для удаления из истории",
+    "selectedCount": "{n} выбрано",
+    "searchHint": "поиск...",
+    "readingTree": "читаю дерево...",
+    "continueDisabled": "выберите файлы, чтобы продолжить",
+    "continueEnabled": "продолжить →",
+    "toPurgeCount": "{n} к вычистке",
+    "analyzing": "анализирую...",
+    "riskLow": "низкий риск",
+    "riskModerate": "умеренный риск",
+    "riskHigh": "высокий риск",
+    "impactCommitsLabel": "коммиты",
+    "impactBranchesLabel": "ветки",
+    "impactWorktreesLabel": "рабочие каталоги",
+    "impactCouplingLabel": "связность",
+    "impactCouplingIsland": "остров",
+    "impactCouplingNeighbors": "{n} соседей",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Как это работает",
+    "backupTitle": "Резервная копия",
+    "backupBody": "Каждая ссылка ветки и метки копируется в резервное пространство имён до любых изменений. Если что-то пойдёт не так, один клик восстановит исходное состояние.",
+    "rewriteTitle": "Перезапись",
+    "rewriteBody": "Каждый коммит обходится от корня к вершине. Для каждого коммита, содержащего целевые файлы, создаётся новый коммит с удалёнными из дерева файлами. Цепочки родителей переотображаются для сохранения топологии. ",
+    "rewriteSummary": "Будет перезаписано {affected} из {total} коммитов.",
+    "updateRefsTitle": "Обновление ссылок",
+    "updateRefsBody": "Указатели веток и меток переводятся на новые SHA коммитов. Старые объекты существуют до сборки мусора. ",
+    "worktreesNeedRecheckout": "Вашим рабочим каталогам ({n} шт.) потребуется повторный checkout.",
+    "noWorktreesAffected": "Рабочие каталоги не затронуты.",
+    "forcePushTitle": "Принудительная отправка",
+    "forcePushBody": "После проверки вычистки вы выбираете, какие ветки принудительно отправить. Используется --force-with-lease, поэтому операция безопасно прервётся, если кто-то отправил в это время.",
+    "plumbingNote": "В отличие от filter-repo или BFG, это работает целиком через plumbing-команды git (cat-file, mktree, commit-tree, update-ref). Без внешних зависимостей. Отслеживание переименований идёт по одной цепочке на файл — если файл был скопирован, а обе копии переименованы независимо, проверьте результат вычистки после выполнения.",
+    "back": "← Назад",
+    "continueLabel": "Понимаю, продолжить →"
+  },
+  "confirm": {
+    "commitsRewritten": "Будет перезаписано {n} коммитов",
+    "forcePushRequired": "Для удалённых веток потребуется принудительная отправка",
+    "worktreesRecheckout": "{n} рабочим каталогам потребуется повторный checkout",
+    "stashesInvalid": "{n} стэшей могут стать недействительными",
+    "heading": "Эта операция переписывает историю git",
+    "subheading": "Её нельзя автоматически отменить после принудительной отправки.",
+    "typeHint": "введите {word}",
+    "goBack": "Назад",
+    "begin": "Начать операцию"
+  },
+  "execute": {
+    "preparing": "Подготовка...",
+    "backingUpRefs": "Резервирую ссылки...",
+    "rewritingCommits": "Переписываю коммиты...",
+    "updatingRefs": "Обновляю ссылки..."
+  },
+  "verify": {
+    "complete": "Операция завершена",
+    "failed": "Операция не удалась",
+    "commitsRewrittenLabel": "Коммитов переписано",
+    "refsUpdatedLabel": "Ссылок обновлено",
+    "oldHeadLabel": "Старый HEAD",
+    "newHeadLabel": "Новый HEAD",
+    "purgeVerifiedLabel": "Вычистка проверена",
+    "purgeClean": "чисто",
+    "purgeTracesRemain": "ОСТАЛИСЬ СЛЕДЫ",
+    "displacedWorktrees": "Смещённые рабочие каталоги",
+    "undoSurgery": "Отменить операцию",
+    "rolledBack": "Откачено к резервным ссылкам.",
+    "done": "Готово"
+  },
+  "forcePush": {
+    "pushing": "отправка...",
+    "forcePushAll": "Принудительно отправить всё",
+    "confirmPush": "подтвердить отправку",
+    "cancel": "отмена"
+  }
+}

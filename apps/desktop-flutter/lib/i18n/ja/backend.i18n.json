@@ -1,0 +1,23 @@
+{
+  "@@locale": "ja",
+  "ops": {
+    "merge": "マージ",
+    "pull": "プル",
+    "apply": "適用",
+    "switchOp": "切り替え",
+    "sync": "同期"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op}をキャンセルしました。",
+    "complete": "{op}が完了しました。",
+    "conflictsLeft": {
+      "other": "コンフリクトが {n} 件残っています。変更ページで解決してください。"
+    },
+    "resolvedConflicts": {
+      "other": "コンフリクトを {n} 件解決しました。"
+    },
+    "uncommittedEdits": {
+      "other": "{n} ファイルに未コミットの編集があります。先にコミットしてください。"
+    }
+  }
+}

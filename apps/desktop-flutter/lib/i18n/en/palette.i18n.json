@@ -1,0 +1,201 @@
+{
+  "active": "active",
+  "prefixes": {
+    "askHint": "ask: [question]",
+    "nearHint": "near: [file]",
+    "whoHint": "who: [file]",
+    "logHint": "log: [message]",
+    "runHint": "run: [tool]",
+    "askLabel": "Ask {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} reviewers · {touches} touches",
+    "whoTouchesLabel": "{name} — {touches} touches",
+    "whoTouchesSubtitle": "{path} · no reviewers recorded"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NEAR",
+    "who": "WHO",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HOT",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "GONE",
+    "remote": "REMOTE",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% momentum"
+  },
+  "topTouched": {
+    "subtitle": "{count} touches · {path}"
+  },
+  "coherence": {
+    "label": "Staged coherence: {percent}%",
+    "subtitle": "{count} files"
+  },
+  "keystone": {
+    "subtitle": "{path} · keystone {score}"
+  },
+  "repoSub": {
+    "changes": "Changes in {name}",
+    "history": "History in {name}",
+    "branches": "Branches in {name}",
+    "terminal": "Terminal in {name}",
+    "generateCommit": "Generate Commit · {name}",
+    "reviewChanges": "Review Changes in {name}",
+    "muse": "Muse in {name}"
+  },
+  "desks": {
+    "mainWorktree": "main worktree",
+    "detached": "detached",
+    "dirty": "{count} dirty"
+  },
+  "actions": {
+    "openInBrowser": "Open in Browser",
+    "terminal": "Terminal",
+    "revealInFiles": "Reveal in Files",
+    "copyPath": "Copy Path",
+    "copyBranch": "Copy Branch"
+  },
+  "tools": {
+    "launch": "Launch {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} behind",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
+    "pushCommitsUpstream": "{commits} to {upstream}",
+    "forcePush": "Force Push",
+    "forcePushNoUpstream": "Cannot force-push: no upstream set for {branch}.",
+    "commit": "Commit",
+    "stageAll": "Stage All",
+    "unstageAll": "Unstage All",
+    "discardAll": "Discard All",
+    "createBranch": "Create Branch",
+    "deleteBranch": "Delete Branch",
+    "renameBranch": "Rename Branch",
+    "stash": "Stash",
+    "stashPop": "Stash Pop",
+    "stashApply": "Stash Apply",
+    "stashDrop": "Stash Drop",
+    "createTag": "Create Tag",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash applied with conflicts. Resolve them on the Changes page."
+  },
+  "pr": {
+    "create": "Create PR",
+    "merge": "Merge PR",
+    "markReady": "Mark PR Ready"
+  },
+  "ai": {
+    "generateCommit": "Generate Commit",
+    "reviewChanges": "Review Changes",
+    "runMuse": "Run Muse",
+    "debugRepo": "Debug {name}",
+    "describeSymptom": "describe a symptom",
+    "viewResult": "View {kind}",
+    "unseenResult": "unseen result",
+    "runningResult": "AI: {kind}…",
+    "running": "running",
+    "kindCommitMessage": "Commit Message",
+    "kindCodeReview": "Code Review",
+    "kindMuseResult": "Muse Result",
+    "kindPresentation": "Presentation",
+    "kindDebugResult": "Debug Result"
+  },
+  "undo": {
+    "cancel": "Cancel: {label}"
+  },
+  "navigation": {
+    "changes": "Changes",
+    "history": "History",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "settings": "Settings",
+    "refresh": "Refresh"
+  },
+  "settings": {
+    "reduceMotion": "Reduce Motion",
+    "animateLogoUnfocused": "Animate Logo Unfocused",
+    "instantBlameHover": "Instant Blame Hover",
+    "autoSelectChanges": "Auto-select Changes",
+    "fetchOnlineIssues": "Fetch Online Issues",
+    "rememberWip": "Remember Work in Progress",
+    "hideAiFeatures": "Hide AI Features",
+    "crashReporting": "Crash Reporting",
+    "aiReadOnly": "AI Read-only",
+    "stashCabinetExpanded": "Stash Cabinet Expanded",
+    "fileSortInverted": "File Sort Inverted"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Engine Status",
+    "engineStatusSubtitle": "LogosGit spectral engine diagnostics",
+    "fileCoupling": "File Coupling",
+    "fileCouplingSubtitle": "Nearest co-change neighbors for staged files",
+    "themeSpecimen": "Theme Specimen",
+    "themeSpecimenSubtitle": "All colors, icons, text tiers, and geometry"
+  },
+  "dev": {
+    "testMergeEditor": "Test Merge Editor",
+    "testHistorySurgery": "Test History Surgery",
+    "back": "back",
+    "cancel": "cancel",
+    "buildingConflicts": "building test conflicts from history…"
+  },
+  "historySurgery": {
+    "label": "History Surgery",
+    "subtitle": "Rewrite history to permanently remove files"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Scrub the repo’s structural history through the manifold"
+  },
+  "command": {
+    "complete": "{label} complete",
+    "failed": "{label} failed: {message}",
+    "copy": "Copy"
+  },
+  "search": {
+    "hintDefault": "search everything...",
+    "hintElevated": "elevated — all actions",
+    "emptyTypeToSearch": "type to search",
+    "emptyNoResults": "no results"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "coupled"
+  },
+  "gitCache": {
+    "current": "current",
+    "staged": "staged",
+    "modified": "modified"
+  }
+}

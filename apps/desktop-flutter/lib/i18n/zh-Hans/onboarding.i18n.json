@@ -1,0 +1,96 @@
+{
+  "@@locale": "zh-Hans",
+  "nav": {
+    "back": "返回",
+    "continueLabel": "继续",
+    "letsGo": "出发"
+  },
+  "naming": {
+    "question": "它对你意味着什么？",
+    "questionEmphasis": "它",
+    "iAmPrefix": "我是 ",
+    "iAmSuffix": " ，你的私人 Git 客户端。"
+  },
+  "theme": {
+    "title": "为 {name} 换身行头。",
+    "themesHeader": "主题",
+    "keybindingsHeader": "快捷键",
+    "previewBadge": "预览",
+    "useDefaults": "使用默认"
+  },
+  "repo": {
+    "title": "让 {name} 指向点什么。",
+    "later": "我稍后再弄",
+    "doors": {
+      "open": {
+        "title": "打开",
+        "subtitle": "已有的",
+        "hint": "你已经有的仓库"
+      },
+      "clone": {
+        "title": "克隆",
+        "subtitle": "从 URL",
+        "hint": "粘贴一个远程 URL"
+      },
+      "create": {
+        "title": "创建",
+        "subtitle": "全新的",
+        "hint": "从头开始"
+      }
+    },
+    "cloneForm": {
+      "title": "从 URL 克隆",
+      "urlLabel": "仓库 URL",
+      "targetLabel": "目标文件夹",
+      "browse": "浏览…",
+      "clone": "克隆",
+      "cloning": "正在克隆…"
+    },
+    "pickers": {
+      "openRepository": "打开仓库",
+      "createRepository": "创建仓库",
+      "cloneTarget": "克隆目标"
+    },
+    "errors": {
+      "urlAndTargetRequired": "需要 URL 和目标路径。",
+      "createFailed": "创建仓库失败。",
+      "cloneFailed": "克隆仓库失败。"
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "仓库透视",
+      "settings": "设置"
+    },
+    "sidebar": {
+      "projectsHeader": "项目"
+    },
+    "changes": {
+      "filesStagedCount": "{total} 个文件中的 {staged} 个",
+      "stagedCount": "{n} 个已暂存",
+      "commitMessageHint": "提交信息…",
+      "commitAndPush": "提交并推送"
+    },
+    "history": {
+      "header": "历史",
+      "viewingLast": "正在查看最近 20 个提交",
+      "inFlight": "进行中",
+      "you": "你",
+      "commit1": "教小狐狸下咽前先闻一闻",
+      "commit2": "琥珀：留住气味过夜",
+      "commit3": "让卷心菜退役，改用琥珀 + 荆棘",
+      "commit4": "荆棘把守大门"
+    },
+    "branches": {
+      "lensBranches": "分支",
+      "lensPRs": "PR",
+      "absorbed": "已吸收",
+      "desk": "工作台",
+      "head": "HEAD",
+      "tracking": "→ 跟踪：{ref}"
+    },
+    "diff": {
+      "readmeTagline": "你的私人 Git 客户端。"
+    }
+  }
+}

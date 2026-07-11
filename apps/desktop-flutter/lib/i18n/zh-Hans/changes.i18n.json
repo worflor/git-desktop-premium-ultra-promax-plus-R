@@ -1,0 +1,523 @@
+{
+  "@@locale": "zh-Hans",
+  "usage": {
+    "caption": "{input} 入 · {output} 出",
+    "captionCached": "{fresh} 入 · {cached} 缓存 · {out} 出",
+    "inWord": "入",
+    "cachedWord": "缓存",
+    "outWord": "出",
+    "tipIn": "{value}  入",
+    "tipCacheRead": "{value}  缓存读取",
+    "tipCacheWrite": "{value}  缓存写入",
+    "tipOut": "{value}  出",
+    "tipReasoning": "{value}  推理",
+    "tipWallClock": "{value}s  墙钟"
+  },
+  "tabs": {
+    "defaultLabel": "更改",
+    "empty": "空"
+  },
+  "tabStrip": {
+    "newDiffTab": "新建差异标签页"
+  },
+  "select": {
+    "selectAll": "全选",
+    "deselectAll": "取消全选"
+  },
+  "constellationToggle": {
+    "backToList": "返回列表",
+    "atlas": "星图，查看提交候选"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\n与 {anchor} 耦合 · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "新",
+    "roleBridge": "桥",
+    "roleHub": "枢纽",
+    "roleLeaf": "叶",
+    "roleConnected": "已连接",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "与 {name} 一同改动",
+    "newFile": "新文件",
+    "nearOtherChanges": "靠近 {dir} 中另外 {count} 处改动",
+    "usuallyChangesWithFile": "{name} 通常与此文件一同改动"
+  },
+  "tagInput": {
+    "hint": "标签…"
+  },
+  "composer": {
+    "hintPlaceholder": "提交信息…",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "提交更改",
+    "primaryCommitChangesDetail": "游离 HEAD：本地提交，不同步。",
+    "primaryPublish": "提交并发布",
+    "primaryPublishDetail": "一步创建提交并发布此分支。",
+    "primarySync": "提交并同步",
+    "primarySyncDetail": "创建提交，然后协调并推送分支。",
+    "primaryPush": "提交并推送",
+    "primaryPushDetail": "创建提交并立即推送。",
+    "amendLast": "修订上一个提交",
+    "amendAnd": "修订并{action}",
+    "chooseFile": "为下一个提交至少选择一个文件。",
+    "writeMessage": "请先写一条提交信息。",
+    "committing": "正在提交",
+    "committingSync": "正在提交并同步",
+    "committed": "已提交。",
+    "undoFailed": "撤销失败。",
+    "working": "处理中…",
+    "commitOnly": "仅提交",
+    "noRuntimeModels": "没有可用于提交信息的运行时发现模型。",
+    "restoreFailedRetry": "{err}\n无法恢复被排除文件的暂存；重试前请检查索引。",
+    "committedSummary": "已提交 {summary}（{hash}）。",
+    "restoreFailedSync": "无法重新暂存被排除文件的选择；已跳过同步。同步前请检查索引。",
+    "noModelLabel": "无模型",
+    "chooseBeforeGenerate": "生成前至少选择一个文件。",
+    "aiUnavailable": "提交信息 AI 尚不可用。",
+    "generateFailed": "生成失败。",
+    "stageFailed": "暂存文件失败。",
+    "commitFailed": "提交失败。",
+    "committedAndRan": "已提交 {summary}（{hash}）并运行了 {operation}。",
+    "committedResolved": {
+      "other": "已提交 {summary}（{hash}）；解决了 {n} 个冲突。"
+    },
+    "conflictsLeft": {
+      "other": "还剩 {n} 个冲突待解决。"
+    },
+    "syncBlocked": {
+      "other": "提交成功，但同步被 {n} 个未提交文件阻挡。"
+    },
+    "syncStalled": "提交成功，但同步停滞：{message}",
+    "syncFailed": "提交成功，但同步失败：{message}"
+  },
+  "rebase": {
+    "continueFailed": "无法继续变基。"
+  },
+  "editor": {
+    "closeBarrier": "关闭编辑器"
+  },
+  "editorTitles": {
+    "any": [
+      "亲爱的 git log",
+      "看在 git 的份上，容我诉说…",
+      "给这一刻起个名",
+      "尽情唠",
+      "说吧！",
+      "你妈是个悬空引用，你爹一身分号味"
+    ],
+    "short": [
+      "哦？",
+      "你好呀 :)",
+      "顺便说：",
+      "三言两语",
+      "客气点的版本",
+      "留个便条",
+      "你刚说到哪..?",
+      "对了，说出来吧"
+    ],
+    "mid": [
+      "记录在案",
+      "告诉未来的你",
+      "但先说说？",
+      "过程如何",
+      "用你自己的话",
+      "你刚干了啥来着？",
+      "已悉数记下",
+      "我洗耳恭听"
+    ],
+    "long": [
+      "请说说你的梦想",
+      "说点好听的",
+      "……然后我说：",
+      "后世正等着呢",
+      "写得越多，bug 越少",
+      "哦哇",
+      "神圣文本"
+    ]
+  },
+  "askHint": {
+    "round": "第 {n} 轮 — 细化或补充上下文。",
+    "symptom": "描述症状。",
+    "broken": "哪儿坏了？",
+    "bug": "描述这个 bug。",
+    "error": "粘贴报错。"
+  },
+  "fileMenu": {
+    "ripple": "涟漪",
+    "includeCoChanges": "包含共变",
+    "deleteFile": "删除 {name}…",
+    "discardChangesTo": "丢弃对 {name} 的改动…",
+    "ignore": "忽略",
+    "diffTabFromSelection": "从选中项建差异标签页",
+    "addSelectedToTab": "将选中项加入 {name}",
+    "diffTabFromFile": "从 {name} 建差异标签页",
+    "addFileToTab": "将 {file} 加入 {tab}",
+    "copyFilePath": "复制文件路径",
+    "showInExplorer": "在资源管理器中显示"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "紧密耦合",
+    "cohesionLoose": "松散相关",
+    "cohesionScattered": "结构上分散",
+    "clusterOne": "全在一个簇里",
+    "clusterSpansDetailed": "横跨 {count} 个簇（{parts} 个文件）",
+    "clusterSpans": "横跨 {count} 个簇",
+    "roleLine": "{count} 个文件 · {cohesion}",
+    "usuallyChangesWithGroup": "{file} 通常与此组一同改动",
+    "splitToNewTab": "拆分到新标签页",
+    "copyPaths": "复制 {count} 个路径"
+  },
+  "ignoreMenu": {
+    "extension": ".{ext} 扩展名",
+    "allSelected": "全部 {count} 个选中项",
+    "couplesWith": {
+      "other": "与 {n} 个已包含文件耦合"
+    },
+    "updateFailed": "更新 .gitignore 失败。"
+  },
+  "discard": {
+    "deleteTitle": "删除 {name}？",
+    "discardTitle": "丢弃对 {name} 的改动？",
+    "deleteBody": "{path} 将从磁盘移除。此操作无法在应用内撤销。",
+    "discardBody": "对 {path} 的所有改动都将还原到 HEAD 中的状态。此操作无法撤销。",
+    "discard": "丢弃",
+    "deletingFile": "正在删除 {name}",
+    "discardingFile": "正在丢弃 {name}",
+    "discardFailed": "丢弃改动失败。",
+    "discardManyTitle": "丢弃对 {count} 个文件的改动？",
+    "discardManyBody": "已跟踪的文件将还原到 HEAD 中的状态；未跟踪的文件将从磁盘移除。此操作无法撤销。",
+    "discardManyConfirm": "丢弃 {count} 个",
+    "discardingManyFiles": "正在丢弃 {count} 个文件",
+    "failedOpenExplorer": "打开文件管理器失败：{error}",
+    "someFailed": "部分丢弃失败。"
+  },
+  "snack": {
+    "sameWorktree": "同一工作树 — 没什么可倒出的。",
+    "diffFailed": "差异失败：{error}",
+    "deskEmpty": "工作台没有领先于你的内容 — 空倒。",
+    "sourceDesk": "工作台 {label}",
+    "shelfReadFailed": "搁架读取失败：{error}",
+    "shelfEmpty": "空搁架 — 没什么可倒出的。",
+    "sourceShelf": "搁架 {label}",
+    "noModelConfigured": "未为“{label}”配置模型。",
+    "fetchFailed": "抓取失败：{error}"
+  },
+  "trace": {
+    "title": "验证轨迹",
+    "draftReview": "草稿审查"
+  },
+  "cleanTree": {
+    "title": "工作区干净",
+    "subtitle": "未检测到已暂存或未暂存的改动。",
+    "noUpstream": "  ·  无上游",
+    "ahead": " 领先",
+    "behind": " 落后",
+    "refreshing": "正在刷新…",
+    "refresh": "刷新",
+    "check": "检查",
+    "checkTooltip": "抓取并本地刷新。",
+    "sync": "& 同步"
+  },
+  "guardrail": {
+    "loose": "宽松",
+    "balanced": "均衡",
+    "strict": "严格",
+    "paranoid": "偏执"
+  },
+  "dropHint": {
+    "fromShelf": "拖放以把此搁架的改动带到这里",
+    "fromDesk": "拖放以把此工作台的改动带到这里"
+  },
+  "diffEmpty": {
+    "title": "未选择文件",
+    "message": "选择一个已更改的文件以查看其差异。"
+  },
+  "shelvePill": {
+    "shelveN": "↓ 搁置 {count}",
+    "shelve": "↓ 搁置",
+    "shelvedCount": "已搁置 {count} 个 {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "取回",
+    "peek": "窥看",
+    "toss": "扔掉"
+  },
+  "stashContents": {
+    "reading": "正在读取搁架…",
+    "empty": "空搁架"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "仅提交已暂存的行",
+    "doubleClickToggle": "双击：切换整组",
+    "repoRoot": "仓库根"
+  },
+  "resolveStrip": {
+    "reading": {
+      "other": "正在读取 {n} 个文件 · 起草解决方案…"
+    },
+    "conflictsAcross": {
+      "other": "{files} 中共 {n} 个冲突"
+    },
+    "resolve": "解决",
+    "orWith": "或使用",
+    "resolveWith": "用 {label} 解决",
+    "resolveWithModel": "用 {label} 解决  ·  {model}",
+    "resolving": "正在解决…",
+    "resolveWithGlyph": "↵  用 {label} 解决",
+    "orWithAnother": "或用其他模型"
+  },
+  "badge": {
+    "stagedEdit": "已暂存的编辑",
+    "edited": "已编辑",
+    "stagedAdd": "已暂存的新增",
+    "added": "已添加",
+    "stagedDelete": "已暂存的删除",
+    "deleted": "已删除",
+    "stagedRename": "已暂存的重命名",
+    "renamed": "已重命名",
+    "stagedCopy": "已暂存的复制",
+    "copied": "已复制",
+    "conflict": "冲突",
+    "stagedTypeChange": "已暂存的类型变更",
+    "typeChanged": "类型已变更",
+    "untracked": "未跟踪"
+  },
+  "review": {
+    "title": "代码审查",
+    "includedFiles": {
+      "other": "{n} 个已包含文件"
+    },
+    "hunkCount": {
+      "other": "{n} 个 hunk"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "审查不可用",
+    "backToDiff": "返回差异",
+    "verified": "已验证",
+    "draftOnly": "仅草稿",
+    "runAgain": "再次运行",
+    "draftShownBelow": "{error} 草稿审查显示在下方。",
+    "hideTrace": "隐藏轨迹",
+    "showTrace": "显示轨迹",
+    "showVerificationTrace": "显示验证轨迹",
+    "whyLanded": "此审查为何落在这里",
+    "noFindings": "无发现",
+    "findings": "发现",
+    "noEvidenceIssues": "此提交范围内未浮现有证据支持的问题。",
+    "observations": "观察",
+    "chooseBeforeReview": "审查前至少选择一个文件。",
+    "aiUnavailable": "审查 AI 尚不可用。",
+    "failed": "审查失败。",
+    "noRuntimeModels": "没有可用于提交审查的运行时发现模型。"
+  },
+  "commitBtn": {
+    "switchTo": "切换到：{label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "正在用 {cat} 询问…",
+    "askWith": "用 {cat} 询问",
+    "noModel": "未配置 AI 模型",
+    "nextTooltip": "下一个：{cat}  ·  shift+点击选上一个",
+    "onlyOne": "只配置了一个 AI 类别"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "other": "{pct}% 既视感 — 来自被丢弃时间线的 {n} 条幽灵边触及此差异"
+    },
+    "label": "既视感"
+  },
+  "identity": {
+    "none": "未配置提交身份",
+    "asName": "以 {name}",
+    "asNameEmail": "以 {name} <{email}>",
+    "asNameSpace": "以 {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\n此仓库的首个提交",
+    "newToRepo": "\n初来此仓库"
+  },
+  "staleScope": {
+    "message": "自本次运行后选择已改变",
+    "rerun": "重新运行"
+  },
+  "finding": {
+    "openDiff": "打开差异",
+    "recorded": "已记录",
+    "dismiss": "忽略"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "你抽出了这个",
+    "fromIdea": "来自想法：“{text}”",
+    "foothold": "落脚点 — ",
+    "brainstormSpew": "头脑风暴喷涌",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "复制 {count}",
+    "clear": "清除",
+    "chooseBeforeMuse": "唤起 muse 前至少选择一个文件。",
+    "aiUnavailable": "Muse AI 尚不可用。",
+    "failed": "Muse 失败。",
+    "noRuntimeModels": "没有可用于 muse 的运行时发现模型。",
+    "needsModel": "Muse 至少需要一个已配置的模型。",
+    "dreaming": "muse 正在做梦…"
+  },
+  "debug": {
+    "title": "调试",
+    "round": "· 第 {n} 轮",
+    "clear": "清除",
+    "close": "关闭",
+    "analyzing": "正在分析症状…",
+    "describeSymptom": "描述一个症状，然后按调试。",
+    "evidenceFor": "支持",
+    "evidenceAgainst": "但是",
+    "narrowDown": "有助于缩小范围的：",
+    "failed": "调试失败。",
+    "refinementFailed": "调试细化失败。"
+  },
+  "includeSummary": {
+    "none": "无",
+    "stagedSuffix": " · {count} 个已暂存",
+    "full": {
+      "other": "全部 {n} 个文件{staged}"
+    },
+    "partial": "{n} 个中的 {count} 个{staged}",
+    "shortAll": "全部 {n} 个{staged}"
+  },
+  "status": {
+    "unavailableTitle": "仓库状态不可用",
+    "loadingTitle": "正在加载仓库状态",
+    "loadingMessage": "正在读取工作区。"
+  },
+  "stash": {
+    "appliedWithConflicts": "储藏应用时产生冲突 — 请在“更改”页面解决（储藏条目已保留）。",
+    "couldNotPop": "无法弹出储藏。",
+    "listChanged": "储藏列表已改变；已跳过丢弃。请重试。",
+    "droppingStash": "正在丢弃储藏"
+  },
+  "tooltips": {
+    "commitGenerating": "正在生成提交信息…",
+    "commitPreparing": "正在准备提交信息…",
+    "commitSelectFile": "至少选择一个文件以生成提交信息。",
+    "commitConfigure": "在 设置 > 行为动态 > 提交信息 中配置提交信息。",
+    "fastFallback": "快速",
+    "commitGenerateWith": "用 {label} 模型生成提交信息",
+    "museConsulting": "正在咨询 muse…",
+    "showMuse": "显示 muse",
+    "museSelectFile": "为 muse 至少选择一个文件。",
+    "showMuseError": "显示 muse 错误",
+    "museAsk": "向 muse 求方向",
+    "museAskWithModels": "向 muse 求方向\n{brainstorm} → {synthesis}",
+    "qualityFallback": "高质",
+    "reviewing": "正在审查…",
+    "showReview": "显示审查",
+    "reviewPreparing": "正在准备提交审查…",
+    "reviewSelectFile": "至少选择一个文件以审查。",
+    "reviewConfigure": "在设置中配置审查 AI。",
+    "viewingReview": "正在查看审查",
+    "reviewWith": "用 {label} 模型进行 {guardrail} 审查"
+  },
+  "mergeEditor": {
+    "resolutionYours": "你的",
+    "resolutionTheirs": "他们的",
+    "resolutionCustom": "自定义",
+    "keepBoth": "两者都留",
+    "trust": {
+      "manual": "手动",
+      "safe": "安全",
+      "guided": "引导",
+      "assisted": "辅助",
+      "full": "完全",
+      "label": "信任：{label}"
+    },
+    "allResolved": "全部已解决",
+    "resolveEasy": "解决简单冲突",
+    "base": "基准",
+    "cancel": "取消",
+    "save": "保存",
+    "complete": "完成",
+    "nextFile": "下一个文件",
+    "edit": "编辑",
+    "auto": "自动",
+    "undo": "撤销",
+    "keyHints": {
+      "accept": "采纳",
+      "other": "另一方",
+      "both": "两者",
+      "navigate": "导航",
+      "jumpNext": "跳到下一个"
+    },
+    "favoredTooltip": "耦合分析在结构上更倾向此方",
+    "newOnBothSides": "（两侧都是新的）",
+    "writeFailed": "写入已解决文件失败：{error}",
+    "neighborsCoChanged": "{total} 个邻居中 {changed} 个共变",
+    "integrity": "完整性 {pct}%",
+    "reviewer": "审查者：{name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "未为“{category}”配置模型。请在 设置 → AI 中设置一个。",
+    "sensitiveFilesSkipped": {
+      "other": "已跳过 {n} 个敏感文件 — 请手动解决。"
+    },
+    "couldNotReadFiles": "无法读取任何冲突文件。",
+    "blockedSecret": "已阻止 — 某个冲突文件看起来含有 {secret}。请手动解决。",
+    "resolutionFailed": "解决失败：{error}",
+    "mergeResolutionLabel": "◇ 合并解决 · {total} 个文件中的 {resolved} 个 · {category}",
+    "conflictSummary": "{op} · {files} 中的 {conflicts}",
+    "conflictCount": {
+      "other": "{n} 个冲突"
+    },
+    "mergeEditorButton": "⇋ 合并编辑器",
+    "noAiModel": "无 AI 模型",
+    "later": "稍后",
+    "discard": "丢弃",
+    "resolveWithAi": "◇ 用 AI 解决",
+    "otherModel": "其他模型",
+    "withModel": "用 {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "合并",
+      "cherryPick": "拣选",
+      "revert": "还原",
+      "resolve": "解决",
+      "switchOp": "切换",
+      "pull": "拉取",
+      "rebase": "变基",
+      "rebaseOnto": "将 {branch} 变基到 {base} 上"
+    },
+    "pushFailed": "推送失败",
+    "rebasedAndPushed": "已变基并推送。",
+    "switchedTo": "已切换到 {name}。",
+    "switchFailed": "切换失败。",
+    "switchedToCarried": "已切换到 {name}（改动已带过来）。",
+    "alreadyUpToDate": "已是最新。",
+    "merged": "已合并 {upstream}（{n} 个文件）。",
+    "rebaseNotConverge": "变基未收敛 — 请手动解决。",
+    "rebased": "已变基。",
+    "rebasedResolved": {
+      "other": "已变基（解决了 {n} 个文件）。"
+    },
+    "detachedHead": "无法同步：处于游离 HEAD 状态。请先检出一个分支。",
+    "publishFailed": "发布失败。",
+    "noRemote": "未配置远程。添加一个以发布此分支。",
+    "failed": "失败"
+  },
+  "constellation": {
+    "axisStructure": "结构",
+    "axisCoChange": "共变",
+    "axisSpectralProfile": "谱剖面",
+    "axisPathSiblings": "路径同胞",
+    "axisDiffStructure": "差异结构",
+    "axisSpectral": "谱",
+    "titleUnsorted": "未排序",
+    "titleSingleton": "孤立项",
+    "titleMixed": "混合",
+    "untie": "解绑",
+    "bind": "绑定",
+    "emptyClusters": "暂无簇"
+  }
+}

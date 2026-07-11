@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../app/build_info.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/tokens.dart';
@@ -25,7 +26,7 @@ class ReleaseNotesPanel extends StatelessWidget {
         const SizedBox(height: 16),
         _SectionDivider(tokens: t),
         const SizedBox(height: 24),
-        for (final entry in _aboutDevelopment) ...[
+        for (final entry in _aboutEntries(context)) ...[
           _AboutBlock(entry: entry, tokens: t),
           const SizedBox(height: 24),
         ],
@@ -41,7 +42,9 @@ class _VersionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = tokens;
-    final version = BuildInfo.version.isNotEmpty ? BuildInfo.version : 'dev';
+    final version = BuildInfo.version.isNotEmpty
+        ? BuildInfo.version
+        : context.t.releaseNotes.versionFallback;
     final channel = BuildInfo.channel.name.toUpperCase();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -53,7 +56,8 @@ class _VersionHeader extends StatelessWidget {
               decoration: BoxDecoration(
                 color: t.chromeAccent.withValues(alpha: 0.10),
                 border: Border.all(
-                    color: t.chromeAccent.withValues(alpha: 0.30)),
+                  color: t.chromeAccent.withValues(alpha: 0.30),
+                ),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -98,10 +102,7 @@ class _VersionHeader extends StatelessWidget {
 class _ReleaseEntry extends StatelessWidget {
   final _ReleaseNote entry;
   final AppTokens tokens;
-  const _ReleaseEntry({
-    required this.entry,
-    required this.tokens,
-  });
+  const _ReleaseEntry({required this.entry, required this.tokens});
 
   @override
   Widget build(BuildContext context) {
@@ -186,10 +187,7 @@ class _SectionDivider extends StatelessWidget {
 class _AboutBlock extends StatelessWidget {
   final _AboutEntry entry;
   final AppTokens tokens;
-  const _AboutBlock({
-    required this.entry,
-    required this.tokens,
-  });
+  const _AboutBlock({required this.entry, required this.tokens});
 
   @override
   Widget build(BuildContext context) {
@@ -212,11 +210,7 @@ class _AboutBlock extends StatelessWidget {
         const SizedBox(height: 8),
         _ReactiveText(
           text: entry.body,
-          style: TextStyle(
-            color: t.textMuted,
-            fontSize: 12,
-            height: 1.6,
-          ),
+          style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.6),
           accentColor: t.accentBright,
           bgColor: t.bg0,
         ),
@@ -259,13 +253,15 @@ class _ReactiveText extends StatelessWidget {
   }
 
   static Widget _buildParagraph(
-      String para, TextStyle resolved, double spaceW) {
+    String para,
+    TextStyle resolved,
+    double spaceW,
+  ) {
     final words = para.split(' ').where((w) => w.isNotEmpty).toList();
     return Wrap(
       spacing: spaceW,
       children: [
-        for (final word in words)
-          _ReactiveWord(word: word, style: resolved),
+        for (final word in words) _ReactiveWord(word: word, style: resolved),
       ],
     );
   }
@@ -380,52 +376,23 @@ class _ReleaseNote {
   });
 }
 
-const _aboutDevelopment = <_AboutEntry>[
-  _AboutEntry(
-    question: 'WHY FLUTTER?',
-    body: 'The first version of this was a Tauri app (Rust + TypeScript). '
-        'I already knew it felt slow. Then I caught a streamer saying the '
-        'same thing on a stream I don\'t usually watch, and that was the '
-        'nudge to finally swap. He didn\'t suggest Flutter; far from it. I '
-        'found Dart on my own, threw together a prototype, and startup went '
-        'from about 15 seconds to under a second. Night and day. '
-        'Farewell Tauri era.\n\n'
-        'Flutter\'s rendering pipeline is closer to a game engine than a '
-        'DOM, and for a desktop app where the UI is the product that\'s '
-        'everything. Dart turned out to be a genuinely good language too. '
-        'The math behind the spectral engine was prototyped in Rust first, '
-        'so that work carried over fine.\n\n'
-        'Flutter is cross-platform by default, which is great, but it\'s '
-        'Googley in nature so there are a few quirks.',
-  ),
-  _AboutEntry(
-    question: 'WHAT IS THE SPECTRAL ENGINE?',
-    body: 'Every time you commit, the files you change together form '
-        'patterns over time. The spectral engine reads your commit graph '
-        'and decomposes those co-change patterns into signals: which files '
-        'are coupled, how tightly, and what structural role they play in '
-        'the repo. Basically spectral analysis on your development '
-        'history. In a git client. On purpose.\n\n'
-        'The math is new, so I\'m treating it like game feel: tune it, '
-        'test it, adjust it, and keep going until the signals feel '
-        'correct.\n\n'
-        'Those signals feed into everything. The seismograph in history, '
-        'the painted bars under commit subjects, the review system, Muse, '
-        'the file constellation. The whole app reasons from this layer '
-        'down, not the other way around.',  ),
-  _AboutEntry(
-    question: 'WHERE IS THIS GOING?',
-    body: 'The first milestone is full parity with GitHub Desktop, '
-        'SourceTree, and GitKraken. A cross-platform git client that '
-        'feels fast and handles the fundamentals better than anything '
-        'else. That\'s mostly here. The spectral engine already gives '
-        'us an advantage for operations that other clients make you think '
-        'through manually.\n\n'
-        'Past that, the goal is to surpass every other git client in '
-        'speed, accessibility, intelligence, and overall UX. There\'s more in the pipeline '
-        'than what\'s announced here.',
-  ),
-];
+List<_AboutEntry> _aboutEntries(BuildContext context) {
+  final about = context.t.releaseNotes.about;
+  return [
+    _AboutEntry(
+      question: about.whyFlutter.question,
+      body: about.whyFlutter.body,
+    ),
+    _AboutEntry(
+      question: about.spectralEngine.question,
+      body: about.spectralEngine.body,
+    ),
+    _AboutEntry(
+      question: about.whereGoing.question,
+      body: about.whereGoing.body,
+    ),
+  ];
+}
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(

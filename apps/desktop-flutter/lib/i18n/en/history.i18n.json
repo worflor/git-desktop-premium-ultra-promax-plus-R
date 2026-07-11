@@ -1,0 +1,134 @@
+{
+  "@@locale": "en",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "high importance",
+      "importanceModerate": "moderate importance",
+      "mostlyAdditions": "mostly additions",
+      "mostlyDeletions": "mostly deletions",
+      "tightlyCoupled": "tightly coupled files",
+      "overlapsWorkingTree": "overlaps your working tree"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(root)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} more",
+    "filesInDir": {
+      "one": "{n} file in {path}/",
+      "other": "{n} files in {path}/"
+    },
+    "moreFilesCount": {
+      "one": "{n} more file",
+      "other": "{n} more files"
+    },
+    "breadcrumbAll": "all",
+    "breadcrumbCurrentFocus": "Current focus: {target}",
+    "breadcrumbViewAllChanges": "View all changes in this commit",
+    "breadcrumbDrillUpTo": "Drill up to {target}",
+    "trackStats": {
+      "one": "{n} file  +{adds}  -{dels}",
+      "other": "{n} files  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} subdir",
+      "other": "{n} subdirs"
+    },
+    "segmentLeafSummary": "{path}, {adds} added, {dels} deleted",
+    "segmentContainerSummary": {
+      "one": "{n} file, {adds} added, {dels} deleted",
+      "other": "{n} files, {adds} added, {dels} deleted"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunks"
+    },
+    "largestChangeInView": "largest change in this view",
+    "conflictedTag": "conflicted",
+    "dirtyTag": "dirty",
+    "drillInTag": "drill in",
+    "changeTypeRenamed": "renamed",
+    "changeTypeCopied": "copied",
+    "changeTypeTypechange": "typechange",
+    "changeTypeConflict": "conflict",
+    "coreFile": "core file",
+    "staleFile": "stale",
+    "filterPathHint": "filter path",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Close worldline",
+    "dragToOpenWorldline": "Drag to open worldline"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "current branch",
+    "applyCommitOnto": "Apply commit's changes onto {branch}",
+    "revertCommitOn": "Revert commit's changes on {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick paused. Finish the remaining conflicts on the Changes page.",
+    "failed": "Cherry-pick failed: {error}",
+    "pickedResolved": "Cherry-picked {short} (resolved conflicts)",
+    "picked": "Cherry-picked {short}"
+  },
+  "revert": {
+    "paused": "Revert paused. Finish the remaining conflicts on the Changes page.",
+    "failed": "Revert failed: {error}",
+    "revertedResolved": "Reverted {short} (resolved conflicts)",
+    "reverted": "Reverted {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "Create branch from here…",
+    "copyCommitHash": "Copy commit hash",
+    "createBranchDialogTitle": "Create branch from reflog entry",
+    "anchorLine": "Anchor: {short}  ·  {summary}",
+    "branchNameHint": "branch name",
+    "createAction": "Create",
+    "createBranchFailed": "Failed to create branch: {error}",
+    "branchCreatedAt": "Branch \"{name}\" created at {short}."
+  },
+  "revealCeilingExceeded": {
+    "one": "That commit is deeper than the {n} commit loaded.",
+    "other": "That commit is deeper than the {n} commits loaded."
+  },
+  "deleteTagFailed": "Failed to delete tag: {error}",
+  "loadingTitle": "Loading history",
+  "loadingMessage": "Reading recent commits.",
+  "unavailableTitle": "History unavailable",
+  "toggleWorldline": "Toggle worldline",
+  "pageTitle": "History",
+  "viewingLast": "Viewing last",
+  "commitsUnit": "commits",
+  "noCommitSelectedTitle": "No commit selected",
+  "noCommitSelectedMessage": "Select a commit to inspect its changes.",
+  "loadingCommitTitle": "Loading commit",
+  "loadingCommitMessage": "Reading commit details.",
+  "commitUnavailableTitle": "Commit unavailable",
+  "couldNotLoadCommit": "Could not load commit.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Load reflog",
+  "createTag": "Create tag",
+  "newTagName": "New tag name",
+  "newTagNameError": "New tag name — {error}",
+  "allFilesHeader": {
+    "one": "{n} file · all changes",
+    "other": "{n} files · all changes"
+  },
+  "allChangesLabel": "all changes",
+  "rebase": {
+    "firstCommitCannotBe": "First commit cannot be {action}",
+    "rebaseCommitCount": {
+      "one": "Rebase {n} commit",
+      "other": "Rebase {n} commits"
+    },
+    "resetLabel": "reset",
+    "dragToReorderHint": "drag to reorder, pick action per commit",
+    "newMessageHint": "new message",
+    "runningEllipsis": "…",
+    "startRebase": "Start Rebase"
+  },
+  "inFlight": {
+    "header": "IN FLIGHT",
+    "deskFallbackLabel": "desk"
+  }
+}

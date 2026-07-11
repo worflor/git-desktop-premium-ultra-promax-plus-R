@@ -1,0 +1,101 @@
+{
+  "@@locale": "ja",
+  "header": {
+    "title": "オーラリー",
+    "modeScrub": "スクラブ",
+    "modeCompare": "比較",
+    "lodModules": "モジュール",
+    "lodFiles": "ファイル"
+  },
+  "status": {
+    "loading": "履歴を通してマニフォールドを追跡中…",
+    "loadError": "このリポジトリの履歴を読み取れませんでした。",
+    "notEnoughHistory": "軌道を描くにはまだ履歴が足りません。",
+    "notEnoughHistoryDetail": "オーラリーには図示のためにいくつかのコミットが必要です。"
+  },
+  "legend": {
+    "central": "中心",
+    "peripheral": "周縁"
+  },
+  "node": {
+    "module": "モジュール",
+    "moduleWithCount": "{path} · {n} ファイル",
+    "fileFallback": "ファイル #{id}",
+    "nodeFallback": "ノード #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "起源",
+    "now": "現在",
+    "reorganized": "再編成",
+    "becameArchetype": "{archetype}になった",
+    "snapshot": "スナップショット"
+  },
+  "structure": {
+    "forming": "形成中…",
+    "canonical": "正準",
+    "connectivity": "連結性",
+    "rigidity": "剛性",
+    "entropy": "エントロピー"
+  },
+  "rail": {
+    "structureLabel": "構造",
+    "fieldLabel": "フィールド",
+    "findingsLabel": "指摘",
+    "selectedLabel": "選択中",
+    "noFindings": "この履歴に構造的イベントは検出されませんでした。"
+  },
+  "selection": {
+    "notPresent": "履歴のこの時点には存在しません。",
+    "roleCentral": "結合の中心 — ここでの変更はシステム全体に波及します。",
+    "rolePeripheral": "周縁 — 疎に結合し、おおむね単独で変化します。",
+    "roleMid": "中間構造 — 適度に結合しています。",
+    "driftOutward": " 外へ漂流中 — 脱結合。",
+    "driftInward": " 内へ漂流中 — 統合。",
+    "driftHolding": " 位置を保持中。"
+  },
+  "findingKind": {
+    "hub": "ハブ",
+    "driftOut": "外へ漂流",
+    "driftIn": "内へ漂流",
+    "tangle": "もつれ",
+    "clarify": "明確化",
+    "regime": "再編",
+    "thrash": "スラッシング",
+    "reshuffle": "再配置",
+    "forecast": "予測"
+  },
+  "findings": {
+    "forecastSplit": "連結性が低下し続け、最低付近にあります。このまま続けば、コードベースは疎に結合した二つの半分へと分裂に向かいます。それが意図かどうか、今決めてください。",
+    "forecastConsolidate": "連結性がピークに向けて上昇しています。このまま続けば、コードベースは密に結合した一つの塊へと統合されます。モノリスへの硬直化に注意してください。",
+    "thrash": "{name}は何度も行き来しながら再編成されています。構造的な混乱が多く、正味の移動はわずかです。結合を安定させるか、触るのをやめてください。",
+    "reshuffle": "このコミットは一見ありふれて見えますが、どのファイルが中心かを静かに変えました。全体の形は保たれつつ、内側で構造が再配置されています。慎重に見直してください。",
+    "hub": "{name}は構造の核に位置し、システムはこれを中心に再編成します。ここでの変更は影響範囲が大きいものとして扱ってください。",
+    "driftOut": "{name}は核から縁へと漂流しました。システムから脱結合しています。引退しつつあるか、静かに腐りつつあるかのどちらかです。",
+    "driftIn": "{name}は核へと移動しました。荷重を担う存在になりつつあります。さらに依存が増える前に、十分にテストされているか確認してください。",
+    "regime": "コードベースがここで大きく再編成され、連結性が跳ね上がりました。何が分離したか、統合したかを見直してください。",
+    "tangleTrend": "履歴を通して、コードベースはよりもつれた構造へと向かっています。連結が密になり、モジュール性が下がっています。",
+    "clarifyTrend": "履歴を通して、コードベースはより整理された構造へと向かっています。より明確なモジュールへと分離しつつあります。"
+  },
+  "anchor": {
+    "core": "核",
+    "drift": "漂流",
+    "trend": "傾向",
+    "thrash": "スラッシュ"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "変化",
+    "movers": "移動したもの",
+    "noMovers": "これらのフレーム間で移動したファイルはありません。",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "ファイル",
+    "deltaConnectivity": "連結性",
+    "deltaRigidity": "剛性",
+    "deltaEntropy": "エントロピー",
+    "wayOutward": "外へ",
+    "wayInward": "内へ",
+    "wayShifted": "移動"
+  }
+}

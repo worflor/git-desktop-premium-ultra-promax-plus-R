@@ -26,8 +26,10 @@ import '../../backend/logos_git.dart';
 import '../../backend/release_check.dart';
 import '../../backend/settings_store.dart';
 import '../../app/alpha_math_state.dart';
+import '../../app/locale_provenance.dart';
 import '../../app/wick_state.dart';
 import '../../ui/context_menu.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../backend/storage_paths.dart';
 import '../../backend/system_browser.dart';
 import '../../backend/undo_controller.dart';
@@ -54,7 +56,6 @@ import '../../ui/motion.dart';
 import '../../ui/split_pill_button.dart';
 import '../../ui/tokens.dart';
 
-const _guardrailStageLabels = ['Loose', 'Balanced', 'Strict', 'Paranoid'];
 const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 
 enum _PromptSaveState { idle, typing, saving, saved, error }
@@ -267,15 +268,15 @@ class _SettingsPageState extends State<SettingsPage>
     final fraction = max > 0 ? (pos.pixels / max).clamp(0.0, 1.0) : 0.0;
 
     final sections = [
-      (_sectionKeyPreferences, 'Preferences'),
-      (_sectionKeyShortcuts, 'Shortcuts'),
-      (_sectionKeyBehaviour, 'Behaviour'),
-      (_sectionKeyProviders, 'AI Providers'),
-      (_sectionKeyModelSlots, 'Model Slots'),
-      (_sectionKeyTools, 'Tools'),
-      (_sectionKeyDiagnostics, 'Diagnostics'),
-      (_sectionKeyOffenders, 'Offenders'),
-      (_sectionKeyRelease, 'Release'),
+      (_sectionKeyPreferences, context.t.settings.sectionLabels.preferences),
+      (_sectionKeyShortcuts, context.t.settings.sectionLabels.shortcuts),
+      (_sectionKeyBehaviour, context.t.settings.sectionLabels.behaviour),
+      (_sectionKeyProviders, context.t.settings.sectionLabels.aiProviders),
+      (_sectionKeyModelSlots, context.t.settings.sectionLabels.modelSlots),
+      (_sectionKeyTools, context.t.settings.sectionLabels.tools),
+      (_sectionKeyDiagnostics, context.t.settings.sectionLabels.diagnostics),
+      (_sectionKeyOffenders, context.t.settings.sectionLabels.offenders),
+      (_sectionKeyRelease, context.t.settings.sectionLabels.release),
     ];
 
     String label = sections.first.$2;
@@ -405,7 +406,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save guardrail profile.');
+      setState(() => _actionError = context.t.settings.errors.saveGuardrailProfile);
     }
   }
 
@@ -424,7 +425,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save retention policy.');
+      setState(() => _actionError = context.t.settings.errors.saveRetentionPolicy);
     }
   }
 
@@ -449,7 +450,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) return;
     } catch (_) {
       if (!mounted) return;
-      setState(() => _actionError = 'Failed to save update channel.');
+      setState(() => _actionError = context.t.settings.errors.saveUpdateChannel);
     }
   }
 
@@ -472,7 +473,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save AI model selection.');
+      setState(() => _actionError = context.t.settings.errors.saveModelSelection);
     }
   }
 
@@ -492,7 +493,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save model alias.');
+      setState(() => _actionError = context.t.settings.errors.saveModelAlias);
     }
   }
 
@@ -512,7 +513,7 @@ class _SettingsPageState extends State<SettingsPage>
         return;
       }
       setState(
-        () => _actionError = 'Failed to save commit message model slot.',
+        () => _actionError = context.t.settings.errors.saveCommitMessageModelSlot,
       );
     }
   }
@@ -530,7 +531,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save review model slot.');
+      setState(() => _actionError = context.t.settings.errors.saveReviewModelSlot);
     }
   }
 
@@ -584,7 +585,7 @@ class _SettingsPageState extends State<SettingsPage>
       }
       setState(
         () {
-          _actionError = 'Failed to save commit message custom prompt.';
+          _actionError = context.t.settings.errors.saveCommitMessageCustomPrompt;
           _commitPromptSaveState = _PromptSaveState.error;
         },
       );
@@ -606,7 +607,7 @@ class _SettingsPageState extends State<SettingsPage>
         return;
       }
       setState(() {
-        _actionError = 'Failed to save review guide.';
+        _actionError = context.t.settings.errors.saveReviewGuide;
         _reviewPromptSaveState = _PromptSaveState.error;
       });
     }
@@ -640,7 +641,7 @@ class _SettingsPageState extends State<SettingsPage>
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _actionError = 'Failed to save muse notes.';
+        _actionError = context.t.settings.errors.saveMuseNotes;
         _musePromptSaveState = _PromptSaveState.error;
       });
     }
@@ -661,7 +662,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save review double-check mode.');
+      setState(() => _actionError = context.t.settings.errors.saveReviewDoubleCheck);
     }
   }
 
@@ -678,20 +679,20 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) {
         return;
       }
-      setState(() => _actionError = 'Failed to save API piggyback CLI.');
+      setState(() => _actionError = context.t.settings.errors.saveApiPiggybackCli);
     }
   }
 
   String? _commitPromptStatusLabel() {
     switch (_commitPromptSaveState) {
       case _PromptSaveState.typing:
-        return 'Editing';
+        return t.settings.promptStatus.editing;
       case _PromptSaveState.saving:
-        return 'Saving';
+        return t.settings.promptStatus.saving;
       case _PromptSaveState.saved:
         return null;
       case _PromptSaveState.error:
-        return 'Save failed';
+        return t.settings.promptStatus.saveFailed;
       case _PromptSaveState.idle:
         return null;
     }
@@ -700,13 +701,13 @@ class _SettingsPageState extends State<SettingsPage>
   String? _reviewPromptStatusLabel() {
     switch (_reviewPromptSaveState) {
       case _PromptSaveState.typing:
-        return 'Editing';
+        return t.settings.promptStatus.editing;
       case _PromptSaveState.saving:
-        return 'Saving';
+        return t.settings.promptStatus.saving;
       case _PromptSaveState.saved:
         return null;
       case _PromptSaveState.error:
-        return 'Save failed';
+        return t.settings.promptStatus.saveFailed;
       case _PromptSaveState.idle:
         return null;
     }
@@ -715,13 +716,13 @@ class _SettingsPageState extends State<SettingsPage>
   String? _musePromptStatusLabel() {
     switch (_musePromptSaveState) {
       case _PromptSaveState.typing:
-        return 'Editing';
+        return t.settings.promptStatus.editing;
       case _PromptSaveState.saving:
-        return 'Saving';
+        return t.settings.promptStatus.saving;
       case _PromptSaveState.saved:
         return null;
       case _PromptSaveState.error:
-        return 'Save failed';
+        return t.settings.promptStatus.saveFailed;
       case _PromptSaveState.idle:
         return null;
     }
@@ -735,18 +736,18 @@ class _SettingsPageState extends State<SettingsPage>
         // Every caller clears/wipes local data — name that and dress it in the
         // delete tier instead of the old vague 'Confirm'/'Continue' pair.
         title: Text(
-          'Clear local data',
+          context.t.settings.clearData.dialogTitle,
           style: TextStyle(color: t.danger, fontWeight: FontWeight.w600),
         ),
         content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            child: Text(context.t.common.cancel, style: TextStyle(color: t.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text('Clear', style: TextStyle(color: t.danger)),
+            child: Text(context.t.settings.clearData.clear, style: TextStyle(color: t.danger)),
           ),
         ],
       ),
@@ -756,7 +757,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _clearDiagnostics() async {
     if (!await _confirmLocalDataAction(
-      'Clear local diagnostics samples and performance timings?',
+      context.t.settings.clearData.confirmDiagnostics,
     )) {
       return;
     }
@@ -777,7 +778,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _clearAudit() async {
     if (!await _confirmLocalDataAction(
-      'Clear local AI audit metadata records?',
+      context.t.settings.clearData.confirmAudit,
     )) {
       return;
     }
@@ -797,7 +798,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   Future<void> _clearAllLocalData() async {
     if (!await _confirmLocalDataAction(
-      'Clear all local diagnostics samples and AI audit metadata records?',
+      context.t.settings.clearData.confirmAll,
     )) {
       return;
     }
@@ -850,11 +851,8 @@ class _SettingsPageState extends State<SettingsPage>
   Future<void> _resetLocalData({required bool wipeRecents}) async {
     if (!await _confirmLocalDataAction(
       wipeRecents
-          ? 'Wipe all local app data — including the recent repos list — '
-              'and quit? Your actual git repos on disk are not touched.'
-          : 'Reset local app data and quit?\n\n'
-              'Settings, theme, onboarding, AI preferences, telemetry, and '
-              'engram caches are cleared. Your recent repos list survives.',
+          ? context.t.settings.clearData.confirmWipeAll
+          : context.t.settings.clearData.confirmReset,
     )) {
       return;
     }
@@ -872,7 +870,7 @@ class _SettingsPageState extends State<SettingsPage>
       await StoragePaths.purgeDataDir();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _actionError = 'Could not clear local data: $e');
+      setState(() => _actionError = context.t.settings.errors.clearLocalData(error: e));
       return;
     }
     // Hard exit, intentionally synchronous: any ChangeNotifier disposal
@@ -891,29 +889,29 @@ class _SettingsPageState extends State<SettingsPage>
     final cards = <_ProviderCard>[];
 
     if (_aiProviders.isEmpty) {
-      cards.addAll(const [
+      cards.addAll([
         _ProviderCard(
           id: 'codex',
           binaryLabel: 'codex',
-          status: 'Detecting...',
+          status: context.t.settings.providerStatus.detecting,
           placeholder: true,
         ),
         _ProviderCard(
           id: 'claude',
           binaryLabel: 'claude',
-          status: 'Detecting...',
+          status: context.t.settings.providerStatus.detecting,
           placeholder: true,
         ),
         _ProviderCard(
           id: 'opencode',
           binaryLabel: 'opencode',
-          status: 'Detecting...',
+          status: context.t.settings.providerStatus.detecting,
           placeholder: true,
         ),
         _ProviderCard(
           id: 'cursor',
           binaryLabel: 'cursor-agent',
-          status: 'Detecting...',
+          status: context.t.settings.providerStatus.detecting,
           placeholder: true,
         ),
       ]);
@@ -929,8 +927,8 @@ class _SettingsPageState extends State<SettingsPage>
                 .split(RegExp(r'[\\/]'))
                 .last,
             status: provider.available
-                ? provider.planName ?? 'Ready'
-                : 'Not detected',
+                ? _providerStatusLabel(context, provider)
+                : context.t.settings.providerStatus.notDetected,
             detail: _providerCardDetail(provider.healthCheck),
             ready: provider.available,
           ));
@@ -945,8 +943,8 @@ class _SettingsPageState extends State<SettingsPage>
       id: 'api',
       binaryLabel: 'http',
       status: configuredApiCount > 0
-          ? '$configuredApiCount configured'
-          : 'Not configured',
+          ? context.t.settings.providerStatus.configured(count: configuredApiCount)
+          : context.t.settings.providerStatus.notConfigured,
       ready: configuredApiCount > 0,
       isApiProvider: true,
       apiProviderId: 'api',
@@ -963,7 +961,7 @@ class _SettingsPageState extends State<SettingsPage>
     final local = parsed.toLocal();
     final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
     final minute = local.minute.toString().padLeft(2, '0');
-    final suffix = local.hour >= 12 ? 'PM' : 'AM';
+    final suffix = local.hour >= 12 ? t.settings.meridiem.pm : t.settings.meridiem.am;
     return '$hour:$minute $suffix';
   }
 
@@ -990,11 +988,13 @@ class _SettingsPageState extends State<SettingsPage>
       offenders.add(
         _DiagnosticsOffender(
           focus: 'command',
-          streamLabel: 'Command',
+          streamLabel: t.settings.offenders.commandStream,
           name: summary.command,
           score: score,
-          metricLabel:
-              '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
+          metricLabel: t.settings.offenders.latencyFailMetric(
+            p95: summary.p95Ms.toStringAsFixed(0),
+            fail: (failureRate * 100).toStringAsFixed(0),
+          ),
         ),
       );
     }
@@ -1025,11 +1025,13 @@ class _SettingsPageState extends State<SettingsPage>
       offenders.add(
         _DiagnosticsOffender(
           focus: 'diff',
-          streamLabel: 'Diff Render',
-          name: '${summary.rendererMode} renderer',
+          streamLabel: t.settings.offenders.diffStream,
+          name: t.settings.offenders.rendererName(mode: summary.rendererMode),
           score: score,
-          metricLabel:
-              '${(summary.jankyFrameRate * 100).toStringAsFixed(0)}% jank | ${summary.frameTimeP95Ms.toStringAsFixed(0)}ms frame p95',
+          metricLabel: t.settings.offenders.jankFrameMetric(
+            jank: (summary.jankyFrameRate * 100).toStringAsFixed(0),
+            frame: summary.frameTimeP95Ms.toStringAsFixed(0),
+          ),
         ),
       );
     }
@@ -1051,11 +1053,13 @@ class _SettingsPageState extends State<SettingsPage>
       offenders.add(
         _DiagnosticsOffender(
           focus: 'ui',
-          streamLabel: 'UI Timing',
+          streamLabel: t.settings.offenders.uiStream,
           name: '${summary.phase}:${summary.event}',
           score: score,
-          metricLabel:
-              '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
+          metricLabel: t.settings.offenders.latencyFailMetric(
+            p95: summary.p95Ms.toStringAsFixed(0),
+            fail: (failureRate * 100).toStringAsFixed(0),
+          ),
         ),
       );
     }
@@ -1105,9 +1109,8 @@ class _SettingsPageState extends State<SettingsPage>
           gap: 10,
           children: [
             _StateCard(
-              title: 'Guardrails',
-              summary:
-                  'How attentive automation is across the whole experience.',
+              title: context.t.settings.guardrails.title,
+              summary: context.t.settings.guardrails.summary,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1126,8 +1129,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
             ),
             _StateCard(
-              title: 'Appearance',
-              summary: 'Global interface mood and atmosphere.',
+              title: context.t.settings.appearance.title,
+              summary: context.t.settings.appearance.summary,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1154,72 +1157,17 @@ class _SettingsPageState extends State<SettingsPage>
                 ],
               ),
             ),
-            _StateCard(
-              title: 'Local Data Retention',
-              summary: preferences.hideAiFeatures
-                  ? 'Diagnostic retention policy.'
-                  : 'Diagnostic and AI audit retention policy.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _InputWithUnit(
-                          unit: 'days',
-                          value: diagnostics.retentionDays,
-                          min: 1,
-                          max: 365,
-                          onChanged: (value) =>
-                              _saveRetention(value, diagnostics.retentionMb),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _InputWithUnit(
-                          unit: 'MB',
-                          value: diagnostics.retentionMb,
-                          min: 16,
-                          max: 4096,
-                          onChanged: (value) =>
-                              _saveRetention(diagnostics.retentionDays, value),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _WrappedAnnotation(
-                    'Includes diagnostics, performance timings, and metadata.',
-                    color: t.textMuted,
-                  ),
-                  const SizedBox(height: 8),
-                  _HybridRetentionActions(
-                    busy: _dataMaintenanceBusy,
-                    onClearDiagnostics: () {
-                      _clearDiagnostics();
-                    },
-                    onClearAudit: preferences.hideAiFeatures
-                        ? null
-                        : () {
-                            _clearAudit();
-                          },
-                    onClearAll: () {
-                      _clearAllLocalData();
-                    },
-                  ),
-                ],
-              ),
-            ),
+            const _LanguageCard(),
           ],
         ),
         const SizedBox(height: 10),
         KeyedSubtree(
           key: _sectionKeyShortcuts,
           child: _StateCard(
-          title: 'Navigation and Dynamics',
+          title: context.t.settings.navigation.title,
           summary: preferences.hideAiFeatures
-              ? 'Shortcuts and interface behavior.'
-              : 'Shortcuts, interface behavior, and AI routing.',
+              ? context.t.settings.navigation.summaryShortcuts
+              : context.t.settings.navigation.summaryWithAi,
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1233,7 +1181,7 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsGap(),
               KeyedSubtree(
                 key: _sectionKeyBehaviour,
-                child: const _SettingsSubtitle('Behavioural Dynamics'),
+                child: _SettingsSubtitle(context.t.settings.behaviour.title),
               ),
               const SizedBox(height: 12),
               _ReduceMotionToggle(
@@ -1264,8 +1212,8 @@ class _SettingsPageState extends State<SettingsPage>
               const SizedBox(height: 10),
               if (!preferences.hideAiFeatures) ...[
                 _CheckboxRow(
-                  label: 'AI read-only mode',
-                  description: 'Prevents AI from writing or staging changes automatically.',
+                  label: context.t.settings.toggles.aiReadOnlyLabel,
+                  description: context.t.settings.toggles.aiReadOnlyDescription,
                   value: true, // Forced enabled
                   enabled: false, // Grayed out
                   onChanged: (_) {},
@@ -1273,10 +1221,10 @@ class _SettingsPageState extends State<SettingsPage>
                 const SizedBox(height: 10),
               ],
               _CheckboxRow(
-                label: 'Logo animates when tabbed out',
+                label: context.t.settings.toggles.logoMotionLabel,
                 description: preferences.logoAnimatesWhenUnfocused
-                    ? "It's designed to be efficient, don't hurt its feelings"
-                    : ":(",
+                    ? context.t.settings.toggles.logoMotionDescriptionEnabled
+                    : context.t.settings.toggles.logoMotionDescriptionDisabled,
                 value: preferences.logoAnimatesWhenUnfocused,
                 trailing: _LogoMotionMiniIndicator(
                   animates: preferences.logoAnimatesWhenUnfocused,
@@ -1288,9 +1236,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
-                label: 'Remember work in progress',
-                description:
-                    'Keep your commit drafts and file selection between sessions.',
+                label: context.t.settings.toggles.rememberWipLabel,
+                description: context.t.settings.toggles.rememberWipDescription,
                 value: preferences.rememberWorkInProgress,
                 trailing: _WipMemoryMiniIndicator(
                   remembered: preferences.rememberWorkInProgress,
@@ -1304,9 +1251,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
-                label: 'Stash cabinet starts expanded',
-                description:
-                    'Show the filing-cabinet drawer open by default when a repo has shelves.',
+                label: context.t.settings.toggles.stashCabinetLabel,
+                description: context.t.settings.toggles.stashCabinetDescription,
                 value: preferences.stashCabinetDefaultExpanded,
                 trailing: _CabinetMiniIndicator(
                   expanded: preferences.stashCabinetDefaultExpanded,
@@ -1320,9 +1266,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
-                label: 'Instant blame hover',
-                description:
-                    'Skip the 180ms delay before blame info reveals on a diff line.',
+                label: context.t.settings.toggles.instantBlameLabel,
+                description: context.t.settings.toggles.instantBlameDescription,
                 value: preferences.instantBlameHover,
                 trailing: _InstantBlameMiniIndicator(
                   instant: preferences.instantBlameHover,
@@ -1336,9 +1281,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
-                label: 'Auto select new changes',
-                description:
-                    'Newly tracked or changed files are added to the commit selection automatically.',
+                label: context.t.settings.toggles.autoSelectLabel,
+                description: context.t.settings.toggles.autoSelectDescription,
                 value: preferences.autoSelectNewChanges,
                 trailing: _AutoSelectMiniIndicator(
                   active: preferences.autoSelectNewChanges,
@@ -1352,9 +1296,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
-                label: 'Fetch online issues on branch load',
-                description:
-                    'Pull PR and issue details from your git provider in the background when the branches page opens.',
+                label: context.t.settings.toggles.fetchIssuesLabel,
+                description: context.t.settings.toggles.fetchIssuesDescription,
                 value: preferences.fetchOnlineIssuesOnBranchLoad,
                 trailing: _OnlineFetchMiniIndicator(
                   active: preferences.fetchOnlineIssuesOnBranchLoad,
@@ -1367,7 +1310,7 @@ class _SettingsPageState extends State<SettingsPage>
                 },
               ),
               const SizedBox(height: 16),
-              const _SettingsSubtitle('diff diff-ability'),
+              _SettingsSubtitle(context.t.settings.diffDiffability.title),
               const SizedBox(height: 12),
               _DiffDiffabilityStage(
                 mediaEnabled: preferences.diffMediaEnabled,
@@ -1392,10 +1335,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const _SettingsGap(),
               _CheckboxRow(
-                label: 'I hate AI',
-                description:
-                    "Banish all LLM-backed features. Logos keeps running "
-                    "because it's just spectral math.",
+                label: context.t.settings.toggles.hateAiLabel,
+                description: context.t.settings.toggles.hateAiDescription,
                 value: preferences.hideAiFeatures,
                 trailing: _AiHiddenMiniIndicator(
                   hidden: preferences.hideAiFeatures,
@@ -1413,15 +1354,14 @@ class _SettingsPageState extends State<SettingsPage>
                 key: _sectionKeyProviders,
                 child: Row(
                 children: [
-                  const _SettingsSubtitle('CLI Piggybacking'),
+                  _SettingsSubtitle(context.t.settings.cliPiggyback.title),
                   const Spacer(),
                   SplitPillButton(
                     enabled: _aiRefreshAction == _AiRefreshAction.none,
                     segments: [
                       SplitPillSegment(
-                        label: 'Clear cache',
-                        tooltip: 'Wipe cached models and re-probe. '
-                            'Clears out ones a provider dropped.',
+                        label: context.t.settings.cliPiggyback.clearCacheLabel,
+                        tooltip: context.t.settings.cliPiggyback.clearCacheTooltip,
                         restColor: t.textMuted,
                         hoverColor: t.stateModified,
                         loading:
@@ -1429,8 +1369,8 @@ class _SettingsPageState extends State<SettingsPage>
                         onTap: _clearModelCache,
                       ),
                       SplitPillSegment(
-                        label: 'Refresh providers',
-                        tooltip: 'Re-probe every provider now.',
+                        label: context.t.settings.cliPiggyback.refreshLabel,
+                        tooltip: context.t.settings.cliPiggyback.refreshTooltip,
                         restColor: t.textNormal,
                         hoverColor: t.accentBright,
                         bold: true,
@@ -1443,8 +1383,8 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               ),
               const SizedBox(height: 8),
-              const _SettingsBody(
-                'Directly pipe interface messages to local provider binaries.',
+              _SettingsBody(
+                context.t.settings.cliPiggyback.body,
               ),
               if (_aiProvidersError != null && _aiProviders.isEmpty) ...[
                 const SizedBox(height: 8),
@@ -1472,8 +1412,8 @@ class _SettingsPageState extends State<SettingsPage>
                     const SizedBox(width: 8),
                     Text(
                       _aiProviders.isEmpty
-                          ? 'Loading providers...'
-                          : 'Refreshing provider diagnostics...',
+                          ? context.t.settings.modelSlots.loadingProviders
+                          : context.t.settings.modelSlots.refreshingProviders,
                       style: TextStyle(color: t.textMuted, fontSize: 11),
                     ),
                   ],
@@ -1506,11 +1446,11 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsGap(),
               KeyedSubtree(
                 key: _sectionKeyModelSlots,
-                child: const _SettingsSubtitle('Model Slots'),
+                child: _SettingsSubtitle(context.t.settings.sectionLabels.modelSlots),
               ),
               const SizedBox(height: 8),
               Text(
-                'Rename and route configurations to any detected provider model.',
+                context.t.settings.modelSlots.routeDescription,
                 style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
               ),
               if (_aiModelOptionsError != null &&
@@ -1539,7 +1479,7 @@ class _SettingsPageState extends State<SettingsPage>
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'Loading model categories...',
+                      context.t.settings.modelSlots.loadingCategories,
                       style: TextStyle(color: t.textMuted, fontSize: 11),
                     ),
                   ],
@@ -1547,7 +1487,7 @@ class _SettingsPageState extends State<SettingsPage>
               ] else if (_aiModelCategories.isEmpty) ...[
                 const SizedBox(height: 10),
                 Text(
-                  'No model options are available yet. Detect a compatible local AI CLI first.',
+                  context.t.settings.modelSlots.noOptions,
                   style: TextStyle(color: t.textMuted, fontSize: 12),
                 ),
               ] else ...[
@@ -1588,7 +1528,7 @@ class _SettingsPageState extends State<SettingsPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Draft commit messages from staged changes using your structure, voice, and coverage preferences.',
+                          context.t.settings.aiFeatures.commitDescription,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 12,
@@ -1610,7 +1550,7 @@ class _SettingsPageState extends State<SettingsPage>
                           )
                         else
                           Text(
-                            'Model-slot settings will appear here once provider models are available.',
+                            context.t.settings.modelSlots.slotsAppearWhenAvailable,
                             style: TextStyle(
                               color: t.textMuted,
                               fontSize: 12,
@@ -1625,7 +1565,7 @@ class _SettingsPageState extends State<SettingsPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Review the current commit scope before you commit.',
+                          context.t.settings.aiFeatures.reviewDescription,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 12,
@@ -1649,7 +1589,7 @@ class _SettingsPageState extends State<SettingsPage>
                           )
                         else
                           Text(
-                            'Model-slot settings will appear here once provider models are available.',
+                            context.t.settings.modelSlots.slotsAppearWhenAvailable,
                             style: TextStyle(
                               color: t.textMuted,
                               fontSize: 12,
@@ -1664,7 +1604,7 @@ class _SettingsPageState extends State<SettingsPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Three-phase oracle that brainstorms then synthesizes a forward direction for the diff.',
+                          context.t.settings.aiFeatures.museDescription,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 12,
@@ -1730,10 +1670,67 @@ class _SettingsPageState extends State<SettingsPage>
         const SizedBox(height: 10),
         const _GiteaTokenCard(),
         const SizedBox(height: 10),
+        _StateCard(
+          title: context.t.settings.retention.title,
+          summary: preferences.hideAiFeatures
+              ? context.t.settings.retention.summaryDiagnostics
+              : context.t.settings.retention.summaryWithAudit,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _InputWithUnit(
+                      unit: context.t.settings.retention.unitDays,
+                      value: diagnostics.retentionDays,
+                      min: 1,
+                      max: 365,
+                      onChanged: (value) =>
+                          _saveRetention(value, diagnostics.retentionMb),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _InputWithUnit(
+                      unit: context.t.settings.retention.unitMb,
+                      value: diagnostics.retentionMb,
+                      min: 16,
+                      max: 4096,
+                      onChanged: (value) =>
+                          _saveRetention(diagnostics.retentionDays, value),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              _WrappedAnnotation(
+                context.t.settings.retention.includesNote,
+                color: t.textMuted,
+              ),
+              const SizedBox(height: 8),
+              _HybridRetentionActions(
+                busy: _dataMaintenanceBusy,
+                onClearDiagnostics: () {
+                  _clearDiagnostics();
+                },
+                onClearAudit: preferences.hideAiFeatures
+                    ? null
+                    : () {
+                        _clearAudit();
+                      },
+                onClearAll: () {
+                  _clearAllLocalData();
+                },
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
         const _SettingsGap(),
         KeyedSubtree(
           key: _sectionKeyDiagnostics,
-          child: const _SettingsSubtitle('Performance Diagnostics'),
+          child: _SettingsSubtitle(context.t.settings.diagnosticsPanel.title),
         ),
         const SizedBox(height: 10),
         Row(
@@ -1750,7 +1747,7 @@ class _SettingsPageState extends State<SettingsPage>
             ),
             const SizedBox(width: 12),
             _GhostMiniButton(
-              label: 'Copy Trace',
+              label: context.t.settings.diagnosticsPanel.copyTrace,
               onTap: _copyAllDiagnostics,
             ),
           ],
@@ -1760,10 +1757,10 @@ class _SettingsPageState extends State<SettingsPage>
           key: _sectionKeyOffenders,
           child: Row(
           children: [
-            const _SettingsSubtitle('Offender Ranking'),
+            _SettingsSubtitle(context.t.settings.diagnosticsPanel.offenderRanking),
             const SizedBox(width: 8),
             Text(
-              'Latency drivers across streams.',
+              context.t.settings.diagnosticsPanel.offenderRankingSubtitle,
               style: TextStyle(color: t.textMuted, fontSize: 10),
             ),
           ],
@@ -1772,7 +1769,7 @@ class _SettingsPageState extends State<SettingsPage>
         const SizedBox(height: 6),
         if (topOffenders.isEmpty)
           Text(
-            'No offender ranking yet. Capture diagnostic activity to populate this list.',
+            context.t.settings.diagnosticsPanel.noOffenders,
             style: TextStyle(color: t.textMuted, fontSize: 12),
           )
         else
@@ -1808,8 +1805,8 @@ class _SettingsPageState extends State<SettingsPage>
         KeyedSubtree(
           key: _sectionKeyRelease,
           child: _StateCard(
-          title: 'Release Deployment',
-          summary: 'Update related settings.',
+          title: context.t.settings.release.title,
+          summary: context.t.settings.release.summary,
           wide: true,
           action: Row(
             mainAxisSize: MainAxisSize.min,
@@ -1836,7 +1833,7 @@ class _SettingsPageState extends State<SettingsPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'DEPLOYMENT CHANNEL',
+                          context.t.settings.release.deploymentChannel,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 9,
@@ -1855,8 +1852,8 @@ class _SettingsPageState extends State<SettingsPage>
                   const SizedBox(width: 24),
                   Expanded(
                     child: _CheckboxRow(
-                      label: 'Capture crash diagnostics',
-                      description: 'Coming soon.',
+                      label: context.t.settings.release.captureCrashDiagnostics,
+                      description: context.t.settings.release.comingSoon,
                       value: false,
                       enabled: false,
                       onChanged: (_) {},
@@ -1870,8 +1867,8 @@ class _SettingsPageState extends State<SettingsPage>
                 children: [
                   _DeckButton(
                     label: _releaseChecking
-                        ? 'CHECKING…'
-                        : 'POLL FOR UPDATES',
+                        ? context.t.settings.release.checking
+                        : context.t.settings.release.pollForUpdates,
                     icon: Icons.radar_outlined,
                     enabled: !_releaseChecking,
                     onTap: () => unawaited(_pollForUpdates()),
@@ -2010,7 +2007,7 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'in ${offender.streamLabel}',
+                    context.t.settings.offenders.inStream(stream: offender.streamLabel),
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 9,
@@ -2140,7 +2137,7 @@ class _FeatureHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Workspace Preferences',
+                context.t.settings.header.title,
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 11,
@@ -2150,7 +2147,7 @@ class _FeatureHeader extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Configure global aesthetics, interface dynamics, and core operational safeguards for the entire workspace.',
+                context.t.settings.header.subtitle,
                 style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
               ),
             ],
@@ -2239,7 +2236,7 @@ class _ReleaseNotesButtonState extends State<_ReleaseNotesButton> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Tooltip(
-      message: 'Release notes',
+      message: context.t.settings.header.releaseNotesTooltip,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
@@ -2298,7 +2295,7 @@ class _ReplayOnboardingButtonState extends State<_ReplayOnboardingButton> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Tooltip(
-      message: 'Replay onboarding',
+      message: context.t.settings.header.replayOnboardingTooltip,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
@@ -2350,6 +2347,7 @@ class _GuardrailStepper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final stageLabels = context.t.settings.guardrailStageLabels;
     final stageColor =
         _guardrailStageColors[stage.clamp(0, _guardrailStageColors.length - 1)];
     return Column(
@@ -2369,23 +2367,32 @@ class _GuardrailStepper extends StatelessWidget {
           child: Slider(
             value: stage.toDouble(),
             min: 0,
-            max: (_guardrailStageLabels.length - 1).toDouble(),
-            divisions: _guardrailStageLabels.length - 1,
+            max: (stageLabels.length - 1).toDouble(),
+            divisions: stageLabels.length - 1,
             onChanged: (value) => onChanged(value.round()),
           ),
         ),
         const SizedBox(height: 2),
         Row(
           children: [
-            for (var i = 0; i < _guardrailStageLabels.length; i++)
+            for (var i = 0; i < stageLabels.length; i++)
               Expanded(
-                child: Text(
-                  _guardrailStageLabels[i],
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: i == stage ? t.textStrong : t.textMuted,
-                    fontSize: 10,
-                    fontWeight: i == stage ? FontWeight.w600 : FontWeight.w500,
+                // scaleDown keeps each stage label on ONE line and lets a
+                // long locale (pt-BR 'Equilibrado' vs 'Balanced') shrink to
+                // fit its equal-width column instead of wrapping mid-word.
+                // English labels already fit, so the scale factor is 1.0 —
+                // pixel-identical. Center alignment matches the prior
+                // TextAlign.center.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    stageLabels[i],
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: i == stage ? t.textStrong : t.textMuted,
+                      fontSize: 10,
+                      fontWeight: i == stage ? FontWeight.w600 : FontWeight.w500,
+                    ),
                   ),
                 ),
               ),
@@ -2528,9 +2535,10 @@ class _HybridRetentionActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final hasAudit = onClearAudit != null;
+    final clearLabels = context.t.settings.retentionClear;
     final labels = hasAudit
-        ? const ['Diag', 'Audit', 'All']
-        : const ['Diag', 'All'];
+        ? [clearLabels.diag, clearLabels.audit, clearLabels.all]
+        : [clearLabels.diag, clearLabels.all];
     final actions = hasAudit
         ? <VoidCallback>[onClearDiagnostics, onClearAudit!, onClearAll]
         : <VoidCallback>[onClearDiagnostics, onClearAll];
@@ -2582,7 +2590,7 @@ class _HybridRetentionActions extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Text(
-          '<-- clears',
+          context.t.settings.retentionClear.clearsHint,
           style: TextStyle(
             color: t.textMuted.withValues(alpha: 0.55),
             fontSize: 10,
@@ -2654,18 +2662,18 @@ class _ChannelRibbon extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           _ChannelRibbonItem(
-            label: 'STABLE',
+            label: context.t.settings.channels.stable,
             active: value == 'stable',
             onTap: () => onChanged('stable'),
           ),
           _ChannelRibbonItem(
-            label: 'BETA',
+            label: context.t.settings.channels.beta,
             active: value == 'beta',
             onTap: () => onChanged('beta'),
           ),
           if (isDevBuild)
             _ChannelRibbonItem(
-              label: 'DEV',
+              label: context.t.settings.channels.dev,
               active: value == 'dev',
               onTap: () => onChanged('dev'),
             )
@@ -2899,7 +2907,7 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             Text(
-              'DEV',
+              context.t.settings.channels.dev,
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 10,
@@ -3104,18 +3112,128 @@ class _PollResultLabelState extends State<_PollResultLabel>
     final channel = r.channel.toUpperCase();
     switch (r.status) {
       case ReleaseCheckStatus.upToDate:
-        return 'up to date';
+        return t.settings.pollResult.upToDate;
       case ReleaseCheckStatus.updateAvailable:
-        return '${r.manifest!.version} available';
+        return t.settings.pollResult.updateAvailable(version: r.manifest!.version);
       case ReleaseCheckStatus.notConfigured:
-        return 'no update server';
+        return t.settings.pollResult.notConfigured;
       case ReleaseCheckStatus.notFound:
-        return 'no $channel releases';
+        return t.settings.pollResult.notFound(channel: channel);
       case ReleaseCheckStatus.networkError:
-        return 'unreachable';
+        return t.settings.pollResult.unreachable;
       case ReleaseCheckStatus.parseError:
-        return 'bad manifest';
+        return t.settings.pollResult.badManifest;
     }
+  }
+}
+
+class _LanguageCard extends StatelessWidget {
+  const _LanguageCard();
+
+  /// Locale endonyms (each language's own name). Locale-invariant proper
+  /// nouns — 日本語 stays 日本語 no matter the UI language — so they live
+  /// in code, not in the translation files.
+  static const Map<String, String> _endonyms = {
+    'en': 'English',
+    'de': 'Deutsch',
+    'es': 'Español',
+    'fr': 'Français',
+    'ja': '日本語',
+    'ko': '한국어',
+    'pt-BR': 'Português (Brasil)',
+    'ru': 'Русский',
+    'zh-Hans': '中文（简体）',
+  };
+
+  String _nameFor(AppLocale locale) =>
+      _endonyms[locale.languageTag] ?? locale.languageTag;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final preferences = context.watch<PreferencesState>();
+    final override = preferences.localeOverride;
+    final lang = context.t.settings.language;
+    // The disclosure line describes the locale the user is actually
+    // reading right now — the effective one, not the persisted override.
+    final effective = TranslationProvider.of(context).locale;
+    return _StateCard(
+      title: lang.title,
+      summary: lang.summary,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Label stacked ABOVE the control: in longer locales
+          // ("IDIOMA DE EXIBIÇÃO") a side-by-side row squeezes the
+          // dropdown until endonyms wrap mid-word ("Portugu/ês").
+          Text(
+            lang.label,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          AppDropdownField<String>(
+            value: AppLocaleUtils.supportedLocalesRaw.contains(override)
+                ? override
+                : '',
+            items: [
+              DropdownMenuItem(
+                value: '',
+                child: Text(
+                  lang.systemDefault,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              for (final locale in AppLocale.values)
+                DropdownMenuItem(
+                  value: locale.languageTag,
+                  child: Text(
+                    _nameFor(locale),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: (tag) {
+              if (tag == null) return;
+              unawaited(
+                  context.read<PreferencesState>().setLocaleOverride(tag));
+            },
+          ),
+          const SizedBox(height: 10),
+          FutureBuilder<Map<String, LocaleProvenance>>(
+            future: LocaleProvenanceStore.load(),
+            builder: (context, snapshot) {
+              final p = snapshot.data?[effective.languageTag];
+              if (p == null) return const SizedBox.shrink();
+              final line = switch (p.source) {
+                'source' => lang.disclosureSource,
+                'human' => lang.disclosureHuman,
+                'ai' when p.humanReviewedPercent > 0 =>
+                  lang.disclosureAiReviewed(
+                    model: p.model ?? 'AI',
+                    percent: p.humanReviewedPercent,
+                  ),
+                'ai' => lang.disclosureAi(model: p.model ?? 'AI'),
+                _ => null,
+              };
+              if (line == null) return const SizedBox.shrink();
+              final reviewers = p.reviewers.isEmpty
+                  ? null
+                  : lang.reviewedBy(names: p.reviewers.join(', '));
+              return _WrappedAnnotation(
+                reviewers == null ? line : '$line $reviewers',
+                color: t.textMuted,
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -3131,7 +3249,7 @@ class _ProfileSelect extends StatelessWidget {
     return Row(
       children: [
         Text(
-          'Keybinding profile',
+          context.t.settings.keybindingProfile.label,
           style: TextStyle(
             color: t.textMuted,
             fontSize: 12,
@@ -3169,63 +3287,64 @@ class _ShortcutsReference extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final sc = context.t.settings.shortcuts;
     final sections = <(String, List<(String, String)>)>[
       (
-        'navigate',
+        sc.navigate,
         profile == KeybindingProfile.classic
-            ? const [
-                ('Changes', 'G C'),
-                ('History', 'G H'),
-                ('Branches', 'G B'),
-                ('X-Ray', 'G S'),
-                ('Switch (always)', '⌘ 1/2/3'),
-                ('Search', '/'),
-                ('Dismiss', 'Esc'),
-                ('Refresh', 'F5'),
-                ('Shortcuts', '?'),
+            ? [
+                (sc.changes, 'G C'),
+                (sc.history, 'G H'),
+                (sc.branches, 'G B'),
+                (sc.xray, 'G S'),
+                (sc.switchAlways, '⌘ 1/2/3'),
+                (sc.search, '/'),
+                (sc.dismiss, 'Esc'),
+                (sc.refresh, 'F5'),
+                (sc.shortcuts, '?'),
               ]
-            : const [
-                ('Changes', '1'),
-                ('History', '2'),
-                ('Branches', '3'),
-                ('X-Ray', '4'),
-                ('Switch (always)', '⌘ 1/2/3'),
-                ('Search', '/'),
-                ('Dismiss', 'Esc'),
-                ('Refresh', 'F5'),
-                ('Shortcuts', '?'),
+            : [
+                (sc.changes, '1'),
+                (sc.history, '2'),
+                (sc.branches, '3'),
+                (sc.xray, '4'),
+                (sc.switchAlways, '⌘ 1/2/3'),
+                (sc.search, '/'),
+                (sc.dismiss, 'Esc'),
+                (sc.refresh, 'F5'),
+                (sc.shortcuts, '?'),
               ],
       ),
       (
-        'staging',
-        const [
-          ('Next change', 'J'),
-          ('Prev change', 'K'),
-          ('Toggle line', 'Space'),
-          ('Toggle hunk', 'S'),
-          ('Toggle file', 'F'),
-          ('Pin context', 'P'),
-          ('Commit', '⌘ Enter'),
-          ('Commit', '⌘ S'),
-          ('Accept hint', 'Tab'),
-          ('Undo', '⌘ Z'),
+        sc.staging,
+        [
+          (sc.nextChange, 'J'),
+          (sc.prevChange, 'K'),
+          (sc.toggleLine, 'Space'),
+          (sc.toggleHunk, 'S'),
+          (sc.toggleFile, 'F'),
+          (sc.pinContext, 'P'),
+          (sc.commit, '⌘ Enter'),
+          (sc.commit, '⌘ S'),
+          (sc.acceptHint, 'Tab'),
+          (sc.undo, '⌘ Z'),
         ],
       ),
       (
-        'branches & PRs',
-        const [
-          ('Navigate', 'J / K'),
-          ('Expand', 'Enter'),
-          ('Checkout', 'C'),
-          ('Approve', 'A'),
-          ('Request changes', 'R'),
+        sc.branchesPrs,
+        [
+          (sc.navigateRow, 'J / K'),
+          (sc.expand, 'Enter'),
+          (sc.checkout, 'C'),
+          (sc.approve, 'A'),
+          (sc.requestChanges, 'R'),
         ],
       ),
       (
-        'modifiers',
-        const [
-          ('Select range', 'Shift+Click'),
-          ('Extended menu', 'Shift+Right click'),
+        sc.modifiers,
+        [
+          (sc.selectRange, 'Shift+Click'),
+          (sc.extendedMenu, 'Shift+Right click'),
         ],
       ),
     ];
@@ -3475,7 +3594,7 @@ class _ApiUsageBar extends StatelessWidget {
         : '';
 
     return Tooltip(
-      message: '$usedLabel$limitLabel this month',
+      message: context.t.settings.apiUsage.thisMonth(used: usedLabel, limit: limitLabel),
       child: SizedBox(
         height: 12,
         child: Row(
@@ -3912,7 +4031,7 @@ class _ProviderGridState extends State<_ProviderGrid>
         'openai' => 'sk-...',
         'anthropic' => 'sk-ant-...',
         'xai' => 'xai-...',
-        _ => 'api key',
+        _ => t.settings.apiKeys.keyHintDefault,
       };
 
   Widget _buildProviderRow(AppTokens t, AiApiProvider provider) {
@@ -3985,20 +4104,20 @@ class _ProviderGridState extends State<_ProviderGrid>
             child: _ApiTextField(
               controller: urlCtrl,
               tokens: t,
-              hint: 'endpoint',
+              hint: context.t.settings.apiKeys.endpointHint,
               fontSize: 9,
               onSubmitted: () => _saveKey(provider.id),
             ),
           ),
           const SizedBox(width: 4),
           _MicroButton(
-            label: 'Save',
+            label: context.t.common.save,
             tokens: t,
             onTap: () => _saveKey(provider.id),
           ),
           const SizedBox(width: 3),
           _MicroButton(
-            label: 'Test',
+            label: context.t.settings.apiKeys.test,
             tokens: t,
             onTap: hasKey ? () => _testKey(provider.id) : null,
           ),
@@ -4086,7 +4205,7 @@ class _ApiTextFieldState extends State<_ApiTextField> {
         if (widget.obscure) ...[
           const SizedBox(width: 6),
           _MicroButton(
-            label: _revealed ? 'Hide' : 'Show',
+            label: _revealed ? context.t.settings.apiKeys.hide : context.t.settings.apiKeys.show,
             tokens: t,
             onTap: () => setState(() => _revealed = !_revealed),
           ),
@@ -4443,7 +4562,7 @@ class _ReasoningEffortRowState extends State<_ReasoningEffortRow> {
             SizedBox(
               width: 42,
               child: Text(
-                current ?? 'default',
+                current ?? context.t.settings.modelSlots.effortDefault,
                 style: TextStyle(
                   color: current != null
                       ? t.textMuted.withValues(alpha: 0.6)
@@ -4655,7 +4774,7 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
           const SizedBox(height: 8),
           if (widget.category.models.isEmpty)
             Text(
-              'No models detected for this slot.',
+              context.t.settings.modelSlots.noModelsForSlot,
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
           else
@@ -4670,7 +4789,7 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
           if (resolvedProviderLabel != null) ...[
             const SizedBox(height: 6),
             Text(
-              'via ${resolvedProviderLabel.toLowerCase()}',
+              context.t.settings.modelSlots.viaProvider(provider: resolvedProviderLabel.toLowerCase()),
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.65),
                 fontSize: 10,
@@ -4761,7 +4880,7 @@ class _CustomModelRow extends StatelessWidget {
                 borderSide:
                     BorderSide(color: t.accentBright.withValues(alpha: 0.50)),
               ),
-              hintText: 'custom model id',
+              hintText: context.t.settings.modelSlots.customModelId,
               hintStyle: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.30),
                 fontSize: 11,
@@ -4847,7 +4966,7 @@ class _CustomModelChinState extends State<_CustomModelChin>
                   child: Row(
                     children: [
                       Text(
-                        'custom model id',
+                        context.t.settings.modelSlots.customModelId,
                         style: TextStyle(
                           color: t.textMuted.withValues(alpha: 0.45),
                           fontSize: 10,
@@ -5253,8 +5372,8 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
                               horizontal: 10, vertical: 14),
                           child: Text(
                             _query.isNotEmpty
-                                ? 'no models match "$_query"'
-                                : 'no models available',
+                                ? context.t.settings.modelPicker.noMatch(query: _query)
+                                : context.t.settings.modelPicker.noModels,
                             style: TextStyle(
                               color: t.textMuted.withValues(alpha: 0.5),
                               fontSize: 11,
@@ -5310,7 +5429,7 @@ class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
                 isCollapsed: true,
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-                hintText: 'filter models...',
+                hintText: context.t.settings.modelPicker.filterHint,
                 hintStyle: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.35),
                   fontSize: 11,
@@ -5383,6 +5502,27 @@ String? _providerCardDetail(String? healthCheck) {
   return i >= 0 ? healthCheck.substring(i + marker.length) : healthCheck;
 }
 
+/// Localized status label for an available provider's card. Renders the
+/// backend's structured [AiProviderStatus.planStatus] via slang; falls back to
+/// the raw [AiProviderStatus.planName] when the plan is opaque account data
+/// (e.g. a humanized subscription tier), and to "Ready" when there is none.
+String _providerStatusLabel(BuildContext context, AiProviderStatus provider) {
+  final plan = provider.planStatus;
+  final s = context.t.settings.providerStatus;
+  switch (plan) {
+    case AiPlanCliManaged():
+      return s.cliManaged;
+    case AiPlanConnected():
+      return s.connected;
+    case AiPlanModelCount(:final count):
+      return s.modelCount(n: count);
+    case AiPlanProviderCount(:final count):
+      return s.providerCount(n: count);
+    case null:
+      return provider.planName ?? s.ready;
+  }
+}
+
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool active;
@@ -5450,8 +5590,8 @@ class _ModelProviderHeader extends StatelessWidget {
     String? note;
     if (providerId == 'opencode') {
       note = switch (context.watch<AiSettingsState>().opencodeEnrichState) {
-        OpencodeEnrichState.warming => 'warming…',
-        OpencodeEnrichState.unavailable => 'details unavailable',
+        OpencodeEnrichState.warming => context.t.settings.modelPicker.warming,
+        OpencodeEnrichState.unavailable => context.t.settings.modelPicker.detailsUnavailable,
         OpencodeEnrichState.none => null,
       };
     }
@@ -5502,7 +5642,7 @@ class _ModelPickerItem extends StatelessWidget {
     if (!m.hasPricing) return null;
     final i = m.promptPricePer1m;
     final o = m.completionPricePer1m;
-    if ((i == null || i == 0) && (o == null || o == 0)) return 'free';
+    if ((i == null || i == 0) && (o == null || o == 0)) return t.settings.modelPicker.free;
     final iStr = i != null ? '\$${_compact(i)}' : '?';
     final oStr = o != null ? '\$${_compact(o)}' : '?';
     return '$iStr/$oStr';
@@ -5653,12 +5793,11 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
           },
         ),
         const SizedBox(height: 12),
-        const _SettingsSubtitle('Style Guide'),
+        _SettingsSubtitle(context.t.settings.commitEditor.styleGuide),
         const SizedBox(height: 8),
         AppMultilineTextField(
           controller: promptController,
-          hintText:
-              'Optional. Voice / tone / bans. The format above handles skeleton.',
+          hintText: context.t.settings.commitEditor.styleGuideHint,
           minHeight: 100,
           maxHeight: 200,
           onChanged: onPromptChanged,
@@ -5720,7 +5859,7 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
           statusLabel: promptStatusLabel,
         ),
         const SizedBox(height: 12),
-        const _SettingsSubtitle('Additional notes to review with'),
+        _SettingsSubtitle(context.t.settings.review.additionalNotes),
         const SizedBox(height: 8),
         AppMultilineTextField(
           controller: promptController,
@@ -5731,8 +5870,8 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _CheckboxRow(
-          label: 'Double-check review',
-          description: 'Run a second verification pass before showing the final report.',
+          label: context.t.settings.review.doubleCheckLabel,
+          description: context.t.settings.review.doubleCheckDescription,
           value: aiSettings.reviewCommitDoubleCheckEnabled,
           onChanged: onDoubleCheckChanged,
         ),
@@ -5775,21 +5914,21 @@ class _MuseStrandStrip extends StatelessWidget {
   static String _strandHint(MuseStrandKind k) {
     switch (k) {
       case MuseStrandKind.spark:
-        return 'spark of inspiration · the immediately next step';
+        return t.settings.museStrands.spark;
       case MuseStrandKind.current:
-        return 'current in the water · present-tense extensions';
+        return t.settings.museStrands.current;
       case MuseStrandKind.horizon:
-        return 'look over the horizon · reaching directions';
+        return t.settings.museStrands.horizon;
       case MuseStrandKind.fever:
-        return 'wake from a fever dream · provocations';
+        return t.settings.museStrands.fever;
       case MuseStrandKind.echo:
-        return 'an echo across the canyon · analogues elsewhere';
+        return t.settings.museStrands.echo;
       case MuseStrandKind.vertigo:
-        return 'vertigo at the cliff edge · adjacent risks';
+        return t.settings.museStrands.vertigo;
       case MuseStrandKind.ghost:
-        return 'the ghost of what was · historical context';
+        return t.settings.museStrands.ghost;
       case MuseStrandKind.mirror:
-        return 'a mirror on still water · inversions';
+        return t.settings.museStrands.mirror;
     }
   }
 
@@ -6111,13 +6250,13 @@ class _AiMuseIntegrationEditor extends StatelessWidget {
   static String _hintForGuardrail(int stage) {
     switch (stage.clamp(0, 3)) {
       case 0:
-        return 'anything to gently steer toward? mood is kind today.';
+        return t.settings.museHint.loose;
       case 1:
-        return 'what to dwell on, what to skip. honest, not harsh.';
+        return t.settings.museHint.balanced;
       case 2:
-        return 'the standards. the bans. what the muse won\'t let slide.';
+        return t.settings.museHint.strict;
       default:
-        return 'tune the lens. what frequencies should the manifold hum at?';
+        return t.settings.museHint.paranoid;
     }
   }
 
@@ -6129,7 +6268,7 @@ class _AiMuseIntegrationEditor extends StatelessWidget {
       children: [
         Row(
           children: [
-            const _SettingsSubtitle('Additional notes for the muse'),
+            _SettingsSubtitle(context.t.settings.museEditor.additionalNotes),
             if (promptStatusLabel != null) ...[
               const SizedBox(width: 8),
               Text(
@@ -6187,26 +6326,26 @@ class _MuseStage extends StatelessWidget {
   String _guardrailIdeaCountHint(int stage) {
     switch (stage.clamp(0, 3)) {
       case 0:
-        return '~12 ideas';
+        return t.settings.museStage.ideaCountLoose;
       case 1:
-        return '~16 ideas';
+        return t.settings.museStage.ideaCountBalanced;
       case 2:
-        return '~20 ideas';
+        return t.settings.museStage.ideaCountStrict;
       default:
-        return '~24 ideas';
+        return t.settings.museStage.ideaCountParanoid;
     }
   }
 
   String _guardrailMacroLabel(int stage) {
     switch (stage.clamp(0, 3)) {
       case 0:
-        return 'loose';
+        return t.settings.guardrailMacro.loose;
       case 1:
-        return 'balanced';
+        return t.settings.guardrailMacro.balanced;
       case 2:
-        return 'strict';
+        return t.settings.guardrailMacro.strict;
       default:
-        return 'paranoid';
+        return t.settings.guardrailMacro.paranoid;
     }
   }
 
@@ -6240,8 +6379,8 @@ class _MuseStage extends StatelessWidget {
         _MuseStation(
           tokens: t,
           number: '1',
-          title: 'BRAINSTORM',
-          slotLabel: 'slot',
+          title: context.t.settings.museStage.brainstorm,
+          slotLabel: context.t.settings.museStage.slot,
           categories: categories,
           aiSettings: aiSettings,
           selectedCategoryId: brain.id,
@@ -6259,14 +6398,16 @@ class _MuseStage extends StatelessWidget {
           order: aiSettings.museStrandOrder,
           onReorder: (next) =>
               unawaited(aiSettings.setMuseStrandOrder(next)),
-          guardrailHint:
-              '${_guardrailIdeaCountHint(guardrailStage)}  ·  guardrail: ${_guardrailMacroLabel(guardrailStage)}',
+          guardrailHint: context.t.settings.museStage.guardrailHint(
+            ideas: _guardrailIdeaCountHint(guardrailStage),
+            macro: _guardrailMacroLabel(guardrailStage),
+          ),
         ),
         _MuseStation(
           tokens: t,
           number: '2',
-          title: 'SYNTHESIZE',
-          slotLabel: 'slot',
+          title: context.t.settings.museStage.synthesize,
+          slotLabel: context.t.settings.museStage.slot,
           categories: categories,
           aiSettings: aiSettings,
           selectedCategoryId: synth.id,
@@ -7429,10 +7570,10 @@ class _LogosPadPainter extends CustomPainter {
       tp.dispose();
     }
 
-    word('FOLDER', Offset(w * 0.25, h - 10));
-    word('HISTORY', Offset(w * 0.75, h - 10));
-    word('FAR', Offset(12, h * 0.25), rotate: -math.pi / 2);
-    word('NEAR', Offset(12, h * 0.75), rotate: -math.pi / 2);
+    word(t.settings.lensAxis.folder, Offset(w * 0.25, h - 10));
+    word(t.settings.lensAxis.history, Offset(w * 0.75, h - 10));
+    word(t.settings.lensAxis.far, Offset(12, h * 0.25), rotate: -math.pi / 2);
+    word(t.settings.lensAxis.near, Offset(12, h * 0.75), rotate: -math.pi / 2);
   }
 
   //
@@ -7683,10 +7824,10 @@ enum _LogosQuadrant {
   }
 
   String get whisper => switch (this) {
-        _LogosQuadrant.moduleMap => 'module map',
-        _LogosQuadrant.repoCenters => 'repo centers',
-        _LogosQuadrant.neighbors => 'neighbors',
-        _LogosQuadrant.toTouch => 'what to touch next',
+        _LogosQuadrant.moduleMap => t.settings.logosLens.moduleMap,
+        _LogosQuadrant.repoCenters => t.settings.logosLens.repoCenters,
+        _LogosQuadrant.neighbors => t.settings.logosLens.neighbors,
+        _LogosQuadrant.toTouch => t.settings.logosLens.toTouch,
       };
 }
 
@@ -7734,7 +7875,7 @@ class _LogosLensReadout extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(
-            'relevance engine',
+            context.t.settings.logosLens.relevanceEngine,
             maxLines: 1,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.7),
@@ -7745,10 +7886,7 @@ class _LogosLensReadout extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'reads how files move together '
-            'across structure, history, and '
-            'rhythm, so Manifold knows what '
-            'matters, not just what changed.',
+            context.t.settings.logosLens.description,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.6),
               fontSize: 10,
@@ -7764,7 +7902,7 @@ class _LogosLensReadout extends StatelessWidget {
           // number in real time. That's the feedback loop the old
           // hardcoded grip never gave.
           _GripStat(
-            label: 'within reach',
+            label: context.t.settings.logosLens.withinReach,
             value: ready ? '${snapshot.reachableCount}' : '—',
             t: t,
             mono: true,
@@ -7776,7 +7914,7 @@ class _LogosLensReadout extends StatelessWidget {
             mono: true,
           ),
           _GripStat(
-            label: 'gate',
+            label: context.t.settings.logosLens.gate,
             value: snapshot.coherenceGate.toStringAsFixed(2),
             t: t,
             mono: true,
@@ -7785,7 +7923,7 @@ class _LogosLensReadout extends StatelessWidget {
           _GripDivider(t: t),
           const SizedBox(height: 10),
           Text(
-            ready ? 'nearest' : 'warming',
+            ready ? context.t.settings.logosLens.nearest : context.t.settings.logosLens.warming,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.55),
               fontSize: 8.5,
@@ -7796,7 +7934,7 @@ class _LogosLensReadout extends StatelessWidget {
           const SizedBox(height: 6),
           if (!ready)
             Text(
-              'open a repo to\nsee the lens live',
+              context.t.settings.logosLens.emptyOpenRepo,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 9.5,
@@ -7806,7 +7944,7 @@ class _LogosLensReadout extends StatelessWidget {
             )
           else if (topReachable.isEmpty)
             Text(
-              'no files within\nreach — drag\ntoward HISTORY',
+              context.t.settings.logosLens.emptyNoFiles,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 9.5,
@@ -7974,7 +8112,7 @@ class _FilamentReadout extends StatelessWidget {
           _FilamentShaderTitle(t: t),
           const SizedBox(height: 2),
           Text(
-            'execution-flow',
+            context.t.settings.flowEngine.executionFlow,
             maxLines: 1,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.7),
@@ -7985,10 +8123,7 @@ class _FilamentReadout extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'simulate oscillators on code. '
-            'surfacing fragile '
-            'execution paths before '
-            'they crystalize as bugs.',
+            context.t.settings.flowEngine.description,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.6),
               fontSize: 10,
@@ -8002,7 +8137,7 @@ class _FilamentReadout extends StatelessWidget {
           const SizedBox(height: 12),
           if (!engineReady) ...[
             Text(
-              'idle',
+              context.t.settings.flowEngine.idle,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 8.5,
@@ -8012,7 +8147,7 @@ class _FilamentReadout extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'open a repo to\nsee flow analysis',
+              context.t.settings.flowEngine.emptyOpenRepo,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 9.5,
@@ -8022,7 +8157,7 @@ class _FilamentReadout extends StatelessWidget {
             ),
           ] else if (!snapshot.ready) ...[
             Text(
-              'scanning',
+              context.t.settings.flowEngine.scanning,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 8.5,
@@ -8032,7 +8167,7 @@ class _FilamentReadout extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'analysing files\nin the lens…',
+              context.t.settings.flowEngine.analysing,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.55),
                 fontSize: 9.5,
@@ -8042,19 +8177,19 @@ class _FilamentReadout extends StatelessWidget {
             ),
           ] else ...[
             _GripStat(
-              label: 'fragility',
+              label: context.t.settings.flowEngine.fragility,
               value: snapshot.fragility.toStringAsFixed(2),
               t: t,
               mono: true,
             ),
             _GripStat(
-              label: 'findings',
+              label: context.t.settings.flowEngine.findings,
               value: '${snapshot.totalFindings}',
               t: t,
               mono: true,
             ),
             _GripStat(
-              label: 'gap',
+              label: context.t.settings.flowEngine.gap,
               value: snapshot.spectralGap.toStringAsFixed(2),
               t: t,
               mono: true,
@@ -8064,7 +8199,7 @@ class _FilamentReadout extends StatelessWidget {
             const SizedBox(height: 10),
             if (snapshot.totalFindings == 0)
               Text(
-                'clean',
+                context.t.settings.flowEngine.clean,
                 style: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.55),
                   fontSize: 8.5,
@@ -8074,7 +8209,7 @@ class _FilamentReadout extends StatelessWidget {
               )
             else ...[
               Text(
-                'severity',
+                context.t.settings.flowEngine.severity,
                 style: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.55),
                   fontSize: 8.5,
@@ -8085,17 +8220,17 @@ class _FilamentReadout extends StatelessWidget {
               const SizedBox(height: 6),
               if (snapshot.criticalCount > 0) ...[
                 _SeverityRow(
-                    label: 'critical', count: snapshot.criticalCount, t: t),
+                    label: context.t.settings.flowEngine.critical, count: snapshot.criticalCount, t: t),
                 const SizedBox(height: 4),
               ],
               if (snapshot.warnCount > 0) ...[
                 _SeverityRow(
-                    label: 'warn', count: snapshot.warnCount, t: t),
+                    label: context.t.settings.flowEngine.warn, count: snapshot.warnCount, t: t),
                 const SizedBox(height: 4),
               ],
               if (snapshot.infoCount > 0) ...[
                 _SeverityRow(
-                    label: 'info', count: snapshot.infoCount, t: t),
+                    label: context.t.settings.flowEngine.info, count: snapshot.infoCount, t: t),
                 const SizedBox(height: 4),
               ],
             ],
@@ -8326,21 +8461,32 @@ class _TelemetrySwitcher extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final tel = context.t.settings.telemetry;
     final items = [
       (
         'command',
-        'Command',
-        '${commandReport.totalSamples} samples | ${commandReport.commandCount} commands'
+        context.t.settings.offenders.commandStream,
+        tel.metaCommand(
+          samples: tel.samples(n: commandReport.totalSamples),
+          commands: tel.commands(n: commandReport.commandCount),
+        )
       ),
       (
         'diff',
-        'Diff Render',
-        '${diffReport.totalSessions} sessions | ${((1 - diffReport.fallbackRate) * 100).toStringAsFixed(0)}% stability'
+        context.t.settings.offenders.diffStream,
+        tel.metaDiff(
+          sessions: tel.sessions(n: diffReport.totalSessions),
+          stability: tel.stability(
+              pct: ((1 - diffReport.fallbackRate) * 100).toStringAsFixed(0)),
+        )
       ),
       (
         'ui',
-        'UI Timing',
-        '${uiReport.totalSamples} samples | ${uiReport.eventCount} events'
+        context.t.settings.offenders.uiStream,
+        tel.metaUi(
+          samples: tel.samples(n: uiReport.totalSamples),
+          events: tel.events(n: uiReport.eventCount),
+        )
       ),
     ];
 
@@ -8478,17 +8624,20 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SettingsSubtitle('Command Diagnostics'),
+        _SettingsSubtitle(context.t.settings.diagnostics.commandDiagnostics),
         const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
-          clearLabel: 'Clear Samples',
+          clearLabel: context.t.settings.diagnostics.clearSamples,
           onClear: onClear,
           clearEnabled: report.totalSamples > 0,
         ),
         const SizedBox(height: 8),
         Text(
-          '${report.totalSamples} samples | ${report.commandCount} unique commands',
+          context.t.settings.diagnostics.summaryCommand(
+            samples: context.t.settings.telemetry.samples(n: report.totalSamples),
+            commands: context.t.settings.diagnostics.uniqueCommands(n: report.commandCount),
+          ),
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
@@ -8498,12 +8647,12 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 12),
         if (summaries.isEmpty)
           Text(
-            'No command timings captured yet. Run normal actions to populate diagnostics.',
+            context.t.settings.diagnostics.noCommandTimings,
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
           _TelemetryTable(
-            headers: const ['command', 'p50', 'reliability', 'range'],
+            headers: context.t.settings.diagnostics.headersCommand,
             rows: [
               for (final s in summaries)
                 _TelemetryTableRow(
@@ -8519,21 +8668,24 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
         if (report.recentSamples.isNotEmpty) ...[
           const SizedBox(height: 8),
           _RecentSamplesList(
-            title: 'Recent Operations',
+            title: context.t.settings.diagnostics.recentOperations,
             items: report.recentSamples
                 .map(
                   (sample) =>
-                      '${formatSampleTime(sample.recordedAt)} | ${sample.command} | ${(sample.backendDurationMs ?? sample.roundTripMs).toStringAsFixed(2)} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                      '${formatSampleTime(sample.recordedAt)} | ${sample.command} | ${(sample.backendDurationMs ?? sample.roundTripMs).toStringAsFixed(2)} ms | ${sample.ok ? context.t.settings.diagnostics.ok : sample.errorCode}',
                 )
                 .toList(),
           ),
         ],
         const SizedBox(height: 16),
         const SizedBox(height: 16),
-        const _SettingsSubtitle('Network Flow Telemetry'),
+        _SettingsSubtitle(context.t.settings.diagnostics.networkFlowTelemetry),
         const SizedBox(height: 8),
         Text(
-          '${backendReport.sampleCount} samples | ${backendReport.summaries.length} scoped commands',
+          context.t.settings.diagnostics.summaryBackend(
+            samples: context.t.settings.telemetry.samples(n: backendReport.sampleCount),
+            commands: context.t.settings.diagnostics.scopedCommands(n: backendReport.summaries.length),
+          ),
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
@@ -8543,12 +8695,12 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 10),
         if (backendReport.summaries.isEmpty)
           Text(
-            'No backend command samples captured yet. Run git and settings actions to populate this log.',
+            context.t.settings.diagnostics.noBackendSamples,
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
           _TelemetryTable(
-            headers: const ['scope', 'p50', 'p95', 'failures'],
+            headers: context.t.settings.diagnostics.headersBackend,
             rows: [
               for (final s in backendReport.summaries.take(10))
                 _TelemetryTableRow(
@@ -8564,12 +8716,12 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
         if (backendReport.recentSamples.isNotEmpty) ...[
           const SizedBox(height: 8),
           _RecentSamplesList(
-            title: 'Recent Backend Operations',
+            title: context.t.settings.diagnostics.recentBackendOperations,
             items: backendReport.recentSamples.reversed
                 .take(10)
                 .map(
                   (sample) =>
-                      '${formatSampleTime(sample.createdAt)} | ${sample.scope}:${sample.command} | ${sample.durationMs} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                      '${formatSampleTime(sample.createdAt)} | ${sample.scope}:${sample.command} | ${sample.durationMs} ms | ${sample.ok ? context.t.settings.diagnostics.ok : sample.errorCode}',
                 )
                 .toList(),
           ),
@@ -8600,13 +8752,16 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
-          clearLabel: 'Clear Metrics',
+          clearLabel: context.t.settings.diagnostics.clearMetrics,
           onClear: onClear,
           clearEnabled: report.totalSessions > 0,
         ),
         const SizedBox(height: 8),
         Text(
-          '${report.totalSessions} sessions | jank ${(report.jankyFrameRate * 100).toStringAsFixed(0)}%',
+          context.t.settings.diagnostics.summaryDiff(
+            sessions: context.t.settings.telemetry.sessions(n: report.totalSessions),
+            jank: (report.jankyFrameRate * 100).toStringAsFixed(0),
+          ),
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
@@ -8616,12 +8771,12 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 12),
         if (report.modeSummaries.isEmpty)
           Text(
-            'No diff render sessions captured yet. Open and scroll file diffs to populate this panel.',
+            context.t.settings.diagnostics.noDiffSessions,
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
           _TelemetryTable(
-            headers: const ['renderer', 'first paint', 'frame p95', 'raster p95', 'jank'],
+            headers: context.t.settings.diagnostics.headersDiff,
             rows: [
               for (final s in report.modeSummaries)
                 _TelemetryTableRow(
@@ -8638,7 +8793,7 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
         if (report.recentSamples.isNotEmpty) ...[
           const SizedBox(height: 8),
           _RecentSamplesList(
-            title: 'Recent Diff Sessions',
+            title: context.t.settings.diagnostics.recentDiffSessions,
             items: report.recentSamples
                 .map(
                   (sample) =>
@@ -8674,13 +8829,16 @@ class _UiDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
-          clearLabel: 'Clear Timings',
+          clearLabel: context.t.settings.diagnostics.clearTimings,
           onClear: onClear,
           clearEnabled: report.totalSamples > 0,
         ),
         const SizedBox(height: 8),
         Text(
-          '${report.totalSamples} samples | ${report.eventCount} instrumented events',
+          context.t.settings.diagnostics.summaryUi(
+            samples: context.t.settings.telemetry.samples(n: report.totalSamples),
+            events: context.t.settings.diagnostics.instrumentedEvents(n: report.eventCount),
+          ),
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
@@ -8690,12 +8848,12 @@ class _UiDiagnosticsPanel extends StatelessWidget {
         const SizedBox(height: 12),
         if (summaries.isEmpty)
           Text(
-            'No UI timing sessions captured yet. Open panels and navigate routes to populate this panel.',
+            context.t.settings.diagnostics.noUiSessions,
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
           _TelemetryTable(
-            headers: const ['event', 'p50', 'failures', 'range'],
+            headers: context.t.settings.diagnostics.headersUi,
             rows: [
               for (final s in summaries)
                 _TelemetryTableRow(
@@ -8711,11 +8869,11 @@ class _UiDiagnosticsPanel extends StatelessWidget {
         if (report.recentSamples.isNotEmpty) ...[
           const SizedBox(height: 8),
           _RecentSamplesList(
-            title: 'Recent UI Timings',
+            title: context.t.settings.diagnostics.recentUiTimings,
             items: report.recentSamples
                 .map(
                   (sample) =>
-                      '${formatSampleTime(sample.recordedAt)} | ${sample.phase}:${sample.event} | ${sample.durationMs.toStringAsFixed(2)} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                      '${formatSampleTime(sample.recordedAt)} | ${sample.phase}:${sample.event} | ${sample.durationMs.toStringAsFixed(2)} ms | ${sample.ok ? context.t.settings.diagnostics.ok : sample.errorCode}',
                 )
                 .toList(),
           ),
@@ -8743,7 +8901,7 @@ class _DiagnosticsActionRow extends StatelessWidget {
     return Row(
       children: [
         _DeckButton(
-          label: 'RECALIBRATE',
+          label: context.t.settings.diagnostics.recalibrate,
           icon: Icons.refresh_outlined,
           onTap: onRefresh,
         ),
@@ -8895,7 +9053,7 @@ class _ResetQuitControlState extends State<_ResetQuitControl> {
 
   Widget _buildCollapsed(BuildContext context) {
     return _DeckButton(
-      label: 'RESET & QUIT',
+      label: context.t.settings.resetQuit.resetAndQuit,
       icon: Icons.delete_sweep_outlined,
       isDestructive: true,
       onTap: _toggle,
@@ -8907,7 +9065,7 @@ class _ResetQuitControlState extends State<_ResetQuitControl> {
       mainAxisSize: MainAxisSize.min,
       children: [
         _DeckButton(
-          label: 'KEEP REPOS',
+          label: context.t.settings.resetQuit.keepRepos,
           icon: Icons.history_outlined,
           isDestructive: true,
           onTap: () {
@@ -8917,7 +9075,7 @@ class _ResetQuitControlState extends State<_ResetQuitControl> {
         ),
         const SizedBox(width: 6),
         _DeckButton(
-          label: 'WIPE ALL',
+          label: context.t.settings.resetQuit.wipeAll,
           icon: Icons.delete_forever_outlined,
           isDestructive: true,
           onTap: () {
@@ -9241,22 +9399,16 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
     switch (guide) {
       case FileSortGuide.relatedProximity:
         return inverted
-            ? 'Isolated changes come first. '
-                'Tightly-coupled clusters sink to the bottom.'
-            : 'Files that change together cluster together. '
-                'The concern comes first; context follows.';
+            ? t.settings.sortGuide.relatedInverted
+            : t.settings.sortGuide.related;
       case FileSortGuide.alphabetical:
         return inverted
-            ? 'Plain Z → A by path. '
-                'Case-insensitive, numbers ordered naturally.'
-            : 'Plain A → Z by path. '
-                'Case-insensitive, numbers ordered naturally.';
+            ? t.settings.sortGuide.alphabeticalInverted
+            : t.settings.sortGuide.alphabetical;
       case FileSortGuide.impact:
         return inverted
-            ? 'Lightest changes surface first. '
-                'Quick wins on top; the heavy lifts wait.'
-            : 'Heaviest changes surface first. '
-                'Churn is weighted; binaries and new files get boosted.';
+            ? t.settings.sortGuide.impactInverted
+            : t.settings.sortGuide.impact;
     }
   }
 
@@ -9325,7 +9477,7 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
           Row(
             children: [
               Text(
-                'Change sort guide',
+                context.t.settings.sortGuide.title,
                 style: TextStyle(
                   color: t.textNormal,
                   fontSize: 13,
@@ -9523,11 +9675,11 @@ class _SortGuideBadge extends StatelessWidget {
   String get _label {
     switch (guide) {
       case FileSortGuide.relatedProximity:
-        return 'near related';
+        return t.settings.sortGuide.nearRelated;
       case FileSortGuide.alphabetical:
-        return 'alphabetical';
+        return t.settings.sortGuide.alphabeticalShort;
       case FileSortGuide.impact:
-        return 'by impact';
+        return t.settings.sortGuide.byImpact;
     }
   }
 
@@ -9537,8 +9689,8 @@ class _SortGuideBadge extends StatelessWidget {
     // (persistent flip state) — so "alphabetical · flipped · peek"
     // reads left-to-right as mode → persistent modifier → live state.
     final parts = <String>[base];
-    if (inverted) parts.add('flipped');
-    if (previewing) parts.add('peek');
+    if (inverted) parts.add(t.settings.sortGuide.flipped);
+    if (previewing) parts.add(t.settings.sortGuide.peek);
     return parts.join(' · ');
   }
 
@@ -9803,11 +9955,11 @@ class _SortOptionLabel extends StatelessWidget {
   String get _label {
     switch (guide) {
       case FileSortGuide.relatedProximity:
-        return 'near related';
+        return t.settings.sortGuide.nearRelated;
       case FileSortGuide.alphabetical:
-        return 'alphabetical';
+        return t.settings.sortGuide.alphabeticalShort;
       case FileSortGuide.impact:
-        return 'by impact';
+        return t.settings.sortGuide.byImpact;
     }
   }
 
@@ -10053,8 +10205,9 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     return KeyEventResult.ignored;
   }
 
-  String _subtitleForRate(double r) =>
-      r <= 0.0001 ? 'Still… like ice?' : 'Flow like water.';
+  String _subtitleForRate(double r) => r <= 0.0001
+      ? t.settings.reduceMotion.subtitleStill
+      : t.settings.reduceMotion.subtitleFlow;
 
   @override
   Widget build(BuildContext context) {
@@ -10123,7 +10276,7 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Reduce motion',
+                        context.t.settings.reduceMotion.label,
                         style: TextStyle(
                           color: t.textNormal,
                           fontSize: 13,
@@ -10501,7 +10654,7 @@ class _PiggybackCliRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'API models use',
+                  context.t.settings.piggyback.apiModelsUse,
                   style: TextStyle(color: t.textNormal, fontSize: 13),
                 ),
               ],
@@ -10537,9 +10690,9 @@ class _PiggybackCliRow extends StatelessWidget {
         const Spacer(),
         if (dormant)
           Tooltip(
-            message: 'codex not detected',
+            message: context.t.settings.piggyback.codexNotDetected,
             child: Text(
-              'DORMANT',
+              context.t.settings.piggyback.dormant,
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
@@ -10586,7 +10739,7 @@ class _DiffDiffabilityStage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'viewer',
+            context.t.settings.diffStage.viewer,
             style: TextStyle(
               fontSize: 8,
               fontFamily: AppFonts.mono,
@@ -10597,14 +10750,14 @@ class _DiffDiffabilityStage extends StatelessWidget {
           const SizedBox(height: 8),
           _DiffDiffabilityTile(
             icon: Icons.image_outlined,
-            label: 'media',
+            label: context.t.settings.diffStage.media,
             enabled: mediaEnabled,
             onTap: onToggleMedia,
           ),
           const SizedBox(height: 6),
           _DiffDiffabilityTile(
             icon: Icons.memory,
-            label: 'binary',
+            label: context.t.settings.diffStage.binary,
             enabled: binaryEnabled,
             onTap: onToggleBinary,
           ),
@@ -10676,7 +10829,7 @@ class _DiffDiffabilityTile extends StatelessWidget {
                 const Spacer(),
                 if (!enabled)
                   Text(
-                    'hidden',
+                    context.t.settings.diffStage.hidden,
                     style: TextStyle(
                       fontSize: 8,
                       fontFamily: AppFonts.mono,
@@ -10796,7 +10949,7 @@ class _StepperRowState extends State<_StepperRow> {
     super.dispose();
   }
 
-  String _formatStop(int s) => s == 0 ? 'Off' : '${s}s';
+  String _formatStop(int s) => s == 0 ? t.settings.undoWindow.off : '${s}s';
 
   void _onHorizontalDragUpdate(DragUpdateDetails d) {
     _snapToPointer(d.localPosition.dx);
@@ -11111,13 +11264,13 @@ extension _UndoScopeInfo on _UndoScope {
   String get descriptionLabel {
     switch (this) {
       case _UndoScope.all:
-        return 'destructive actions';
+        return t.settings.undoScope.destructiveActions;
       case _UndoScope.discard:
-        return 'discards';
+        return t.settings.undoScope.discards;
       case _UndoScope.commit:
-        return 'commits';
+        return t.settings.undoScope.commits;
       case _UndoScope.commitAndPush:
-        return 'commit + push';
+        return t.settings.undoScope.commitPush;
     }
   }
 
@@ -11125,13 +11278,13 @@ extension _UndoScopeInfo on _UndoScope {
   String get chipLabel {
     switch (this) {
       case _UndoScope.all:
-        return 'all';
+        return t.settings.undoScope.all;
       case _UndoScope.discard:
-        return 'discards';
+        return t.settings.undoScope.discards;
       case _UndoScope.commit:
-        return 'commits';
+        return t.settings.undoScope.commits;
       case _UndoScope.commitAndPush:
-        return 'commit + push';
+        return t.settings.undoScope.commitPush;
     }
   }
 
@@ -11210,10 +11363,13 @@ class _UndoWindowControlState extends State<_UndoWindowControl> {
     final value = _valueFor(prefs);
     final scopeLabel = _scope.descriptionLabel;
     final description = value == 0
-        ? '${scopeLabel.substring(0, 1).toUpperCase()}${scopeLabel.substring(1)} finalize instantly.'
-        : '${value}s before $scopeLabel finalize.';
+        ? context.t.settings.undoWindow.descriptionInstant(
+            scope:
+                '${scopeLabel.substring(0, 1).toUpperCase()}${scopeLabel.substring(1)}')
+        : context.t.settings.undoWindow.descriptionDelayed(
+            seconds: value, scope: scopeLabel);
     return _StepperRow(
-      label: 'Undo window',
+      label: context.t.settings.undoWindow.label,
       value: value,
       fixedStops: const [0, 3, 6, 10],
       topStopBaseline: 15,
@@ -11298,7 +11454,7 @@ class _ScopeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final muted = tokens.textMuted.withValues(alpha: 0.55);
     return Tooltip(
-      message: 'Click to cycle scope · drag up/down on the slider too',
+      message: context.t.settings.undoWindow.cycleScopeTooltip,
       waitDuration: const Duration(milliseconds: 500),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -11336,7 +11492,7 @@ class _SyncGlyph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Reset every action to use the default window',
+      message: context.t.settings.undoWindow.resetTooltip,
       waitDuration: const Duration(milliseconds: 400),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -12235,15 +12391,15 @@ class _WrappedAnnotation extends StatelessWidget {
 String _guardrailPhrase(int stage) {
   switch (stage) {
     case 0:
-      return 'Probably fine means fine';
+      return t.settings.guardrailPhrase.probablyFine;
     case 1:
-      return 'A proper read, logic, integration, patterns';
+      return t.settings.guardrailPhrase.proper;
     case 2:
-      return 'Look again. Something might be hiding';
+      return t.settings.guardrailPhrase.lookAgain;
     case 3:
-      return 'Assume something is wrong. Find it';
+      return t.settings.guardrailPhrase.assumeWrong;
     default:
-      return 'A proper read, logic, integration, patterns';
+      return t.settings.guardrailPhrase.proper;
   }
 }
 
@@ -12254,15 +12410,15 @@ String _themeDescription(AppThemeId id) {
 String _reviewGuideHint(int stage) {
   switch (stage) {
     case 0:
-      return 'e.g. Focus on high-level logic and major bugs. Be brief and forgiving.';
+      return t.settings.reviewGuideHint.focusHigh;
     case 1:
-      return 'e.g. Surface potential bugs, architectural inconsistencies, and edge case failures.';
+      return t.settings.reviewGuideHint.surfaceBugs;
     case 2:
-      return 'e.g. Scrutinize every line for optimization, security, and pattern compliance.';
+      return t.settings.reviewGuideHint.scrutinize;
     case 3:
-      return 'e.g. Trust nothing. Question every side effect. Treat every line as a potential failure.';
+      return t.settings.reviewGuideHint.trustNothing;
     default:
-      return 'Optional guidance for what the review should care about.';
+      return t.settings.reviewGuideHint.optional;
   }
 }
 /// Commit format controls with live preview.
@@ -12369,230 +12525,180 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
 
   /// Headline text for each voice/stage combination.
   String _titleFor(CommitVoice voice, int stage) {
+    final p = t.settings.commitPreview.title;
     switch (voice) {
       case CommitVoice.verbLed:
         switch (stage) {
           case 0:
-            return 'Let fox skip cookies that smell off';
+            return p.verbLed.s0;
           case 2:
-            return 'Train fox to refuse tampered cookies before swallowing';
+            return p.verbLed.s2;
           case 3:
-            return 'Compel fox to forensically vet every cookie at the gate';
+            return p.verbLed.s3;
           default:
-            return 'Teach fox to refuse bad cookies';
+            return p.verbLed.def;
         }
       case CommitVoice.descriptive:
         switch (stage) {
           case 0:
-            return 'fox now picks the cookies';
+            return p.descriptive.s0;
           case 2:
-            return 'Cookie-inspection routine, drilled into fox';
+            return p.descriptive.s2;
           case 3:
-            return 'Cookie-vetting forensics, embedded in fox by repetition';
+            return p.descriptive.s3;
           default:
-            return 'Cookie-sniff protocol, installed in fox';
+            return p.descriptive.def;
         }
       case CommitVoice.narrative:
         switch (stage) {
           case 0:
-            return 'the fox started skipping cookies that smelled wrong';
+            return p.narrative.s0;
           case 2:
-            return 'Sat down with the fox and worked through which '
-                'cookies to refuse';
+            return p.narrative.s2;
           case 3:
-            return 'Spent the better part of an afternoon convincing the '
-                'fox that not every cookie offered is, in good faith, '
-                'a cookie';
+            return p.narrative.s3;
           default:
-            return 'Asked the fox to sniff cookies before eating them';
+            return p.narrative.def;
         }
     }
   }
 
   /// Base body text for each voice/stage combination.
   String _baseFor(CommitVoice voice, int stage) {
+    final p = t.settings.commitPreview.base;
     switch (voice) {
       case CommitVoice.verbLed:
         switch (stage) {
           case 0:
-            return 'Fox glances. Anything off gets left.';
+            return p.verbLed.s0;
           case 2:
-            return 'Fox inspects each token, declines anything off-scent, '
-                'and notes the refusal on the porch.';
+            return p.verbLed.s2;
           case 3:
-            return 'Fox circles each token, samples the air at three angles, '
-                'refuses any that read wrong, and waits a beat to make sure '
-                'the refusal sticks.';
+            return p.verbLed.s3;
           default:
-            return 'Fox sniffs each token now and politely declines the '
-                'suspicious ones.';
+            return p.verbLed.def;
         }
       case CommitVoice.descriptive:
         switch (stage) {
           case 0:
-            return 'Soft pass on the weird ones, mostly.';
+            return p.descriptive.s0;
           case 2:
-            return 'A documented refusal on every off-scent token, issued '
-                'from the porch and noted.';
+            return p.descriptive.s2;
           case 3:
-            return 'A notarized refusal per off-scent token, issued from '
-                'the porch with one paw raised, the other still.';
+            return p.descriptive.s3;
           default:
-            return 'A polite refusal on suspicious tokens, issued from the '
-                'porch.';
+            return p.descriptive.def;
         }
       case CommitVoice.narrative:
         switch (stage) {
           case 0:
-            return 'The fox just sort of stopped eating the weird ones. '
-                'Easy.';
+            return p.narrative.s0;
           case 2:
-            return 'Every token used to go down without much thought; now '
-                'there\u2019s a pause, a proper look, and a refusal for '
-                'the ones that don\u2019t sit right.';
+            return p.narrative.s2;
           case 3:
-            return 'Every token used to go down without thinking. Now: a '
-                'pause. The air, taken in. The air, held. The fox watches '
-                'the porch boards for the small twitch they sometimes have '
-                'when something is off, and only then is the call made.';
+            return p.narrative.s3;
           default:
-            return 'Every token used to be swallowed without ceremony; now '
-                'there\u2019s a whiff first.';
+            return p.narrative.def;
         }
     }
   }
 
   /// Extra text for the "balanced" coverage tier (also included in "everything").
   String _balancedSuffixFor(CommitVoice voice, int stage) {
+    final p = t.settings.commitPreview.balancedSuffix;
     switch (voice) {
       case CommitVoice.verbLed:
         switch (stage) {
           case 0:
-            return ' Porch is fine. Backyard is whatever.';
+            return p.verbLed.s0;
           case 2:
-            return ' Porch swept after each refusal; backyard mud allowed '
-                'within posted hours.';
+            return p.verbLed.s2;
           case 3:
-            return ' Porch swept and re-swept; backyard mud catalogued by '
-                'paw-print and weather, and the fox lingers at the '
-                'threshold longer than before.';
+            return p.verbLed.s3;
           default:
-            return ' Porch stays clean; backyard keeps its mud rights.';
+            return p.verbLed.def;
         }
       case CommitVoice.descriptive:
         switch (stage) {
           case 0:
-            return ' Porch okay. Backyard does backyard things.';
+            return p.descriptive.s0;
           case 2:
-            return ' Porch as evidence-clean zone; backyard as designated '
-                'mud zone, hours posted.';
+            return p.descriptive.s2;
           case 3:
-            return ' Porch as evidence-grade clean room; backyard as '
-                'cataloged mud archive; threshold as a place the fox '
-                'stands and thinks too long.';
+            return p.descriptive.s3;
           default:
-            return ' Clean porch; mud rights preserved in the backyard.';
+            return p.descriptive.def;
         }
       case CommitVoice.narrative:
         switch (stage) {
           case 0:
-            return ' Porch was fine. Backyard, who knows.';
+            return p.narrative.s0;
           case 2:
-            return ' The porch was kept clean afterward; the fox retreated '
-                'to the backyard, which is where the thinking happens.';
+            return p.narrative.s2;
           case 3:
-            return ' The porch was scrubbed twice that evening. The fox '
-                'walked the backyard slow, paused at the same fence post '
-                'as always, and looked back at the porch like the porch '
-                'owed something.';
+            return p.narrative.s3;
           default:
-            return ' The porch stays clean, though the backyard still '
-                'wins on dignity.';
+            return p.narrative.def;
         }
     }
   }
 
   /// Extra text for the "everything" coverage tier only.
   String _everythingSuffix(CommitVoice voice, int stage) {
+    final p = t.settings.commitPreview.everythingSuffix;
     switch (voice) {
       case CommitVoice.verbLed:
         switch (stage) {
           case 0:
-            return ' Amber\u2019s there. Drift drifts. Thorn pricks if it '
-                'has to. Mostly nothing.';
+            return p.verbLed.s0;
           case 2:
-            return ' Amber holds each scent for review. Drift carries the '
-                'day\u2019s air toward the gate thorn, which marks each '
-                'refusal for the evening tally.';
+            return p.verbLed.s2;
           case 3:
-            return ' Amber holds each scent and gives a different weight '
-                'depending on the hour. Drift moves through the porch at '
-                'angles that should not matter but do. The gate thorn '
-                'pricks once for refusals and twice for the ones the fox '
-                'almost missed, and the fox knows the difference even '
-                'when nobody else does.';
+            return p.verbLed.s3;
           default:
-            return ' Amber holds the scent. Drift moves it on. The gate '
-                'thorn catches what shouldn\u2019t pass.';
+            return p.verbLed.def;
         }
       case CommitVoice.descriptive:
         switch (stage) {
           case 0:
-            return ' Amber on the post. Drift in the air. Thorn at the '
-                'gate. Fine.';
+            return p.descriptive.s0;
           case 2:
-            return ' Amber as designated scent-witness; drift as a logged '
-                'ambient; thorn-marks as the day\u2019s refusal record, '
-                'reconciled at dusk.';
+            return p.descriptive.s2;
           case 3:
-            return ' Amber as a scent-witness whose silence is itself a '
-                'reading; drift as a patterned ambient that moves wrong '
-                'on the days something is wrong; thorn as the gate\u2019s '
-                'tally-keeper, whose marks the fox checks before bed and '
-                'again before dawn.';
+            return p.descriptive.s3;
           default:
-            return ' Amber as scent-witness; drift as ambient context; '
-                'thorn as the gate\u2019s quiet refusal-mark.';
+            return p.descriptive.def;
         }
       case CommitVoice.narrative:
         switch (stage) {
           case 0:
-            return ' Amber was around. Drift came and went. Thorn did its '
-                'quiet thing. Whatever, it was chill.';
+            return p.narrative.s0;
           case 2:
-            return ' Amber kept the scent-record for the day, drift was '
-                'noted by direction and hour, and the thorn\u2019s marks '
-                'were tallied and countersigned by the porch.';
+            return p.narrative.s2;
           case 3:
-            return ' Amber kept the scent-record, but the fox swears it '
-                'weighs heavier on certain mornings. Drift moved through '
-                'the porch the way it always does, which is to say wrong '
-                'on the days that matter. The gate thorn marked each '
-                'refusal; the fox went out at first light to count them, '
-                'the way you count stairs you have already counted.';
+            return p.narrative.s3;
           default:
-            return ' Amber held the scent-record, drift moved the air, '
-                'and the gate thorn caught what needed catching.';
+            return p.narrative.def;
         }
     }
   }
 
   String _structureLabel(CommitStructure s) => switch (s) {
-        CommitStructure.titleBody => 'title + body',
-        CommitStructure.titleOnly => 'title only',
-        CommitStructure.freeform => 'freeform',
+        CommitStructure.titleBody => t.settings.commitFormat.structureTitleBody,
+        CommitStructure.titleOnly => t.settings.commitFormat.structureTitleOnly,
+        CommitStructure.freeform => t.settings.commitFormat.structureFreeform,
       };
 
   String _voiceLabel(CommitVoice v) => switch (v) {
-        CommitVoice.verbLed => 'action orientated',
-        CommitVoice.descriptive => 'descriptive',
-        CommitVoice.narrative => 'narrative',
+        CommitVoice.verbLed => t.settings.commitFormat.voiceVerbLed,
+        CommitVoice.descriptive => t.settings.commitFormat.voiceDescriptive,
+        CommitVoice.narrative => t.settings.commitFormat.voiceNarrative,
       };
 
   String _coverageLabel(CommitCoverage c) => switch (c) {
-        CommitCoverage.essentials => 'essentials',
-        CommitCoverage.balanced => 'balanced',
-        CommitCoverage.everything => 'everything',
+        CommitCoverage.essentials => t.settings.commitFormat.coverageEssentials,
+        CommitCoverage.balanced => t.settings.commitFormat.coverageBalanced,
+        CommitCoverage.everything => t.settings.commitFormat.coverageEverything,
       };
 
   @override
@@ -12620,7 +12726,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
           Row(
             children: [
               Text(
-                'Format',
+                context.t.settings.commitFormat.title,
                 style: TextStyle(
                   color: t.textNormal,
                   fontSize: 13,
@@ -12648,7 +12754,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
                   final peeking = _peekStructure.value != null ||
                       _peekVoice.value != null ||
                       _peekCoverage.value != null;
-                  if (peeking) parts.add('peek');
+                  if (peeking) parts.add(context.t.settings.commitFormat.peek);
                   return AnimatedContainer(
                     duration:
                         context.motion(const Duration(milliseconds: 140)),
@@ -12744,7 +12850,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
           ),
           const SizedBox(height: 12),
           _CommitFormatChipRow<CommitStructure>(
-            label: 'Structure',
+            label: context.t.settings.commitFormat.structure,
             options: CommitStructure.values,
             committed: widget.structure,
             peeking: _peekStructure,
@@ -12765,7 +12871,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
           ),
           const SizedBox(height: 10),
           _CommitFormatChipRow<CommitVoice>(
-            label: 'Voice',
+            label: context.t.settings.commitFormat.voice,
             options: CommitVoice.values,
             committed: widget.voice,
             peeking: _peekVoice,
@@ -12786,7 +12892,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
           ),
           const SizedBox(height: 10),
           _CommitFormatChipRow<CommitCoverage>(
-            label: 'Coverage',
+            label: context.t.settings.commitFormat.coverage,
             options: CommitCoverage.values,
             committed: widget.coverage,
             peeking: _peekCoverage,
@@ -13099,16 +13205,15 @@ class _ExternalToolsCard extends StatelessWidget {
           ]
         : <ExternalToolPreset>[];
     return _StateCard(
-      title: 'External Tools',
-      summary:
-          'Right-click a project in the sidebar to open it with one of these. Args use {path} for the project folder.',
+      title: context.t.settings.externalTools.title,
+      summary: context.t.settings.externalTools.summary,
       wide: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!detection.isLoaded)
             Text(
-              'Detecting installed tools…',
+              context.t.settings.externalTools.detecting,
               style: TextStyle(color: t.textMuted, fontSize: 12),
             )
           else
@@ -13116,7 +13221,7 @@ class _ExternalToolsCard extends StatelessWidget {
           if (detection.isLoaded && availablePresets.isEmpty && tools.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              'All known presets are already added. Use “+ Custom” to add more.',
+              context.t.settings.externalTools.allPresetsAdded,
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 11,
@@ -13136,7 +13241,7 @@ class _ExternalToolsCard extends StatelessWidget {
           ] else ...[
             const SizedBox(height: 8),
             Text(
-              'No tools configured yet. Add one above.',
+              context.t.settings.externalTools.noToolsConfigured,
               style: TextStyle(color: t.textMuted, fontSize: 12),
             ),
           ],
@@ -13145,13 +13250,13 @@ class _ExternalToolsCard extends StatelessWidget {
     );
   }
 
-  static const _categoryLabels = {
-    ExternalToolCategory.ai: 'ai',
-    ExternalToolCategory.editors: 'editors',
-    ExternalToolCategory.explore: 'explore',
-    ExternalToolCategory.ops: 'ops',
-    ExternalToolCategory.gitOps: 'git ops',
-  };
+  static Map<ExternalToolCategory, String> get _categoryLabels => {
+        ExternalToolCategory.ai: t.settings.externalTools.categoryAi,
+        ExternalToolCategory.editors: t.settings.externalTools.categoryEditors,
+        ExternalToolCategory.explore: t.settings.externalTools.categoryExplore,
+        ExternalToolCategory.ops: t.settings.externalTools.categoryOps,
+        ExternalToolCategory.gitOps: t.settings.externalTools.categoryGitOps,
+      };
 
   static List<Widget> _buildPresetShelves(
     BuildContext context,
@@ -13325,7 +13430,7 @@ class _ExternalToolRowState extends State<_ExternalToolRow> {
           width: 120,
           child: AppTextField(
             controller: _labelCtrl,
-            hintText: 'Name',
+            hintText: context.t.settings.externalTools.nameHint,
             onChanged: (_) => _schedulePersist(),
           ),
         ),
@@ -13335,7 +13440,7 @@ class _ExternalToolRowState extends State<_ExternalToolRow> {
           width: 110,
           child: AppTextField(
             controller: _execCtrl,
-            hintText: 'command',
+            hintText: context.t.settings.externalTools.commandHint,
             mono: true,
             onChanged: (_) => _schedulePersist(),
           ),
@@ -13363,7 +13468,7 @@ class _ExternalToolRowState extends State<_ExternalToolRow> {
         ),
         const SizedBox(width: 6),
         _GhostMiniButton(
-          label: _testInFlight ? '…' : 'test',
+          label: _testInFlight ? '…' : context.t.settings.externalTools.test,
           onTap: _testInFlight ? null : () => unawaited(_runTest()),
         ),
         const SizedBox(width: 4),
@@ -13371,7 +13476,7 @@ class _ExternalToolRowState extends State<_ExternalToolRow> {
         // Tooltip + close icon to match the "Forget this project"
         // affordance in the project context menu.
         Tooltip(
-          message: 'Remove tool',
+          message: context.t.settings.externalTools.removeTool,
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
@@ -13446,8 +13551,8 @@ class _ToolModeToggle extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          seg(ToolLaunchMode.newTerminal, 'terminal'),
-          seg(ToolLaunchMode.detached, 'detached'),
+          seg(ToolLaunchMode.newTerminal, context.t.settings.externalTools.modeTerminal),
+          seg(ToolLaunchMode.detached, context.t.settings.externalTools.modeDetached),
         ],
       ),
     );
@@ -13817,7 +13922,7 @@ class _GiteaTokenCardState extends State<_GiteaTokenCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SettingsSubtitle('Gitea tokens'),
+        _SettingsSubtitle(context.t.settings.gitea.title),
         const SizedBox(height: 8),
         for (final host in entries) ...[
           Container(
@@ -13885,7 +13990,7 @@ class _GiteaTokenCardState extends State<_GiteaTokenCard> {
               width: 150,
               child: AppTextField(
                 controller: _hostCtrl,
-                hintText: 'host',
+                hintText: context.t.settings.gitea.hostHint,
                 mono: true,
                 height: 26,
                 fontSize: 10,
@@ -13896,7 +14001,7 @@ class _GiteaTokenCardState extends State<_GiteaTokenCard> {
             Expanded(
               child: AppTextField(
                 controller: _tokenCtrl,
-                hintText: 'token',
+                hintText: context.t.settings.gitea.tokenHint,
                 mono: true,
                 height: 26,
                 fontSize: 10,
@@ -13905,7 +14010,7 @@ class _GiteaTokenCardState extends State<_GiteaTokenCard> {
             ),
             const SizedBox(width: 6),
             _GhostMiniButton(
-              label: 'save',
+              label: context.t.settings.gitea.save,
               onTap: () => unawaited(_add()),
             ),
           ],
@@ -13948,7 +14053,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
 
   Future<void> _browse() async {
     final result = await FilePicker.platform.pickFiles(
-      dialogTitle: 'Select wick executable',
+      dialogTitle: t.settings.wick.selectExecutable,
       type: FileType.any,
     );
     if (result != null && result.files.single.path != null) {
@@ -13973,7 +14078,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
     final wick = context.watch<WickState>();
     final live = wick.available;
     final statusColor = live ? t.stateAdded : t.textFaint;
-    final hint = live ? 'wick · connected' : 'wick · path to executable';
+    final hint = live ? context.t.settings.wick.connected : context.t.settings.wick.pathToExecutable;
     // alpha-math is scaffolded but not yet a live engine, so `available`
     // is always false today and this renders the blanked "coming soon"
     // tease. When the engine ships and detect() flips available, the row
@@ -13983,7 +14088,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SettingsSubtitle('& Integrations'),
+        _SettingsSubtitle(context.t.settings.integrations.title),
         const SizedBox(height: 8),
         MouseRegion(
           cursor: SystemMouseCursors.click,
@@ -14024,7 +14129,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                     ),
                   ),
                   Text(
-                    'alpha',
+                    context.t.settings.integrations.alpha,
                     style: TextStyle(
                       fontSize: 8,
                       fontFamily: AppFonts.mono,
@@ -14062,7 +14167,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                 ),
                 const SizedBox(width: 7),
                 Text(
-                  'lsp · coming soon',
+                  context.t.settings.integrations.lspComingSoon,
                   style: TextStyle(
                     fontSize: 10,
                     fontFamily: AppFonts.mono,
@@ -14071,7 +14176,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                 ),
                 const Spacer(),
                 Text(
-                  'planned',
+                  context.t.settings.integrations.planned,
                   style: TextStyle(
                     fontSize: 8,
                     fontFamily: AppFonts.mono,
@@ -14109,8 +14214,8 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                 const SizedBox(width: 7),
                 Text(
                   alphaMathLive
-                      ? 'alpha-math · connected'
-                      : 'alpha-math · coming soon',
+                      ? context.t.settings.integrations.alphaMathConnected
+                      : context.t.settings.integrations.alphaMathComingSoon,
                   style: TextStyle(
                     fontSize: 10,
                     fontFamily: AppFonts.mono,
@@ -14119,7 +14224,7 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                 ),
                 const Spacer(),
                 Text(
-                  alphaMathLive ? 'alpha' : 'planned',
+                  alphaMathLive ? context.t.settings.integrations.alpha : context.t.settings.integrations.planned,
                   style: TextStyle(
                     fontSize: 8,
                     fontFamily: AppFonts.mono,

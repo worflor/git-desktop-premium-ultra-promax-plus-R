@@ -1,0 +1,582 @@
+{
+  "@@locale": "zh-Hans",
+  "language": {
+    "title": "语言",
+    "summary": "此应用的界面语言。Git 输出、日志和诊断信息保持英文，以便错误报告可搜索。",
+    "label": "显示语言",
+    "systemDefault": "系统默认",
+    "systemDefaultDetail": "跟随你的操作系统语言（{resolved}）",
+    "disclosureSource": "源语言，由开发者撰写。",
+    "disclosureAi": "由 {model} 机器翻译，尚未经人工审校。欢迎指正。",
+    "disclosureAiReviewed": "由 {model} 机器翻译，已人工审校 {percent}%。",
+    "disclosureHuman": "人工翻译，由社区维护。",
+    "reviewedBy": "由 {names} 审校。"
+  },
+  "sectionLabels": {
+    "preferences": "偏好",
+    "shortcuts": "快捷键",
+    "behaviour": "行为",
+    "aiProviders": "AI 提供方",
+    "modelSlots": "模型槽位",
+    "tools": "工具",
+    "diagnostics": "诊断",
+    "offenders": "问题项",
+    "release": "发布"
+  },
+  "errors": {
+    "saveGuardrailProfile": "保存护栏配置失败。",
+    "saveRetentionPolicy": "保存保留策略失败。",
+    "saveUpdateChannel": "保存更新通道失败。",
+    "saveModelSelection": "保存 AI 模型选择失败。",
+    "saveModelAlias": "保存模型别名失败。",
+    "saveCommitMessageModelSlot": "保存提交信息模型槽位失败。",
+    "saveReviewModelSlot": "保存审查模型槽位失败。",
+    "saveCommitMessageCustomPrompt": "保存提交信息自定义提示词失败。",
+    "saveReviewGuide": "保存审查指引失败。",
+    "saveMuseNotes": "保存 muse 备注失败。",
+    "saveReviewDoubleCheck": "保存审查复核模式失败。",
+    "saveApiPiggybackCli": "保存 API 搭载 CLI 失败。",
+    "clearLocalData": "无法清除本地数据：{error}"
+  },
+  "promptStatus": {
+    "editing": "编辑中",
+    "saving": "保存中",
+    "saveFailed": "保存失败"
+  },
+  "clearData": {
+    "dialogTitle": "清除本地数据",
+    "clear": "清除",
+    "confirmDiagnostics": "清除本地诊断样本和性能计时？",
+    "confirmAudit": "清除本地 AI 审计元数据记录？",
+    "confirmAll": "清除所有本地诊断样本和 AI 审计元数据记录？",
+    "confirmWipeAll": "抹除所有本地应用数据 — 包括最近仓库列表 — 并退出？磁盘上你实际的 git 仓库不会被触及。",
+    "confirmReset": "重置本地应用数据并退出？\n\n设置、主题、引导、AI 偏好、遥测和 engram 缓存都会被清除。你的最近仓库列表将保留。"
+  },
+  "guardrailStageLabels": ["宽松", "均衡", "严格", "偏执"],
+  "guardrailMacro": {
+    "loose": "宽松",
+    "balanced": "均衡",
+    "strict": "严格",
+    "paranoid": "偏执"
+  },
+  "guardrails": {
+    "title": "护栏",
+    "summary": "整个体验中自动化的专注程度。"
+  },
+  "appearance": {
+    "title": "外观",
+    "summary": "全局界面氛围与气质。"
+  },
+  "retention": {
+    "title": "本地数据保留",
+    "summaryDiagnostics": "诊断保留策略。",
+    "summaryWithAudit": "诊断和 AI 审计保留策略。",
+    "unitDays": "天",
+    "unitMb": "MB",
+    "includesNote": "包括诊断、性能计时和元数据。"
+  },
+  "navigation": {
+    "title": "导航与动态",
+    "summaryShortcuts": "快捷键与界面行为。",
+    "summaryWithAi": "快捷键、界面行为和 AI 路由。"
+  },
+  "behaviour": {
+    "title": "行为动态"
+  },
+  "retentionClear": {
+    "diag": "诊断",
+    "audit": "审计",
+    "all": "全部",
+    "clearsHint": "<-- 清除"
+  },
+  "channels": {
+    "stable": "稳定版",
+    "beta": "测试版",
+    "dev": "开发版"
+  },
+  "pollResult": {
+    "upToDate": "已是最新",
+    "updateAvailable": "有可用更新 {version}",
+    "notConfigured": "无更新服务器",
+    "notFound": "无 {channel} 版本",
+    "unreachable": "无法访问",
+    "badManifest": "清单错误"
+  },
+  "keybindingProfile": {
+    "label": "快捷键配置",
+    "porcelain": "瓷釉",
+    "numeric": "数字",
+    "porcelainDescription": "组合键快捷方式（先按 G，再按 C、H、B…）。",
+    "numericDescription": "单个数字键快捷方式（1、2、3…）。"
+  },
+  "apiKeys": {
+    "keyHintDefault": "api 密钥",
+    "endpointHint": "端点",
+    "test": "测试",
+    "hide": "隐藏",
+    "show": "显示"
+  },
+  "shortcuts": {
+    "navigate": "导航",
+    "staging": "暂存",
+    "branchesPrs": "分支与 PR",
+    "modifiers": "修饰键",
+    "changes": "更改",
+    "history": "历史",
+    "branches": "分支",
+    "xray": "透视",
+    "switchAlways": "切换（始终）",
+    "search": "搜索",
+    "dismiss": "关闭",
+    "refresh": "刷新",
+    "shortcuts": "快捷键",
+    "nextChange": "下一处改动",
+    "prevChange": "上一处改动",
+    "toggleLine": "切换行",
+    "toggleHunk": "切换 hunk",
+    "toggleFile": "切换文件",
+    "pinContext": "固定上下文",
+    "commit": "提交",
+    "acceptHint": "采纳提示",
+    "undo": "撤销",
+    "navigateRow": "导航",
+    "expand": "展开",
+    "checkout": "检出",
+    "approve": "批准",
+    "requestChanges": "请求修改",
+    "selectRange": "选择范围",
+    "extendedMenu": "扩展菜单"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI 只读模式",
+    "aiReadOnlyDescription": "阻止 AI 自动写入或暂存改动。",
+    "logoMotionLabel": "切出标签页时 Logo 仍动画",
+    "logoMotionDescriptionEnabled": "它被设计得很高效，别伤它的心",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "记住进行中的工作",
+    "rememberWipDescription": "在会话之间保留你的提交草稿和文件选择。",
+    "stashCabinetLabel": "储藏柜默认展开",
+    "stashCabinetDescription": "当仓库有搁架时，默认展开档案柜抽屉。",
+    "instantBlameLabel": "即时 blame 悬停",
+    "instantBlameDescription": "跳过在差异行上显示 blame 信息前的 180ms 延迟。",
+    "autoSelectLabel": "自动选择新改动",
+    "autoSelectDescription": "新跟踪或改动的文件会自动加入提交选择。",
+    "fetchIssuesLabel": "加载分支时抓取在线议题",
+    "fetchIssuesDescription": "打开分支页面时在后台从你的 git 提供方拉取 PR 和议题详情。",
+    "hateAiLabel": "我讨厌 AI",
+    "hateAiDescription": "放逐所有 LLM 驱动的功能。Logos 会继续运行，因为它只是谱数学。"
+  },
+  "diffDiffability": {
+    "title": "差异可差异性"
+  },
+  "modelSlots": {
+    "loadingProviders": "正在加载提供方…",
+    "refreshingProviders": "正在刷新提供方诊断…",
+    "routeDescription": "重命名配置并将其路由到任意检测到的提供方模型。",
+    "loadingCategories": "正在加载模型类别…",
+    "noOptions": "尚无可用的模型选项。请先检测一个兼容的本地 AI CLI。",
+    "slotsAppearWhenAvailable": "一旦提供方模型可用，模型槽位设置就会出现在这里。",
+    "effortDefault": "默认",
+    "noModelsForSlot": "未为此槽位检测到模型。",
+    "viaProvider": "经由 {provider}",
+    "customModelId": "自定义模型 id"
+  },
+  "modelPicker": {
+    "noMatch": "没有模型匹配“{query}”",
+    "noModels": "无可用模型",
+    "filterHint": "筛选模型…",
+    "warming": "预热中…",
+    "detailsUnavailable": "详情不可用",
+    "free": "免费"
+  },
+  "aiFeatures": {
+    "commitDescription": "依据你的结构、语气和覆盖偏好，从暂存改动起草提交信息。",
+    "reviewDescription": "在提交前审查当前提交范围。",
+    "museDescription": "三阶段神谕，先头脑风暴，再为差异综合出一个前进方向。"
+  },
+  "commitEditor": {
+    "styleGuide": "风格指南",
+    "styleGuideHint": "可选。语气 / 语调 / 禁忌。上面的格式负责骨架。"
+  },
+  "review": {
+    "additionalNotes": "审查时一并参考的附加备注",
+    "doubleCheckLabel": "复核审查",
+    "doubleCheckDescription": "在显示最终报告前运行第二遍验证。"
+  },
+  "museHint": {
+    "loose": "有什么想温和引导的？今天心情不错。",
+    "balanced": "该着墨什么，该略过什么。诚实，但不刻薄。",
+    "strict": "标准。禁忌。muse 不会放过的东西。",
+    "paranoid": "调校透镜。流形该以什么频率共鸣？"
+  },
+  "museEditor": {
+    "additionalNotes": "给 muse 的附加备注"
+  },
+  "museStage": {
+    "brainstorm": "头脑风暴",
+    "synthesize": "综合",
+    "slot": "槽位",
+    "ideaCountLoose": "约 12 个想法",
+    "ideaCountBalanced": "约 16 个想法",
+    "ideaCountStrict": "约 20 个想法",
+    "ideaCountParanoid": "约 24 个想法",
+    "guardrailHint": "{ideas}  ·  护栏：{macro}"
+  },
+  "lensAxis": {
+    "folder": "文件夹",
+    "history": "历史",
+    "far": "远",
+    "near": "近"
+  },
+  "logosLens": {
+    "moduleMap": "模块地图",
+    "repoCenters": "仓库中心",
+    "neighbors": "邻居",
+    "toTouch": "接下来该动什么",
+    "relevanceEngine": "相关性引擎",
+    "description": "读取文件如何跨结构、历史和节奏一同移动，从而让 Manifold 知道什么重要，而不只是什么改了。",
+    "withinReach": "触手可及",
+    "gate": "门",
+    "nearest": "最近",
+    "warming": "预热中",
+    "emptyOpenRepo": "打开一个仓库\n即可实时看到透镜",
+    "emptyNoFiles": "触及范围内\n无文件 — 向\n历史方向拖动"
+  },
+  "sortGuide": {
+    "title": "更改排序指南",
+    "related": "一同改动的文件聚在一起。关注点在前，上下文随后。",
+    "relatedInverted": "孤立的改动在前。紧密耦合的簇沉到底部。",
+    "alphabetical": "按路径 A → Z 排列。不区分大小写，数字按自然顺序。",
+    "alphabeticalInverted": "按路径 Z → A 排列。不区分大小写，数字按自然顺序。",
+    "impact": "改动最重的浮到最前。变动量加权；二进制和新文件会被提升。",
+    "impactInverted": "改动最轻的浮到最前。速战速决在上，重活稍等。",
+    "nearRelated": "近相关",
+    "alphabeticalShort": "字母顺序",
+    "byImpact": "按影响",
+    "flipped": "已翻转",
+    "peek": "窥看"
+  },
+  "piggyback": {
+    "apiModelsUse": "API 模型使用",
+    "codexNotDetected": "未检测到 codex",
+    "dormant": "休眠"
+  },
+  "diffStage": {
+    "viewer": "查看器",
+    "media": "媒体",
+    "binary": "二进制",
+    "hidden": "隐藏"
+  },
+  "undoScope": {
+    "destructiveActions": "破坏性操作",
+    "discards": "丢弃",
+    "commits": "提交",
+    "commitPush": "提交 + 推送",
+    "all": "全部"
+  },
+  "undoWindow": {
+    "label": "撤销窗口",
+    "off": "关",
+    "descriptionInstant": "{scope}立即定稿。",
+    "descriptionDelayed": "{scope}定稿前有 {seconds}s。",
+    "cycleScopeTooltip": "点击以循环切换范围 · 也可在滑块上上下拖动",
+    "resetTooltip": "重置每个操作以使用默认窗口"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "“大概没问题”就是没问题",
+    "proper": "认真读一遍：逻辑、集成、模式",
+    "lookAgain": "再看一遍。也许有东西藏着",
+    "assumeWrong": "假定有问题。把它找出来"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "例如：聚焦高层逻辑和重大 bug。简明而宽容。",
+    "surfaceBugs": "例如：浮现潜在 bug、架构不一致和边界情况失败。",
+    "scrutinize": "例如：逐行审视优化、安全和模式合规。",
+    "trustNothing": "例如：不信任何东西。质疑每个副作用。把每一行都当作潜在故障。",
+    "optional": "关于审查该关注什么的可选指引。"
+  },
+  "commitFormat": {
+    "title": "格式",
+    "peek": "窥看",
+    "structure": "结构",
+    "voice": "语气",
+    "coverage": "覆盖",
+    "structureTitleBody": "标题 + 正文",
+    "structureTitleOnly": "仅标题",
+    "structureFreeform": "自由形式",
+    "voiceVerbLed": "行动导向",
+    "voiceDescriptive": "描述性",
+    "voiceNarrative": "叙述性",
+    "coverageEssentials": "要点",
+    "coverageBalanced": "均衡",
+    "coverageEverything": "面面俱到"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "让狐狸跳过闻着不对劲的饼干",
+        "s2": "训练狐狸吞下前拒收被动过手脚的饼干",
+        "s3": "迫使狐狸在门口对每块饼干做取证核验",
+        "def": "教狐狸拒收坏饼干"
+      },
+      "descriptive": {
+        "s0": "狐狸现在会挑饼干了",
+        "s2": "饼干检查流程，已灌进狐狸脑里",
+        "s3": "饼干核验取证术，靠反复演练嵌进狐狸体内",
+        "def": "闻饼干协议，已装进狐狸体内"
+      },
+      "narrative": {
+        "s0": "狐狸开始跳过闻着不对劲的饼干了",
+        "s2": "和狐狸坐下来，一块块理清哪些饼干该拒收",
+        "s3": "花了大半个下午说服狐狸：不是每块递上来的饼干，都真心是块饼干",
+        "def": "让狐狸吃前先闻闻饼干"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "狐狸扫一眼。有点不对的就丢下。",
+        "s2": "狐狸检查每个 token，拒收任何气味不对的，并在门廊记下这次拒收。",
+        "s3": "狐狸绕着每个 token 转，从三个角度嗅空气，拒收任何读着不对的，再等上一拍确认拒收生效。",
+        "def": "狐狸如今会嗅每个 token，礼貌地谢绝可疑的那些。"
+      },
+      "descriptive": {
+        "s0": "对怪异的那些，大多轻轻放过。",
+        "s2": "对每个气味不对的 token 都有一次记录在案的拒收，从门廊发出并记下。",
+        "s3": "对每个气味不对的 token 都有一次公证过的拒收，从门廊发出，一爪抬起，另一爪不动。",
+        "def": "对可疑 token 从门廊发出一次礼貌的拒收。"
+      },
+      "narrative": {
+        "s0": "狐狸就这么不再吃那些怪的了。轻松。",
+        "s2": "每个 token 从前都不假思索地咽下去；如今有了停顿、有了认真一看、对不对劲的那些有了拒收。",
+        "s3": "每个 token 从前都不假思索地咽下去。如今：一次停顿。空气，纳入。空气，屏住。狐狸盯着门廊的木板，等那种东西不对时它们偶尔会有的微小抽动，只有那时才做出判断。",
+        "def": "每个 token 从前都不带仪式地被咽下；如今先有一嗅。"
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " 门廊没事。后院随便。",
+        "s2": " 每次拒收后清扫门廊；后院的泥在张贴的时段内允许。",
+        "s3": " 门廊一扫再扫；后院的泥按爪印和天气编目，狐狸在门槛停留得比从前更久。",
+        "def": " 门廊保持干净；后院保留它的泥权。"
+      },
+      "descriptive": {
+        "s0": " 门廊还行。后院干后院的事。",
+        "s2": " 门廊作为证据洁净区；后院作为指定泥区，时段已张贴。",
+        "s3": " 门廊作为证据级洁净室；后院作为编目泥档案库；门槛作为狐狸站着想太久的地方。",
+        "def": " 门廊干净；泥权保留在后院。"
+      },
+      "narrative": {
+        "s0": " 门廊没事。后院，谁知道呢。",
+        "s2": " 门廊事后被保持干净；狐狸退回后院，那才是思考发生的地方。",
+        "s3": " 那晚门廊被刷了两遍。狐狸慢慢走过后院，在那根一如既往的篱笆桩旁停下，回头看门廊，仿佛门廊欠了什么。",
+        "def": " 门廊保持干净，尽管后院在尊严上仍然胜出。"
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " 琥珀在那儿。飘移飘着。荆棘必要时会刺。大多啥也没有。",
+        "s2": " 琥珀留住每股气味供复核。飘移把当天的空气送向门口的荆棘，荆棘为每次拒收标记，供傍晚清点。",
+        "s3": " 琥珀留住每股气味，并按时辰给出不同权重。飘移以本不该有影响却有影响的角度穿过门廊。门口的荆棘为拒收刺一下，为狐狸险些漏掉的那些刺两下，哪怕没别人看得出，狐狸也分得清其中的差别。",
+        "def": " 琥珀留住气味。飘移把它送走。门口的荆棘拦下不该通过的。"
+      },
+      "descriptive": {
+        "s0": " 琥珀在桩上。飘移在空气里。荆棘在门口。没事。",
+        "s2": " 琥珀作为指定气味见证者；飘移作为记录在案的环境气息；荆棘刺痕作为当天的拒收记录，黄昏时对账。",
+        "s3": " 琥珀作为气味见证者，其沉默本身即是一种读数；飘移作为有规律的环境气息，在不对劲的日子里移动得不对劲；荆棘作为门口的记数者，狐狸睡前会查它的刺痕，天亮前再查一遍。",
+        "def": " 琥珀作为气味见证者；飘移作为环境上下文；荆棘作为门口那道安静的拒收刺痕。"
+      },
+      "narrative": {
+        "s0": " 琥珀在附近。飘移来了又走。荆棘悄悄干着它的活。无所谓，挺闲适。",
+        "s2": " 琥珀保管当天的气味记录，飘移按方向和时辰被记下，荆棘的刺痕经清点并由门廊会签。",
+        "s3": " 琥珀保管着气味记录，但狐狸赌咒说某些清晨它分量更重。飘移一如既往地穿过门廊，也就是说，在要紧的日子里移动得不对劲。门口的荆棘为每次拒收做了标记；狐狸天一亮就出门去数它们，像数一遍已经数过的台阶。",
+        "def": " 琥珀保管着气味记录，飘移搅动空气，门口的荆棘拦下了该拦的。"
+      }
+    }
+  },
+  "externalTools": {
+    "title": "外部工具",
+    "summary": "右键点击侧栏中的项目，用其中之一打开它。参数用 \\{path} 表示项目文件夹。",
+    "detecting": "正在检测已安装的工具…",
+    "allPresetsAdded": "所有已知预设都已添加。用“+ 自定义”添加更多。",
+    "noToolsConfigured": "尚未配置工具。在上方添加一个。",
+    "categoryAi": "ai",
+    "categoryEditors": "编辑器",
+    "categoryExplore": "浏览",
+    "categoryOps": "运维",
+    "categoryGitOps": "git 运维",
+    "nameHint": "名称",
+    "commandHint": "命令",
+    "test": "测试",
+    "removeTool": "移除工具",
+    "modeTerminal": "终端",
+    "modeDetached": "分离"
+  },
+  "apiUsage": {
+    "thisMonth": "本月 {used}{limit}"
+  },
+  "gitea": {
+    "title": "Gitea 令牌",
+    "hostHint": "主机",
+    "tokenHint": "令牌",
+    "save": "保存"
+  },
+  "wick": {
+    "selectExecutable": "选择 wick 可执行文件",
+    "connected": "wick · 已连接",
+    "pathToExecutable": "wick · 可执行文件路径"
+  },
+  "integrations": {
+    "title": "& 集成",
+    "alpha": "alpha",
+    "planned": "计划中",
+    "lspComingSoon": "lsp · 即将推出",
+    "alphaMathConnected": "alpha-math · 已连接",
+    "alphaMathComingSoon": "alpha-math · 即将推出"
+  },
+  "reduceMotion": {
+    "label": "减弱动效",
+    "subtitleStill": "静止…如冰？",
+    "subtitleFlow": "流动如水。"
+  },
+  "resetQuit": {
+    "resetAndQuit": "重置并退出",
+    "keepRepos": "保留仓库",
+    "wipeAll": "全部抹除"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "命令诊断",
+    "networkFlowTelemetry": "网络流遥测",
+    "clearSamples": "清除样本",
+    "clearMetrics": "清除指标",
+    "clearTimings": "清除计时",
+    "recalibrate": "重新校准",
+    "ok": "ok",
+    "noCommandTimings": "尚未捕获命令计时。运行常规操作以填充诊断。",
+    "noBackendSamples": "尚未捕获后端命令样本。运行 git 和设置操作以填充此日志。",
+    "noDiffSessions": "尚未捕获差异渲染会话。打开并滚动文件差异以填充此面板。",
+    "noUiSessions": "尚未捕获 UI 计时会话。打开面板并导航路由以填充此面板。",
+    "recentOperations": "近期操作",
+    "recentBackendOperations": "近期后端操作",
+    "recentDiffSessions": "近期差异会话",
+    "recentUiTimings": "近期 UI 计时",
+    "uniqueCommands": {
+      "other": "{n} 个唯一命令"
+    },
+    "scopedCommands": {
+      "other": "{n} 个作用域命令"
+    },
+    "instrumentedEvents": {
+      "other": "{n} 个已插桩事件"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | 卡顿 {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["命令", "p50", "可靠性", "范围"],
+    "headersBackend": ["作用域", "p50", "p95", "失败"],
+    "headersDiff": ["渲染器", "首次绘制", "帧 p95", "光栅 p95", "卡顿"],
+    "headersUi": ["事件", "p50", "失败", "范围"]
+  },
+  "telemetry": {
+    "samples": {
+      "other": "{n} 个样本"
+    },
+    "commands": {
+      "other": "{n} 个命令"
+    },
+    "sessions": {
+      "other": "{n} 个会话"
+    },
+    "events": {
+      "other": "{n} 个事件"
+    },
+    "stability": "{pct}% 稳定性",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "执行流",
+    "description": "在代码上模拟振子。在脆弱的执行路径结晶为 bug 之前把它们浮现出来。",
+    "idle": "闲置",
+    "emptyOpenRepo": "打开一个仓库\n即可看到流分析",
+    "scanning": "正在扫描",
+    "analysing": "正在分析\n透镜中的文件…",
+    "fragility": "脆弱性",
+    "findings": "发现",
+    "gap": "间隙",
+    "clean": "干净",
+    "severity": "严重度",
+    "critical": "严重",
+    "warn": "警告",
+    "info": "信息"
+  },
+  "museStrands": {
+    "spark": "灵感火花 · 眼下就该走的下一步",
+    "current": "水中的暗流 · 现在时的延伸",
+    "horizon": "眺望地平线 · 触及远方的方向",
+    "fever": "从高烧的梦中醒来 · 挑衅",
+    "echo": "峡谷间的回响 · 别处的类比",
+    "vertigo": "崖边的眩晕 · 相邻的风险",
+    "ghost": "旧日的幽灵 · 历史上下文",
+    "mirror": "静水上的镜面 · 倒置"
+  },
+  "cliPiggyback": {
+    "title": "CLI 搭载",
+    "clearCacheLabel": "清除缓存",
+    "clearCacheTooltip": "抹除缓存的模型并重新探测。清掉提供方已下线的那些。",
+    "refreshLabel": "刷新提供方",
+    "refreshTooltip": "立即重新探测每个提供方。",
+    "body": "把界面消息直接管道给本地提供方二进制文件。"
+  },
+  "header": {
+    "title": "工作区偏好",
+    "subtitle": "为整个工作区配置全局美学、界面动态和核心操作保障。",
+    "releaseNotesTooltip": "发布说明",
+    "replayOnboardingTooltip": "重放引导"
+  },
+  "diagnosticsPanel": {
+    "title": "性能诊断",
+    "copyTrace": "复制轨迹",
+    "offenderRanking": "问题项排名",
+    "offenderRankingSubtitle": "各数据流中的延迟推手。",
+    "noOffenders": "尚无问题项排名。捕获诊断活动以填充此列表。"
+  },
+  "release": {
+    "title": "发布部署",
+    "summary": "更新相关设置。",
+    "deploymentChannel": "部署通道",
+    "captureCrashDiagnostics": "捕获崩溃诊断",
+    "comingSoon": "即将推出。",
+    "checking": "检查中…",
+    "pollForUpdates": "检查更新"
+  },
+  "providerStatus": {
+    "detecting": "检测中…",
+    "ready": "就绪",
+    "notDetected": "未检测到",
+    "configured": "已配置 {count} 个",
+    "notConfigured": "未配置",
+    "cliManaged": "CLI 托管",
+    "connected": "已连接",
+    "modelCount": {
+      "other": "{n} 个模型"
+    },
+    "providerCount": {
+      "other": "{n} 个提供方"
+    }
+  },
+  "meridiem": {
+    "am": "上午",
+    "pm": "下午"
+  },
+  "offenders": {
+    "commandStream": "命令",
+    "diffStream": "差异渲染",
+    "uiStream": "UI 计时",
+    "rendererName": "{mode} 渲染器",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% 失败",
+    "jankFrameMetric": "{jank}% 卡顿 | {frame}ms 帧 p95",
+    "inStream": "在 {stream} 中"
+  }
+}

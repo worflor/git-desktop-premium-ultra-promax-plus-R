@@ -1,0 +1,67 @@
+{
+  "@@locale": "es",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} línea",
+      "other": "{n} líneas"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} archivo.",
+      "other": "{n} archivos."
+    },
+    "lines": {
+      "one": "{n} línea ({bytes}).",
+      "other": "{n} líneas ({bytes})."
+    },
+    "roles": "Roles — {parts}.",
+    "showingNofM": "Mostrando {active} de {total} archivos, ordenados por centralidad estructural."
+  },
+  "heading": {
+    "atAGlance": "De un vistazo",
+    "core": "Núcleo",
+    "gettingStarted": "Primeros pasos",
+    "regions": "Regiones",
+    "shape": "Forma"
+  },
+  "historyStarvedCaveat": "El ranking es limitado: el grafo de acoplamiento no tenía aristas (clon reciente o muy pocos commits). El orden de archivos refleja el tamaño, no la centralidad estructural.",
+  "pitch": {
+    "empty": "Un repositorio sin archivos de texto legibles{detail}.",
+    "emptyBinary": "{n} binario",
+    "emptyUnreadable": "{n} ilegible",
+    "noRegions": {
+      "one": "Un repositorio de {n} archivo activo.",
+      "other": "Un repositorio de {n} archivos activos."
+    },
+    "withRegions": {
+      "one": "Un repositorio de {n} archivo activo — {regions}.",
+      "other": "Un repositorio de {n} archivos activos — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Todo bajo `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 central",
+      "other": "{n} centrales"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Un archivo",
+      "other": "{n} archivos"
+    },
+    "connectsTo": "Se conecta con: {linked}.",
+    "filesLabel": "Archivos:"
+  },
+  "shape": {
+    "bulk": "Código densamente interconectado: la mayoría de los archivos participan en un gran vecindario de cambios compartidos.",
+    "crystalline": "Código en forma de retícula: acoplamiento uniforme y regular entre archivos con estructura local predecible.",
+    "goe": "Código ricamente interconectado: los acoplamientos se reparten entre archivos sin una espina dominante.",
+    "modular": "Código modular: varias regiones cohesivas con acoplamiento cruzado limitado. Trabajar en una región rara vez perturba otra.",
+    "poisson": "Código débilmente acoplado: los archivos evolucionan mayormente por su cuenta, con cambios compartidos ocasionales.",
+    "tree": "Código en forma de árbol: una espina dominante con ramas dependientes. El cambio suele propagarse hacia afuera desde el núcleo."
+  }
+}

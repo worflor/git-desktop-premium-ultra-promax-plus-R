@@ -1,0 +1,23 @@
+{
+  "@@locale": "ja",
+  "noRepositoryOpen": "リポジトリが開かれていません。",
+  "scanningProgress": "スキャン中 {scanned} / {total} ファイル…",
+  "findingsAcrossFiles": "{files} ファイルにわたり {count} 件の指摘",
+  "copiedFindings": "{count} 件の指摘をコピーしました",
+  "copy": "コピー",
+  "noFindings": "実行フローの指摘はありません。",
+  "severity": {
+    "critical": "重大",
+    "warn": "警告",
+    "info": "情報",
+    "joint": "接合"
+  },
+  "kind": {
+    "staleValue": "古い値",
+    "temporalShift": "時間的なずれ",
+    "contextInversion": "文脈の反転",
+    "contradictoryFlow": "矛盾したフロー"
+  },
+  "lineLabel": "L{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

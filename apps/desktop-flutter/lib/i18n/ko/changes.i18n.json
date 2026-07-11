@@ -1,0 +1,523 @@
+{
+  "@@locale": "ko",
+  "usage": {
+    "caption": "{input} 입력 · {output} 출력",
+    "captionCached": "{fresh} 입력 · {cached} 캐시 · {out} 출력",
+    "inWord": "입력",
+    "cachedWord": "캐시",
+    "outWord": "출력",
+    "tipIn": "{value}  입력",
+    "tipCacheRead": "{value}  캐시 읽기",
+    "tipCacheWrite": "{value}  캐시 쓰기",
+    "tipOut": "{value}  출력",
+    "tipReasoning": "{value}  추론",
+    "tipWallClock": "{value}s  실측 시간"
+  },
+  "tabs": {
+    "defaultLabel": "변경사항",
+    "empty": "비어 있음"
+  },
+  "tabStrip": {
+    "newDiffTab": "새 Diff 탭"
+  },
+  "select": {
+    "selectAll": "모두 선택",
+    "deselectAll": "모두 선택 해제"
+  },
+  "constellationToggle": {
+    "backToList": "목록으로 돌아가기",
+    "atlas": "아틀라스, 커밋 후보 보기"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\n결합 대상: {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "새로움",
+    "roleBridge": "브리지",
+    "roleHub": "허브",
+    "roleLeaf": "리프",
+    "roleConnected": "연결됨",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "함께 변경: {name}",
+    "newFile": "새 파일",
+    "nearOtherChanges": "{dir}의 다른 변경 {count}개 근처",
+    "usuallyChangesWithFile": "보통 이 파일과 함께 변경됨: {name}"
+  },
+  "tagInput": {
+    "hint": "태그..."
+  },
+  "composer": {
+    "hintPlaceholder": "커밋 메시지...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "변경 커밋",
+    "primaryCommitChangesDetail": "분리된 HEAD: 동기화 없이 로컬로 커밋합니다.",
+    "primaryPublish": "커밋 & 게시",
+    "primaryPublishDetail": "커밋을 생성하고 이 브랜치를 한 번에 게시합니다.",
+    "primarySync": "커밋 & 동기화",
+    "primarySyncDetail": "커밋을 생성한 뒤, 브랜치를 조정하고 내보냅니다.",
+    "primaryPush": "커밋 & 푸시",
+    "primaryPushDetail": "커밋을 생성하고 즉시 푸시합니다.",
+    "amendLast": "마지막 커밋 수정",
+    "amendAnd": "수정 & {action}",
+    "chooseFile": "다음 커밋을 위해 최소 한 개 파일을 선택하세요.",
+    "writeMessage": "먼저 커밋 메시지를 작성하세요.",
+    "committing": "커밋 중",
+    "committingSync": "커밋 및 동기화 중",
+    "committed": "커밋됨.",
+    "undoFailed": "실행 취소 실패.",
+    "working": "작업 중…",
+    "commitOnly": "커밋만",
+    "noRuntimeModels": "커밋 메시지에 사용할 수 있는 런타임 발견 모델이 없습니다.",
+    "restoreFailedRetry": "{err}\n제외된 파일의 스테이징을 복원할 수 없습니다. 다시 시도하기 전에 인덱스를 확인하세요.",
+    "committedSummary": "{summary} 커밋됨 ({hash}).",
+    "restoreFailedSync": "제외된 파일의 선택을 다시 스테이징할 수 없습니다. 동기화를 건너뜁니다. 동기화 전에 인덱스를 확인하세요.",
+    "noModelLabel": "모델 없음",
+    "chooseBeforeGenerate": "생성 전에 최소 한 개 파일을 선택하세요.",
+    "aiUnavailable": "커밋 메시지 AI를 아직 사용할 수 없습니다.",
+    "generateFailed": "생성 실패.",
+    "stageFailed": "파일 스테이징에 실패했습니다.",
+    "commitFailed": "커밋 실패.",
+    "committedAndRan": "{summary} 커밋됨 ({hash}), {operation} 실행함.",
+    "committedResolved": {
+      "other": "{summary} 커밋됨 ({hash}); 충돌 {n}개 해결."
+    },
+    "conflictsLeft": {
+      "other": "해결할 충돌 {n}개 남음."
+    },
+    "syncBlocked": {
+      "other": "커밋은 성공했지만, 커밋되지 않은 파일 {n}개로 동기화가 차단됐습니다."
+    },
+    "syncStalled": "커밋은 성공했지만, 동기화가 정체됐습니다: {message}",
+    "syncFailed": "커밋은 성공했지만, 동기화에 실패했습니다: {message}"
+  },
+  "rebase": {
+    "continueFailed": "리베이스를 계속할 수 없습니다."
+  },
+  "editor": {
+    "closeBarrier": "편집기 닫기"
+  },
+  "editorTitles": {
+    "any": [
+      "친애하는 git log에게",
+      "git이시여, 저를 용서하소서, 제가 지은 죄가…",
+      "이 순간에 이름을",
+      "떠들어 봐",
+      "말하라!",
+      "네 어미는 dangling reference였고 네 아비에게선 세미콜론 냄새가 났다"
+    ],
+    "short": [
+      "오?",
+      "안녕하세요:)",
+      "그나저나:",
+      "몇 마디",
+      "정중한 버전",
+      "메모 남기기",
+      "무슨 말이었죠..?",
+      "그래, 다 털어놔"
+    ],
+    "mid": [
+      "기록을 위해",
+      "미래의 너에게 전해",
+      "그전에?",
+      "어떻게 됐는지",
+      "네 말로",
+      "너 방금 뭘 했다고?",
+      "잘 접수했음",
+      "귀 기울이고 있어"
+    ],
+    "long": [
+      "당신의 꿈을, 부디",
+      "좋은 말 좀 해봐",
+      "... 그러고 나서 내가 말했지:",
+      "후세가 기다린다",
+      "더 많이 쓰면 버그가 사라진다",
+      "우와",
+      "성스러운 경전"
+    ]
+  },
+  "askHint": {
+    "round": "라운드 {n} — 다듬거나 맥락을 추가하세요.",
+    "symptom": "증상을 설명하세요.",
+    "broken": "무엇이 고장 났나요?",
+    "bug": "버그를 설명하세요.",
+    "error": "오류를 붙여넣으세요."
+  },
+  "fileMenu": {
+    "ripple": "물결",
+    "includeCoChanges": "공동 변경 포함",
+    "deleteFile": "{name} 삭제…",
+    "discardChangesTo": "{name}의 변경 버리기…",
+    "ignore": "무시",
+    "diffTabFromSelection": "선택 항목으로 Diff 탭",
+    "addSelectedToTab": "선택 항목을 {name}에 추가",
+    "diffTabFromFile": "{name}에서 Diff 탭",
+    "addFileToTab": "{tab}에 {file} 추가",
+    "copyFilePath": "파일 경로 복사",
+    "showInExplorer": "탐색기에서 보기"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "단단히 결합됨",
+    "cohesionLoose": "느슨하게 관련됨",
+    "cohesionScattered": "구조적으로 흩어짐",
+    "clusterOne": "모두 한 클러스터에",
+    "clusterSpansDetailed": "클러스터 {count}개에 걸침 (파일 {parts}개)",
+    "clusterSpans": "클러스터 {count}개에 걸침",
+    "roleLine": "파일 {count}개 · {cohesion}",
+    "usuallyChangesWithGroup": "보통 이 그룹과 함께 변경됨: {file}",
+    "splitToNewTab": "새 탭으로 분리",
+    "copyPaths": "경로 {count}개 복사"
+  },
+  "ignoreMenu": {
+    "extension": ".{ext} 확장자",
+    "allSelected": "선택된 {count}개 전체",
+    "couplesWith": {
+      "other": "포함된 파일 {n}개와 결합"
+    },
+    "updateFailed": ".gitignore 업데이트에 실패했습니다."
+  },
+  "discard": {
+    "deleteTitle": "{name} 삭제할까요?",
+    "discardTitle": "{name}의 변경을 버릴까요?",
+    "deleteBody": "{path} — 디스크에서 제거됩니다. 앱 내부에서는 되돌릴 수 없습니다.",
+    "discardBody": "{path}의 모든 변경이 HEAD 상태로 되돌아갑니다. 되돌릴 수 없습니다.",
+    "discard": "버리기",
+    "deletingFile": "{name} 삭제 중",
+    "discardingFile": "{name} 버리는 중",
+    "discardFailed": "변경 버리기에 실패했습니다.",
+    "discardManyTitle": "파일 {count}개의 변경을 버릴까요?",
+    "discardManyBody": "추적된 파일은 HEAD 상태로 되돌아가고, 추적되지 않은 파일은 디스크에서 제거됩니다. 되돌릴 수 없습니다.",
+    "discardManyConfirm": "{count}개 버리기",
+    "discardingManyFiles": "파일 {count}개 버리는 중",
+    "failedOpenExplorer": "파일 탐색기 열기 실패: {error}",
+    "someFailed": "일부 버리기에 실패했습니다."
+  },
+  "snack": {
+    "sameWorktree": "같은 작업 트리 — 버릴 것이 없습니다.",
+    "diffFailed": "Diff 실패: {error}",
+    "deskEmpty": "데스크에 앞선 것이 없습니다 — 빈 덤프.",
+    "sourceDesk": "데스크 {label}",
+    "shelfReadFailed": "선반 읽기 실패: {error}",
+    "shelfEmpty": "빈 선반 — 버릴 것이 없습니다.",
+    "sourceShelf": "선반 {label}",
+    "noModelConfigured": "\"{label}\"에 구성된 모델이 없습니다.",
+    "fetchFailed": "페치 실패: {error}"
+  },
+  "trace": {
+    "title": "검증 추적",
+    "draftReview": "초안 리뷰"
+  },
+  "cleanTree": {
+    "title": "작업 트리 깨끗함",
+    "subtitle": "스테이징되거나 스테이징되지 않은 변경이 감지되지 않았습니다.",
+    "noUpstream": "  ·  업스트림 없음",
+    "ahead": " 앞섬",
+    "behind": " 뒤처짐",
+    "refreshing": "새로고침 중...",
+    "refresh": "새로고침",
+    "check": "확인",
+    "checkTooltip": "페치 및 로컬 새로고침.",
+    "sync": "& 동기화"
+  },
+  "guardrail": {
+    "loose": "느슨",
+    "balanced": "균형",
+    "strict": "엄격",
+    "paranoid": "편집증"
+  },
+  "dropHint": {
+    "fromShelf": "이 선반의 변경을 여기로 가져오려면 놓으세요",
+    "fromDesk": "이 데스크의 변경을 여기로 가져오려면 놓으세요"
+  },
+  "diffEmpty": {
+    "title": "선택된 파일 없음",
+    "message": "diff를 살펴보려면 변경된 파일을 선택하세요."
+  },
+  "shelvePill": {
+    "shelveN": "↓ {count}개 보류",
+    "shelve": "↓ 보류",
+    "shelvedCount": "{count}개 보류됨 {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "가져오기",
+    "peek": "엿보기",
+    "toss": "버리기"
+  },
+  "stashContents": {
+    "reading": "선반 읽는 중…",
+    "empty": "빈 선반"
+  },
+  "stashFile": {
+    "binary": "바이너리"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "스테이징된 줄만 커밋",
+    "doubleClickToggle": "더블클릭: 전체 그룹 토글",
+    "repoRoot": "저장소 루트"
+  },
+  "resolveStrip": {
+    "reading": {
+      "other": "파일 {n}개 읽는 중 · 해결 초안 작성 중…"
+    },
+    "conflictsAcross": {
+      "other": "{files}에 걸쳐 충돌 {n}개"
+    },
+    "resolve": "해결",
+    "orWith": "또는",
+    "resolveWith": "{label} 사용해 해결",
+    "resolveWithModel": "{label} 사용해 해결  ·  {model}",
+    "resolving": "해결 중…",
+    "resolveWithGlyph": "↵  {label} 사용해 해결",
+    "orWithAnother": "또는 다른 모델로"
+  },
+  "badge": {
+    "stagedEdit": "스테이징된 편집",
+    "edited": "편집됨",
+    "stagedAdd": "스테이징된 추가",
+    "added": "추가됨",
+    "stagedDelete": "스테이징된 삭제",
+    "deleted": "삭제됨",
+    "stagedRename": "스테이징된 이름 변경",
+    "renamed": "이름 변경됨",
+    "stagedCopy": "스테이징된 복사",
+    "copied": "복사됨",
+    "conflict": "충돌",
+    "stagedTypeChange": "스테이징된 타입 변경",
+    "typeChanged": "타입 변경됨",
+    "untracked": "추적 안 됨"
+  },
+  "review": {
+    "title": "코드 리뷰",
+    "includedFiles": {
+      "other": "포함된 파일 {n}개"
+    },
+    "hunkCount": {
+      "other": "헝크 {n}개"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "리뷰를 사용할 수 없음",
+    "backToDiff": "diff로 돌아가기",
+    "verified": "검증됨",
+    "draftOnly": "초안만",
+    "runAgain": "다시 실행",
+    "draftShownBelow": "{error} 아래에 초안 리뷰가 표시됩니다.",
+    "hideTrace": "추적 숨기기",
+    "showTrace": "추적 보기",
+    "showVerificationTrace": "검증 추적 보기",
+    "whyLanded": "이 리뷰가 여기에 이른 이유",
+    "noFindings": "발견 없음",
+    "findings": "발견",
+    "noEvidenceIssues": "이 커밋 범위에서 증거에 기반한 문제가 드러나지 않았습니다.",
+    "observations": "관찰",
+    "chooseBeforeReview": "리뷰 전에 최소 한 개 파일을 선택하세요.",
+    "aiUnavailable": "리뷰 AI를 아직 사용할 수 없습니다.",
+    "failed": "리뷰 실패.",
+    "noRuntimeModels": "커밋 리뷰에 사용할 수 있는 런타임 발견 모델이 없습니다."
+  },
+  "commitBtn": {
+    "switchTo": "전환: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "{cat} 사용해 묻는 중…",
+    "askWith": "{cat} 사용해 묻기",
+    "noModel": "구성된 AI 모델 없음",
+    "nextTooltip": "다음: {cat}  ·  이전은 shift-클릭",
+    "onlyOne": "구성된 AI 카테고리가 하나뿐"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "other": "{pct}% 데자뷰 — 버려진 타임라인의 유령 간선 {n}개가 이 diff를 건드림"
+    },
+    "label": "데자뷰"
+  },
+  "identity": {
+    "none": "구성된 커밋 신원 없음",
+    "asName": "{name} 이름으로",
+    "asNameEmail": "{name} <{email}> 이름으로",
+    "asNameSpace": "{name} 이름으로 ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\n이 저장소의 첫 커밋",
+    "newToRepo": "\n이 저장소에 처음"
+  },
+  "staleScope": {
+    "message": "실행 이후 선택이 변경됨",
+    "rerun": "다시 실행"
+  },
+  "finding": {
+    "openDiff": "diff 열기",
+    "recorded": "기록됨",
+    "dismiss": "닫기"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "당신이 이걸 끌어냈습니다",
+    "fromIdea": "아이디어에서: \"{text}\"",
+    "foothold": "발판 — ",
+    "brainstormSpew": "브레인스톰 분출",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "{count}개 복사",
+    "clear": "지우기",
+    "chooseBeforeMuse": "muse를 호출하기 전에 최소 한 개 파일을 선택하세요.",
+    "aiUnavailable": "Muse AI를 아직 사용할 수 없습니다.",
+    "failed": "Muse 실패.",
+    "noRuntimeModels": "muse에 사용할 수 있는 런타임 발견 모델이 없습니다.",
+    "needsModel": "Muse에는 구성된 모델이 최소 하나 필요합니다.",
+    "dreaming": "muse가 꿈꾸는 중..."
+  },
+  "debug": {
+    "title": "디버그",
+    "round": "· 라운드 {n}",
+    "clear": "지우기",
+    "close": "닫기",
+    "analyzing": "증상 분석 중…",
+    "describeSymptom": "증상을 설명한 뒤 디버그를 누르세요.",
+    "evidenceFor": "근거",
+    "evidenceAgainst": "반증",
+    "narrowDown": "범위를 좁히는 데 도움이 될 것:",
+    "failed": "디버그 실패.",
+    "refinementFailed": "디버그 정제 실패."
+  },
+  "includeSummary": {
+    "none": "없음",
+    "stagedSuffix": " · {count}개 스테이징됨",
+    "full": {
+      "other": "전체 {n}개 파일{staged}"
+    },
+    "partial": "{n}개 중 {count}개{staged}",
+    "shortAll": "전체 {n}개{staged}"
+  },
+  "status": {
+    "unavailableTitle": "저장소 상태를 사용할 수 없음",
+    "loadingTitle": "저장소 상태 불러오는 중",
+    "loadingMessage": "작업 트리를 읽는 중."
+  },
+  "stash": {
+    "appliedWithConflicts": "충돌과 함께 스태시가 적용됐습니다 — 변경사항 페이지에서 해결하세요 (스태시 항목은 유지됨).",
+    "couldNotPop": "스태시를 팝할 수 없습니다.",
+    "listChanged": "스태시 목록이 변경됐습니다. 버리기를 건너뜁니다. 다시 시도하세요.",
+    "droppingStash": "스태시 버리는 중"
+  },
+  "tooltips": {
+    "commitGenerating": "커밋 메시지 생성 중...",
+    "commitPreparing": "커밋 메시지 준비 중...",
+    "commitSelectFile": "커밋 메시지를 생성하려면 최소 한 개 파일을 선택하세요.",
+    "commitConfigure": "설정 > 행동 다이내믹스 > 커밋 메시지에서 커밋 메시지를 구성하세요.",
+    "fastFallback": "빠름",
+    "commitGenerateWith": "{label} 모델로 커밋 메시지 생성",
+    "museConsulting": "muse에게 자문 중...",
+    "showMuse": "muse 보기",
+    "museSelectFile": "muse를 위해 최소 한 개 파일을 선택하세요.",
+    "showMuseError": "muse 오류 보기",
+    "museAsk": "muse에게 방향을 묻기",
+    "museAskWithModels": "muse에게 방향을 묻기\n{brainstorm} → {synthesis}",
+    "qualityFallback": "품질",
+    "reviewing": "리뷰 중...",
+    "showReview": "리뷰 보기",
+    "reviewPreparing": "커밋 리뷰 준비 중...",
+    "reviewSelectFile": "리뷰하려면 최소 한 개 파일을 선택하세요.",
+    "reviewConfigure": "설정에서 리뷰 AI를 구성하세요.",
+    "viewingReview": "리뷰 보는 중",
+    "reviewWith": "{label} 모델로 {guardrail} 리뷰"
+  },
+  "mergeEditor": {
+    "resolutionYours": "내 것",
+    "resolutionTheirs": "상대 것",
+    "resolutionCustom": "사용자 정의",
+    "keepBoth": "둘 다 유지",
+    "trust": {
+      "manual": "수동",
+      "safe": "안전",
+      "guided": "안내",
+      "assisted": "보조",
+      "full": "전체",
+      "label": "신뢰: {label}"
+    },
+    "allResolved": "모두 해결됨",
+    "resolveEasy": "쉬운 충돌 해결",
+    "base": "기준",
+    "cancel": "취소",
+    "save": "저장",
+    "complete": "완료",
+    "nextFile": "다음 파일",
+    "edit": "편집",
+    "auto": "자동",
+    "undo": "실행 취소",
+    "keyHints": {
+      "accept": "수락",
+      "other": "다른 쪽",
+      "both": "둘 다",
+      "navigate": "이동",
+      "jumpNext": "다음으로 이동"
+    },
+    "favoredTooltip": "결합 분석에 의해 구조적으로 선호됨",
+    "newOnBothSides": "(양쪽 모두 새로움)",
+    "writeFailed": "해결된 파일 쓰기 실패: {error}",
+    "neighborsCoChanged": "이웃 {changed}/{total}개 공동 변경됨",
+    "integrity": "무결성 {pct}%",
+    "reviewer": "리뷰어: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "\"{category}\"에 구성된 모델이 없습니다. 설정 → AI에서 설정하세요.",
+    "sensitiveFilesSkipped": {
+      "other": "민감한 파일 {n}개 건너뜀 — 직접 해결하세요."
+    },
+    "couldNotReadFiles": "충돌 파일을 하나도 읽을 수 없습니다.",
+    "blockedSecret": "차단됨 — 충돌 파일에 {secret} 유형의 비밀이 포함된 것으로 보입니다. 직접 해결하세요.",
+    "resolutionFailed": "해결 실패: {error}",
+    "mergeResolutionLabel": "◇ 병합 해결 · 파일 {resolved}/{total}개 · {category}",
+    "conflictSummary": "{op} · {files}에 걸쳐 {conflicts}",
+    "conflictCount": {
+      "other": "충돌 {n}개"
+    },
+    "mergeEditorButton": "⇋ 병합 편집기",
+    "noAiModel": "AI 모델 없음",
+    "later": "나중에",
+    "discard": "버리기",
+    "resolveWithAi": "◇ AI로 해결",
+    "otherModel": "다른 모델",
+    "withModel": "{model} 사용"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "병합",
+      "cherryPick": "체리픽",
+      "revert": "되돌리기",
+      "resolve": "해결",
+      "switchOp": "전환",
+      "pull": "풀",
+      "rebase": "리베이스",
+      "rebaseOnto": "{base} 위로 {branch} 리베이스"
+    },
+    "pushFailed": "푸시 실패",
+    "rebasedAndPushed": "리베이스 후 푸시했습니다.",
+    "switchedTo": "이제 {name}에 있습니다.",
+    "switchFailed": "전환 실패.",
+    "switchedToCarried": "이제 {name}에 있습니다 (변경 이어짐).",
+    "alreadyUpToDate": "이미 최신입니다.",
+    "merged": "{upstream} 병합됨 (파일 {n}개).",
+    "rebaseNotConverge": "리베이스가 수렴하지 않았습니다 — 직접 해결하세요.",
+    "rebased": "리베이스됨.",
+    "rebasedResolved": {
+      "other": "리베이스됨 (파일 {n}개 해결)."
+    },
+    "detachedHead": "동기화할 수 없음: 분리된 HEAD 상태입니다. 먼저 브랜치를 체크아웃하세요.",
+    "publishFailed": "게시 실패.",
+    "noRemote": "구성된 원격이 없습니다. 이 브랜치를 게시하려면 하나 추가하세요.",
+    "failed": "실패"
+  },
+  "constellation": {
+    "axisStructure": "구조",
+    "axisCoChange": "공동 변경",
+    "axisSpectralProfile": "스펙트럴 프로파일",
+    "axisPathSiblings": "경로 형제",
+    "axisDiffStructure": "DIFF 구조",
+    "axisSpectral": "스펙트럴",
+    "titleUnsorted": "정렬 안 됨",
+    "titleSingleton": "싱글턴",
+    "titleMixed": "혼합",
+    "untie": "풀기",
+    "bind": "묶기",
+    "emptyClusters": "아직 클러스터 없음"
+  }
+}

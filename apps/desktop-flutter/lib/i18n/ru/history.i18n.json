@@ -1,0 +1,152 @@
+{
+  "@@locale": "ru",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "высокая важность",
+      "importanceModerate": "умеренная важность",
+      "mostlyAdditions": "в основном добавления",
+      "mostlyDeletions": "в основном удаления",
+      "tightlyCoupled": "тесно связанные файлы",
+      "overlapsWorkingTree": "пересекается с рабочим каталогом"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(корень)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} ещё",
+    "filesInDir": {
+      "one": "{n} файл в {path}/",
+      "few": "{n} файла в {path}/",
+      "many": "{n} файлов в {path}/",
+      "other": "{n} файлов в {path}/"
+    },
+    "moreFilesCount": {
+      "one": "ещё {n} файл",
+      "few": "ещё {n} файла",
+      "many": "ещё {n} файлов",
+      "other": "ещё {n} файлов"
+    },
+    "breadcrumbAll": "все",
+    "breadcrumbCurrentFocus": "Текущий фокус: {target}",
+    "breadcrumbViewAllChanges": "Показать все изменения в этом коммите",
+    "breadcrumbDrillUpTo": "Подняться до {target}",
+    "trackStats": {
+      "one": "{n} файл  +{adds}  -{dels}",
+      "few": "{n} файла  +{adds}  -{dels}",
+      "many": "{n} файлов  +{adds}  -{dels}",
+      "other": "{n} файлов  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} подкаталог",
+      "few": "{n} подкаталога",
+      "many": "{n} подкаталогов",
+      "other": "{n} подкаталогов"
+    },
+    "segmentLeafSummary": "{path}, добавлено {adds}, удалено {dels}",
+    "segmentContainerSummary": {
+      "one": "{n} файл, добавлено {adds}, удалено {dels}",
+      "few": "{n} файла, добавлено {adds}, удалено {dels}",
+      "many": "{n} файлов, добавлено {adds}, удалено {dels}",
+      "other": "{n} файлов, добавлено {adds}, удалено {dels}"
+    },
+    "hunkCount": {
+      "one": "{n} ханк",
+      "few": "{n} ханка",
+      "many": "{n} ханков",
+      "other": "{n} ханков"
+    },
+    "largestChangeInView": "крупнейшее изменение в этом виде",
+    "conflictedTag": "конфликт",
+    "dirtyTag": "грязный",
+    "drillInTag": "углубиться",
+    "changeTypeRenamed": "переименован",
+    "changeTypeCopied": "скопирован",
+    "changeTypeTypechange": "смена типа",
+    "changeTypeConflict": "конфликт",
+    "coreFile": "файл ядра",
+    "staleFile": "устаревший",
+    "filterPathHint": "фильтр по пути",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Закрыть мировую линию",
+    "dragToOpenWorldline": "Потяните, чтобы открыть мировую линию"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "текущая ветка",
+    "applyCommitOnto": "Применить изменения коммита к {branch}",
+    "revertCommitOn": "Откатить изменения коммита на {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick приостановлен. Завершите оставшиеся конфликты на странице «Изменения».",
+    "failed": "Сбой cherry-pick: {error}",
+    "pickedResolved": "Cherry-pick {short} (конфликты устранены)",
+    "picked": "Cherry-pick {short}"
+  },
+  "revert": {
+    "paused": "Откат приостановлен. Завершите оставшиеся конфликты на странице «Изменения».",
+    "failed": "Сбой отката: {error}",
+    "revertedResolved": "Откачен {short} (конфликты устранены)",
+    "reverted": "Откачен {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "Создать ветку отсюда…",
+    "copyCommitHash": "Копировать хеш коммита",
+    "createBranchDialogTitle": "Создать ветку из записи reflog",
+    "anchorLine": "Якорь: {short}  ·  {summary}",
+    "branchNameHint": "имя ветки",
+    "createAction": "Создать",
+    "createBranchFailed": "Не удалось создать ветку: {error}",
+    "branchCreatedAt": "Ветка «{name}» создана на {short}."
+  },
+  "revealCeilingExceeded": {
+    "one": "Этот коммит глубже, чем {n} загруженный коммит.",
+    "few": "Этот коммит глубже, чем {n} загруженных коммита.",
+    "many": "Этот коммит глубже, чем {n} загруженных коммитов.",
+    "other": "Этот коммит глубже, чем {n} загруженных коммитов."
+  },
+  "deleteTagFailed": "Не удалось удалить метку: {error}",
+  "loadingTitle": "Загрузка истории",
+  "loadingMessage": "Читаю недавние коммиты.",
+  "unavailableTitle": "История недоступна",
+  "toggleWorldline": "Переключить мировую линию",
+  "pageTitle": "История",
+  "viewingLast": "Показаны последние",
+  "commitsUnit": "коммитов",
+  "noCommitSelectedTitle": "Коммит не выбран",
+  "noCommitSelectedMessage": "Выберите коммит, чтобы изучить его изменения.",
+  "loadingCommitTitle": "Загрузка коммита",
+  "loadingCommitMessage": "Читаю детали коммита.",
+  "commitUnavailableTitle": "Коммит недоступен",
+  "couldNotLoadCommit": "Не удалось загрузить коммит.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Загрузить reflog",
+  "createTag": "Создать метку",
+  "newTagName": "Имя новой метки",
+  "newTagNameError": "Имя новой метки — {error}",
+  "allFilesHeader": {
+    "one": "{n} файл · все изменения",
+    "few": "{n} файла · все изменения",
+    "many": "{n} файлов · все изменения",
+    "other": "{n} файлов · все изменения"
+  },
+  "allChangesLabel": "все изменения",
+  "rebase": {
+    "firstCommitCannotBe": "Первый коммит не может быть {action}",
+    "rebaseCommitCount": {
+      "one": "Rebase {n} коммит",
+      "few": "Rebase {n} коммита",
+      "many": "Rebase {n} коммитов",
+      "other": "Rebase {n} коммитов"
+    },
+    "resetLabel": "сброс",
+    "dragToReorderHint": "перетаскивайте для порядка, действие для каждого коммита",
+    "newMessageHint": "новое сообщение",
+    "runningEllipsis": "…",
+    "startRebase": "Начать rebase"
+  },
+  "inFlight": {
+    "header": "В РАБОТЕ",
+    "deskFallbackLabel": "стол"
+  }
+}

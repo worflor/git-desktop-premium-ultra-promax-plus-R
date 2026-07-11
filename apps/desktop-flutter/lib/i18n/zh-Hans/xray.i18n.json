@@ -1,0 +1,261 @@
+{
+  "@@locale": "zh-Hans",
+  "board": {
+    "movesWithModule": "与另一个模块一同改动",
+    "reviewerCount": {
+      "other": "{n} 位审查者"
+    },
+    "territory": "领地",
+    "unreviewed": "未审查"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} 个提交 · {days} 天\n{lines}",
+    "burstTooltipSingle": "{label} 有 {n} 个提交",
+    "gapTooltip": "{n} 天间隔 · {label}",
+    "reflogTooltip": "{label} 有 {n} 个 reflog 事件"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "仓库的分支面足够广，值得用分支感知的方式来导航。",
+      "broadTitle": "分支模型有面积",
+      "localBranchesDetail": "{count} 个本地分支。",
+      "localBranchesLabel": "本地分支",
+      "remoteBranchesDetail": "{count} 个远程分支。",
+      "remoteBranchesLabel": "远程分支",
+      "simpleClaim": "可见的分支模型很窄。",
+      "simpleTitle": "简单分支模型"
+    },
+    "bursty": {
+      "claim": "工作以集中的爆发方式落地，而非平稳的日常节律。",
+      "title": "爆发式开发节奏"
+    },
+    "hiddenRefs": {
+      "claim": "{count} 个引用位于常规分支/标签空间之外。",
+      "evidenceDetail": "{count} 个引用位于 heads/remotes/tags 之外。",
+      "evidenceLabel": "隐藏引用",
+      "namespacesLabel": "命名空间",
+      "title": "隐藏的 Git 命名空间"
+    },
+    "keystone": {
+      "claim": {
+        "other": "少数几个文件相对其改动次数承担了不成比例的共变权重。"
+      },
+      "evidenceDetail": {
+        "other": "{n} 次改动 · 引力 φ={score}"
+      },
+      "title": {
+        "other": "{n} 个关键石桥接文件"
+      }
+    },
+    "machineHistory": {
+      "claim": "检查点式的提交实质性地扭曲了朴素的历史指标。",
+      "machineCommitsDetail": "{count} 个提交匹配机器/会话模式。",
+      "machineCommitsLabel": "机器提交",
+      "rawVsFilteredDetail": "{raw} 个原始提交对 {filtered} 个过滤后提交。",
+      "rawVsFilteredLabel": "原始对过滤",
+      "title": "机器历史主导原始指标"
+    },
+    "migration": {
+      "claim": "历史从 `{older}` 转向 `{newer}`，暗示一次技术栈或表层的迁移。",
+      "stratumDetail": "{touches} 次改动，上次活跃 {lastActive}。",
+      "title": "可见的架构迁移"
+    },
+    "narrowHotspot": {
+      "claim": "少数文件和目录吸收了不成比例的改动份额。",
+      "title": "热点集中且狭窄",
+      "topHotspotDetail": "{path} 占可见热点集的 {pct}%。",
+      "topHotspotLabel": "首要热点",
+      "visibleAuthorsDetail": "此历史切片中有 {count} 位作者。",
+      "visibleAuthorsLabel": "可见作者"
+    },
+    "noTags": {
+      "claim": "Git 标签未被用作可见的发布或里程碑层。",
+      "remoteEndpointsDetail": "已配置 {count} 个远程端点。",
+      "remoteEndpointsLabel": "远程端点",
+      "tagCountDetail": "找到 0 个标签。",
+      "tagCountLabel": "标签数",
+      "title": "无正式的发布/标签轨迹"
+    },
+    "reflog": {
+      "claim": "Reflog 体量暗示已发布提交之外还有集中的本地迭代。",
+      "peakReflogDayLabel": "reflog 峰值日",
+      "title": "密集的本地编辑会话"
+    },
+    "singleOwner": {
+      "claim": "`{path}` 是一个改动频繁的{kind}，只有一位可见的独立作者。",
+      "ownerCountDetail": "{count} 位独立作者。",
+      "ownerCountLabel": "所有者数量",
+      "title": "单一所有者热点",
+      "touchCountLabel": "改动次数",
+      "touchDetailFiltered": "过滤后历史中 {count} 次改动。",
+      "touchDetailRaw": "原始历史中 {count} 次改动。"
+    }
+  },
+  "cardTitle": {
+    "branches": "分支",
+    "bursty": "爆发",
+    "hiddenRefs": "隐藏引用",
+    "machineHeavy": "机器主导",
+    "migration": "迁移",
+    "narrowHotspot": "狭窄热点",
+    "noTags": "无标签",
+    "reflog": "reflog",
+    "singleOwner": "单一所有者"
+  },
+  "grain": {
+    "coarsest": "最粗 — 顶层模块",
+    "finest": "最细粒度",
+    "mid": "中等粒度",
+    "oneCharacteristic": "一个特征尺度"
+  },
+  "header": {
+    "dirtyBadge": "脏",
+    "machineChip": "机器",
+    "refresh": "刷新",
+    "refreshing": "正在刷新…",
+    "title": "仓库透视"
+  },
+  "hotspot": {
+    "clusterPeers": "簇内同伴",
+    "coChangers": "共变者",
+    "keystone": "关键石",
+    "keystoneScore": "关键石  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "分支",
+    "commitsHumanMachine": "人工 · {n} 机器",
+    "commitsLabel": "提交",
+    "confidenceLabel": "置信度",
+    "curlLabel": "旋度",
+    "engineSection": "引擎",
+    "gradientLabel": "梯度",
+    "harmonicLabel": "谐波",
+    "headLabel": "头",
+    "hiddenRefsLabel": "隐藏引用",
+    "mergeCount": {
+      "other": "{n} 次合并"
+    },
+    "noTags": "无标签",
+    "notesLabel": "注释",
+    "openCommit": "打开提交",
+    "pathLabel": "路径",
+    "remoteCount": "{n} 个远程",
+    "renamesLabel": "重命名",
+    "scannedAt": "扫描于 {time}",
+    "selectedCount": "已选 {n} 个",
+    "shapeLinear": "线性",
+    "shapeMergeHeavy": "合并密集",
+    "shapeMostlyLinear": "基本线性",
+    "stashCount": {
+      "other": "{n} 个储藏"
+    },
+    "stressLabel": "应力",
+    "tagCount": {
+      "other": "{n} 个标签"
+    },
+    "worktreeCount": {
+      "other": "{n} 个工作树"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "正在探查 Git 历史、引用、节奏和热点。",
+    "buildingTitle": "正在构建仓库透视",
+    "idleMessage": "再次打开面板以探查当前仓库。",
+    "idleTitle": "仓库透视",
+    "unavailableTitle": "仓库透视不可用"
+  },
+  "metabolism": {
+    "halfLife": "{n} 天半衰期"
+  },
+  "multi": {
+    "clusterCount": {
+      "other": "{n} 个簇"
+    },
+    "clusterSingle": "簇 {id}",
+    "couplingSuffix": "{parts} 耦合",
+    "externalCount": "{n} 个外部",
+    "mutualCount": "{n} 个互相"
+  },
+  "recency": {
+    "days": "{n} 天",
+    "months": "{n} 月",
+    "today": "今天",
+    "weeks": "{n} 周",
+    "years": "{n} 年"
+  },
+  "rings": {
+    "hintOneBlended": "一个混合结构",
+    "hintSelfSimilar": "自相似",
+    "oneBlendedBody": "一个混合结构 — 尚无可分离的模块尺度解析出来。",
+    "overHistory": "纵观历史",
+    "parts": "部分",
+    "readingHint": "正在读取结构…",
+    "scaleCount": {
+      "other": "{n} 个尺度"
+    },
+    "scaleDissolved": "一个结构尺度消融了",
+    "scaleEmerged": "一个结构尺度浮现了",
+    "scaleSpectrum": "尺度谱",
+    "selfSimilarBody": "自相似 — 结构跨尺度重复，无单一特征层级。",
+    "shiftInHistory": {
+      "other": "历史中 {n} 次转变"
+    },
+    "structuralShiftCount": {
+      "other": "{n} 次结构转变"
+    },
+    "title": "生长环",
+    "unavailable": "不可用"
+  },
+  "stats": {
+    "alive": "存活",
+    "files": "文件",
+    "lastTouched": "上次改动",
+    "owner": {
+      "other": "所有者"
+    },
+    "touches": "改动次数"
+  },
+  "stratumLabel": {
+    "current": "当前",
+    "legacy": "遗留",
+    "zone": "仓库区"
+  },
+  "summary": {
+    "analysisFailed": "分析失败：{error}",
+    "analyze": "分析",
+    "copied": "摘要已复制到剪贴板。",
+    "directionHint": "方向",
+    "download": "下载",
+    "emptyState": "运行 Logos 分析以描绘此仓库的结构与区域。\n(tw: 现在还有点糙)",
+    "exit": "退出",
+    "generating": "正在读取仓库并聚类特征…",
+    "noModel": "未配置 AI 模型。",
+    "noModelConfigured": "未配置 AI 模型",
+    "presentWith": "用 {label} 演示",
+    "presentingWith": "正在用 {label} 演示…",
+    "reanalyze": "重新分析",
+    "saveDialogTitle": "保存仓库摘要",
+    "saveFailed": "保存失败：{error}",
+    "savePresentationDialogTitle": "保存演示",
+    "savedTo": "已保存到 {path}"
+  },
+  "tabs": {
+    "map": "地图",
+    "signals": "信号",
+    "summary": "摘要",
+    "time": "时间"
+  },
+  "trajectory": {
+    "connectivity": "连通性",
+    "events": "{n} 个事件",
+    "openInOrrery": "在天象仪中打开",
+    "readingHint": "正在读取历史…",
+    "snapshots": "{n} 个快照",
+    "steady": "平稳 — 此窗口内无结构事件。",
+    "title": "结构轨迹"
+  },
+  "verdict": {
+    "canonical": "{pct}% 典范",
+    "tooltip": "{archetype} · {canonical}% 典范 · {decisive}% 决定性"
+  }
+}

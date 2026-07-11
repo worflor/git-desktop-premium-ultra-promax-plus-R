@@ -1,0 +1,60 @@
+{
+  "@@locale": "ko",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "other": "{n}줄"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "other": "파일 {n}개."
+    },
+    "lines": {
+      "other": "{n}줄 ({bytes})."
+    },
+    "roles": "역할 — {parts}.",
+    "showingNofM": "구조적 중심성 순으로 정렬된 {total}개 파일 중 {active}개 표시 중."
+  },
+  "heading": {
+    "atAGlance": "한눈에 보기",
+    "core": "핵심",
+    "gettingStarted": "시작하기",
+    "regions": "영역",
+    "shape": "형태"
+  },
+  "historyStarvedCaveat": "순위가 제한적입니다: 결합 그래프에 간선이 없습니다(갓 클론했거나 커밋이 너무 적음). 파일 순서는 구조적 중심성이 아니라 크기를 반영합니다.",
+  "pitch": {
+    "empty": "읽을 수 있는 텍스트 파일이 없는 저장소입니다{detail}.",
+    "emptyBinary": "바이너리 {n}개",
+    "emptyUnreadable": "읽을 수 없는 파일 {n}개",
+    "noRegions": {
+      "other": "활성 파일 {n}개로 이루어진 저장소입니다."
+    },
+    "withRegions": {
+      "other": "활성 파일 {n}개로 이루어진 저장소입니다 — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "모두 `{dir}` 아래에 있습니다.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "other": "핵심 {n}개"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "other": "파일 {n}개"
+    },
+    "connectsTo": "연결 대상: {linked}.",
+    "filesLabel": "파일:"
+  },
+  "shape": {
+    "bulk": "촘촘히 얽힌 코드베이스: 대부분의 파일이 하나의 큰 공동 변경 이웃에 참여합니다.",
+    "crystalline": "격자 모양 코드베이스: 파일 전반에 균일하고 규칙적인 결합, 예측 가능한 국소 구조.",
+    "goe": "풍부하게 얽힌 코드베이스: 지배적인 등뼈 없이 결합이 파일 전반에 퍼져 있습니다.",
+    "modular": "모듈형 코드베이스: 교차 결합이 제한된 여러 응집 영역. 한 영역의 작업이 다른 영역을 건드리는 일은 드뭅니다.",
+    "poisson": "느슨하게 결합된 코드베이스: 파일들이 대체로 독립적으로 진화하며, 이따금 공동 변경이 있습니다.",
+    "tree": "나무 모양 코드베이스: 하나의 지배적인 등뼈와 그에 딸린 가지들. 변경은 보통 핵심에서 바깥으로 전파됩니다."
+  }
+}

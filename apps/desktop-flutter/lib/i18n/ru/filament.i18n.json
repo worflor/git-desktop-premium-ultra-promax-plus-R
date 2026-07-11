@@ -1,0 +1,23 @@
+{
+  "@@locale": "ru",
+  "noRepositoryOpen": "Репозиторий не открыт.",
+  "scanningProgress": "сканирование {scanned} / {total} файлов…",
+  "findingsAcrossFiles": "{count} находок в {files} файлах",
+  "copiedFindings": "Скопировано находок: {count}",
+  "copy": "КОПИРОВАТЬ",
+  "noFindings": "Находок по потоку выполнения нет.",
+  "severity": {
+    "critical": "критично",
+    "warn": "предупр.",
+    "info": "инфо",
+    "joint": "узел"
+  },
+  "kind": {
+    "staleValue": "устаревшее значение",
+    "temporalShift": "временной сдвиг",
+    "contextInversion": "инверсия контекста",
+    "contradictoryFlow": "противоречивый поток"
+  },
+  "lineLabel": "стр. {line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

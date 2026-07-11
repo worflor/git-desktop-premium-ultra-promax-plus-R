@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 
 import 'design_primitives.dart';
 import 'tokens.dart';
+import '../i18n/gen/strings.g.dart';
 
 /// Lightweight inline rich text renderer for AI-generated output.
 /// Parses markdown formatting (`**bold**`, `*italic*`, `` `code` ``),
@@ -307,7 +308,7 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
                 ),
                 child: Center(
                   child: Text(
-                    _expanded ? '▲ collapse' : '▼ $hiddenLines more lines',
+                    _expanded ? context.t.app.collapseGlyph : context.t.app.moreLinesGlyph(n: hiddenLines),
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../backend/settings_store.dart';
+import '../i18n/gen/strings.g.dart';
 import '../ui/theme_shaders.dart';
 import '../ui/tokens.dart';
 
@@ -8,16 +9,21 @@ enum KeybindingProfile { classic, compact }
 /// Single source of truth for how each [KeybindingProfile] is labelled in
 /// the UI. The settings page dropdown, the onboarding picker, and anything
 /// else that needs to name a profile all read from here so a rename or a
-/// new profile only has to be updated in one place.
+/// new profile only has to be updated in one place. Localized via the
+/// global [t] (no BuildContext at an extension getter); callers are
+/// rebuilt on locale change by their own context.t reads, so these
+/// resolve fresh each build.
 extension KeybindingProfileLabels on KeybindingProfile {
   String get label => switch (this) {
-        KeybindingProfile.classic => 'Porcelain',
-        KeybindingProfile.compact => 'Numeric',
+        KeybindingProfile.classic => t.settings.keybindingProfile.porcelain,
+        KeybindingProfile.compact => t.settings.keybindingProfile.numeric,
       };
 
   String get description => switch (this) {
-        KeybindingProfile.classic => 'Chorded shortcuts (G then C, H, B…).',
-        KeybindingProfile.compact => 'Single-key numeric shortcuts (1, 2, 3…).',
+        KeybindingProfile.classic =>
+          t.settings.keybindingProfile.porcelainDescription,
+        KeybindingProfile.compact =>
+          t.settings.keybindingProfile.numericDescription,
       };
 }
 

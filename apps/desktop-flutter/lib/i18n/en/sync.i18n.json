@@ -1,0 +1,51 @@
+{
+  "@@locale": "en",
+  "actions": {
+    "syncLabel": "Sync",
+    "syncOpenRepoDetail": "Open a repository to manage push and pull operations.",
+    "detachedHeadLabel": "Detached HEAD",
+    "detachedHeadDetail": "Check out a branch before pushing or pulling.",
+    "publishBranchLabel": "Publish branch",
+    "publishBranchDetail": "Push {branch} and set its upstream tracking branch.",
+    "publishButtonLabel": "Publish",
+    "syncBranchLabel": "Sync branch",
+    "syncBranchDetail": "Pull {behindCount} with rebase, then push {aheadCount}.",
+    "syncBranchButtonLabel": "Pull (rebase) then push",
+    "pushBranchLabel": "Push branch",
+    "pushBranchDetail": "Push {count} to {upstream}.",
+    "pushBranchButtonLabel": "Push commits",
+    "pullUpdatesLabel": "Pull updates",
+    "pullUpdatesDetail": "Pull {count} from {upstream}.",
+    "syncUpToDateDetail": "Fetch from {upstream} and refresh upstream status."
+  },
+  "panel": {
+    "loadingTitle": "Loading remote status",
+    "loadingMessage": "Checking branch tracking information.",
+    "remoteStatusUnavailable": "Remote status unavailable",
+    "noUpstream": "no upstream",
+    "aheadLabel": "Ahead",
+    "behindLabel": "Behind",
+    "treeLabel": "Tree",
+    "runningSync": "Running sync…",
+    "fetching": "Fetching…",
+    "fetchOnly": "Fetch only",
+    "syncFailed": "Sync failed",
+    "forcePushRecoveryLabel": "Force push (with lease)",
+    "conflictsToResolveTitle": "Conflicts to resolve",
+    "conflictsToResolveBody": "{count} need resolving: {list}",
+    "resolveConflicts": "Resolve conflicts",
+    "workingEllipsis": "Working…",
+    "lastActivity": "Last activity: {operation}",
+    "noOutput": "No output.",
+    "resolvedConflicts": "Resolved {count}.",
+    "cancelledUnchanged": "Cancelled, working tree unchanged.",
+    "uncommittedEditsBlocked": "{count} have uncommitted edits, commit them first to rebase-sync ({list}).",
+    "noUpstreamForForcePush": "Cannot force-push: no upstream is configured for \"{branch}\"."
+  },
+  "forcePush": {
+    "confirmTitle": "Force push (with lease)?",
+    "target": "Target: {remote}/{branch}",
+    "warning": "This rewrites the remote branch with your local history. With lease aborts if someone pushed to the remote after your last fetch, but already-fetched changes will still be overwritten. Use only when you intended a rebase or amend that diverged the branch.",
+    "confirmButton": "Force push"
+  }
+}

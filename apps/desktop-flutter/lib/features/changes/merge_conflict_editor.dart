@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../../backend/logos_git.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
@@ -88,11 +89,11 @@ class ConflictBlock {
 
   String get resolutionLabel {
     return switch (resolution) {
-      ConflictSide.ours => 'yours',
-      ConflictSide.theirs => 'theirs',
-      ConflictSide.both => 'keep both',
-      ConflictSide.bothReversed => 'keep both',
-      ConflictSide.custom => 'custom',
+      ConflictSide.ours => t.changes.mergeEditor.resolutionYours,
+      ConflictSide.theirs => t.changes.mergeEditor.resolutionTheirs,
+      ConflictSide.both => t.changes.mergeEditor.keepBoth,
+      ConflictSide.bothReversed => t.changes.mergeEditor.keepBoth,
+      ConflictSide.custom => t.changes.mergeEditor.resolutionCustom,
       ConflictSide.unresolved => '',
     };
   }
@@ -552,7 +553,13 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   ConflictFile get _file => widget.file;
   List<ConflictBlock> get _blocks => _file.blocks;
 
-  static const _trustLabels = ['manual', 'safe', 'guided', 'assisted', 'full'];
+  List<String> _trustLabelsFor(BuildContext context) => [
+        context.t.changes.mergeEditor.trust.manual,
+        context.t.changes.mergeEditor.trust.safe,
+        context.t.changes.mergeEditor.trust.guided,
+        context.t.changes.mergeEditor.trust.assisted,
+        context.t.changes.mergeEditor.trust.full,
+      ];
 
   @override
   void initState() {
@@ -894,6 +901,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final trustLabels = _trustLabelsFor(context);
     final resolved = _file.resolvedCount;
     final total = _blocks.length;
     final allDone = _file.allResolved;
@@ -1050,8 +1058,8 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                           : SystemMouseCursors.click,
                       child: Tooltip(
                         message: allDone
-                            ? 'all resolved'
-                            : 'resolve easy conflicts',
+                            ? context.t.changes.mergeEditor.allResolved
+                            : context.t.changes.mergeEditor.resolveEasy,
                         waitDuration:
                             const Duration(milliseconds: 400),
                         child: Text(
@@ -1077,7 +1085,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                   ),
                   const SizedBox(width: 4),
                   _HeaderChip(
-                    label: 'base',
+                    label: context.t.changes.mergeEditor.base,
                     active: _showBase,
                     onTap: () =>
                         setState(() => _showBase = !_showBase),
@@ -1085,7 +1093,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                   const SizedBox(width: 3),
                   _TrustChip(
                     level: _trustLevel,
-                    labels: _trustLabels,
+                    labels: trustLabels,
                     onChanged: _setTrust,
                   ),
                   const SizedBox(width: 3),
@@ -1102,7 +1110,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                                 enabled: true,
                                 baseBorderColor: t.chromeBorder
                                     .withValues(alpha: 0.2)),
-                    child: Text('cancel',
+                    child: Text(context.t.changes.mergeEditor.cancel,
                         style: TextStyle(
                             color: t.textMuted,
                             fontSize: 9.5,
@@ -1134,9 +1142,9 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
                                             alpha: 0.1)),
                     child: Text(
                       canComplete
-                          ? 'complete'
+                          ? context.t.changes.mergeEditor.complete
                           : nextFileLabel
-                              ? 'next file'
+                              ? context.t.changes.mergeEditor.nextFile
                               : '…',
                       style: TextStyle(
                         color: canComplete
@@ -1190,16 +1198,21 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(children: [
-            _KeyHint('Enter', 'accept', oursColor),
-            _KeyHint('⇧Enter', 'other', theirsColor),
-            _KeyHint('B', 'both', t.textMuted),
+            _KeyHint('Enter', context.t.changes.mergeEditor.keyHints.accept,
+                oursColor),
+            _KeyHint('⇧Enter', context.t.changes.mergeEditor.keyHints.other,
+                theirsColor),
+            _KeyHint('B', context.t.changes.mergeEditor.keyHints.both,
+                t.textMuted),
             const SizedBox(width: 6),
             Container(width: 1, height: 10,
                 color: t.chromeBorder.withValues(alpha: 0.15)),
             const SizedBox(width: 6),
-            _KeyHint('↑↓', 'navigate', t.textMuted),
-            _KeyHint('⌃.', 'jump next', t.textMuted),
-            _KeyHint('⌘Z', 'undo', t.textMuted),
+            _KeyHint('↑↓', context.t.changes.mergeEditor.keyHints.navigate,
+                t.textMuted),
+            _KeyHint('⌃.', context.t.changes.mergeEditor.keyHints.jumpNext,
+                t.textMuted),
+            _KeyHint('⌘Z', context.t.changes.mergeEditor.undo, t.textMuted),
           ]),
         ),
       ]),
@@ -1386,8 +1399,8 @@ class _InlineConflictRegion extends StatelessWidget {
         child: editing
             ? _editingInline(context, t)
             : resolved && !focused
-                ? _resolvedInline(t)
-                : _unresolvedInline(t),
+                ? _resolvedInline(context, t)
+                : _unresolvedInline(context, t),
       ),
     );
   }
@@ -1429,13 +1442,13 @@ class _InlineConflictRegion extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(44, 0, 8, 4),
           child: Row(children: [
             _ActionChip(
-              label: 'save',
+              label: context.t.changes.mergeEditor.save,
               color: oursColor,
               onTap: onSaveEdit,
             ),
             const SizedBox(width: 4),
             _ActionChip(
-              label: 'cancel',
+              label: context.t.changes.mergeEditor.cancel,
               color: t.textMuted,
               onTap: onCancelEdit,
             ),
@@ -1445,9 +1458,11 @@ class _InlineConflictRegion extends StatelessWidget {
     );
   }
 
-  Widget _resolvedInline(AppTokens t) {
+  Widget _resolvedInline(BuildContext context, AppTokens t) {
     final lines = block.resolvedText.split('\n');
-    final label = autoResolved ? 'auto' : 'undo';
+    final label = autoResolved
+        ? context.t.changes.mergeEditor.auto
+        : context.t.changes.mergeEditor.undo;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1503,7 +1518,7 @@ class _InlineConflictRegion extends StatelessWidget {
     );
   }
 
-  Widget _unresolvedInline(AppTokens t) {
+  Widget _unresolvedInline(BuildContext context, AppTokens t) {
     final oursLinesRaw = block.oursText.split('\n');
     final theirsLinesRaw = block.theirsText.split('\n');
     final maxLen = math.max(oursLinesRaw.length, theirsLinesRaw.length);
@@ -1584,7 +1599,7 @@ class _InlineConflictRegion extends StatelessWidget {
                 onTap: onUnresolve,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
-                  child: Text('undo',
+                  child: Text(context.t.changes.mergeEditor.undo,
                       style: TextStyle(
                         color: t.textFaint.withValues(alpha: 0.4),
                         fontSize: 9,
@@ -1636,12 +1651,12 @@ class _InlineActionPillState extends State<_InlineActionPill> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _ActionChip(
-                    label: 'keep both',
+                    label: context.t.changes.mergeEditor.keepBoth,
                     color: t.textMuted,
                     onTap: widget.onBoth),
                 const SizedBox(width: 3),
                 _ActionChip(
-                    label: 'edit',
+                    label: context.t.changes.mergeEditor.edit,
                     color: t.chromeAccent,
                     onTap: widget.onEdit),
               ],
@@ -1742,7 +1757,7 @@ class _InlineSide extends StatelessWidget {
                 top: 2,
                 right: 4,
                 child: Tooltip(
-                  message: 'structurally favored by coupling analysis',
+                  message: context.t.changes.mergeEditor.favoredTooltip,
                   child: Icon(Icons.auto_awesome,
                       size: 10,
                       color: AppTokens.contrastGlyph(t.surface1)
@@ -1779,7 +1794,7 @@ class _BasePanel extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 5, 10, 0),
-            child: Text('base',
+            child: Text(context.t.changes.mergeEditor.base,
                 style: TextStyle(
                   color: t.textFaint,
                   fontSize: 9,
@@ -1792,7 +1807,9 @@ class _BasePanel extends StatelessWidget {
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
               child: SelectableText(
-                text.isEmpty ? '(new on both sides)' : text,
+                text.isEmpty
+                    ? context.t.changes.mergeEditor.newOnBothSides
+                    : text,
                 style: TextStyle(
                   color: text.isEmpty ? t.textFaint : t.textMuted,
                   fontSize: 10.5,
@@ -2009,7 +2026,7 @@ class _TrustChipState extends State<_TrustChip> {
               baseBorderColor: widget.level > 1
                   ? t.chromeAccent.withValues(alpha: 0.3)
                   : t.chromeBorder.withValues(alpha: 0.25)),
-      child: Text('trust: $label',
+      child: Text(context.t.changes.mergeEditor.trust.label(label: label),
           style: TextStyle(
             color: widget.level > 1 ? t.chromeAccent : t.textMuted,
             fontSize: 9.5,
@@ -2103,7 +2120,9 @@ class _MergeEditorPageState extends State<MergeEditorPage> {
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to write resolved files: $e')),
+        SnackBar(
+            content: Text(context.t.changes.mergeEditor
+                .writeFailed(error: '$e'))),
       );
       return;
     }
@@ -2197,14 +2216,17 @@ class _FileTab extends StatelessWidget {
     final resolved = file.allResolved;
     final tipParts = [file.path];
     if (file.changedNeighborCount != null) {
-      tipParts.add(
-          '${file.changedNeighborCount}/${file.totalNeighborCount} neighbors co-changed');
+      tipParts.add(context.t.changes.mergeEditor.neighborsCoChanged(
+          changed: '${file.changedNeighborCount}',
+          total: '${file.totalNeighborCount}'));
     }
     if (file.integrity != null) {
-      tipParts.add('integrity ${(file.integrity! * 100).round()}%');
+      tipParts.add(context.t.changes.mergeEditor
+          .integrity(pct: '${(file.integrity! * 100).round()}'));
     }
     if (file.lastReviewer != null) {
-      tipParts.add('reviewer: ${file.lastReviewer}');
+      tipParts.add(context.t.changes.mergeEditor
+          .reviewer(name: '${file.lastReviewer}'));
     }
     return Tooltip(
       message: tipParts.join('\n'),

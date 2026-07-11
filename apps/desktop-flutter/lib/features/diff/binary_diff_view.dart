@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../../backend/blob_loader.dart';
 import '../../backend/magic_bytes.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/tokens.dart';
 import 'media_renderer.dart';
 
@@ -168,7 +169,9 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
         newBlob: null,
         state: state,
         tokens: t,
-        sizeOverride: '${(tl.sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB (too large to preview)',
+        sizeOverride: context.t.diff.binary.tooLargeToPreview(
+          size: (tl.sizeBytes / (1024 * 1024)).toStringAsFixed(1),
+        ),
       );
     }
 
@@ -180,7 +183,7 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
         newBlob: null,
         state: state,
         tokens: t,
-        sizeOverride: 'Unable to load blob',
+        sizeOverride: context.t.diff.binary.unableToLoadBlob,
       );
     }
 
@@ -220,7 +223,9 @@ class _BinaryDiffViewState extends State<BinaryDiffView> {
       return _OmittedDiffStub(
         tokens: t,
         filePath: widget.filePath,
-        kindLabel: isMediaBucket ? 'media' : 'binary',
+        kindLabel: isMediaBucket
+            ? context.t.diff.binary.omittedKindMedia
+            : context.t.diff.binary.omittedKindBinary,
         icon: isMediaBucket ? Icons.image_outlined : Icons.memory,
       );
     }
@@ -290,7 +295,7 @@ class _OmittedDiffStub extends StatelessWidget {
                 borderRadius: BorderRadius.circular(3),
               ),
               child: Text(
-                '$kindLabel · hidden',
+                context.t.diff.binary.omittedStub(kind: kindLabel),
                 style: TextStyle(
                   color: t.textFaint,
                   fontSize: 10,

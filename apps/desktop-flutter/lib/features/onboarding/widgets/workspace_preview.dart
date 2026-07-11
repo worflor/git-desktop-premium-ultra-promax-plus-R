@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../app/app_identity.dart';
 import '../../../components/hypercube_logo.dart';
 import '../../../components/icons/app_icons.dart';
+import '../../../i18n/gen/strings.g.dart';
 import '../../../ui/design_primitives.dart';
 import '../../../ui/form_controls.dart';
 import '../../../ui/motion.dart';
@@ -138,10 +139,16 @@ class _WorkspacePreviewState extends State<WorkspacePreview> {
         ),
       _PreviewPanel.history => _HistoryPanel(tokens: t),
       _PreviewPanel.branches => _BranchesPanel(tokens: t),
-      _PreviewPanel.xray =>
-        _SimpleCaption(tokens: t, icon: 'xray', text: 'repo x-ray'),
-      _PreviewPanel.settings =>
-        _SimpleCaption(tokens: t, icon: 'settings', text: 'settings'),
+      _PreviewPanel.xray => _SimpleCaption(
+          tokens: t,
+          icon: 'xray',
+          text: context.t.onboarding.preview.panels.xray,
+        ),
+      _PreviewPanel.settings => _SimpleCaption(
+          tokens: t,
+          icon: 'settings',
+          text: context.t.onboarding.preview.panels.settings,
+        ),
     };
   }
 }
@@ -393,7 +400,7 @@ class _PreviewSidebar extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  'Projects',
+                  context.t.onboarding.preview.sidebar.projectsHeader,
                   style: TextStyle(
                     color: tokens.textFaint,
                     fontSize: 8,
@@ -578,7 +585,10 @@ class _FileList extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '${staged.length} of ${files.length} files',
+                  context.t.onboarding.preview.changes.filesStagedCount(
+                    staged: staged.length,
+                    total: files.length,
+                  ),
                   style: TextStyle(
                     color: tokens.textMuted,
                     fontSize: 9.5,
@@ -828,7 +838,7 @@ class _CommitComposer extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '$stagedCount staged',
+            context.t.onboarding.preview.changes.stagedCount(n: stagedCount),
             style: TextStyle(
               color: tokens.textFaint,
               fontSize: 8.5,
@@ -848,7 +858,7 @@ class _CommitComposer extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Commit message…',
+                    context.t.onboarding.preview.changes.commitMessageHint,
                     style: TextStyle(
                       color: tokens.textFaint,
                       fontSize: 9,
@@ -883,7 +893,7 @@ class _CommitComposer extends StatelessWidget {
                       name: 'push', size: 10, color: tokens.textStrong),
                   const SizedBox(width: 6),
                   Text(
-                    'Commit & push',
+                    context.t.onboarding.preview.changes.commitAndPush,
                     style: TextStyle(
                       color: tokens.textStrong,
                       fontSize: 9.5,
@@ -992,7 +1002,12 @@ class _DiffPanel extends StatelessWidget {
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: _diffLinesFor(file, tokens, shortName),
+                children: _diffLinesFor(
+                  file,
+                  tokens,
+                  shortName,
+                  context.t.onboarding.preview.diff.readmeTagline,
+                ),
               ),
             ),
           ),
@@ -1001,7 +1016,12 @@ class _DiffPanel extends StatelessWidget {
     );
   }
 
-  List<Widget> _diffLinesFor(_PreviewFile f, AppTokens t, String name) {
+  List<Widget> _diffLinesFor(
+    _PreviewFile f,
+    AppTokens t,
+    String name,
+    String readmeTagline,
+  ) {
     // Same canon as the commit-format preview: fox/amber/thorn, one scene.
     // The README branch picks up the user's chosen app name so the preview
     // reflects what they just named the client.
@@ -1023,7 +1043,7 @@ class _DiffPanel extends StatelessWidget {
         ],
       _ => [
           ('+', '  ## $name'),
-          ('+', '  Your personal Git client.'),
+          ('+', '  $readmeTagline'),
           (' ', ''),
         ],
     };
@@ -1112,10 +1132,45 @@ class _DiffLine extends StatelessWidget {
 }
 
 
+/// Which translatable demo commit message a row shows — kept as an enum
+/// (rather than a raw literal) so the const commit list can still be
+/// built at compile time while the actual English/localized prose is
+/// resolved from the onboarding namespace at render time.
+enum _MiniCommitMsg { foxSniff, amberHold, cabbageRetire, thornGuard }
+
+/// Demo "time ago" stamp, resolved against `common.time.*` at render
+/// time — reuses the same relative-time vocabulary the real app shows.
+enum _MiniTimeUnit { minutes, hours, days }
+
+class _MiniTimeAgo {
+  final int n;
+  final _MiniTimeUnit unit;
+  const _MiniTimeAgo(this.n, this.unit);
+
+  String resolve(BuildContext context) {
+    final time = context.t.common.time;
+    return switch (unit) {
+      _MiniTimeUnit.minutes => time.minutesAgo(n: n),
+      _MiniTimeUnit.hours => time.hoursAgo(n: n),
+      _MiniTimeUnit.days => time.daysAgo(n: n),
+    };
+  }
+}
+
+String _commitMsgText(BuildContext context, _MiniCommitMsg msg) {
+  final history = context.t.onboarding.preview.history;
+  return switch (msg) {
+    _MiniCommitMsg.foxSniff => history.commit1,
+    _MiniCommitMsg.amberHold => history.commit2,
+    _MiniCommitMsg.cabbageRetire => history.commit3,
+    _MiniCommitMsg.thornGuard => history.commit4,
+  };
+}
+
 class _MiniCommit {
   final String sha;
-  final String msg;
-  final String time;
+  final _MiniCommitMsg msg;
+  final _MiniTimeAgo time;
   final String? tag;
   final int added;
   final int removed;
@@ -1147,14 +1202,37 @@ class _HistoryPanelState extends State<_HistoryPanel> {
   // Same fox/amber/thorn canon as the changes panel — the two newest
   // commits are still local-only so the strip gets its stateAdded span.
   static const List<_MiniCommit> _commits = [
-    _MiniCommit('a3f19', 'teach fox to sniff before swallowing', '2m ago',
-        'forest', 18, 0, false),
     _MiniCommit(
-        'b71e0', 'amber: hold scent overnight', '1h ago', 'scent', 12, 3,
+        'a3f19',
+        _MiniCommitMsg.foxSniff,
+        _MiniTimeAgo(2, _MiniTimeUnit.minutes),
+        'forest',
+        18,
+        0,
         false),
-    _MiniCommit('cc8d2', 'retire cabbage in favor of amber + thorn',
-        '3h ago', null, 6, 9, true),
-    _MiniCommit('d5e4b', 'thorn guards the gate', '1d ago', 'gate', 4, 2,
+    _MiniCommit(
+        'b71e0',
+        _MiniCommitMsg.amberHold,
+        _MiniTimeAgo(1, _MiniTimeUnit.hours),
+        'scent',
+        12,
+        3,
+        false),
+    _MiniCommit(
+        'cc8d2',
+        _MiniCommitMsg.cabbageRetire,
+        _MiniTimeAgo(3, _MiniTimeUnit.hours),
+        null,
+        6,
+        9,
+        true),
+    _MiniCommit(
+        'd5e4b',
+        _MiniCommitMsg.thornGuard,
+        _MiniTimeAgo(1, _MiniTimeUnit.days),
+        'gate',
+        4,
+        2,
         true),
   ];
 
@@ -1183,7 +1261,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
             child: Row(
               children: [
                 Text(
-                  'History',
+                  context.t.onboarding.preview.history.header,
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 8.5,
@@ -1193,7 +1271,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
                 ),
                 const Spacer(),
                 Text(
-                  'viewing last 20 commits',
+                  context.t.onboarding.preview.history.viewingLast,
                   style: TextStyle(
                     color: t.textFaint,
                     fontSize: 7.5,
@@ -1230,7 +1308,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
             child: Row(
               children: [
                 Text(
-                  'IN FLIGHT',
+                  context.t.onboarding.preview.history.inFlight,
                   style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.85),
                     fontSize: 7,
@@ -1583,7 +1661,7 @@ class _MiniCommitRow extends StatelessWidget {
                     ),
                   const Spacer(),
                   Text(
-                    commit.time,
+                    commit.time.resolve(context),
                     style: TextStyle(
                       color: t.textMuted.withValues(alpha: 0.8),
                       fontSize: 7.5,
@@ -1594,7 +1672,7 @@ class _MiniCommitRow extends StatelessWidget {
               ),
               const SizedBox(height: 1.5),
               Text(
-                commit.msg,
+                _commitMsgText(context, commit.msg),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -1608,7 +1686,7 @@ class _MiniCommitRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    'you',
+                    context.t.onboarding.preview.history.you,
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 8,
@@ -1733,13 +1811,13 @@ class _MiniBranch {
   final String name;
   final _MiniStratum stratum;
   final int ahead;
-  final String? age; // idle rows
+  final int? ageDays; // idle rows — resolved via common.time.daysShort
   final List<double>? spark; // head/live rows
   const _MiniBranch(
     this.name,
     this.stratum, {
     this.ahead = 0,
-    this.age,
+    this.ageDays,
     this.spark,
   });
 }
@@ -1757,7 +1835,7 @@ class _BranchesPanel extends StatelessWidget {
         spark: [2, 4, 1, 6, 3, 5, 2, 7, 3, 8, 5, 9, 4, 6]),
     _MiniBranch('fox/sniff-protocol', _MiniStratum.live, ahead: 2,
         spark: [0, 1, 0, 2, 1, 0, 3, 1, 4, 2, 6, 3, 7, 5]),
-    _MiniBranch('amber/in-triplicate', _MiniStratum.idle, age: '12d'),
+    _MiniBranch('amber/in-triplicate', _MiniStratum.idle, ageDays: 12),
     _MiniBranch('thorn/gate-rewrite', _MiniStratum.corpse),
   ];
 
@@ -1782,10 +1860,16 @@ class _BranchesPanel extends StatelessWidget {
             ),
             child: Row(
               children: [
-                _MiniLensTab(tokens: t, label: 'BRANCHES', count: '4',
+                _MiniLensTab(
+                    tokens: t,
+                    label: context.t.onboarding.preview.branches.lensBranches,
+                    count: '4',
                     active: true),
                 const SizedBox(width: 12),
-                _MiniLensTab(tokens: t, label: 'PRs', count: '1',
+                _MiniLensTab(
+                    tokens: t,
+                    label: context.t.onboarding.preview.branches.lensPRs,
+                    count: '1',
                     active: false),
               ],
             ),
@@ -1956,7 +2040,7 @@ class _MiniBranchCardState extends State<_MiniBranchCard> {
                           borderRadius: BorderRadius.circular(3),
                         ),
                         child: Text(
-                          'HEAD',
+                          context.t.onboarding.preview.branches.head,
                           style: TextStyle(
                             color: t.surface0,
                             fontSize: 6.5,
@@ -1985,9 +2069,9 @@ class _MiniBranchCardState extends State<_MiniBranchCard> {
                     ),
                   ),
                 ),
-              if (b.age != null)
+              if (b.ageDays != null)
                 Text(
-                  b.age!,
+                  context.t.common.time.daysShort(n: b.ageDays!),
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 8,
@@ -1997,7 +2081,7 @@ class _MiniBranchCardState extends State<_MiniBranchCard> {
                 ),
               if (isCorpse)
                 Text(
-                  'absorbed',
+                  context.t.onboarding.preview.branches.absorbed,
                   style: TextStyle(
                     color: t.textFaint,
                     fontSize: 8,
@@ -2029,7 +2113,7 @@ class _MiniBranchCardState extends State<_MiniBranchCard> {
                       ),
                     ),
                     child: Text(
-                      'desk',
+                      context.t.onboarding.preview.branches.desk,
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 6.5,
@@ -2045,7 +2129,8 @@ class _MiniBranchCardState extends State<_MiniBranchCard> {
             Padding(
               padding: const EdgeInsets.only(left: 14),
               child: Text(
-                '→ tracking: origin/main',
+                context.t.onboarding.preview.branches
+                    .tracking(ref: 'origin/main'),
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 7.5,

@@ -1,0 +1,582 @@
+{
+  "@@locale": "ko",
+  "language": {
+    "title": "언어",
+    "summary": "이 앱의 UI 언어입니다. Git 출력, 로그, 진단은 버그 보고서를 검색 가능하게 유지하기 위해 영어로 남습니다.",
+    "label": "표시 언어",
+    "systemDefault": "시스템 기본값",
+    "systemDefaultDetail": "OS 언어를 따릅니다 ({resolved})",
+    "disclosureSource": "개발자가 작성한 원본 언어입니다.",
+    "disclosureAi": "{model} 기계 번역입니다. 아직 사람이 검수하지 않았습니다. 수정 환영합니다.",
+    "disclosureAiReviewed": "{model} 기계 번역. {percent}% 사람 검수됨.",
+    "disclosureHuman": "사람 번역, 커뮤니티가 관리합니다.",
+    "reviewedBy": "검수: {names}."
+  },
+  "sectionLabels": {
+    "preferences": "환경설정",
+    "shortcuts": "단축키",
+    "behaviour": "동작",
+    "aiProviders": "AI 제공자",
+    "modelSlots": "모델 슬롯",
+    "tools": "도구",
+    "diagnostics": "진단",
+    "offenders": "문제 요소",
+    "release": "릴리스"
+  },
+  "errors": {
+    "saveGuardrailProfile": "가드레일 프로필 저장에 실패했습니다.",
+    "saveRetentionPolicy": "보존 정책 저장에 실패했습니다.",
+    "saveUpdateChannel": "업데이트 채널 저장에 실패했습니다.",
+    "saveModelSelection": "AI 모델 선택 저장에 실패했습니다.",
+    "saveModelAlias": "모델 별칭 저장에 실패했습니다.",
+    "saveCommitMessageModelSlot": "커밋 메시지 모델 슬롯 저장에 실패했습니다.",
+    "saveReviewModelSlot": "리뷰 모델 슬롯 저장에 실패했습니다.",
+    "saveCommitMessageCustomPrompt": "커밋 메시지 사용자 프롬프트 저장에 실패했습니다.",
+    "saveReviewGuide": "리뷰 가이드 저장에 실패했습니다.",
+    "saveMuseNotes": "muse 노트 저장에 실패했습니다.",
+    "saveReviewDoubleCheck": "리뷰 이중 확인 모드 저장에 실패했습니다.",
+    "saveApiPiggybackCli": "API 피기백 CLI 저장에 실패했습니다.",
+    "clearLocalData": "로컬 데이터를 지울 수 없음: {error}"
+  },
+  "promptStatus": {
+    "editing": "편집 중",
+    "saving": "저장 중",
+    "saveFailed": "저장 실패"
+  },
+  "clearData": {
+    "dialogTitle": "로컬 데이터 지우기",
+    "clear": "지우기",
+    "confirmDiagnostics": "로컬 진단 샘플과 성능 측정값을 지울까요?",
+    "confirmAudit": "로컬 AI 감사 메타데이터 기록을 지울까요?",
+    "confirmAll": "모든 로컬 진단 샘플과 AI 감사 메타데이터 기록을 지울까요?",
+    "confirmWipeAll": "최근 저장소 목록을 포함한 모든 로컬 앱 데이터를 지우고 종료할까요? 디스크의 실제 git 저장소는 건드리지 않습니다.",
+    "confirmReset": "로컬 앱 데이터를 초기화하고 종료할까요?\n\n설정, 테마, 온보딩, AI 환경설정, 텔레메트리, engram 캐시가 지워집니다. 최근 저장소 목록은 유지됩니다."
+  },
+  "guardrailStageLabels": ["느슨", "균형", "엄격", "편집증"],
+  "guardrailMacro": {
+    "loose": "느슨",
+    "balanced": "균형",
+    "strict": "엄격",
+    "paranoid": "편집증"
+  },
+  "guardrails": {
+    "title": "가드레일",
+    "summary": "전체 경험에 걸쳐 자동화가 얼마나 세심한지."
+  },
+  "appearance": {
+    "title": "모양",
+    "summary": "전역 인터페이스 분위기와 무드."
+  },
+  "retention": {
+    "title": "로컬 데이터 보존",
+    "summaryDiagnostics": "진단 보존 정책.",
+    "summaryWithAudit": "진단 및 AI 감사 보존 정책.",
+    "unitDays": "일",
+    "unitMb": "MB",
+    "includesNote": "진단, 성능 측정값, 메타데이터를 포함합니다."
+  },
+  "navigation": {
+    "title": "탐색 및 다이내믹스",
+    "summaryShortcuts": "단축키와 인터페이스 동작.",
+    "summaryWithAi": "단축키, 인터페이스 동작, AI 라우팅."
+  },
+  "behaviour": {
+    "title": "행동 다이내믹스"
+  },
+  "retentionClear": {
+    "diag": "진단",
+    "audit": "감사",
+    "all": "전체",
+    "clearsHint": "<-- 지움"
+  },
+  "channels": {
+    "stable": "안정",
+    "beta": "베타",
+    "dev": "개발"
+  },
+  "pollResult": {
+    "upToDate": "최신",
+    "updateAvailable": "{version} 사용 가능",
+    "notConfigured": "업데이트 서버 없음",
+    "notFound": "{channel} 릴리스 없음",
+    "unreachable": "도달 불가",
+    "badManifest": "잘못된 매니페스트"
+  },
+  "keybindingProfile": {
+    "label": "키 바인딩 프로필",
+    "porcelain": "포슬린",
+    "numeric": "숫자형",
+    "porcelainDescription": "연속 키 단축키입니다 (G 다음 C, H, B…).",
+    "numericDescription": "숫자 한 키 단축키입니다 (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "api 키",
+    "endpointHint": "엔드포인트",
+    "test": "테스트",
+    "hide": "숨기기",
+    "show": "표시"
+  },
+  "shortcuts": {
+    "navigate": "이동",
+    "staging": "스테이징",
+    "branchesPrs": "브랜치 & PR",
+    "modifiers": "수정자",
+    "changes": "변경사항",
+    "history": "히스토리",
+    "branches": "브랜치",
+    "xray": "엑스레이",
+    "switchAlways": "전환 (항상)",
+    "search": "검색",
+    "dismiss": "닫기",
+    "refresh": "새로고침",
+    "shortcuts": "단축키",
+    "nextChange": "다음 변경",
+    "prevChange": "이전 변경",
+    "toggleLine": "줄 토글",
+    "toggleHunk": "헝크 토글",
+    "toggleFile": "파일 토글",
+    "pinContext": "컨텍스트 고정",
+    "commit": "커밋",
+    "acceptHint": "힌트 수락",
+    "undo": "실행 취소",
+    "navigateRow": "이동",
+    "expand": "펼치기",
+    "checkout": "체크아웃",
+    "approve": "승인",
+    "requestChanges": "변경 요청",
+    "selectRange": "범위 선택",
+    "extendedMenu": "확장 메뉴"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI 읽기 전용 모드",
+    "aiReadOnlyDescription": "AI가 변경을 자동으로 쓰거나 스테이징하는 것을 막습니다.",
+    "logoMotionLabel": "탭 벗어날 때 로고 애니메이션",
+    "logoMotionDescriptionEnabled": "효율적으로 설계됐으니, 마음 상하게 하지 마세요",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "작업 중인 내용 기억",
+    "rememberWipDescription": "세션 간에 커밋 초안과 파일 선택을 유지합니다.",
+    "stashCabinetLabel": "스태시 캐비닛을 펼친 채로 시작",
+    "stashCabinetDescription": "저장소에 선반이 있을 때 서랍을 기본으로 열어 둡니다.",
+    "instantBlameLabel": "즉시 blame 호버",
+    "instantBlameDescription": "diff 줄에 blame 정보가 나타나기 전 180ms 지연을 건너뜁니다.",
+    "autoSelectLabel": "새 변경 자동 선택",
+    "autoSelectDescription": "새로 추적되거나 변경된 파일이 커밋 선택에 자동으로 추가됩니다.",
+    "fetchIssuesLabel": "브랜치 로드 시 온라인 이슈 가져오기",
+    "fetchIssuesDescription": "브랜치 페이지가 열릴 때 git 제공자에서 PR과 이슈 세부 정보를 백그라운드로 가져옵니다.",
+    "hateAiLabel": "AI가 싫어요",
+    "hateAiDescription": "LLM 기반 기능을 모두 추방합니다. Logos는 그저 스펙트럴 수학이므로 계속 작동합니다."
+  },
+  "diffDiffability": {
+    "title": "diff diff-능력"
+  },
+  "modelSlots": {
+    "loadingProviders": "제공자 불러오는 중...",
+    "refreshingProviders": "제공자 진단 새로고침 중...",
+    "routeDescription": "구성의 이름을 바꾸고 감지된 제공자 모델로 라우팅합니다.",
+    "loadingCategories": "모델 카테고리 불러오는 중...",
+    "noOptions": "아직 사용 가능한 모델 옵션이 없습니다. 먼저 호환되는 로컬 AI CLI를 감지하세요.",
+    "slotsAppearWhenAvailable": "제공자 모델이 준비되면 모델 슬롯 설정이 여기에 나타납니다.",
+    "effortDefault": "기본값",
+    "noModelsForSlot": "이 슬롯에 감지된 모델이 없습니다.",
+    "viaProvider": "{provider} 경유",
+    "customModelId": "사용자 모델 id"
+  },
+  "modelPicker": {
+    "noMatch": "일치하는 모델 없음: \"{query}\"",
+    "noModels": "사용 가능한 모델 없음",
+    "filterHint": "모델 필터...",
+    "warming": "예열 중…",
+    "detailsUnavailable": "세부 정보 없음",
+    "free": "무료"
+  },
+  "aiFeatures": {
+    "commitDescription": "구조, 목소리, 커버리지 설정을 사용해 스테이징된 변경으로 커밋 메시지 초안을 작성합니다.",
+    "reviewDescription": "커밋하기 전에 현재 커밋 범위를 검토합니다.",
+    "museDescription": "브레인스토밍한 뒤 diff의 나아갈 방향을 종합하는 3단계 오라클."
+  },
+  "commitEditor": {
+    "styleGuide": "스타일 가이드",
+    "styleGuideHint": "선택 사항. 목소리 / 톤 / 금지. 위 형식이 골격을 처리합니다."
+  },
+  "review": {
+    "additionalNotes": "리뷰에 함께 참고할 추가 메모",
+    "doubleCheckLabel": "이중 확인 리뷰",
+    "doubleCheckDescription": "최종 보고서를 보여주기 전에 두 번째 검증 단계를 실행합니다."
+  },
+  "museHint": {
+    "loose": "부드럽게 이끌 방향이 있나요? 오늘은 무드가 너그럽습니다.",
+    "balanced": "무엇에 머무를지, 무엇을 건너뛸지. 솔직하되 가혹하지 않게.",
+    "strict": "기준. 금지. muse가 그냥 넘어가지 않을 것들.",
+    "paranoid": "렌즈를 조율하세요. 매니폴드가 어떤 주파수로 울려야 할까요?"
+  },
+  "museEditor": {
+    "additionalNotes": "muse를 위한 추가 메모"
+  },
+  "museStage": {
+    "brainstorm": "브레인스톰",
+    "synthesize": "종합",
+    "slot": "슬롯",
+    "ideaCountLoose": "아이디어 ~12개",
+    "ideaCountBalanced": "아이디어 ~16개",
+    "ideaCountStrict": "아이디어 ~20개",
+    "ideaCountParanoid": "아이디어 ~24개",
+    "guardrailHint": "{ideas}  ·  가드레일: {macro}"
+  },
+  "lensAxis": {
+    "folder": "폴더",
+    "history": "히스토리",
+    "far": "멀리",
+    "near": "가까이"
+  },
+  "logosLens": {
+    "moduleMap": "모듈 맵",
+    "repoCenters": "저장소 중심",
+    "neighbors": "이웃",
+    "toTouch": "다음에 건드릴 것",
+    "relevanceEngine": "관련성 엔진",
+    "description": "구조, 히스토리, 리듬 전반에 걸쳐 파일이 어떻게 함께 움직이는지 읽어, Manifold가 무엇이 변경됐는지뿐 아니라 무엇이 중요한지 압니다.",
+    "withinReach": "닿을 수 있는 범위",
+    "gate": "게이트",
+    "nearest": "가장 가까움",
+    "warming": "예열 중",
+    "emptyOpenRepo": "렌즈가 살아 움직이는 걸\n보려면 저장소를 여세요",
+    "emptyNoFiles": "닿는 범위에\n파일 없음 — 히스토리\n쪽으로 드래그"
+  },
+  "sortGuide": {
+    "title": "변경 정렬 가이드",
+    "related": "함께 변경되는 파일이 함께 묶입니다. 관심사가 먼저, 맥락이 뒤따릅니다.",
+    "relatedInverted": "고립된 변경이 먼저 옵니다. 단단히 결합된 클러스터는 맨 아래로 가라앉습니다.",
+    "alphabetical": "경로 기준 단순 A → Z. 대소문자 구분 없음, 숫자는 자연스러운 순서.",
+    "alphabeticalInverted": "경로 기준 단순 Z → A. 대소문자 구분 없음, 숫자는 자연스러운 순서.",
+    "impact": "가장 무거운 변경이 먼저 떠오릅니다. 변동량에 가중치를 두고, 바이너리와 새 파일은 부스트됩니다.",
+    "impactInverted": "가장 가벼운 변경이 먼저 떠오릅니다. 손쉬운 것이 위로, 무거운 작업은 기다립니다.",
+    "nearRelated": "관련순",
+    "alphabeticalShort": "알파벳순",
+    "byImpact": "영향순",
+    "flipped": "반전됨",
+    "peek": "엿보기"
+  },
+  "piggyback": {
+    "apiModelsUse": "API 모델 사용",
+    "codexNotDetected": "codex 감지 안 됨",
+    "dormant": "휴면"
+  },
+  "diffStage": {
+    "viewer": "뷰어",
+    "media": "미디어",
+    "binary": "바이너리",
+    "hidden": "숨김"
+  },
+  "undoScope": {
+    "destructiveActions": "파괴적 동작",
+    "discards": "버리기",
+    "commits": "커밋",
+    "commitPush": "커밋 + 푸시",
+    "all": "전체"
+  },
+  "undoWindow": {
+    "label": "실행 취소 창",
+    "off": "끔",
+    "descriptionInstant": "{scope} 즉시 확정.",
+    "descriptionDelayed": "{scope} 확정 전 {seconds}초.",
+    "cycleScopeTooltip": "클릭하여 범위 순환 · 슬라이더 위/아래 드래그도 가능",
+    "resetTooltip": "모든 동작을 기본 창으로 초기화"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "아마 괜찮으면 괜찮은 것",
+    "proper": "제대로 된 읽기, 로직, 통합, 패턴",
+    "lookAgain": "다시 보세요. 뭔가 숨어 있을 수 있습니다",
+    "assumeWrong": "뭔가 잘못됐다고 가정하세요. 찾아내세요"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "예: 고수준 로직과 주요 버그에 집중하세요. 간결하고 관대하게.",
+    "surfaceBugs": "예: 잠재적 버그, 아키텍처 불일치, 엣지 케이스 실패를 드러내세요.",
+    "scrutinize": "예: 최적화, 보안, 패턴 준수를 위해 모든 줄을 면밀히 살피세요.",
+    "trustNothing": "예: 아무것도 믿지 마세요. 모든 부작용을 의심하세요. 모든 줄을 잠재적 실패로 취급하세요.",
+    "optional": "리뷰가 무엇에 신경 써야 하는지에 대한 선택적 지침."
+  },
+  "commitFormat": {
+    "title": "형식",
+    "peek": "엿보기",
+    "structure": "구조",
+    "voice": "목소리",
+    "coverage": "커버리지",
+    "structureTitleBody": "제목 + 본문",
+    "structureTitleOnly": "제목만",
+    "structureFreeform": "자유 형식",
+    "voiceVerbLed": "행동 지향",
+    "voiceDescriptive": "서술형",
+    "voiceNarrative": "이야기형",
+    "coverageEssentials": "핵심만",
+    "coverageBalanced": "균형",
+    "coverageEverything": "전부"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "여우가 냄새 이상한 쿠키를 건너뛰게 하기",
+        "s2": "삼키기 전에 손댄 쿠키를 거부하도록 여우 훈련",
+        "s3": "문에서 모든 쿠키를 법의학적으로 검증하도록 여우를 강제",
+        "def": "여우에게 나쁜 쿠키를 거부하도록 가르치기"
+      },
+      "descriptive": {
+        "s0": "이제 여우가 쿠키를 고른다",
+        "s2": "쿠키 검사 루틴, 여우에게 반복 주입",
+        "s3": "쿠키 검증 법의학, 반복으로 여우에 심음",
+        "def": "쿠키 냄새 맡기 프로토콜, 여우에 설치"
+      },
+      "narrative": {
+        "s0": "여우가 냄새 이상한 쿠키를 건너뛰기 시작했다",
+        "s2": "여우와 마주 앉아 어떤 쿠키를 거부할지 하나하나 짚어봤다",
+        "s3": "건네받은 모든 쿠키가 선의로 된 쿠키는 아니라는 걸 여우에게 납득시키느라 오후의 상당 부분을 썼다",
+        "def": "여우에게 먹기 전에 쿠키 냄새를 맡아 달라고 부탁했다"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "여우가 흘긋 본다. 이상한 건 남겨둔다.",
+        "s2": "여우가 각 토큰을 검사하고, 냄새 이상한 건 거절하며, 현관에 거절을 기록한다.",
+        "s3": "여우가 각 토큰을 빙 돌며 세 각도에서 공기를 맡고, 이상하게 읽히는 건 거부하며, 거부가 확실히 자리 잡도록 한 박자 기다린다.",
+        "def": "이제 여우가 각 토큰의 냄새를 맡고 의심스러운 건 정중히 거절한다."
+      },
+      "descriptive": {
+        "s0": "이상한 것들은 대체로 슬쩍 넘긴다.",
+        "s2": "냄새 이상한 모든 토큰에 대한 문서화된 거부, 현관에서 발부되어 기록됨.",
+        "s3": "냄새 이상한 토큰마다 공증된 거부, 한 발은 들고 다른 발은 가만히 둔 채 현관에서 발부.",
+        "def": "의심스러운 토큰에 대한 정중한 거부, 현관에서 발부."
+      },
+      "narrative": {
+        "s0": "여우가 그냥 이상한 것들을 안 먹기 시작했다. 간단하다.",
+        "s2": "예전엔 모든 토큰이 별생각 없이 넘어갔다. 이제는 멈춤이 있고, 제대로 된 관찰이 있고, 영 마음에 걸리는 것에 대한 거부가 있다.",
+        "s3": "예전엔 모든 토큰이 생각 없이 넘어갔다. 이제는: 멈춤. 공기를 들이마시고. 공기를 붙든다. 여우는 뭔가 이상할 때 이따금 나타나는 현관 널빤지의 미세한 떨림을 지켜보고, 그제야 판단을 내린다.",
+        "def": "예전엔 모든 토큰이 격식 없이 삼켜졌다. 이제는 먼저 한 번 킁킁한다."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " 현관은 괜찮다. 뒷마당은 아무래도 좋다.",
+        "s2": " 거부할 때마다 현관을 쓴다. 뒷마당 진흙은 게시된 시간 내에서 허용.",
+        "s3": " 현관을 쓸고 또 쓴다. 뒷마당 진흙은 발자국과 날씨로 분류되고, 여우는 전보다 문턱에 더 오래 머문다.",
+        "def": " 현관은 깨끗이 유지되고, 뒷마당은 진흙 권리를 지킨다."
+      },
+      "descriptive": {
+        "s0": " 현관은 괜찮다. 뒷마당은 뒷마당다운 짓을 한다.",
+        "s2": " 현관은 증거처럼 깨끗한 구역, 뒷마당은 지정된 진흙 구역, 시간 게시됨.",
+        "s3": " 현관은 증거급 청정실, 뒷마당은 목록화된 진흙 기록소, 문턱은 여우가 서서 너무 오래 생각하는 곳.",
+        "def": " 깨끗한 현관, 뒷마당에 보존된 진흙 권리."
+      },
+      "narrative": {
+        "s0": " 현관은 괜찮았다. 뒷마당은, 누가 알겠나.",
+        "s2": " 그 뒤로 현관은 깨끗이 유지됐다. 여우는 뒷마당으로 물러났는데, 거기가 바로 생각이 이뤄지는 곳이다.",
+        "s3": " 그날 저녁 현관은 두 번 문질러 닦였다. 여우는 뒷마당을 느리게 걸었고, 늘 그렇듯 같은 울타리 기둥에서 멈췄으며, 현관이 뭔가 빚진 것처럼 현관을 돌아봤다.",
+        "def": " 현관은 깨끗이 유지되지만, 그래도 품위는 뒷마당이 이긴다."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " 앰버는 거기 있다. 드리프트는 떠돈다. 가시는 필요하면 찌른다. 대체로 아무 일 없다.",
+        "s2": " 앰버는 검토를 위해 각 향을 붙든다. 드리프트는 하루의 공기를 문 가시 쪽으로 실어 나르고, 가시는 저녁 집계를 위해 각 거부를 표시한다.",
+        "s3": " 앰버는 각 향을 붙들고 시각에 따라 다른 무게를 준다. 드리프트는 상관없어야 할 각도로 현관을 가로지르지만 실은 상관이 있다. 문 가시는 거부에는 한 번, 여우가 하마터면 놓칠 뻔한 것에는 두 번 찌르고, 여우는 아무도 모를 때조차 그 차이를 안다.",
+        "def": " 앰버는 향을 붙든다. 드리프트는 그것을 흘려보낸다. 문 가시는 지나가선 안 될 것을 붙잡는다."
+      },
+      "descriptive": {
+        "s0": " 앰버는 기둥에. 드리프트는 공기 중에. 가시는 문에. 괜찮다.",
+        "s2": " 앰버는 지정된 향 증인, 드리프트는 기록된 주변 환경, 가시 표시는 하루의 거부 기록, 해질녘에 대조됨.",
+        "s3": " 앰버는 침묵 자체가 하나의 판독인 향 증인, 드리프트는 뭔가 잘못된 날엔 잘못 움직이는 패턴화된 주변 환경, 가시는 여우가 잠들기 전과 동트기 전에 다시 그 표시를 확인하는 문의 집계원.",
+        "def": " 앰버는 향 증인, 드리프트는 주변 맥락, 가시는 문의 조용한 거부 표시."
+      },
+      "narrative": {
+        "s0": " 앰버는 근처에 있었다. 드리프트는 왔다 갔다. 가시는 조용히 제 일을 했다. 어쨌든, 느긋했다.",
+        "s2": " 앰버는 그날의 향 기록을 맡았고, 드리프트는 방향과 시각으로 기록됐으며, 가시의 표시는 집계되어 현관의 부서명을 받았다.",
+        "s3": " 앰버는 향 기록을 맡았지만, 여우는 어떤 아침엔 그게 더 무겁게 느껴진다고 우긴다. 드리프트는 늘 그렇듯 현관을 가로질렀는데, 다시 말해 중요한 날엔 잘못 움직였다. 문 가시는 각 거부를 표시했고, 여우는 이미 세어 본 계단을 다시 세듯 첫 햇빛에 나가 그것들을 셌다.",
+        "def": " 앰버는 향 기록을 맡았고, 드리프트는 공기를 움직였으며, 문 가시는 붙잡아야 할 것을 붙잡았다."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "외부 도구",
+    "summary": "사이드바에서 프로젝트를 우클릭하면 이 도구들 중 하나로 엽니다. 인자는 프로젝트 폴더에 \\{path}를 사용합니다.",
+    "detecting": "설치된 도구 감지 중…",
+    "allPresetsAdded": "알려진 프리셋은 이미 모두 추가됐습니다. 더 추가하려면 “+ Custom”을 사용하세요.",
+    "noToolsConfigured": "아직 구성된 도구가 없습니다. 위에서 하나 추가하세요.",
+    "categoryAi": "ai",
+    "categoryEditors": "편집기",
+    "categoryExplore": "탐색",
+    "categoryOps": "운영",
+    "categoryGitOps": "git 운영",
+    "nameHint": "이름",
+    "commandHint": "명령",
+    "test": "테스트",
+    "removeTool": "도구 제거",
+    "modeTerminal": "터미널",
+    "modeDetached": "분리됨"
+  },
+  "apiUsage": {
+    "thisMonth": "이번 달 {used}{limit}"
+  },
+  "gitea": {
+    "title": "Gitea 토큰",
+    "hostHint": "호스트",
+    "tokenHint": "토큰",
+    "save": "저장"
+  },
+  "wick": {
+    "selectExecutable": "wick 실행 파일 선택",
+    "connected": "wick · 연결됨",
+    "pathToExecutable": "wick · 실행 파일 경로"
+  },
+  "integrations": {
+    "title": "& 통합",
+    "alpha": "알파",
+    "planned": "예정",
+    "lspComingSoon": "lsp · 곧 제공",
+    "alphaMathConnected": "alpha-math · 연결됨",
+    "alphaMathComingSoon": "alpha-math · 곧 제공"
+  },
+  "reduceMotion": {
+    "label": "모션 줄이기",
+    "subtitleStill": "고요하게… 얼음처럼?",
+    "subtitleFlow": "물처럼 흐르게."
+  },
+  "resetQuit": {
+    "resetAndQuit": "초기화 & 종료",
+    "keepRepos": "저장소 유지",
+    "wipeAll": "전체 삭제"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "명령 진단",
+    "networkFlowTelemetry": "네트워크 플로 텔레메트리",
+    "clearSamples": "샘플 지우기",
+    "clearMetrics": "지표 지우기",
+    "clearTimings": "측정값 지우기",
+    "recalibrate": "재보정",
+    "ok": "정상",
+    "noCommandTimings": "아직 캡처된 명령 측정값이 없습니다. 일반 동작을 실행하여 진단을 채우세요.",
+    "noBackendSamples": "아직 캡처된 백엔드 명령 샘플이 없습니다. git과 설정 동작을 실행하여 이 로그를 채우세요.",
+    "noDiffSessions": "아직 캡처된 diff 렌더 세션이 없습니다. 파일 diff를 열고 스크롤하여 이 패널을 채우세요.",
+    "noUiSessions": "아직 캡처된 UI 측정 세션이 없습니다. 패널을 열고 경로를 이동하여 이 패널을 채우세요.",
+    "recentOperations": "최근 작업",
+    "recentBackendOperations": "최근 백엔드 작업",
+    "recentDiffSessions": "최근 diff 세션",
+    "recentUiTimings": "최근 UI 측정값",
+    "uniqueCommands": {
+      "other": "고유 명령 {n}개"
+    },
+    "scopedCommands": {
+      "other": "범위 지정 명령 {n}개"
+    },
+    "instrumentedEvents": {
+      "other": "계측 이벤트 {n}개"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | 잰크 {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["명령", "p50", "신뢰도", "범위"],
+    "headersBackend": ["범위", "p50", "p95", "실패"],
+    "headersDiff": ["렌더러", "첫 페인트", "프레임 p95", "래스터 p95", "잰크"],
+    "headersUi": ["이벤트", "p50", "실패", "범위"]
+  },
+  "telemetry": {
+    "samples": {
+      "other": "샘플 {n}개"
+    },
+    "commands": {
+      "other": "명령 {n}개"
+    },
+    "sessions": {
+      "other": "세션 {n}개"
+    },
+    "events": {
+      "other": "이벤트 {n}개"
+    },
+    "stability": "{pct}% 안정성",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "실행 흐름",
+    "description": "코드 위에서 진동자를 시뮬레이션합니다. 취약한 실행 경로가 버그로 굳기 전에 드러냅니다.",
+    "idle": "유휴",
+    "emptyOpenRepo": "흐름 분석을 보려면\n저장소를 여세요",
+    "scanning": "스캔 중",
+    "analysing": "렌즈 안의\n파일 분석 중…",
+    "fragility": "취약성",
+    "findings": "발견",
+    "gap": "간격",
+    "clean": "깨끗함",
+    "severity": "심각도",
+    "critical": "심각",
+    "warn": "경고",
+    "info": "정보"
+  },
+  "museStrands": {
+    "spark": "영감의 불꽃 · 바로 다음 단계",
+    "current": "물속의 흐름 · 현재형 확장",
+    "horizon": "지평선 너머 · 뻗어 나가는 방향",
+    "fever": "열병 꿈에서 깨어나 · 도발",
+    "echo": "협곡을 가로지르는 메아리 · 다른 곳의 유사물",
+    "vertigo": "절벽 끝의 현기증 · 인접한 위험",
+    "ghost": "지난 것의 유령 · 역사적 맥락",
+    "mirror": "고요한 물 위의 거울 · 반전"
+  },
+  "cliPiggyback": {
+    "title": "CLI 피기백",
+    "clearCacheLabel": "캐시 지우기",
+    "clearCacheTooltip": "캐시된 모델을 지우고 다시 탐지합니다. 제공자가 뺀 것들을 정리합니다.",
+    "refreshLabel": "제공자 새로고침",
+    "refreshTooltip": "지금 모든 제공자를 다시 탐지합니다.",
+    "body": "인터페이스 메시지를 로컬 제공자 바이너리로 직접 연결합니다."
+  },
+  "header": {
+    "title": "작업 공간 환경설정",
+    "subtitle": "전체 작업 공간의 전역 미학, 인터페이스 다이내믹스, 핵심 운영 안전장치를 구성합니다.",
+    "releaseNotesTooltip": "릴리스 노트",
+    "replayOnboardingTooltip": "온보딩 다시 보기"
+  },
+  "diagnosticsPanel": {
+    "title": "성능 진단",
+    "copyTrace": "추적 복사",
+    "offenderRanking": "문제 요소 순위",
+    "offenderRankingSubtitle": "스트림 전반의 지연 유발 요인.",
+    "noOffenders": "아직 문제 요소 순위가 없습니다. 진단 활동을 캡처하여 이 목록을 채우세요."
+  },
+  "release": {
+    "title": "릴리스 배포",
+    "summary": "업데이트 관련 설정.",
+    "deploymentChannel": "배포 채널",
+    "captureCrashDiagnostics": "크래시 진단 캡처",
+    "comingSoon": "곧 제공.",
+    "checking": "확인 중…",
+    "pollForUpdates": "업데이트 확인"
+  },
+  "providerStatus": {
+    "detecting": "감지 중...",
+    "ready": "준비됨",
+    "notDetected": "감지 안 됨",
+    "configured": "{count}개 구성됨",
+    "notConfigured": "구성 안 됨",
+    "cliManaged": "CLI 관리",
+    "connected": "연결됨",
+    "modelCount": {
+      "other": "모델 {n}개"
+    },
+    "providerCount": {
+      "other": "제공자 {n}개"
+    }
+  },
+  "meridiem": {
+    "am": "오전",
+    "pm": "오후"
+  },
+  "offenders": {
+    "commandStream": "명령",
+    "diffStream": "Diff 렌더",
+    "uiStream": "UI 측정",
+    "rendererName": "{mode} 렌더러",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% 실패",
+    "jankFrameMetric": "{jank}% 잰크 | {frame}ms 프레임 p95",
+    "inStream": "{stream} 내"
+  }
+}

@@ -44,11 +44,17 @@ import 'purpose.dart';
 import 'regions.dart';
 import 'relevance.dart';
 import 'shape.dart';
+import 'strings.dart';
 import 'text_harvest.dart';
 import 'types.dart';
 
-/// Generate a [RepoDoc] for the repository at [repoRoot].
-Future<RepoDoc> generateRepoSummary(String repoRoot) async {
+/// Generate a [RepoDoc] for the repository at [repoRoot]. [strings]
+/// supplies every synthesised sentence baked into the doc (region
+/// bodies, elevator pitch, shape); the default is verbatim English.
+Future<RepoDoc> generateRepoSummary(
+  String repoRoot, {
+  RepoSummaryStrings strings = const EnglishRepoSummaryStrings(),
+}) async {
   if (repoRoot.isEmpty) {
     throw ArgumentError.value(repoRoot, 'repoRoot', 'must be non-empty');
   }
@@ -62,7 +68,7 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
   if (files.isEmpty) {
     return RepoDoc(
       repoName: repoName,
-      elevatorPitch: _emptyRepoPitch(harvest),
+      elevatorPitch: _emptyRepoPitch(harvest, strings),
       shape: '',
       glance: const RepoStatsGlance(
         activeFileCount: 0,
@@ -162,7 +168,7 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
       geometry = null;
     }
   }
-  final shape = shapeDescription(geometry);
+  final shape = shapeDescription(geometry, strings: strings);
 
   // Name each region — wells first, filename-concept second, then
   // structural-anchor fallback ("around `main.dart`"), finally
@@ -218,6 +224,7 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
         backboneFileCount: backboneInRegion,
         themes: themes,
         commonDirectory: commonDirectoryFor(r.paths),
+        strings: strings,
       ),
       paths: r.paths,
       neighborNames: List<String>.unmodifiable(neighborNames),
@@ -357,6 +364,7 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
     repoName: repoName,
     regionNames: regionNames,
     activeFileCount: activeFiles.length,
+    strings: strings,
   );
   final gettingStarted = proseFile == null
       ? ''
@@ -388,8 +396,13 @@ Future<RepoDoc> generateRepoSummary(String repoRoot) async {
   );
 }
 
-/// Thin re-export so callers only need one import.
-String repoDocToMarkdown(RepoDoc doc) => renderMarkdown(doc);
+/// Thin re-export so callers only need one import. [strings] defaults
+/// to verbatim English; UI callers pass a slang-backed implementation.
+String repoDocToMarkdown(
+  RepoDoc doc, {
+  RepoSummaryStrings strings = const EnglishRepoSummaryStrings(),
+}) =>
+    renderMarkdown(doc, strings: strings);
 
 /// Resolve [input] to the true git toplevel. Falls back to [input]
 /// when git isn't available or the path isn't inside a repository.
@@ -420,16 +433,16 @@ String _deriveRepoName(String repoRoot) {
   }
 }
 
-String _emptyRepoPitch(HarvestResult harvest) {
+String _emptyRepoPitch(HarvestResult harvest, RepoSummaryStrings strings) {
   final parts = <String>[];
   if (harvest.binarySkipped > 0) {
-    parts.add('${harvest.binarySkipped} binary');
+    parts.add(strings.emptyRepoBinary(harvest.binarySkipped));
   }
   if (harvest.decodeFailed > 0) {
-    parts.add('${harvest.decodeFailed} unreadable');
+    parts.add(strings.emptyRepoUnreadable(harvest.decodeFailed));
   }
-  final suffix = parts.isEmpty ? '' : ' (${parts.join(', ')})';
-  return 'A repository with no readable text files$suffix.';
+  final detail = parts.isEmpty ? '' : ' (${parts.join(', ')})';
+  return strings.emptyRepoPitch(detail);
 }
 
 List<BackboneEntry> _buildBackbone({
@@ -543,6 +556,7 @@ String _pickElevatorPitch({
   required String repoName,
   required List<String> regionNames,
   required int activeFileCount,
+  required RepoSummaryStrings strings,
 }) {
   if (proseFile != null) {
     final snippet = _firstParagraph(proseFile.text);
@@ -552,6 +566,7 @@ String _pickElevatorPitch({
     repoName: repoName,
     topRegionNames: regionNames,
     activeFileCount: activeFileCount,
+    strings: strings,
   );
 }
 

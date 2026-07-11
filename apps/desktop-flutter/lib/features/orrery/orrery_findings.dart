@@ -1,5 +1,6 @@
 import 'dart:ui' show Offset;
 
+import '../../i18n/gen/strings.g.dart';
 import 'orrery_model.dart';
 
 /// Plain-language, commit-anchored findings derived from the trajectory — the
@@ -164,9 +165,8 @@ List<OrreryFinding> _forecastFinding(OrreryModel model) {
       OrreryFinding(
         kind: OrreryFindingKind.forecast,
         stepIndex: headStep,
-        headline:
-            'Connectivity has been falling and is near its lowest — if this holds, the codebase is heading toward splitting into loosely-coupled halves. Decide now whether that’s the intent.',
-        anchor: 'trend',
+        headline: t.orrery.findings.forecastSplit,
+        anchor: t.orrery.anchor.trend,
       ),
     ];
   }
@@ -176,9 +176,8 @@ List<OrreryFinding> _forecastFinding(OrreryModel model) {
       OrreryFinding(
         kind: OrreryFindingKind.forecast,
         stepIndex: headStep,
-        headline:
-            'Connectivity has been climbing toward its peak — if this holds, the codebase is consolidating into one tightly-coupled mass. Watch for it hardening into a monolith.',
-        anchor: 'trend',
+        headline: t.orrery.findings.forecastConsolidate,
+        anchor: t.orrery.anchor.trend,
       ),
     ];
   }
@@ -226,9 +225,8 @@ List<OrreryFinding> _thrashFinding(OrreryModel model) {
       kind: OrreryFindingKind.thrash,
       stepIndex: headStep,
       nodeId: worst.id,
-      headline:
-          '${_shortPath(worst.path!)} keeps getting reorganised back and forth — lots of structural churn, little net movement. Settle its coupling or stop touching it.',
-      anchor: 'thrash',
+      headline: t.orrery.findings.thrash(name: _shortPath(worst.path!)),
+      anchor: t.orrery.anchor.thrash,
     ),
   ];
 }
@@ -288,8 +286,7 @@ List<OrreryFinding> _reshuffleFinding(OrreryModel model) {
     OrreryFinding(
       kind: OrreryFindingKind.reshuffle,
       stepIndex: best,
-      headline:
-          'This commit looked routine but quietly moved which files are central — the overall shape held while the structure reshuffled underneath. Review it carefully.',
+      headline: t.orrery.findings.reshuffle,
       anchor: '${best + 1} · ${s.shortSha}',
     ),
   ];
@@ -323,9 +320,8 @@ List<OrreryFinding> _positionFindings(OrreryModel model) {
       kind: OrreryFindingKind.hub,
       stepIndex: headStep,
       nodeId: hub.id,
-      headline:
-          '${_shortPath(hub.path!)} sits at the structural core — the system reorganises around it. Treat changes here as high blast-radius.',
-      anchor: 'core',
+      headline: t.orrery.findings.hub(name: _shortPath(hub.path!)),
+      anchor: t.orrery.anchor.core,
     ));
   }
 
@@ -354,17 +350,15 @@ List<OrreryFinding> _positionFindings(OrreryModel model) {
             kind: OrreryFindingKind.driftOut,
             stepIndex: headStep,
             nodeId: dr.node.id,
-            headline:
-                '$name has drifted from the core toward the edge — it’s decoupling from the system. Either it’s being retired, or it’s quietly rotting.',
-            anchor: 'drift',
+            headline: t.orrery.findings.driftOut(name: name),
+            anchor: t.orrery.anchor.drift,
           )
         : OrreryFinding(
             kind: OrreryFindingKind.driftIn,
             stepIndex: headStep,
             nodeId: dr.node.id,
-            headline:
-                '$name has migrated toward the core — it’s becoming load-bearing. Make sure it’s well-tested before more depends on it.',
-            anchor: 'drift',
+            headline: t.orrery.findings.driftIn(name: name),
+            anchor: t.orrery.anchor.drift,
           ));
     emitted++;
   }
@@ -380,8 +374,7 @@ List<OrreryFinding> _regimeFindings(OrreryModel model) {
     out.add(OrreryFinding(
       kind: OrreryFindingKind.regime,
       stepIndex: i,
-      headline:
-          'The codebase reorganized sharply here — its connectivity jumped. Review what split off or merged.',
+      headline: t.orrery.findings.regime,
       anchor: '${i + 1} · ${s.shortSha}',
     ));
   }
@@ -419,9 +412,8 @@ List<OrreryFinding> _archetypeTrendFinding(OrreryModel model) {
       OrreryFinding(
         kind: OrreryFindingKind.tangle,
         stepIndex: headStep,
-        headline:
-            'Over its history the codebase has trended toward a more tangled structure — its connectivity is getting denser and less modular.',
-        anchor: 'trend',
+        headline: t.orrery.findings.tangleTrend,
+        anchor: t.orrery.anchor.trend,
       ),
     ];
   }
@@ -430,9 +422,8 @@ List<OrreryFinding> _archetypeTrendFinding(OrreryModel model) {
       OrreryFinding(
         kind: OrreryFindingKind.clarify,
         stepIndex: headStep,
-        headline:
-            'Over its history the codebase has trended toward a cleaner structure — it’s separating into clearer modules.',
-        anchor: 'trend',
+        headline: t.orrery.findings.clarifyTrend,
+        anchor: t.orrery.anchor.trend,
       ),
     ];
   }

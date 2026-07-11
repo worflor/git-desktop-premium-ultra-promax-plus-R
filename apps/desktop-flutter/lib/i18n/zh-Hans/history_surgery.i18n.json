@@ -1,0 +1,83 @@
+{
+  "@@locale": "zh-Hans",
+  "chrome": {
+    "title": "历史手术",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "预演"
+  },
+  "select": {
+    "prompt": "选择要从历史中移除的文件",
+    "selectedCount": "已选 {n} 个",
+    "searchHint": "搜索…",
+    "readingTree": "正在读取树…",
+    "continueDisabled": "选择文件以继续",
+    "continueEnabled": "继续 →",
+    "toPurgeCount": "{n} 个待清除",
+    "analyzing": "正在分析…",
+    "riskLow": "低风险",
+    "riskModerate": "中等风险",
+    "riskHigh": "高风险",
+    "impactCommitsLabel": "提交",
+    "impactBranchesLabel": "分支",
+    "impactWorktreesLabel": "工作树",
+    "impactCouplingLabel": "耦合",
+    "impactCouplingIsland": "孤岛",
+    "impactCouplingNeighbors": "{n} 个邻居",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "工作原理",
+    "backupTitle": "备份",
+    "backupBody": "在任何改动之前，每个分支和标签引用都会被复制到备份命名空间。若出现问题，一键即可恢复原始状态。",
+    "rewriteTitle": "重写",
+    "rewriteBody": "每个提交都会从根遍历到顶端。对于每个包含目标文件的提交，都会创建一个从树中移除了这些文件的新提交。父链会被重新映射以保留拓扑。",
+    "rewriteSummary": "将重写 {total} 个提交中的 {affected} 个。",
+    "updateRefsTitle": "更新引用",
+    "updateRefsBody": "分支和标签指针会被移到新的提交 SHA。旧对象在垃圾回收之前仍然存在。",
+    "worktreesNeedRecheckout": "你的 {n} 个工作树将需要重新检出。",
+    "noWorktreesAffected": "没有工作树受影响。",
+    "forcePushTitle": "强制推送",
+    "forcePushBody": "验证清除后，你可以选择要强制推送的分支。使用 --force-with-lease，以便在此期间有人推送时安全失败。",
+    "plumbingNote": "与 filter-repo 或 BFG 不同，本操作完全通过 git 底层命令（cat-file、mktree、commit-tree、update-ref）运行。无外部依赖。重命名跟踪对每个文件只跟一条链 — 如果某文件被复制且两份副本各自独立重命名，请在执行后核实清除结果。",
+    "back": "← 返回",
+    "continueLabel": "我已了解，继续 →"
+  },
+  "confirm": {
+    "commitsRewritten": "将重写 {n} 个提交",
+    "forcePushRequired": "远程分支将需要强制推送",
+    "worktreesRecheckout": "{n} 个工作树将需要重新检出",
+    "stashesInvalid": "{n} 个储藏可能失效",
+    "heading": "此操作会重写 git 历史",
+    "subheading": "强制推送后无法自动撤销。",
+    "typeHint": "输入 {word}",
+    "goBack": "返回",
+    "begin": "开始手术"
+  },
+  "execute": {
+    "preparing": "正在准备…",
+    "backingUpRefs": "正在备份引用…",
+    "rewritingCommits": "正在重写提交…",
+    "updatingRefs": "正在更新引用…"
+  },
+  "verify": {
+    "complete": "手术完成",
+    "failed": "手术失败",
+    "commitsRewrittenLabel": "已重写的提交",
+    "refsUpdatedLabel": "已更新的引用",
+    "oldHeadLabel": "旧 HEAD",
+    "newHeadLabel": "新 HEAD",
+    "purgeVerifiedLabel": "清除已验证",
+    "purgeClean": "干净",
+    "purgeTracesRemain": "仍有残留",
+    "displacedWorktrees": "被移位的工作树",
+    "undoSurgery": "撤销手术",
+    "rolledBack": "已回滚到备份引用。",
+    "done": "完成"
+  },
+  "forcePush": {
+    "pushing": "正在推送…",
+    "forcePushAll": "全部强制推送",
+    "confirmPush": "确认推送",
+    "cancel": "取消"
+  }
+}

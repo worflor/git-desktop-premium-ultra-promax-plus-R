@@ -1,0 +1,23 @@
+{
+  "@@locale": "es",
+  "noRepositoryOpen": "No hay ningún repositorio abierto.",
+  "scanningProgress": "escaneando {scanned} / {total} archivos…",
+  "findingsAcrossFiles": "{count} hallazgos en {files} archivos",
+  "copiedFindings": "Se copiaron {count} hallazgos",
+  "copy": "COPIAR",
+  "noFindings": "Sin hallazgos de flujo de ejecución.",
+  "severity": {
+    "critical": "crítico",
+    "warn": "aviso",
+    "info": "info",
+    "joint": "conjunto"
+  },
+  "kind": {
+    "staleValue": "valor obsoleto",
+    "temporalShift": "desfase temporal",
+    "contextInversion": "inversión de contexto",
+    "contradictoryFlow": "flujo contradictorio"
+  },
+  "lineLabel": "L{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

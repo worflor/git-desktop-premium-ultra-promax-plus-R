@@ -1,0 +1,145 @@
+{
+  "@@locale": "pt-BR",
+  "status": {
+    "loadingTitle": "Carregando diff",
+    "loadingMessage": "Lendo as mudanças do arquivo.",
+    "unavailableTitle": "Diff indisponível",
+    "noChangesTitle": "Sem mudanças",
+    "noChangesMessage": "Este arquivo não tem conteúdo de diff para exibir."
+  },
+  "toolbar": {
+    "searchHint": "buscar no diff...",
+    "lineCount": {
+      "one": "{n} linha",
+      "other": "{n} linhas"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "desgaste · ligado",
+    "wearMapOnHint": "mapa de desgaste ligado — clique para ocultar",
+    "wearMapOffHint": "mostrar mapa de desgaste (heatmap de atividade)",
+    "trailBadge": "· trilha"
+  },
+  "hunkDropdown": {
+    "tooltip": "Pular para o bloco de mudança. O git chama isso de hunks.",
+    "changeCount": {
+      "one": "{n} mudança",
+      "other": "{n} mudanças"
+    }
+  },
+  "stagingFailed": "Falha no stage parcial: {error}",
+  "trail": {
+    "loading": "carregando trilha...",
+    "noHistory": "nenhum histórico encontrado",
+    "nowWorkingCopy": "agora · cópia de trabalho",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "carregando contexto fixado",
+    "pageManifold": "Manifold",
+    "pageSignals": "Sinais",
+    "echoesTitle": "Ecos",
+    "technicalLedger": "Registro Técnico",
+    "noSecondaryCues": "Nenhuma pista secundária detectada.",
+    "linkedPaths": "Caminhos Vinculados",
+    "moreCount": "+{n} mais",
+    "localSeam": "Costura local",
+    "sharedOwnership": "propriedade compartilhada",
+    "historyWarmingUp": "Histórico aquecendo",
+    "echoesTotal": "{n} NO TOTAL",
+    "noEchoes": "Nenhum eco neste diff.",
+    "openRelatedFile": "Abrir arquivo relacionado {name}",
+    "inspectFile": "inspecionar {name}",
+    "jumpEcho": "pular para o eco",
+    "copyLine": "copiar linha",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "Movimento recente com um dono forte por perto.",
+      "activeSeam": "Movimento recente de várias mãos por perto.",
+      "stableOwnerLane": "Faixa de vida longa com um dono dominante.",
+      "sharedLongLivedSeam": "Costura compartilhada que se acumulou ao longo do tempo.",
+      "sharedLane": "Faixa compartilhada sem um único dono dominante.",
+      "resolving": "O histórico ainda está se resolvendo em torno desta linha."
+    },
+    "tone": {
+      "hot": "Quente",
+      "novel": "Novo",
+      "contested": "Disputado",
+      "spreading": "Espalhando",
+      "stable": "Estável"
+    },
+    "summary": {
+      "livesIn": "Mora em {concept}",
+      "sitsInLocalSeam": "Fica numa costura local",
+      "workedMostlyBy": "trabalhado principalmente por {owner} por perto",
+      "echoesInSpots": {
+        "one": "ecoa em {n} outro ponto",
+        "other": "ecoa em {n} outros pontos"
+      },
+      "inspectNext": "inspecionar {path} a seguir{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "encaixe apertado",
+      "close": "encaixe próximo",
+      "loose": "encaixe frouxo"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Por que isto importa",
+    "storyConfidence": "Confiança",
+    "storySecondarySignal": "Sinal secundário",
+    "storyNeighbourhood": "Vizinhança",
+    "neighbourhoodDetail": "Esta linha fica perto de {name} no campo atual da base de código.",
+    "propagationLane": "Faixa de propagação",
+    "propagationLaneNamed": "Faixa de propagação: {lane}",
+    "witness": {
+      "nearbySupport": "Apoio por perto · {label}",
+      "localizedMove": "Movimento localizado · {label}",
+      "surprisingMove": "Movimento surpreendente · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Estrutura estável",
+      "conflictingSignals": "Sinais conflitantes",
+      "novelShape": "Forma inédita"
+    },
+    "related": {
+      "testMirror": "Espelho de teste",
+      "semanticHistorySibling": "Irmão semântico + de histórico",
+      "recentCoChange": "Co-mudança recente",
+      "semanticSibling": "Irmão semântico",
+      "relatedStructure": "Estrutura relacionada",
+      "tightlyBound": "fortemente ligado",
+      "orbiting": "orbitando",
+      "weaklyCoupled": "fracamente acoplado",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "trilha de histórico",
+      "testMirrorLane": "faixa de espelho de teste",
+      "structuralLane": "faixa estrutural",
+      "semanticNeighbourhood": "vizinhança semântica"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} ocultos",
+    "landing": "chegada"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (grande demais para prévia)",
+    "unableToLoadBlob": "Não foi possível carregar o blob",
+    "omittedKindMedia": "mídia",
+    "omittedKindBinary": "binário",
+    "omittedStub": "{kind} · oculto"
+  },
+  "media": {
+    "unableToDecodeImage": "Não foi possível decodificar a imagem",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "adicionado",
+    "stateDeleted": "removido",
+    "stateModified": "modificado",
+    "fallbackFormatName": "Binário"
+  }
+}

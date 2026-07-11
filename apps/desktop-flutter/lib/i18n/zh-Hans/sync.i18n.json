@@ -1,0 +1,51 @@
+{
+  "@@locale": "zh-Hans",
+  "actions": {
+    "syncLabel": "同步",
+    "syncOpenRepoDetail": "打开一个仓库以管理推送与拉取操作。",
+    "detachedHeadLabel": "游离 HEAD",
+    "detachedHeadDetail": "推送或拉取前请先检出一个分支。",
+    "publishBranchLabel": "发布分支",
+    "publishBranchDetail": "推送 {branch} 并设置其上游跟踪分支。",
+    "publishButtonLabel": "发布",
+    "syncBranchLabel": "同步分支",
+    "syncBranchDetail": "以变基方式拉取 {behindCount}，然后推送 {aheadCount}。",
+    "syncBranchButtonLabel": "拉取（变基）后推送",
+    "pushBranchLabel": "推送分支",
+    "pushBranchDetail": "推送 {count} 到 {upstream}。",
+    "pushBranchButtonLabel": "推送提交",
+    "pullUpdatesLabel": "拉取更新",
+    "pullUpdatesDetail": "从 {upstream} 拉取 {count}。",
+    "syncUpToDateDetail": "从 {upstream} 抓取并刷新上游状态。"
+  },
+  "panel": {
+    "loadingTitle": "正在加载远程状态",
+    "loadingMessage": "正在检查分支跟踪信息。",
+    "remoteStatusUnavailable": "远程状态不可用",
+    "noUpstream": "无上游",
+    "aheadLabel": "领先",
+    "behindLabel": "落后",
+    "treeLabel": "树",
+    "runningSync": "正在同步…",
+    "fetching": "正在抓取…",
+    "fetchOnly": "仅抓取",
+    "syncFailed": "同步失败",
+    "forcePushRecoveryLabel": "强制推送（带 lease）",
+    "conflictsToResolveTitle": "待解决的冲突",
+    "conflictsToResolveBody": "{count} 个需要解决：{list}",
+    "resolveConflicts": "解决冲突",
+    "workingEllipsis": "处理中…",
+    "lastActivity": "最近活动：{operation}",
+    "noOutput": "无输出。",
+    "resolvedConflicts": "已解决 {count} 个。",
+    "cancelledUnchanged": "已取消，工作区未改动。",
+    "uncommittedEditsBlocked": "{count} 个文件有未提交的改动，请先提交后再变基同步（{list}）。",
+    "noUpstreamForForcePush": "无法强制推送：“{branch}”未配置上游。"
+  },
+  "forcePush": {
+    "confirmTitle": "强制推送（带 lease）？",
+    "target": "目标：{remote}/{branch}",
+    "warning": "这会用你的本地历史重写远程分支。带 lease 会在你上次抓取后有人推送到远程时中止，但已抓取的改动仍会被覆盖。仅在你有意进行了使分支分叉的变基或修订时才使用。",
+    "confirmButton": "强制推送"
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "@@locale": "ko",
+  "status": {
+    "loadingTitle": "diff 불러오는 중",
+    "loadingMessage": "파일 변경 내용을 읽는 중.",
+    "unavailableTitle": "diff를 사용할 수 없음",
+    "noChangesTitle": "변경 없음",
+    "noChangesMessage": "이 파일에는 표시할 diff 내용이 없습니다."
+  },
+  "toolbar": {
+    "searchHint": "diff 검색...",
+    "lineCount": {
+      "other": "{n}줄"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "마모 · 켜짐",
+    "wearMapOnHint": "마모 지도 켜짐 — 클릭하여 숨기기",
+    "wearMapOffHint": "마모 지도 표시(활동 히트맵)",
+    "trailBadge": "· 자취"
+  },
+  "hunkDropdown": {
+    "tooltip": "변경 블록으로 이동. git은 이를 헝크라고 부릅니다.",
+    "changeCount": {
+      "other": "변경 {n}개"
+    }
+  },
+  "stagingFailed": "부분 스테이징 실패: {error}",
+  "trail": {
+    "loading": "자취 불러오는 중...",
+    "noHistory": "히스토리 없음",
+    "nowWorkingCopy": "지금 · 작업 사본",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "고정된 컨텍스트 불러오는 중",
+    "pageManifold": "Manifold",
+    "pageSignals": "신호",
+    "echoesTitle": "메아리",
+    "technicalLedger": "기술 원장",
+    "noSecondaryCues": "부차적 단서가 감지되지 않았습니다.",
+    "linkedPaths": "연결된 경로",
+    "moreCount": "+{n}개 더",
+    "localSeam": "로컬 이음새",
+    "sharedOwnership": "공동 소유",
+    "historyWarmingUp": "히스토리 예열 중",
+    "echoesTotal": "총 {n}개",
+    "noEchoes": "이 diff에는 메아리가 없습니다.",
+    "openRelatedFile": "관련 파일 {name} 열기",
+    "inspectFile": "{name} 살펴보기",
+    "jumpEcho": "메아리로 이동",
+    "copyLine": "줄 복사",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "근처에 강한 소유자 한 명이 있는 최근 움직임.",
+      "activeSeam": "근처 여러 손에서 온 최근 움직임.",
+      "stableOwnerLane": "지배적 소유자 한 명이 있는 오래된 레인.",
+      "sharedLongLivedSeam": "시간이 지나며 쌓인 공유 이음새.",
+      "sharedLane": "단일 지배 소유자가 없는 공유 레인.",
+      "resolving": "이 줄 주변의 히스토리가 아직 정리되는 중입니다."
+    },
+    "tone": {
+      "hot": "뜨거움",
+      "novel": "새로움",
+      "contested": "다툼",
+      "spreading": "확산",
+      "stable": "안정"
+    },
+    "summary": {
+      "livesIn": "{concept}에 자리함",
+      "sitsInLocalSeam": "로컬 이음새에 위치",
+      "workedMostlyBy": "주로 근처 {owner} 담당",
+      "echoesInSpots": {
+        "other": "다른 지점 {n}곳에서 메아리침"
+      },
+      "inspectNext": "다음으로 {path} 살펴보기{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "꽉 맞음",
+      "close": "가깝게 맞음",
+      "loose": "느슨하게 맞음"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "왜 중요한가",
+    "storyConfidence": "신뢰도",
+    "storySecondarySignal": "부차 신호",
+    "storyNeighbourhood": "이웃",
+    "neighbourhoodDetail": "이 줄은 현재 코드베이스 필드에서 {name} 가까이에 위치합니다.",
+    "propagationLane": "전파 레인",
+    "propagationLaneNamed": "전파 레인: {lane}",
+    "witness": {
+      "nearbySupport": "근처 뒷받침 · {label}",
+      "localizedMove": "국소적 이동 · {label}",
+      "surprisingMove": "예상 밖 이동 · {label}"
+    },
+    "integrity": {
+      "stableStructure": "안정적 구조",
+      "conflictingSignals": "상충하는 신호",
+      "novelShape": "새로운 형태"
+    },
+    "related": {
+      "testMirror": "테스트 미러",
+      "semanticHistorySibling": "의미 + 히스토리 형제",
+      "recentCoChange": "최근 공동 변경",
+      "semanticSibling": "의미 형제",
+      "relatedStructure": "관련 구조",
+      "tightlyBound": "단단히 묶임",
+      "orbiting": "공전 중",
+      "weaklyCoupled": "약하게 결합",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "히스토리 자취",
+      "testMirrorLane": "테스트 미러 레인",
+      "structuralLane": "구조 레인",
+      "semanticNeighbourhood": "의미 이웃"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n}개 숨김",
+    "landing": "착지"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (너무 커서 미리보기 불가)",
+    "unableToLoadBlob": "blob을 불러올 수 없음",
+    "omittedKindMedia": "미디어",
+    "omittedKindBinary": "바이너리",
+    "omittedStub": "{kind} · 숨김"
+  },
+  "media": {
+    "unableToDecodeImage": "이미지를 디코딩할 수 없음",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "추가됨",
+    "stateDeleted": "삭제됨",
+    "stateModified": "수정됨",
+    "fallbackFormatName": "바이너리"
+  }
+}

@@ -9,8 +9,10 @@ import 'package:flutter/physics.dart'
     show SpringDescription, SpringSimulation;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/format.dart';
 import '../../ui/horizontal_wheel.dart';
 import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
@@ -1183,7 +1185,7 @@ class _TimelinePainter extends CustomPainter {
       final spans = <TextSpan>[];
       final metaBits = <String>[
         if (withAuthor && entry.authorName.isNotEmpty) entry.authorName,
-        _relAgeShort(entry.authoredAt),
+        relAgeShort(entry.authoredAt),
         if (entry.isMerge) 'merge',
       ];
       spans.add(TextSpan(text: metaBits.join(' · '), style: metaStyle));
@@ -2154,10 +2156,11 @@ class _TimelineStripState extends State<_TimelineStrip>
                     onTap: _toggleTheta,
                   ),
                 ),
-                builder: (_, open, child) => Semantics(
+                builder: (context, open, child) => Semantics(
                   button: true,
-                  label:
-                      open ? 'Close worldline' : 'Drag to open worldline',
+                  label: open
+                      ? context.t.history.worldline.closeWorldline
+                      : context.t.history.worldline.dragToOpenWorldline,
                   onTap: _toggleTheta,
                   child: child,
                 ),
@@ -2259,22 +2262,6 @@ String _normalizeDeskPath(String p) {
   final n = p.replaceAll('\\', '/');
   return Platform.isLinux ? n : n.toLowerCase();
 }
-
-/// Relative age for the strip's inline hover caption — one token.
-String _relAgeShort(String iso) {
-  try {
-    final dt = DateTime.parse(iso);
-    final diff = DateTime.now().difference(dt);
-    if (diff.inDays > 365) return '${(diff.inDays / 365).floor()}y';
-    if (diff.inDays > 30) return '${(diff.inDays / 30).floor()}mo';
-    if (diff.inDays > 0) return '${diff.inDays}d';
-    if (diff.inHours > 0) return '${diff.inHours}h';
-    return '${max(diff.inMinutes, 0)}m';
-  } catch (_) {
-    return iso.length > 10 ? iso.substring(0, 10) : iso;
-  }
-}
-
 
 class _CommitImpact extends StatelessWidget {
   final CommitDetailData? detail;
@@ -3073,17 +3060,17 @@ class _HistoryPageState extends State<HistoryPage> {
     // sees at a glance that ONLY the commit's diff moves, and WHERE
     // it lands. Falls back to "current branch" when status hasn't
     // loaded yet (e.g. on first paint) — still parseable.
-    final branch =
-        context.read<RepositoryState>().status?.branch ?? 'current branch';
+    final branch = context.read<RepositoryState>().status?.branch ??
+        context.t.history.contextMenu.currentBranchFallback;
     final items = <AppContextMenuItem>[
       AppContextMenuItem(
         icon: Icons.content_paste_go,
-        label: "Apply commit's changes onto $branch",
+        label: context.t.history.contextMenu.applyCommitOnto(branch: branch),
         onTap: () => _cherryPick(repoPath, commit.commitHash),
       ),
       AppContextMenuItem(
         icon: Icons.undo,
-        label: "Revert commit's changes on $branch",
+        label: context.t.history.contextMenu.revertCommitOn(branch: branch),
         onTap: () => _revert(repoPath, commit.commitHash),
       ),
     ];
@@ -3107,18 +3094,18 @@ class _HistoryPageState extends State<HistoryPage> {
         final paused = (await inProgressOperation(repoPath)) != null;
         if (!mounted) return;
         if (paused) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Cherry-pick paused. Finish the remaining conflicts "
-                "on the Changes page."),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(context.t.history.cherryPick.paused),
           ));
         } else {
           // Lead with the classified reason; keep raw stderr one tap away.
           final f = r.failure;
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text("Cherry-pick failed: ${f?.message ?? r.error}"),
+            content: Text(context.t.history.cherryPick
+                .failed(error: '${f?.message ?? r.error}')),
             action: f != null && f.detail.isNotEmpty && f.detail != f.message
                 ? SnackBarAction(
-                    label: 'Copy',
+                    label: context.t.common.copy,
                     onPressed: () =>
                         Clipboard.setData(ClipboardData(text: f.detail)),
                   )
@@ -3128,7 +3115,9 @@ class _HistoryPageState extends State<HistoryPage> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Cherry-picked $short (resolved conflicts)")),
+        SnackBar(
+            content: Text(
+                context.t.history.cherryPick.pickedResolved(short: short))),
       );
       // The resolved pick created a commit — reload the history list (so it
       // appears) and refresh status, matching the revert path.
@@ -3137,7 +3126,8 @@ class _HistoryPageState extends State<HistoryPage> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Cherry-picked $short")),
+      SnackBar(
+          content: Text(context.t.history.cherryPick.picked(short: short))),
     );
     await context.read<RepositoryState>().refreshStatus();
   }
@@ -3154,17 +3144,17 @@ class _HistoryPageState extends State<HistoryPage> {
         final paused = (await inProgressOperation(repoPath)) != null;
         if (!mounted) return;
         if (paused) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Revert paused. Finish the remaining conflicts on "
-                "the Changes page."),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(context.t.history.revert.paused),
           ));
         } else {
           final f = r.failure;
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text("Revert failed: ${f?.message ?? r.error}"),
+            content: Text(context.t.history.revert
+                .failed(error: '${f?.message ?? r.error}')),
             action: f != null && f.detail.isNotEmpty && f.detail != f.message
                 ? SnackBarAction(
-                    label: 'Copy',
+                    label: context.t.common.copy,
                     onPressed: () =>
                         Clipboard.setData(ClipboardData(text: f.detail)),
                   )
@@ -3174,7 +3164,9 @@ class _HistoryPageState extends State<HistoryPage> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Reverted $short (resolved conflicts)")),
+        SnackBar(
+            content:
+                Text(context.t.history.revert.revertedResolved(short: short))),
       );
       await _load(repoPath);
       // A resolved revert creates a commit — refresh the status bar
@@ -3183,7 +3175,7 @@ class _HistoryPageState extends State<HistoryPage> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Reverted $short")),
+      SnackBar(content: Text(context.t.history.revert.reverted(short: short))),
     );
     await _load(repoPath);
   }
@@ -3290,12 +3282,12 @@ class _HistoryPageState extends State<HistoryPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.alt_route_outlined,
-          label: 'Create branch from here…',
+          label: context.t.history.reflog.createBranchFromHere,
           onTap: () => _promptReflogRecoverBranch(repo, entry),
         ),
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: 'Copy commit hash',
+          label: context.t.history.reflog.copyCommitHash,
           onTap: () =>
               Clipboard.setData(ClipboardData(text: entry.commitHash)),
         ),
@@ -3319,7 +3311,7 @@ class _HistoryPageState extends State<HistoryPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          'Create branch from reflog entry',
+          context.t.history.reflog.createBranchDialogTitle,
           style: TextStyle(color: t.textStrong, fontSize: 14),
         ),
         content: Column(
@@ -3327,7 +3319,8 @@ class _HistoryPageState extends State<HistoryPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Anchor: ${entry.shortHash}  ·  ${entry.actionSummary}',
+              context.t.history.reflog.anchorLine(
+                  short: entry.shortHash, summary: entry.actionSummary),
               style: TextStyle(
                   color: t.textMuted,
                   fontSize: 11,
@@ -3336,7 +3329,7 @@ class _HistoryPageState extends State<HistoryPage> {
             const SizedBox(height: 12),
             AppTextField(
               controller: controller,
-              hintText: 'branch name',
+              hintText: context.t.history.reflog.branchNameHint,
               autofocus: true,
               onSubmitted: (s) => Navigator.of(ctx).pop(s.trim()),
             ),
@@ -3345,12 +3338,12 @@ class _HistoryPageState extends State<HistoryPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(null),
-            child: const Text('Cancel'),
+            child: Text(context.t.common.cancel),
           ),
           TextButton(
             onPressed: () =>
                 Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('Create'),
+            child: Text(context.t.history.reflog.createAction),
           ),
         ],
       ),
@@ -3362,12 +3355,16 @@ class _HistoryPageState extends State<HistoryPage> {
     if (!mounted) return;
     if (!res.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to create branch: ${res.error}')),
+        SnackBar(
+            content: Text(context.t.history.reflog
+                .createBranchFailed(error: '${res.error}'))),
       );
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Branch "$name" created at ${entry.shortHash}.')),
+      SnackBar(
+          content: Text(context.t.history.reflog
+              .branchCreatedAt(name: name, short: entry.shortHash))),
     );
   }
 
@@ -3407,9 +3404,9 @@ class _HistoryPageState extends State<HistoryPage> {
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('That commit is deeper than the '
-          '$_kHistoryRevealCeiling commits loaded.'),
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(context.t.history
+          .revealCeilingExceeded(n: _kHistoryRevealCeiling)),
     ));
   }
 
@@ -3507,7 +3504,9 @@ class _HistoryPageState extends State<HistoryPage> {
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete tag: ${r.error}')),
+        SnackBar(
+            content: Text(context.t.history
+                .deleteTagFailed(error: '${r.error}'))),
       );
     }
   }
@@ -3613,15 +3612,15 @@ class _HistoryPageState extends State<HistoryPage> {
     }
 
     if (_loading && _commits.isEmpty) {
-      return const AppStatusView.loading(
-        title: 'Loading history',
-        message: 'Reading recent commits.',
+      return AppStatusView.loading(
+        title: context.t.history.loadingTitle,
+        message: context.t.history.loadingMessage,
       );
     }
 
     if (_error != null) {
       return AppStatusView.error(
-        title: 'History unavailable',
+        title: context.t.history.unavailableTitle,
         message: _error!,
       );
     }
@@ -3650,14 +3649,14 @@ class _HistoryPageState extends State<HistoryPage> {
           // is a power-user shortcut, cursor + semantics only).
           Semantics(
             button: true,
-            label: 'Toggle worldline',
+            label: context.t.history.toggleWorldline,
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () =>
                     _timelineStripKey.currentState?._toggleTheta(),
-                child: Text('History',
+                child: Text(context.t.history.pageTitle,
                     style: TextStyle(
                         color: t.textMuted,
                         fontSize: 10,
@@ -3668,7 +3667,7 @@ class _HistoryPageState extends State<HistoryPage> {
           ),
           const Spacer(),
           Row(children: [
-            Text('Viewing last',
+            Text(context.t.history.viewingLast,
                 style: TextStyle(color: t.textMuted, fontSize: 11)),
             const SizedBox(width: 6),
             SizedBox(
@@ -3684,7 +3683,8 @@ class _HistoryPageState extends State<HistoryPage> {
               ),
             ),
             const SizedBox(width: 6),
-            Text('commits', style: TextStyle(color: t.textMuted, fontSize: 11)),
+            Text(context.t.history.commitsUnit,
+                style: TextStyle(color: t.textMuted, fontSize: 11)),
           ]),
         ]),
       ),
@@ -3872,9 +3872,9 @@ class _HistoryPageState extends State<HistoryPage> {
                           setState(() => _rebaseRangeEndIndex = null),
                     )
                   : _selectedHash == null
-                      ? const AppStatusView(
-                          title: 'No commit selected',
-                          message: 'Select a commit to inspect its changes.',
+                      ? AppStatusView(
+                          title: context.t.history.noCommitSelectedTitle,
+                          message: context.t.history.noCommitSelectedMessage,
                           compact: true,
                         )
                       : _detail != null
@@ -3949,15 +3949,16 @@ class _HistoryPageState extends State<HistoryPage> {
                               ),
                             )
                           : _detailLoading
-                              ? const AppStatusView.loading(
-                                  title: 'Loading commit',
-                                  message: 'Reading commit details.',
+                              ? AppStatusView.loading(
+                                  title: context.t.history.loadingCommitTitle,
+                                  message:
+                                      context.t.history.loadingCommitMessage,
                                   compact: true,
                                 )
                               : AppStatusView.error(
-                                  title: 'Commit unavailable',
-                                  message:
-                                      _detailError ?? 'Could not load commit.',
+                                  title: context.t.history.commitUnavailableTitle,
+                                  message: _detailError ??
+                                      context.t.history.couldNotLoadCommit,
                                   compact: true,
                                 ),
             ),
@@ -4088,20 +4089,6 @@ class _CommitRowState extends State<_CommitRow> {
     );
   }
 
-  static String _formatDate(String iso) {
-    try {
-      final dt = DateTime.parse(iso);
-      final now = DateTime.now();
-      final diff = now.difference(dt);
-      if (diff.inDays > 365) return '${(diff.inDays / 365).floor()}y ago';
-      if (diff.inDays > 30) return '${(diff.inDays / 30).floor()}mo ago';
-      if (diff.inDays > 0) return '${diff.inDays}d ago';
-      if (diff.inHours > 0) return '${diff.inHours}h ago';
-      return '${diff.inMinutes}m ago';
-    } catch (_) {
-      return iso.length > 10 ? iso.substring(0, 10) : iso;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -4200,7 +4187,7 @@ class _CommitRowState extends State<_CommitRow> {
                     ),
                   ),
                 const Spacer(),
-                Text(_formatDate(c.authoredAt),
+                Text(relativeAgeAgo(c.authoredAt),
                     style: TextStyle(
                         color: t.textMuted.withValues(alpha: 0.8),
                         fontSize: 10)),
@@ -4264,7 +4251,7 @@ class _ReflogDivider extends StatelessWidget {
                   color: t.chromeBorder.withValues(alpha: 0.3), height: 1)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text('reflog',
+            child: Text(context.t.history.reflogDividerLabel,
                 style: TextStyle(
                     color: t.textMuted, fontSize: 10, letterSpacing: 0.05)),
           ),
@@ -4278,7 +4265,7 @@ class _ReflogDivider extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: GestureDetector(
             onTap: onLoad,
-            child: Text('Load reflog',
+            child: Text(context.t.history.loadReflog,
                 style: TextStyle(color: t.accentBright, fontSize: 11)),
           ),
         ),
@@ -4558,11 +4545,11 @@ class _TagCreatorState extends State<_TagCreator> {
     final shader = context.surfaceShader;
     final color = _hovered ? t.accentBright : t.textFaint;
     return Tooltip(
-      message: 'Create tag',
+      message: context.t.history.createTag,
       waitDuration: const Duration(milliseconds: 400),
       child: Semantics(
         button: true,
-        label: 'Create tag',
+        label: context.t.history.createTag,
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           onEnter: (_) => setState(() => _hovered = true),
@@ -4616,7 +4603,9 @@ class _TagCreatorState extends State<_TagCreator> {
       },
       child: Semantics(
         textField: true,
-        label: hasError ? 'New tag name — ${widget.error}' : 'New tag name',
+        label: hasError
+            ? context.t.history.newTagNameError(error: widget.error!)
+            : context.t.history.newTagName,
         child: Container(
           height: 22,
           constraints: const BoxConstraints(minWidth: 84, maxWidth: 150),
@@ -4792,25 +4781,7 @@ class _CommitDetail extends StatelessWidget {
   /// Terse relative age ("3d ago", "2mo ago") in the app's mono voice.
   /// The absolute date rides along in a tooltip so precision is one hover
   /// away without spending a whole metadata slot on a raw ISO date.
-  static String _relativeDate(String iso) {
-    try {
-      final dt = DateTime.parse(iso);
-      final diff = DateTime.now().difference(dt);
-      final s = diff.inSeconds;
-      if (s < 45) return 'just now';
-      final m = diff.inMinutes;
-      if (m < 60) return '${m}m ago';
-      final h = diff.inHours;
-      if (h < 24) return '${h}h ago';
-      final days = diff.inDays;
-      if (days < 7) return '${days}d ago';
-      if (days < 30) return '${(days / 7).floor()}w ago';
-      if (days < 365) return '${(days / 30).floor()}mo ago';
-      return '${(days / 365).floor()}y ago';
-    } catch (_) {
-      return _formatDate(iso);
-    }
-  }
+  static String _relativeDate(String iso) => relativeDate(iso);
 
   /// GitHub's noreply identity is `<numeric-id>+<username>`; when a commit
   /// carries it as the *name* (web/co-authored commits), the raw digits
@@ -4974,7 +4945,7 @@ class _CommitDetail extends StatelessWidget {
         // and the +/- chips all act as the same affordance — wherever
         // the user's eye lands when they want "show me everything."
         _StatChip(
-            label: '${d.filesChanged} file${d.filesChanged == 1 ? "" : "s"}',
+            label: context.t.common.fileCount(n: d.filesChanged),
             color: t.textMuted,
             onTap: onOpenAllFiles),
         const SizedBox(width: 6),
@@ -5164,8 +5135,7 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
     final t = widget.tokens;
     final isAll = widget.filePath == _HistoryPageState._kAllFilesPath;
     final headerPath = isAll
-        ? '${widget.detail.filesChanged} '
-            'file${widget.detail.filesChanged == 1 ? "" : "s"} · all changes'
+        ? context.t.history.allFilesHeader(n: widget.detail.filesChanged)
         : widget.filePath;
     return Focus(
       focusNode: _focusNode,
@@ -5221,7 +5191,8 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
               // In all-files mode pass a synthetic label DiffShell can
               // display as the file header — it natively renders
               // multi-file diffs containing per-file `+++/---` markers.
-              filePath: isAll ? 'all changes' : widget.filePath,
+              filePath:
+                  isAll ? context.t.history.allChangesLabel : widget.filePath,
               tokens: t,
               diffContent: widget.diffContent,
               loading: widget.loading,
@@ -5382,7 +5353,8 @@ class _RebaseEditorState extends State<_RebaseEditor> {
     if (_todo.isEmpty) return null;
     final first = _todo[0]['action']!;
     if (first == 'squash' || first == 'fixup') {
-      return 'First commit cannot be ${_todo[0]['action']}';
+      return context.t.history.rebase
+          .firstCommitCannotBe(action: _todo[0]['action']!);
     }
     return null;
   }
@@ -5428,7 +5400,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
           Row(children: [
             Expanded(
               child: Text(
-                  'Rebase ${_todo.length} commit${_todo.length == 1 ? "" : "s"}',
+                  context.t.history.rebase.rebaseCommitCount(n: _todo.length),
                   style: TextStyle(
                       color: t.textStrong,
                       fontSize: 14,
@@ -5439,7 +5411,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                 onTap: _reset,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
-                  child: Text('reset',
+                  child: Text(context.t.history.rebase.resetLabel,
                       style: TextStyle(
                           color: t.textMuted,
                           fontSize: 10,
@@ -5448,7 +5420,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
               ),
           ]),
           const SizedBox(height: 2),
-          Text('drag to reorder, pick action per commit',
+          Text(context.t.history.rebase.dragToReorderHint,
               style: TextStyle(color: t.textMuted, fontSize: 11)),
         ]),
       ),
@@ -5586,7 +5558,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                             isDense: true,
                             contentPadding: const EdgeInsets.symmetric(
                                 horizontal: 8, vertical: 6),
-                            hintText: 'new message',
+                            hintText: context.t.history.rebase.newMessageHint,
                             hintStyle: TextStyle(
                                 color: t.textFaint, fontSize: 11),
                             border: OutlineInputBorder(
@@ -5637,7 +5609,9 @@ class _RebaseEditorState extends State<_RebaseEditor> {
         child: Row(children: [
           Expanded(
               child: _RebaseBtn(
-                  label: _running ? '…' : 'Start Rebase',
+                  label: _running
+                      ? context.t.history.rebase.runningEllipsis
+                      : context.t.history.rebase.startRebase,
                   t: t,
                   primary: true,
                   enabled: !_running && validation == null,
@@ -5645,7 +5619,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
           const SizedBox(width: 8),
           Expanded(
               child: _RebaseBtn(
-                  label: 'Cancel',
+                  label: context.t.common.cancel,
                   t: t,
                   primary: false,
                   enabled: !_running,
@@ -5835,7 +5809,7 @@ class _DesksInFlightStripState extends State<_DesksInFlightStrip> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
-            'IN FLIGHT',
+            context.t.history.inFlight.header,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.85),
               fontSize: 8.5,
@@ -5863,7 +5837,7 @@ class _DesksInFlightStripState extends State<_DesksInFlightStrip> {
                         (desk.isDetached
                             ? desk.head.substring(0,
                                 desk.head.length < 7 ? desk.head.length : 7)
-                            : 'desk');
+                            : context.t.history.inFlight.deskFallbackLabel);
                     return _InFlightDeskChip(
                       tokens: t,
                       label: label,

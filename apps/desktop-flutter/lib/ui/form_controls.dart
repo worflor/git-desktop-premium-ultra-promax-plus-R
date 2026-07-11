@@ -216,6 +216,31 @@ class AppDropdownField<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // Force every item — both in the popup list AND the selected-value
+    // slot the button reuses (no selectedItemBuilder here, so the item
+    // widget is what renders in-place) — onto a single ellipsized line.
+    // DefaultTextStyle.merge is layout-neutral: it adds no box, only
+    // seeds softWrap/overflow/maxLines that any descendant Text inherits
+    // unless it sets them itself. Long translated values (e.g. a locale
+    // name 30-40% wider than English) ellipsize instead of breaking
+    // mid-word; short English labels are unaffected. Paired with
+    // `isExpanded` so a long item ellipsizes against the button width
+    // rather than overflowing the menu.
+    final singleLineItems = <DropdownMenuItem<T>>[
+      for (final item in items)
+        DropdownMenuItem<T>(
+          value: item.value,
+          enabled: item.enabled,
+          alignment: item.alignment,
+          onTap: item.onTap,
+          child: DefaultTextStyle.merge(
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            child: item.child,
+          ),
+        ),
+    ];
     return AppInputShell(
       height: height,
       padding: padding,
@@ -240,7 +265,7 @@ class AppDropdownField<T> extends StatelessWidget {
             fontWeight: fontWeight,
           ),
           isExpanded: isExpanded,
-          items: items,
+          items: singleLineItems,
           onChanged: enabled ? onChanged : null,
         ),
       ),

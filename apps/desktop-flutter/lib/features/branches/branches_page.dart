@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
+import '../../ui/format.dart';
 import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/interaction_feedback.dart';
@@ -66,10 +67,11 @@ import '../../backend/merge_session.dart'
         MergeFailed,
         MergeConflicted,
         MergeBlockedByLocalChanges,
-        MergeNeedsCheckout,
-        mergeOutcomeMessage;
+        MergeNeedsCheckout;
+import '../../ui/merge_outcome_text.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../../i18n/gen/strings.g.dart';
 
 class BranchesPage extends StatefulWidget {
   const BranchesPage({super.key});
@@ -104,7 +106,7 @@ class _AiReviewProgressDialog extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          Text('Running AI review…',
+          Text(context.t.branches.runningAiReview,
               style: TextStyle(color: t.textNormal, fontSize: 12)),
         ],
       ),
@@ -155,7 +157,7 @@ class _PrAiReviewDialog extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'PR #${pr.number}',
+              context.t.branches.prNumberLabel(number: pr.number),
               style: TextStyle(color: t.textMuted, fontSize: 10),
               overflow: TextOverflow.ellipsis,
             ),
@@ -175,7 +177,7 @@ class _PrAiReviewDialog extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
               if (review.findings.isNotEmpty) ...[
-                Text('FINDINGS',
+                Text(context.t.branches.findings,
                     style: TextStyle(
                         color: t.textMuted,
                         fontSize: 9,
@@ -220,7 +222,7 @@ class _PrAiReviewDialog extends StatelessWidget {
                   ),
               ],
               if (review.observations.isNotEmpty) ...[
-                Text('OBSERVATIONS',
+                Text(context.t.branches.observations,
                     style: TextStyle(
                         color: t.textMuted,
                         fontSize: 9,
@@ -256,11 +258,11 @@ class _PrAiReviewDialog extends StatelessWidget {
             Clipboard.setData(
                 ClipboardData(text: renderCommitReviewReport(review)));
           },
-          child: Text('Copy', style: TextStyle(color: t.textMuted)),
+          child: Text(context.t.common.copy, style: TextStyle(color: t.textMuted)),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+          child: Text(context.t.common.close),
         ),
       ],
     );
@@ -832,13 +834,17 @@ class _BranchesPageState extends State<BranchesPage> {
     // Exhaustive (no `_`) so a new MergeOutcome variant fails to compile here.
     final err = switch (outcome) {
       MergeClean() => null,
-      MergeConflicted(:final resolved) =>
-        resolved ? null : mergeOutcomeMessage(outcome, op: 'Switch'),
-      MergeBlockedByLocalChanges() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeConflicted(:final resolved) => resolved
+          ? null
+          : mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeBlockedByLocalChanges() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
       // A switch never produces this (it operates on the checked-out tree);
       // handled for exhaustiveness so the guidance surfaces if it ever does.
-      MergeNeedsCheckout() => mergeOutcomeMessage(outcome, op: 'Switch'),
-      MergeFailed() => mergeOutcomeMessage(outcome, op: 'Switch'),
+      MergeNeedsCheckout() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeFailed() =>
+        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
     };
     if (err != null) setState(() => _actionError = err);
     if (outcome is MergeFailed) return; // hard failure: don't reload
@@ -862,7 +868,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final items = <AppContextMenuItem>[
       AppContextMenuItem(
         icon: Icons.drive_file_rename_outline,
-        label: 'Rename…',
+        label: context.t.branches.renameEllipsis,
         onTap: () => _showRenameBranchDialog(repoPath, branch.name),
       ),
       // Publish — only for local branches with no upstream. Pushes and
@@ -870,7 +876,7 @@ class _BranchesPageState extends State<BranchesPage> {
       if (branch.upstream == null)
         AppContextMenuItem(
           icon: Icons.cloud_upload_outlined,
-          label: 'Publish',
+          label: context.t.branches.publish,
           onTap: () => _publishBranch(repoPath, branch.name),
         ),
     ];
@@ -889,7 +895,7 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() => _actionRunning = false);
     if (!r.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Publish failed: ${r.error}')),
+        SnackBar(content: Text(context.t.branches.publishFailed(error: r.error ?? ''))),
       );
       return;
     }
@@ -905,7 +911,7 @@ class _BranchesPageState extends State<BranchesPage> {
         .setActivePath(desk.path, addToRecents: false);
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't open desk: $err")),
+        SnackBar(content: Text(context.t.branches.couldntOpenDesk(error: err))),
       );
     }
   }
@@ -940,7 +946,7 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() => _manifoldSyncing = false);
     if (prErr != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Sync failed: $prErr')),
+        SnackBar(content: Text(context.t.branches.syncFailed(error: prErr))),
       );
     }
   }
@@ -957,7 +963,7 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          title: Text('Rename branch',
+          title: Text(ctx.t.branches.renameBranchTitle,
               style: TextStyle(color: t.textStrong, fontSize: 14)),
           content: SizedBox(
             width: 320,
@@ -974,7 +980,7 @@ class _BranchesPageState extends State<BranchesPage> {
                 const SizedBox(height: 10),
                 AppTextField(
                   controller: ctrl,
-                  hintText: 'new name',
+                  hintText: ctx.t.branches.newNameHint,
                   autofocus: true,
                   mono: true,
                   onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
@@ -985,11 +991,11 @@ class _BranchesPageState extends State<BranchesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(null),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
-              child: const Text('Rename'),
+              child: Text(ctx.t.branches.rename),
             ),
           ],
         );
@@ -1008,7 +1014,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (checkRef.exitCode != 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("'$newName' is not a valid branch name.")),
+          SnackBar(content: Text(context.t.branches.invalidBranchName(name: newName))),
         );
       }
       return;
@@ -1018,7 +1024,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     if (!r.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Rename failed: ${r.error}")),
+        SnackBar(content: Text(context.t.branches.renameFailed(error: r.error ?? ''))),
       );
       return;
     }
@@ -1048,13 +1054,13 @@ class _BranchesPageState extends State<BranchesPage> {
     final expectTip = await refTip(repo, 'refs/heads/$name');
     if (!mounted) return const _DeleteBranchOutcome.error('cancelled');
     if (expectTip == null) {
-      return const _DeleteBranchOutcome.error(
-          'could not pin the branch tip; delete skipped');
+      return _DeleteBranchOutcome.error(
+          context.t.branches.couldNotPinBranch);
     }
     setState(() => _actionRunning = true);
     final r = await coord.schedule<GitResult<void>>(
       kind: UndoActionKind.branchDelete,
-      label: 'Deleting $name',
+      label: context.t.branches.deletingBranch(name: name),
       window: Duration(seconds: windowSec),
       run: () => deleteBranchIfAt(repo, name, expectTip, force: force),
     );
@@ -1075,14 +1081,14 @@ class _BranchesPageState extends State<BranchesPage> {
           final label = desk.path.split(RegExp(r'[\\/]')).last;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("'$name' is open in desk '$label'."),
+              content: Text(context.t.branches.branchOpenInDesk(name: name, desk: label)),
               action: SnackBarAction(
-                label: 'Open desk',
+                label: context.t.branches.openDesk,
                 onPressed: () => _openDeskForBranch(desk),
               ),
             ),
           );
-          return _DeleteBranchOutcome.error("open in desk '$label'");
+          return _DeleteBranchOutcome.error(context.t.branches.openInDeskShort(desk: label));
         case DeleteFailed(:final message):
           return _DeleteBranchOutcome.error(message);
       }
@@ -1102,7 +1108,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     if (expectTip == null) {
       setState(
-          () => _actionError = 'could not pin the tag; delete skipped');
+          () => _actionError = context.t.branches.couldNotPinTag);
       return;
     }
     setState(() {
@@ -1111,7 +1117,7 @@ class _BranchesPageState extends State<BranchesPage> {
     });
     final r = await coord.schedule<GitResult<void>>(
       kind: UndoActionKind.tagDelete,
-      label: 'Deleting tag $name',
+      label: context.t.branches.deletingTag(name: name),
       window: Duration(seconds: windowSec),
       run: () => deleteTagIfAt(repo, name, expectTip),
     );
@@ -1266,7 +1272,7 @@ class _BranchesPageState extends State<BranchesPage> {
         // sees the collision landscape BEFORE touching the tree.
         AppContextMenuItem(
           icon: Icons.science_outlined,
-          label: 'Apply to active changes…',
+          label: context.t.branches.applyToActiveChanges,
           onTap: () async {
             var detail = _prDetails[pr.number];
             if (detail == null || detail.diff.isEmpty) {
@@ -1277,7 +1283,7 @@ class _BranchesPageState extends State<BranchesPage> {
             if (detail == null || detail.diff.isEmpty) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Could not load PR diff.')),
+                SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
               );
               return;
             }
@@ -1285,7 +1291,7 @@ class _BranchesPageState extends State<BranchesPage> {
             await _openPatchPreview(
               repoPath,
               detail.diff,
-              sourceLabel: 'PR #${pr.number}: ${pr.title}',
+              sourceLabel: context.t.branches.prSourceLabel(number: pr.number, title: pr.title),
             );
           },
         ),
@@ -1298,12 +1304,12 @@ class _BranchesPageState extends State<BranchesPage> {
         for (final desk in deskTargets)
           AppContextMenuItem(
             icon: Icons.call_merge_outlined,
-            label: 'Merge into ${desk.branch}…',
+            label: context.t.branches.mergeIntoDesk(branch: desk.branch ?? ''),
             onTap: () => _showMergeIntoDeskMenu(pr, desk),
           ),
         AppContextMenuItem(
           icon: Icons.download_done_outlined,
-          label: 'Checkout this PR',
+          label: context.t.branches.checkoutThisPr,
           onTap: () => _checkoutPr(repoPath, pr.number),
         ),
         // Merge into new desk — materialises the PR as its own
@@ -1314,27 +1320,27 @@ class _BranchesPageState extends State<BranchesPage> {
         if (!isLocal)
           AppContextMenuItem(
             icon: Icons.view_quilt_outlined,
-            label: 'Merge into new desk…',
+            label: context.t.branches.mergeIntoNewDesk,
             onTap: () => _openPrAsDesk(repoPath, pr),
           ),
         if (isLocal && _forge != RemoteForge.unknown)
           AppContextMenuItem(
             icon: Icons.cloud_upload_outlined,
-            label: 'Push to forge',
+            label: context.t.branches.pushToForge,
             onTap: () => _promoteToForge(repoPath, pr.headRef),
           ),
       ]),
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.link,
-          label: 'Link to issue…',
+          label: context.t.branches.linkToIssue,
           onTap: () => _showLinkToIssuePicker(repoPath, pr, isLocal),
         ),
       ]),
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.file_download_outlined,
-          label: '↓ git patch',
+          label: context.t.branches.gitPatch,
           onTap: () async {
             var detail = _prDetails[pr.number];
             if (detail == null || detail.diff.isEmpty) {
@@ -1345,7 +1351,7 @@ class _BranchesPageState extends State<BranchesPage> {
             if (detail == null || detail.diff.isEmpty) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Could not load PR diff.')),
+                SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
               );
               return;
             }
@@ -1355,12 +1361,12 @@ class _BranchesPageState extends State<BranchesPage> {
         ),
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: 'Copy branch name',
+          label: context.t.branches.copyBranchName,
           onTap: () async {
             await Clipboard.setData(ClipboardData(text: pr.headRef));
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Copied "${pr.headRef}"')),
+              SnackBar(content: Text(context.t.branches.copiedRef(ref: pr.headRef))),
             );
           },
         ),
@@ -1373,7 +1379,7 @@ class _BranchesPageState extends State<BranchesPage> {
         if (!context.read<PreferencesState>().hideAiFeatures)
           AppContextMenuItem(
             icon: Icons.auto_awesome_outlined,
-            label: 'Review PR',
+            label: context.t.branches.reviewPr,
             onTap: () => _runPrAiReview(repoPath, pr),
           ),
         // Open in browser — `gh pr view --web` for remote PRs. Local
@@ -1381,7 +1387,7 @@ class _BranchesPageState extends State<BranchesPage> {
         if (!isLocal)
           AppContextMenuItem(
             icon: Icons.open_in_new,
-            label: 'Open in browser',
+            label: context.t.branches.openInBrowser,
             onTap: () => _openPrInBrowser(repoPath, pr.number),
           ),
       ]),
@@ -1390,7 +1396,7 @@ class _BranchesPageState extends State<BranchesPage> {
           icon: unread
               ? Icons.mark_email_read_outlined
               : Icons.mark_email_unread_outlined,
-          label: unread ? 'Mark as read' : 'Mark as unread',
+          label: unread ? context.t.branches.markAsRead : context.t.branches.markAsUnread,
           onTap: () =>
               unread ? _markPrSeen(pr.number) : _unmarkPrSeen(pr.number),
         ),
@@ -1422,24 +1428,22 @@ class _BranchesPageState extends State<BranchesPage> {
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text(
-              'Replace local commits?',
+              ctx.t.branches.replaceLocalCommitsTitle,
               style: TextStyle(color: t.textStrong, fontSize: 14),
             ),
             content: Text(
-              '$localRef has local commits that are not on the remote PR '
-              'head. Updating it will replace them with the latest from the '
-              'remote.',
+              ctx.t.branches.replaceLocalCommitsBody(ref: localRef),
               style: TextStyle(color: t.textNormal, fontSize: 12),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(false),
-                child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+                child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
               ),
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(true),
                 // Overwrites unreachable local commits — destructive.
-                child: Text('Update',
+                child: Text(ctx.t.branches.update,
                     style: TextStyle(
                         color: t.danger, fontWeight: FontWeight.w600)),
               ),
@@ -1459,13 +1463,13 @@ class _BranchesPageState extends State<BranchesPage> {
             return;
           case PrCheckoutFailed(:final error):
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Couldn't fetch PR: $error")),
+              SnackBar(content: Text(context.t.branches.couldntFetchPr(error: error))),
             );
             return;
         }
       case PrCheckoutFailed(:final error):
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't fetch PR: $error")),
+          SnackBar(content: Text(context.t.branches.couldntFetchPr(error: error))),
         );
         return;
       case PrCheckoutOk():
@@ -1479,7 +1483,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final err = await context.read<WorktreeState>().addDesk('pr-${pr.number}');
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't open as desk: $err")),
+        SnackBar(content: Text(context.t.branches.couldntOpenAsDesk(error: err))),
       );
     }
   }
@@ -1496,8 +1500,8 @@ class _BranchesPageState extends State<BranchesPage> {
     if (res.exitCode != 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                "Couldn't open in browser: ${(res.stderr as String).trim()}")),
+            content: Text(context.t.branches
+                .couldntOpenInBrowser(error: (res.stderr as String).trim()))),
       );
     }
   }
@@ -1548,12 +1552,12 @@ class _BranchesPageState extends State<BranchesPage> {
     final emptyMessage = entries.isNotEmpty
         ? null
         : (prIsLocal
-            ? 'No issues yet. Open one upstream, or use "+ new local issue" in the issues lens.'
-            : 'Remote PRs can only link to local issues. Create one with "+ new local issue".');
+            ? context.t.branches.noIssuesYetLocal
+            : context.t.branches.remotePrsLinkLocalOnly);
     await showDialog<void>(
       context: context,
       builder: (ctx) => _StickyLinkPicker(
-        title: 'Link PR #${pr.number} to issue(s)',
+        title: context.t.branches.linkPrToIssues(number: pr.number),
         candidates: entries,
         emptyMessage: emptyMessage,
         onToggle: (candidate) async {
@@ -1624,12 +1628,12 @@ class _BranchesPageState extends State<BranchesPage> {
     final emptyMessage = entries.isNotEmpty
         ? null
         : (issueIsLocal
-            ? 'No PRs yet. Open one upstream, or promote a desk to PR.'
-            : 'Remote issues can only link to local PRs. Promote a desk to PR first.');
+            ? context.t.branches.noPrsYetLocal
+            : context.t.branches.remoteIssuesLinkLocalOnly);
     await showDialog<void>(
       context: context,
       builder: (ctx) => _StickyLinkPicker(
-        title: 'Link issue #${issue.number} to PR(s)',
+        title: context.t.branches.linkIssueToPrs(number: issue.number),
         candidates: entries,
         emptyMessage: emptyMessage,
         // Custom chip labels — we're listing PRs, so `L/R` still means
@@ -1845,7 +1849,7 @@ class _BranchesPageState extends State<BranchesPage> {
     }
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't toggle link: $err")),
+        SnackBar(content: Text(context.t.branches.couldntToggleLink(error: err))),
       );
     }
     return err;
@@ -1867,7 +1871,7 @@ class _BranchesPageState extends State<BranchesPage> {
     try {
       if (picked == 'file') {
         final res = await FilePicker.platform.pickFiles(
-          dialogTitle: 'Open patch (.patch / .diff)',
+          dialogTitle: context.t.branches.openPatchDialogTitle,
           type: FileType.custom,
           allowedExtensions: const ['patch', 'diff', 'txt'],
           withData: true,
@@ -1890,12 +1894,13 @@ class _BranchesPageState extends State<BranchesPage> {
         if (text.isEmpty) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Clipboard has no text.')),
+            SnackBar(content: Text(context.t.branches.clipboardNoText)),
           );
           return;
         }
         if (!mounted) return;
-        await _openPatchPreview(repoPath, text, sourceLabel: 'clipboard.patch');
+        await _openPatchPreview(repoPath, text,
+            sourceLabel: context.t.branches.clipboardPatchLabel);
       }
     } catch (e) {
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -1906,7 +1911,7 @@ class _BranchesPageState extends State<BranchesPage> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to open patch: $e')),
+        SnackBar(content: Text(context.t.branches.failedToOpenPatch(error: '$e'))),
       );
     }
   }
@@ -1934,7 +1939,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (parsed.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Patch is empty or unparseable.')),
+        SnackBar(content: Text(context.t.branches.patchEmptyOrUnparseable)),
       );
       return;
     }
@@ -2007,7 +2012,8 @@ class _BranchesPageState extends State<BranchesPage> {
         prFiles: prFiles,
         filesByPath: parsed,
         dryRunOk: check.ok,
-        dryRunError: check.ok ? null : (check.error ?? 'apply --check failed'),
+        dryRunError:
+            check.ok ? null : (check.error ?? context.t.branches.applyCheckFailed),
         conflictingPaths: conflictingPaths,
         fightTitles: fightTitles,
         fightShared: fightShared,
@@ -2824,7 +2830,7 @@ class _BranchesPageState extends State<BranchesPage> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('PR pushed to forge.')),
+      SnackBar(content: Text(context.t.branches.prPushedToForge)),
     );
     await _fetchPullRequests(repoPath);
   }
@@ -2869,17 +2875,17 @@ class _BranchesPageState extends State<BranchesPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         content: Text(
-          'Overwrite $localRef with the latest from the remote?',
+          ctx.t.branches.overwriteRefConfirm(ref: localRef),
           style: TextStyle(color: t.textNormal, fontSize: 12),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Overwrite', style: TextStyle(color: t.stateDeleted)),
+            child: Text(ctx.t.branches.overwrite, style: TextStyle(color: t.stateDeleted)),
           ),
         ],
       ),
@@ -3119,15 +3125,15 @@ class _BranchesPageState extends State<BranchesPage> {
     }
 
     if (_loading && _branches.isEmpty) {
-      return const AppStatusView.loading(
-        title: 'Loading branches',
-        message: 'Reading local branches and tags.',
+      return AppStatusView.loading(
+        title: context.t.branches.loadingBranchesTitle,
+        message: context.t.branches.loadingBranchesMessage,
       );
     }
 
     if (_error != null && _branches.isEmpty) {
       return AppStatusView.error(
-        title: 'Branches unavailable',
+        title: context.t.branches.branchesUnavailableTitle,
         message: _error!,
       );
     }
@@ -3158,7 +3164,7 @@ class _BranchesPageState extends State<BranchesPage> {
           if (_lens == _BranchesLens.prs)
             _FilterRow(
               searchCtrl: _prSearchCtrl,
-              searchHint: 'filter pull requests…',
+              searchHint: context.t.branches.filterPullRequestsHint,
               onSearchChanged: (v) => setState(() => _prSearch = v),
               pills: [
                 (
@@ -3187,7 +3193,7 @@ class _BranchesPageState extends State<BranchesPage> {
           if (_lens == _BranchesLens.issues)
             _FilterRow(
               searchCtrl: _issueSearchCtrl,
-              searchHint: 'filter issues…',
+              searchHint: context.t.branches.filterIssuesHint,
               onSearchChanged: (v) => setState(() => _issueSearch = v),
               pills: [
                 ('MINE', null, _issueFilters.contains('MINE')),
@@ -3364,7 +3370,7 @@ class _BranchesPageState extends State<BranchesPage> {
             enabled: !_actionRunning,
             controller: _newBranchCtrl,
             escapeFocus: _branchCreatorEscapeFocus,
-            hintText: _branchNameDream.value ?? 'branch name',
+            hintText: _branchNameDream.value ?? context.t.branches.branchNameHint,
             onToggle: () => setState(() {
               _branchCreatorExpanded = !_branchCreatorExpanded;
               if (!_branchCreatorExpanded) {
@@ -3440,8 +3446,8 @@ class _BranchesPageState extends State<BranchesPage> {
   Widget _buildTagsSortGlyph(AppTokens t, bool descending) {
     return Semantics(
       button: true,
-      label: descending ? 'tags, newest first' : 'tags, oldest first',
-      hint: 'flip sort direction',
+      label: descending ? context.t.branches.tagsNewestFirst : context.t.branches.tagsOldestFirst,
+      hint: context.t.branches.flipSortDirection,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
@@ -3546,7 +3552,7 @@ class _BranchesPageState extends State<BranchesPage> {
       _prWarmSweepToken = null;
     }
     if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
-      return const _LensLoadingNotice(label: 'Reading pull requests…');
+      return _LensLoadingNotice(label: context.t.branches.readingPullRequests);
     }
     // Remote PRs first — same data and lifecycle as before. Local desk
     // PRs are mixed in as PullRequestSummary adapters so the row
@@ -3589,8 +3595,8 @@ class _BranchesPageState extends State<BranchesPage> {
     final allPrs = [...remoteList, ...localSummaries];
     if (allPrs.isEmpty) {
       return _LensEmptyNotice(
-        primary: 'No open pull requests',
-        secondary: _prsError ?? 'Open one from a branch, or promote a desk.',
+        primary: context.t.branches.noOpenPullRequests,
+        secondary: _prsError ?? context.t.branches.noPullRequestsHint,
       );
     }
     // (The dedupe'd set is also exposed as the `_localPrNumbers`
@@ -3598,9 +3604,9 @@ class _BranchesPageState extends State<BranchesPage> {
     // async event handlers always see the current DeskPrState.)
     final prs = allPrs.where(_prMatchesFilters).toList();
     final mainColumn = prs.isEmpty
-        ? const _LensEmptyNotice(
-            primary: 'No PRs match these filters',
-            secondary: 'Toggle filters off in the row above.',
+        ? _LensEmptyNotice(
+            primary: context.t.branches.noPrsMatchFilters,
+            secondary: context.t.branches.toggleFiltersRowAbove,
           )
         // Deliberately NOT a ListView.builder. Each expanded PR row
         // embeds a same-axis scrollable (the diff), and nesting two
@@ -3671,8 +3677,8 @@ class _BranchesPageState extends State<BranchesPage> {
   Widget _buildIssuesSortHeader(AppTokens t, int count, bool descending) {
     return Semantics(
       button: true,
-      label: descending ? 'issues, newest first' : 'issues, oldest first',
-      hint: 'flip sort direction',
+      label: descending ? context.t.branches.issuesNewestFirst : context.t.branches.issuesOldestFirst,
+      hint: context.t.branches.flipSortDirection,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
@@ -3685,7 +3691,7 @@ class _BranchesPageState extends State<BranchesPage> {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(
-                'ISSUES',
+                context.t.branches.issuesHeading,
                 style: TextStyle(
                   color: t.textStrong,
                   fontSize: 11,
@@ -3809,18 +3815,18 @@ class _BranchesPageState extends State<BranchesPage> {
       return _RemoteMissingNotice(status: _remoteStatus!);
     }
     if (_issuesLoading && (_issues == null || _issues!.isEmpty)) {
-      return const _LensLoadingNotice(label: 'reading issues…');
+      return _LensLoadingNotice(label: context.t.branches.readingIssuesLower);
     }
     if (all.isEmpty) {
       return _LensEmptyNotice(
-        primary: 'No open issues',
-        secondary: _issuesError ?? '+ new for tracking work and bugs.',
+        primary: context.t.branches.noOpenIssues,
+        secondary: _issuesError ?? context.t.branches.noIssuesHint,
       );
     }
     if (filtered.isEmpty) {
-      return const _LensEmptyNotice(
-        primary: 'Nothing matches',
-        secondary: 'Toggle filters off above.',
+      return _LensEmptyNotice(
+        primary: context.t.branches.nothingMatches,
+        secondary: context.t.branches.toggleFiltersAbove,
       );
     }
     return SingleChildScrollView(
@@ -3938,10 +3944,10 @@ class _BranchesPageState extends State<BranchesPage> {
       }
     }
 
-    emitBucket('FRESH', fresh);
-    emitBucket('THIS WEEK', week);
-    emitBucket('STALLED', stalled, tone: true);
-    emitBucket('OLDER', older);
+    emitBucket(context.t.branches.bucketFresh, fresh);
+    emitBucket(context.t.branches.bucketThisWeek, week);
+    emitBucket(context.t.branches.bucketStalled, stalled, tone: true);
+    emitBucket(context.t.branches.bucketOlder, older);
     return out;
   }
 
@@ -4071,9 +4077,9 @@ class _BranchesPageState extends State<BranchesPage> {
               final mainPath = _mainWorktreePath();
               if (mainPath == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
+                  SnackBar(
                       content: Text(
-                    'Could not resolve the main worktree path.',
+                    context.t.branches.couldNotResolveMainWorktree,
                   )),
                 );
                 return;
@@ -4118,7 +4124,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't submit review: $err")),
+        SnackBar(content: Text(context.t.branches.couldntSubmitReview(error: err))),
       );
     }
   }
@@ -4142,7 +4148,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (detail == null || detail.diff.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not load PR diff.')),
+        SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
       );
       return;
     }
@@ -4151,7 +4157,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final categories = aiSettings.runtimeModelCategories;
     if (categories.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Review AI is not available yet.')),
+        SnackBar(content: Text(context.t.branches.reviewAiNotAvailable)),
       );
       return;
     }
@@ -4163,7 +4169,7 @@ class _BranchesPageState extends State<BranchesPage> {
         categories.where((c) => c.models.isNotEmpty).firstOrNull;
     if (selectedCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No review model is configured.')),
+        SnackBar(content: Text(context.t.branches.noReviewModelConfigured)),
       );
       return;
     }
@@ -4214,7 +4220,7 @@ class _BranchesPageState extends State<BranchesPage> {
     Navigator.of(context, rootNavigator: true).pop(); // close progress
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Review failed: ${result.error}')),
+        SnackBar(content: Text(context.t.branches.reviewFailed(error: result.error ?? ''))),
       );
       return;
     }
@@ -4270,15 +4276,15 @@ class _BranchesPageState extends State<BranchesPage> {
     if (desk.dirtyFileCount > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('${desk.branch ?? 'desk'} has ${desk.dirtyFileCount} '
-                'uncommitted change${desk.dirtyFileCount == 1 ? '' : 's'} — '
-                'commit or stash first.')),
+            content: Text(context.t.branches.deskUncommittedChanges(
+                n: desk.dirtyFileCount,
+                branch: desk.branch ?? context.t.branches.deskFallback))),
       );
       return;
     }
     if (desk.branch == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Target desk has no branch.')),
+        SnackBar(content: Text(context.t.branches.targetDeskNoBranch)),
       );
       return;
     }
@@ -4302,7 +4308,7 @@ class _BranchesPageState extends State<BranchesPage> {
         final t = ctx.tokens;
         return AlertDialog(
               title: Text(
-            'Merge PR #${pr.number} into ${desk.branch}',
+            ctx.t.branches.mergePrIntoDesk(number: pr.number, branch: desk.branch ?? ''),
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
           content: Column(
@@ -4326,8 +4332,8 @@ class _BranchesPageState extends State<BranchesPage> {
                 const SizedBox(height: 10),
                 Text(
                   preflight.versionUnsupported
-                      ? 'Conflict check unavailable — git 2.38+ required'
-                      : 'Conflict check unavailable',
+                      ? ctx.t.branches.conflictCheckUnavailableVersion
+                      : ctx.t.branches.conflictCheckUnavailable,
                   style: TextStyle(color: t.textMuted, fontSize: 10),
                 ),
               ],
@@ -4345,9 +4351,8 @@ class _BranchesPageState extends State<BranchesPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'WILL CONFLICT · '
-                        '${preflight.conflictingPaths.length} '
-                        'file${preflight.conflictingPaths.length == 1 ? '' : 's'}',
+                        ctx.t.branches.willConflictFiles(
+                            n: preflight.conflictingPaths.length),
                         style: TextStyle(
                           color: t.stateConflicted,
                           fontSize: 9,
@@ -4369,7 +4374,8 @@ class _BranchesPageState extends State<BranchesPage> {
                         ),
                       if (preflight.conflictingPaths.length > 6)
                         Text(
-                          '+${preflight.conflictingPaths.length - 6} more',
+                          ctx.t.branches.plusMore(
+                              n: preflight.conflictingPaths.length - 6),
                           style: TextStyle(color: t.textMuted, fontSize: 10),
                         ),
                     ],
@@ -4381,19 +4387,19 @@ class _BranchesPageState extends State<BranchesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(null),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop('rebase'),
-              child: const Text('Rebase'),
+              child: Text(ctx.t.branches.rebase),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop('squash'),
-              child: const Text('Squash'),
+              child: Text(ctx.t.branches.squash),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop('merge'),
-              child: const Text('Merge commit'),
+              child: Text(ctx.t.branches.mergeCommit),
             ),
           ],
         );
@@ -4445,7 +4451,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (wt.path.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("No desk found for branch $branch")),
+        SnackBar(content: Text(context.t.branches.noDeskForBranch(branch: branch))),
       );
       return;
     }
@@ -4520,7 +4526,11 @@ class _BranchesPageState extends State<BranchesPage> {
         (outcome is MergeConflicted && outcome.resolved);
     if (!landed) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(mergeOutcomeMessage(outcome, op: 'Merge'))),
+        SnackBar(
+          content: Text(
+            mergeOutcomeMessage(outcome, op: context.t.backend.ops.merge),
+          ),
+        ),
       );
       return;
     }
@@ -4562,8 +4572,7 @@ class _BranchesPageState extends State<BranchesPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'WILL CONFLICT · ${paths.length} '
-                    'file${paths.length == 1 ? '' : 's'}',
+                    ctx.t.branches.willConflictFiles(n: paths.length),
                     style: TextStyle(
                       color: t.stateConflicted,
                       fontSize: 9,
@@ -4585,7 +4594,7 @@ class _BranchesPageState extends State<BranchesPage> {
                     ),
                   if (paths.length > 6)
                     Text(
-                      '+${paths.length - 6} more',
+                      ctx.t.branches.plusMore(n: paths.length - 6),
                       style: TextStyle(color: t.textMuted, fontSize: 10),
                     ),
                 ],
@@ -4596,11 +4605,11 @@ class _BranchesPageState extends State<BranchesPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Merge anyway',
+            child: Text(ctx.t.branches.mergeAnyway,
                 style: TextStyle(color: t.stateConflicted)),
           ),
         ],
@@ -4625,7 +4634,7 @@ class _BranchesPageState extends State<BranchesPage> {
     if (_issuesLoading &&
         (_issues == null || _issues!.isEmpty) &&
         deskIssues.isEmpty) {
-      return const _LensLoadingNotice(label: 'Reading issues…');
+      return _LensLoadingNotice(label: context.t.branches.readingIssues);
     }
     // Mix local desk issues into the list. Issues don't have a branch
     // join key like PRs do, so there's no dedupe — local + remote
@@ -4640,7 +4649,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final allIssues = [...remoteList, ...localSummaries];
     if (allIssues.isEmpty) {
       return _IssuesEmptyState(
-        message: _issuesError ?? 'Open one upstream, or open a local one.',
+        message: _issuesError ?? context.t.branches.openUpstreamOrLocal,
         onCreateLocal: () => _showCreateLocalIssueDialog(repoPath),
       );
     }
@@ -4654,9 +4663,9 @@ class _BranchesPageState extends State<BranchesPage> {
       descending,
     );
     if (issues.isEmpty) {
-      return const _LensEmptyNotice(
-        primary: 'No issues match these filters',
-        secondary: 'Toggle filters off in the row above.',
+      return _LensEmptyNotice(
+        primary: context.t.branches.noIssuesMatchFilters,
+        secondary: context.t.branches.toggleFiltersRowAbove,
       );
     }
     // Same rationale as `_buildPullRequestsBody`: avoid same-axis
@@ -4704,7 +4713,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't create issue: $err")),
+        SnackBar(content: Text(context.t.branches.couldntCreateIssue(error: err))),
       );
     }
   }
@@ -4814,7 +4823,7 @@ class _BranchesPageState extends State<BranchesPage> {
       if (isLocal && !hasRemoteLink && forgeUsable)
         AppContextMenuItem(
           icon: Icons.cloud_upload_outlined,
-          label: 'Promote to remote',
+          label: context.t.branches.promoteToRemote,
           onTap: () => _promoteIssueToRemote(repoPath, issue.number),
         ),
       // Local + already linked → two-way sync with the forge. Push is a
@@ -4823,20 +4832,20 @@ class _BranchesPageState extends State<BranchesPage> {
       if (isLocal && hasRemoteLink && forgeUsable)
         AppContextMenuItem(
           icon: Icons.north_outlined,
-          label: 'Push to remote',
+          label: context.t.branches.pushToRemote,
           onTap: () => _pushIssueToRemote(repoPath, issue.number),
         ),
       if (isLocal && hasRemoteLink && (_remoteStatus?.available ?? false))
         AppContextMenuItem(
           icon: Icons.south_outlined,
-          label: 'Pull from remote',
+          label: context.t.branches.pullFromRemote,
           onTap: () => _pullIssueFromRemote(repoPath, issue.number),
         ),
       // Pure-remote row → import a local twin.
       if (!isLocal)
         AppContextMenuItem(
           icon: Icons.download_outlined,
-          label: 'Import',
+          label: context.t.branches.import,
           onTap: () => _importRemoteIssue(repoPath, issue),
         ),
     ];
@@ -4845,7 +4854,7 @@ class _BranchesPageState extends State<BranchesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.link,
-          label: 'Link to PR…',
+          label: context.t.branches.linkToPr,
           onTap: () => _showLinkToPrPickerFromIssue(repoPath, issue, isLocal),
         ),
       ]),
@@ -4854,7 +4863,7 @@ class _BranchesPageState extends State<BranchesPage> {
         ListMenuSection([
           AppContextMenuItem(
             icon: Icons.delete_outline,
-            label: 'Abandon',
+            label: context.t.branches.abandon,
             destructive: true,
             onTap: () => _abandonLocalIssue(repoPath, issue.number),
           ),
@@ -4868,7 +4877,7 @@ class _BranchesPageState extends State<BranchesPage> {
         .promoteToRemote(repoPath: repoPath, id: id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? 'Issue promoted to remote.'),
+      content: Text(err ?? context.t.branches.issuePromotedToRemote),
     ));
   }
 
@@ -4878,7 +4887,7 @@ class _BranchesPageState extends State<BranchesPage> {
         .pushToRemote(repoPath: repoPath, id: id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? 'Pushed to remote.'),
+      content: Text(err ?? context.t.branches.issuePushedToRemote),
     ));
   }
 
@@ -4888,7 +4897,7 @@ class _BranchesPageState extends State<BranchesPage> {
         .syncFromRemote(repoPath: repoPath, id: id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? 'Pulled from remote.'),
+      content: Text(err ?? context.t.branches.issuePulledFromRemote),
     ));
   }
 
@@ -4900,7 +4909,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? 'Imported #${issue.number} locally.'),
+      content: Text(err ?? context.t.branches.issueImportedLocally(number: issue.number)),
     ));
   }
 
@@ -4908,18 +4917,16 @@ class _BranchesPageState extends State<BranchesPage> {
     // Abandon hard-deletes the issue's ref — confirm first (PR abandon
     // is a soft state change; this is not, so it earns a gate).
     final ok = await _confirmDestructive(
-      title: 'Abandon issue',
-      message:
-          'Permanently remove local issue #$id? This deletes its ref and '
-          "can't be undone.",
-      confirmLabel: 'Abandon',
+      title: context.t.branches.abandonIssueTitle,
+      message: context.t.branches.abandonIssueMessage(id: id),
+      confirmLabel: context.t.branches.abandon,
     );
     if (!ok || !mounted) return;
     final err =
         await context.read<DeskIssueState>().abandon(repoPath: repoPath, id: id);
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't abandon: $err")),
+        SnackBar(content: Text(context.t.branches.couldntAbandon(error: err))),
       );
     }
   }
@@ -4942,7 +4949,7 @@ class _BranchesPageState extends State<BranchesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
@@ -4964,7 +4971,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't post comment: $err")),
+        SnackBar(content: Text(context.t.branches.couldntPostComment(error: err))),
       );
     }
   }
@@ -4977,7 +4984,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't close issue: $err")),
+        SnackBar(content: Text(context.t.branches.couldntCloseIssue(error: err))),
       );
     }
   }
@@ -4994,7 +5001,7 @@ class _BranchesPageState extends State<BranchesPage> {
     );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't add label: $err")),
+        SnackBar(content: Text(context.t.branches.couldntAddLabel(error: err))),
       );
     }
   }
@@ -5037,8 +5044,8 @@ class _LensRibbon extends StatelessWidget {
     // sidebar). Single source of truth for "open intent on the
     // remote" + structural cohesion across the whole tab.
     final segments = [
-      ('BRANCHES', branchCount, _BranchesLens.branches),
-      ('PRs', prCount, _BranchesLens.prs),
+      (context.t.branches.lensBranches, branchCount, _BranchesLens.branches),
+      (context.t.branches.lensPrs, prCount, _BranchesLens.prs),
     ];
     return MaterialSurface(
       tone: AppMaterialTone.surface1,
@@ -5091,7 +5098,7 @@ class _LensRibbon extends StatelessWidget {
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    child: Text('↑ patch',
+                    child: Text(context.t.branches.patchUp,
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 11,
@@ -5125,7 +5132,7 @@ class _LensRibbon extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.3,
                       ),
-                      child: const Text('⇅ sync'),
+                      child: Text(context.t.branches.syncRibbon),
                     ),
                   ),
                 ),
@@ -5325,21 +5332,20 @@ class _KeyboardHelpOverlay extends StatelessWidget {
   final VoidCallback onDismiss;
   const _KeyboardHelpOverlay({required this.onDismiss});
 
-  static const _bindings = <(String, String)>[
-    ('j  / k  / ↑ / ↓', 'navigate rows'),
-    ('enter', 'expand / collapse focused row'),
-    ('c', 'checkout focused PR locally'),
-    ('a', 'approve · review'),
-    ('r', 'request changes'),
-    ('/', 'focus search'),
-    ('1  ·  2', 'switch lens (branches · prs)'),
-    ('?', 'toggle this overlay'),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final shader = context.surfaceShader;
+    final bindings = <(String, String)>[
+      ('j  / k  / ↑ / ↓', context.t.branches.kbNavigateRows),
+      ('enter', context.t.branches.kbExpandCollapse),
+      ('c', context.t.branches.kbCheckoutPr),
+      ('a', context.t.branches.kbApproveReview),
+      ('r', context.t.branches.kbRequestChanges),
+      ('/', context.t.branches.kbFocusSearch),
+      ('1  ·  2', context.t.branches.kbSwitchLens),
+      ('?', context.t.branches.kbToggleOverlay),
+    ];
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: (_) => onDismiss(),
@@ -5362,7 +5368,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'KEYBOARD',
+                  context.t.branches.kbHeading,
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
@@ -5371,7 +5377,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 14),
-                for (final b in _bindings)
+                for (final b in bindings)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
@@ -5404,7 +5410,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
                   ),
                 const SizedBox(height: 14),
                 Text(
-                  'press anywhere to dismiss',
+                  context.t.branches.kbPressToDismiss,
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.7),
@@ -5837,7 +5843,9 @@ class _PullRequestRowState extends State<_PullRequestRow> {
   }
 
   String _stateLabel() {
-    if (widget.pr.state == 'OPEN' && widget.pr.isDraft) return 'DRAFT';
+    if (widget.pr.state == 'OPEN' && widget.pr.isDraft) {
+      return context.t.branches.prStateDraft;
+    }
     return widget.pr.state;
   }
 
@@ -6122,8 +6130,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                 right: 4,
                 top: 0,
                 child: Tooltip(
-                  message: 'merged with failing checks or without an '
-                      'approving review — investigate first under fire',
+                  message: context.t.branches.overrideScarTooltip,
                   child: Container(
                     height: 3,
                     decoration: BoxDecoration(
@@ -6161,9 +6168,8 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                 bottom: 0,
                 child: _HazardStrip(
                   color: t.stateDeleted,
-                  tooltip: '${widget.conflictingPaths.length} '
-                      'file${widget.conflictingPaths.length == 1 ? '' : 's'}'
-                      ' overlap your uncommitted work',
+                  tooltip: context.t.branches.filesOverlapUncommitted(
+                      n: widget.conflictingPaths.length),
                 ),
               ),
             if (hasCollisions)
@@ -6179,9 +6185,8 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                   tooltip: widget.collidesWithPrs.map((n) {
                     final shared =
                         widget.collisionSharedFiles[n] ?? const <String>{};
-                    return '#$n  '
-                        '(${shared.length} '
-                        'file${shared.length == 1 ? '' : 's'})';
+                    return context.t.branches
+                        .collisionPrShared(pr: n, n: shared.length);
                   }).join('\n'),
                   // Jump to the collision partner with the most shared
                   // files — that's the pair the reviewer most needs to
@@ -6406,7 +6411,7 @@ class _PrHeader extends StatelessWidget {
               ),
             ),
             child: Text(
-              'LOCAL',
+              context.t.branches.localBadge,
               style: TextStyle(
                 color: t.chromeAccent,
                 fontSize: 9,
@@ -6517,11 +6522,11 @@ class _MyReviewPill extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final (label, color) = switch (state) {
-      'pending' => ('your review pending', t.accentBright),
-      'approved' => ('you ✓', t.accentBright),
-      'changes_requested' => ('you ✗ requested changes', t.stateConflicted),
-      'commented' => ('you commented', t.textNormal),
-      _ => ('you', t.textMuted),
+      'pending' => (context.t.branches.myReviewPending, t.accentBright),
+      'approved' => (context.t.branches.myReviewApproved, t.accentBright),
+      'changes_requested' => (context.t.branches.myReviewChangesRequested, t.stateConflicted),
+      'commented' => (context.t.branches.myReviewCommented, t.textNormal),
+      _ => (context.t.branches.myReviewDefault, t.textMuted),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -6570,7 +6575,7 @@ class _ConversationTailPill extends StatelessWidget {
       fontFeatures: const [FontFeature.tabularFigures()],
     );
     if (tail == null) {
-      return Text(_relativeTime(fallbackAt), style: mono);
+      return Text(relativeTime(fallbackAt), style: mono);
     }
     final ev = tail!;
     final (glyph, color) = _glyphFor(t, ev);
@@ -6583,14 +6588,14 @@ class _ConversationTailPill extends StatelessWidget {
     return Tooltip(
       message: switch (ev.kind) {
         'comment' => conversationCount >= 2
-            ? '$conversationCount comments · last from author shown'
-            : 'last comment',
+            ? context.t.branches.tailCommentsAuthor(count: conversationCount)
+            : context.t.branches.tailLastComment,
         'review' => ev.state.isNotEmpty
-            ? 'last review · ${ev.state.toLowerCase()}'
-            : 'last review',
-        'check' => 'last check · ${ev.state}',
-        'push' => 'last commit',
-        _ => 'last activity',
+            ? context.t.branches.tailLastReviewState(state: ev.state.toLowerCase())
+            : context.t.branches.tailLastReview,
+        'check' => context.t.branches.tailLastCheckState(state: ev.state),
+        'push' => context.t.branches.tailLastCommit,
+        _ => context.t.branches.tailLastActivity,
       },
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -6605,7 +6610,7 @@ class _ConversationTailPill extends StatelessWidget {
             ),
           ),
           Text(
-            '$actor · ${_relativeTime(ev.at)}$convSuffix',
+            '$actor · ${relativeTime(ev.at)}$convSuffix',
             style: mono,
           ),
         ],
@@ -6733,10 +6738,7 @@ class _DiffSparkline extends StatelessWidget {
     final hasFiles = files.isNotEmpty;
     final tooltipLines = hasFiles
         ? files.map((f) => '${f.path}  +${f.additions} -${f.deletions}')
-        : [
-            '${pr.changedFiles} '
-                'file${pr.changedFiles == 1 ? '' : 's'}'
-          ];
+        : [context.t.common.fileCount(n: pr.changedFiles)];
     return Tooltip(
       message: tooltipLines.join('\n'),
       child: Row(
@@ -6910,10 +6912,8 @@ class _WorklineConnectorState extends State<_WorklineConnector> {
         onTap: widget.onTap,
         child: Tooltip(
           message: widget.direction == _WorklineDirection.outgoing
-              ? 'closes ${widget.count} issue'
-                  '${widget.count == 1 ? '' : 's'} — click to jump'
-              : 'addressed by ${widget.count} PR'
-                  '${widget.count == 1 ? '' : 's'} — click to jump',
+              ? context.t.branches.worklineClosesIssues(n: widget.count)
+              : context.t.branches.worklineAddressedByPrs(n: widget.count),
           child: AnimatedContainer(
             duration: context.motion(shader.duration),
             curve: shader.safeCurve,
@@ -7042,7 +7042,7 @@ class _PrMetricLine extends StatelessWidget {
                 ),
               ),
             const SizedBox(width: 3),
-            Text('checks', style: mono),
+            Text(context.t.branches.checksLabel, style: mono),
           ],
         ),
       ));
@@ -7070,7 +7070,7 @@ class _PrMetricLine extends StatelessWidget {
                 ),
               ),
             const SizedBox(width: 3),
-            Text('reviewers', style: mono),
+            Text(context.t.branches.reviewersLabel, style: mono),
           ],
         ),
       ));
@@ -7096,7 +7096,8 @@ class _PrMetricLine extends StatelessWidget {
     // along inside the tail pill (only when ≥ 1).
     if (pr.mergeable == 'CONFLICTING') {
       blocks
-          .add(Text('conflicts', style: mono.copyWith(color: t.stateDeleted)));
+          .add(Text(context.t.branches.conflictsLabel,
+              style: mono.copyWith(color: t.stateDeleted)));
     }
     // MY-REVIEW-STATE pill — distinct from anonymous reviewer dots.
     // Lights up when *I* have engaged with this PR, separating
@@ -7228,7 +7229,7 @@ Future<void> _exportPrAsPatch(
   } catch (e) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Export failed: $e')),
+      SnackBar(content: Text(context.t.branches.exportFailed(error: '$e'))),
     );
   }
 }
@@ -7404,16 +7405,16 @@ class _PrExpanded extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           if (detail == null && detailLoading)
-            Text('reading files…',
+            Text(context.t.branches.readingFiles,
                 style: TextStyle(
                     color: t.textMuted,
                     fontSize: 11,
                     fontStyle: FontStyle.italic))
           else if (detail == null)
-            Text('no detail available',
+            Text(context.t.branches.noDetailAvailable,
                 style: TextStyle(color: t.textMuted, fontSize: 11))
           else if (detail!.files.isEmpty)
-            Text('no files reported',
+            Text(context.t.branches.noFilesReported,
                 style: TextStyle(color: t.textMuted, fontSize: 11))
           else
             _FilePillStrip(
@@ -7635,7 +7636,7 @@ class _PeopleSection extends StatelessWidget {
     });
     if (entries.isEmpty && touchersLoading) {
       return Text(
-        'reading git history…',
+        context.t.branches.readingGitHistory,
         style: TextStyle(
           color: t.textMuted,
           fontSize: 11,
@@ -7709,7 +7710,7 @@ class _PersonRow extends StatelessWidget {
             ),
           if (!entry.isReviewer)
             Text(
-              'knows this code',
+              context.t.branches.knowsThisCode,
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.7),
                 fontSize: 10,
@@ -7723,9 +7724,7 @@ class _PersonRow extends StatelessWidget {
           // grammar instead of living in its own section.
           if (entry.commits > 0)
             Tooltip(
-              message: '${entry.commits} commit'
-                  '${entry.commits == 1 ? '' : 's'} on these files '
-                  'in the last year',
+              message: context.t.branches.commitsOnFiles(n: entry.commits),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
@@ -7796,7 +7795,7 @@ class _WillFightSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'WILL FIGHT',
+            context.t.branches.willFight,
             style: TextStyle(
               color: t.stateConflicted,
               fontSize: 9,
@@ -7873,7 +7872,8 @@ class _WillFightRowState extends State<_WillFightRow> {
             message: widget.shared.isEmpty
                 ? (cos == null
                     ? '#${widget.number}'
-                    : 'orbital partner — cos ${cos.toStringAsFixed(2)}')
+                    : context.t.branches
+                        .orbitalPartnerCos(cos: cos.toStringAsFixed(2)))
                 : widget.shared.join('\n'),
             child: Row(
               children: [
@@ -7919,9 +7919,8 @@ class _WillFightRowState extends State<_WillFightRow> {
                   ),
                 Text(
                   widget.shared.isEmpty
-                      ? 'orbit'
-                      : '${widget.shared.length} '
-                          'file${widget.shared.length == 1 ? '' : 's'}',
+                      ? context.t.branches.orbitLabel
+                      : context.t.common.fileCount(n: widget.shared.length),
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
@@ -7966,7 +7965,7 @@ class _ConflictsWithYouSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'TOUCHES YOUR LOCAL WORK',
+            context.t.branches.touchesYourLocalWork,
             style: TextStyle(
               color: t.stateDeleted,
               fontSize: 9,
@@ -7989,7 +7988,7 @@ class _ConflictsWithYouSection extends StatelessWidget {
             ),
           const SizedBox(height: 4),
           Text(
-            'merging will likely conflict with your uncommitted changes',
+            context.t.branches.mergingWillConflict,
             style: TextStyle(
               color: t.textMuted,
               fontSize: 10,
@@ -8020,7 +8019,7 @@ class _LinkedIssuesSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CLOSES',
+          context.t.branches.closesHeading,
           style: TextStyle(
             color: t.textMuted,
             fontSize: 9,
@@ -8127,7 +8126,7 @@ class _PrLinkChipState extends State<_PrLinkChip> {
     final shader = context.surfaceShader;
     final state = _stateColor(t);
     final stateLabel = widget.pr.state == 'OPEN' && widget.pr.isDraft
-        ? 'draft'
+        ? context.t.branches.prStateDraftLower
         : widget.pr.state.toLowerCase();
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -8372,7 +8371,7 @@ class _FilesSectionHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const _SectionLabel('FILES'),
+                _SectionLabel(context.t.branches.filesHeading),
                 const SizedBox(width: 6),
                 Text(
                   isWrapped ? '⇕' : '↔',
@@ -8395,23 +8394,38 @@ class _FilesSectionHeader extends StatelessWidget {
           // it's ambiguous (or learn what the rail color means).
           Tooltip(
             message: [
-              _orientationLabel(orientation),
-              if (align != null) 'field ${align.toStringAsFixed(2)}',
+              _orientationLabel(context, orientation),
+              if (align != null)
+                context.t.branches.shapeField(v: align.toStringAsFixed(2)),
               if (sourceAlign != null)
-                'source ${sourceAlign.toStringAsFixed(2)}',
+                context.t.branches
+                    .shapeSource(v: sourceAlign.toStringAsFixed(2)),
               if (sourceSurprise != null)
-                'srcΔ ${sourceSurprise.toStringAsFixed(2)}',
+                context.t.branches
+                    .shapeSrcDelta(v: sourceSurprise.toStringAsFixed(2)),
               if (fieldSurprise != null)
-                'fldΔ ${fieldSurprise.toStringAsFixed(2)}',
-              if (highFreq > 0.01) 'hf ${highFreq.toStringAsFixed(2)}',
-              if (higherOrder > 0.01) 'ho ${higherOrder.toStringAsFixed(2)}',
-              if (reducibility > 0.01) 'rg ${reducibility.toStringAsFixed(2)}',
-              if (flow != null) 'g ${flow.gradientMass.toStringAsFixed(2)}',
-              if (flow != null) 'c ${flow.curlMass.toStringAsFixed(2)}',
-              if (flow != null) 'h ${flow.harmonicMass.toStringAsFixed(2)}',
+                context.t.branches
+                    .shapeFldDelta(v: fieldSurprise.toStringAsFixed(2)),
+              if (highFreq > 0.01)
+                context.t.branches.shapeHf(v: highFreq.toStringAsFixed(2)),
+              if (higherOrder > 0.01)
+                context.t.branches.shapeHo(v: higherOrder.toStringAsFixed(2)),
+              if (reducibility > 0.01)
+                context.t.branches.shapeRg(v: reducibility.toStringAsFixed(2)),
               if (flow != null)
-                'stress ${flow.structuralStress.toStringAsFixed(2)}',
-              if (witnessPill != null) 'wit $witnessPill',
+                context.t.branches
+                    .shapeFlowG(v: flow.gradientMass.toStringAsFixed(2)),
+              if (flow != null)
+                context.t.branches
+                    .shapeFlowC(v: flow.curlMass.toStringAsFixed(2)),
+              if (flow != null)
+                context.t.branches
+                    .shapeFlowH(v: flow.harmonicMass.toStringAsFixed(2)),
+              if (flow != null)
+                context.t.branches
+                    .shapeStress(v: flow.structuralStress.toStringAsFixed(2)),
+              if (witnessPill != null)
+                context.t.branches.shapeWit(v: witnessPill),
             ].join(' · '),
             child: Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -8448,7 +8462,7 @@ class _FilesSectionHeader extends StatelessWidget {
             ),
           const SizedBox(width: 6),
           Text(
-            'resonance ${coherence.toStringAsFixed(2)}',
+            context.t.branches.resonanceReadout(v: coherence.toStringAsFixed(2)),
             style: TextStyle(
               color: t.textMuted,
               fontSize: 9.5,
@@ -8473,14 +8487,14 @@ class _FilesSectionHeader extends StatelessWidget {
     }
   }
 
-  static String _orientationLabel(FieldOrientation o) {
+  static String _orientationLabel(BuildContext context, FieldOrientation o) {
     switch (o) {
       case FieldOrientation.withField:
-        return 'aligned';
+        return context.t.branches.orientAligned;
       case FieldOrientation.adjacent:
-        return 'adjacent';
+        return context.t.branches.orientAdjacent;
       case FieldOrientation.orthogonal:
-        return 'orthogonal';
+        return context.t.branches.orientOrthogonal;
     }
   }
 
@@ -8592,7 +8606,7 @@ class _GhostFilePill extends StatelessWidget {
     final t = context.tokens;
     final filename = path.split('/').last;
     return Tooltip(
-      message: 'usually moves with the files in this PR\n($path)',
+      message: context.t.branches.ghostFileTooltip(path: path),
       child: CustomPaint(
         painter: _DashedBorderPainter(
           color: t.textMuted.withValues(alpha: 0.55),
@@ -8996,7 +9010,7 @@ class _FilePillState extends State<_FilePill> {
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
                             child: Tooltip(
-                              message: 'keystone — repo-wide bridge file',
+                              message: context.t.branches.keystoneTooltip,
                               child: Text(
                                 '✦',
                                 style: TextStyle(
@@ -9095,7 +9109,7 @@ class _ReviewFormState extends State<_ReviewForm> {
             decoration: InputDecoration(
               isDense: true,
               border: InputBorder.none,
-              hintText: 'leave a note (optional)…',
+              hintText: context.t.branches.reviewNoteHint,
               hintStyle: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.6),
                 fontSize: 11,
@@ -9108,7 +9122,7 @@ class _ReviewFormState extends State<_ReviewForm> {
         Row(
           children: [
             _ActionButton(
-              label: 'comment',
+              label: context.t.branches.reviewComment,
               onTap: () {
                 widget.onSubmit('comment', _ctrl.text);
                 _ctrl.clear();
@@ -9116,7 +9130,7 @@ class _ReviewFormState extends State<_ReviewForm> {
             ),
             const SizedBox(width: 8),
             _ActionButton(
-              label: 'request changes',
+              label: context.t.branches.reviewRequestChanges,
               tone: _ActionTone.warning,
               onTap: () {
                 widget.onSubmit('request-changes', _ctrl.text);
@@ -9125,7 +9139,7 @@ class _ReviewFormState extends State<_ReviewForm> {
             ),
             const SizedBox(width: 8),
             _ActionButton(
-              label: '✓ approve',
+              label: context.t.branches.reviewApprove,
               tone: _ActionTone.primary,
               onTap: () {
                 widget.onSubmit('approve', _ctrl.text);
@@ -9276,20 +9290,21 @@ class _PrActionToolbarState extends State<_PrActionToolbar> {
         children: [
           if (widget.canExportPatch && widget.onExportPatch != null)
             _ActionButton(
-              label: '↓ patch',
+              label: context.t.branches.actionPatchDown,
               onTap: widget.onExportPatch!,
             ),
           if (widget.onAiReview != null)
             _ActionButton(
-              label: '✦ pr review',
+              label: context.t.branches.actionPrReview,
               onTap: widget.onAiReview!,
             ),
           if (widget.onOpenAsDesk != null)
             _ActionButton(
-              label: '⊞ open as desk',
+              label: context.t.branches.actionOpenAsDesk,
               onTap: widget.onOpenAsDesk!,
             ),
-          _ActionButton(label: '[c] checkout', onTap: widget.onCheckout),
+          _ActionButton(
+              label: context.t.branches.actionCheckout, onTap: widget.onCheckout),
           if (widget.stateOpen)
             // Merge button + popover. The popover positions itself
             // above the button via Overlay so it doesn't push the row.
@@ -9359,19 +9374,19 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _MergeMenuRow(
-                              label: 'merge commit',
+                              label: ctx.t.branches.mergeMenuMergeCommit,
                               onTap: () {
                                 widget.onPick('merge', _deleteBranchAfter);
                                 _close();
                               }),
                           _MergeMenuRow(
-                              label: 'squash & merge',
+                              label: ctx.t.branches.mergeMenuSquash,
                               onTap: () {
                                 widget.onPick('squash', _deleteBranchAfter);
                                 _close();
                               }),
                           _MergeMenuRow(
-                              label: 'rebase & merge',
+                              label: ctx.t.branches.mergeMenuRebase,
                               onTap: () {
                                 widget.onPick('rebase', _deleteBranchAfter);
                                 _close();
@@ -9403,7 +9418,7 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                Text('delete branch after',
+                                Text(ctx.t.branches.deleteBranchAfter,
                                     style: TextStyle(
                                         color: t.textNormal, fontSize: 10.5)),
                               ]),
@@ -9437,7 +9452,7 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
   @override
   Widget build(BuildContext context) {
     return _ActionButton(
-      label: '[m] merge ▾',
+      label: context.t.branches.actionMerge,
       tone: _ActionTone.primary,
       onTap: widget.enabled ? _open : () {},
     );
@@ -9571,7 +9586,7 @@ class _CommentBlock extends StatelessWidget {
                     fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w700)),
             const SizedBox(width: 8),
-            Text(_relativeTime(comment.createdAt),
+            Text(relativeTime(comment.createdAt),
                 style: TextStyle(color: t.textMuted, fontSize: 10)),
           ]),
           const SizedBox(height: 4),
@@ -9875,7 +9890,10 @@ class _IssueRowState extends State<_IssueRow> {
                                     ...widget.issue.labels,
                                     '@${widget.issue.authorLogin}',
                                     if (widget.issue.assignees.isNotEmpty)
-                                      'assigned: ${widget.issue.assignees.map((a) => '@$a').join(', ')}',
+                                      context.t.branches.assignedTo(
+                                          names: widget.issue.assignees
+                                              .map((a) => '@$a')
+                                              .join(', ')),
                                   ].join(' · '),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -9888,8 +9906,10 @@ class _IssueRowState extends State<_IssueRow> {
                                 ),
                                 const SizedBox(height: 3),
                                 Text(
-                                  '${widget.issue.commentCount} conv · '
-                                  '${_relativeTime(widget.issue.updatedAt)}',
+                                  context.t.branches.issueConvLine(
+                                      n: widget.issue.commentCount,
+                                      time: relativeTime(
+                                          widget.issue.updatedAt)),
                                   style: TextStyle(
                                     color: t.textMuted.withValues(alpha: 0.8),
                                     fontSize: 10,
@@ -9918,7 +9938,7 @@ class _IssueRowState extends State<_IssueRow> {
                                 ),
                               ),
                               child: Text(
-                                'LOCAL',
+                                context.t.branches.localBadge,
                                 style: TextStyle(
                                   color: t.chromeAccent,
                                   fontSize: 9,
@@ -9970,13 +9990,13 @@ class _IssueRowState extends State<_IssueRow> {
                               children: [
                                 if (widget.detail == null &&
                                     widget.detailLoading)
-                                  Text('reading thread…',
+                                  Text(context.t.branches.readingThread,
                                       style: TextStyle(
                                           color: t.textMuted,
                                           fontSize: 11,
                                           fontStyle: FontStyle.italic))
                                 else if (widget.detail == null)
-                                  Text('no detail available',
+                                  Text(context.t.branches.noDetailAvailable,
                                       style: TextStyle(
                                           color: t.textMuted, fontSize: 11))
                                 else ...[
@@ -9986,7 +10006,8 @@ class _IssueRowState extends State<_IssueRow> {
                                   // FIRST so the reader sees "this is being
                                   // worked on" before reading the body.
                                   if (widget.addressingPrs.isNotEmpty) ...[
-                                    const _SectionLabel('ADDRESSED BY'),
+                                    _SectionLabel(
+                                        context.t.branches.addressedByHeading),
                                     const SizedBox(height: 6),
                                     Wrap(
                                       spacing: 6,
@@ -10003,7 +10024,8 @@ class _IssueRowState extends State<_IssueRow> {
                                     const SizedBox(height: 14),
                                   ],
                                   if (widget.detail!.body.isNotEmpty) ...[
-                                    const _SectionLabel('DESCRIPTION'),
+                                    _SectionLabel(
+                                        context.t.branches.descriptionHeading),
                                     const SizedBox(height: 6),
                                     _CommentBlock(
                                       comment: RemoteComment(
@@ -10015,7 +10037,8 @@ class _IssueRowState extends State<_IssueRow> {
                                     const SizedBox(height: 6),
                                   ],
                                   if (widget.detail!.comments.isNotEmpty) ...[
-                                    const _SectionLabel('THREAD'),
+                                    _SectionLabel(
+                                        context.t.branches.threadHeading),
                                     const SizedBox(height: 6),
                                     for (final c in widget.detail!.comments)
                                       _CommentBlock(comment: c),
@@ -10045,7 +10068,7 @@ class _IssueRowState extends State<_IssueRow> {
                                       decoration: InputDecoration(
                                         isDense: true,
                                         border: InputBorder.none,
-                                        hintText: 'reply…',
+                                        hintText: context.t.branches.replyHint,
                                         hintStyle: TextStyle(
                                           color: t.textMuted
                                               .withValues(alpha: 0.6),
@@ -10065,7 +10088,7 @@ class _IssueRowState extends State<_IssueRow> {
                                         padding:
                                             const EdgeInsets.only(right: 8),
                                         child: _ActionButton(
-                                          label: 'assign me',
+                                          label: context.t.branches.assignMe,
                                           onTap: widget.onAssignSelf,
                                         ),
                                       ),
@@ -10074,13 +10097,13 @@ class _IssueRowState extends State<_IssueRow> {
                                         padding:
                                             const EdgeInsets.only(right: 8),
                                         child: _ActionButton(
-                                          label: 'close',
+                                          label: context.t.branches.closeLower,
                                           tone: _ActionTone.danger,
                                           onTap: widget.onClose,
                                         ),
                                       ),
                                     _ActionButton(
-                                      label: '↩ post',
+                                      label: context.t.branches.postReply,
                                       tone: _ActionTone.primary,
                                       onTap: () {
                                         final body = _replyCtrl.text.trim();
@@ -10247,8 +10270,8 @@ class _RemoteMissingNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    const headline = 'Remote provider unavailable';
-    final hint = status.reason ?? 'No recognised remote host for this repo.';
+    final headline = context.t.branches.remoteProviderUnavailable;
+    final hint = status.reason ?? context.t.branches.noRecognisedRemoteHost;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -10286,22 +10309,11 @@ String _forgeSigil(RemoteForge forge) => switch (forge) {
   RemoteForge.unknown => '',
 };
 
-String _relativeTime(DateTime t) {
-  final delta = DateTime.now().difference(t);
-  if (delta.inMinutes < 1) return 'just now';
-  if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
-  if (delta.inHours < 24) return '${delta.inHours}h ago';
-  if (delta.inDays < 7) return '${delta.inDays}d ago';
-  if (delta.inDays < 30) return '${(delta.inDays / 7).floor()}w ago';
-  if (delta.inDays < 365) return '${(delta.inDays / 30).floor()}mo ago';
-  return '${(delta.inDays / 365).floor()}y ago';
-}
-
 String _formatDuration(Duration d) {
-  if (d.inSeconds < 60) return '${d.inSeconds}s';
+  if (d.inSeconds < 60) return t.branches.checkDurationSec(n: d.inSeconds);
   final m = d.inMinutes;
   final s = d.inSeconds % 60;
-  return '${m}m ${s.toString().padLeft(2, '0')}s';
+  return t.branches.checkDurationMin(m: m, s: s.toString().padLeft(2, '0'));
 }
 
 /// Outcome of a branch-delete attempt, returned from the page state to
@@ -10445,14 +10457,6 @@ List<BranchInfo> _evidenceSorted(
 
 /// Idle/corpse age phrasing for Semantics — the state word the eye
 /// infers from the compression, narrated for readers. Never rendered.
-String _idlePhrase(DateTime? last) {
-  if (last == null) return 'idle';
-  final d = DateTime.now().difference(last).inDays;
-  if (d < 365) return 'idle $d days';
-  final y = (d / 365).floor();
-  return 'idle $y year${y == 1 ? '' : 's'}';
-}
-
 class _BranchCard extends StatefulWidget {
   final BranchInfo branch;
   final AppTokens tokens;
@@ -10579,15 +10583,6 @@ class _BranchCardState extends State<_BranchCard> {
       widget.stratum == _BranchStratum.live ||
       widget.stratum == _BranchStratum.head;
 
-  // Compact, wordless idle age for the data zone — the number + `d`/`y`
-  // IS the datum. Semantics (`_idlePhrase`) narrates the sentence.
-  String? _idleAgeShort(DateTime? last) {
-    if (last == null) return null;
-    final d = DateTime.now().difference(last).inDays;
-    if (d < 365) return '${d}d';
-    return '${(d / 365).floor()}y';
-  }
-
   /// The whisper vocabulary for a spent branch — one word per law, simplest
   /// honest term. 'gone' when the upstream vanished; 'absorbed' when the
   /// content already lives in base (the absorption law: merging adds no
@@ -10596,9 +10591,9 @@ class _BranchCardState extends State<_BranchCard> {
   /// squash via `git cherry` but not the general law. gone wins — the
   /// upstream story is the more specific one.
   String _corpseWhisper(BranchInfo b) {
-    if (b.gone) return 'gone';
-    if (b.absorbed == true) return 'absorbed';
-    return 'squashed';
+    if (b.gone) return context.t.branches.corpseGone;
+    if (b.absorbed == true) return context.t.branches.corpseAbsorbed;
+    return context.t.branches.corpseSquashed;
   }
 
   /// The absorbed receipt — the courtroom exhibit. When the witness commit
@@ -10607,15 +10602,19 @@ class _BranchCardState extends State<_BranchCard> {
   /// fallback for a witness-less flag.
   String _absorbedReceipt(BranchInfo b) {
     final w = b.absorbedWitness;
-    if (w != null && w.length >= 7) return 'delivered in ${w.substring(0, 7)}';
-    return 'merging adds no changes';
+    if (w != null && w.length >= 7) {
+      return context.t.branches.absorbedDeliveredIn(hash: w.substring(0, 7));
+    }
+    return context.t.branches.absorbedNoChanges;
   }
 
   /// Narration of the corpse reason for the Semantics receipt.
   String _corpseSemanticsTag(BranchInfo b) {
-    if (b.gone) return 'upstream gone';
-    if (b.absorbed == true) return 'absorbed, ${_absorbedReceipt(b)}';
-    return 'squashed and merged';
+    if (b.gone) return context.t.branches.corpseTagUpstreamGone;
+    if (b.absorbed == true) {
+      return context.t.branches.corpseTagAbsorbed(receipt: _absorbedReceipt(b));
+    }
+    return context.t.branches.corpseTagSquashed;
   }
 
   /// The whisper text for a spent branch. On an absorbed row it also carries
@@ -10688,7 +10687,7 @@ class _BranchCardState extends State<_BranchCard> {
               child: _ChurnSpark(timestamps: _churn!, color: t.textNormal)));
         }
       case _BranchStratum.idle:
-        final age = _idleAgeShort(b.lastCommitAt);
+        final age = idleAgeShort(b.lastCommitAt);
         if (age != null) {
           children.add(Text(age,
               style: TextStyle(
@@ -10764,25 +10763,30 @@ class _BranchCardState extends State<_BranchCard> {
     final b = widget.branch;
     switch (widget.stratum) {
       case _BranchStratum.head:
-        return '${b.name}, current branch';
+        return context.t.branches.semanticsCurrentBranch(name: b.name);
       case _BranchStratum.live:
         var label = b.upstream != null
-            ? '${b.name}, tracking ${b.upstream}'
+            ? context.t.branches
+                .semanticsTracking(name: b.name, upstream: b.upstream!)
             : b.name;
         if (widget.leased) {
           // The lease keeps a would-be corpse in the live band, but its
           // reason is still narrated alongside the open room.
           if (b.gone || b.squashMerged == true || b.absorbed == true) {
-            label = '$label, ${_corpseSemanticsTag(b)}';
+            label = context.t.branches.semanticsLabelWithTag(
+                label: label, tag: _corpseSemanticsTag(b));
           }
-          label = '$label, worktree open';
+          label = context.t.branches.semanticsWorktreeOpen(label: label);
         }
         return label;
       case _BranchStratum.idle:
-        return '${b.name}, ${_idlePhrase(b.lastCommitAt)}';
+        return context.t.branches.semanticsIdle(
+            name: b.name, phrase: idlePhrase(b.lastCommitAt));
       case _BranchStratum.corpse:
-        return '${b.name}, ${_corpseSemanticsTag(b)}, '
-            '${_idlePhrase(b.lastCommitAt)}';
+        return context.t.branches.semanticsCorpse(
+            name: b.name,
+            tag: _corpseSemanticsTag(b),
+            phrase: idlePhrase(b.lastCommitAt));
     }
   }
 
@@ -10826,23 +10830,23 @@ class _BranchCardState extends State<_BranchCard> {
         if (links.desk != null && widget.onOpenDesk != null)
           _BranchCrossLinkChip(
             tokens: t,
-            label: 'desk',
+            label: context.t.branches.crossLinkDesk,
             color: t.accentBright,
             onTap: widget.onOpenDesk!,
           ),
         if (pr != null && widget.onOpenPr != null)
           _BranchCrossLinkChip(
             tokens: t,
-            label: pr.isDraft && pr.state == 'OPEN' ? 'PR · draft' : 'PR',
+            label: pr.isDraft && pr.state == 'OPEN'
+                ? context.t.branches.crossLinkPrDraft
+                : context.t.branches.crossLinkPr,
             color: prColor(),
             onTap: widget.onOpenPr!,
           ),
         if (links.issueCount > 0 && widget.onOpenPr != null)
           _BranchCrossLinkChip(
             tokens: t,
-            label: links.issueCount == 1
-                ? '1 issue'
-                : '${links.issueCount} issues',
+            label: context.t.branches.issueChipCount(n: links.issueCount),
             color: t.textMuted,
             onTap: widget.onOpenPr!,
           ),
@@ -11014,7 +11018,7 @@ class _BranchCardState extends State<_BranchCard> {
                                           borderRadius: BorderRadius.circular(
                                               shader.geometry.pillRadius),
                                         ),
-                                        child: Text('HEAD',
+                                        child: Text(context.t.branches.headBadge,
                                             style: TextStyle(
                                                 color: t.surface0,
                                                 fontSize: 10,
@@ -11034,7 +11038,7 @@ class _BranchCardState extends State<_BranchCard> {
                                       const SizedBox(width: 6),
                                       _BranchStatePill(
                                         tokens: t,
-                                        label: 'gone',
+                                        label: context.t.branches.corpseGone,
                                         color: t.textMuted,
                                       ),
                                     ],
@@ -11044,7 +11048,7 @@ class _BranchCardState extends State<_BranchCard> {
                                       const SizedBox(width: 6),
                                       _BranchStatePill(
                                         tokens: t,
-                                        label: 'squashed',
+                                        label: context.t.branches.corpseSquashed,
                                         color: t.stateAdded,
                                       ),
                                     ],
@@ -11072,7 +11076,8 @@ class _BranchCardState extends State<_BranchCard> {
                                       padding:
                                           const EdgeInsets.only(left: 20),
                                       child: Text(
-                                        '→ tracking: ${b.upstream}',
+                                        context.t.branches
+                                            .trackingLine(upstream: b.upstream!),
                                         style: TextStyle(
                                             color: t.textMuted,
                                             fontSize: 11,
@@ -11120,7 +11125,7 @@ class _BranchCardState extends State<_BranchCard> {
                                         width: 80,
                                         height: 24,
                                         child: _ChromeButton(
-                                          label: 'Checkout',
+                                          label: context.t.branches.checkoutButton,
                                           compact: true,
                                           enabled: !widget.actionRunning,
                                           onPressed: widget.actionRunning
@@ -11381,11 +11386,11 @@ class _BranchCreatorState extends State<_BranchCreator> {
     // for its outline, glyph + '+' where names sit. It reads as one more
     // row in the list — the one waiting to exist.
     return Tooltip(
-      message: 'Create branch',
+      message: context.t.branches.createBranch,
       waitDuration: const Duration(milliseconds: 400),
       child: Semantics(
         button: true,
-        label: 'Create branch',
+        label: context.t.branches.createBranch,
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           onEnter: (_) => setState(() => _hovered = true),
@@ -11448,7 +11453,9 @@ class _BranchCreatorState extends State<_BranchCreator> {
       },
       child: Semantics(
         textField: true,
-        label: hasError ? 'New branch name — ${widget.error}' : 'New branch name',
+        label: hasError
+            ? context.t.branches.newBranchNameError(error: widget.error!)
+            : context.t.branches.newBranchName,
         child: Container(
           height: 24,
           constraints: const BoxConstraints(minWidth: 140, maxWidth: 260),
@@ -11571,7 +11578,7 @@ class _ForceDeletePill extends StatelessWidget {
             AppIcon(name: 'trash', size: 11, color: t.stateDeleted),
             const SizedBox(width: 5),
             Text(
-              'Force?',
+              context.t.branches.forceDelete,
               style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: 11,
@@ -11647,7 +11654,7 @@ class _TagCard extends StatelessWidget {
                 color: t.accentBright.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(3),
               ),
-              child: Text('annotated',
+              child: Text(context.t.branches.annotated,
                   style: TextStyle(
                       color: t.accentBright,
                       fontSize: 9,
@@ -11862,7 +11869,7 @@ Future<void> showPatchPreviewDialog(
   if (parsed.isEmpty) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Patch is empty or unparseable.')),
+      SnackBar(content: Text(context.t.branches.patchEmptyOrUnparseable)),
     );
     return;
   }
@@ -11902,7 +11909,8 @@ Future<void> showPatchPreviewDialog(
       prFiles: prFiles,
       filesByPath: parsed,
       dryRunOk: check.ok,
-      dryRunError: check.ok ? null : (check.error ?? 'apply --check failed'),
+      dryRunError:
+          check.ok ? null : (check.error ?? context.t.branches.applyCheckFailed),
       conflictingPaths: const {},
       fightTitles: const {},
       fightShared: const {},
@@ -11968,7 +11976,7 @@ class _PatchSourceMenu extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-                  child: Text('OPEN PATCH FROM',
+                  child: Text(context.t.branches.openPatchFrom,
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 9,
@@ -11977,13 +11985,13 @@ class _PatchSourceMenu extends StatelessWidget {
                       )),
                 ),
                 _PatchSourceRow(
-                  label: 'from file…',
-                  hint: '.patch / .diff',
+                  label: context.t.branches.patchFromFile,
+                  hint: context.t.branches.patchFromFileHint,
                   onTap: () => Navigator.of(context).pop('file'),
                 ),
                 _PatchSourceRow(
-                  label: 'from clipboard',
-                  hint: 'paste text',
+                  label: context.t.branches.patchFromClipboard,
+                  hint: context.t.branches.patchFromClipboardHint,
                   onTap: () => Navigator.of(context).pop('clipboard'),
                 ),
               ],
@@ -12176,7 +12184,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       if (r.ok) {
         _applied = true;
       } else {
-        _applyError = r.error ?? 'apply failed';
+        _applyError = r.error ?? context.t.branches.applyFailed;
       }
     });
   }
@@ -12244,7 +12252,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     }
     setState(() {
       _applying = false;
-      _applyError = r.error ?? 'apply failed';
+      _applyError = r.error ?? context.t.branches.applyFailed;
     });
   }
 
@@ -12692,8 +12700,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     final aiSettings = context.read<AiSettingsState>();
     final modelValue = aiSettings.modelSelections[categoryId] ?? '';
     if (modelValue.isEmpty) {
-      setState(() => _resolveError =
-          'no model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}"');
+      setState(() => _resolveError = context.t.branches.noModelConfiguredFor(
+          label: aiSettings.labelForCategory(categoryId, categoryId)));
       return;
     }
 
@@ -12820,7 +12828,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       );
       if (!mounted) return;
       if (!r.ok) {
-        setState(() => _resolveError = r.error ?? 'resolution failed');
+        setState(() => _resolveError = r.error ?? context.t.branches.resolutionFailed);
         return;
       }
 
@@ -12832,8 +12840,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
               ''
           : r.data!.patch;
       if (newPatch.isEmpty) {
-        setState(() => _resolveError =
-            'model returned patch blocks that did not cover the failing files');
+        setState(() => _resolveError = context.t.branches.patchBlocksNoCover);
         return;
       }
       // Re-parse and re-check the rewritten patch.
@@ -12849,7 +12856,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       if (parsed.isEmpty) {
         if (!mounted) return;
         setState(() =>
-            _resolveError = 'model returned an empty or unparseable patch');
+            _resolveError = context.t.branches.emptyOrUnparseablePatch);
         return;
       }
       final newPrFiles = <PrFile>[];
@@ -12880,8 +12887,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         _filesByPath = parsed;
         _prFiles = newPrFiles;
         _dryRunOk = check.ok;
-        _dryRunError =
-            check.ok ? null : (check.error ?? 'apply --check failed');
+        _dryRunError = check.ok
+            ? null
+            : (check.error ?? context.t.branches.applyCheckFailed);
         _expanded = null;
         _hasResolved = true;
       });
@@ -12924,7 +12932,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text('PATCH PREVIEW',
+                    Text(context.t.branches.patchPreviewHeading,
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 10,
@@ -13089,8 +13097,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                 child: Row(
                   children: [
                     Text(
-                      '${files.length} file${files.length == 1 ? '' : 's'}'
-                      '  ·  +$totalAdds  −$totalDels',
+                      context.t.branches.patchDiffSummary(
+                        files: context.t.common.fileCount(n: files.length),
+                        adds: totalAdds,
+                        dels: totalDels,
+                      ),
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 11,
@@ -13099,7 +13110,10 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                     ),
                     const SizedBox(width: 14),
                     if (_applied)
-                      Text(widget.stageMode ? 'staged.' : 'applied.',
+                      Text(
+                          widget.stageMode
+                              ? context.t.branches.stagedDone
+                              : context.t.branches.appliedDone,
                           style: TextStyle(
                             color: t.stateAdded,
                             fontSize: 11,
@@ -13160,7 +13174,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                         // whether or not git could auto-apply. Primary when the
                         // patch won't apply cleanly (the moment you need it).
                         _ActionButton(
-                          label: _applying ? 'opening…' : '⇋ merge editor',
+                          label: _applying
+                              ? context.t.branches.opening
+                              : context.t.branches.mergeEditor,
                           tone: _dryRunOk
                               ? _ActionTone.neutral
                               : _ActionTone.primary,
@@ -13171,8 +13187,12 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       ],
                       _ActionButton(
                         label: _applying
-                            ? (widget.stageMode ? 'staging…' : 'applying…')
-                            : (widget.stageMode ? 'stage' : 'apply'),
+                            ? (widget.stageMode
+                                ? context.t.branches.staging
+                                : context.t.branches.applying)
+                            : (widget.stageMode
+                                ? context.t.branches.stage
+                                : context.t.branches.apply),
                         tone: _dryRunOk
                             ? _ActionTone.primary
                             : _ActionTone.neutral,
@@ -13181,7 +13201,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       ),
                     ] else
                       _ActionButton(
-                        label: 'close',
+                        label: context.t.branches.closeLower,
                         onTap: () => Navigator.of(context).pop(),
                       ),
                   ],
@@ -13270,7 +13290,7 @@ class _RefineBarState extends State<_RefineBar> {
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
-                hintText: 'refine… (e.g. "also drop the logger changes")',
+                hintText: context.t.branches.refineHint,
                 hintStyle: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.7),
                   fontSize: 12,
@@ -13314,8 +13334,8 @@ class _ReverseToggleState extends State<_ReverseToggle> {
         onTap: widget.onTap,
         child: Tooltip(
           message: widget.armed
-              ? 'armed — next apply will REVERT the patch (-R)'
-              : 'arm reverse (-R) — undo instead of apply',
+              ? context.t.branches.reverseArmedTooltip
+              : context.t.branches.reverseDisarmedTooltip,
           child: AnimatedContainer(
             duration: context.motion(shader.duration),
             curve: shader.safeCurve,
@@ -13333,7 +13353,10 @@ class _ReverseToggleState extends State<_ReverseToggle> {
                     : t.chromeBorder.withValues(alpha: 0.35),
               ),
             ),
-            child: Text(widget.armed ? '⟲ reverse ✓' : '⟲ reverse',
+            child: Text(
+                widget.armed
+                    ? context.t.branches.reverseArmedLabel
+                    : context.t.branches.reverseLabel,
                 style: TextStyle(
                   color: accent,
                   fontSize: 10.5,
@@ -13383,7 +13406,7 @@ class _DroppedPathsBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text('⚠ UNTOUCHED',
+              Text(context.t.branches.untouchedHeading,
                   style: TextStyle(
                     color: t.stateConflicted,
                     fontSize: 9,
@@ -13392,7 +13415,8 @@ class _DroppedPathsBanner extends StatelessWidget {
                   )),
               const SizedBox(width: 8),
               Text(
-                  '${missing.length} of $total file${total == 1 ? '' : 's'} not in the patch',
+                  context.t.branches
+                      .untouchedFiles(count: missing.length, n: total),
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 11,
@@ -13414,7 +13438,7 @@ class _DroppedPathsBanner extends StatelessWidget {
             ),
           const SizedBox(height: 6),
           Text(
-              'these files will stay conflicted — applying will not stage them',
+              context.t.branches.staysConflicted,
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
@@ -13501,7 +13525,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                      child: Text('OR WITH',
+                      child: Text(context.t.branches.orWith,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 9,
@@ -13548,7 +13572,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
     final ai = context.watch<AiSettingsState>();
     final defaultCategory = _defaultCategoryId(ai);
     if (defaultCategory.isEmpty) {
-      return Text('no AI model configured',
+      return Text(context.t.branches.noAiModelConfigured,
           style: TextStyle(
             color: t.textMuted,
             fontSize: 10.5,
@@ -13572,8 +13596,9 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                 widget.busy ? null : () => widget.onAction(defaultCategory),
             child: Tooltip(
               message: modelDisplay.isEmpty
-                  ? 'apply with patch from $label'
-                  : 'apply with patch from $label  ·  $modelDisplay',
+                  ? context.t.branches.applyWithPatchFrom(label: label)
+                  : context.t.branches
+                      .applyWithPatchFromModel(label: label, model: modelDisplay),
                 child: AnimatedContainer(
                   duration: context.motion(shader.duration),
                   curve: shader.safeCurve,
@@ -13594,8 +13619,8 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                   ),
                   child: Text(
                     widget.busy
-                        ? 'patching…'
-                        : '✦  apply with patch from $label',
+                        ? context.t.branches.patching
+                        : context.t.branches.applyWithPatchFromGlyph(label: label),
                     style: TextStyle(
                       color: t.accentBright,
                       fontSize: 11,
@@ -13616,7 +13641,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
               behavior: HitTestBehavior.opaque,
               onTap: widget.busy ? null : () => _openMenu(defaultCategory),
               child: Tooltip(
-                message: 'or with another model',
+                message: context.t.branches.orWithAnotherModel,
                 child: AnimatedContainer(
                   duration: context.motion(shader.duration),
                   curve: shader.safeCurve,
@@ -13718,8 +13743,8 @@ class _ApplyBadge extends StatelessWidget {
     final c = ok ? t.stateAdded : t.stateConflicted;
     return Tooltip(
       message: ok
-          ? 'git apply --check passed — patch will apply cleanly'
-          : (error ?? 'git apply --check failed'),
+          ? context.t.branches.applyCheckPassed
+          : (error ?? context.t.branches.gitApplyCheckFailed),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
@@ -13737,7 +13762,7 @@ class _ApplyBadge extends StatelessWidget {
               decoration: BoxDecoration(color: c, shape: BoxShape.circle),
             ),
             const SizedBox(width: 6),
-            Text(ok ? 'applies cleanly' : 'will not apply',
+            Text(ok ? context.t.branches.appliesClean : context.t.branches.willNotApply,
                 style: TextStyle(
                   color: c,
                   fontSize: 10,
@@ -13893,7 +13918,7 @@ class _IssuesEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'No open issues',
+              context.t.branches.noOpenIssues,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 13,
@@ -13963,7 +13988,7 @@ class _NewLocalIssueActionState extends State<_NewLocalIssueAction> {
               ),
               const SizedBox(width: 6),
               Text(
-                'new local issue',
+                context.t.branches.newLocalIssue,
                 style: TextStyle(
                   color: t.chromeAccent,
                   fontSize: 10.5,
@@ -14167,7 +14192,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                 onChanged: (v) => setState(() => _filter = v),
                 style: TextStyle(color: t.textNormal, fontSize: 12),
                 decoration: InputDecoration(
-                  hintText: 'filter…',
+                  hintText: context.t.branches.filterHint,
                   hintStyle: TextStyle(
                       color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
                   isDense: true,
@@ -14187,7 +14212,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                     ? Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          widget.emptyMessage ?? 'Nothing to link yet.',
+                          widget.emptyMessage ?? context.t.branches.nothingToLink,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 11,
@@ -14199,7 +14224,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                         ? Padding(
                             padding: const EdgeInsets.all(16),
                             child: Text(
-                              'Nothing matches.',
+                              context.t.branches.nothingMatchesDot,
                               style:
                                   TextStyle(color: t.textMuted, fontSize: 11),
                             ),
@@ -14209,7 +14234,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                             children: [
                               if (relevantTop.isNotEmpty) ...[
                                 _StickyLinkSectionLabel(
-                                  label: 'RELEVANT',
+                                  label: context.t.branches.relevantHeading,
                                   tokens: t,
                                 ),
                                 for (final c in relevantTop)
@@ -14221,7 +14246,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                                   ),
                                 const SizedBox(height: 6),
                                 _StickyLinkSectionLabel(
-                                  label: 'ALL',
+                                  label: context.t.branches.allHeading,
                                   tokens: t,
                                 ),
                               ],
@@ -14240,7 +14265,7 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text('done',
+                  child: Text(context.t.branches.doneLower,
                       style: TextStyle(
                           color: t.textMuted,
                           fontSize: 11,
@@ -14346,7 +14371,9 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                   borderRadius: BorderRadius.circular(3),
                 ),
                 child: Text(
-                  c.isRemote ? 'R' : 'L',
+                  c.isRemote
+                      ? context.t.branches.candidateRemote
+                      : context.t.branches.candidateLocal,
                   style: TextStyle(
                     color: c.isRemote ? t.textMuted : t.chromeAccent,
                     fontSize: 9,
@@ -14428,7 +14455,7 @@ class _CreateLocalIssueDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'New local issue',
+                context.t.branches.newLocalIssueTitle,
                 style: TextStyle(
                   color: t.textStrong,
                   fontSize: 13,
@@ -14442,7 +14469,7 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 autofocus: true,
                 style: TextStyle(color: t.textNormal, fontSize: 12),
                 decoration: InputDecoration(
-                  hintText: 'title',
+                  hintText: context.t.branches.titleHint,
                   hintStyle: TextStyle(
                       color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
                   isDense: true,
@@ -14459,7 +14486,7 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 minLines: 4,
                 maxLines: 10,
                 decoration: InputDecoration(
-                  hintText: 'body (markdown)',
+                  hintText: context.t.branches.bodyHint,
                   hintStyle: TextStyle(
                       color: t.textMuted.withValues(alpha: 0.6), fontSize: 11),
                   isDense: true,
@@ -14475,13 +14502,13 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(false),
-                    child: Text('cancel',
+                    child: Text(context.t.branches.cancelLower,
                         style: TextStyle(color: t.textMuted, fontSize: 11)),
                   ),
                   const SizedBox(width: 6),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(true),
-                    child: Text('create',
+                    child: Text(context.t.branches.createLower,
                         style: TextStyle(
                             color: t.chromeAccent,
                             fontSize: 11,

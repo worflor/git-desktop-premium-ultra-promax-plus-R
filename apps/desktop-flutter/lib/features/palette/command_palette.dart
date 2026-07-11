@@ -9,6 +9,7 @@ import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../backend/wick.dart' show WickPosture, WickUnit;
 import 'palette_entry.dart';
 import 'palette_state.dart';
@@ -168,17 +169,20 @@ class _CommandPaletteState extends State<CommandPalette> {
       // repos mid-op refreshes the wrong one.
       final mutatedPath = entry.mutatesRepoPath ?? repoState.activePath;
       final label = entry.label;
+      final loc = context.t;
       _closeAndRun(() async {
         final result = await mutate();
         if (result.ok) {
-          messenger?.showSnackBar(SnackBar(content: Text('$label complete')));
+          messenger?.showSnackBar(SnackBar(
+              content: Text(loc.palette.command.complete(label: label))));
         } else {
           final f = git.classifyGitError(result.error ?? '');
           messenger?.showSnackBar(SnackBar(
-            content: Text('$label failed: ${f.message}'),
+            content: Text(
+                loc.palette.command.failed(label: label, message: f.message)),
             action: f.detail.isNotEmpty && f.detail != f.message
                 ? SnackBarAction(
-                    label: 'Copy',
+                    label: loc.palette.command.copy,
                     onPressed: () =>
                         Clipboard.setData(ClipboardData(text: f.detail)),
                   )
@@ -288,8 +292,8 @@ class _CommandPaletteState extends State<CommandPalette> {
             onChanged: _onChanged,
             loading: palette.isLoading,
             hintText: widget.elevated
-                ? 'elevated — all actions'
-                : 'search everything...',
+                ? context.t.palette.search.hintElevated
+                : context.t.palette.search.hintDefault,
           ),
           Expanded(
             // Show the empty state on genuine emptiness — no command results,
@@ -325,20 +329,21 @@ class _PaletteInput extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final ValueChanged<String> onChanged;
-  final String hintText;
+  final String? hintText;
   final bool loading;
 
   const _PaletteInput({
     required this.controller,
     required this.focusNode,
     required this.onChanged,
-    this.hintText = 'search everything...',
+    this.hintText,
     this.loading = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final resolvedHint = hintText ?? context.t.palette.search.hintDefault;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -358,7 +363,7 @@ class _PaletteInput extends StatelessWidget {
             decoration: InputDecoration(
               isCollapsed: true,
               filled: false,
-              hintText: hintText,
+              hintText: resolvedHint,
               hintStyle: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.4),
                 fontSize: 14,
@@ -667,7 +672,9 @@ class _EmptyState extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          query.isEmpty ? 'type to search' : 'no results',
+          query.isEmpty
+              ? context.t.palette.search.emptyTypeToSearch
+              : context.t.palette.search.emptyNoResults,
           style: TextStyle(fontSize: 12, color: t.textFaint),
         ),
       ),
@@ -784,7 +791,7 @@ class _WickShelfState extends State<_WickShelf> {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         child: Text(
-          'wick',
+          context.t.palette.wick.label,
           style: TextStyle(
             fontSize: 10,
             color: t.textFaint.withValues(alpha: 0.4),
@@ -809,7 +816,7 @@ class _WickShelfState extends State<_WickShelf> {
             ),
             const SizedBox(width: 6),
             Text(
-              'wick',
+              context.t.palette.wick.label,
               style: TextStyle(
                 fontSize: 10,
                 color: t.textFaint,
@@ -835,7 +842,7 @@ class _WickShelfState extends State<_WickShelf> {
         child: Row(
           children: [
             Text(
-              'wick',
+              context.t.palette.wick.label,
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w500,
@@ -895,7 +902,8 @@ class _WickShelfState extends State<_WickShelf> {
     final isGhost = unit.reason.kind == 'neighborhood' ||
         unit.reason.kind == 'transport';
     final ghostAlpha = isGhost ? 0.45 : 1.0;
-    final reasonLabel = isGhost ? 'coupled' : unit.reason.kind;
+    final reasonLabel =
+        isGhost ? context.t.palette.wick.coupledFallback : unit.reason.kind;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hoveredIndex = index),

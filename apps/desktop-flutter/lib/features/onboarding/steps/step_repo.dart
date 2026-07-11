@@ -5,6 +5,7 @@ import '../../../app/app_identity.dart';
 import '../../../app/repository_state.dart';
 import '../../../backend/file_picker.dart';
 import '../../../backend/git.dart';
+import '../../../i18n/gen/strings.g.dart';
 import '../../../ui/design_primitives.dart';
 import '../../../ui/form_controls.dart';
 import '../../../ui/material_surface.dart';
@@ -57,7 +58,8 @@ class _RepoStepPageState extends State<RepoStepPage> {
 
   Future<void> _onOpen() async {
     setState(() => _error = null);
-    final picked = await pickDirectory('Open Repository');
+    final picked =
+        await pickDirectory(context.t.onboarding.repo.pickers.openRepository);
     if (picked == null || !mounted) return;
     setState(() => _busy = true);
     await _finish(picked);
@@ -65,7 +67,8 @@ class _RepoStepPageState extends State<RepoStepPage> {
 
   Future<void> _onCreate() async {
     setState(() => _error = null);
-    final picked = await pickDirectory('Create Repository');
+    final picked = await pickDirectory(
+        context.t.onboarding.repo.pickers.createRepository);
     if (picked == null || !mounted) return;
     setState(() => _busy = true);
     final result = await initRepository(picked);
@@ -73,7 +76,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
     if (!result.ok || result.data == null) {
       setState(() {
         _busy = false;
-        _error = result.error ?? 'Failed to create repository.';
+        _error = result.error ?? context.t.onboarding.repo.errors.createFailed;
       });
       return;
     }
@@ -84,7 +87,8 @@ class _RepoStepPageState extends State<RepoStepPage> {
     final url = _cloneUrlController.text.trim();
     final target = _cloneTargetController.text.trim();
     if (url.isEmpty || target.isEmpty) {
-      setState(() => _error = 'URL and target path required.');
+      setState(() =>
+          _error = context.t.onboarding.repo.errors.urlAndTargetRequired);
       return;
     }
     setState(() {
@@ -96,7 +100,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
     if (!result.ok || result.data == null) {
       setState(() {
         _busy = false;
-        _error = result.error ?? 'Failed to clone repository.';
+        _error = result.error ?? context.t.onboarding.repo.errors.cloneFailed;
       });
       return;
     }
@@ -104,7 +108,8 @@ class _RepoStepPageState extends State<RepoStepPage> {
   }
 
   Future<void> _pickCloneTarget() async {
-    final picked = await pickDirectory('Clone Target');
+    final picked =
+        await pickDirectory(context.t.onboarding.repo.pickers.cloneTarget);
     if (picked == null || !mounted) return;
     setState(() => _cloneTargetController.text = picked);
   }
@@ -125,7 +130,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
         children: [
           Center(
             child: Text(
-              'point ${identity.shortName} at something.',
+              context.t.onboarding.repo.title(name: identity.shortName),
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 20,
@@ -142,9 +147,9 @@ class _RepoStepPageState extends State<RepoStepPage> {
                 _Door(
                   id: _DoorId.open,
                   icon: Icons.folder_outlined,
-                  title: 'Open',
-                  subtitle: 'existing',
-                  hint: 'one you already have',
+                  title: context.t.onboarding.repo.doors.open.title,
+                  subtitle: context.t.onboarding.repo.doors.open.subtitle,
+                  hint: context.t.onboarding.repo.doors.open.hint,
                   expanded: _expanded == _DoorId.open,
                   compressed: _expanded != null && _expanded != _DoorId.open,
                   onTap: _busy ? null : _onOpen,
@@ -154,9 +159,9 @@ class _RepoStepPageState extends State<RepoStepPage> {
                 _Door(
                   id: _DoorId.clone,
                   icon: Icons.cloud_download_outlined,
-                  title: 'Clone',
-                  subtitle: 'from URL',
-                  hint: 'paste a remote URL',
+                  title: context.t.onboarding.repo.doors.clone.title,
+                  subtitle: context.t.onboarding.repo.doors.clone.subtitle,
+                  hint: context.t.onboarding.repo.doors.clone.hint,
                   expanded: _expanded == _DoorId.clone,
                   compressed: _expanded != null && _expanded != _DoorId.clone,
                   onTap: _busy
@@ -186,9 +191,9 @@ class _RepoStepPageState extends State<RepoStepPage> {
                 _Door(
                   id: _DoorId.create,
                   icon: Icons.auto_awesome_outlined,
-                  title: 'Create',
-                  subtitle: 'new',
-                  hint: 'start something fresh',
+                  title: context.t.onboarding.repo.doors.create.title,
+                  subtitle: context.t.onboarding.repo.doors.create.subtitle,
+                  hint: context.t.onboarding.repo.doors.create.hint,
                   expanded: _expanded == _DoorId.create,
                   compressed: _expanded != null && _expanded != _DoorId.create,
                   onTap: _busy ? null : _onCreate,
@@ -209,7 +214,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
           const SizedBox(height: 8),
           Center(
             child: OnboardingQuietLink(
-              label: "i'll do this later",
+              label: context.t.onboarding.repo.later,
               onTap: _later,
             ),
           ),
@@ -406,7 +411,7 @@ class _CloneForm extends StatelessWidget {
                 color: t.accentBright, size: 20),
             const SizedBox(width: 8),
             Text(
-              'Clone from URL',
+              context.t.onboarding.repo.cloneForm.title,
               style: TextStyle(
                 color: t.textStrong,
                 fontSize: 14,
@@ -417,7 +422,7 @@ class _CloneForm extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _LabeledField(
-          label: 'Repository URL',
+          label: context.t.onboarding.repo.cloneForm.urlLabel,
           child: AppTextField(
             controller: urlController,
             hintText: 'https://host.com/you/repo.git',
@@ -429,7 +434,7 @@ class _CloneForm extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         _LabeledField(
-          label: 'Target folder',
+          label: context.t.onboarding.repo.cloneForm.targetLabel,
           child: Row(
             children: [
               Expanded(
@@ -444,7 +449,7 @@ class _CloneForm extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               _SmallButton(
-                label: 'Browse…',
+                label: context.t.onboarding.repo.cloneForm.browse,
                 onTap: busy ? null : onPickTarget,
               ),
             ],
@@ -454,10 +459,14 @@ class _CloneForm extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            _SmallButton(label: 'Cancel', onTap: busy ? null : onCancel),
+            _SmallButton(
+                label: context.t.common.cancel,
+                onTap: busy ? null : onCancel),
             const SizedBox(width: 8),
             _SmallButton(
-              label: busy ? 'Cloning…' : 'Clone',
+              label: busy
+                  ? context.t.onboarding.repo.cloneForm.cloning
+                  : context.t.onboarding.repo.cloneForm.clone,
               onTap: onClone,
               primary: true,
             ),

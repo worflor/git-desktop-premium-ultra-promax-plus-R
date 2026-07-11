@@ -1,0 +1,125 @@
+{
+  "@@locale": "zh-Hans",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "重要性高",
+      "importanceModerate": "重要性中等",
+      "mostlyAdditions": "以新增为主",
+      "mostlyDeletions": "以删除为主",
+      "tightlyCoupled": "紧密耦合的文件",
+      "overlapsWorkingTree": "与你的工作区重叠"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "（根）",
+    "dirTrackLabel": "（{name}）",
+    "moreLabel": "+{n} 更多",
+    "filesInDir": {
+      "other": "{path}/ 中 {n} 个文件"
+    },
+    "moreFilesCount": {
+      "other": "还有 {n} 个文件"
+    },
+    "breadcrumbAll": "全部",
+    "breadcrumbCurrentFocus": "当前聚焦：{target}",
+    "breadcrumbViewAllChanges": "查看此提交的全部改动",
+    "breadcrumbDrillUpTo": "上钻到 {target}",
+    "trackStats": {
+      "other": "{n} 个文件  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "other": "{n} 个子目录"
+    },
+    "segmentLeafSummary": "{path}，新增 {adds}，删除 {dels}",
+    "segmentContainerSummary": {
+      "other": "{n} 个文件，新增 {adds}，删除 {dels}"
+    },
+    "hunkCount": {
+      "other": "{n} 个 hunk"
+    },
+    "largestChangeInView": "此视图中最大的改动",
+    "conflictedTag": "有冲突",
+    "dirtyTag": "脏",
+    "drillInTag": "下钻",
+    "changeTypeRenamed": "重命名",
+    "changeTypeCopied": "复制",
+    "changeTypeTypechange": "类型变更",
+    "changeTypeConflict": "冲突",
+    "coreFile": "核心文件",
+    "staleFile": "陈旧",
+    "filterPathHint": "筛选路径",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "关闭世界线",
+    "dragToOpenWorldline": "拖动以打开世界线"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "当前分支",
+    "applyCommitOnto": "将此提交的改动应用到 {branch}",
+    "revertCommitOn": "在 {branch} 上还原此提交的改动"
+  },
+  "cherryPick": {
+    "paused": "拣选已暂停。请在“更改”页面完成剩余的冲突。",
+    "failed": "拣选失败：{error}",
+    "pickedResolved": "已拣选 {short}（已解决冲突）",
+    "picked": "已拣选 {short}"
+  },
+  "revert": {
+    "paused": "还原已暂停。请在“更改”页面完成剩余的冲突。",
+    "failed": "还原失败：{error}",
+    "revertedResolved": "已还原 {short}（已解决冲突）",
+    "reverted": "已还原 {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "从此处创建分支…",
+    "copyCommitHash": "复制提交哈希",
+    "createBranchDialogTitle": "从 reflog 条目创建分支",
+    "anchorLine": "锚点：{short}  ·  {summary}",
+    "branchNameHint": "分支名",
+    "createAction": "创建",
+    "createBranchFailed": "创建分支失败：{error}",
+    "branchCreatedAt": "分支“{name}”已在 {short} 创建。"
+  },
+  "revealCeilingExceeded": {
+    "other": "该提交比已加载的 {n} 个提交更深。"
+  },
+  "deleteTagFailed": "删除标签失败：{error}",
+  "loadingTitle": "正在加载历史",
+  "loadingMessage": "正在读取近期提交。",
+  "unavailableTitle": "历史不可用",
+  "toggleWorldline": "切换世界线",
+  "pageTitle": "历史",
+  "viewingLast": "正在查看最近",
+  "commitsUnit": "个提交",
+  "noCommitSelectedTitle": "未选择提交",
+  "noCommitSelectedMessage": "选择一个提交以查看其改动。",
+  "loadingCommitTitle": "正在加载提交",
+  "loadingCommitMessage": "正在读取提交详情。",
+  "commitUnavailableTitle": "提交不可用",
+  "couldNotLoadCommit": "无法加载提交。",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "加载 reflog",
+  "createTag": "创建标签",
+  "newTagName": "新标签名",
+  "newTagNameError": "新标签名 — {error}",
+  "allFilesHeader": {
+    "other": "{n} 个文件 · 全部改动"
+  },
+  "allChangesLabel": "全部改动",
+  "rebase": {
+    "firstCommitCannotBe": "第一个提交不能是{action}",
+    "rebaseCommitCount": {
+      "other": "变基 {n} 个提交"
+    },
+    "resetLabel": "重置",
+    "dragToReorderHint": "拖动以重排，为每个提交选择操作",
+    "newMessageHint": "新消息",
+    "runningEllipsis": "…",
+    "startRebase": "开始变基"
+  },
+  "inFlight": {
+    "header": "进行中",
+    "deskFallbackLabel": "工作台"
+  }
+}

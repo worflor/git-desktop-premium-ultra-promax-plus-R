@@ -1,0 +1,96 @@
+{
+  "@@locale": "de",
+  "nav": {
+    "back": "Zurück",
+    "continueLabel": "Weiter",
+    "letsGo": "Los geht's"
+  },
+  "naming": {
+    "question": "was ist das für dich?",
+    "questionEmphasis": "das",
+    "iAmPrefix": "Ich bin ",
+    "iAmSuffix": " , dein persönlicher Git-Client."
+  },
+  "theme": {
+    "title": "mach {name} schick.",
+    "themesHeader": "THEMES",
+    "keybindingsHeader": "TASTENKÜRZEL",
+    "previewBadge": "vorschau",
+    "useDefaults": "standard nutzen"
+  },
+  "repo": {
+    "title": "richte {name} auf etwas.",
+    "later": "mach ich später",
+    "doors": {
+      "open": {
+        "title": "Öffnen",
+        "subtitle": "vorhanden",
+        "hint": "eins, das du schon hast"
+      },
+      "clone": {
+        "title": "Klonen",
+        "subtitle": "von URL",
+        "hint": "eine Remote-URL einfügen"
+      },
+      "create": {
+        "title": "Erstellen",
+        "subtitle": "neu",
+        "hint": "was Frisches anfangen"
+      }
+    },
+    "cloneForm": {
+      "title": "Von URL klonen",
+      "urlLabel": "Repository-URL",
+      "targetLabel": "Zielordner",
+      "browse": "Durchsuchen…",
+      "clone": "Klonen",
+      "cloning": "Klont…"
+    },
+    "pickers": {
+      "openRepository": "Repository öffnen",
+      "createRepository": "Repository erstellen",
+      "cloneTarget": "Klon-Ziel"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL und Zielpfad erforderlich.",
+      "createFailed": "Repository konnte nicht erstellt werden.",
+      "cloneFailed": "Repository konnte nicht geklont werden."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "repo-röntgen",
+      "settings": "einstellungen"
+    },
+    "sidebar": {
+      "projectsHeader": "Projekte"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} von {total} Dateien",
+      "stagedCount": "{n} gestaged",
+      "commitMessageHint": "Commit-Nachricht…",
+      "commitAndPush": "Committen & pushen"
+    },
+    "history": {
+      "header": "Verlauf",
+      "viewingLast": "zeige letzte 20 Commits",
+      "inFlight": "UNTERWEGS",
+      "you": "du",
+      "commit1": "fuchs beibringen, vor dem schlucken zu schnuppern",
+      "commit2": "amber: duft über nacht halten",
+      "commit3": "kohl abschaffen zugunsten von amber + dorn",
+      "commit4": "dorn bewacht das tor"
+    },
+    "branches": {
+      "lensBranches": "BRANCHES",
+      "lensPRs": "PRs",
+      "absorbed": "absorbiert",
+      "desk": "tisch",
+      "head": "HEAD",
+      "tracking": "→ verfolgt: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Dein persönlicher Git-Client."
+    }
+  }
+}

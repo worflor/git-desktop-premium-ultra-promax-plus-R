@@ -1,12 +1,11 @@
 import '../../backend/dtos.dart';
+import '../../i18n/gen/strings.g.dart';
 
 /// Shared, headless sync semantics — the single source of truth for the
 /// labels/tooltips every sync surface shows (the topbar control, the clean-
 /// tree split pill, and the sync flyout). Keeping the wording here means the
 /// three surfaces can't drift, and the diverged-branch case always spells out
 /// the rebase before it runs.
-
-String pluralize(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
 
 /// What the primary sync action will do for the current [RepositoryStatus],
 /// resolved once and shared across surfaces. [detail] is the human sentence
@@ -33,64 +32,70 @@ class SyncActionDescriptor {
 
 SyncActionDescriptor describeSyncAction(RepositoryStatus? status) {
   if (status == null) {
-    return const SyncActionDescriptor(
-      label: 'Sync',
-      detail: 'Open a repository to manage push and pull operations.',
-      buttonLabel: 'Sync',
+    return SyncActionDescriptor(
+      label: t.sync.actions.syncLabel,
+      detail: t.sync.actions.syncOpenRepoDetail,
+      buttonLabel: t.sync.actions.syncLabel,
       disabled: true,
     );
   }
 
   final branch = status.branch;
   if (branch == 'HEAD' || branch.startsWith('(')) {
-    return const SyncActionDescriptor(
-      label: 'Detached HEAD',
-      detail: 'Check out a branch before pushing or pulling.',
-      buttonLabel: 'Detached HEAD',
+    return SyncActionDescriptor(
+      label: t.sync.actions.detachedHeadLabel,
+      detail: t.sync.actions.detachedHeadDetail,
+      buttonLabel: t.sync.actions.detachedHeadLabel,
       disabled: true,
     );
   }
 
   if (status.upstream == null) {
     return SyncActionDescriptor(
-      label: 'Publish branch',
-      detail: 'Push $branch and set its upstream tracking branch.',
-      buttonLabel: 'Publish',
+      label: t.sync.actions.publishBranchLabel,
+      detail: t.sync.actions.publishBranchDetail(branch: branch),
+      buttonLabel: t.sync.actions.publishButtonLabel,
     );
   }
 
   if (status.ahead > 0 && status.behind > 0) {
     return SyncActionDescriptor(
-      label: 'Sync branch',
-      detail: 'Pull ${pluralize(status.behind, 'commit')} with rebase, '
-          'then push ${pluralize(status.ahead, 'commit')}.',
-      buttonLabel: 'Pull (rebase) then push',
+      label: t.sync.actions.syncBranchLabel,
+      detail: t.sync.actions.syncBranchDetail(
+        behindCount: t.common.commitCount(n: status.behind),
+        aheadCount: t.common.commitCount(n: status.ahead),
+      ),
+      buttonLabel: t.sync.actions.syncBranchButtonLabel,
       rebases: true,
     );
   }
 
   if (status.ahead > 0) {
     return SyncActionDescriptor(
-      label: 'Push branch',
-      detail: 'Push ${pluralize(status.ahead, 'local commit')} '
-          'to ${status.upstream}.',
-      buttonLabel: 'Push commits',
+      label: t.sync.actions.pushBranchLabel,
+      detail: t.sync.actions.pushBranchDetail(
+        count: t.common.localCommitCount(n: status.ahead),
+        upstream: status.upstream!,
+      ),
+      buttonLabel: t.sync.actions.pushBranchButtonLabel,
     );
   }
 
   if (status.behind > 0) {
     return SyncActionDescriptor(
-      label: 'Pull updates',
-      detail: 'Pull ${pluralize(status.behind, 'remote commit')} '
-          'from ${status.upstream}.',
-      buttonLabel: 'Pull updates',
+      label: t.sync.actions.pullUpdatesLabel,
+      detail: t.sync.actions.pullUpdatesDetail(
+        count: t.common.remoteCommitCount(n: status.behind),
+        upstream: status.upstream!,
+      ),
+      buttonLabel: t.sync.actions.pullUpdatesLabel,
     );
   }
 
   return SyncActionDescriptor(
-    label: 'Sync',
-    detail: 'Fetch from ${status.upstream} and refresh upstream status.',
-    buttonLabel: 'Sync',
+    label: t.sync.actions.syncLabel,
+    detail: t.sync.actions.syncUpToDateDetail(upstream: status.upstream!),
+    buttonLabel: t.sync.actions.syncLabel,
   );
 }
 

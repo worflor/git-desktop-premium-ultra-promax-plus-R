@@ -1,0 +1,23 @@
+{
+  "@@locale": "fr",
+  "noRepositoryOpen": "Aucun dépôt ouvert.",
+  "scanningProgress": "analyse de {scanned} / {total} fichiers…",
+  "findingsAcrossFiles": "{count} constats dans {files} fichiers",
+  "copiedFindings": "{count} constats copiés",
+  "copy": "COPIER",
+  "noFindings": "Aucun constat de flux d'exécution.",
+  "severity": {
+    "critical": "critique",
+    "warn": "alerte",
+    "info": "info",
+    "joint": "joint"
+  },
+  "kind": {
+    "staleValue": "valeur périmée",
+    "temporalShift": "décalage temporel",
+    "contextInversion": "inversion de contexte",
+    "contradictoryFlow": "flux contradictoire"
+  },
+  "lineLabel": "L{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

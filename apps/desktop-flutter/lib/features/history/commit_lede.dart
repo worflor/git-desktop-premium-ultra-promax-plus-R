@@ -7,6 +7,7 @@ import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/commit_fingerprint.dart';
 import '../../backend/dtos.dart';
+import '../../i18n/gen/strings.g.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/tokens.dart';
 
@@ -64,7 +65,7 @@ class CommitLede extends StatelessWidget {
 
 
       return Semantics(
-        label: _semanticDescription(signals),
+        label: _semanticDescription(context, signals),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -102,21 +103,22 @@ class CommitLede extends StatelessWidget {
     });
   }
 
-  String _semanticDescription(_LedeSignals s) {
+  String _semanticDescription(BuildContext context, _LedeSignals s) {
+    final tr = context.t.history.commitLede.semantics;
     final parts = <String>[detail.subject];
     if (s.importance > 0.7) {
-      parts.add('high importance');
+      parts.add(tr.importanceHigh);
     } else if (s.importance > 0.4) {
-      parts.add('moderate importance');
+      parts.add(tr.importanceModerate);
     }
     if (s.addShare > 0.7) {
-      parts.add('mostly additions');
+      parts.add(tr.mostlyAdditions);
     } else if (s.delShare > 0.7) {
-      parts.add('mostly deletions');
+      parts.add(tr.mostlyDeletions);
     }
-    if (s.thread > 0.5) parts.add('tightly coupled files');
-    if (s.dirty > 0) parts.add('overlaps your working tree');
-    return parts.join(', ');
+    if (s.thread > 0.5) parts.add(tr.tightlyCoupled);
+    if (s.dirty > 0) parts.add(tr.overlapsWorkingTree);
+    return parts.join(context.t.common.listSeparator);
   }
 
   _LedeSignals _computeSignals(BuildContext context) {

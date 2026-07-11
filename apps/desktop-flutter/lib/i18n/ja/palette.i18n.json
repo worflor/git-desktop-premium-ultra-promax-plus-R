@@ -1,0 +1,201 @@
+{
+  "active": "アクティブ",
+  "prefixes": {
+    "askHint": "ask: [質問]",
+    "nearHint": "near: [ファイル]",
+    "whoHint": "who: [ファイル]",
+    "logHint": "log: [メッセージ]",
+    "runHint": "run: [ツール]",
+    "askLabel": "{name}に質問：{body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · レビュアー {count} 名 · {touches} 回タッチ",
+    "whoTouchesLabel": "{name} — {touches} 回タッチ",
+    "whoTouchesSubtitle": "{path} · レビュアーの記録なし"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NEAR",
+    "who": "WHO",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HOT",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "GONE",
+    "remote": "REMOTE",
+    "local": "LOCAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "勢い {percent}%"
+  },
+  "topTouched": {
+    "subtitle": "{count} 回タッチ · {path}"
+  },
+  "coherence": {
+    "label": "ステージの一貫性：{percent}%",
+    "subtitle": "{count} ファイル"
+  },
+  "keystone": {
+    "subtitle": "{path} · キーストーン {score}"
+  },
+  "repoSub": {
+    "changes": "{name}の変更",
+    "history": "{name}の履歴",
+    "branches": "{name}のブランチ",
+    "terminal": "{name}のターミナル",
+    "generateCommit": "コミット生成 · {name}",
+    "reviewChanges": "{name}の変更をレビュー",
+    "muse": "{name}の Muse"
+  },
+  "desks": {
+    "mainWorktree": "メイン作業ツリー",
+    "detached": "分離",
+    "dirty": "{count} 件ダーティ"
+  },
+  "actions": {
+    "openInBrowser": "ブラウザーで開く",
+    "terminal": "ターミナル",
+    "revealInFiles": "ファイルで表示",
+    "copyPath": "パスをコピー",
+    "copyBranch": "ブランチ名をコピー"
+  },
+  "tools": {
+    "launch": "{label}を起動"
+  },
+  "gitCommands": {
+    "fetch": "フェッチ",
+    "pull": "プル",
+    "pullBehind": "{count} 遅延",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "プッシュ",
+    "pushCommits": {"other": "{n} コミット"},
+    "pushCommitsUpstream": "{commits} を {upstream} へ",
+    "forcePush": "強制プッシュ",
+    "forcePushNoUpstream": "強制プッシュできません：{branch}に上流が設定されていません。",
+    "commit": "コミット",
+    "stageAll": "すべてステージ",
+    "unstageAll": "すべてステージ解除",
+    "discardAll": "すべて破棄",
+    "createBranch": "ブランチを作成",
+    "deleteBranch": "ブランチを削除",
+    "renameBranch": "ブランチ名を変更",
+    "stash": "スタッシュ",
+    "stashPop": "スタッシュを取り出す",
+    "stashApply": "スタッシュを適用",
+    "stashDrop": "スタッシュを破棄",
+    "createTag": "タグを作成",
+    "cherryPick": "チェリーピック",
+    "revert": "リバート",
+    "stashConflictMessage": "スタッシュをコンフリクト付きで適用しました。変更ページで解決してください。"
+  },
+  "pr": {
+    "create": "PR を作成",
+    "merge": "PR をマージ",
+    "markReady": "PR を準備完了にする"
+  },
+  "ai": {
+    "generateCommit": "コミット生成",
+    "reviewChanges": "変更をレビュー",
+    "runMuse": "Muse を実行",
+    "debugRepo": "{name}をデバッグ",
+    "describeSymptom": "症状を記述",
+    "viewResult": "{kind}を表示",
+    "unseenResult": "未読の結果",
+    "runningResult": "AI：{kind}…",
+    "running": "実行中",
+    "kindCommitMessage": "コミットメッセージ",
+    "kindCodeReview": "コードレビュー",
+    "kindMuseResult": "Muse の結果",
+    "kindPresentation": "プレゼンテーション",
+    "kindDebugResult": "デバッグ結果"
+  },
+  "undo": {
+    "cancel": "キャンセル：{label}"
+  },
+  "navigation": {
+    "changes": "変更",
+    "history": "履歴",
+    "branches": "ブランチ",
+    "xray": "X 線",
+    "settings": "設定",
+    "refresh": "更新"
+  },
+  "settings": {
+    "reduceMotion": "モーションを減らす",
+    "animateLogoUnfocused": "非フォーカス時にロゴをアニメーション",
+    "instantBlameHover": "即時ブレームホバー",
+    "autoSelectChanges": "変更を自動選択",
+    "fetchOnlineIssues": "オンラインの Issue を取得",
+    "rememberWip": "作業中の内容を記憶",
+    "hideAiFeatures": "AI 機能を非表示",
+    "crashReporting": "クラッシュレポート",
+    "aiReadOnly": "AI 読み取り専用",
+    "stashCabinetExpanded": "スタッシュ棚を展開",
+    "fileSortInverted": "ファイルの並び順を反転"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "エンジンの状態",
+    "engineStatusSubtitle": "LogosGit スペクトルエンジンの診断",
+    "fileCoupling": "ファイル結合",
+    "fileCouplingSubtitle": "ステージ済みファイルの最近傍の共変更",
+    "themeSpecimen": "テーマ見本",
+    "themeSpecimenSubtitle": "すべての色、アイコン、テキスト階層、ジオメトリ"
+  },
+  "dev": {
+    "testMergeEditor": "マージエディターをテスト",
+    "testHistorySurgery": "履歴手術をテスト",
+    "back": "戻る",
+    "cancel": "キャンセル",
+    "buildingConflicts": "履歴からテスト用コンフリクトを構築中…"
+  },
+  "historySurgery": {
+    "label": "履歴手術",
+    "subtitle": "履歴を書き換えてファイルを永久に削除"
+  },
+  "orrery": {
+    "label": "オーラリー",
+    "subtitle": "リポジトリの構造的履歴をマニフォールドでスクラブ"
+  },
+  "command": {
+    "complete": "{label}が完了しました",
+    "failed": "{label}に失敗しました：{message}",
+    "copy": "コピー"
+  },
+  "search": {
+    "hintDefault": "すべてを検索…",
+    "hintElevated": "昇格 — 全アクション",
+    "emptyTypeToSearch": "入力して検索",
+    "emptyNoResults": "結果なし"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "結合"
+  },
+  "gitCache": {
+    "current": "現在",
+    "staged": "ステージ済み",
+    "modified": "変更済み"
+  }
+}

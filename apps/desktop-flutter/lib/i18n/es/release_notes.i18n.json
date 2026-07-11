@@ -1,0 +1,18 @@
+{
+  "@@locale": "es",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "¿POR QUÉ FLUTTER?",
+      "body": "La primera versión de esto fue una app de Tauri (Rust + TypeScript). Ya sentía que iba lenta. Luego pillé a un streamer diciendo lo mismo en un directo que no suelo ver, y ese fue el empujón para por fin cambiar. Él no sugirió Flutter; para nada. Encontré Dart por mi cuenta, armé un prototipo, y el arranque pasó de unos 15 segundos a menos de uno. Del cielo a la tierra. Adiós a la era Tauri.\n\nEl pipeline de renderizado de Flutter se parece más a un motor de juego que a un DOM, y para una app de escritorio donde la UI es el producto, eso lo es todo. Dart resultó ser también un lenguaje genuinamente bueno. La matemática detrás del motor espectral se prototipó primero en Rust, así que ese trabajo se trasladó sin problemas.\n\nFlutter es multiplataforma por defecto, lo cual es genial, pero tiene un aire muy Google, así que hay unas cuantas rarezas."
+    },
+    "spectralEngine": {
+      "question": "¿QUÉ ES EL MOTOR ESPECTRAL?",
+      "body": "Cada vez que haces commit, los archivos que cambias juntos forman patrones a lo largo del tiempo. El motor espectral lee tu grafo de commits y descompone esos patrones de co-cambio en señales: qué archivos están acoplados, con qué fuerza, y qué rol estructural juegan en el repo. Básicamente análisis espectral sobre tu historial de desarrollo. En un cliente de git. A propósito.\n\nLa matemática es nueva, así que la trato como el feel de un juego: la ajusto, la pruebo, la retoco, y sigo hasta que las señales se sienten correctas.\n\nEsas señales alimentan todo. El sismógrafo en el historial, las barras pintadas bajo los asuntos de los commits, el sistema de revisión, la Musa, la constelación de archivos. La app entera razona desde esta capa hacia abajo, no al revés."
+    },
+    "whereGoing": {
+      "question": "¿HACIA DÓNDE VA ESTO?",
+      "body": "El primer hito es la paridad completa con GitHub Desktop, SourceTree y GitKraken. Un cliente de git multiplataforma que se siente rápido y maneja lo fundamental mejor que cualquier otra cosa. Eso ya está casi listo. El motor espectral ya nos da ventaja en operaciones que otros clientes te hacen razonar a mano.\n\nMás allá de eso, la meta es superar a todos los demás clientes de git en velocidad, accesibilidad, inteligencia y UX en general. Hay más en camino de lo que se anuncia aquí."
+    }
+  }
+}

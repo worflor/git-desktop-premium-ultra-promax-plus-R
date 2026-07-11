@@ -13,6 +13,7 @@ import '../../backend/git.dart' as git_backend;
 import '../../backend/logos_git.dart';
 import '../../backend/repo_web_url.dart';
 import '../../backend/storage_paths.dart';
+import '../../i18n/gen/strings.g.dart';
 import 'palette_async_providers.dart';
 import '../../app/ai_activity_state.dart';
 import '../../app/external_tools_state.dart';
@@ -230,7 +231,7 @@ class PaletteState extends ChangeNotifier {
       if (_forgeCache.containsKey(path)) continue;
       final info = await resolveRepoWebInfo(path);
       if (gen != _generation) return;
-      _forgeCache[path] = info?.label ?? 'LOCAL';
+      _forgeCache[path] = info?.label ?? t.palette.chips.local;
       forgeChanged = true;
     }
 

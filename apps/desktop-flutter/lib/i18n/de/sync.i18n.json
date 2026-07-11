@@ -1,0 +1,51 @@
+{
+  "@@locale": "de",
+  "actions": {
+    "syncLabel": "Sync",
+    "syncOpenRepoDetail": "Öffne ein Repository, um Push- und Pull-Vorgänge zu verwalten.",
+    "detachedHeadLabel": "Detached HEAD",
+    "detachedHeadDetail": "Checke einen Branch aus, bevor du pushst oder pullst.",
+    "publishBranchLabel": "Branch veröffentlichen",
+    "publishBranchDetail": "Pushe {branch} und setze seinen Upstream-Tracking-Branch.",
+    "publishButtonLabel": "Veröffentlichen",
+    "syncBranchLabel": "Branch synchronisieren",
+    "syncBranchDetail": "Pulle {behindCount} mit Rebase, dann pushe {aheadCount}.",
+    "syncBranchButtonLabel": "Pullen (Rebase), dann pushen",
+    "pushBranchLabel": "Branch pushen",
+    "pushBranchDetail": "Pushe {count} nach {upstream}.",
+    "pushBranchButtonLabel": "Commits pushen",
+    "pullUpdatesLabel": "Updates pullen",
+    "pullUpdatesDetail": "Pulle {count} von {upstream}.",
+    "syncUpToDateDetail": "Fetche von {upstream} und aktualisiere den Upstream-Status."
+  },
+  "panel": {
+    "loadingTitle": "Lade Remote-Status",
+    "loadingMessage": "Prüfe Branch-Tracking-Informationen.",
+    "remoteStatusUnavailable": "Remote-Status nicht verfügbar",
+    "noUpstream": "kein Upstream",
+    "aheadLabel": "Voraus",
+    "behindLabel": "Zurück",
+    "treeLabel": "Baum",
+    "runningSync": "Sync läuft…",
+    "fetching": "Fetcht…",
+    "fetchOnly": "Nur fetchen",
+    "syncFailed": "Sync fehlgeschlagen",
+    "forcePushRecoveryLabel": "Force-Push (mit Lease)",
+    "conflictsToResolveTitle": "Zu lösende Konflikte",
+    "conflictsToResolveBody": "{count} müssen gelöst werden: {list}",
+    "resolveConflicts": "Konflikte lösen",
+    "workingEllipsis": "Arbeite…",
+    "lastActivity": "Letzte Aktivität: {operation}",
+    "noOutput": "Keine Ausgabe.",
+    "resolvedConflicts": "{count} gelöst.",
+    "cancelledUnchanged": "Abgebrochen, Arbeitsverzeichnis unverändert.",
+    "uncommittedEditsBlocked": "{count} haben uncommittete Änderungen, committe sie zuerst für den Rebase-Sync ({list}).",
+    "noUpstreamForForcePush": "Force-Push nicht möglich: für \"{branch}\" ist kein Upstream konfiguriert."
+  },
+  "forcePush": {
+    "confirmTitle": "Force-Push (mit Lease)?",
+    "target": "Ziel: {remote}/{branch}",
+    "warning": "Das überschreibt den Remote-Branch mit deiner lokalen Historie. Mit Lease bricht es ab, falls jemand nach deinem letzten Fetch zum Remote gepusht hat, aber bereits gefetchte Änderungen werden trotzdem überschrieben. Nutze es nur, wenn du einen Rebase oder Amend beabsichtigt hast, der den Branch divergieren ließ.",
+    "confirmButton": "Force-Push"
+  }
+}
