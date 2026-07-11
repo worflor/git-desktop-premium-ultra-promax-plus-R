@@ -430,7 +430,7 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.6',
-    date: '2026-07-08',
+    date: '2026-07-11',
     bullets: [
       'Staging a file that lives under an unstaged directory no longer gets left behind at commit. This is the real reason 0.1.6 exists. And since it had to ship early, the features below are a tad early, served a little raw.',
       'The history DAG can expand into a worldline view now, your whole history stretched out along one thread.',
