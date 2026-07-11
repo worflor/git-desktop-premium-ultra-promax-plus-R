@@ -34,6 +34,7 @@
 // unicode, case-folding, Turkish-İ, CRLF vs LF, malformed percent
 // escapes, surrogate pairs, emoji, combining marks).
 
+import 'package:git_desktop/backend/atomic_write.dart';
 import 'package:git_desktop/backend/desk_pr_store.dart';
 import 'package:git_desktop/backend/engram_tokenizer.dart';
 import 'package:git_desktop/backend/geometric_tokenizer.dart';
@@ -51,7 +52,13 @@ Map<String, Object?> computeOsProbe() {
   _probeSplitIdentifier(out);
   _probeStringSort(out);
   _probeLockKeyForIntentional(out);
+  _probeAtomicWriteCapabilities(out);
   return out;
+}
+
+void _probeAtomicWriteCapabilities(Map<String, Object?> out) {
+  out['INTENTIONAL::atomicWrite::parentDirectoryFsyncSupported'] =
+      parentDirectoryFsyncSupported;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,10 +94,14 @@ const List<(String, String)> _pathCorpus = [
 
 void _probeNormalizeWorktreePath(Map<String, Object?> out) {
   for (final (label, path) in _pathCorpus) {
-    out['normalizeWorktreePath::caseFoldTrue::$label'] =
-        normalizeWorktreePath(path, caseFold: true);
-    out['normalizeWorktreePath::caseFoldFalse::$label'] =
-        normalizeWorktreePath(path, caseFold: false);
+    out['normalizeWorktreePath::caseFoldTrue::$label'] = normalizeWorktreePath(
+      path,
+      caseFold: true,
+    );
+    out['normalizeWorktreePath::caseFoldFalse::$label'] = normalizeWorktreePath(
+      path,
+      caseFold: false,
+    );
   }
 }
 
@@ -127,23 +138,26 @@ Binary files /dev/null and b/bin/blob.dat differ
 
 List<Map<String, Object?>> _serializeParsed(String diffText) =>
     parseUnifiedDiff(diffText)
-        .map((l) => {
-              'text': l.text,
-              'lowerText': l.lowerText,
-              'kind': l.kind.name,
-              'lineNumOld': l.lineNumOld,
-              'lineNumNew': l.lineNumNew,
-              'hunkIndex': l.hunkIndex,
-              'filePath': l.filePath,
-              'isStaged': l.isStaged,
-              'noNewlineAtEof': l.noNewlineAtEof,
-            })
+        .map(
+          (l) => {
+            'text': l.text,
+            'lowerText': l.lowerText,
+            'kind': l.kind.name,
+            'lineNumOld': l.lineNumOld,
+            'lineNumNew': l.lineNumNew,
+            'hunkIndex': l.hunkIndex,
+            'filePath': l.filePath,
+            'isStaged': l.isStaged,
+            'noNewlineAtEof': l.noNewlineAtEof,
+          },
+        )
         .toList();
 
 void _probeParseUnifiedDiff(Map<String, Object?> out) {
   out['parseUnifiedDiff::lf'] = _serializeParsed(_unifiedDiffLf);
-  out['parseUnifiedDiff::crlf'] =
-      _serializeParsed(_unifiedDiffLf.replaceAll('\n', '\r\n'));
+  out['parseUnifiedDiff::crlf'] = _serializeParsed(
+    _unifiedDiffLf.replaceAll('\n', '\r\n'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +182,10 @@ const List<(String, String)> _branchCorpus = [
   ('backslash', r'back\slash\branch'),
   ('empty', ''),
   ('whitespace-only', '   '),
-  ('long-repeat', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  (
+    'long-repeat',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  ),
 ];
 
 // Raw (possibly malformed) already-encoded strings, decoded directly —
@@ -283,10 +300,33 @@ void _probeSplitIdentifier(Map<String, Object?> out) {
 // ---------------------------------------------------------------------------
 
 const List<String> _sortCorpus = [
-  'Banana', 'banana', 'Àpple', 'apple', 'apple2', 'APPLE', 'Ärger', 'arger',
-  '日本語', 'にほんご', 'Zebra', 'able', 'Able', '_underscore', '1number',
-  'émoji🔥string', 'émoji🔥string2', 'ß', 'straße', 'strasse', '',
-  ' leading space', 'trailing space ', 'Ω', 'ω', 'İstanbul', 'istanbul',
+  'Banana',
+  'banana',
+  'Àpple',
+  'apple',
+  'apple2',
+  'APPLE',
+  'Ärger',
+  'arger',
+  '日本語',
+  'にほんご',
+  'Zebra',
+  'able',
+  'Able',
+  '_underscore',
+  '1number',
+  'émoji🔥string',
+  'émoji🔥string2',
+  'ß',
+  'straße',
+  'strasse',
+  '',
+  ' leading space',
+  'trailing space ',
+  'Ω',
+  'ω',
+  'İstanbul',
+  'istanbul',
 ];
 
 void _probeStringSort(Map<String, Object?> out) {

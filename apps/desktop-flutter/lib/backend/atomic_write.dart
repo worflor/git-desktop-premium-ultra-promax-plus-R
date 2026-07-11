@@ -99,14 +99,19 @@ void fsyncParentDirBestEffort(String dirPath) {
   // Windows: NTFS journals rename metadata; a directory-handle
   // FlushFileBuffers is not the durability mechanism. Documented no-op.
   // (DynamicLibrary.process() is also unavailable on Windows.)
-  if (Platform.isWindows) return;
+  if (!parentDirectoryFsyncSupported) return;
   try {
-    final open = _libc.lookupFunction<Int Function(Pointer<Utf8>, Int),
-        int Function(Pointer<Utf8>, int)>('open');
-    final fsync =
-        _libc.lookupFunction<Int Function(Int), int Function(int)>('fsync');
-    final close =
-        _libc.lookupFunction<Int Function(Int), int Function(int)>('close');
+    final open = _libc
+        .lookupFunction<
+          Int Function(Pointer<Utf8>, Int),
+          int Function(Pointer<Utf8>, int)
+        >('open');
+    final fsync = _libc.lookupFunction<Int Function(Int), int Function(int)>(
+      'fsync',
+    );
+    final close = _libc.lookupFunction<Int Function(Int), int Function(int)>(
+      'close',
+    );
     final cPath = dirPath.toNativeUtf8();
     try {
       // O_RDONLY == 0 on Linux and macOS; opening a directory read-only is
@@ -127,6 +132,11 @@ void fsyncParentDirBestEffort(String dirPath) {
   }
 }
 
+/// Whether this host supports the POSIX parent-directory fsync used by
+/// [fsyncParentDirBestEffort]. Kept public so the intentional OS capability
+/// boundary is exercised by the cross-OS differential oracle.
+bool get parentDirectoryFsyncSupported => !Platform.isWindows;
+
 /// libc for the POSIX directory fsync (see [fsyncParentDirBestEffort]). Only
 /// resolved on non-Windows platforms — the getter is never reached on Windows
 /// because [fsyncParentDirBestEffort] returns first. `DynamicLibrary.process()`
@@ -142,13 +152,15 @@ Future<void> writeFileAtomicString(
   String contents, {
   Encoding encoding = utf8,
   Future<void> Function(File tmp)? beforeRename,
-}) =>
-    writeFileAtomic(target, encoding.encode(contents),
-        beforeRename: beforeRename);
+}) => writeFileAtomic(
+  target,
+  encoding.encode(contents),
+  beforeRename: beforeRename,
+);
 
 Future<void> _renameWithRetry(File tmp, String targetPath) async {
   const maxAttempts = 5;
-  for (var attempt = 1;; attempt++) {
+  for (var attempt = 1; ; attempt++) {
     try {
       await tmp.rename(targetPath);
       return;

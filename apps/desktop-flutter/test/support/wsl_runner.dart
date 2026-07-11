@@ -41,10 +41,12 @@ bool wslAvailable() {
   if (cached != null) return cached;
   bool result;
   try {
-    final r = Process.runSync(
-      'wsl.exe',
-      ['-e', 'bash', '-lc', 'ls /root/flutter/bin/dart'],
-    );
+    final r = Process.runSync('wsl.exe', [
+      '-e',
+      'bash',
+      '-lc',
+      'ls /root/flutter/bin/dart',
+    ]);
     result = r.exitCode == 0;
   } catch (_) {
     result = false;
@@ -63,6 +65,9 @@ String windowsPathToWsl(String winPath) {
   return '/mnt/$drive/${m.group(2)}';
 }
 
+/// Quote one value for bash without relying on its contents being space-free.
+String _bashQuote(String value) => "'${value.replaceAll("'", "'\\\"'\\\"'")}'";
+
 /// Runs [bashScript] as `wsl.exe -e bash -lc <bashScript>` and returns its
 /// stdout. Throws a [StateError] (with both stdout and stderr folded into
 /// the message) on a nonzero exit, and a [TimeoutException] if [timeout]
@@ -71,16 +76,18 @@ Future<String> runInWsl(
   String bashScript, {
   Duration timeout = const Duration(minutes: 5),
 }) async {
-  final result = await Process.run(
-    'wsl.exe',
-    ['-e', 'bash', '-lc', bashScript],
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  ).timeout(
-    timeout,
-    onTimeout: () => throw TimeoutException(
-        'wsl.exe bash script exceeded ${timeout.inSeconds}s:\n$bashScript'),
-  );
+  final result =
+      await Process.run(
+        'wsl.exe',
+        ['-e', 'bash', '-lc', bashScript],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException(
+          'wsl.exe bash script exceeded ${timeout.inSeconds}s:\n$bashScript',
+        ),
+      );
   final stdout = result.stdout as String;
   final stderr = result.stderr as String;
   if (result.exitCode != 0) {
@@ -110,41 +117,64 @@ Future<String> syncedLinuxProjectDir() async {
 
   final headShaResult = await Process.run('git', ['rev-parse', 'HEAD']);
   if (headShaResult.exitCode != 0) {
-    throw StateError(
-        'could not resolve current HEAD: ${headShaResult.stderr}');
+    throw StateError('could not resolve current HEAD: ${headShaResult.stderr}');
   }
   final headSha = (headShaResult.stdout as String).trim();
 
-  final toplevelResult =
-      await Process.run('git', ['rev-parse', '--show-toplevel']);
+  final toplevelResult = await Process.run('git', [
+    'rev-parse',
+    '--show-toplevel',
+  ]);
   if (toplevelResult.exitCode != 0) {
     throw StateError(
-        'could not resolve repo top-level: ${toplevelResult.stderr}');
+      'could not resolve repo top-level: ${toplevelResult.stderr}',
+    );
   }
-  final topLevelWsl =
-      windowsPathToWsl((toplevelResult.stdout as String).trim());
+  final topLevelWsl = windowsPathToWsl(
+    (toplevelResult.stdout as String).trim(),
+  );
   var relSubpath = repoPathWsl.startsWith(topLevelWsl)
       ? repoPathWsl.substring(topLevelWsl.length)
       : '';
   relSubpath = relSubpath.replaceFirst(RegExp(r'^/+'), '');
-  final linuxProjectDir =
-      relSubpath.isEmpty ? kLinuxWorktree : '$kLinuxWorktree/$relSubpath';
+  final linuxProjectDir = relSubpath.isEmpty
+      ? kLinuxWorktree
+      : '$kLinuxWorktree/$relSubpath';
 
-  await runInWsl("git -C '$repoPathWsl' worktree prune");
+  final repo = _bashQuote(repoPathWsl);
+  final worktree = _bashQuote(kLinuxWorktree);
+  await runInWsl('git -C $repo worktree prune');
 
   final existsCheck = await runInWsl(
-    'test -e $kLinuxWorktree && echo EXISTS || echo MISSING',
+    'test -e $worktree && echo EXISTS || echo MISSING',
   );
   final exists = existsCheck.contains('EXISTS');
 
-  if (!exists) {
+  var usable = false;
+  if (exists) {
+    final check = await runInWsl(
+      'git -C $worktree rev-parse --is-inside-work-tree '
+      '2>/dev/null || echo INVALID',
+    );
+    usable = check.lines.any((line) => line.trim() == 'true');
+  }
+
+  if (!usable) {
+    // A cached directory can outlive (or point at) stale linked-worktree
+    // metadata. Remove both halves before recreating it; merely pruning the
+    // Windows-side registration cannot repair the Linux `.git` backpointer.
     await runInWsl(
-      "git -C '$repoPathWsl' worktree add --detach -f "
-      '$kLinuxWorktree $headSha',
+      'git -C $repo worktree remove --force $worktree 2>/dev/null || true\n'
+      'rm -rf -- $worktree\n'
+      'git -C $repo worktree prune',
+    );
+    await runInWsl(
+      'git -C $repo worktree add --detach -f $worktree '
+      '${_bashQuote(headSha)}',
     );
   } else {
     await runInWsl(
-      'cd $kLinuxWorktree && git checkout --detach -f $headSha',
+      'git -C $worktree checkout --detach -f ${_bashQuote(headSha)}',
     );
   }
 
@@ -175,22 +205,25 @@ Future<Map<String, Object?>> runLinuxTestAndSliceJson(
   Duration timeout = const Duration(minutes: 15),
 }) async {
   final linuxProjectDir = await syncedLinuxProjectDir();
-  final runScript = 'export PATH=/root/flutter/bin:\$PATH\n'
+  final runScript =
+      'export PATH=/root/flutter/bin:\$PATH\n'
       "cd '$linuxProjectDir'\n"
       'flutter pub get\n'
       'flutter test $testRelPath\n';
 
-  final testRun = await Process.run(
-    'wsl.exe',
-    ['-e', 'bash', '-lc', runScript],
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  ).timeout(
-    timeout,
-    onTimeout: () => throw TimeoutException(
-        'Linux test run ($testRelPath) exceeded ${timeout.inMinutes} '
-        'minutes'),
-  );
+  final testRun =
+      await Process.run(
+        'wsl.exe',
+        ['-e', 'bash', '-lc', runScript],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ).timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException(
+          'Linux test run ($testRelPath) exceeded ${timeout.inMinutes} '
+          'minutes',
+        ),
+      );
 
   final stdout = testRun.stdout as String;
   final beginIdx = stdout.indexOf(beginMarker);

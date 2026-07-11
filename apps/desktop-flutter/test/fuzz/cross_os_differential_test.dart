@@ -87,10 +87,12 @@ String _windowsPathToWsl(String winPath) {
 /// `flutter test` run (no MANIFOLD_CROSS_OS) never spawns wsl.exe.
 bool _wslToolchainAvailable() {
   try {
-    final r = Process.runSync(
-      'wsl.exe',
-      ['-e', 'bash', '-lc', 'ls /root/flutter/bin/dart'],
-    );
+    final r = Process.runSync('wsl.exe', [
+      '-e',
+      'bash',
+      '-lc',
+      'ls /root/flutter/bin/dart',
+    ]);
     return r.exitCode == 0;
   } catch (_) {
     return false;
@@ -185,8 +187,11 @@ void main() {
       final repoPathWsl = _windowsPathToWsl(repoPathWin);
 
       final headShaResult = await Process.run('git', ['rev-parse', 'HEAD']);
-      expect(headShaResult.exitCode, 0,
-          reason: 'could not resolve current HEAD: ${headShaResult.stderr}');
+      expect(
+        headShaResult.exitCode,
+        0,
+        reason: 'could not resolve current HEAD: ${headShaResult.stderr}',
+      );
       final headSha = (headShaResult.stdout as String).trim();
 
       // `git worktree add` always checks out the WHOLE repository (from
@@ -195,13 +200,20 @@ void main() {
       // monorepo root and the actual Flutter project (pubspec.yaml etc.)
       // lands at /root/manifold-osdiff/<same relative subpath>. Compute
       // that subpath instead of assuming this file's own repo layout.
-      final toplevelResult =
-          await Process.run('git', ['rev-parse', '--show-toplevel']);
-      expect(toplevelResult.exitCode, 0,
-          reason: 'could not resolve repo top-level: '
-              '${toplevelResult.stderr}');
-      final topLevelWsl =
-          _windowsPathToWsl((toplevelResult.stdout as String).trim());
+      final toplevelResult = await Process.run('git', [
+        'rev-parse',
+        '--show-toplevel',
+      ]);
+      expect(
+        toplevelResult.exitCode,
+        0,
+        reason:
+            'could not resolve repo top-level: '
+            '${toplevelResult.stderr}',
+      );
+      final topLevelWsl = _windowsPathToWsl(
+        (toplevelResult.stdout as String).trim(),
+      );
       var relSubpath = repoPathWsl.startsWith(topLevelWsl)
           ? repoPathWsl.substring(topLevelWsl.length)
           : '';
@@ -215,8 +227,12 @@ void main() {
       // create the worktree if it doesn't exist yet, or fast-forward an
       // existing one to the current HEAD if it does. Never runs `flutter`
       // against /mnt/c — only ever against this separate Linux path.
-      await Process.run('wsl.exe',
-          ['-e', 'bash', '-lc', "git -C '$repoPathWsl' worktree prune"]);
+      await Process.run('wsl.exe', [
+        '-e',
+        'bash',
+        '-lc',
+        "git -C '$repoPathWsl' worktree prune",
+      ]);
 
       final existsCheck = await Process.run('wsl.exe', [
         '-e',
@@ -225,8 +241,33 @@ void main() {
         'test -e $_kLinuxWorktree && echo EXISTS || echo MISSING',
       ]);
       final exists = (existsCheck.stdout as String).contains('EXISTS');
+      var usable = false;
+      if (exists) {
+        final validity = await Process.run('wsl.exe', [
+          '-e',
+          'bash',
+          '-lc',
+          'git -C $_kLinuxWorktree rev-parse --is-inside-work-tree '
+              '2>/dev/null || echo INVALID',
+        ]);
+        usable = (validity.stdout as String)
+            .split('\n')
+            .any((line) => line.trim() == 'true');
+      }
 
-      if (!exists) {
+      if (!usable) {
+        // Heal both halves of a stale linked worktree. A directory existing
+        // at the cache path says nothing about whether its `.git` backpointer
+        // still resolves (the common failure after moving the Windows repo).
+        await Process.run('wsl.exe', [
+          '-e',
+          'bash',
+          '-lc',
+          "git -C '$repoPathWsl' worktree remove --force "
+              '$_kLinuxWorktree 2>/dev/null || true; '
+              'rm -rf -- $_kLinuxWorktree; '
+              "git -C '$repoPathWsl' worktree prune",
+        ]);
         final add = await Process.run('wsl.exe', [
           '-e',
           'bash',
@@ -234,10 +275,14 @@ void main() {
           "git -C '$repoPathWsl' worktree add --detach -f "
               '$_kLinuxWorktree $headSha',
         ]);
-        expect(add.exitCode, 0,
-            reason: 'could not create isolated Linux worktree at '
-                '$_kLinuxWorktree:\nstdout: ${add.stdout}\n'
-                'stderr: ${add.stderr}');
+        expect(
+          add.exitCode,
+          0,
+          reason:
+              'could not create isolated Linux worktree at '
+              '$_kLinuxWorktree:\nstdout: ${add.stdout}\n'
+              'stderr: ${add.stderr}',
+        );
       } else {
         final checkout = await Process.run('wsl.exe', [
           '-e',
@@ -245,10 +290,14 @@ void main() {
           '-lc',
           'cd $_kLinuxWorktree && git checkout --detach -f $headSha',
         ]);
-        expect(checkout.exitCode, 0,
-            reason: 'could not fast-forward existing Linux worktree at '
-                '$_kLinuxWorktree to $headSha:\nstdout: '
-                '${checkout.stdout}\nstderr: ${checkout.stderr}');
+        expect(
+          checkout.exitCode,
+          0,
+          reason:
+              'could not fast-forward existing Linux worktree at '
+              '$_kLinuxWorktree to $headSha:\nstdout: '
+              '${checkout.stdout}\nstderr: ${checkout.stderr}',
+        );
       }
 
       // `git worktree add`/`checkout` only materializes COMMITTED content
@@ -272,41 +321,54 @@ void main() {
             "cp -r '$repoPathWsl/test/support' "
             "'$linuxProjectDir/test/support'",
       ]);
-      expect(syncProbe.exitCode, 0,
-          reason: 'could not sync live lib/ + probe source files into the '
-              'Linux worktree:\nstdout: ${syncProbe.stdout}\n'
-              'stderr: ${syncProbe.stderr}');
+      expect(
+        syncProbe.exitCode,
+        0,
+        reason:
+            'could not sync live lib/ + probe source files into the '
+            'Linux worktree:\nstdout: ${syncProbe.stdout}\n'
+            'stderr: ${syncProbe.stderr}',
+      );
 
       // pub get + test compile on a cold cache is slow — this is the
       // multi-minute part the opt-in gate exists for.
-      final runScript = 'export PATH=/root/flutter/bin:\$PATH\n'
+      final runScript =
+          'export PATH=/root/flutter/bin:\$PATH\n'
           "cd '$linuxProjectDir'\n"
           'flutter pub get\n'
           'flutter test test/support/os_probe_main.dart\n';
       ranLinuxProbe = true;
-      final testRun = await Process.run(
-        'wsl.exe',
-        ['-e', 'bash', '-lc', runScript],
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-      ).timeout(
-        const Duration(minutes: 15),
-        onTimeout: () => throw TimeoutException(
-            'Linux probe run (pub get + flutter test) exceeded 15 minutes'),
-      );
+      final testRun =
+          await Process.run(
+            'wsl.exe',
+            ['-e', 'bash', '-lc', runScript],
+            stdoutEncoding: utf8,
+            stderrEncoding: utf8,
+          ).timeout(
+            const Duration(minutes: 15),
+            onTimeout: () => throw TimeoutException(
+              'Linux probe run (pub get + flutter test) exceeded 15 minutes',
+            ),
+          );
 
       final linuxStdout = testRun.stdout as String;
       const beginMarker = 'OSPROBE_BEGIN';
       const endMarker = 'OSPROBE_END';
       final beginIdx = linuxStdout.indexOf(beginMarker);
       final endIdx = linuxStdout.indexOf(endMarker);
-      expect(beginIdx >= 0 && endIdx > beginIdx, isTrue,
-          reason: 'Linux probe did not emit OSPROBE markers (exitCode='
-              '${testRun.exitCode}). Full stdout:\n$linuxStdout\n'
-              '--- stderr ---\n${testRun.stderr}');
+      expect(
+        beginIdx >= 0 && endIdx > beginIdx,
+        isTrue,
+        reason:
+            'Linux probe did not emit OSPROBE markers (exitCode='
+            '${testRun.exitCode}). Full stdout:\n$linuxStdout\n'
+            '--- stderr ---\n${testRun.stderr}',
+      );
 
-      final jsonStr =
-          linuxStdout.substring(beginIdx + beginMarker.length, endIdx);
+      final jsonStr = linuxStdout.substring(
+        beginIdx + beginMarker.length,
+        endIdx,
+      );
       final linuxResult = jsonDecode(jsonStr) as Map<String, dynamic>;
 
       // --- 3. Diff key-by-key. -----------------------------------------
@@ -317,10 +379,20 @@ void main() {
       // Independently replicate the non-Windows branch of
       // LogosSseStore._lockKey so the Linux side is checked against a
       // ground truth computed here, not against the Windows output.
-      final expectedLinuxLockKey = <String, String>{
+      final expectedLinuxIntentional = <String, Object?>{
         for (final (label, path) in lockKeyForCorpus)
-          'INTENTIONAL::lockKeyFor::$label':
-              path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), ''),
+          'INTENTIONAL::lockKeyFor::$label': path
+              .replaceAll('\\', '/')
+              .replaceAll(RegExp(r'/+$'), ''),
+        'INTENTIONAL::atomicWrite::parentDirectoryFsyncSupported': true,
+      };
+      final expectedWindowsIntentional = <String, Object?>{
+        for (final (label, path) in lockKeyForCorpus)
+          'INTENTIONAL::lockKeyFor::$label': path
+              .replaceAll('\\', '/')
+              .replaceAll(RegExp(r'/+$'), '')
+              .toLowerCase(),
+        'INTENTIONAL::atomicWrite::parentDirectoryFsyncSupported': false,
       };
 
       for (final key in allKeys) {
@@ -328,31 +400,39 @@ void main() {
         final linuxVal = linuxResult[key];
 
         if (key.startsWith('INTENTIONAL::')) {
-          final expectedLinux = expectedLinuxLockKey[key];
-          if (expectedLinux == null) {
+          if (!expectedLinuxIntentional.containsKey(key) ||
+              !expectedWindowsIntentional.containsKey(key)) {
             intentionalMismatches.add(
-                '$key\n  (no expected-value mapping registered for this '
-                'INTENTIONAL key in the test itself)');
+              '$key\n  (no expected-value mapping registered for this '
+              'INTENTIONAL key in the test itself)',
+            );
             continue;
           }
-          final expectedWindows = expectedLinux.toLowerCase();
+          final expectedLinux = expectedLinuxIntentional[key];
+          final expectedWindows = expectedWindowsIntentional[key];
           if (winVal != expectedWindows) {
-            intentionalMismatches.add('$key (Windows side)\n'
-                '  expected (case-folded): ${_renderValue(expectedWindows)}\n'
-                '  actual:                 ${_renderValue(winVal)}');
+            intentionalMismatches.add(
+              '$key (Windows side)\n'
+              '  expected (case-folded): ${_renderValue(expectedWindows)}\n'
+              '  actual:                 ${_renderValue(winVal)}',
+            );
           }
           if (linuxVal != expectedLinux) {
-            intentionalMismatches.add('$key (Linux side)\n'
-                '  expected (not case-folded): ${_renderValue(expectedLinux)}\n'
-                '  actual:                     ${_renderValue(linuxVal)}');
+            intentionalMismatches.add(
+              '$key (Linux side)\n'
+              '  expected (not case-folded): ${_renderValue(expectedLinux)}\n'
+              '  actual:                     ${_renderValue(linuxVal)}',
+            );
           }
           continue;
         }
 
         if (!_deepEquals(winVal, linuxVal)) {
-          invariantMismatches.add('$key\n'
-              '  windows: ${_renderValue(winVal)}\n'
-              '  linux:   ${_renderValue(linuxVal)}');
+          invariantMismatches.add(
+            '$key\n'
+            '  windows: ${_renderValue(winVal)}\n'
+            '  linux:   ${_renderValue(linuxVal)}',
+          );
         }
       }
 

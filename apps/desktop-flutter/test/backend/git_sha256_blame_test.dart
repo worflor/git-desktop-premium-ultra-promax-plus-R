@@ -55,6 +55,11 @@ Future<void> _blameRoundTrips(ScratchRepo repo, {required int oidWidth}) async {
 }
 
 void main() {
+  // The git backend's command-telemetry touches a platform channel, so the
+  // test binding must exist before any getFileBlame/ScratchRepo call (matches
+  // manifold_sha256_test / git_mutations_test).
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('getFileBlame attributes every line in a SHA-1 repo (control)',
       () async {
     final repo = await ScratchRepo.create(name: 'blame_sha1');

@@ -80,7 +80,6 @@ const _rawWriteBaseline = <String, int>{
   'lib/features/changes/changes_page.dart': 5,
   'lib/features/changes/merge_conflict_editor.dart': 1,
   'lib/features/changes/merge_conflict_flow.dart': 2,
-  'lib/features/palette/palette_state.dart': 1,
   'lib/features/xray/repo_xray_panel.dart': 3,
 };
 
@@ -110,20 +109,20 @@ const _manifoldRefFiles = <String>{
 const _tornWriteExemptions = <String, String>{
   'lib/backend/git.dart':
       'writes are working-tree / patch / index plumbing inside the USER repo '
-          '(git\'s own crash domain), not app-data snapshots',
+      '(git\'s own crash domain), not app-data snapshots',
   'lib/backend/ai.dart':
       'ephemeral per-invocation artifacts (codex piggyback proxy config, '
-          'prompt temp files) in temp dirs; the model disk cache rides '
-          'writeFileAtomic — documented in the torn-write suite header',
+      'prompt temp files) in temp dirs; the model disk cache rides '
+      'writeFileAtomic — documented in the torn-write suite header',
   'lib/backend/ipc/pipe_server.dart':
       'per-pid discovery beacons (manifold-<pid>.lock) — ephemeral by '
-          'construction; stale/torn beacons are skipped and re-created',
+      'construction; stale/torn beacons are skipped and re-created',
   'lib/backend/logos_git_calibration.dart':
       'recomputable calibration cache with its own pid+timestamp tmp '
-          'choreography; loss degrades to recompute, never to data loss',
+      'choreography; loss degrades to recompute, never to data loss',
   'lib/backend/system_paths.dart':
       'throwaway shell/reveal scripts in a fresh systemTemp dir, executed '
-          'once and abandoned — not state anything loads back',
+      'once and abandoned — not state anything loads back',
 };
 
 void main() {
@@ -133,11 +132,16 @@ void main() {
   test('L0: every lib/ file parses cleanly', () {
     final broken = [
       for (final f in corpus.files)
-        if (f.syntaxErrors.isNotEmpty) '${f.path}\n  ${f.syntaxErrors.join('\n  ')}',
+        if (f.syntaxErrors.isNotEmpty)
+          '${f.path}\n  ${f.syntaxErrors.join('\n  ')}',
     ];
-    expect(broken, isEmpty,
-        reason: 'Files the law corpus could not parse — every other law '
-            'silently undercounts on these:\n${broken.join('\n')}');
+    expect(
+      broken,
+      isEmpty,
+      reason:
+          'Files the law corpus could not parse — every other law '
+          'silently undercounts on these:\n${broken.join('\n')}',
+    );
   });
 
   test('L1: dart:ffi is confined to the audited FFI files', () {
@@ -154,11 +158,15 @@ void main() {
             !auditedFfiFiles.contains(f.path))
           f.path,
     ];
-    expect(offenders, isEmpty,
-        reason: 'dart:ffi is the one memory-unsafe edge in the app; it stays '
-            'behind audited files. New FFI goes in (or behind) one of '
-            '$auditedFfiFiles, or a new file added here deliberately. '
-            'Offenders: $offenders');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'dart:ffi is the one memory-unsafe edge in the app; it stays '
+          'behind audited files. New FFI goes in (or behind) one of '
+          '$auditedFfiFiles, or a new file added here deliberately. '
+          'Offenders: $offenders',
+    );
   });
 
   test('L2: no dev-only packages imported from lib/', () {
@@ -168,9 +176,13 @@ void main() {
         for (final imp in f.facts.imports)
           if (devOnly.any(imp.startsWith)) '${f.path} imports $imp',
     ];
-    expect(offenders, isEmpty,
-        reason: 'dev_dependencies must not leak into the shipped app:\n'
-            '${offenders.join('\n')}');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'dev_dependencies must not leak into the shipped app:\n'
+          '${offenders.join('\n')}',
+    );
   });
 
   test('L3: no raw control bytes in source', () {
@@ -184,9 +196,13 @@ void main() {
           if (f.bytes[i] < 0x20 && !allowed.contains(f.bytes[i]))
             '${f.path}: raw byte 0x${f.bytes[i].toRadixString(16).padLeft(2, '0')} at offset $i',
     ];
-    expect(offenders, isEmpty,
-        reason: 'Raw control bytes in source (write them escaped instead):\n'
-            '${offenders.join('\n')}');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Raw control bytes in source (write them escaped instead):\n'
+          '${offenders.join('\n')}',
+    );
   });
 
   test('L4: %09 stays confined to git.dart', () {
@@ -201,9 +217,13 @@ void main() {
             f.facts.stringLiterals.any((s) => s.contains('%09')))
           f.path,
     ];
-    expect(offenders, isEmpty,
-        reason: 'Only git.dart may use %09 (and only in for-each-ref '
-            'formats — see the listReflog comment). Offenders: $offenders');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Only git.dart may use %09 (and only in for-each-ref '
+          'formats — see the listReflog comment). Offenders: $offenders',
+    );
   });
 
   test('L5: codex --sandbox is always pinned to read-only', () {
@@ -212,18 +232,26 @@ void main() {
     // immediately followed by \'read-only\', and ai.dart has at least one.
     final ai = byPath['lib/backend/ai.dart'];
     expect(ai, isNotNull, reason: 'lib/backend/ai.dart moved — update law L5');
-    expect(ai!.facts.sandboxFlags, greaterThanOrEqualTo(1),
-        reason: 'The codex exec argv no longer pins --sandbox at all — this '
-            'is the exact incident regression. Restore the '
-            "'--sandbox', 'read-only' pair (NEVER remove it).");
+    expect(
+      ai!.facts.sandboxFlags,
+      greaterThanOrEqualTo(1),
+      reason:
+          'The codex exec argv no longer pins --sandbox at all — this '
+          'is the exact incident regression. Restore the '
+          "'--sandbox', 'read-only' pair (NEVER remove it).",
+    );
     final offenders = [
       for (final f in corpus.files)
         if (f.facts.sandboxAdjacencyViolations > 0)
           '${f.path}: ${f.facts.sandboxAdjacencyViolations}',
     ];
-    expect(offenders, isEmpty,
-        reason: "Every '--sandbox' argv element must be immediately followed "
-            "by 'read-only': $offenders");
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          "Every '--sandbox' argv element must be immediately followed "
+          "by 'read-only': $offenders",
+    );
   });
 
   test('L11: staging-namespace literal confined to the ref-type algebra', () {
@@ -235,12 +263,18 @@ void main() {
     final offenders = [
       for (final f in corpus.files)
         if (f.path != 'lib/backend/manifold_ref_types.dart' &&
-            f.facts.stringLiterals.any((s) => s.contains('refs/manifold-remote')))
+            f.facts.stringLiterals.any(
+              (s) => s.contains('refs/manifold-remote'),
+            ))
           f.path,
     ];
-    expect(offenders, isEmpty,
-        reason: 'Staging refs are built via MetadataRemote, never spelled: '
-            '$offenders');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Staging refs are built via MetadataRemote, never spelled: '
+          '$offenders',
+    );
   });
 
   test('L12: the zero oid is spelled once', () {
@@ -253,9 +287,13 @@ void main() {
             f.facts.stringLiterals.any((s) => s.contains(zeros)))
           f.path,
     ];
-    expect(offenders, isEmpty,
-        reason: 'Use Oid.zero (manifold_ref_types.dart), never a literal: '
-            '$offenders');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Use Oid.zero (manifold_ref_types.dart), never a literal: '
+          '$offenders',
+    );
   });
 
   test('L13: manifold outcome APIs carry @useResult', () {
@@ -284,15 +322,20 @@ void main() {
           if (name.startsWith('_')) continue;
           final ret = member.returnType?.toSource() ?? '';
           if (!ret.contains('GitResult')) continue;
-          final annotated =
-              member.metadata.any((a) => a.name.name == 'useResult');
+          final annotated = member.metadata.any(
+            (a) => a.name.name == 'useResult',
+          );
           if (!annotated) offenders.add('$path: $name');
         }
       }
     }
-    expect(offenders, isEmpty,
-        reason: 'Public GitResult APIs missing @useResult:\n'
-            '${offenders.join('\n')}');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Public GitResult APIs missing @useResult:\n'
+          '${offenders.join('\n')}',
+    );
   });
 
   test('L14: an LruCache of disposables must release on eviction', () {
@@ -305,9 +348,13 @@ void main() {
         for (final vType in f.facts.lruDisposableNoEvict)
           '${f.path}: LruCache<_, $vType> without onEvict',
     ];
-    expect(offenders, isEmpty,
-        reason: 'LruCache of a native-resource disposable must pass '
-            'onEvict: (v) => v.dispose():\n${offenders.join('\n')}');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'LruCache of a native-resource disposable must pass '
+          'onEvict: (v) => v.dispose():\n${offenders.join('\n')}',
+    );
   });
 
   test('L6 (ratchet): Process spawn surface only shrinks', () {
@@ -319,7 +366,8 @@ void main() {
         for (final f in corpus.files)
           if (f.facts.processSpawns > 0) f.path: f.facts.processSpawns,
       },
-      onNewSite: 'New Process.run/start sites belong behind the existing '
+      onNewSite:
+          'New Process.run/start sites belong behind the existing '
           'seams (git.dart runner / process_utils.dart) so they inherit '
           'fault injection, the barrier scheduler, and telemetry for free.',
     );
@@ -332,10 +380,12 @@ void main() {
       baseline: _rawWriteBaseline,
       actual: {
         for (final f in corpus.files)
-          if (f.facts.rawWrites > 0 && f.path != 'lib/backend/atomic_write.dart')
+          if (f.facts.rawWrites > 0 &&
+              f.path != 'lib/backend/atomic_write.dart')
             f.path: f.facts.rawWrites,
       },
-      onNewSite: 'A truncating writeAsString/writeAsBytes on durable state is '
+      onNewSite:
+          'A truncating writeAsString/writeAsBytes on durable state is '
           'the torn-snapshot bug class (B20). Use writeFileAtomic / '
           'writeFileAtomicString (backend/atomic_write.dart) unless the file '
           'is genuinely disposable.',
@@ -344,7 +394,12 @@ void main() {
 
   test('L8 (ratchet): engine code stays wall-clock free', () {
     const enginePrefixes = [
-      'logos_', 'spectral_', 'engram_', 'gyat', 'lrg_', 'resonance_',
+      'logos_',
+      'spectral_',
+      'engram_',
+      'gyat',
+      'lrg_',
+      'resonance_',
     ];
     bool isEngine(String path) {
       if (!path.startsWith('lib/backend/')) return false;
@@ -361,7 +416,8 @@ void main() {
           if (isEngine(f.path) && f.facts.wallClock > 0)
             f.path: f.facts.wallClock,
       },
-      onNewSite: 'DateTime.now()/unseeded Random() inside the deterministic '
+      onNewSite:
+          'DateTime.now()/unseeded Random() inside the deterministic '
           'engine breaks replayability and the differential oracles — inject '
           'a clock/seed from the caller instead (timestamps at store/telemetry '
           'seams are fine; they live outside these files).',
@@ -381,18 +437,20 @@ void main() {
     final added = actual.difference(_manifoldRefFiles).toList()..sort();
     final removed = _manifoldRefFiles.difference(actual).toList()..sort();
     if (added.isEmpty && removed.isEmpty) return;
-    fail([
-      'LAW L9: the set of files touching the refs/manifold namespace changed.',
-      if (added.isNotEmpty)
-        'NEW files: $added — the staging-namespace laws apply (never fetch '
-            'remote refs onto refs/manifold/*; sync via the staging namespace). '
-            'If this is deliberate, add the file to _manifoldRefFiles.',
-      if (removed.isNotEmpty)
-        'No longer touching it (ratchet down — remove from set): $removed',
-      '',
-      'Updated literal:',
-      _setLiteral('_manifoldRefFiles', actual),
-    ].join('\n'));
+    fail(
+      [
+        'LAW L9: the set of files touching the refs/manifold namespace changed.',
+        if (added.isNotEmpty)
+          'NEW files: $added — the staging-namespace laws apply (never fetch '
+              'remote refs onto refs/manifold/*; sync via the staging namespace). '
+              'If this is deliberate, add the file to _manifoldRefFiles.',
+        if (removed.isNotEmpty)
+          'No longer touching it (ratchet down — remove from set): $removed',
+        '',
+        'Updated literal:',
+        _setLiteral('_manifoldRefFiles', actual),
+      ].join('\n'),
+    );
   });
 
   test('L10 (meta): every persisting backend file is torn-write covered', () {
@@ -411,7 +469,8 @@ void main() {
     final offenders = <String>[];
     for (final f in corpus.files) {
       if (!f.path.startsWith('lib/backend/')) continue;
-      final persists = f.facts.rawWrites > 0 ||
+      final persists =
+          f.facts.rawWrites > 0 ||
           f.facts.openWrites > 0 ||
           f.facts.callsWriteFileAtomic;
       if (!persists) continue;
@@ -421,11 +480,15 @@ void main() {
       offenders.add(f.path);
     }
     offenders.sort();
-    expect(offenders, isEmpty,
-        reason: 'These lib/backend files persist state but are neither '
-            'imported by torn_write_crash_consistency_test.dart nor exempted '
-            'with a reason in _tornWriteExemptions:\n${offenders.join('\n')}\n'
-            'A new store joins the crash corpus, or documents why not.');
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'These lib/backend files persist state but are neither '
+          'imported by torn_write_crash_consistency_test.dart nor exempted '
+          'with a reason in _tornWriteExemptions:\n${offenders.join('\n')}\n'
+          'A new store joins the crash corpus, or documents why not.',
+    );
   });
 }
 
@@ -449,24 +512,26 @@ void _expectRatchet({
     if (!actual.containsKey(e.key)) progress.add('${e.key}: ${e.value} -> 0');
   }
   if (newSites.isEmpty && progress.isEmpty) return;
-  fail([
-    'LAW $law ratchet drift.',
-    if (newSites.isNotEmpty) ...[
+  fail(
+    [
+      'LAW $law ratchet drift.',
+      if (newSites.isNotEmpty) ...[
+        '',
+        'NEW sites (count rose above baseline):',
+        ...newSites.map((s) => '  $s'),
+        onNewSite,
+        'If a new site is genuinely correct, paste the updated baseline below.',
+      ],
+      if (progress.isNotEmpty) ...[
+        '',
+        'Progress (ratchet DOWN — paste the updated baseline so it sticks):',
+        ...progress.map((s) => '  $s'),
+      ],
       '',
-      'NEW sites (count rose above baseline):',
-      ...newSites.map((s) => '  $s'),
-      onNewSite,
-      'If a new site is genuinely correct, paste the updated baseline below.',
-    ],
-    if (progress.isNotEmpty) ...[
-      '',
-      'Progress (ratchet DOWN — paste the updated baseline so it sticks):',
-      ...progress.map((s) => '  $s'),
-    ],
-    '',
-    'Updated literal for $constName:',
-    _mapLiteral(constName, actual),
-  ].join('\n'));
+      'Updated literal for $constName:',
+      _mapLiteral(constName, actual),
+    ].join('\n'),
+  );
 }
 
 String _mapLiteral(String name, Map<String, int> m) {

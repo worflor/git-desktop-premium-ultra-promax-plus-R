@@ -35,8 +35,9 @@ import 'package:path/path.dart' as p;
 /// grandfather in) — see the per-rule comments for which is which.
 void main() {
   final libDir = Directory(p.join(Directory.current.path, 'lib'));
-  final backendDir =
-      Directory(p.join(Directory.current.path, 'lib', 'backend'));
+  final backendDir = Directory(
+    p.join(Directory.current.path, 'lib', 'backend'),
+  );
 
   List<File> dartFilesIn(Directory dir) => dir
       .listSync(recursive: true)
@@ -44,8 +45,9 @@ void main() {
       .where((f) => f.path.endsWith('.dart'))
       .toList();
 
-  String relPath(File f) =>
-      p.posix.joinAll(p.split(p.relative(f.path, from: Directory.current.path)));
+  String relPath(File f) => p.posix.joinAll(
+    p.split(p.relative(f.path, from: Directory.current.path)),
+  );
 
   // ---------------------------------------------------------------------
   // Rule 1 — no unseeded Random() in lib/backend/.
@@ -77,17 +79,23 @@ void main() {
     // fine as a precedent; new engine code should not copy this pattern).
     if (offenders.length < baseline) {
       // ignore: avoid_print
-      print('Random() offender count dropped to ${offenders.length} '
-          '(baseline $baseline) — lower the baseline in '
-          'determinism_tripwire_test.dart.');
+      print(
+        'Random() offender count dropped to ${offenders.length} '
+        '(baseline $baseline) — lower the baseline in '
+        'determinism_tripwire_test.dart.',
+      );
     }
-    expect(offenders.length, lessThanOrEqualTo(baseline),
-        reason: 'unseeded Random() found outside the git.dart jitter '
-            'holdout in: ${offenders.take(5).toList()}. Every unseeded '
-            'Random() in lib/backend/ is a place two runs of the same '
-            'input can diverge — either seed it explicitly, or if it is a '
-            'genuine anti-collision/jitter use (like git.dart\'s retry '
-            'backoff), allowlist it here with the same justification.');
+    expect(
+      offenders.length,
+      lessThanOrEqualTo(baseline),
+      reason:
+          'unseeded Random() found outside the git.dart jitter '
+          'holdout in: ${offenders.take(5).toList()}. Every unseeded '
+          'Random() in lib/backend/ is a place two runs of the same '
+          'input can diverge — either seed it explicitly, or if it is a '
+          'genuine anti-collision/jitter use (like git.dart\'s retry '
+          'backoff), allowlist it here with the same justification.',
+    );
   });
 
   // ---------------------------------------------------------------------
@@ -106,8 +114,10 @@ void main() {
   // ---------------------------------------------------------------------
   test('no DateTime.now() in logos/spectral/coupling/gyat/engram-named '
       'lib/backend/ files', () {
-    final namePattern =
-        RegExp(r'logos|spectral|coupling|gyat|engram', caseSensitive: false);
+    final namePattern = RegExp(
+      r'logos|spectral|coupling|gyat|engram',
+      caseSensitive: false,
+    );
     final nowPattern = RegExp(r'DateTime\.now\(\)');
     final offenders = <String>[];
     for (final f in dartFilesIn(backendDir)) {
@@ -120,18 +130,24 @@ void main() {
     const baseline = 6; // measured 2026-07-09
     if (offenders.length < baseline) {
       // ignore: avoid_print
-      print('DateTime.now() offender count dropped to ${offenders.length} '
-          '(baseline $baseline) — lower the baseline in '
-          'determinism_tripwire_test.dart.');
+      print(
+        'DateTime.now() offender count dropped to ${offenders.length} '
+        '(baseline $baseline) — lower the baseline in '
+        'determinism_tripwire_test.dart.',
+      );
     }
-    expect(offenders.length, lessThanOrEqualTo(baseline),
-        reason: 'DateTime.now() found in engine-named files: '
-            '${offenders.take(5).toList()}. The cross-OS differential '
-            'oracle and the property/fuzz harness both assume the engine '
-            'layer is a pure function of the repo — a wall-clock read '
-            'inside it is either dead weight (should be passed in as an '
-            'explicit parameter) or a live bug (the computed result now '
-            'depends on when the test happened to run).');
+    expect(
+      offenders.length,
+      lessThanOrEqualTo(baseline),
+      reason:
+          'DateTime.now() found in engine-named files: '
+          '${offenders.take(5).toList()}. The cross-OS differential '
+          'oracle and the property/fuzz harness both assume the engine '
+          'layer is a pure function of the repo — a wall-clock read '
+          'inside it is either dead weight (should be passed in as an '
+          'explicit parameter) or a live bug (the computed result now '
+          'depends on when the test happened to run).',
+    );
   });
 
   // ---------------------------------------------------------------------
@@ -159,20 +175,26 @@ void main() {
       if (pattern.hasMatch(f.readAsStringSync())) offenders.add(relPath(f));
     }
     offenders.sort();
-    const baseline = 18; // measured 2026-07-09
+    const baseline = 19; // measured 2026-07-11; atomic fsync capability probed
     if (offenders.length < baseline) {
       // ignore: avoid_print
-      print('Platform.is* offender count dropped to ${offenders.length} '
-          '(baseline $baseline) — lower the baseline in '
-          'determinism_tripwire_test.dart.');
+      print(
+        'Platform.is* offender count dropped to ${offenders.length} '
+        '(baseline $baseline) — lower the baseline in '
+        'determinism_tripwire_test.dart.',
+      );
     }
-    expect(offenders.length, lessThanOrEqualTo(baseline),
-        reason: 'Platform.is* reads found in: ${offenders.take(5).toList()} '
-            '(full measured set: $offenders). A new Platform.is* read '
-            'needs either an INTENTIONAL:: entry in '
-            'test/support/os_probe_corpus.dart (so the WSL2 differential '
-            'oracle actually exercises the branch) or removal — otherwise '
-            'it is an untested cross-OS divergence.');
+    expect(
+      offenders.length,
+      lessThanOrEqualTo(baseline),
+      reason:
+          'Platform.is* reads found in: ${offenders.take(5).toList()} '
+          '(full measured set: $offenders). A new Platform.is* read '
+          'needs either an INTENTIONAL:: entry in '
+          'test/support/os_probe_corpus.dart (so the WSL2 differential '
+          'oracle actually exercises the branch) or removal — otherwise '
+          'it is an untested cross-OS divergence.',
+    );
   });
 
   // ---------------------------------------------------------------------
@@ -224,20 +246,26 @@ void main() {
     const baseline = 1;
     if (offenders.length < baseline) {
       // ignore: avoid_print
-      print('hashCode/persistence offender count dropped to '
-          '${offenders.length} (baseline $baseline) — lower the baseline '
-          'in determinism_tripwire_test.dart.');
+      print(
+        'hashCode/persistence offender count dropped to '
+        '${offenders.length} (baseline $baseline) — lower the baseline '
+        'in determinism_tripwire_test.dart.',
+      );
     }
-    expect(offenders.length, lessThanOrEqualTo(baseline),
-        reason: 'hashCode used alongside a persistence/key verb (in CODE, '
-            'comments stripped) in: ${offenders.take(5).toList()}. The one '
-            'baseline hit — lib/backend/diff_logos_facade.dart\'s '
-            '`_requestCacheKey` — folds `request.diffText.hashCode` into a '
-            'cache key, safe ONLY because that key lives in an in-memory Map '
-            'for one running session and is never written to disk or compared '
-            'across process restarts. A NEW hit means a hashCode is being '
-            'used where a stable content hash is required — replace it (see '
-            'FileCouplingMatrix.contentHash for the pattern).');
+    expect(
+      offenders.length,
+      lessThanOrEqualTo(baseline),
+      reason:
+          'hashCode used alongside a persistence/key verb (in CODE, '
+          'comments stripped) in: ${offenders.take(5).toList()}. The one '
+          'baseline hit — lib/backend/diff_logos_facade.dart\'s '
+          '`_requestCacheKey` — folds `request.diffText.hashCode` into a '
+          'cache key, safe ONLY because that key lives in an in-memory Map '
+          'for one running session and is never written to disk or compared '
+          'across process restarts. A NEW hit means a hashCode is being '
+          'used where a stable content hash is required — replace it (see '
+          'FileCouplingMatrix.contentHash for the pattern).',
+    );
   });
 
   // ---------------------------------------------------------------------
@@ -253,8 +281,7 @@ void main() {
   // a `Set`/concurrent source, `.first` silently starts picking whichever
   // entry happened to land first instead of a deliberately-chosen one.
   // ---------------------------------------------------------------------
-  test('no .keys.first / .values.first / .entries.first in lib/backend/',
-      () {
+  test('no .keys.first / .values.first / .entries.first in lib/backend/', () {
     final pattern = RegExp(r'\.keys\.first|\.values\.first|\.entries\.first');
     final offenders = <String>[];
     for (final f in dartFilesIn(backendDir)) {
@@ -264,17 +291,23 @@ void main() {
     const baseline = 7; // measured 2026-07-09
     if (offenders.length < baseline) {
       // ignore: avoid_print
-      print('.first-on-map offender count dropped to ${offenders.length} '
-          '(baseline $baseline) — lower the baseline in '
-          'determinism_tripwire_test.dart.');
+      print(
+        '.first-on-map offender count dropped to ${offenders.length} '
+        '(baseline $baseline) — lower the baseline in '
+        'determinism_tripwire_test.dart.',
+      );
     }
-    expect(offenders.length, lessThanOrEqualTo(baseline),
-        reason: '.keys.first / .values.first / .entries.first found in: '
-            '${offenders.take(5).toList()}. Each site is worth a manual '
-            'check for whether the underlying map\'s insertion order is '
-            'actually deliberate (fine) or incidental (a latent '
-            'nondeterminism — prefer an explicit sort/selection instead '
-            'of relying on whatever order the map happened to be built '
-            'in).');
+    expect(
+      offenders.length,
+      lessThanOrEqualTo(baseline),
+      reason:
+          '.keys.first / .values.first / .entries.first found in: '
+          '${offenders.take(5).toList()}. Each site is worth a manual '
+          'check for whether the underlying map\'s insertion order is '
+          'actually deliberate (fine) or incidental (a latent '
+          'nondeterminism — prefer an explicit sort/selection instead '
+          'of relying on whatever order the map happened to be built '
+          'in).',
+    );
   });
 }
