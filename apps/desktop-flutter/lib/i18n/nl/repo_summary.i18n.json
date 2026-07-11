@@ -1,0 +1,67 @@
+{
+  "@@locale": "nl",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} regel",
+      "other": "{n} regels"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} bestand.",
+      "other": "{n} bestanden."
+    },
+    "lines": {
+      "one": "{n} regel ({bytes}).",
+      "other": "{n} regels ({bytes})."
+    },
+    "roles": "Rollen — {parts}.",
+    "showingNofM": "Toont {active} van {total} bestanden, gerangschikt op structurele centraliteit."
+  },
+  "heading": {
+    "atAGlance": "In één oogopslag",
+    "core": "Kern",
+    "gettingStarted": "Aan de slag",
+    "regions": "Regio's",
+    "shape": "Vorm"
+  },
+  "historyStarvedCaveat": "Rangschikking beperkt: de koppelingsgraaf had geen randen (verse kloon of te weinig commits). De bestandsvolgorde weerspiegelt grootte, niet structurele centraliteit.",
+  "pitch": {
+    "empty": "Een repository zonder leesbare tekstbestanden{detail}.",
+    "emptyBinary": "{n} binair",
+    "emptyUnreadable": "{n} onleesbaar",
+    "noRegions": {
+      "one": "Een repository met {n} actief bestand.",
+      "other": "Een repository met {n} actieve bestanden."
+    },
+    "withRegions": {
+      "one": "Een repository met {n} actief bestand — {regions}.",
+      "other": "Een repository met {n} actieve bestanden — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Alles onder `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 kern",
+      "other": "{n} kern"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Eén bestand",
+      "other": "{n} bestanden"
+    },
+    "connectsTo": "Verbindt met: {linked}.",
+    "filesLabel": "Bestanden:"
+  },
+  "shape": {
+    "bulk": "Dicht verknoopte codebase: de meeste bestanden horen bij één grote buurt van gedeelde wijzigingen.",
+    "crystalline": "Roostervormige codebase: uniforme, regelmatige koppeling over bestanden heen met voorspelbare lokale structuur.",
+    "goe": "Rijk verknoopte codebase: koppelingen verspreiden zich over bestanden zonder een dominante ruggengraat.",
+    "modular": "Modulaire codebase: meerdere samenhangende regio's met beperkte kruiskoppeling. Werk in de ene regio verstoort zelden een andere.",
+    "poisson": "Los gekoppelde codebase: bestanden evolueren grotendeels op zichzelf, met af en toe een gedeelde wijziging.",
+    "tree": "Boomvormige codebase: één dominante ruggengraat met afhankelijke takken. Wijzigingen planten zich meestal vanuit de kern naar buiten voort."
+  }
+}

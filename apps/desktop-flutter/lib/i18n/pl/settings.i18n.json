@@ -1,0 +1,609 @@
+{
+  "@@locale": "pl",
+  "language": {
+    "title": "Język",
+    "summary": "Język interfejsu tej aplikacji. Wyjście git, logi i diagnostyka pozostają po angielsku, aby zgłoszenia błędów były przeszukiwalne.",
+    "label": "JĘZYK INTERFEJSU",
+    "systemDefault": "Systemowy domyślny",
+    "systemDefaultDetail": "Zgodny z językiem systemu ({resolved})",
+    "disclosureSource": "Język źródłowy, napisany przez twórców.",
+    "disclosureAi": "Tłumaczenie maszynowe od {model}, jeszcze nie sprawdzone przez człowieka. Poprawki mile widziane.",
+    "disclosureAiReviewed": "Tłumaczenie maszynowe od {model}. {percent}% sprawdzone przez człowieka.",
+    "disclosureHuman": "Tłumaczenie ludzkie, utrzymywane przez społeczność.",
+    "reviewedBy": "Sprawdzone przez: {names}."
+  },
+  "sectionLabels": {
+    "preferences": "Preferencje",
+    "shortcuts": "Skróty",
+    "behaviour": "Zachowanie",
+    "aiProviders": "Dostawcy AI",
+    "modelSlots": "Sloty modeli",
+    "tools": "Narzędzia",
+    "diagnostics": "Diagnostyka",
+    "offenders": "Winowajcy",
+    "release": "Wydanie"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Nie udało się zapisać profilu barierek.",
+    "saveRetentionPolicy": "Nie udało się zapisać polityki przechowywania.",
+    "saveUpdateChannel": "Nie udało się zapisać kanału aktualizacji.",
+    "saveModelSelection": "Nie udało się zapisać wyboru modelu AI.",
+    "saveModelAlias": "Nie udało się zapisać aliasu modelu.",
+    "saveCommitMessageModelSlot": "Nie udało się zapisać slotu modelu wiadomości commitów.",
+    "saveReviewModelSlot": "Nie udało się zapisać slotu modelu przeglądu.",
+    "saveCommitMessageCustomPrompt": "Nie udało się zapisać własnego promptu wiadomości commitów.",
+    "saveReviewGuide": "Nie udało się zapisać przewodnika przeglądu.",
+    "saveMuseNotes": "Nie udało się zapisać notatek muzy.",
+    "saveReviewDoubleCheck": "Nie udało się zapisać trybu podwójnej weryfikacji przeglądu.",
+    "saveApiPiggybackCli": "Nie udało się zapisać CLI dla piggybacku API.",
+    "clearLocalData": "Nie udało się wyczyścić lokalnych danych: {error}"
+  },
+  "promptStatus": {
+    "editing": "Edytowanie",
+    "saving": "Zapisywanie",
+    "saveFailed": "Zapis nie powiódł się"
+  },
+  "clearData": {
+    "dialogTitle": "Wyczyść lokalne dane",
+    "clear": "Wyczyść",
+    "confirmDiagnostics": "Wyczyścić lokalne próbki diagnostyki i pomiary wydajności?",
+    "confirmAudit": "Wyczyścić lokalne rekordy metadanych audytu AI?",
+    "confirmAll": "Wyczyścić wszystkie lokalne próbki diagnostyki i rekordy metadanych audytu AI?",
+    "confirmWipeAll": "Wymazać wszystkie lokalne dane aplikacji — w tym listę ostatnich repozytoriów — i wyjść? Twoje rzeczywiste repozytoria git na dysku nie zostaną naruszone.",
+    "confirmReset": "Zresetować lokalne dane aplikacji i wyjść?\n\nUstawienia, motyw, onboarding, preferencje AI, telemetria i cache engramów zostaną wyczyszczone. Lista ostatnich repozytoriów przetrwa."
+  },
+  "guardrailStageLabels": ["Luźno", "Zrównoważone", "Ściśle", "Paranoicznie"],
+  "guardrailMacro": {
+    "loose": "luźno",
+    "balanced": "zrównoważone",
+    "strict": "ściśle",
+    "paranoid": "paranoicznie"
+  },
+  "guardrails": {
+    "title": "Barierki",
+    "summary": "Jak uważna jest automatyka w całym doświadczeniu."
+  },
+  "appearance": {
+    "title": "Wygląd",
+    "summary": "Globalny nastrój i atmosfera interfejsu."
+  },
+  "retention": {
+    "title": "Przechowywanie danych lokalnych",
+    "summaryDiagnostics": "Polityka przechowywania diagnostyki.",
+    "summaryWithAudit": "Polityka przechowywania diagnostyki i audytu AI.",
+    "unitDays": "dni",
+    "unitMb": "MB",
+    "includesNote": "Obejmuje diagnostykę, pomiary wydajności i metadane."
+  },
+  "navigation": {
+    "title": "Nawigacja i dynamika",
+    "summaryShortcuts": "Skróty i zachowanie interfejsu.",
+    "summaryWithAi": "Skróty, zachowanie interfejsu i routing AI."
+  },
+  "behaviour": {
+    "title": "Dynamika zachowań"
+  },
+  "retentionClear": {
+    "diag": "Diag",
+    "audit": "Audyt",
+    "all": "Wszystko",
+    "clearsHint": "<-- czyści"
+  },
+  "channels": {
+    "stable": "STABLE",
+    "beta": "BETA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "aktualne",
+    "updateAvailable": "dostępna {version}",
+    "notConfigured": "brak serwera aktualizacji",
+    "notFound": "brak wydań {channel}",
+    "unreachable": "nieosiągalne",
+    "badManifest": "zły manifest"
+  },
+  "keybindingProfile": {
+    "label": "Profil skrótów klawiszowych",
+    "porcelain": "Porcelain",
+    "numeric": "Numeryczny",
+    "porcelainDescription": "Skróty akordowe (G, potem C, H, B…).",
+    "numericDescription": "Skróty numeryczne jednym klawiszem (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "klucz api",
+    "endpointHint": "endpoint",
+    "test": "Test",
+    "hide": "Ukryj",
+    "show": "Pokaż"
+  },
+  "shortcuts": {
+    "navigate": "nawigacja",
+    "staging": "indeks",
+    "branchesPrs": "gałęzie i PR",
+    "modifiers": "modyfikatory",
+    "changes": "Zmiany",
+    "history": "Historia",
+    "branches": "Gałęzie",
+    "xray": "X-Ray",
+    "switchAlways": "Przełącz (zawsze)",
+    "search": "Szukaj",
+    "dismiss": "Zamknij",
+    "refresh": "Odśwież",
+    "shortcuts": "Skróty",
+    "nextChange": "Nast. zmiana",
+    "prevChange": "Poprz. zmiana",
+    "toggleLine": "Przełącz linię",
+    "toggleHunk": "Przełącz hunk",
+    "toggleFile": "Przełącz plik",
+    "pinContext": "Przypnij kontekst",
+    "commit": "Commit",
+    "acceptHint": "Przyjmij podpowiedź",
+    "undo": "Cofnij",
+    "navigateRow": "Nawigacja",
+    "expand": "Rozwiń",
+    "checkout": "Checkout",
+    "approve": "Zatwierdź",
+    "requestChanges": "Poproś o zmiany",
+    "selectRange": "Zaznacz zakres",
+    "extendedMenu": "Menu rozszerzone"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "Tryb AI tylko do odczytu",
+    "aiReadOnlyDescription": "Uniemożliwia AI automatyczne pisanie lub dodawanie zmian do indeksu.",
+    "logoMotionLabel": "Logo animuje się poza aktywną kartą",
+    "logoMotionDescriptionEnabled": "Jest zaprojektowane, by być wydajne, nie rań jego uczuć",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Pamiętaj pracę w toku",
+    "rememberWipDescription": "Zachowuj szkice commitów i wybór plików między sesjami.",
+    "stashCabinetLabel": "Szafka stash otwarta na starcie",
+    "stashCabinetDescription": "Domyślnie pokazuj szufladę kartoteki otwartą, gdy repozytorium ma półki.",
+    "instantBlameLabel": "Natychmiastowy blame przy najechaniu",
+    "instantBlameDescription": "Pomiń opóźnienie 180 ms przed pokazaniem informacji blame na linii diff.",
+    "autoSelectLabel": "Automatyczny wybór nowych zmian",
+    "autoSelectDescription": "Nowo śledzone lub zmienione pliki są automatycznie dodawane do wyboru do commita.",
+    "fetchIssuesLabel": "Pobieraj zgłoszenia online przy ładowaniu gałęzi",
+    "fetchIssuesDescription": "Podciągaj szczegóły PR i zgłoszeń od twojego dostawcy git w tle, gdy otwiera się strona gałęzi.",
+    "hateAiLabel": "Nienawidzę AI",
+    "hateAiDescription": "Wygnaj wszystkie funkcje oparte na LLM. Logos działa dalej, bo to tylko matematyka spektralna."
+  },
+  "diffDiffability": {
+    "title": "diff-owalność diff"
+  },
+  "modelSlots": {
+    "loadingProviders": "Ładowanie dostawców...",
+    "refreshingProviders": "Odświeżam diagnostykę dostawców...",
+    "routeDescription": "Zmień nazwę i skieruj konfiguracje na dowolny wykryty model dostawcy.",
+    "loadingCategories": "Ładowanie kategorii modeli...",
+    "noOptions": "Nie ma jeszcze dostępnych opcji modeli. Najpierw wykryj kompatybilne lokalne CLI AI.",
+    "slotsAppearWhenAvailable": "Ustawienia slotów modeli pojawią się tutaj, gdy modele dostawców będą dostępne.",
+    "effortDefault": "domyślny",
+    "noModelsForSlot": "Nie wykryto modeli dla tego slotu.",
+    "viaProvider": "przez {provider}",
+    "customModelId": "własny id modelu"
+  },
+  "modelPicker": {
+    "noMatch": "brak modeli dla „{query}”",
+    "noModels": "brak dostępnych modeli",
+    "filterHint": "filtruj modele...",
+    "warming": "rozgrzewanie…",
+    "detailsUnavailable": "szczegóły niedostępne",
+    "free": "za darmo"
+  },
+  "aiFeatures": {
+    "commitDescription": "Szkicuje wiadomości commitów z zaindeksowanych zmian, zgodnie z twoją strukturą, głosem i preferencjami zakresu.",
+    "reviewDescription": "Przejrzyj bieżący zakres commita, zanim go utworzysz.",
+    "museDescription": "Trójfazowa wyrocznia: najpierw burza mózgów, potem synteza kierunku naprzód dla diff."
+  },
+  "commitEditor": {
+    "styleGuide": "Przewodnik stylu",
+    "styleGuideHint": "Opcjonalne. Głos / ton / zakazy. Format powyżej odpowiada za szkielet."
+  },
+  "review": {
+    "additionalNotes": "Dodatkowe notatki do przeglądu",
+    "doubleCheckLabel": "Podwójna weryfikacja przeglądu",
+    "doubleCheckDescription": "Uruchom drugi przebieg weryfikacji przed pokazaniem końcowego raportu."
+  },
+  "museHint": {
+    "loose": "coś, ku czemu delikatnie skierować? nastrój dziś łaskawy.",
+    "balanced": "na czym się zatrzymać, co pominąć. szczerze, ale nie ostro.",
+    "strict": "standardy. zakazy. czego muza nie odpuści.",
+    "paranoid": "nastrój soczewkę. na jakich częstotliwościach ma buczeć manifold?"
+  },
+  "museEditor": {
+    "additionalNotes": "Dodatkowe notatki dla muzy"
+  },
+  "museStage": {
+    "brainstorm": "BURZA MÓZGÓW",
+    "synthesize": "SYNTEZA",
+    "slot": "slot",
+    "ideaCountLoose": "~12 pomysłów",
+    "ideaCountBalanced": "~16 pomysłów",
+    "ideaCountStrict": "~20 pomysłów",
+    "ideaCountParanoid": "~24 pomysły",
+    "guardrailHint": "{ideas}  ·  barierka: {macro}"
+  },
+  "lensAxis": {
+    "folder": "FOLDER",
+    "history": "HISTORIA",
+    "far": "DALEKO",
+    "near": "BLISKO"
+  },
+  "logosLens": {
+    "moduleMap": "mapa modułów",
+    "repoCenters": "centra repozytorium",
+    "neighbors": "sąsiedzi",
+    "toTouch": "co ruszyć dalej",
+    "relevanceEngine": "silnik trafności",
+    "description": "czyta, jak pliki poruszają się razem przez strukturę, historię i rytm, aby Manifold wiedział, co ważne, a nie tylko co się zmieniło.",
+    "withinReach": "w zasięgu",
+    "gate": "próg",
+    "nearest": "najbliższy",
+    "warming": "rozgrzewanie",
+    "emptyOpenRepo": "otwórz repozytorium,\naby zobaczyć soczewkę na żywo",
+    "emptyNoFiles": "brak plików w\nzasięgu — przeciągnij\nku HISTORII"
+  },
+  "sortGuide": {
+    "title": "Przewodnik sortowania zmian",
+    "related": "Pliki zmieniające się razem grupują się razem. Najpierw sedno, potem kontekst.",
+    "relatedInverted": "Najpierw izolowane zmiany. Ściśle sprzężone klastry osiadają na dole.",
+    "alphabetical": "Zwykłe A → Z wg ścieżki. Bez rozróżniania wielkości liter, liczby w naturalnym porządku.",
+    "alphabeticalInverted": "Zwykłe Z → A wg ścieżki. Bez rozróżniania wielkości liter, liczby w naturalnym porządku.",
+    "impact": "Najpierw wypływają najcięższe zmiany. Rotacja jest ważona; binaria i nowe pliki dostają wzmocnienie.",
+    "impactInverted": "Najpierw wypływają najlżejsze zmiany. Szybkie zwycięstwa na górze; ciężkie czekają.",
+    "nearRelated": "wg sprzężeń",
+    "alphabeticalShort": "alfabetycznie",
+    "byImpact": "wg wpływu",
+    "flipped": "odwrócone",
+    "peek": "zerknij"
+  },
+  "piggyback": {
+    "apiModelsUse": "Modele API używają",
+    "codexNotDetected": "nie wykryto codex",
+    "dormant": "UŚPIONE"
+  },
+  "diffStage": {
+    "viewer": "podgląd",
+    "media": "media",
+    "binary": "binarny",
+    "hidden": "ukryty"
+  },
+  "undoScope": {
+    "destructiveActions": "działania niszczące",
+    "discards": "odrzucenia",
+    "commits": "commity",
+    "commitPush": "commit + push",
+    "all": "wszystko"
+  },
+  "undoWindow": {
+    "label": "Okno cofania",
+    "off": "Wył",
+    "descriptionInstant": "{scope} finalizują się natychmiast.",
+    "descriptionDelayed": "{seconds} s do finalizacji: {scope}.",
+    "cycleScopeTooltip": "Kliknij, aby przełączyć zakres · albo przeciągnij w górę/dół na suwaku",
+    "resetTooltip": "Zresetuj każde działanie do domyślnego okna"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "„Pewnie w porządku” znaczy w porządku",
+    "proper": "Porządne czytanie, logika, integracja, wzorce",
+    "lookAgain": "Spójrz jeszcze raz. Coś może się kryć",
+    "assumeWrong": "Załóż, że coś jest nie tak. Znajdź to"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "np. Skup się na logice wysokiego poziomu i poważnych błędach. Zwięźle i wyrozumiale.",
+    "surfaceBugs": "np. Wydobądź potencjalne błędy, niespójności architektoniczne i awarie przypadków brzegowych.",
+    "scrutinize": "np. Analizuj każdą linię pod kątem optymalizacji, bezpieczeństwa i zgodności ze wzorcami.",
+    "trustNothing": "np. Nie ufaj niczemu. Kwestionuj każdy efekt uboczny. Traktuj każdą linię jak potencjalną awarię.",
+    "optional": "Opcjonalna wskazówka, o co przegląd ma dbać."
+  },
+  "commitFormat": {
+    "title": "Format",
+    "peek": "zerknij",
+    "structure": "Struktura",
+    "voice": "Głos",
+    "coverage": "Zakres",
+    "structureTitleBody": "tytuł + treść",
+    "structureTitleOnly": "tylko tytuł",
+    "structureFreeform": "dowolna forma",
+    "voiceVerbLed": "zorientowany na działanie",
+    "voiceDescriptive": "opisowy",
+    "voiceNarrative": "narracyjny",
+    "coverageEssentials": "sedno",
+    "coverageBalanced": "zrównoważony",
+    "coverageEverything": "wszystko"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Niech lis pomija ciastka, które pachną nie tak",
+        "s2": "Naucz lisa odrzucać zmanipulowane ciastka, zanim je połknie",
+        "s3": "Zmuś lisa, by kryminalistycznie sprawdzał każde ciastko u bramy",
+        "def": "Naucz lisa odrzucać złe ciastka"
+      },
+      "descriptive": {
+        "s0": "teraz to lis wybiera ciastka",
+        "s2": "Procedura inspekcji ciastek, wbita w lisa",
+        "s3": "Kryminalistyka weryfikacji ciastek, wszczepiona w lisa powtórzeniem",
+        "def": "Protokół obwąchiwania ciastek, zainstalowany w lisie"
+      },
+      "narrative": {
+        "s0": "lis zaczął pomijać ciastka, które pachniały nie tak",
+        "s2": "Usiadłem z lisem i przeszliśmy, które ciastka odrzucać",
+        "s3": "Spędziłem większość popołudnia, przekonując lisa, że nie każde oferowane ciastko jest, w dobrej wierze, ciastkiem",
+        "def": "Poprosiłem lisa, by obwąchiwał ciastka, zanim je zje"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Lis zerka. Cokolwiek nie tak — zostawia.",
+        "s2": "Lis ogląda każdy token, odrzuca wszystko o niewłaściwym zapachu i odnotowuje odmowę na ganku.",
+        "s3": "Lis okrąża każdy token, próbuje powietrza pod trzema kątami, odrzuca każdy, który czyta się źle, i czeka chwilę, by upewnić się, że odmowa się utrzyma.",
+        "def": "Lis obwąchuje teraz każdy token i grzecznie odrzuca podejrzane."
+      },
+      "descriptive": {
+        "s0": "Łagodne przepuszczenie dziwnych, przeważnie.",
+        "s2": "Udokumentowana odmowa dla każdego tokenu o niewłaściwym zapachu, wydana z ganku i odnotowana.",
+        "s3": "Notarialnie poświadczona odmowa dla każdego pachnącego nie tak tokenu, wydana z ganku z jedną uniesioną łapą, druga nieruchoma.",
+        "def": "Grzeczna odmowa dla podejrzanych tokenów, wydana z ganku."
+      },
+      "narrative": {
+        "s0": "Lis po prostu jakoś przestał jeść te dziwne. Łatwo.",
+        "s2": "Kiedyś każdy token schodził bez namysłu; teraz jest pauza, porządne spojrzenie i odmowa dla tych, które siedzą nie tak.",
+        "s3": "Kiedyś każdy token schodził bez namysłu. Teraz: pauza. Powietrze wciągnięte. Powietrze zatrzymane. Lis wypatruje na deskach ganku tego małego drgnięcia, które czasem mają, gdy coś jest nie tak, i dopiero wtedy zapada decyzja.",
+        "def": "Kiedyś każdy token był połykany bez ceremonii; teraz najpierw jest wąch."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Ganek w porządku. Podwórko jakoś tam.",
+        "s2": " Ganek zamieciony po każdej odmowie; błoto na podwórku dozwolone w wyznaczonych godzinach.",
+        "s3": " Ganek zamieciony i zamieciony ponownie; błoto na podwórku skatalogowane wg odcisków łap i pogody, a lis marudzi na progu dłużej niż dawniej.",
+        "def": " Ganek pozostaje czysty; podwórko zachowuje swoje prawa do błota."
+      },
+      "descriptive": {
+        "s0": " Ganek okej. Podwórko robi podwórkowe rzeczy.",
+        "s2": " Ganek jako strefa czysta od dowodów; podwórko jako wyznaczona strefa błota, godziny podane.",
+        "s3": " Ganek jako pomieszczenie czyste na poziomie dowodowym; podwórko jako skatalogowane archiwum błota; próg jako miejsce, gdzie lis stoi i myśli zbyt długo.",
+        "def": " Czysty ganek; prawa do błota zachowane na podwórku."
+      },
+      "narrative": {
+        "s0": " Ganek był w porządku. Podwórko, kto wie.",
+        "s2": " Ganek potem trzymano w czystości; lis wycofał się na podwórko, gdzie odbywa się myślenie.",
+        "s3": " Ganek wyszorowano tego wieczoru dwa razy. Lis wolno obszedł podwórko, przystanął przy tym samym słupku płotu co zawsze i obejrzał się na ganek, jakby ganek był mu coś winien.",
+        "def": " Ganek pozostaje czysty, choć podwórko wciąż wygrywa godnością."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Bursztyn jest. Dryf dryfuje. Cierń kłuje, gdy musi. Przeważnie nic.",
+        "s2": " Bursztyn przechowuje każdy zapach do przeglądu. Dryf niesie dzienne powietrze ku cierniowi u bramy, który znaczy każdą odmowę do wieczornego podliczenia.",
+        "s3": " Bursztyn przechowuje każdy zapach i nadaje mu inną wagę zależnie od godziny. Dryf przemieszcza się przez ganek pod kątami, które nie powinny mieć znaczenia, ale mają. Cierń u bramy kłuje raz za odmowy i dwa razy za te, które lis omal nie przegapił, a lis zna różnicę, nawet gdy nikt inny jej nie zna.",
+        "def": " Bursztyn przechowuje zapach. Dryf niesie go dalej. Cierń u bramy łapie to, co nie powinno przejść."
+      },
+      "descriptive": {
+        "s0": " Bursztyn na słupku. Dryf w powietrzu. Cierń u bramy. W porządku.",
+        "s2": " Bursztyn jako wyznaczony świadek zapachu; dryf jako zalogowane tło; ślady ciernia jako dzienny rejestr odmów, uzgodniony o zmierzchu.",
+        "s3": " Bursztyn jako świadek zapachu, którego milczenie samo jest odczytem; dryf jako wzorzyste tło, poruszające się nie tak w te dni, gdy coś jest nie tak; cierń jako rachmistrz bramy, którego ślady lis sprawdza przed snem i znów przed świtem.",
+        "def": " Bursztyn jako świadek zapachu; dryf jako tło kontekstu; cierń jako cicha oznaka odmowy u bramy."
+      },
+      "narrative": {
+        "s0": " Bursztyn był w pobliżu. Dryf przychodził i odchodził. Cierń robił swoje ciche. Nieważne, było spokojnie.",
+        "s2": " Bursztyn prowadził rejestr zapachów za dzień, dryf odnotowywano wg kierunku i godziny, a ślady ciernia podliczono i kontrasygnowano z ganku.",
+        "s3": " Bursztyn prowadził rejestr zapachów, ale lis przysięga, że w niektóre poranki waży on więcej. Dryf poruszał się przez ganek jak zawsze, to znaczy nie tak w te dni, które się liczą. Cierń u bramy znaczył każdą odmowę; lis wychodził o pierwszym świetle je liczyć, tak jak liczy się schody, które już się policzyło.",
+        "def": " Bursztyn trzymał rejestr zapachów, dryf poruszał powietrze, a cierń u bramy łapał to, co trzeba było złapać."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "Narzędzia zewnętrzne",
+    "summary": "Kliknij projekt prawym przyciskiem w panelu bocznym, aby otworzyć go jednym z nich. Argumenty używają \\{path} dla folderu projektu.",
+    "detecting": "Wykrywam zainstalowane narzędzia…",
+    "allPresetsAdded": "Wszystkie znane presety są już dodane. Użyj „+ Własne”, aby dodać więcej.",
+    "noToolsConfigured": "Nie skonfigurowano jeszcze narzędzi. Dodaj jedno powyżej.",
+    "categoryAi": "ai",
+    "categoryEditors": "edytory",
+    "categoryExplore": "eksploracja",
+    "categoryOps": "operacje",
+    "categoryGitOps": "operacje git",
+    "nameHint": "Nazwa",
+    "commandHint": "polecenie",
+    "test": "test",
+    "removeTool": "Usuń narzędzie",
+    "modeTerminal": "terminal",
+    "modeDetached": "odłączony"
+  },
+  "apiUsage": {
+    "thisMonth": "{used}{limit} w tym miesiącu"
+  },
+  "gitea": {
+    "title": "Tokeny Gitea",
+    "hostHint": "host",
+    "tokenHint": "token",
+    "save": "zapisz"
+  },
+  "wick": {
+    "selectExecutable": "Wybierz plik wykonywalny wick",
+    "connected": "wick · połączony",
+    "pathToExecutable": "wick · ścieżka do pliku wykonywalnego"
+  },
+  "integrations": {
+    "title": "i integracje",
+    "alpha": "alpha",
+    "planned": "w planach",
+    "lspComingSoon": "lsp · wkrótce",
+    "alphaMathConnected": "alpha-math · połączony",
+    "alphaMathComingSoon": "alpha-math · wkrótce"
+  },
+  "reduceMotion": {
+    "label": "Ogranicz animacje",
+    "subtitleStill": "Nieruchomo… jak lód?",
+    "subtitleFlow": "Płynie jak woda."
+  },
+  "resetQuit": {
+    "resetAndQuit": "RESET I WYJŚCIE",
+    "keepRepos": "ZACHOWAJ REPOZYTORIA",
+    "wipeAll": "WYMAŻ WSZYSTKO"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Diagnostyka poleceń",
+    "networkFlowTelemetry": "Telemetria przepływu sieciowego",
+    "clearSamples": "Wyczyść próbki",
+    "clearMetrics": "Wyczyść metryki",
+    "clearTimings": "Wyczyść pomiary",
+    "recalibrate": "REKALIBRUJ",
+    "ok": "ok",
+    "noCommandTimings": "Brak zarejestrowanych pomiarów poleceń. Wykonuj zwykłe działania, aby wypełnić diagnostykę.",
+    "noBackendSamples": "Brak zarejestrowanych próbek poleceń backendu. Wykonuj działania git i ustawień, aby wypełnić ten log.",
+    "noDiffSessions": "Brak zarejestrowanych sesji renderowania diff. Otwieraj i przewijaj diff plików, aby wypełnić ten panel.",
+    "noUiSessions": "Brak zarejestrowanych sesji pomiarów UI. Otwieraj panele i nawiguj po trasach, aby wypełnić ten panel.",
+    "recentOperations": "Ostatnie operacje",
+    "recentBackendOperations": "Ostatnie operacje backendu",
+    "recentDiffSessions": "Ostatnie sesje diff",
+    "recentUiTimings": "Ostatnie pomiary UI",
+    "uniqueCommands": {
+      "one": "{n} unikalne polecenie",
+      "few": "{n} unikalne polecenia",
+      "many": "{n} unikalnych poleceń",
+      "other": "{n} unikalnego polecenia"
+    },
+    "scopedCommands": {
+      "one": "{n} polecenie z zakresem",
+      "few": "{n} polecenia z zakresem",
+      "many": "{n} poleceń z zakresem",
+      "other": "{n} polecenia z zakresem"
+    },
+    "instrumentedEvents": {
+      "one": "{n} zdarzenie z instrumentacją",
+      "few": "{n} zdarzenia z instrumentacją",
+      "many": "{n} zdarzeń z instrumentacją",
+      "other": "{n} zdarzenia z instrumentacją"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | jank {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["polecenie", "p50", "niezawodność", "zakres"],
+    "headersBackend": ["zakres", "p50", "p95", "awarie"],
+    "headersDiff": ["renderer", "pierwsze malowanie", "klatka p95", "raster p95", "jank"],
+    "headersUi": ["zdarzenie", "p50", "awarie", "zakres"]
+  },
+  "telemetry": {
+    "samples": {
+      "one": "{n} próbka",
+      "few": "{n} próbki",
+      "many": "{n} próbek",
+      "other": "{n} próbki"
+    },
+    "commands": {
+      "one": "{n} polecenie",
+      "few": "{n} polecenia",
+      "many": "{n} poleceń",
+      "other": "{n} polecenia"
+    },
+    "sessions": {
+      "one": "{n} sesja",
+      "few": "{n} sesje",
+      "many": "{n} sesji",
+      "other": "{n} sesji"
+    },
+    "events": {
+      "one": "{n} zdarzenie",
+      "few": "{n} zdarzenia",
+      "many": "{n} zdarzeń",
+      "other": "{n} zdarzenia"
+    },
+    "stability": "{pct}% stabilności",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "przepływ wykonania",
+    "description": "symuluje oscylatory na kodzie, wydobywając kruche ścieżki wykonania, zanim skrystalizują się w błędy.",
+    "idle": "bezczynny",
+    "emptyOpenRepo": "otwórz repozytorium,\naby zobaczyć analizę przepływu",
+    "scanning": "skanowanie",
+    "analysing": "analizuję pliki\nw soczewce…",
+    "fragility": "kruchość",
+    "findings": "znaleziska",
+    "gap": "luka",
+    "clean": "czysto",
+    "severity": "waga",
+    "critical": "krytyczne",
+    "warn": "ostrzeż.",
+    "info": "info"
+  },
+  "museStrands": {
+    "spark": "iskra natchnienia · natychmiastowy następny krok",
+    "current": "prąd w wodzie · rozwinięcia w czasie teraźniejszym",
+    "horizon": "spojrzenie za horyzont · sięgające kierunki",
+    "fever": "przebudzenie z gorączkowego snu · prowokacje",
+    "echo": "echo przez kanion · analogie gdzie indziej",
+    "vertigo": "zawroty głowy na skraju urwiska · sąsiednie ryzyka",
+    "ghost": "duch tego, co było · kontekst historyczny",
+    "mirror": "lustro na spokojnej wodzie · inwersje"
+  },
+  "cliPiggyback": {
+    "title": "Piggybacking CLI",
+    "clearCacheLabel": "Wyczyść cache",
+    "clearCacheTooltip": "Wymaż zbuforowane modele i ponów sondowanie. Usuwa te, które dostawca porzucił.",
+    "refreshLabel": "Odśwież dostawców",
+    "refreshTooltip": "Ponów sondowanie każdego dostawcy teraz.",
+    "body": "Bezpośrednio przekazuj wiadomości interfejsu do lokalnych binariów dostawców."
+  },
+  "header": {
+    "title": "Preferencje przestrzeni roboczej",
+    "subtitle": "Skonfiguruj globalną estetykę, dynamikę interfejsu i kluczowe zabezpieczenia operacyjne dla całej przestrzeni roboczej.",
+    "releaseNotesTooltip": "Uwagi do wydania",
+    "replayOnboardingTooltip": "Powtórz onboarding"
+  },
+  "diagnosticsPanel": {
+    "title": "Diagnostyka wydajności",
+    "copyTrace": "Kopiuj ślad",
+    "offenderRanking": "Ranking winowajców",
+    "offenderRankingSubtitle": "Czynniki opóźnień we wszystkich strumieniach.",
+    "noOffenders": "Brak rankingu winowajców. Zbierz aktywność diagnostyczną, aby wypełnić tę listę."
+  },
+  "release": {
+    "title": "Wdrożenie wydania",
+    "summary": "Ustawienia związane z aktualizacjami.",
+    "deploymentChannel": "KANAŁ WDROŻENIA",
+    "captureCrashDiagnostics": "Zbieraj diagnostykę awarii",
+    "comingSoon": "Wkrótce.",
+    "checking": "SPRAWDZANIE…",
+    "pollForUpdates": "SPRAWDŹ AKTUALIZACJE"
+  },
+  "providerStatus": {
+    "detecting": "Wykrywanie...",
+    "ready": "Gotowy",
+    "notDetected": "Nie wykryto",
+    "configured": "{count} skonfigurowano",
+    "notConfigured": "Nie skonfigurowano",
+    "cliManaged": "Zarządzany przez CLI",
+    "connected": "Połączony",
+    "modelCount": {
+      "one": "{n} model",
+      "few": "{n} modele",
+      "many": "{n} modeli",
+      "other": "{n} modelu"
+    },
+    "providerCount": {
+      "one": "{n} dostawca",
+      "few": "{n} dostawcy",
+      "many": "{n} dostawców",
+      "other": "{n} dostawcy"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Polecenie",
+    "diffStream": "Renderowanie diff",
+    "uiStream": "Pomiar UI",
+    "rendererName": "renderer {mode}",
+    "latencyFailMetric": "{p95} ms p95 | {fail}% awarii",
+    "jankFrameMetric": "{jank}% jank | {frame} ms klatka p95",
+    "inStream": "w {stream}"
+  }
+}

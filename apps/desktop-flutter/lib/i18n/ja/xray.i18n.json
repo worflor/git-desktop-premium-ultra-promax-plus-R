@@ -113,7 +113,7 @@
     "machineChip": "マシン",
     "refresh": "更新",
     "refreshing": "更新中…",
-    "title": "リポジトリ X 線"
+    "title": "リポジトリ X-Ray"
   },
   "hotspot": {
     "clusterPeers": "クラスターの仲間",
@@ -159,10 +159,10 @@
   },
   "loadingCard": {
     "buildingMessage": "Git 履歴、ref、ペース、ホットスポットを調査中。",
-    "buildingTitle": "リポジトリ X 線を構築中",
+    "buildingTitle": "リポジトリ X-Ray を構築中",
     "idleMessage": "パネルを再度開くと現在のリポジトリを調査します。",
-    "idleTitle": "リポジトリ X 線",
-    "unavailableTitle": "リポジトリ X 線を取得できません"
+    "idleTitle": "リポジトリ X-Ray",
+    "unavailableTitle": "リポジトリ X-Ray を取得できません"
   },
   "metabolism": {
     "halfLife": "半減期 {n} 日"
@@ -181,7 +181,10 @@
     "months": "{n}か月",
     "today": "今日",
     "weeks": "{n}週",
-    "years": "{n}年"
+    "years": {
+      "one": "{n}年",
+      "other": "{n}年"
+    }
   },
   "rings": {
     "hintOneBlended": "一つに溶け合った構造",
@@ -248,7 +251,7 @@
   "trajectory": {
     "connectivity": "連結性",
     "events": "{n} イベント",
-    "openInOrrery": "オーラリーで開く",
+    "openInOrrery": "Orrery で開く",
     "readingHint": "履歴を読み込み中…",
     "snapshots": "{n} スナップショット",
     "steady": "安定 — このウィンドウに構造的イベントはありません。",

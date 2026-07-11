@@ -4238,8 +4238,13 @@ class Translations$common$time$en {
   /// en: '{n}mo ago'
   String monthsAgo({required Object n}) => '${n}mo ago';
 
-  /// en: '{n}y ago'
-  String yearsAgo({required Object n}) => '${n}y ago';
+  /// en: '(one) {{n}y ago} (other) {{n}y ago}'
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '${n}y ago',
+        other: '${n}y ago',
+      );
 
   /// en: '{n}m'
   String minutesShort({required Object n}) => '${n}m';
@@ -4256,8 +4261,13 @@ class Translations$common$time$en {
   /// en: '{n}mo'
   String monthsShort({required Object n}) => '${n}mo';
 
-  /// en: '{n}y'
-  String yearsShort({required Object n}) => '${n}y';
+  /// en: '(one) {{n}y} (other) {{n}y}'
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '${n}y',
+        other: '${n}y',
+      );
 
   /// en: '{n}m'
   String commitMonthsShort({required Object n}) => '${n}m';
@@ -8877,8 +8887,13 @@ class Translations$xray$recency$en {
   /// en: '{n}w'
   String weeks({required Object n}) => '${n}w';
 
-  /// en: '{n}y'
-  String years({required Object n}) => '${n}y';
+  /// en: '(one) {{n}y} (other) {{n}y}'
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '${n}y',
+        other: '${n}y',
+      );
 }
 
 // Path: xray.rings

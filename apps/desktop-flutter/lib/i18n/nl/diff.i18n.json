@@ -1,0 +1,145 @@
+{
+  "@@locale": "nl",
+  "status": {
+    "loadingTitle": "Diff laden",
+    "loadingMessage": "Bestandswijzigingen lezen.",
+    "unavailableTitle": "Diff niet beschikbaar",
+    "noChangesTitle": "Geen wijzigingen",
+    "noChangesMessage": "Dit bestand heeft geen diff-inhoud om te tonen."
+  },
+  "toolbar": {
+    "searchHint": "diff doorzoeken...",
+    "lineCount": {
+      "one": "{n} regel",
+      "other": "{n} regels"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "slijtage · aan",
+    "wearMapOnHint": "slijtagekaart aan — klik om te verbergen",
+    "wearMapOffHint": "slijtagekaart tonen (activiteits-heatmap)",
+    "trailBadge": "· spoor"
+  },
+  "hunkDropdown": {
+    "tooltip": "Naar wijzigingsblok springen. Git noemt deze hunks.",
+    "changeCount": {
+      "one": "{n} wijziging",
+      "other": "{n} wijzigingen"
+    }
+  },
+  "stagingFailed": "Gedeeltelijk stagen mislukt: {error}",
+  "trail": {
+    "loading": "spoor laden...",
+    "noHistory": "geen geschiedenis gevonden",
+    "nowWorkingCopy": "nu · werkkopie",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "vastgezette context laden",
+    "pageManifold": "Manifold",
+    "pageSignals": "Signalen",
+    "echoesTitle": "Echo's",
+    "technicalLedger": "Technisch grootboek",
+    "noSecondaryCues": "Geen secundaire aanwijzingen gedetecteerd.",
+    "linkedPaths": "Gekoppelde paden",
+    "moreCount": "+{n} meer",
+    "localSeam": "Lokale naad",
+    "sharedOwnership": "gedeeld eigenaarschap",
+    "historyWarmingUp": "Geschiedenis warmt op",
+    "echoesTotal": "{n} TOTAAL",
+    "noEchoes": "Geen echo's in deze diff.",
+    "openRelatedFile": "Gerelateerd bestand {name} openen",
+    "inspectFile": "{name} inspecteren",
+    "jumpEcho": "naar echo springen",
+    "copyLine": "regel kopiëren",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "Recente beweging met één sterke eigenaar dichtbij.",
+      "activeSeam": "Recente beweging van meerdere handen dichtbij.",
+      "stableOwnerLane": "Langlevende baan met één dominante eigenaar.",
+      "sharedLongLivedSeam": "Gedeelde naad die zich in de loop van de tijd heeft opgebouwd.",
+      "sharedLane": "Gedeelde baan zonder één dominante eigenaar.",
+      "resolving": "De geschiedenis rond deze regel is nog niet uitgekristalliseerd."
+    },
+    "tone": {
+      "hot": "Heet",
+      "novel": "Nieuw",
+      "contested": "Betwist",
+      "spreading": "Verspreidend",
+      "stable": "Stabiel"
+    },
+    "summary": {
+      "livesIn": "Woont in {concept}",
+      "sitsInLocalSeam": "Zit in een lokale naad",
+      "workedMostlyBy": "meestal bewerkt door {owner} dichtbij",
+      "echoesInSpots": {
+        "one": "echoot op {n} andere plek",
+        "other": "echoot op {n} andere plekken"
+      },
+      "inspectNext": "inspecteer {path} als volgende{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "strakke passing",
+      "close": "nauwe passing",
+      "loose": "losse passing"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Waarom dit ertoe doet",
+    "storyConfidence": "Vertrouwen",
+    "storySecondarySignal": "Secundair signaal",
+    "storyNeighbourhood": "Buurt",
+    "neighbourhoodDetail": "Deze regel zit dicht bij {name} in het huidige codebase-veld.",
+    "propagationLane": "Voortplantingsbaan",
+    "propagationLaneNamed": "Voortplantingsbaan: {lane}",
+    "witness": {
+      "nearbySupport": "Steun dichtbij · {label}",
+      "localizedMove": "Gelokaliseerde beweging · {label}",
+      "surprisingMove": "Verrassende beweging · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Stabiele structuur",
+      "conflictingSignals": "Tegenstrijdige signalen",
+      "novelShape": "Nieuwe vorm"
+    },
+    "related": {
+      "testMirror": "Test-spiegel",
+      "semanticHistorySibling": "Semantiek- + geschiedenis-broer",
+      "recentCoChange": "Recente co-change",
+      "semanticSibling": "Semantische broer",
+      "relatedStructure": "Gerelateerde structuur",
+      "tightlyBound": "strak gebonden",
+      "orbiting": "in een baan eromheen",
+      "weaklyCoupled": "zwak gekoppeld",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "geschiedenisspoor",
+      "testMirrorLane": "test-spiegel-baan",
+      "structuralLane": "structurele baan",
+      "semanticNeighbourhood": "semantische buurt"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} verborgen",
+    "landing": "landing"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (te groot voor voorbeeld)",
+    "unableToLoadBlob": "Blob kon niet worden geladen",
+    "omittedKindMedia": "media",
+    "omittedKindBinary": "binair",
+    "omittedStub": "{kind} · verborgen"
+  },
+  "media": {
+    "unableToDecodeImage": "Afbeelding kon niet worden gedecodeerd",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "toegevoegd",
+    "stateDeleted": "verwijderd",
+    "stateModified": "gewijzigd",
+    "fallbackFormatName": "Binair"
+  }
+}

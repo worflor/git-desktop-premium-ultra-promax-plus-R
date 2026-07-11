@@ -1,0 +1,83 @@
+{
+  "@@locale": "pl",
+  "chrome": {
+    "title": "Chirurgia historii",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "NA SUCHO"
+  },
+  "select": {
+    "prompt": "Wybierz pliki do usunięcia z historii",
+    "selectedCount": "{n} wybrano",
+    "searchHint": "szukaj...",
+    "readingTree": "odczyt drzewa...",
+    "continueDisabled": "wybierz pliki, aby kontynuować",
+    "continueEnabled": "kontynuuj →",
+    "toPurgeCount": "{n} do wyczyszczenia",
+    "analyzing": "analizuję...",
+    "riskLow": "niskie ryzyko",
+    "riskModerate": "umiarkowane ryzyko",
+    "riskHigh": "wysokie ryzyko",
+    "impactCommitsLabel": "commity",
+    "impactBranchesLabel": "gałęzie",
+    "impactWorktreesLabel": "drzewa robocze",
+    "impactCouplingLabel": "sprzężenie",
+    "impactCouplingIsland": "wyspa",
+    "impactCouplingNeighbors": "{n} sąsiadów",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Jak to działa",
+    "backupTitle": "Kopia zapasowa",
+    "backupBody": "Każdy ref gałęzi i tagu jest kopiowany do zapasowej przestrzeni nazw przed jakąkolwiek zmianą. Jeśli coś pójdzie nie tak, jedno kliknięcie przywraca stan pierwotny.",
+    "rewriteTitle": "Przepisywanie",
+    "rewriteBody": "Każdy commit jest przechodzony od korzenia do wierzchołka. Dla każdego commita zawierającego docelowe pliki tworzony jest nowy commit z tymi plikami usuniętymi z drzewa. Łańcuchy rodziców są remapowane, aby zachować topologię. ",
+    "rewriteSummary": "Przepisanych zostanie {affected} z {total} commitów.",
+    "updateRefsTitle": "Aktualizacja refów",
+    "updateRefsBody": "Wskaźniki gałęzi i tagów są przenoszone na nowe SHA commitów. Stare obiekty istnieją do czasu odśmiecania. ",
+    "worktreesNeedRecheckout": "Twoje drzewa robocze ({n}) będą wymagać ponownego checkoutu.",
+    "noWorktreesAffected": "Żadne drzewo robocze nie jest naruszone.",
+    "forcePushTitle": "Wymuszony push",
+    "forcePushBody": "Po zweryfikowaniu czyszczenia wybierasz, które gałęzie wymusić push. Używa --force-with-lease, więc bezpiecznie przerywa, jeśli ktoś w międzyczasie pushnął.",
+    "plumbingNote": "W przeciwieństwie do filter-repo czy BFG, działa to w całości przez polecenia plumbing gita (cat-file, mktree, commit-tree, update-ref). Bez zewnętrznych zależności. Śledzenie zmian nazw idzie jednym łańcuchem na plik — jeśli plik został skopiowany, a obie kopie zmieniły nazwę niezależnie, zweryfikuj wynik czyszczenia po wykonaniu.",
+    "back": "← Wstecz",
+    "continueLabel": "Rozumiem, kontynuuj →"
+  },
+  "confirm": {
+    "commitsRewritten": "Przepisanych zostanie {n} commitów",
+    "forcePushRequired": "Dla zdalnych gałęzi wymagany będzie wymuszony push",
+    "worktreesRecheckout": "{n} drzew roboczych będzie wymagać ponownego checkoutu",
+    "stashesInvalid": "{n} schowków może stać się nieważnych",
+    "heading": "Ta operacja przepisuje historię git",
+    "subheading": "Nie można jej automatycznie cofnąć po wymuszonym pushu.",
+    "typeHint": "wpisz {word}",
+    "goBack": "Wstecz",
+    "begin": "Rozpocznij operację"
+  },
+  "execute": {
+    "preparing": "Przygotowywanie...",
+    "backingUpRefs": "Tworzę kopię refów...",
+    "rewritingCommits": "Przepisuję commity...",
+    "updatingRefs": "Aktualizuję refy..."
+  },
+  "verify": {
+    "complete": "Operacja zakończona",
+    "failed": "Operacja nie powiodła się",
+    "commitsRewrittenLabel": "Przepisane commity",
+    "refsUpdatedLabel": "Zaktualizowane refy",
+    "oldHeadLabel": "Stary HEAD",
+    "newHeadLabel": "Nowy HEAD",
+    "purgeVerifiedLabel": "Czyszczenie zweryfikowane",
+    "purgeClean": "czysto",
+    "purgeTracesRemain": "POZOSTAŁY ŚLADY",
+    "displacedWorktrees": "Przemieszczone drzewa robocze",
+    "undoSurgery": "Cofnij operację",
+    "rolledBack": "Wycofano do zapasowych refów.",
+    "done": "Gotowe"
+  },
+  "forcePush": {
+    "pushing": "push...",
+    "forcePushAll": "Wymuś push wszystkich",
+    "confirmPush": "potwierdź push",
+    "cancel": "anuluj"
+  }
+}

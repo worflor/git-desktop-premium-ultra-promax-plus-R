@@ -14,7 +14,7 @@
     "changes": "更改",
     "history": "历史",
     "branches": "分支",
-    "xray": "透视",
+    "xray": "X-Ray",
     "switchAlways": "切换（始终）",
     "commandPalette": "命令面板",
     "elevatedPalette": "提升面板",
@@ -38,31 +38,31 @@
 
   "commandPaletteTooltip": "命令面板   /",
 
-  "newDeskFallback": "新工作台",
-  "deskFallback": "工作台",
+  "newDeskFallback": "新 Desk",
+  "deskFallback": "Desk",
   "currentDeskFallback": "当前",
   "noRepositoryOpen": "未打开仓库",
 
-  "couldntOpenAsDesk": "无法作为工作台打开：{error}",
+  "couldntOpenAsDesk": "无法作为 Desk 打开：{error}",
   "couldNotDetectForge": "无法检测代码托管平台：{error}",
   "cannotFetchPrNoForge": "无法抓取 PR：未检测到此仓库的代码托管平台。",
   "overwriteRefConfirm": "用远程最新内容覆盖 {ref}？",
   "overwrite": "覆盖",
   "couldntFetchPr": "无法抓取 PR：{error}",
 
-  "promoteDeskToPr": "将工作台提升为 PR",
+  "promoteDeskToPr": "将 Desk 提升为 PR",
   "applyToMain": "应用到 main",
   "updateDeskFrom": "从 {source} 更新 {target}",
   "bringChangesFromHere": "把 {source} 的改动带到这里",
   "editLocalPr": "编辑本地 PR",
   "discardLocalPr": "丢弃本地 PR",
-  "closeDesk": "关闭工作台",
+  "closeDesk": "关闭 Desk",
 
   "couldntPromote": "无法提升：{error}",
-  "commitOrShelveBeforeApplying": "应用前请先提交或搁置工作台的改动。",
+  "commitOrShelveBeforeApplying": "应用前请先提交或搁置 Desk 的改动。",
   "couldNotResolveMainWorktree": "无法解析主工作树路径。",
-  "couldntPromoteDesk": "无法提升工作台：{error}",
-  "couldntDetermineBaseBranch": "无法确定此工作台的基础分支。",
+  "couldntPromoteDesk": "无法提升 Desk：{error}",
+  "couldntDetermineBaseBranch": "无法确定此 Desk 的基础分支。",
   "prBaseHeadSame": "PR 的基础分支与头分支相同（{branch}）— 无内容可应用。",
   "appliedBranchToBase": "已将 {branch} 应用到 {base}",
 
@@ -90,7 +90,7 @@
   "cancelLower": "取消",
   "saveLower": "保存",
   "couldntSave": "无法保存：{error}",
-  "stashedNoOtherDesk": "改动已储藏 — 没有其他工作台可应用。用 git stash pop 恢复。",
+  "stashedNoOtherDesk": "改动已储藏 — 没有其他 Desk 可应用。用 git stash pop 恢复。",
 
   "suggestedSource": "建议来源",
   "tooltipModifiedCount": "{n} 个已修改",
@@ -108,7 +108,7 @@
   "driftSummaryRemainder": "{summary} +{remainder}",
 
   "uncommittedChanges": "未提交的改动",
-  "closeDeskQuestion": "关闭工作台？",
+  "closeDeskQuestion": "关闭 Desk？",
   "uncommittedFileCount": {
     "other": "{n} 个未提交的文件。"
   },
@@ -138,14 +138,14 @@
   "publish": "发布",
   "noRemoteConfigured": "此仓库未配置远程。",
 
-  "jumpToDesk": "跳到工作台",
+  "jumpToDesk": "跳到 Desk",
   "arrowOpen": "→ 打开",
-  "openOnANewDesk": "在新工作台打开",
-  "plusDesk": "+ 工作台",
+  "openOnANewDesk": "在新 Desk 打开",
+  "plusDesk": "+ Desk",
   "plusSpace": "+ ",
   "newBranchNameHint": "new-branch-name",
   "escLower": "esc",
-  "plusNewDesk": "+ 新工作台",
+  "plusNewDesk": "+ 新 Desk",
   "fromHeadEllipsis": "从 HEAD…",
   "viewAllBranches": "查看所有分支",
 

@@ -34,7 +34,7 @@
     "undo": "ОТМЕНА",
     "thm": "ТЕМА",
     "ver": "ВЕР",
-    "desk": "СТОЛ",
+    "desk": "DESK",
     "det": "ОТСЦ",
     "main": "MAIN",
     "head": "HEAD",
@@ -82,15 +82,15 @@
     "launch": "Запустить {label}"
   },
   "gitCommands": {
-    "fetch": "Получить",
-    "pull": "Забрать",
+    "fetch": "Фетч",
+    "pull": "Пул",
     "pullBehind": "{count} позади",
     "pullBehindUpstream": "{behind} {upstream}",
-    "push": "Отправить",
+    "push": "Пуш",
     "pushCommits": {"one": "{n} коммит", "few": "{n} коммита", "many": "{n} коммитов", "other": "{n} коммитов"},
     "pushCommitsUpstream": "{commits} в {upstream}",
-    "forcePush": "Принудительная отправка",
-    "forcePushNoUpstream": "Принудительная отправка невозможна: для {branch} не задан upstream.",
+    "forcePush": "Форс-пуш",
+    "forcePushNoUpstream": "Форс-пуш невозможен: для {branch} не задан upstream.",
     "commit": "Коммит",
     "stageAll": "Всё в индекс",
     "unstageAll": "Всё из индекса",
@@ -104,12 +104,12 @@
     "stashDrop": "Сбросить стэш",
     "createTag": "Создать метку",
     "cherryPick": "Cherry-pick",
-    "revert": "Откатить",
+    "revert": "Ревёрт",
     "stashConflictMessage": "Стэш применён с конфликтами. Устраните их на странице «Изменения»."
   },
   "pr": {
     "create": "Создать PR",
-    "merge": "Слить PR",
+    "merge": "Мёржить PR",
     "markReady": "Пометить PR готовым"
   },
   "ai": {
@@ -135,7 +135,7 @@
     "changes": "Изменения",
     "history": "История",
     "branches": "Ветки",
-    "xray": "Рентген",
+    "xray": "X-Ray",
     "settings": "Настройки",
     "refresh": "Обновить"
   },
@@ -175,8 +175,8 @@
     "subtitle": "Переписать историю, чтобы навсегда удалить файлы"
   },
   "orrery": {
-    "label": "Оррери",
-    "subtitle": "Прокрутите структурную историю репозитория сквозь манифолд"
+    "label": "Orrery",
+    "subtitle": "Прокрутите структурную историю репозитория сквозь manifold"
   },
   "command": {
     "complete": "{label} — завершено",

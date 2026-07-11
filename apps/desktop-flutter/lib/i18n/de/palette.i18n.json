@@ -135,7 +135,7 @@
     "changes": "Änderungen",
     "history": "Verlauf",
     "branches": "Branches",
-    "xray": "Röntgen",
+    "xray": "X-Ray",
     "settings": "Einstellungen",
     "refresh": "Aktualisieren"
   },
@@ -176,7 +176,7 @@
   },
   "orrery": {
     "label": "Orrery",
-    "subtitle": "Scrubbe die strukturelle Historie des Repos durch die Mannigfaltigkeit"
+    "subtitle": "Scrubbe die strukturelle Historie des Repos durch die manifold"
   },
   "command": {
     "complete": "{label} abgeschlossen",
@@ -190,7 +190,7 @@
     "emptyNoResults": "keine Ergebnisse"
   },
   "wick": {
-    "label": "docht",
+    "label": "wick",
     "coupledFallback": "gekoppelt"
   },
   "gitCache": {

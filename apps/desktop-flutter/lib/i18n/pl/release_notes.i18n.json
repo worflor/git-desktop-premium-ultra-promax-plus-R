@@ -1,0 +1,18 @@
+{
+  "@@locale": "pl",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "DLACZEGO FLUTTER?",
+      "body": "Pierwsza wersja tego była aplikacją na Tauri (Rust + TypeScript). Sam już czułem, że działa wolno. Potem złapałem streamera mówiącego dokładnie to samo na streamie, którego zwykle nie oglądam — i to był impuls, żeby wreszcie zmienić stos. Fluttera wcale nie polecał, wręcz przeciwnie. Dart znalazłem sam, sklecił prototyp i uruchamianie skróciło się z jakichś 15 sekund do poniżej jednej. Niebo a ziemia. Żegnaj, ero Tauri.\n\nPotok renderowania Fluttera jest bliższy silnikowi gry niż DOM-owi, a dla aplikacji desktopowej, gdzie interfejs jest produktem, to zmienia wszystko. Dart okazał się na dodatek naprawdę dobrym językiem. Matematykę stojącą za silnikiem spektralnym najpierw prototypowano w Rust, więc tamta praca przeniosła się bez problemu.\n\nFlutter jest domyślnie wieloplatformowy, co jest świetne, ale z natury jest „googlowy”, więc ma kilka dziwactw."
+    },
+    "spectralEngine": {
+      "question": "CZYM JEST SILNIK SPEKTRALNY?",
+      "body": "Za każdym razem, gdy commitujesz, pliki, które zmieniasz razem, z czasem układają się we wzorce. Silnik spektralny czyta twój graf commitów i rozkłada te wzorce wspólnych zmian na sygnały: które pliki są sprzężone, jak ściśle i jaką rolę strukturalną pełnią w repozytorium. Zasadniczo analiza spektralna twojej historii rozwoju. W kliencie git. Celowo.\n\nTa matematyka jest nowa, więc traktuję ją jak „game feel”: stroję, testuję, koryguję i tak dalej, aż sygnały zaczną wydawać się poprawne.\n\nTe sygnały zasilają wszystko. Sejsmograf w historii, malowane paski pod tematami commitów, system przeglądu, Muse, konstelację plików. Cała aplikacja rozumuje od tej warstwy w dół, a nie na odwrót."
+    },
+    "whereGoing": {
+      "question": "DOKĄD TO ZMIERZA?",
+      "body": "Pierwszy kamień milowy to pełna równość z GitHub Desktop, SourceTree i GitKraken. Wieloplatformowy klient git, który działa szybko i radzi sobie z podstawami lepiej niż cokolwiek innego. To w większości już jest. Silnik spektralny już daje nam przewagę w operacjach, które inne klienty każą przemyśleć ręcznie.\n\nDalej celem jest przewyższyć każdy inny klient git pod względem szybkości, dostępności, inteligencji i ogólnego UX. W przygotowaniu jest więcej niż to, co ogłoszono tutaj."
+    }
+  }
+}

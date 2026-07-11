@@ -1,0 +1,303 @@
+{
+  "@@locale": "pl",
+  "board": {
+    "movesWithModule": "porusza się z innym modułem",
+    "reviewerCount": {
+      "one": "{n} recenzent",
+      "few": "{n} recenzentów",
+      "many": "{n} recenzentów",
+      "other": "{n} recenzenta"
+    },
+    "territory": "Terytorium",
+    "unreviewed": "bez przeglądu"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commitów · {days} dni\n{lines}",
+    "burstTooltipSingle": "{n} commitów w {label}",
+    "gapTooltip": "przerwa {n} dni · {label}",
+    "reflogTooltip": "{n} zdarzeń reflog w {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "Repozytorium ma wystarczającą powierzchnię gałęzi, by nawigacja świadoma gałęzi się opłacała.",
+      "broadTitle": "Model gałęzi ma powierzchnię",
+      "localBranchesDetail": "{count} lokalnych gałęzi.",
+      "localBranchesLabel": "Lokalne gałęzie",
+      "remoteBranchesDetail": "{count} zdalnych gałęzi.",
+      "remoteBranchesLabel": "Zdalne gałęzie",
+      "simpleClaim": "Widoczny model gałęzi jest wąski.",
+      "simpleTitle": "Prosty model gałęzi"
+    },
+    "bursty": {
+      "claim": "Praca ląduje w skoncentrowanych zrywach, a nie równym dziennym rytmem.",
+      "title": "Zrywowy rytm rozwoju"
+    },
+    "hiddenRefs": {
+      "claim": "{count} refów żyje poza normalną przestrzenią gałęzi/tagów.",
+      "evidenceDetail": "{count} refów poza heads/remotes/tags.",
+      "evidenceLabel": "Ukryte refy",
+      "namespacesLabel": "Przestrzenie nazw",
+      "title": "Ukryte przestrzenie nazw Git"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Jeden plik niesie nieproporcjonalną wagę wspólnych zmian względem liczby dotknięć.",
+        "few": "Niewielki zbiór plików niesie nieproporcjonalną wagę wspólnych zmian względem liczby dotknięć.",
+        "many": "Niewielki zbiór plików niesie nieproporcjonalną wagę wspólnych zmian względem liczby dotknięć.",
+        "other": "Niewielki zbiór plików niesie nieproporcjonalną wagę wspólnych zmian względem liczby dotknięć."
+      },
+      "evidenceDetail": {
+        "one": "{n} dotknięcie · przyciąganie φ={score}",
+        "few": "{n} dotknięcia · przyciąganie φ={score}",
+        "many": "{n} dotknięć · przyciąganie φ={score}",
+        "other": "{n} dotknięcia · przyciąganie φ={score}"
+      },
+      "title": {
+        "one": "Zwornikowy plik-most",
+        "few": "{n} zwornikowe pliki-mosty",
+        "many": "{n} zwornikowych plików-mostów",
+        "other": "{n} zwornikowego pliku-mostu"
+      }
+    },
+    "machineHistory": {
+      "claim": "Commity w stylu punktów kontrolnych istotnie zniekształcają naiwne metryki historii.",
+      "machineCommitsDetail": "{count} commitów pasowało do wzorców maszynowych/sesyjnych.",
+      "machineCommitsLabel": "Commity maszynowe",
+      "rawVsFilteredDetail": "{raw} surowych commitów wobec {filtered} przefiltrowanych.",
+      "rawVsFilteredLabel": "Surowe wobec przefiltrowanych",
+      "title": "Historia maszynowa dominuje w surowych metrykach"
+    },
+    "migration": {
+      "claim": "Historia przesuwa się z `{older}` na `{newer}`, co sugeruje przejście stosu lub powierzchni.",
+      "stratumDetail": "{touches} dotknięć, ostatnia aktywność {lastActive}.",
+      "title": "Widoczna migracja architektury"
+    },
+    "narrowHotspot": {
+      "claim": "Niewielki zbiór plików i katalogów pochłania nieproporcjonalną część zmian.",
+      "title": "Koncentracja punktów zapalnych jest wąska",
+      "topHotspotDetail": "{path} stanowi {pct}% widocznego zbioru punktów zapalnych.",
+      "topHotspotLabel": "Główny punkt zapalny",
+      "visibleAuthorsDetail": "{count} autorów w tym wycinku historii.",
+      "visibleAuthorsLabel": "Widoczni autorzy"
+    },
+    "noTags": {
+      "claim": "Tagi git nie są używane jako widoczna warstwa wydań lub kamieni milowych.",
+      "remoteEndpointsDetail": "{count} skonfigurowanych zdalnych punktów końcowych.",
+      "remoteEndpointsLabel": "Zdalne punkty końcowe",
+      "tagCountDetail": "Znaleziono 0 tagów.",
+      "tagCountLabel": "Liczba tagów",
+      "title": "Brak formalnego śladu wydań/tagów"
+    },
+    "reflog": {
+      "claim": "Objętość reflog wskazuje na skoncentrowaną lokalną iterację poza opublikowanymi commitami.",
+      "peakReflogDayLabel": "Szczytowy dzień reflog",
+      "title": "Intensywne sesje lokalnej edycji"
+    },
+    "singleOwner": {
+      "claim": "`{path}` to intensywnie dotykany {kind} z jednym wyraźnym widocznym autorem.",
+      "ownerCountDetail": "{count} wyraźnych autorów.",
+      "ownerCountLabel": "Liczba właścicieli",
+      "title": "Punkt zapalny jednego właściciela",
+      "touchCountLabel": "Liczba dotknięć",
+      "touchDetailFiltered": "{count} dotknięć w przefiltrowanej historii.",
+      "touchDetailRaw": "{count} dotknięć w surowej historii."
+    }
+  },
+  "cardTitle": {
+    "branches": "gałęzie",
+    "bursty": "zrywowy",
+    "hiddenRefs": "ukryte refy",
+    "machineHeavy": "maszynowo-ciężki",
+    "migration": "migracja",
+    "narrowHotspot": "wąski punkt zapalny",
+    "noTags": "brak tagów",
+    "reflog": "reflog",
+    "singleOwner": "jeden właściciel"
+  },
+  "grain": {
+    "coarsest": "najgrubsza — moduły najwyższego poziomu",
+    "finest": "najdrobniejsze ziarno",
+    "mid": "średnie ziarno",
+    "oneCharacteristic": "jedna charakterystyczna skala"
+  },
+  "header": {
+    "dirtyBadge": "brudny",
+    "machineChip": "maszynowy",
+    "refresh": "Odśwież",
+    "refreshing": "Odświeżanie...",
+    "title": "X-Ray repozytorium"
+  },
+  "hotspot": {
+    "clusterPeers": "sąsiedzi w klastrze",
+    "coChangers": "współzmieniający",
+    "keystone": "zwornik",
+    "keystoneScore": "zwornik  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "gałąź",
+    "commitsHumanMachine": "człowiek · {n} maszyna",
+    "commitsLabel": "commity",
+    "confidenceLabel": "pewność",
+    "curlLabel": "curl",
+    "engineSection": "silnik",
+    "gradientLabel": "gradient",
+    "harmonicLabel": "harmoniczna",
+    "headLabel": "head",
+    "hiddenRefsLabel": "ukryte refy",
+    "mergeCount": {
+      "one": "{n} merge",
+      "few": "{n} merge'e",
+      "many": "{n} merge'ów",
+      "other": "{n} merge'a"
+    },
+    "noTags": "brak tagów",
+    "notesLabel": "notatki",
+    "openCommit": "Otwórz commit",
+    "pathLabel": "ścieżka",
+    "remoteCount": "{n} zdalnych",
+    "renamesLabel": "zmiany nazw",
+    "scannedAt": "przeskanowano {time}",
+    "selectedCount": "{n} wybrano",
+    "shapeLinear": "liniowy",
+    "shapeMergeHeavy": "dużo merge'ów",
+    "shapeMostlyLinear": "w większości liniowy",
+    "stashCount": {
+      "one": "{n} stash",
+      "few": "{n} stashe",
+      "many": "{n} stashy",
+      "other": "{n} stasha"
+    },
+    "stressLabel": "naprężenie",
+    "tagCount": {
+      "one": "{n} tag",
+      "few": "{n} tagi",
+      "many": "{n} tagów",
+      "other": "{n} tagu"
+    },
+    "worktreeCount": {
+      "one": "{n} drzewo robocze",
+      "few": "{n} drzewa robocze",
+      "many": "{n} drzew roboczych",
+      "other": "{n} drzewa roboczego"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Sonduję historię Git, refy, rytm i punkty zapalne.",
+    "buildingTitle": "Buduję X-Ray repozytorium",
+    "idleMessage": "Otwórz panel ponownie, aby przesondować bieżące repozytorium.",
+    "idleTitle": "X-Ray repozytorium",
+    "unavailableTitle": "X-Ray repozytorium niedostępny"
+  },
+  "metabolism": {
+    "halfLife": "okres półtrwania {n} dni"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} klaster",
+      "few": "{n} klastry",
+      "many": "{n} klastrów",
+      "other": "{n} klastra"
+    },
+    "clusterSingle": "klaster {id}",
+    "couplingSuffix": "sprzężenie {parts}",
+    "externalCount": "{n} zewnętrznych",
+    "mutualCount": "{n} wzajemnych"
+  },
+  "recency": {
+    "days": "{n} dni",
+    "months": "{n} mies",
+    "today": "dziś",
+    "weeks": "{n} tyg",
+    "years": {
+      "one": "{n} lat",
+      "other": "{n} lat"
+    }
+  },
+  "rings": {
+    "hintOneBlended": "jedna zmieszana struktura",
+    "hintSelfSimilar": "samopodobna",
+    "oneBlendedBody": "Jedna zmieszana struktura — odrębne skale modułów jeszcze się nie wyłaniają.",
+    "overHistory": "Przez historię",
+    "parts": "części",
+    "readingHint": "odczytuję strukturę…",
+    "scaleCount": {
+      "one": "{n} skala",
+      "few": "{n} skale",
+      "many": "{n} skal",
+      "other": "{n} skali"
+    },
+    "scaleDissolved": "skala strukturalna rozpłynęła się",
+    "scaleEmerged": "wyłoniła się skala strukturalna",
+    "scaleSpectrum": "spektrum skal",
+    "selfSimilarBody": "Samopodobna — struktura powtarza się na wszystkich skalach, bez jednego charakterystycznego poziomu.",
+    "shiftInHistory": {
+      "one": "{n} przesunięcie w historii",
+      "few": "{n} przesunięcia w historii",
+      "many": "{n} przesunięć w historii",
+      "other": "{n} przesunięcia w historii"
+    },
+    "structuralShiftCount": {
+      "one": "{n} przesunięcie strukturalne",
+      "few": "{n} przesunięcia strukturalne",
+      "many": "{n} przesunięć strukturalnych",
+      "other": "{n} przesunięcia strukturalnego"
+    },
+    "title": "Słoje przyrostu",
+    "unavailable": "niedostępne"
+  },
+  "stats": {
+    "alive": "żywy",
+    "files": "pliki",
+    "lastTouched": "ostatnio dotknięty",
+    "owner": {
+      "one": "właściciel",
+      "few": "właściciele",
+      "many": "właścicieli",
+      "other": "właściciela"
+    },
+    "touches": "dotknięcia"
+  },
+  "stratumLabel": {
+    "current": "bieżący",
+    "legacy": "legacy",
+    "zone": "strefa repo"
+  },
+  "summary": {
+    "analysisFailed": "Analiza nie powiodła się: {error}",
+    "analyze": "Analizuj",
+    "copied": "Podsumowanie skopiowane do schowka.",
+    "directionHint": "kierunek",
+    "download": "Pobierz",
+    "emptyState": "Uruchom analizę Logos, aby zmapować strukturę i regiony tego repozytorium.\n(tw: na razie kaszana)",
+    "exit": "Wyjdź",
+    "generating": "Odczytuję repozytorium i klastruję cechy…",
+    "noModel": "Nie skonfigurowano modelu AI.",
+    "noModelConfigured": "nie skonfigurowano modelu AI",
+    "presentWith": "zaprezentuj z {label}",
+    "presentingWith": "prezentuję z {label}…",
+    "reanalyze": "Przeanalizuj ponownie",
+    "saveDialogTitle": "Zapisz podsumowanie repozytorium",
+    "saveFailed": "Nie udało się zapisać: {error}",
+    "savePresentationDialogTitle": "Zapisz prezentację",
+    "savedTo": "Zapisano w {path}"
+  },
+  "tabs": {
+    "map": "Mapa",
+    "signals": "Sygnały",
+    "summary": "Podsumowanie",
+    "time": "Czas"
+  },
+  "trajectory": {
+    "connectivity": "łączność",
+    "events": "{n} zdarzeń",
+    "openInOrrery": "Otwórz w Orrery",
+    "readingHint": "odczytuję historię…",
+    "snapshots": "{n} migawek",
+    "steady": "Stabilnie — brak zdarzeń strukturalnych w tym oknie.",
+    "title": "Trajektoria strukturalna"
+  },
+  "verdict": {
+    "canonical": "{pct}% kanoniczny",
+    "tooltip": "{archetype} · {canonical}% kanoniczny · {decisive}% zdecydowany"
+  }
+}

@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "저장소 엑스레이",
+      "xray": "저장소 X-Ray",
       "settings": "설정"
     },
     "sidebar": {
@@ -85,7 +85,7 @@
       "lensBranches": "브랜치",
       "lensPRs": "PR",
       "absorbed": "흡수됨",
-      "desk": "데스크",
+      "desk": "Desk",
       "head": "HEAD",
       "tracking": "→ 추적: {ref}"
     },

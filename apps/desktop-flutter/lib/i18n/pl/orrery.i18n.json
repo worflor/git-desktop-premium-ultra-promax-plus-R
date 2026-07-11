@@ -1,0 +1,101 @@
+{
+  "@@locale": "pl",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Przewijanie",
+    "modeCompare": "Porównanie",
+    "lodModules": "Moduły",
+    "lodFiles": "Pliki"
+  },
+  "status": {
+    "loading": "Śledzę manifold przez historię…",
+    "loadError": "Nie udało się odczytać historii tego repozytorium.",
+    "notEnoughHistory": "Jeszcze za mało historii, aby wykreślić trajektorię.",
+    "notEnoughHistoryDetail": "Orrery potrzebuje kilku commitów, aby coś wykreślić."
+  },
+  "legend": {
+    "central": "centralny",
+    "peripheral": "peryferyjny"
+  },
+  "node": {
+    "module": "moduł",
+    "moduleWithCount": "{path} · {n} plików",
+    "fileFallback": "plik #{id}",
+    "nodeFallback": "węzeł #{id}",
+    "rootModule": "(korzeń)"
+  },
+  "milestone": {
+    "genesis": "geneza",
+    "now": "teraz",
+    "reorganized": "zreorganizowany",
+    "becameArchetype": "stał się {archetype}",
+    "snapshot": "migawka"
+  },
+  "structure": {
+    "forming": "formuje się…",
+    "canonical": "kanoniczny",
+    "connectivity": "łączność",
+    "rigidity": "sztywność",
+    "entropy": "entropia"
+  },
+  "rail": {
+    "structureLabel": "STRUKTURA",
+    "fieldLabel": "POLE",
+    "findingsLabel": "ZNALEZISKA",
+    "selectedLabel": "WYBRANE",
+    "noFindings": "W tej historii nie wykryto zdarzeń strukturalnych."
+  },
+  "selection": {
+    "notPresent": "Nieobecny w tym punkcie historii.",
+    "roleCentral": "Centrum sprzężeń — zmiany tutaj rozchodzą się po całym systemie.",
+    "rolePeripheral": "Peryferie — słabo sprzężony, zmienia się głównie sam.",
+    "roleMid": "Środek struktury — umiarkowanie sprzężony.",
+    "driftOutward": " Dryfuje na zewnątrz — rozprzęga się.",
+    "driftInward": " Dryfuje do wewnątrz — integruje się.",
+    "driftHolding": " Utrzymuje pozycję."
+  },
+  "findingKind": {
+    "hub": "WĘZEŁ",
+    "driftOut": "DRYF NA ZEWNĄTRZ",
+    "driftIn": "DRYF DO WEWNĄTRZ",
+    "tangle": "SPLĄTYWANIE",
+    "clarify": "KLAROWANIE",
+    "regime": "REORG",
+    "thrash": "MIOTANIE",
+    "reshuffle": "PRZETASOWANIE",
+    "forecast": "PROGNOZA"
+  },
+  "findings": {
+    "forecastSplit": "Łączność spadała i jest blisko minimum — jeśli tak zostanie, baza kodu zmierza ku rozpadowi na dwie luźno sprzężone połowy. Zdecyduj teraz, czy taki był zamiar.",
+    "forecastConsolidate": "Łączność wspinała się ku szczytowi — jeśli tak zostanie, baza kodu konsoliduje się w jedną ściśle sprzężoną masę. Uważaj, by nie stwardniała w monolit.",
+    "thrash": "{name} wciąż jest reorganizowany tam i z powrotem — dużo strukturalnego zamieszania, mało realnego ruchu. Ustabilizuj jego sprzężenia albo przestań go ruszać.",
+    "reshuffle": "Ten commit wyglądał rutynowo, ale po cichu przesunął, które pliki są centralne — ogólny kształt się utrzymał, a struktura pod nim się przetasowała. Sprawdź go dokładnie.",
+    "hub": "{name} tkwi w strukturalnym rdzeniu — system reorganizuje się wokół niego. Traktuj zmiany tutaj jako o dużym promieniu rażenia.",
+    "driftOut": "{name} oddryfował od rdzenia ku krawędzi — rozprzęga się z systemem. Albo jest wycofywany, albo po cichu gnije.",
+    "driftIn": "{name} zmigrował ku rdzeniowi — staje się nośny. Upewnij się, że jest dobrze pokryty testami, zanim więcej od niego zależy.",
+    "regime": "Baza kodu gwałtownie się tu zreorganizowała — jej łączność skoczyła. Sprawdź, co się odłączyło lub scaliło.",
+    "tangleTrend": "W swojej historii baza kodu ciążyła ku bardziej splątanej strukturze — jej łączność staje się gęstsza i mniej modułowa.",
+    "clarifyTrend": "W swojej historii baza kodu ciążyła ku czystszej strukturze — rozdziela się na wyraźniejsze moduły."
+  },
+  "anchor": {
+    "core": "rdzeń",
+    "drift": "dryf",
+    "trend": "trend",
+    "thrash": "miotanie"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "ZMIANA",
+    "movers": "PRZESUNIĘCIA",
+    "noMovers": "Między tymi klatkami żadne pliki się nie przesunęły.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "pliki",
+    "deltaConnectivity": "łączność",
+    "deltaRigidity": "sztywność",
+    "deltaEntropy": "entropia",
+    "wayOutward": "na zewnątrz",
+    "wayInward": "do wewnątrz",
+    "wayShifted": "przesunięty"
+  }
+}

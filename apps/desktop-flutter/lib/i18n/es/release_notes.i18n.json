@@ -8,7 +8,7 @@
     },
     "spectralEngine": {
       "question": "¿QUÉ ES EL MOTOR ESPECTRAL?",
-      "body": "Cada vez que haces commit, los archivos que cambias juntos forman patrones a lo largo del tiempo. El motor espectral lee tu grafo de commits y descompone esos patrones de co-cambio en señales: qué archivos están acoplados, con qué fuerza, y qué rol estructural juegan en el repo. Básicamente análisis espectral sobre tu historial de desarrollo. En un cliente de git. A propósito.\n\nLa matemática es nueva, así que la trato como el feel de un juego: la ajusto, la pruebo, la retoco, y sigo hasta que las señales se sienten correctas.\n\nEsas señales alimentan todo. El sismógrafo en el historial, las barras pintadas bajo los asuntos de los commits, el sistema de revisión, la Musa, la constelación de archivos. La app entera razona desde esta capa hacia abajo, no al revés."
+      "body": "Cada vez que haces commit, los archivos que cambias juntos forman patrones a lo largo del tiempo. El motor espectral lee tu grafo de commits y descompone esos patrones de co-cambio en señales: qué archivos están acoplados, con qué fuerza, y qué rol estructural juegan en el repo. Básicamente análisis espectral sobre tu historial de desarrollo. En un cliente de git. A propósito.\n\nLa matemática es nueva, así que la trato como el feel de un juego: la ajusto, la pruebo, la retoco, y sigo hasta que las señales se sienten correctas.\n\nEsas señales alimentan todo. El sismógrafo en el historial, las barras pintadas bajo los asuntos de los commits, el sistema de revisión, Muse, la constelación de archivos. La app entera razona desde esta capa hacia abajo, no al revés."
     },
     "whereGoing": {
       "question": "¿HACIA DÓNDE VA ESTO?",

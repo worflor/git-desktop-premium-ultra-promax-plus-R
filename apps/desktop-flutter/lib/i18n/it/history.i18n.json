@@ -1,0 +1,134 @@
+{
+  "@@locale": "it",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "alta importanza",
+      "importanceModerate": "importanza moderata",
+      "mostlyAdditions": "per lo più aggiunte",
+      "mostlyDeletions": "per lo più eliminazioni",
+      "tightlyCoupled": "file strettamente accoppiati",
+      "overlapsWorkingTree": "si sovrappone al tuo albero di lavoro"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(root)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} altri",
+    "filesInDir": {
+      "one": "{n} file in {path}/",
+      "other": "{n} file in {path}/"
+    },
+    "moreFilesCount": {
+      "one": "{n} altro file",
+      "other": "{n} altri file"
+    },
+    "breadcrumbAll": "tutti",
+    "breadcrumbCurrentFocus": "Focus attuale: {target}",
+    "breadcrumbViewAllChanges": "Vedi tutte le modifiche di questo commit",
+    "breadcrumbDrillUpTo": "Risali a {target}",
+    "trackStats": {
+      "one": "{n} file  +{adds}  -{dels}",
+      "other": "{n} file  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} sottocart.",
+      "other": "{n} sottocart."
+    },
+    "segmentLeafSummary": "{path}, {adds} aggiunte, {dels} eliminazioni",
+    "segmentContainerSummary": {
+      "one": "{n} file, {adds} aggiunte, {dels} eliminazioni",
+      "other": "{n} file, {adds} aggiunte, {dels} eliminazioni"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunk"
+    },
+    "largestChangeInView": "modifica più grande in questa vista",
+    "conflictedTag": "in conflitto",
+    "dirtyTag": "sporco",
+    "drillInTag": "entra",
+    "changeTypeRenamed": "rinominato",
+    "changeTypeCopied": "copiato",
+    "changeTypeTypechange": "cambio tipo",
+    "changeTypeConflict": "conflitto",
+    "coreFile": "file nucleo",
+    "staleFile": "obsoleto",
+    "filterPathHint": "filtra percorso",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Chiudi worldline",
+    "dragToOpenWorldline": "Trascina per aprire la worldline"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "branch corrente",
+    "applyCommitOnto": "Applica le modifiche del commit su {branch}",
+    "revertCommitOn": "Annulla le modifiche del commit su {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick in pausa. Concludi i conflitti rimanenti nella pagina Modifiche.",
+    "failed": "Cherry-pick non riuscito: {error}",
+    "pickedResolved": "Cherry-pick di {short} (conflitti risolti)",
+    "picked": "Cherry-pick di {short}"
+  },
+  "revert": {
+    "paused": "Revert in pausa. Concludi i conflitti rimanenti nella pagina Modifiche.",
+    "failed": "Revert non riuscito: {error}",
+    "revertedResolved": "Revert di {short} (conflitti risolti)",
+    "reverted": "Revert di {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "Crea branch da qui…",
+    "copyCommitHash": "Copia hash del commit",
+    "createBranchDialogTitle": "Crea branch da voce reflog",
+    "anchorLine": "Àncora: {short}  ·  {summary}",
+    "branchNameHint": "nome branch",
+    "createAction": "Crea",
+    "createBranchFailed": "Creazione del branch non riuscita: {error}",
+    "branchCreatedAt": "Branch \"{name}\" creato a {short}."
+  },
+  "revealCeilingExceeded": {
+    "one": "Quel commit è più profondo del {n} commit caricato.",
+    "other": "Quel commit è più profondo dei {n} commit caricati."
+  },
+  "deleteTagFailed": "Eliminazione del tag non riuscita: {error}",
+  "loadingTitle": "Caricamento cronologia",
+  "loadingMessage": "Lettura dei commit recenti.",
+  "unavailableTitle": "Cronologia non disponibile",
+  "toggleWorldline": "Attiva/disattiva worldline",
+  "pageTitle": "Cronologia",
+  "viewingLast": "Ultimi",
+  "commitsUnit": "commit",
+  "noCommitSelectedTitle": "Nessun commit selezionato",
+  "noCommitSelectedMessage": "Seleziona un commit per ispezionarne le modifiche.",
+  "loadingCommitTitle": "Caricamento commit",
+  "loadingCommitMessage": "Lettura dei dettagli del commit.",
+  "commitUnavailableTitle": "Commit non disponibile",
+  "couldNotLoadCommit": "Impossibile caricare il commit.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Carica reflog",
+  "createTag": "Crea tag",
+  "newTagName": "Nome del nuovo tag",
+  "newTagNameError": "Nome del nuovo tag — {error}",
+  "allFilesHeader": {
+    "one": "{n} file · tutte le modifiche",
+    "other": "{n} file · tutte le modifiche"
+  },
+  "allChangesLabel": "tutte le modifiche",
+  "rebase": {
+    "firstCommitCannotBe": "Il primo commit non può essere {action}",
+    "rebaseCommitCount": {
+      "one": "Rebase di {n} commit",
+      "other": "Rebase di {n} commit"
+    },
+    "resetLabel": "reset",
+    "dragToReorderHint": "trascina per riordinare, scegli l'azione per commit",
+    "newMessageHint": "nuovo messaggio",
+    "runningEllipsis": "…",
+    "startRebase": "Avvia rebase"
+  },
+  "inFlight": {
+    "header": "IN VOLO",
+    "deskFallbackLabel": "Desk"
+  }
+}

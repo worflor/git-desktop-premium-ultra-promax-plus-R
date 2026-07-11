@@ -37,13 +37,19 @@
     "daysAgo": "{n}일 전",
     "weeksAgo": "{n}주 전",
     "monthsAgo": "{n}개월 전",
-    "yearsAgo": "{n}년 전",
+    "yearsAgo": {
+      "one": "{n}년 전",
+      "other": "{n}년 전"
+    },
     "minutesShort": "{n}분",
     "hoursShort": "{n}시간",
     "daysShort": "{n}일",
     "weeksShort": "{n}주",
     "monthsShort": "{n}개월",
-    "yearsShort": "{n}년",
+    "yearsShort": {
+      "one": "{n}년",
+      "other": "{n}년"
+    },
     "commitMonthsShort": "{n}개월",
     "idle": "유휴",
     "idleDays": "유휴 {n}일",

@@ -6,7 +6,7 @@
     "label": "DISPLAY LANGUAGE",
     "systemDefault": "System default",
     "systemDefaultDetail": "Follows your OS language ({resolved})",
-    "disclosureSource": "Source language, written by the developers.",
+    "disclosureSource": "Source language, written by the developer.",
     "disclosureAi": "Machine translated by {model}, not yet human reviewed. Corrections welcome.",
     "disclosureAiReviewed": "Machine translated by {model}. {percent}% human reviewed.",
     "disclosureHuman": "Human translation, maintained by the community.",

@@ -1,0 +1,277 @@
+{
+  "@@locale": "tr",
+  "board": {
+    "movesWithModule": "başka bir modülle hareket ediyor",
+    "reviewerCount": {
+      "one": "{n} inceleyici",
+      "other": "{n} inceleyici"
+    },
+    "territory": "Bölge",
+    "unreviewed": "incelenmemiş"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commit · {days} gün\n{lines}",
+    "burstTooltipSingle": "{label} tarihinde {n} commit",
+    "gapTooltip": "{n} günlük boşluk · {label}",
+    "reflogTooltip": "{label} tarihinde {n} reflog olayı"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "Depoda, dal-farkında gezinmeyi ödüllendirecek kadar dal yüzeyi var.",
+      "broadTitle": "Dal modelinin yüzey alanı var",
+      "localBranchesDetail": "{count} yerel dal.",
+      "localBranchesLabel": "Yerel dallar",
+      "remoteBranchesDetail": "{count} uzak dal.",
+      "remoteBranchesLabel": "Uzak dallar",
+      "simpleClaim": "Görünür dal modeli dar.",
+      "simpleTitle": "Basit dal modeli"
+    },
+    "bursty": {
+      "claim": "İş, düz bir günlük ritim yerine yoğunlaşmış patlamalarda iniyor.",
+      "title": "Patlamalı geliştirme temposu"
+    },
+    "hiddenRefs": {
+      "claim": "{count} referans normal dal/etiket alanının dışında yaşıyor.",
+      "evidenceDetail": "heads/remotes/tags dışında {count} referans.",
+      "evidenceLabel": "Gizli referanslar",
+      "namespacesLabel": "Ad alanları",
+      "title": "Gizli Git ad alanları"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Bir dosya, dokunma sayısına oranla orantısız ortak değişim ağırlığı taşıyor.",
+        "other": "Küçük bir dosya kümesi, dokunma sayılarına oranla orantısız ortak değişim ağırlığı taşıyor."
+      },
+      "evidenceDetail": {
+        "one": "{n} dokunma · çekim φ={score}",
+        "other": "{n} dokunma · çekim φ={score}"
+      },
+      "title": {
+        "one": "Kilit taşı köprü-dosya",
+        "other": "{n} kilit taşı köprü-dosya"
+      }
+    },
+    "machineHistory": {
+      "claim": "Checkpoint tarzı commit'ler naif geçmiş metriklerini önemli ölçüde çarpıtıyor.",
+      "machineCommitsDetail": "{count} commit, makine/oturum desenlerine uydu.",
+      "machineCommitsLabel": "Makine commit'leri",
+      "rawVsFilteredDetail": "{raw} ham commit vs {filtered} filtrelenmiş commit.",
+      "rawVsFilteredLabel": "Ham vs filtrelenmiş",
+      "title": "Makine geçmişi ham metriklere hâkim"
+    },
+    "migration": {
+      "claim": "Geçmiş `{older}` katmanından `{newer}` katmanına kayıyor, bir yığın veya yüzey geçişine işaret ediyor.",
+      "stratumDetail": "{touches} dokunma, son etkinlik {lastActive}.",
+      "title": "Mimari geçiş görünür"
+    },
+    "narrowHotspot": {
+      "claim": "Küçük bir dosya ve dizin kümesi, değişikliklerin orantısız bir payını soğuruyor.",
+      "title": "Hotspot yoğunluğu dar",
+      "topHotspotDetail": "{path}, görünür hotspot kümesinin %{pct} payına sahip.",
+      "topHotspotLabel": "En üst hotspot",
+      "visibleAuthorsDetail": "Bu geçmiş diliminde {count} yazar.",
+      "visibleAuthorsLabel": "Görünür yazarlar"
+    },
+    "noTags": {
+      "claim": "Git etiketleri görünür bir sürüm veya kilometre taşı katmanı olarak kullanılmıyor.",
+      "remoteEndpointsDetail": "{count} uzak uç nokta yapılandırıldı.",
+      "remoteEndpointsLabel": "Uzak uç noktalar",
+      "tagCountDetail": "0 etiket bulundu.",
+      "tagCountLabel": "Etiket sayısı",
+      "title": "Biçimsel sürüm/etiket izi yok"
+    },
+    "reflog": {
+      "claim": "Reflog hacmi, yayımlanan commit'lerin ötesinde yoğun yerel yineleme olduğunu gösteriyor.",
+      "peakReflogDayLabel": "Zirve reflog günü",
+      "title": "Yoğun yerel düzenleme oturumları"
+    },
+    "singleOwner": {
+      "claim": "`{path}`, tek belirgin görünür yazarı olan, yoğun şekilde dokunulmuş bir {kind}.",
+      "ownerCountDetail": "{count} belirgin yazar.",
+      "ownerCountLabel": "Sahip sayısı",
+      "title": "Tek sahipli hotspot",
+      "touchCountLabel": "Dokunma sayısı",
+      "touchDetailFiltered": "Filtrelenmiş geçmişte {count} dokunma.",
+      "touchDetailRaw": "Ham geçmişte {count} dokunma."
+    }
+  },
+  "cardTitle": {
+    "branches": "dallar",
+    "bursty": "patlamalı",
+    "hiddenRefs": "gizli referanslar",
+    "machineHeavy": "makine-ağırlıklı",
+    "migration": "geçiş",
+    "narrowHotspot": "dar hotspot",
+    "noTags": "etiket yok",
+    "reflog": "reflog",
+    "singleOwner": "tek-sahip"
+  },
+  "grain": {
+    "coarsest": "en kaba — üst düzey modüller",
+    "finest": "en ince tane",
+    "mid": "orta tane",
+    "oneCharacteristic": "tek karakteristik ölçek"
+  },
+  "header": {
+    "dirtyBadge": "kirli",
+    "machineChip": "makine",
+    "refresh": "Yenile",
+    "refreshing": "Yenileniyor...",
+    "title": "Repo X-Ray"
+  },
+  "hotspot": {
+    "clusterPeers": "küme komşuları",
+    "coChangers": "ortak değişenler",
+    "keystone": "kilit taşı",
+    "keystoneScore": "kilit taşı  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "dal",
+    "commitsHumanMachine": "insan · {n} makine",
+    "commitsLabel": "commit'ler",
+    "confidenceLabel": "güven",
+    "curlLabel": "curl",
+    "engineSection": "motor",
+    "gradientLabel": "gradyan",
+    "harmonicLabel": "harmonik",
+    "headLabel": "head",
+    "hiddenRefsLabel": "gizli referanslar",
+    "mergeCount": {
+      "one": "{n} merge",
+      "other": "{n} merge"
+    },
+    "noTags": "etiket yok",
+    "notesLabel": "notes",
+    "openCommit": "Commit'i aç",
+    "pathLabel": "yol",
+    "remoteCount": "{n} uzak",
+    "renamesLabel": "yeniden adlandırmalar",
+    "scannedAt": "{time} tarandı",
+    "selectedCount": "{n} seçili",
+    "shapeLinear": "doğrusal",
+    "shapeMergeHeavy": "merge-ağırlıklı",
+    "shapeMostlyLinear": "çoğunlukla doğrusal",
+    "stashCount": {
+      "one": "{n} zula",
+      "other": "{n} zula"
+    },
+    "stressLabel": "gerilim",
+    "tagCount": {
+      "one": "{n} etiket",
+      "other": "{n} etiket"
+    },
+    "worktreeCount": {
+      "one": "{n} çalışma ağacı",
+      "other": "{n} çalışma ağacı"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Git geçmişi, referanslar, tempo ve hotspot'lar sondalanıyor.",
+    "buildingTitle": "Repo X-Ray oluşturuluyor",
+    "idleMessage": "Mevcut depoyu sondalamak için paneli tekrar aç.",
+    "idleTitle": "Repo X-Ray",
+    "unavailableTitle": "Repo X-Ray kullanılamıyor"
+  },
+  "metabolism": {
+    "halfLife": "{n}g yarı ömür"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} küme",
+      "other": "{n} küme"
+    },
+    "clusterSingle": "küme {id}",
+    "couplingSuffix": "{parts} bağlaşım",
+    "externalCount": "{n} dış",
+    "mutualCount": "{n} karşılıklı"
+  },
+  "recency": {
+    "days": "{n}g",
+    "months": "{n}ay",
+    "today": "bugün",
+    "weeks": "{n}h",
+    "years": {
+      "one": "{n}y",
+      "other": "{n}y"
+    }
+  },
+  "rings": {
+    "hintOneBlended": "tek harmanlanmış yapı",
+    "hintSelfSimilar": "öz-benzer",
+    "oneBlendedBody": "Tek harmanlanmış yapı — henüz ayrılabilir modül ölçeği çözülmüyor.",
+    "overHistory": "Geçmiş boyunca",
+    "parts": "parçalar",
+    "readingHint": "yapı okunuyor…",
+    "scaleCount": {
+      "one": "{n} ölçek",
+      "other": "{n} ölçek"
+    },
+    "scaleDissolved": "yapısal bir ölçek çözüldü",
+    "scaleEmerged": "yapısal bir ölçek ortaya çıktı",
+    "scaleSpectrum": "ölçek spektrumu",
+    "selfSimilarBody": "Öz-benzer — yapı, tek bir karakteristik düzey olmadan ölçekler boyunca tekrar eder.",
+    "shiftInHistory": {
+      "one": "geçmişte {n} kayma",
+      "other": "geçmişte {n} kayma"
+    },
+    "structuralShiftCount": {
+      "one": "{n} yapısal kayma",
+      "other": "{n} yapısal kayma"
+    },
+    "title": "Büyüme halkaları",
+    "unavailable": "kullanılamıyor"
+  },
+  "stats": {
+    "alive": "canlı",
+    "files": "dosyalar",
+    "lastTouched": "son dokunulan",
+    "owner": {
+      "one": "sahip",
+      "other": "sahipler"
+    },
+    "touches": "dokunmalar"
+  },
+  "stratumLabel": {
+    "current": "güncel",
+    "legacy": "eski",
+    "zone": "repo bölgesi"
+  },
+  "summary": {
+    "analysisFailed": "Analiz başarısız: {error}",
+    "analyze": "Analiz et",
+    "copied": "Özet panoya kopyalandı.",
+    "directionHint": "yön",
+    "download": "İndir",
+    "emptyState": "Bu deponun yapısını ve bölgelerini haritalamak için Logos analizini çalıştır.\n(tw: şu an baya döküntü)",
+    "exit": "Çık",
+    "generating": "Repo okunuyor ve özellikler kümeleniyor…",
+    "noModel": "AI modeli yapılandırılmadı.",
+    "noModelConfigured": "AI modeli yapılandırılmadı",
+    "presentWith": "{label} ile sun",
+    "presentingWith": "{label} ile sunuluyor…",
+    "reanalyze": "Yeniden analiz et",
+    "saveDialogTitle": "Depo özetini kaydet",
+    "saveFailed": "Kaydetme başarısız: {error}",
+    "savePresentationDialogTitle": "Sunumu kaydet",
+    "savedTo": "{path} konumuna kaydedildi"
+  },
+  "tabs": {
+    "map": "Harita",
+    "signals": "Sinyaller",
+    "summary": "Özet",
+    "time": "Zaman"
+  },
+  "trajectory": {
+    "connectivity": "bağlantısallık",
+    "events": "{n} olay",
+    "openInOrrery": "Orrery'de aç",
+    "readingHint": "geçmiş okunuyor…",
+    "snapshots": "{n} anlık görüntü",
+    "steady": "Sabit — bu pencerede yapısal olay yok.",
+    "title": "Yapısal yörünge"
+  },
+  "verdict": {
+    "canonical": "%{pct} kanonik",
+    "tooltip": "{archetype} · %{canonical} kanonik · %{decisive} belirleyici"
+  }
+}

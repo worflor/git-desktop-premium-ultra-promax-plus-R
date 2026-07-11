@@ -1,0 +1,101 @@
+{
+  "@@locale": "nl",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Scrubben",
+    "modeCompare": "Vergelijken",
+    "lodModules": "Modules",
+    "lodFiles": "Bestanden"
+  },
+  "status": {
+    "loading": "De manifold door de geschiedenis traceren…",
+    "loadError": "De geschiedenis van deze repo kon niet worden gelezen.",
+    "notEnoughHistory": "Nog niet genoeg geschiedenis om een traject te tekenen.",
+    "notEnoughHistoryDetail": "De Orrery heeft een paar commits nodig om in kaart te brengen."
+  },
+  "legend": {
+    "central": "centraal",
+    "peripheral": "perifeer"
+  },
+  "node": {
+    "module": "module",
+    "moduleWithCount": "{path} · {n} bestanden",
+    "fileFallback": "bestand #{id}",
+    "nodeFallback": "knoop #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "genesis",
+    "now": "nu",
+    "reorganized": "gereorganiseerd",
+    "becameArchetype": "werd {archetype}",
+    "snapshot": "snapshot"
+  },
+  "structure": {
+    "forming": "vormt zich…",
+    "canonical": "canoniek",
+    "connectivity": "connectiviteit",
+    "rigidity": "starheid",
+    "entropy": "entropie"
+  },
+  "rail": {
+    "structureLabel": "STRUCTUUR",
+    "fieldLabel": "VELD",
+    "findingsLabel": "BEVINDINGEN",
+    "selectedLabel": "GESELECTEERD",
+    "noFindings": "Geen structurele gebeurtenissen gedetecteerd in deze geschiedenis."
+  },
+  "selection": {
+    "notPresent": "Niet aanwezig op dit punt in de geschiedenis.",
+    "roleCentral": "Koppelings-centraal — wijzigingen hier rimpelen door het hele systeem.",
+    "rolePeripheral": "Perifeer — los gekoppeld, wijzigt meestal op zichzelf.",
+    "roleMid": "Middenstructuur — matig gekoppeld.",
+    "driftOutward": " Drijft naar buiten — ontkoppelt.",
+    "driftInward": " Drijft naar binnen — integreert.",
+    "driftHolding": " Houdt zijn positie."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "DRIJFT NAAR BUITEN",
+    "driftIn": "DRIJFT NAAR BINNEN",
+    "tangle": "VERKNOPING",
+    "clarify": "VERHELDERING",
+    "regime": "REORG",
+    "thrash": "GESTAMP",
+    "reshuffle": "HERSCHIKKING",
+    "forecast": "PROGNOSE"
+  },
+  "findings": {
+    "forecastSplit": "De connectiviteit daalt al en zit dicht bij haar laagste punt — als dit aanhoudt, gaat de codebase richting een splitsing in los gekoppelde helften. Beslis nu of dat de bedoeling is.",
+    "forecastConsolidate": "De connectiviteit klimt richting haar piek — als dit aanhoudt, consolideert de codebase tot één strak gekoppelde massa. Let op dat het niet verhardt tot een monoliet.",
+    "thrash": "{name} wordt telkens heen en weer gereorganiseerd — veel structurele beroering, weinig netto beweging. Verhelder de koppeling of blijf er vanaf.",
+    "reshuffle": "Deze commit oogde routineus maar verschoof stilletjes welke bestanden centraal staan — de algehele vorm hield stand terwijl de structuur eronder herschikte. Bekijk hem zorgvuldig.",
+    "hub": "{name} zit in de structurele kern — het systeem reorganiseert zich eromheen. Behandel wijzigingen hier als hoge blast-radius.",
+    "driftOut": "{name} is van de kern naar de rand gedreven — het ontkoppelt van het systeem. Of het wordt uitgefaseerd, of het rot stilletjes weg.",
+    "driftIn": "{name} is naar de kern gemigreerd — het wordt dragend. Zorg dat het goed getest is voordat er meer van afhangt.",
+    "regime": "De codebase reorganiseerde hier scherp — de connectiviteit sprong. Bekijk wat zich afsplitste of samensmolt.",
+    "tangleTrend": "In de loop van haar geschiedenis neigde de codebase naar een meer verknoopte structuur — de connectiviteit wordt dichter en minder modulair.",
+    "clarifyTrend": "In de loop van haar geschiedenis neigde de codebase naar een schonere structuur — ze scheidt zich af in helderdere modules."
+  },
+  "anchor": {
+    "core": "kern",
+    "drift": "drift",
+    "trend": "trend",
+    "thrash": "gestamp"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "WIJZIGING",
+    "movers": "BEWEGERS",
+    "noMovers": "Geen bestanden verplaatst tussen deze frames.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "bestanden",
+    "deltaConnectivity": "connectiviteit",
+    "deltaRigidity": "starheid",
+    "deltaEntropy": "entropie",
+    "wayOutward": "naar buiten",
+    "wayInward": "naar binnen",
+    "wayShifted": "verschoven"
+  }
+}

@@ -2,21 +2,21 @@
   "@@locale": "ru",
   "actions": {
     "syncLabel": "Синхронизировать",
-    "syncOpenRepoDetail": "Откройте репозиторий, чтобы управлять отправкой и получением.",
+    "syncOpenRepoDetail": "Откройте репозиторий, чтобы управлять пушем и пулом.",
     "detachedHeadLabel": "Отсоединённый HEAD",
-    "detachedHeadDetail": "Переключитесь на ветку перед отправкой или получением.",
+    "detachedHeadDetail": "Переключитесь на ветку перед пушем или пулом.",
     "publishBranchLabel": "Опубликовать ветку",
-    "publishBranchDetail": "Отправить {branch} и задать её upstream-ветку слежения.",
+    "publishBranchDetail": "Запушить {branch} и задать её upstream-ветку слежения.",
     "publishButtonLabel": "Опубликовать",
     "syncBranchLabel": "Синхронизировать ветку",
-    "syncBranchDetail": "Забрать {behindCount} с rebase, затем отправить {aheadCount}.",
-    "syncBranchButtonLabel": "Забрать (rebase), затем отправить",
-    "pushBranchLabel": "Отправить ветку",
-    "pushBranchDetail": "Отправить {count} в {upstream}.",
-    "pushBranchButtonLabel": "Отправить коммиты",
-    "pullUpdatesLabel": "Забрать обновления",
-    "pullUpdatesDetail": "Забрать {count} из {upstream}.",
-    "syncUpToDateDetail": "Получить из {upstream} и обновить статус upstream."
+    "syncBranchDetail": "Запулить {behindCount} с rebase, затем запушить {aheadCount}.",
+    "syncBranchButtonLabel": "Запулить (rebase), затем запушить",
+    "pushBranchLabel": "Запушить ветку",
+    "pushBranchDetail": "Запушить {count} в {upstream}.",
+    "pushBranchButtonLabel": "Запушить коммиты",
+    "pullUpdatesLabel": "Запулить обновления",
+    "pullUpdatesDetail": "Запулить {count} из {upstream}.",
+    "syncUpToDateDetail": "Зафетчить из {upstream} и обновить статус upstream."
   },
   "panel": {
     "loadingTitle": "Загрузка статуса удалённого",
@@ -27,10 +27,10 @@
     "behindLabel": "Позади",
     "treeLabel": "Дерево",
     "runningSync": "Синхронизация…",
-    "fetching": "Получение…",
-    "fetchOnly": "Только получить",
+    "fetching": "Фетч…",
+    "fetchOnly": "Только фетч",
     "syncFailed": "Сбой синхронизации",
-    "forcePushRecoveryLabel": "Принудительная отправка (with lease)",
+    "forcePushRecoveryLabel": "Форс-пуш (with lease)",
     "conflictsToResolveTitle": "Конфликты к устранению",
     "conflictsToResolveBody": "{count} требуют устранения: {list}",
     "resolveConflicts": "Устранить конфликты",
@@ -40,12 +40,12 @@
     "resolvedConflicts": "Устранено: {count}.",
     "cancelledUnchanged": "Отменено, рабочий каталог без изменений.",
     "uncommittedEditsBlocked": "{count} с незакоммиченными правками, сначала закоммитьте их для rebase-синхронизации ({list}).",
-    "noUpstreamForForcePush": "Принудительная отправка невозможна: для «{branch}» не настроен upstream."
+    "noUpstreamForForcePush": "Форс-пуш невозможен: для «{branch}» не настроен upstream."
   },
   "forcePush": {
-    "confirmTitle": "Принудительная отправка (with lease)?",
+    "confirmTitle": "Форс-пуш (with lease)?",
     "target": "Цель: {remote}/{branch}",
-    "warning": "Это перезапишет удалённую ветку вашей локальной историей. Режим with lease прервётся, если кто-то отправил в удалённый после вашего последнего fetch, но уже полученные изменения всё равно будут перезаписаны. Используйте только когда вы намеренно сделали rebase или amend, разошедшийся с веткой.",
-    "confirmButton": "Принудительно отправить"
+    "warning": "Это перезапишет удалённую ветку вашей локальной историей. Режим with lease прервётся, если кто-то запушил в удалённый после вашего последнего fetch, но уже полученные изменения всё равно будут перезаписаны. Используйте только когда вы намеренно сделали rebase или amend, разошедшийся с веткой.",
+    "confirmButton": "Форс-пуш"
   }
 }

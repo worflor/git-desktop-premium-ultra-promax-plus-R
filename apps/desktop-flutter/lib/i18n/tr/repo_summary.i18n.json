@@ -1,0 +1,67 @@
+{
+  "@@locale": "tr",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} satır",
+      "other": "{n} satır"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} dosya.",
+      "other": "{n} dosya."
+    },
+    "lines": {
+      "one": "{n} satır ({bytes}).",
+      "other": "{n} satır ({bytes})."
+    },
+    "roles": "Roller — {parts}.",
+    "showingNofM": "{total} dosyadan {active} tanesi gösteriliyor, yapısal merkeziyete göre sıralı."
+  },
+  "heading": {
+    "atAGlance": "Bir bakışta",
+    "core": "Çekirdek",
+    "gettingStarted": "Başlarken",
+    "regions": "Bölgeler",
+    "shape": "Biçim"
+  },
+  "historyStarvedCaveat": "Sıralama sınırlı: bağlaşım grafiğinde kenar yoktu (taze klon ya da çok az commit). Dosya sırası, yapısal merkeziyeti değil boyutu yansıtır.",
+  "pitch": {
+    "empty": "Okunabilir metin dosyası olmayan bir depo{detail}.",
+    "emptyBinary": "{n} ikili",
+    "emptyUnreadable": "{n} okunamaz",
+    "noRegions": {
+      "one": "{n} etkin dosyalı bir depo.",
+      "other": "{n} etkin dosyalı bir depo."
+    },
+    "withRegions": {
+      "one": "{n} etkin dosyalı bir depo — {regions}.",
+      "other": "{n} etkin dosyalı bir depo — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Tümü `{dir}` altında.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 çekirdek",
+      "other": "{n} çekirdek"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Bir dosya",
+      "other": "{n} dosya"
+    },
+    "connectsTo": "Şuna bağlanır: {linked}.",
+    "filesLabel": "Dosyalar:"
+  },
+  "shape": {
+    "bulk": "Yoğun bağlı kod tabanı: çoğu dosya, paylaşılan değişimin tek büyük bir komşuluğuna katılır.",
+    "crystalline": "Kafes biçimli kod tabanı: dosyalar arasında öngörülebilir yerel yapıyla düzenli, tekdüze bağlaşım.",
+    "goe": "Zengin bağlı kod tabanı: bağlaşımlar baskın bir omurga olmadan dosyalara yayılır.",
+    "modular": "Modüler kod tabanı: sınırlı çapraz bağlaşımlı birkaç uyumlu bölge. Bir bölgedeki çalışma nadiren bir diğerini rahatsız eder.",
+    "poisson": "Gevşek bağlı kod tabanı: dosyalar çoğunlukla kendi başına gelişir, ara sıra paylaşılan değişimle.",
+    "tree": "Ağaç biçimli kod tabanı: bağımlı dallara sahip tek baskın omurga. Değişim genellikle çekirdekten dışarı yayılır."
+  }
+}

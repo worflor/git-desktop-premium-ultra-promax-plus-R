@@ -190,7 +190,10 @@
     "months": "{n}mo",
     "today": "today",
     "weeks": "{n}w",
-    "years": "{n}y"
+    "years": {
+      "one": "{n}y",
+      "other": "{n}y"
+    }
   },
   "rings": {
     "hintOneBlended": "one blended structure",

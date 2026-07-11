@@ -2,21 +2,21 @@
   "@@locale": "fr",
   "actions": {
     "syncLabel": "Synchroniser",
-    "syncOpenRepoDetail": "Ouvrez un dépôt pour gérer les opérations pousser et tirer.",
+    "syncOpenRepoDetail": "Ouvrez un dépôt pour gérer les opérations push et pull.",
     "detachedHeadLabel": "HEAD détachée",
-    "detachedHeadDetail": "Basculez sur une branche avant de pousser ou tirer.",
+    "detachedHeadDetail": "Basculez sur une branche avant de pusher ou puller.",
     "publishBranchLabel": "Publier la branche",
-    "publishBranchDetail": "Pousser {branch} et définir sa branche de suivi amont.",
+    "publishBranchDetail": "Pusher {branch} et définir sa branche de suivi amont.",
     "publishButtonLabel": "Publier",
     "syncBranchLabel": "Synchroniser la branche",
-    "syncBranchDetail": "Tirer {behindCount} en rebasant, puis pousser {aheadCount}.",
-    "syncBranchButtonLabel": "Tirer (rebaser) puis pousser",
-    "pushBranchLabel": "Pousser la branche",
-    "pushBranchDetail": "Pousser {count} vers {upstream}.",
-    "pushBranchButtonLabel": "Pousser les commits",
-    "pullUpdatesLabel": "Tirer les mises à jour",
-    "pullUpdatesDetail": "Tirer {count} depuis {upstream}.",
-    "syncUpToDateDetail": "Récupérer depuis {upstream} et actualiser l'état amont."
+    "syncBranchDetail": "Puller {behindCount} en rebasant, puis pusher {aheadCount}.",
+    "syncBranchButtonLabel": "Pull (rebase) puis push",
+    "pushBranchLabel": "Pusher la branche",
+    "pushBranchDetail": "Pusher {count} vers {upstream}.",
+    "pushBranchButtonLabel": "Pusher les commits",
+    "pullUpdatesLabel": "Puller les mises à jour",
+    "pullUpdatesDetail": "Puller {count} depuis {upstream}.",
+    "syncUpToDateDetail": "Fetcher depuis {upstream} et actualiser l'état amont."
   },
   "panel": {
     "loadingTitle": "Chargement de l'état distant",
@@ -27,10 +27,10 @@
     "behindLabel": "En retard",
     "treeLabel": "Arbre",
     "runningSync": "Synchronisation en cours…",
-    "fetching": "Récupération…",
-    "fetchOnly": "Récupérer seulement",
+    "fetching": "Fetch…",
+    "fetchOnly": "Fetch seulement",
     "syncFailed": "Échec de la synchronisation",
-    "forcePushRecoveryLabel": "Poussée forcée (avec bail)",
+    "forcePushRecoveryLabel": "Force push (avec bail)",
     "conflictsToResolveTitle": "Conflits à résoudre",
     "conflictsToResolveBody": "{count} à résoudre : {list}",
     "resolveConflicts": "Résoudre les conflits",
@@ -39,13 +39,13 @@
     "noOutput": "Aucune sortie.",
     "resolvedConflicts": "{count} résolus.",
     "cancelledUnchanged": "Annulé, arbre de travail inchangé.",
-    "uncommittedEditsBlocked": "{count} ont des modifications non validées, validez-les d'abord pour synchroniser par rebasage ({list}).",
-    "noUpstreamForForcePush": "Impossible de forcer la poussée : aucun amont n'est configuré pour « {branch} »."
+    "uncommittedEditsBlocked": "{count} ont des modifications non committées, committez-les d'abord pour synchroniser par rebasage ({list}).",
+    "noUpstreamForForcePush": "Impossible de forcer le push : aucun amont n'est configuré pour « {branch} »."
   },
   "forcePush": {
-    "confirmTitle": "Forcer la poussée (avec bail) ?",
+    "confirmTitle": "Force push (avec bail) ?",
     "target": "Cible : {remote}/{branch}",
-    "warning": "Ceci réécrit la branche distante avec votre historique local. Avec bail, l'opération s'interrompt si quelqu'un a poussé sur le distant après votre dernière récupération, mais les changements déjà récupérés seront tout de même écrasés. À n'utiliser que lorsque vous avez volontairement rebasé ou amendé au point de faire diverger la branche.",
-    "confirmButton": "Forcer la poussée"
+    "warning": "Ceci réécrit la branche distante avec votre historique local. Avec bail, l'opération s'interrompt si quelqu'un a pushé sur le distant après votre dernier fetch, mais les changements déjà fetchés seront tout de même écrasés. À n'utiliser que lorsque vous avez volontairement rebasé ou amendé au point de faire diverger la branche.",
+    "confirmButton": "Force push"
   }
 }

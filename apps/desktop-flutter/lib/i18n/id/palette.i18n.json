@@ -1,0 +1,201 @@
+{
+  "active": "aktif",
+  "prefixes": {
+    "askHint": "tanya: [pertanyaan]",
+    "nearHint": "dekat: [file]",
+    "whoHint": "siapa: [file]",
+    "logHint": "log: [pesan]",
+    "runHint": "jalankan: [tool]",
+    "askLabel": "Tanya {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} reviewer · {touches} sentuhan",
+    "whoTouchesLabel": "{name} — {touches} sentuhan",
+    "whoTouchesSubtitle": "{path} · tidak ada reviewer tercatat"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "DEKAT",
+    "who": "SIAPA",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "PANAS",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "HILANG",
+    "remote": "REMOTE",
+    "local": "LOKAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% momentum"
+  },
+  "topTouched": {
+    "subtitle": "{count} sentuhan · {path}"
+  },
+  "coherence": {
+    "label": "Koherensi staging: {percent}%",
+    "subtitle": "{count} file"
+  },
+  "keystone": {
+    "subtitle": "{path} · keystone {score}"
+  },
+  "repoSub": {
+    "changes": "Changes di {name}",
+    "history": "History di {name}",
+    "branches": "Branches di {name}",
+    "terminal": "Terminal di {name}",
+    "generateCommit": "Buat Commit · {name}",
+    "reviewChanges": "Review Perubahan di {name}",
+    "muse": "Muse di {name}"
+  },
+  "desks": {
+    "mainWorktree": "worktree utama",
+    "detached": "detached",
+    "dirty": "{count} kotor"
+  },
+  "actions": {
+    "openInBrowser": "Buka di Browser",
+    "terminal": "Terminal",
+    "revealInFiles": "Tampilkan di File",
+    "copyPath": "Salin Path",
+    "copyBranch": "Salin Branch"
+  },
+  "tools": {
+    "launch": "Luncurkan {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} di belakang",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"other": "{n} commit"},
+    "pushCommitsUpstream": "{commits} ke {upstream}",
+    "forcePush": "Force Push",
+    "forcePushNoUpstream": "Tidak bisa force-push: tidak ada upstream untuk {branch}.",
+    "commit": "Commit",
+    "stageAll": "Stage Semua",
+    "unstageAll": "Unstage Semua",
+    "discardAll": "Buang Semua",
+    "createBranch": "Buat Branch",
+    "deleteBranch": "Hapus Branch",
+    "renameBranch": "Ganti Nama Branch",
+    "stash": "Stash",
+    "stashPop": "Stash Pop",
+    "stashApply": "Stash Apply",
+    "stashDrop": "Stash Drop",
+    "createTag": "Buat Tag",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash diterapkan dengan konflik. Selesaikan di halaman Changes."
+  },
+  "pr": {
+    "create": "Buat PR",
+    "merge": "Merge PR",
+    "markReady": "Tandai PR Siap"
+  },
+  "ai": {
+    "generateCommit": "Buat Commit",
+    "reviewChanges": "Review Perubahan",
+    "runMuse": "Jalankan Muse",
+    "debugRepo": "Debug {name}",
+    "describeSymptom": "jelaskan sebuah gejala",
+    "viewResult": "Lihat {kind}",
+    "unseenResult": "hasil belum dilihat",
+    "runningResult": "AI: {kind}…",
+    "running": "berjalan",
+    "kindCommitMessage": "Pesan Commit",
+    "kindCodeReview": "Code Review",
+    "kindMuseResult": "Hasil Muse",
+    "kindPresentation": "Presentasi",
+    "kindDebugResult": "Hasil Debug"
+  },
+  "undo": {
+    "cancel": "Batal: {label}"
+  },
+  "navigation": {
+    "changes": "Changes",
+    "history": "History",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "settings": "Pengaturan",
+    "refresh": "Refresh"
+  },
+  "settings": {
+    "reduceMotion": "Kurangi Gerakan",
+    "animateLogoUnfocused": "Animasikan Logo Saat Tak Fokus",
+    "instantBlameHover": "Blame Instan Saat Hover",
+    "autoSelectChanges": "Pilih Otomatis Perubahan",
+    "fetchOnlineIssues": "Ambil Issue Online",
+    "rememberWip": "Ingat Pekerjaan Berjalan",
+    "hideAiFeatures": "Sembunyikan Fitur AI",
+    "crashReporting": "Laporan Crash",
+    "aiReadOnly": "AI Baca-saja",
+    "stashCabinetExpanded": "Lemari Stash Terbuka",
+    "fileSortInverted": "Urutan File Terbalik"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Status Engine",
+    "engineStatusSubtitle": "Diagnostik spectral engine LogosGit",
+    "fileCoupling": "Kopling File",
+    "fileCouplingSubtitle": "Tetangga co-change terdekat untuk file yang di-stage",
+    "themeSpecimen": "Contoh Tema",
+    "themeSpecimenSubtitle": "Semua warna, ikon, tier teks, dan geometri"
+  },
+  "dev": {
+    "testMergeEditor": "Uji Merge Editor",
+    "testHistorySurgery": "Uji Bedah History",
+    "back": "kembali",
+    "cancel": "batal",
+    "buildingConflicts": "membangun konflik uji dari history…"
+  },
+  "historySurgery": {
+    "label": "Bedah History",
+    "subtitle": "Tulis ulang history untuk menghapus file secara permanen"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Scrub history struktural repo melalui manifold"
+  },
+  "command": {
+    "complete": "{label} selesai",
+    "failed": "{label} gagal: {message}",
+    "copy": "Salin"
+  },
+  "search": {
+    "hintDefault": "cari semuanya...",
+    "hintElevated": "elevated — semua aksi",
+    "emptyTypeToSearch": "ketik untuk mencari",
+    "emptyNoResults": "tidak ada hasil"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "terkopel"
+  },
+  "gitCache": {
+    "current": "saat ini",
+    "staged": "di-stage",
+    "modified": "diubah"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "@@locale": "tr",
+  "ops": {
+    "merge": "Merge",
+    "pull": "Pull",
+    "apply": "Uygulama",
+    "switchOp": "Geçiş",
+    "sync": "Eşitleme"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} iptal edildi.",
+    "complete": "{op} tamamlandı.",
+    "conflictsLeft": {
+      "one": "{n} çakışma kaldı — Değişiklikler sayfasında çöz.",
+      "other": "{n} çakışma kaldı — Değişiklikler sayfasında çöz."
+    },
+    "resolvedConflicts": {
+      "one": "{n} çakışma çözüldü.",
+      "other": "{n} çakışma çözüldü."
+    },
+    "uncommittedEdits": {
+      "one": "{n} dosyada commit edilmemiş değişiklik var — önce onları commit et.",
+      "other": "{n} dosyada commit edilmemiş değişiklik var — önce onları commit et."
+    }
+  }
+}

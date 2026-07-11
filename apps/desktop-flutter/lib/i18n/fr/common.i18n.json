@@ -43,13 +43,19 @@
     "daysAgo": "il y a {n} j",
     "weeksAgo": "il y a {n} sem",
     "monthsAgo": "il y a {n} mois",
-    "yearsAgo": "il y a {n} an",
+    "yearsAgo": {
+      "one": "il y a {n} an",
+      "other": "il y a {n} ans"
+    },
     "minutesShort": "{n} min",
     "hoursShort": "{n} h",
     "daysShort": "{n} j",
     "weeksShort": "{n} sem",
     "monthsShort": "{n} mois",
-    "yearsShort": "{n} an",
+    "yearsShort": {
+      "one": "{n} an",
+      "other": "{n} ans"
+    },
     "commitMonthsShort": "{n} mois",
     "idle": "inactif",
     "idleDays": "inactif {n} j",

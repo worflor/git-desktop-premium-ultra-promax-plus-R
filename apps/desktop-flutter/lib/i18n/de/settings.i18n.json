@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "Tastenkürzel-Profil",
-    "porcelain": "Porzellan",
+    "porcelain": "Porcelain",
     "numeric": "Numerisch",
     "porcelainDescription": "Akkord-Shortcuts (G, dann C, H, B…).",
     "numericDescription": "Numerische Einzeltasten-Shortcuts (1, 2, 3…)."
@@ -124,7 +124,7 @@
     "changes": "Änderungen",
     "history": "Verlauf",
     "branches": "Branches",
-    "xray": "Röntgen",
+    "xray": "X-Ray",
     "switchAlways": "Wechseln (immer)",
     "search": "Suchen",
     "dismiss": "Verwerfen",
@@ -207,7 +207,7 @@
     "loose": "irgendwas, wohin man sanft lenken sollte? die Stimmung ist heute gnädig.",
     "balanced": "worauf verweilen, was auslassen. ehrlich, nicht hart.",
     "strict": "die Standards. die Verbote. was die Muse nicht durchgehen lässt.",
-    "paranoid": "justiere die Linse. auf welchen Frequenzen soll die Mannigfaltigkeit summen?"
+    "paranoid": "justiere die Linse. auf welchen Frequenzen soll die manifold summen?"
   },
   "museEditor": {
     "additionalNotes": "Zusätzliche Notizen für die Muse"

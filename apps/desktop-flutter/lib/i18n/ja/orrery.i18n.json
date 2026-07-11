@@ -1,17 +1,17 @@
 {
   "@@locale": "ja",
   "header": {
-    "title": "オーラリー",
+    "title": "Orrery",
     "modeScrub": "スクラブ",
     "modeCompare": "比較",
     "lodModules": "モジュール",
     "lodFiles": "ファイル"
   },
   "status": {
-    "loading": "履歴を通してマニフォールドを追跡中…",
+    "loading": "履歴を通してmanifoldを追跡中…",
     "loadError": "このリポジトリの履歴を読み取れませんでした。",
     "notEnoughHistory": "軌道を描くにはまだ履歴が足りません。",
-    "notEnoughHistoryDetail": "オーラリーには図示のためにいくつかのコミットが必要です。"
+    "notEnoughHistoryDetail": "Orrery には図示のためにいくつかのコミットが必要です。"
   },
   "legend": {
     "central": "中心",

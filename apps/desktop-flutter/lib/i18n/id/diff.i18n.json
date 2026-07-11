@@ -1,0 +1,142 @@
+{
+  "@@locale": "id",
+  "status": {
+    "loadingTitle": "Memuat diff",
+    "loadingMessage": "Membaca perubahan file.",
+    "unavailableTitle": "Diff tidak tersedia",
+    "noChangesTitle": "Tidak ada perubahan",
+    "noChangesMessage": "File ini tidak punya konten diff untuk ditampilkan."
+  },
+  "toolbar": {
+    "searchHint": "cari di diff...",
+    "lineCount": {
+      "other": "{n} baris"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "keausan · on",
+    "wearMapOnHint": "peta keausan aktif — klik untuk menyembunyikan",
+    "wearMapOffHint": "tampilkan peta keausan (heatmap aktivitas)",
+    "trailBadge": "· jejak"
+  },
+  "hunkDropdown": {
+    "tooltip": "Lompat ke blok perubahan. Git menyebutnya hunk.",
+    "changeCount": {
+      "other": "{n} perubahan"
+    }
+  },
+  "stagingFailed": "Stage sebagian gagal: {error}",
+  "trail": {
+    "loading": "memuat jejak...",
+    "noHistory": "tidak ada history ditemukan",
+    "nowWorkingCopy": "sekarang · working copy",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "memuat konteks yang dipin",
+    "pageManifold": "Manifold",
+    "pageSignals": "Sinyal",
+    "echoesTitle": "Gema",
+    "technicalLedger": "Buku Besar Teknis",
+    "noSecondaryCues": "Tidak ada petunjuk sekunder terdeteksi.",
+    "linkedPaths": "Path Tertaut",
+    "moreCount": "+{n} lagi",
+    "localSeam": "Sambungan lokal",
+    "sharedOwnership": "kepemilikan bersama",
+    "historyWarmingUp": "History sedang memanas",
+    "echoesTotal": "{n} TOTAL",
+    "noEchoes": "Tidak ada gema di diff ini.",
+    "openRelatedFile": "Buka file terkait {name}",
+    "inspectFile": "periksa {name}",
+    "jumpEcho": "lompat ke gema",
+    "copyLine": "salin baris",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "Pergerakan baru dengan satu pemilik kuat di dekatnya.",
+      "activeSeam": "Pergerakan baru dari banyak tangan di dekatnya.",
+      "stableOwnerLane": "Jalur berumur panjang dengan satu pemilik dominan.",
+      "sharedLongLivedSeam": "Sambungan bersama yang menumpuk seiring waktu.",
+      "sharedLane": "Jalur bersama tanpa satu pemilik dominan.",
+      "resolving": "History masih menyusun diri di sekitar baris ini."
+    },
+    "tone": {
+      "hot": "Panas",
+      "novel": "Baru",
+      "contested": "Diperebutkan",
+      "spreading": "Menyebar",
+      "stable": "Stabil"
+    },
+    "summary": {
+      "livesIn": "Tinggal di {concept}",
+      "sitsInLocalSeam": "Berada di sambungan lokal",
+      "workedMostlyBy": "sebagian besar dikerjakan {owner} di dekatnya",
+      "echoesInSpots": {
+        "other": "bergema di {n} titik lain"
+      },
+      "inspectNext": "periksa {path} berikutnya{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "pas ketat",
+      "close": "pas dekat",
+      "loose": "pas longgar"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Kenapa ini penting",
+    "storyConfidence": "Keyakinan",
+    "storySecondarySignal": "Sinyal sekunder",
+    "storyNeighbourhood": "Lingkungan",
+    "neighbourhoodDetail": "Baris ini berada dekat dengan {name} di medan codebase saat ini.",
+    "propagationLane": "Jalur perambatan",
+    "propagationLaneNamed": "Jalur perambatan: {lane}",
+    "witness": {
+      "nearbySupport": "Dukungan terdekat · {label}",
+      "localizedMove": "Pergerakan terlokalisasi · {label}",
+      "surprisingMove": "Pergerakan mengejutkan · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Struktur stabil",
+      "conflictingSignals": "Sinyal bertentangan",
+      "novelShape": "Bentuk baru"
+    },
+    "related": {
+      "testMirror": "Cermin test",
+      "semanticHistorySibling": "Saudara semantik + history",
+      "recentCoChange": "Co-change terbaru",
+      "semanticSibling": "Saudara semantik",
+      "relatedStructure": "Struktur terkait",
+      "tightlyBound": "terikat erat",
+      "orbiting": "mengorbit",
+      "weaklyCoupled": "terkopel lemah",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "jejak history",
+      "testMirrorLane": "jalur cermin test",
+      "structuralLane": "jalur struktural",
+      "semanticNeighbourhood": "lingkungan semantik"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} tersembunyi",
+    "landing": "mendarat"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (terlalu besar untuk pratinjau)",
+    "unableToLoadBlob": "Tidak bisa memuat blob",
+    "omittedKindMedia": "media",
+    "omittedKindBinary": "biner",
+    "omittedStub": "{kind} · tersembunyi"
+  },
+  "media": {
+    "unableToDecodeImage": "Tidak bisa mendekode gambar",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "ditambahkan",
+    "stateDeleted": "dihapus",
+    "stateModified": "diubah",
+    "fallbackFormatName": "Biner"
+  }
+}

@@ -208,13 +208,13 @@
   "snack": {
     "sameWorktree": "Тот же рабочий каталог — сбрасывать нечего.",
     "diffFailed": "Сбой diff: {error}",
-    "deskEmpty": "У стола нет ничего впереди вас — пустой сброс.",
-    "sourceDesk": "стол {label}",
+    "deskEmpty": "У Desk нет ничего впереди вас — пустой сброс.",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "Не удалось прочитать полку: {error}",
     "shelfEmpty": "Пустая полка — сбрасывать нечего.",
     "sourceShelf": "полка {label}",
     "noModelConfigured": "Для «{label}» модель не настроена.",
-    "fetchFailed": "Сбой получения: {error}"
+    "fetchFailed": "Сбой фетча: {error}"
   },
   "trace": {
     "title": "След верификации",
@@ -229,7 +229,7 @@
     "refreshing": "Обновление...",
     "refresh": "Обновить",
     "check": "проверить",
-    "checkTooltip": "Получить и локально обновить.",
+    "checkTooltip": "Зафетчить и локально обновить.",
     "sync": "& синхр"
   },
   "guardrail": {
@@ -240,7 +240,7 @@
   },
   "dropHint": {
     "fromShelf": "бросьте, чтобы принести изменения с этой полки сюда",
-    "fromDesk": "бросьте, чтобы принести изменения с этого стола сюда"
+    "fromDesk": "бросьте, чтобы принести изменения с этого Desk сюда"
   },
   "diffEmpty": {
     "title": "Файл не выбран",

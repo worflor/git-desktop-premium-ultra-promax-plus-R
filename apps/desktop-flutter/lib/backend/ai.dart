@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'ai_api_keys_store.dart';
 import 'ai_api_provider.dart';
+import 'ai_language.dart';
 import 'atomic_write.dart';
 import 'clock.dart';
 import 'codex_piggyback_proxy.dart';
@@ -1092,6 +1093,29 @@ Future<GitResult<AiDebugData>> runDebug({
   }
 }
 
+/// Language directive for CONVERSATIONAL AI prompts (review, muse, debug) —
+/// the app speaking to the user about their code. When the UI is non-English,
+/// the reply comes back in that language while technical tokens stay intact.
+/// Empty when the UI is English (the model's default), so English prompts are
+/// unchanged. Deliberately NOT used for commit-message generation: commit text
+/// is a git-history artifact and follows the repository's convention (inferred
+/// from the recent-commit log in that prompt), not the reader's UI locale.
+String _languageDirective() {
+  final lang = AiLanguage.preferredName;
+  if (lang == null) return '';
+  // Translate the prose a human reads, but NEVER the machine-parsed contract.
+  // The structured fields (verdict, severity, category enums, tag names) are
+  // matched against fixed English values downstream — a translated verdict
+  // like "Prêt" would silently coerce to the wrong outcome. So scope the
+  // language switch to free-text only.
+  return 'The reader works in $lang. Write the prose a person reads — '
+      'summaries, explanations, descriptions, messages — in $lang. Keep '
+      'everything the program parses exactly as this prompt specifies it, in '
+      'English: tag names and their allowed values (verdicts, severities, '
+      'categories), field keys, code identifiers, file paths, and git terms. '
+      'Translate free-text only, never a structured value.';
+}
+
 String _buildDebugPrompt({
   required String symptom,
   required List<MindCandidate> candidates,
@@ -1106,6 +1130,11 @@ String _buildDebugPrompt({
   buf.writeln();
   buf.writeln('You do NOT fix bugs. You do NOT write code. You identify '
       'the most likely causal chain and tell the human what to verify.');
+  final langLine = _languageDirective();
+  if (langLine.isNotEmpty) {
+    buf.writeln();
+    buf.writeln(langLine);
+  }
   buf.writeln();
   buf.writeln('<symptom>${symptom.length > 5000 ? symptom.substring(0, 5000) : symptom}</symptom>');
 
@@ -3476,6 +3505,11 @@ String _buildMuseSynthesisPrompt({
 }) {
   final buf = StringBuffer();
   buf.writeln('You are the ${profile.seat}.');
+  final langLine = _languageDirective();
+  if (langLine.isNotEmpty) {
+    buf.writeln();
+    buf.writeln(langLine);
+  }
   buf.writeln();
   buf.writeln('<wake>');
   buf.writeln(profile.wakeFrame);
@@ -9819,6 +9853,11 @@ String _buildCommitReviewPrompt({
 }) {
   final buffer = StringBuffer();
   buffer.writeln(_buildReviewWakeBlock(profile, spec.passMode));
+  final langLine = _languageDirective();
+  if (langLine.isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln(langLine);
+  }
   buffer.writeln();
   buffer.writeln('<scope_and_jurisdiction>');
   buffer.writeln('Branch: ${spec.branchName}');

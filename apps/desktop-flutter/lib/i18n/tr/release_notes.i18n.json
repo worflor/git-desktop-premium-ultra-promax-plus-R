@@ -1,0 +1,18 @@
+{
+  "@@locale": "tr",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "NEDEN FLUTTER?",
+      "body": "Bunun ilk sürümü bir Tauri uygulamasıydı (Rust + TypeScript). Yavaş hissettirdiğini zaten biliyordum. Sonra normalde izlemediğim bir yayında bir yayıncının aynı şeyi söylediğini yakaladım, ve nihayet geçiş yapmam için gereken dürtü bu oldu. Flutter'ı önermedi; tam tersine. Dart'ı kendim buldum, alelacele bir prototip kurdum, ve başlangıç süresi yaklaşık 15 saniyeden bir saniyenin altına indi. Gece ile gündüz gibi. Elveda Tauri dönemi.\n\nFlutter'ın render hattı bir DOM'dan çok bir oyun motoruna yakın, ve UI'nin ürünün kendisi olduğu bir masaüstü uygulaması için bu her şey demek. Dart da gerçekten iyi bir dil çıktı. Spektral motorun arkasındaki matematik önce Rust'ta prototiplenmişti, bu yüzden o iş sorunsuz taşındı.\n\nFlutter varsayılan olarak çapraz platform, ki bu harika, ama doğası gereği Google'vari, bu yüzden birkaç tuhaflığı var."
+    },
+    "spectralEngine": {
+      "question": "SPEKTRAL MOTOR NEDİR?",
+      "body": "Her commit yaptığında, birlikte değiştirdiğin dosyalar zaman içinde desenler oluşturur. Spektral motor commit grafiğini okur ve bu ortak değişim desenlerini sinyallere ayrıştırır: hangi dosyalar bağlı, ne kadar sıkı ve depoda hangi yapısal rolü oynuyorlar. Temelde geliştirme geçmişin üzerinde spektral analiz. Bir git istemcisinde. Bilerek.\n\nMatematik yeni, bu yüzden ona oyun hissi gibi davranıyorum: ayarla, test et, düzelt ve sinyaller doğru hissettirene kadar devam et.\n\nBu sinyaller her şeyi besler. Geçmişteki sismograf, commit başlıklarının altındaki boyalı çubuklar, inceleme sistemi, Muse, dosya takımyıldızı. Tüm uygulama bu katmandan aşağıya doğru akıl yürütür, tersi yönde değil."
+    },
+    "whereGoing": {
+      "question": "BU NEREYE GİDİYOR?",
+      "body": "İlk kilometre taşı GitHub Desktop, SourceTree ve GitKraken ile tam denklik. Hızlı hissettiren ve temelleri her şeyden daha iyi ele alan çapraz platform bir git istemcisi. Bu büyük ölçüde tamam. Spektral motor, diğer istemcilerin sana manuel olarak düşündürdüğü işlemler için bize şimdiden bir avantaj sağlıyor.\n\nBunun ötesinde amaç, diğer her git istemcisini hız, erişilebilirlik, zekâ ve genel UX açısından geçmek. Burada duyurulandan daha fazlası hazırlıkta."
+    }
+  }
+}

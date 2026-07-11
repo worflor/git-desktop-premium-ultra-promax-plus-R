@@ -1,0 +1,536 @@
+{
+  "@@locale": "nl",
+  "usage": {
+    "caption": "{input} in · {output} uit",
+    "captionCached": "{fresh} in · {cached} gecacht · {out} uit",
+    "inWord": "in",
+    "cachedWord": "gecacht",
+    "outWord": "uit",
+    "tipIn": "{value}  in",
+    "tipCacheRead": "{value}  cache lezen",
+    "tipCacheWrite": "{value}  cache schrijven",
+    "tipOut": "{value}  uit",
+    "tipReasoning": "{value}  redenering",
+    "tipWallClock": "{value}s  kloktijd"
+  },
+  "tabs": {
+    "defaultLabel": "Wijzigingen",
+    "empty": "Leeg"
+  },
+  "tabStrip": {
+    "newDiffTab": "Nieuw diff-tabblad"
+  },
+  "select": {
+    "selectAll": "Alles selecteren",
+    "deselectAll": "Alles deselecteren"
+  },
+  "constellationToggle": {
+    "backToList": "terug naar lijst",
+    "atlas": "atlas, bekijk commit-kandidaten"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\nkoppelt met {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "nieuw",
+    "roleBridge": "brug",
+    "roleHub": "hub",
+    "roleLeaf": "blad",
+    "roleConnected": "verbonden",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "wijzigt met {name}",
+    "newFile": "nieuw bestand",
+    "nearOtherChanges": "nabij {count} andere wijzigingen in {dir}",
+    "usuallyChangesWithFile": "{name} wijzigt meestal met dit bestand"
+  },
+  "tagInput": {
+    "hint": "tag..."
+  },
+  "composer": {
+    "hintPlaceholder": "commit-bericht...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Wijzigingen committen",
+    "primaryCommitChangesDetail": "Detached HEAD: lokaal committen zonder sync.",
+    "primaryPublish": "Committen & publiceren",
+    "primaryPublishDetail": "Maak de commit en publiceer deze branch in één stap.",
+    "primarySync": "Committen & syncen",
+    "primarySyncDetail": "Maak de commit, verzoen dan de branch en verstuur hem.",
+    "primaryPush": "Committen & pushen",
+    "primaryPushDetail": "Maak de commit en push hem meteen.",
+    "amendLast": "Laatste commit amenden",
+    "amendAnd": "Amenden & {action}",
+    "chooseFile": "Kies minstens één bestand voor de volgende commit.",
+    "writeMessage": "Schrijf eerst een commit-bericht.",
+    "committing": "Committen",
+    "committingSync": "Committen en syncen",
+    "committed": "Gecommit.",
+    "undoFailed": "Ongedaan maken mislukt.",
+    "working": "Bezig…",
+    "commitOnly": "Alleen committen",
+    "noRuntimeModels": "Geen tijdens runtime ontdekte modellen beschikbaar voor commit-berichten.",
+    "restoreFailedRetry": "{err}\nDe staging van de uitgesloten bestanden kon niet worden hersteld; controleer de index voordat je het opnieuw probeert.",
+    "committedSummary": "{summary} gecommit ({hash}).",
+    "restoreFailedSync": "De selecties van de uitgesloten bestanden konden niet opnieuw worden gestaged; sync overgeslagen. Controleer de index voordat je synct.",
+    "noModelLabel": "Geen model",
+    "chooseBeforeGenerate": "Kies minstens één bestand voordat je genereert.",
+    "aiUnavailable": "Commit-bericht-AI is nog niet beschikbaar.",
+    "generateFailed": "Genereren mislukt.",
+    "stageFailed": "Bestanden stagen mislukt.",
+    "commitFailed": "Commit mislukt.",
+    "committedAndRan": "{summary} gecommit ({hash}) en {operation} uitgevoerd.",
+    "committedResolved": {
+      "one": "{summary} gecommit ({hash}); {n} conflict opgelost.",
+      "other": "{summary} gecommit ({hash}); {n} conflicten opgelost."
+    },
+    "conflictsLeft": {
+      "one": "Nog {n} conflict op te lossen.",
+      "other": "Nog {n} conflicten op te lossen."
+    },
+    "syncBlocked": {
+      "one": "Commit geslaagd, maar sync werd geblokkeerd door {n} niet-gecommit bestand.",
+      "other": "Commit geslaagd, maar sync werd geblokkeerd door {n} niet-gecommitte bestanden."
+    },
+    "syncStalled": "Commit geslaagd, maar sync stokte: {message}",
+    "syncFailed": "Commit geslaagd, maar sync mislukt: {message}"
+  },
+  "rebase": {
+    "continueFailed": "De rebase kon niet worden voortgezet."
+  },
+  "editor": {
+    "closeBarrier": "Editor sluiten"
+  },
+  "editorTitles": {
+    "any": [
+      "beste git-log",
+      "vergit me, hemel, want ik heb gezondigd…",
+      "geef dit moment een naam",
+      "kwek maar door",
+      "spreek!",
+      "je moeder was een bungelende referentie en je vader rook naar puntkomma's"
+    ],
+    "short": [
+      "oh?",
+      "hallo daar:)",
+      "trouwens:",
+      "een paar woorden",
+      "de nette versie",
+      "laat een briefje achter",
+      "je zei..?",
+      "kom op, eruit ermee"
+    ],
+    "mid": [
+      "voor de goede orde",
+      "vertel het de toekomstige jij",
+      "maar eerst?",
+      "hoe het ging",
+      "in je eigen woorden",
+      "je deed WAT?",
+      "genoteerd",
+      "je hebt mijn aandacht"
+    ],
+    "long": [
+      "je dromen, graag",
+      "zeg eens iets aardigs",
+      "... en toen zei ik:",
+      "het nageslacht wacht",
+      "meer schrijven laat je bugs verdwijnen",
+      "oh wauw",
+      "de heilige teksten"
+    ]
+  },
+  "askHint": {
+    "round": "ronde {n} — verfijn of voeg context toe.",
+    "symptom": "beschrijf het symptoom.",
+    "broken": "wat is er stuk?",
+    "bug": "beschrijf de bug.",
+    "error": "plak de foutmelding."
+  },
+  "fileMenu": {
+    "ripple": "Rimpel",
+    "includeCoChanges": "Co-changes meenemen",
+    "deleteFile": "{name} verwijderen…",
+    "discardChangesTo": "Wijzigingen aan {name} verwerpen…",
+    "ignore": "Negeren",
+    "diffTabFromSelection": "Diff-tabblad uit selectie",
+    "addSelectedToTab": "Selectie toevoegen aan {name}",
+    "diffTabFromFile": "Diff-tabblad uit {name}",
+    "addFileToTab": "{file} toevoegen aan {tab}",
+    "copyFilePath": "Bestandspad kopiëren",
+    "showInExplorer": "Tonen in Verkenner"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "strak gekoppeld",
+    "cohesionLoose": "los verwant",
+    "cohesionScattered": "structureel verspreid",
+    "clusterOne": "alles in één cluster",
+    "clusterSpansDetailed": "beslaat {count} clusters ({parts} bestanden)",
+    "clusterSpans": "beslaat {count} clusters",
+    "roleLine": "{count} bestanden · {cohesion}",
+    "usuallyChangesWithGroup": "{file} wijzigt meestal met deze groep",
+    "splitToNewTab": "Afsplitsen naar nieuw tabblad",
+    "copyPaths": "{count} paden kopiëren"
+  },
+  "ignoreMenu": {
+    "extension": ".{ext}-extensie",
+    "allSelected": "Alle {count} geselecteerd",
+    "couplesWith": {
+      "one": "Koppelt met {n} meegenomen bestand",
+      "other": "Koppelt met {n} meegenomen bestanden"
+    },
+    "updateFailed": ".gitignore kon niet worden bijgewerkt."
+  },
+  "discard": {
+    "deleteTitle": "{name} verwijderen?",
+    "discardTitle": "Wijzigingen aan {name} verwerpen?",
+    "deleteBody": "{path} wordt van schijf verwijderd. Dit kan niet vanuit de app ongedaan worden gemaakt.",
+    "discardBody": "Alle wijzigingen aan {path} worden teruggezet naar hun staat in HEAD. Dit kan niet ongedaan worden gemaakt.",
+    "discard": "Verwerpen",
+    "deletingFile": "{name} verwijderen",
+    "discardingFile": "{name} verwerpen",
+    "discardFailed": "Wijzigingen verwerpen mislukt.",
+    "discardManyTitle": "Wijzigingen aan {count} bestanden verwerpen?",
+    "discardManyBody": "Getrackte bestanden worden teruggezet naar hun staat in HEAD; ongetrackte bestanden worden van schijf verwijderd. Dit kan niet ongedaan worden gemaakt.",
+    "discardManyConfirm": "{count} verwerpen",
+    "discardingManyFiles": "{count} bestanden verwerpen",
+    "failedOpenExplorer": "Bestandsverkenner openen mislukt: {error}",
+    "someFailed": "Sommige verwerpingen zijn mislukt."
+  },
+  "snack": {
+    "sameWorktree": "Zelfde worktree — niets om te dumpen.",
+    "diffFailed": "Diff mislukt: {error}",
+    "deskEmpty": "Desk heeft niets voor op je — lege dump.",
+    "sourceDesk": "desk {label}",
+    "shelfReadFailed": "Berging lezen mislukt: {error}",
+    "shelfEmpty": "Lege berging — niets om te dumpen.",
+    "sourceShelf": "berging {label}",
+    "noModelConfigured": "Geen model geconfigureerd voor \"{label}\".",
+    "fetchFailed": "Fetch mislukt: {error}"
+  },
+  "trace": {
+    "title": "Verificatie-trace",
+    "draftReview": "Concept-review"
+  },
+  "cleanTree": {
+    "title": "Werkboom schoon",
+    "subtitle": "Geen gestagede of ongestagede wijzigingen gedetecteerd.",
+    "noUpstream": "  ·  geen upstream",
+    "ahead": " voor",
+    "behind": " achter",
+    "refreshing": "Verversen...",
+    "refresh": "Verversen",
+    "check": "check",
+    "checkTooltip": "Fetch en lokale verversing.",
+    "sync": "& sync"
+  },
+  "guardrail": {
+    "loose": "Los",
+    "balanced": "Gebalanceerd",
+    "strict": "Streng",
+    "paranoid": "Paranoïde"
+  },
+  "dropHint": {
+    "fromShelf": "sleep om wijzigingen uit deze berging hierheen te halen",
+    "fromDesk": "sleep om wijzigingen van deze desk hierheen te halen"
+  },
+  "diffEmpty": {
+    "title": "Geen bestand geselecteerd",
+    "message": "Kies een gewijzigd bestand om de diff te inspecteren."
+  },
+  "shelvePill": {
+    "shelveN": "↓ {count} opbergen",
+    "shelve": "↓ opbergen",
+    "shelvedCount": "{count} opgeborgen {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "oppakken",
+    "peek": "gluren",
+    "toss": "weggooien"
+  },
+  "stashContents": {
+    "reading": "berging lezen…",
+    "empty": "lege berging"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "commit alleen gestagede regels",
+    "doubleClickToggle": "dubbelklik: hele groep omschakelen",
+    "repoRoot": "Repository-root"
+  },
+  "resolveStrip": {
+    "reading": {
+      "one": "{n} bestand lezen · oplossing opstellen…",
+      "other": "{n} bestanden lezen · oplossing opstellen…"
+    },
+    "conflictsAcross": {
+      "one": "{n} conflict in {files}",
+      "other": "{n} conflicten in {files}"
+    },
+    "resolve": "Oplossen",
+    "orWith": "OF MET",
+    "resolveWith": "oplossen met {label}",
+    "resolveWithModel": "oplossen met {label}  ·  {model}",
+    "resolving": "oplossen…",
+    "resolveWithGlyph": "↵  oplossen met {label}",
+    "orWithAnother": "of met een ander model"
+  },
+  "badge": {
+    "stagedEdit": "Gestagede wijziging",
+    "edited": "Bewerkt",
+    "stagedAdd": "Gestagede toevoeging",
+    "added": "Toegevoegd",
+    "stagedDelete": "Gestagede verwijdering",
+    "deleted": "Verwijderd",
+    "stagedRename": "Gestagede hernoeming",
+    "renamed": "Hernoemd",
+    "stagedCopy": "Gestagede kopie",
+    "copied": "Gekopieerd",
+    "conflict": "Conflict",
+    "stagedTypeChange": "Gestagede typewijziging",
+    "typeChanged": "Type gewijzigd",
+    "untracked": "Ongetrackt"
+  },
+  "review": {
+    "title": "Code-review",
+    "includedFiles": {
+      "one": "{n} meegenomen bestand",
+      "other": "{n} meegenomen bestanden"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunks"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "Review niet beschikbaar",
+    "backToDiff": "Terug naar diff",
+    "verified": "Geverifieerd",
+    "draftOnly": "Alleen concept",
+    "runAgain": "Opnieuw uitvoeren",
+    "draftShownBelow": "{error} De concept-review wordt hieronder getoond.",
+    "hideTrace": "Trace verbergen",
+    "showTrace": "Trace tonen",
+    "showVerificationTrace": "Verificatie-trace tonen",
+    "whyLanded": "Waarom deze review hier landde",
+    "noFindings": "Geen bevindingen",
+    "findings": "Bevindingen",
+    "noEvidenceIssues": "Voor deze commit-scope zijn geen door bewijs onderbouwde problemen aan het licht gekomen.",
+    "observations": "Observaties",
+    "chooseBeforeReview": "Kies minstens één bestand voordat je reviewt.",
+    "aiUnavailable": "Review-AI is nog niet beschikbaar.",
+    "failed": "Review mislukt.",
+    "noRuntimeModels": "Geen tijdens runtime ontdekte modellen beschikbaar voor commit-review."
+  },
+  "commitBtn": {
+    "switchTo": "Wisselen naar: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "vragen met {cat}…",
+    "askWith": "vragen met {cat}",
+    "noModel": "geen AI-model geconfigureerd",
+    "nextTooltip": "volgende: {cat}  ·  shift-klik voor vorige",
+    "onlyOne": "slechts één AI-categorie geconfigureerd"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "one": "{pct}% déjà vu — {n} spookrand uit verworpen tijdlijnen raakt deze diff",
+      "other": "{pct}% déjà vu — {n} spookranden uit verworpen tijdlijnen raken deze diff"
+    },
+    "label": "déjà vu"
+  },
+  "identity": {
+    "none": "geen commit-identiteit geconfigureerd",
+    "asName": "als {name}",
+    "asNameEmail": "als {name} <{email}>",
+    "asNameSpace": "als {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\neerste commit in deze repo",
+    "newToRepo": "\nnieuw in deze repo"
+  },
+  "staleScope": {
+    "message": "selectie is gewijzigd sinds dit draaide",
+    "rerun": "opnieuw uitvoeren"
+  },
+  "finding": {
+    "openDiff": "Diff openen",
+    "recorded": "vastgelegd",
+    "dismiss": "Sluiten"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "dit heb je getrokken",
+    "fromIdea": "uit idee: \"{text}\"",
+    "foothold": "houvast — ",
+    "brainstormSpew": "brainstorm-spui",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "{count} kopiëren",
+    "clear": "Wissen",
+    "chooseBeforeMuse": "Kies minstens één bestand voordat je de muse aanroept.",
+    "aiUnavailable": "Muse-AI is nog niet beschikbaar.",
+    "failed": "Muse mislukt.",
+    "noRuntimeModels": "Geen tijdens runtime ontdekte modellen beschikbaar voor de muse.",
+    "needsModel": "De muse heeft minstens één geconfigureerd model nodig.",
+    "dreaming": "de muse droomt..."
+  },
+  "debug": {
+    "title": "Debug",
+    "round": "· ronde {n}",
+    "clear": "wissen",
+    "close": "sluiten",
+    "analyzing": "symptoom analyseren…",
+    "describeSymptom": "beschrijf een symptoom, druk dan op debug.",
+    "evidenceFor": "voor",
+    "evidenceAgainst": "maar",
+    "narrowDown": "wat zou helpen om het af te bakenen:",
+    "failed": "Debug mislukt.",
+    "refinementFailed": "Debug-verfijning mislukt."
+  },
+  "includeSummary": {
+    "none": "Geen",
+    "stagedSuffix": " · {count} gestaged",
+    "full": {
+      "one": "Alle {n} bestand{staged}",
+      "other": "Alle {n} bestanden{staged}"
+    },
+    "partial": "{count} van {n}{staged}",
+    "shortAll": "Alle {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "Repository-status niet beschikbaar",
+    "loadingTitle": "Repository-status laden",
+    "loadingMessage": "De werkboom lezen."
+  },
+  "stash": {
+    "appliedWithConflicts": "Stash toegepast met conflicten — los ze op de Wijzigingen-pagina op (het stash-item is bewaard).",
+    "couldNotPop": "Stash kon niet worden gepopt.",
+    "listChanged": "De stash-lijst is gewijzigd; drop overgeslagen. Probeer opnieuw.",
+    "droppingStash": "Stash droppen"
+  },
+  "tooltips": {
+    "commitGenerating": "commit-bericht genereren...",
+    "commitPreparing": "commit-bericht voorbereiden...",
+    "commitSelectFile": "kies minstens één bestand om een commit-bericht te genereren.",
+    "commitConfigure": "commit-bericht configureren in Instellingen > Gedragsdynamiek > Commit-berichten.",
+    "fastFallback": "snel",
+    "commitGenerateWith": "commit-bericht genereren met model {label}",
+    "museConsulting": "de muse raadplegen...",
+    "showMuse": "muse tonen",
+    "museSelectFile": "kies minstens één bestand voor de muse.",
+    "showMuseError": "muse-fout tonen",
+    "museAsk": "vraag de muse om richting",
+    "museAskWithModels": "vraag de muse om richting\n{brainstorm} → {synthesis}",
+    "qualityFallback": "kwaliteit",
+    "reviewing": "reviewen...",
+    "showReview": "review tonen",
+    "reviewPreparing": "commit-review voorbereiden...",
+    "reviewSelectFile": "kies minstens één bestand om te reviewen.",
+    "reviewConfigure": "review-AI configureren in instellingen.",
+    "viewingReview": "review bekijken",
+    "reviewWith": "{guardrail}-review met model {label}"
+  },
+  "mergeEditor": {
+    "resolutionYours": "van jou",
+    "resolutionTheirs": "van hun",
+    "resolutionCustom": "eigen",
+    "keepBoth": "beide behouden",
+    "trust": {
+      "manual": "handmatig",
+      "safe": "veilig",
+      "guided": "geleid",
+      "assisted": "geassisteerd",
+      "full": "volledig",
+      "label": "vertrouwen: {label}"
+    },
+    "allResolved": "alles opgelost",
+    "resolveEasy": "makkelijke conflicten oplossen",
+    "base": "basis",
+    "cancel": "annuleren",
+    "save": "opslaan",
+    "complete": "afronden",
+    "nextFile": "volgend bestand",
+    "edit": "bewerken",
+    "auto": "auto",
+    "undo": "ongedaan maken",
+    "keyHints": {
+      "accept": "accepteren",
+      "other": "andere",
+      "both": "beide",
+      "navigate": "navigeren",
+      "jumpNext": "naar volgende springen"
+    },
+    "favoredTooltip": "structureel bevoordeeld door koppelingsanalyse",
+    "newOnBothSides": "(nieuw aan beide kanten)",
+    "writeFailed": "Opgeloste bestanden schrijven mislukt: {error}",
+    "neighborsCoChanged": "{changed}/{total} buren mee-gewijzigd",
+    "integrity": "integriteit {pct}%",
+    "reviewer": "reviewer: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "Geen model geconfigureerd voor \"{category}\". Stel er een in bij Instellingen → AI.",
+    "sensitiveFilesSkipped": {
+      "one": "{n} gevoelig bestand overgeslagen — los het handmatig op.",
+      "other": "{n} gevoelige bestanden overgeslagen — los ze handmatig op."
+    },
+    "couldNotReadFiles": "Er konden geen conflictbestanden worden gelezen.",
+    "blockedSecret": "Geblokkeerd — een conflictbestand lijkt een {secret} te bevatten. Los het handmatig op.",
+    "resolutionFailed": "Oplossen mislukt: {error}",
+    "mergeResolutionLabel": "◇ merge-oplossing · {resolved}/{total} bestanden · {category}",
+    "conflictSummary": "{op} · {conflicts} in {files}",
+    "conflictCount": {
+      "one": "{n} conflict",
+      "other": "{n} conflicten"
+    },
+    "mergeEditorButton": "⇋ merge-editor",
+    "noAiModel": "geen AI-model",
+    "later": "later",
+    "discard": "verwerpen",
+    "resolveWithAi": "◇ oplossen met AI",
+    "otherModel": "ander model",
+    "withModel": "met {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "merge",
+      "cherryPick": "cherry-pick",
+      "revert": "revert",
+      "resolve": "oplossen",
+      "switchOp": "wisselen",
+      "pull": "pull",
+      "rebase": "rebase",
+      "rebaseOnto": "{branch} rebasen op {base}"
+    },
+    "pushFailed": "Push mislukt",
+    "rebasedAndPushed": "Gerebased en gepusht.",
+    "switchedTo": "Gewisseld naar {name}.",
+    "switchFailed": "Wisselen mislukt.",
+    "switchedToCarried": "Gewisseld naar {name} (wijzigingen meegenomen).",
+    "alreadyUpToDate": "Al bij.",
+    "merged": "{upstream} gemergd ({n} bestanden).",
+    "rebaseNotConverge": "Rebase convergeerde niet — los handmatig op.",
+    "rebased": "Gerebased.",
+    "rebasedResolved": {
+      "one": "Gerebased ({n} bestand opgelost).",
+      "other": "Gerebased ({n} bestanden opgelost)."
+    },
+    "detachedHead": "Sync niet mogelijk: detached-HEAD-staat. Check eerst een branch uit.",
+    "publishFailed": "Publiceren mislukt.",
+    "noRemote": "Geen remote geconfigureerd. Voeg er een toe om deze branch te publiceren.",
+    "failed": "mislukt"
+  },
+  "constellation": {
+    "axisStructure": "STRUCTUUR",
+    "axisCoChange": "CO-CHANGE",
+    "axisSpectralProfile": "SPECTRAAL PROFIEL",
+    "axisPathSiblings": "PAD-BROERS",
+    "axisDiffStructure": "DIFF-STRUCTUUR",
+    "axisSpectral": "SPECTRAAL",
+    "titleUnsorted": "ONGESORTEERD",
+    "titleSingleton": "EENLING",
+    "titleMixed": "GEMENGD",
+    "untie": "losmaken",
+    "bind": "binden",
+    "emptyClusters": "nog geen clusters"
+  }
+}

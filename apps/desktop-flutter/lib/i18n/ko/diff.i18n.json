@@ -8,11 +8,11 @@
     "noChangesMessage": "이 파일에는 표시할 diff 내용이 없습니다."
   },
   "toolbar": {
-    "searchHint": "diff 검색...",
+    "searchHint": "diff 검색…",
     "lineCount": {
       "other": "{n}줄"
     },
-    "blameLoading": "blame...",
+    "blameLoading": "blame…",
     "blame": "blame",
     "wearMapOn": "마모 · 켜짐",
     "wearMapOnHint": "마모 지도 켜짐 — 클릭하여 숨기기",
@@ -27,7 +27,7 @@
   },
   "stagingFailed": "부분 스테이징 실패: {error}",
   "trail": {
-    "loading": "자취 불러오는 중...",
+    "loading": "자취 불러오는 중…",
     "noHistory": "히스토리 없음",
     "nowWorkingCopy": "지금 · 작업 사본",
     "stopLabel": "{hash} · {author} · {time} · {subject}"

@@ -11,7 +11,7 @@
     "tipCacheWrite": "{value}  缓存写入",
     "tipOut": "{value}  出",
     "tipReasoning": "{value}  推理",
-    "tipWallClock": "{value}s  墙钟"
+    "tipWallClock": "{value}s  实际耗时"
   },
   "tabs": {
     "defaultLabel": "更改",
@@ -196,8 +196,8 @@
   "snack": {
     "sameWorktree": "同一工作树 — 没什么可倒出的。",
     "diffFailed": "差异失败：{error}",
-    "deskEmpty": "工作台没有领先于你的内容 — 空倒。",
-    "sourceDesk": "工作台 {label}",
+    "deskEmpty": "Desk 没有领先于你的内容 — 空倒。",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "搁架读取失败：{error}",
     "shelfEmpty": "空搁架 — 没什么可倒出的。",
     "sourceShelf": "搁架 {label}",
@@ -228,7 +228,7 @@
   },
   "dropHint": {
     "fromShelf": "拖放以把此搁架的改动带到这里",
-    "fromDesk": "拖放以把此工作台的改动带到这里"
+    "fromDesk": "拖放以把此 Desk 的改动带到这里"
   },
   "diffEmpty": {
     "title": "未选择文件",
@@ -421,8 +421,8 @@
     "reviewWith": "用 {label} 模型进行 {guardrail} 审查"
   },
   "mergeEditor": {
-    "resolutionYours": "你的",
-    "resolutionTheirs": "他们的",
+    "resolutionYours": "我方",
+    "resolutionTheirs": "他方",
     "resolutionCustom": "自定义",
     "keepBoth": "两者都留",
     "trust": {

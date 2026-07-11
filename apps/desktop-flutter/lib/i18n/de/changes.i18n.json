@@ -200,8 +200,8 @@
   "snack": {
     "sameWorktree": "Gleicher Worktree — nichts zum Ablegen.",
     "diffFailed": "Diff fehlgeschlagen: {error}",
-    "deskEmpty": "Der Tisch hat nichts vor dir — leere Ablage.",
-    "sourceDesk": "Tisch {label}",
+    "deskEmpty": "Der Desk hat nichts vor dir — leere Ablage.",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "Ablage konnte nicht gelesen werden: {error}",
     "shelfEmpty": "Leere Ablage — nichts zum Ablegen.",
     "sourceShelf": "Ablage {label}",
@@ -232,7 +232,7 @@
   },
   "dropHint": {
     "fromShelf": "ablegen, um Änderungen aus dieser Ablage hierher zu holen",
-    "fromDesk": "ablegen, um Änderungen von diesem Tisch hierher zu holen"
+    "fromDesk": "ablegen, um Änderungen von diesem Desk hierher zu holen"
   },
   "diffEmpty": {
     "title": "Keine Datei ausgewählt",

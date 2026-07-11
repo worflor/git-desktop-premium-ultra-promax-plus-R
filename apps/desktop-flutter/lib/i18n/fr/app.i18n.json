@@ -25,12 +25,12 @@
     "toggleHunk": "Basculer la section",
     "toggleFile": "Basculer le fichier",
     "pinContext": "Épingler le contexte",
-    "commit": "Valider",
+    "commit": "Committer",
     "acceptAiHint": "Accepter l'indice IA",
     "undo": "Annuler",
     "navigate": "Naviguer",
     "expand": "Développer",
-    "checkoutPr": "Extraire la PR",
+    "checkoutPr": "Checkout de la PR",
     "approve": "Approuver",
     "requestChanges": "Demander des modifications",
     "profileSwitchHint": "profil {profile} · changez dans Paramètres"
@@ -38,31 +38,31 @@
 
   "commandPaletteTooltip": "Palette de commandes   /",
 
-  "newDeskFallback": "nouveau bureau",
-  "deskFallback": "bureau",
+  "newDeskFallback": "nouveau Desk",
+  "deskFallback": "Desk",
   "currentDeskFallback": "actuel",
   "noRepositoryOpen": "Aucun dépôt ouvert",
 
-  "couldntOpenAsDesk": "Impossible d'ouvrir comme bureau : {error}",
+  "couldntOpenAsDesk": "Impossible d'ouvrir comme Desk : {error}",
   "couldNotDetectForge": "Impossible de détecter la forge : {error}",
   "cannotFetchPrNoForge": "Impossible de récupérer la PR : forge non détectée pour ce dépôt.",
   "overwriteRefConfirm": "Écraser {ref} avec la dernière version du distant ?",
   "overwrite": "Écraser",
   "couldntFetchPr": "Impossible de récupérer la PR : {error}",
 
-  "promoteDeskToPr": "Promouvoir le bureau en PR",
+  "promoteDeskToPr": "Promouvoir le Desk en PR",
   "applyToMain": "Appliquer à main",
   "updateDeskFrom": "Mettre à jour {target} depuis {source}",
   "bringChangesFromHere": "Amener les changements de {source} ici",
   "editLocalPr": "Modifier la PR locale",
   "discardLocalPr": "Abandonner la PR locale",
-  "closeDesk": "Fermer le bureau",
+  "closeDesk": "Fermer le Desk",
 
   "couldntPromote": "Impossible de promouvoir : {error}",
-  "commitOrShelveBeforeApplying": "Validez ou rangez les changements du bureau avant d'appliquer.",
+  "commitOrShelveBeforeApplying": "Committez ou rangez les changements du Desk avant d'appliquer.",
   "couldNotResolveMainWorktree": "Impossible de résoudre le chemin de l'arbre de travail principal.",
-  "couldntPromoteDesk": "Impossible de promouvoir le bureau : {error}",
-  "couldntDetermineBaseBranch": "Impossible de déterminer la branche de base pour ce bureau.",
+  "couldntPromoteDesk": "Impossible de promouvoir le Desk : {error}",
+  "couldntDetermineBaseBranch": "Impossible de déterminer la branche de base pour ce Desk.",
   "prBaseHeadSame": "La base et la pointe de la PR sont la même branche ({branch}) — rien à appliquer.",
   "appliedBranchToBase": "{branch} appliquée à {base}",
 
@@ -76,7 +76,7 @@
     "other": "{target} est en avance sur {source} de {n} commits."
   },
   "deskUpToDate": "{target} est déjà à jour avec {source}.",
-  "uncommittedPreviewNotice": "Changements non validés dans {target} — aperçu sous forme de patch à la place.",
+  "uncommittedPreviewNotice": "Changements non committés dans {target} — aperçu sous forme de patch à la place.",
   "updateDeskFromLower": "mettre à jour {target} depuis {source}",
   "noUpdatesToBringFrom": "Aucune mise à jour à amener depuis {source}.",
   "updatePrepFailed": "Échec de la préparation de la mise à jour",
@@ -92,7 +92,7 @@
   "cancelLower": "annuler",
   "saveLower": "enregistrer",
   "couldntSave": "Impossible d'enregistrer : {error}",
-  "stashedNoOtherDesk": "Changements remisés — aucun autre bureau où les appliquer. Utilisez git stash pop pour les récupérer.",
+  "stashedNoOtherDesk": "Changements stashés — aucun autre Desk où les appliquer. Utilisez git stash pop pour les récupérer.",
 
   "suggestedSource": "source suggérée",
   "tooltipModifiedCount": "{n} modifiés",
@@ -109,11 +109,11 @@
   "driftGroupCount": "{n} dans {dir}",
   "driftSummaryRemainder": "{summary} +{remainder}",
 
-  "uncommittedChanges": "Changements non validés",
-  "closeDeskQuestion": "Fermer le bureau ?",
+  "uncommittedChanges": "Changements non committés",
+  "closeDeskQuestion": "Fermer le Desk ?",
   "uncommittedFileCount": {
-    "one": "{n} fichier non validé.",
-    "other": "{n} fichiers non validés."
+    "one": "{n} fichier non committé.",
+    "other": "{n} fichiers non committés."
   },
   "commitsAheadOfMain": {
     "one": "{n} commit en avance sur main.",
@@ -129,8 +129,8 @@
 
   "noRepository": "aucun dépôt",
   "issuePromotedToRemote": "Ticket promu vers le distant.",
-  "pushedToRemote": "Poussé vers le distant.",
-  "pulledFromRemote": "Tiré depuis le distant.",
+  "pushedToRemote": "Pushé vers le distant.",
+  "pulledFromRemote": "Pullé depuis le distant.",
   "remoteIssueNotFound": "ticket distant introuvable",
   "importedIssueLocally": "#{id} importé localement.",
   "issueAbandoned": "Ticket abandonné.",
@@ -143,14 +143,14 @@
   "publish": "Publier",
   "noRemoteConfigured": "Aucun distant configuré pour ce dépôt.",
 
-  "jumpToDesk": "Aller au bureau",
+  "jumpToDesk": "Aller au Desk",
   "arrowOpen": "→ ouvrir",
-  "openOnANewDesk": "Ouvrir sur un nouveau bureau",
-  "plusDesk": "+ bureau",
+  "openOnANewDesk": "Ouvrir sur un nouveau Desk",
+  "plusDesk": "+ Desk",
   "plusSpace": "+ ",
   "newBranchNameHint": "nom-de-branche",
   "escLower": "échap",
-  "plusNewDesk": "+ nouveau bureau",
+  "plusNewDesk": "+ nouveau Desk",
   "fromHeadEllipsis": "depuis HEAD...",
   "viewAllBranches": "Voir toutes les branches",
 
@@ -158,14 +158,14 @@
   "newIssueLower": "nouveau ticket",
   "noneLinked": "aucun lié",
   "noOpenIssues": "aucun ticket ouvert",
-  "createAndPushLower": "créer + pousser",
+  "createAndPushLower": "créer + push",
   "createLower": "créer",
   "remoteLower": "distant",
   "issueHashTitle": "#{id} {title}",
 
   "promoteToRemote": "Promouvoir vers le distant",
-  "pushToRemote": "Pousser vers le distant",
-  "pullFromRemote": "Tirer depuis le distant",
+  "pushToRemote": "Pusher vers le distant",
+  "pullFromRemote": "Puller depuis le distant",
   "importLabel": "Importer",
 
   "failedToCreateRepository": "Échec de la création du dépôt.",

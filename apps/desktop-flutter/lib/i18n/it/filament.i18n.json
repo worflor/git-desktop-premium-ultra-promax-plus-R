@@ -1,0 +1,23 @@
+{
+  "@@locale": "it",
+  "noRepositoryOpen": "Nessun repository aperto.",
+  "scanningProgress": "scansione {scanned} / {total} file…",
+  "findingsAcrossFiles": "{count} riscontri in {files} file",
+  "copiedFindings": "{count} riscontri copiati",
+  "copy": "COPIA",
+  "noFindings": "Nessun riscontro nel flusso di esecuzione.",
+  "severity": {
+    "critical": "critico",
+    "warn": "avviso",
+    "info": "info",
+    "joint": "giunzione"
+  },
+  "kind": {
+    "staleValue": "valore obsoleto",
+    "temporalShift": "slittamento temporale",
+    "contextInversion": "inversione di contesto",
+    "contradictoryFlow": "flusso contraddittorio"
+  },
+  "lineLabel": "R{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

@@ -1,0 +1,101 @@
+{
+  "@@locale": "tr",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Tara",
+    "modeCompare": "Karşılaştır",
+    "lodModules": "Modüller",
+    "lodFiles": "Dosyalar"
+  },
+  "status": {
+    "loading": "Manifold, geçmiş boyunca izleniyor…",
+    "loadError": "Bu deponun geçmişi okunamadı.",
+    "notEnoughHistory": "Bir yörünge çizmek için henüz yeterli geçmiş yok.",
+    "notEnoughHistoryDetail": "Orrery'nin haritalamak için birkaç commit'e ihtiyacı var."
+  },
+  "legend": {
+    "central": "merkezi",
+    "peripheral": "çevresel"
+  },
+  "node": {
+    "module": "modül",
+    "moduleWithCount": "{path} · {n} dosya",
+    "fileFallback": "dosya #{id}",
+    "nodeFallback": "düğüm #{id}",
+    "rootModule": "(kök)"
+  },
+  "milestone": {
+    "genesis": "başlangıç",
+    "now": "şimdi",
+    "reorganized": "yeniden düzenlendi",
+    "becameArchetype": "{archetype} oldu",
+    "snapshot": "anlık görüntü"
+  },
+  "structure": {
+    "forming": "oluşuyor…",
+    "canonical": "kanonik",
+    "connectivity": "bağlantısallık",
+    "rigidity": "katılık",
+    "entropy": "entropi"
+  },
+  "rail": {
+    "structureLabel": "YAPI",
+    "fieldLabel": "ALAN",
+    "findingsLabel": "BULGULAR",
+    "selectedLabel": "SEÇİLİ",
+    "noFindings": "Bu geçmişte yapısal olay algılanmadı."
+  },
+  "selection": {
+    "notPresent": "Geçmişin bu noktasında mevcut değil.",
+    "roleCentral": "Bağlaşım-merkezli — buradaki değişiklikler tüm sisteme dalgalanır.",
+    "rolePeripheral": "Çevresel — gevşek bağlı, çoğunlukla kendi başına değişir.",
+    "roleMid": "Orta yapı — orta düzeyde bağlı.",
+    "driftOutward": " Dışa doğru sürükleniyor — bağı çözülüyor.",
+    "driftInward": " İçe doğru sürükleniyor — bütünleşiyor.",
+    "driftHolding": " Konumunu koruyor."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "DIŞA SÜRÜKLENİYOR",
+    "driftIn": "İÇE SÜRÜKLENİYOR",
+    "tangle": "DÜĞÜMLENİYOR",
+    "clarify": "BERRAKLAŞIYOR",
+    "regime": "REORG",
+    "thrash": "ÇALKALANIYOR",
+    "reshuffle": "YENİDEN KARMA",
+    "forecast": "TAHMİN"
+  },
+  "findings": {
+    "forecastSplit": "Bağlantısallık düşüyor ve en düşük noktasına yakın — bu böyle giderse, kod tabanı gevşek bağlı iki yarıya bölünmeye doğru ilerliyor. Bunun amaç olup olmadığına şimdi karar ver.",
+    "forecastConsolidate": "Bağlantısallık zirvesine doğru tırmanıyor — bu böyle giderse, kod tabanı sıkı bağlı tek bir kütleye yoğunlaşıyor. Bir monolite katılaşmasına dikkat et.",
+    "thrash": "{name} sürekli ileri geri yeniden düzenleniyor — çok yapısal çalkantı, az net hareket. Bağlaşımını yerine oturt ya da ona dokunmayı bırak.",
+    "reshuffle": "Bu commit rutin görünüyordu ama hangi dosyaların merkezi olduğunu sessizce değiştirdi — genel biçim korunurken yapı altında yeniden karıldı. Onu dikkatle incele.",
+    "hub": "{name} yapısal çekirdekte oturuyor — sistem onun etrafında yeniden düzenleniyor. Buradaki değişiklikleri yüksek patlama yarıçaplı olarak ele al.",
+    "driftOut": "{name} çekirdekten kenara sürüklendi — sistemden bağı çözülüyor. Ya emekliye ayrılıyor ya da sessizce çürüyor.",
+    "driftIn": "{name} çekirdeğe doğru göç etti — yük taşıyan hale geliyor. Ona daha fazlası bağlanmadan önce iyi test edildiğinden emin ol.",
+    "regime": "Kod tabanı burada keskin şekilde yeniden düzenlendi — bağlantısallığı sıçradı. Neyin ayrıldığını veya birleştiğini incele.",
+    "tangleTrend": "Geçmişi boyunca kod tabanı daha düğümlü bir yapıya eğilim gösterdi — bağlantısallığı yoğunlaşıyor ve daha az modüler hale geliyor.",
+    "clarifyTrend": "Geçmişi boyunca kod tabanı daha temiz bir yapıya eğilim gösterdi — daha net modüllere ayrılıyor."
+  },
+  "anchor": {
+    "core": "çekirdek",
+    "drift": "sürüklenme",
+    "trend": "eğilim",
+    "thrash": "çalkantı"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "DEĞİŞİM",
+    "movers": "HAREKET EDENLER",
+    "noMovers": "Bu kareler arasında dosya hareket etmedi.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "dosyalar",
+    "deltaConnectivity": "bağlantısallık",
+    "deltaRigidity": "katılık",
+    "deltaEntropy": "entropi",
+    "wayOutward": "dışa",
+    "wayInward": "içe",
+    "wayShifted": "kaydı"
+  }
+}

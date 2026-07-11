@@ -125,16 +125,16 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get commandPaletteTooltip => 'Palette de commandes   /';
   @override
-  String get newDeskFallback => 'nouveau bureau';
+  String get newDeskFallback => 'nouveau Desk';
   @override
-  String get deskFallback => 'bureau';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => 'actuel';
   @override
   String get noRepositoryOpen => 'Aucun dépôt ouvert';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Impossible d\'ouvrir comme bureau : ${error}';
+      'Impossible d\'ouvrir comme Desk : ${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       'Impossible de détecter la forge : ${error}';
@@ -150,7 +150,7 @@ class _Translations$app$fr extends Translations$app$en {
   String couldntFetchPr({required Object error}) =>
       'Impossible de récupérer la PR : ${error}';
   @override
-  String get promoteDeskToPr => 'Promouvoir le bureau en PR';
+  String get promoteDeskToPr => 'Promouvoir le Desk en PR';
   @override
   String get applyToMain => 'Appliquer à main';
   @override
@@ -164,22 +164,22 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get discardLocalPr => 'Abandonner la PR locale';
   @override
-  String get closeDesk => 'Fermer le bureau';
+  String get closeDesk => 'Fermer le Desk';
   @override
   String couldntPromote({required Object error}) =>
       'Impossible de promouvoir : ${error}';
   @override
   String get commitOrShelveBeforeApplying =>
-      'Validez ou rangez les changements du bureau avant d\'appliquer.';
+      'Committez ou rangez les changements du Desk avant d\'appliquer.';
   @override
   String get couldNotResolveMainWorktree =>
       'Impossible de résoudre le chemin de l\'arbre de travail principal.';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      'Impossible de promouvoir le bureau : ${error}';
+      'Impossible de promouvoir le Desk : ${error}';
   @override
   String get couldntDetermineBaseBranch =>
-      'Impossible de déterminer la branche de base pour ce bureau.';
+      'Impossible de déterminer la branche de base pour ce Desk.';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'La base et la pointe de la PR sont la même branche (${branch}) — rien à appliquer.';
@@ -214,7 +214,7 @@ class _Translations$app$fr extends Translations$app$en {
       '${target} est déjà à jour avec ${source}.';
   @override
   String uncommittedPreviewNotice({required Object target}) =>
-      'Changements non validés dans ${target} — aperçu sous forme de patch à la place.';
+      'Changements non committés dans ${target} — aperçu sous forme de patch à la place.';
   @override
   String updateDeskFromLower({
     required Object target,
@@ -255,7 +255,7 @@ class _Translations$app$fr extends Translations$app$en {
       'Impossible d\'enregistrer : ${error}';
   @override
   String get stashedNoOtherDesk =>
-      'Changements remisés — aucun autre bureau où les appliquer. Utilisez git stash pop pour les récupérer.';
+      'Changements stashés — aucun autre Desk où les appliquer. Utilisez git stash pop pour les récupérer.';
   @override
   String get suggestedSource => 'source suggérée';
   @override
@@ -293,15 +293,15 @@ class _Translations$app$fr extends Translations$app$en {
     required Object remainder,
   }) => '${summary} +${remainder}';
   @override
-  String get uncommittedChanges => 'Changements non validés';
+  String get uncommittedChanges => 'Changements non committés';
   @override
-  String get closeDeskQuestion => 'Fermer le bureau ?';
+  String get closeDeskQuestion => 'Fermer le Desk ?';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
         n,
-        one: '${n} fichier non validé.',
-        other: '${n} fichiers non validés.',
+        one: '${n} fichier non committé.',
+        other: '${n} fichiers non committés.',
       );
   @override
   String commitsAheadOfMain({required num n}) =>
@@ -329,9 +329,9 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get issuePromotedToRemote => 'Ticket promu vers le distant.';
   @override
-  String get pushedToRemote => 'Poussé vers le distant.';
+  String get pushedToRemote => 'Pushé vers le distant.';
   @override
-  String get pulledFromRemote => 'Tiré depuis le distant.';
+  String get pulledFromRemote => 'Pullé depuis le distant.';
   @override
   String get remoteIssueNotFound => 'ticket distant introuvable';
   @override
@@ -355,13 +355,13 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get noRemoteConfigured => 'Aucun distant configuré pour ce dépôt.';
   @override
-  String get jumpToDesk => 'Aller au bureau';
+  String get jumpToDesk => 'Aller au Desk';
   @override
   String get arrowOpen => '→ ouvrir';
   @override
-  String get openOnANewDesk => 'Ouvrir sur un nouveau bureau';
+  String get openOnANewDesk => 'Ouvrir sur un nouveau Desk';
   @override
-  String get plusDesk => '+ bureau';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -369,7 +369,7 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get escLower => 'échap';
   @override
-  String get plusNewDesk => '+ nouveau bureau';
+  String get plusNewDesk => '+ nouveau Desk';
   @override
   String get fromHeadEllipsis => 'depuis HEAD...';
   @override
@@ -383,7 +383,7 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get noOpenIssues => 'aucun ticket ouvert';
   @override
-  String get createAndPushLower => 'créer + pousser';
+  String get createAndPushLower => 'créer + push';
   @override
   String get createLower => 'créer';
   @override
@@ -394,9 +394,9 @@ class _Translations$app$fr extends Translations$app$en {
   @override
   String get promoteToRemote => 'Promouvoir vers le distant';
   @override
-  String get pushToRemote => 'Pousser vers le distant';
+  String get pushToRemote => 'Pusher vers le distant';
   @override
-  String get pullFromRemote => 'Tirer depuis le distant';
+  String get pullFromRemote => 'Puller depuis le distant';
   @override
   String get importLabel => 'Importer';
   @override
@@ -548,7 +548,7 @@ class _Translations$branches$fr extends Translations$branches$en {
       'Échec de la publication : ${error}';
   @override
   String couldntOpenDesk({required Object error}) =>
-      'Impossible d\'ouvrir le bureau : ${error}';
+      'Impossible d\'ouvrir le Desk : ${error}';
   @override
   String syncFailed({required Object error}) =>
       'Échec de la synchronisation : ${error}';
@@ -568,12 +568,12 @@ class _Translations$branches$fr extends Translations$branches$en {
   String deletingBranch({required Object name}) => 'Suppression de ${name}';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '« ${name} » est ouverte dans le bureau « ${desk} ».';
+      '« ${name} » est ouverte dans le Desk « ${desk} ».';
   @override
-  String get openDesk => 'Ouvrir le bureau';
+  String get openDesk => 'Ouvrir le Desk';
   @override
   String openInDeskShort({required Object desk}) =>
-      'ouvrir dans le bureau « ${desk} »';
+      'ouvrir dans le Desk « ${desk} »';
   @override
   String get couldNotPinBranch =>
       'impossible d\'épingler la pointe de la branche ; suppression ignorée';
@@ -591,13 +591,13 @@ class _Translations$branches$fr extends Translations$branches$en {
   String prSourceLabel({required Object number, required Object title}) =>
       'PR n°${number} : ${title}';
   @override
-  String mergeIntoDesk({required Object branch}) => 'Fusionner dans ${branch}…';
+  String mergeIntoDesk({required Object branch}) => 'Merger dans ${branch}…';
   @override
-  String get checkoutThisPr => 'Extraire cette PR';
+  String get checkoutThisPr => 'Checkout de cette PR';
   @override
-  String get mergeIntoNewDesk => 'Fusionner dans un nouveau bureau…';
+  String get mergeIntoNewDesk => 'Merger dans un nouveau Desk…';
   @override
-  String get pushToForge => 'Pousser vers la forge';
+  String get pushToForge => 'Pusher vers la forge';
   @override
   String get linkToIssue => 'Lier à un ticket…';
   @override
@@ -626,7 +626,7 @@ class _Translations$branches$fr extends Translations$branches$en {
       'Impossible de récupérer la PR : ${error}';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Impossible d\'ouvrir comme bureau : ${error}';
+      'Impossible d\'ouvrir comme Desk : ${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       'Impossible d\'ouvrir dans le navigateur : ${error}';
@@ -641,10 +641,10 @@ class _Translations$branches$fr extends Translations$branches$en {
       'Lier la PR n°${number} à un/des ticket(s)';
   @override
   String get noPrsYetLocal =>
-      'Aucune PR pour l\'instant. Ouvrez-en une en amont, ou promouvez un bureau en PR.';
+      'Aucune PR pour l\'instant. Ouvrez-en une en amont, ou promouvez un Desk en PR.';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      'Les tickets distants ne peuvent être liés qu\'à des PR locales. Promouvez d\'abord un bureau en PR.';
+      'Les tickets distants ne peuvent être liés qu\'à des PR locales. Promouvez d\'abord un Desk en PR.';
   @override
   String linkIssueToPrs({required Object number}) =>
       'Lier le ticket n°${number} à une/des PR';
@@ -664,7 +664,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   String get patchEmptyOrUnparseable =>
       'Le patch est vide ou impossible à analyser.';
   @override
-  String get prPushedToForge => 'PR poussée vers la forge.';
+  String get prPushedToForge => 'PR pushée vers la forge.';
   @override
   String overwriteRefConfirm({required Object ref}) =>
       'Écraser ${ref} avec la dernière version du distant ?';
@@ -695,7 +695,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   String get noOpenPullRequests => 'Aucune pull request ouverte';
   @override
   String get noPullRequestsHint =>
-      'Ouvrez-en une depuis une branche, ou promouvez un bureau.';
+      'Ouvrez-en une depuis une branche, ou promouvez un Desk.';
   @override
   String get noPrsMatchFilters => 'Aucune PR ne correspond à ces filtres';
   @override
@@ -737,7 +737,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => 'Aucun modèle de revue configuré.';
   @override
-  String get deskFallback => 'bureau';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({
     required num n,
@@ -745,15 +745,15 @@ class _Translations$branches$fr extends Translations$branches$en {
   }) => (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
     n,
     one:
-        '${branch} a ${n} changement non validé — validez ou remisez d\'abord.',
+        '${branch} a ${n} changement non committé — committez ou stashez d\'abord.',
     other:
-        '${branch} a ${n} changements non validés — validez ou remisez d\'abord.',
+        '${branch} a ${n} changements non committés — committez ou stashez d\'abord.',
   );
   @override
-  String get targetDeskNoBranch => 'Le bureau cible n\'a pas de branche.';
+  String get targetDeskNoBranch => 'Le Desk cible n\'a pas de branche.';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
-      'Fusionner la PR n°${number} dans ${branch}';
+      'Merger la PR n°${number} dans ${branch}';
   @override
   String get conflictCheckUnavailableVersion =>
       'Vérification de conflit indisponible — git 2.38+ requis';
@@ -773,12 +773,12 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get squash => 'Écraser';
   @override
-  String get mergeCommit => 'Commit de fusion';
+  String get mergeCommit => 'Commit de merge';
   @override
   String noDeskForBranch({required Object branch}) =>
-      'Aucun bureau trouvé pour la branche ${branch}';
+      'Aucun Desk trouvé pour la branche ${branch}';
   @override
-  String get mergeAnyway => 'Fusionner quand même';
+  String get mergeAnyway => 'Merger quand même';
   @override
   String get readingIssues => 'Lecture des tickets…';
   @override
@@ -792,9 +792,9 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get promoteToRemote => 'Promouvoir vers le distant';
   @override
-  String get pushToRemote => 'Pousser vers le distant';
+  String get pushToRemote => 'Pusher vers le distant';
   @override
-  String get pullFromRemote => 'Tirer depuis le distant';
+  String get pullFromRemote => 'Puller depuis le distant';
   @override
   String get import => 'Importer';
   @override
@@ -804,9 +804,9 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get issuePromotedToRemote => 'Ticket promu vers le distant.';
   @override
-  String get issuePushedToRemote => 'Poussé vers le distant.';
+  String get issuePushedToRemote => 'Pushé vers le distant.';
   @override
-  String get issuePulledFromRemote => 'Tiré depuis le distant.';
+  String get issuePulledFromRemote => 'Pullé depuis le distant.';
   @override
   String issueImportedLocally({required Object number}) =>
       '#${number} importé localement.';
@@ -842,7 +842,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get kbExpandCollapse => 'développer / réduire la rangée ciblée';
   @override
-  String get kbCheckoutPr => 'extraire la PR ciblée localement';
+  String get kbCheckoutPr => 'checkout de la PR ciblée en local';
   @override
   String get kbApproveReview => 'approuver · revue';
   @override
@@ -857,13 +857,13 @@ class _Translations$branches$fr extends Translations$branches$en {
   String get kbPressToDismiss => 'appuyez n\'importe où pour fermer';
   @override
   String get overrideScarTooltip =>
-      'fusionnée avec des vérifications en échec ou sans revue approuvée — à examiner en priorité';
+      'mergée avec des vérifications en échec ou sans revue approuvée — à examiner en priorité';
   @override
   String filesOverlapUncommitted({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
         n,
-        one: '${n} fichier recoupe votre travail non validé',
-        other: '${n} fichiers recoupent votre travail non validé',
+        one: '${n} fichier recoupe votre travail non committé',
+        other: '${n} fichiers recoupent votre travail non committé',
       );
   @override
   String collisionPrShared({required num n, required Object pr}) =>
@@ -954,7 +954,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   String get touchesYourLocalWork => 'TOUCHE VOTRE TRAVAIL LOCAL';
   @override
   String get mergingWillConflict =>
-      'la fusion entrera probablement en conflit avec vos changements non validés';
+      'le merge entrera probablement en conflit avec vos changements non committés';
   @override
   String get closesHeading => 'FERME';
   @override
@@ -1012,17 +1012,17 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ revue pr';
   @override
-  String get actionOpenAsDesk => '⊞ ouvrir comme bureau';
+  String get actionOpenAsDesk => '⊞ ouvrir comme Desk';
   @override
-  String get actionCheckout => '[c] extraire';
+  String get actionCheckout => '[c] checkout';
   @override
-  String get actionMerge => '[m] fusionner ▾';
+  String get actionMerge => '[m] merger ▾';
   @override
-  String get mergeMenuMergeCommit => 'commit de fusion';
+  String get mergeMenuMergeCommit => 'commit de merge';
   @override
-  String get mergeMenuSquash => 'écraser et fusionner';
+  String get mergeMenuSquash => 'écraser et merger';
   @override
-  String get mergeMenuRebase => 'rebaser et fusionner';
+  String get mergeMenuRebase => 'rebaser et merger';
   @override
   String get deleteBranchAfter => 'supprimer la branche après';
   @override
@@ -1065,13 +1065,13 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String absorbedDeliveredIn({required Object hash}) => 'livrée dans ${hash}';
   @override
-  String get absorbedNoChanges => 'la fusion n\'ajoute aucun changement';
+  String get absorbedNoChanges => 'le merge n\'ajoute aucun changement';
   @override
   String get corpseTagUpstreamGone => 'amont parti';
   @override
   String corpseTagAbsorbed({required Object receipt}) => 'absorbée, ${receipt}';
   @override
-  String get corpseTagSquashed => 'écrasée et fusionnée';
+  String get corpseTagSquashed => 'écrasée et mergée';
   @override
   String semanticsCurrentBranch({required Object name}) =>
       '${name}, branche actuelle';
@@ -1094,7 +1094,7 @@ class _Translations$branches$fr extends Translations$branches$en {
     required Object phrase,
   }) => '${name}, ${tag}, ${phrase}';
   @override
-  String get crossLinkDesk => 'bureau';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -1111,7 +1111,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String trackingLine({required Object upstream}) => '→ suivi : ${upstream}';
   @override
-  String get checkoutButton => 'Extraire';
+  String get checkoutButton => 'Checkout';
   @override
   String get createBranch => 'Créer une branche';
   @override
@@ -1150,7 +1150,7 @@ class _Translations$branches$fr extends Translations$branches$en {
   @override
   String get opening => 'ouverture…';
   @override
-  String get mergeEditor => '⇋ éditeur de fusion';
+  String get mergeEditor => '⇋ éditeur de merge';
   @override
   String get staging => 'indexation…';
   @override
@@ -1164,10 +1164,10 @@ class _Translations$branches$fr extends Translations$branches$en {
       'affiner… (ex. « retire aussi les changements du logger »)';
   @override
   String get reverseArmedTooltip =>
-      'armé — la prochaine application ANNULERA le patch (-R)';
+      'armé — la prochaine application INVERSERA le patch (-R)';
   @override
   String get reverseDisarmedTooltip =>
-      'armer l\'inversion (-R) — annuler au lieu d\'appliquer';
+      'armer l\'inversion (-R) — inverser au lieu d\'appliquer';
   @override
   String get reverseArmedLabel => '⟲ inverser ✓';
   @override
@@ -2243,7 +2243,7 @@ class _Translations$app$cheatsheet$fr extends Translations$app$cheatsheet$en {
   @override
   String get pinContext => 'Épingler le contexte';
   @override
-  String get commit => 'Valider';
+  String get commit => 'Committer';
   @override
   String get acceptAiHint => 'Accepter l\'indice IA';
   @override
@@ -2253,7 +2253,7 @@ class _Translations$app$cheatsheet$fr extends Translations$app$cheatsheet$en {
   @override
   String get expand => 'Développer';
   @override
-  String get checkoutPr => 'Extraire la PR';
+  String get checkoutPr => 'Checkout de la PR';
   @override
   String get approve => 'Approuver';
   @override
@@ -2273,9 +2273,9 @@ class _Translations$backend$ops$fr extends Translations$backend$ops$en {
 
   // Translations
   @override
-  String get merge => 'Fusion';
+  String get merge => 'Merge';
   @override
-  String get pull => 'Tirage';
+  String get pull => 'Pull';
   @override
   String get apply => 'Application';
   @override
@@ -2318,9 +2318,10 @@ class _Translations$backend$mergeOutcome$fr
     required num n,
   }) => (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
     n,
-    one: '${n} fichier a des modifications non validées — validez-le d\'abord.',
+    one:
+        '${n} fichier a des modifications non committées — committez-le d\'abord.',
     other:
-        '${n} fichiers ont des modifications non validées — validez-les d\'abord.',
+        '${n} fichiers ont des modifications non committées — committez-les d\'abord.',
   );
 }
 
@@ -2516,25 +2517,24 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
 
   // Translations
   @override
-  String get primaryCommitChanges => 'Valider les modifications';
+  String get primaryCommitChanges => 'Committer les modifications';
   @override
   String get primaryCommitChangesDetail =>
-      'HEAD détachée : validez localement sans synchroniser.';
+      'HEAD détachée : committez localement sans synchroniser.';
   @override
-  String get primaryPublish => 'Valider et publier';
+  String get primaryPublish => 'Committer et publier';
   @override
   String get primaryPublishDetail =>
       'Créer le commit et publier cette branche d\'un coup.';
   @override
-  String get primarySync => 'Valider et synchroniser';
+  String get primarySync => 'Committer et synchroniser';
   @override
   String get primarySyncDetail =>
       'Créer le commit, puis réconcilier et livrer la branche.';
   @override
-  String get primaryPush => 'Valider et pousser';
+  String get primaryPush => 'Committer et pusher';
   @override
-  String get primaryPushDetail =>
-      'Créer le commit et le pousser immédiatement.';
+  String get primaryPushDetail => 'Créer le commit et le pusher immédiatement.';
   @override
   String get amendLast => 'Amender le dernier commit';
   @override
@@ -2545,17 +2545,17 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
   @override
   String get writeMessage => 'Écrivez d\'abord un message de commit.';
   @override
-  String get committing => 'Validation';
+  String get committing => 'Commit';
   @override
-  String get committingSync => 'Validation et synchronisation';
+  String get committingSync => 'Commit et synchronisation';
   @override
-  String get committed => 'Validé.';
+  String get committed => 'Committé.';
   @override
   String get undoFailed => 'Échec de l\'annulation.';
   @override
   String get working => 'En cours…';
   @override
-  String get commitOnly => 'Valider seulement';
+  String get commitOnly => 'Committer seulement';
   @override
   String get noRuntimeModels =>
       'Aucun modèle découvert à l\'exécution n\'est disponible pour les messages de commit.';
@@ -2564,7 +2564,7 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
       '${err}\nImpossible de restaurer l\'indexation des fichiers exclus ; vérifiez l\'index avant de réessayer.';
   @override
   String committedSummary({required Object summary, required Object hash}) =>
-      'Validé ${summary} (${hash}).';
+      'Committé ${summary} (${hash}).';
   @override
   String get restoreFailedSync =>
       'Impossible de réindexer les sélections des fichiers exclus ; synchronisation ignorée. Vérifiez l\'index avant de synchroniser.';
@@ -2581,13 +2581,13 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
   @override
   String get stageFailed => 'Échec de l\'indexation des fichiers.';
   @override
-  String get commitFailed => 'Échec de la validation.';
+  String get commitFailed => 'Échec du commit.';
   @override
   String committedAndRan({
     required Object summary,
     required Object hash,
     required Object operation,
-  }) => 'Validé ${summary} (${hash}) et exécuté ${operation}.';
+  }) => 'Committé ${summary} (${hash}) et exécuté ${operation}.';
   @override
   String committedResolved({
     required num n,
@@ -2595,8 +2595,8 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
     required Object hash,
   }) => (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
     n,
-    one: 'Validé ${summary} (${hash}) ; ${n} conflit résolu.',
-    other: 'Validé ${summary} (${hash}) ; ${n} conflits résolus.',
+    one: 'Committé ${summary} (${hash}) ; ${n} conflit résolu.',
+    other: 'Committé ${summary} (${hash}) ; ${n} conflits résolus.',
   );
   @override
   String conflictsLeft({required num n}) =>
@@ -2611,16 +2611,16 @@ class _Translations$changes$commit$fr extends Translations$changes$commit$en {
   }) => (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
     n,
     one:
-        'Validation réussie, mais la synchronisation a été bloquée par ${n} fichier non validé.',
+        'Commit réussi, mais la synchronisation a été bloquée par ${n} fichier non committé.',
     other:
-        'Validation réussie, mais la synchronisation a été bloquée par ${n} fichiers non validés.',
+        'Commit réussi, mais la synchronisation a été bloquée par ${n} fichiers non committés.',
   );
   @override
   String syncStalled({required Object message}) =>
-      'Validation réussie, mais la synchronisation a calé : ${message}';
+      'Commit réussi, mais la synchronisation a calé : ${message}';
   @override
   String syncFailed({required Object message}) =>
-      'Validation réussie, mais la synchronisation a échoué : ${message}';
+      'Commit réussi, mais la synchronisation a échoué : ${message}';
 }
 
 // Path: changes.rebase
@@ -2884,9 +2884,9 @@ class _Translations$changes$snack$fr extends Translations$changes$snack$en {
   String diffFailed({required Object error}) => 'Échec du diff : ${error}';
   @override
   String get deskEmpty =>
-      'Le bureau n\'a rien en avance sur vous — déversement vide.';
+      'Le Desk n\'a rien en avance sur vous — déversement vide.';
   @override
-  String sourceDesk({required Object label}) => 'bureau ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) =>
       'Échec de lecture de l\'étagère : ${error}';
@@ -2898,8 +2898,7 @@ class _Translations$changes$snack$fr extends Translations$changes$snack$en {
   String noModelConfigured({required Object label}) =>
       'Aucun modèle configuré pour « ${label} ».';
   @override
-  String fetchFailed({required Object error}) =>
-      'Échec de la récupération : ${error}';
+  String fetchFailed({required Object error}) => 'Échec du fetch : ${error}';
 }
 
 // Path: changes.trace
@@ -2944,7 +2943,7 @@ class _Translations$changes$cleanTree$fr
   @override
   String get check => 'vérifier';
   @override
-  String get checkTooltip => 'Récupérer et actualiser en local.';
+  String get checkTooltip => 'Fetch et actualiser en local.';
   @override
   String get sync => '& sync';
 }
@@ -2983,7 +2982,7 @@ class _Translations$changes$dropHint$fr
   String get fromShelf =>
       'déposez pour amener ici les changements de cette étagère';
   @override
-  String get fromDesk => 'déposez pour amener ici les changements de ce bureau';
+  String get fromDesk => 'déposez pour amener ici les changements de ce Desk';
 }
 
 // Path: changes.diffEmpty
@@ -3080,7 +3079,7 @@ class _Translations$changes$fileRow$fr extends Translations$changes$fileRow$en {
 
   // Translations
   @override
-  String get stagedLinesOnly => 'valide seulement les lignes indexées';
+  String get stagedLinesOnly => 'committe seulement les lignes indexées';
   @override
   String get doubleClickToggle => 'double-clic : basculer tout le groupe';
   @override
@@ -3495,14 +3494,14 @@ class _Translations$changes$stash$fr extends Translations$changes$stash$en {
   // Translations
   @override
   String get appliedWithConflicts =>
-      'Remisage appliqué avec des conflits — résolvez-les sur la page Modifications (l\'entrée de remisage a été conservée).';
+      'Stash appliqué avec des conflits — résolvez-les sur la page Modifications (l\'entrée de stash a été conservée).';
   @override
-  String get couldNotPop => 'Impossible de dépiler le remisage.';
+  String get couldNotPop => 'Impossible de dépiler le stash.';
   @override
   String get listChanged =>
-      'La liste des remisages a changé ; suppression ignorée. Réessayez.';
+      'La liste des stash a changé ; suppression ignorée. Réessayez.';
   @override
-  String get droppingStash => 'Suppression du remisage';
+  String get droppingStash => 'Suppression du stash';
 }
 
 // Path: changes.tooltips
@@ -3659,7 +3658,7 @@ class _Translations$changes$conflictResolution$fr
     required Object resolved,
     required Object total,
     required Object category,
-  }) => '◇ résolution de fusion · ${resolved}/${total} fichiers · ${category}';
+  }) => '◇ résolution de merge · ${resolved}/${total} fichiers · ${category}';
   @override
   String conflictSummary({
     required Object op,
@@ -3674,7 +3673,7 @@ class _Translations$changes$conflictResolution$fr
         other: '${n} conflits',
       );
   @override
-  String get mergeEditorButton => '⇋ éditeur de fusion';
+  String get mergeEditorButton => '⇋ éditeur de merge';
   @override
   String get noAiModel => 'aucun modèle IA';
   @override
@@ -3703,9 +3702,9 @@ class _Translations$changes$mergeFlow$fr
   late final _Translations$changes$mergeFlow$op$fr op =
       _Translations$changes$mergeFlow$op$fr._(_root);
   @override
-  String get pushFailed => 'Échec de la poussée';
+  String get pushFailed => 'Échec du push';
   @override
-  String get rebasedAndPushed => 'Rebasé et poussé.';
+  String get rebasedAndPushed => 'Rebasé et pushé.';
   @override
   String switchedTo({required Object name}) => 'Basculé vers ${name}.';
   @override
@@ -3717,7 +3716,7 @@ class _Translations$changes$mergeFlow$fr
   String get alreadyUpToDate => 'Déjà à jour.';
   @override
   String merged({required Object upstream, required Object n}) =>
-      '${upstream} fusionné (${n} fichiers).';
+      '${upstream} mergé (${n} fichiers).';
   @override
   String get rebaseNotConverge =>
       'Le rebasage n\'a pas convergé — résolvez manuellement.';
@@ -3804,7 +3803,12 @@ class _Translations$common$time$fr extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => 'il y a ${n} mois';
   @override
-  String yearsAgo({required Object n}) => 'il y a ${n} an';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
+        n,
+        one: 'il y a ${n} an',
+        other: 'il y a ${n} ans',
+      );
   @override
   String minutesShort({required Object n}) => '${n} min';
   @override
@@ -3816,7 +3820,12 @@ class _Translations$common$time$fr extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n} mois';
   @override
-  String yearsShort({required Object n}) => '${n} an';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
+        n,
+        one: '${n} an',
+        other: '${n} ans',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n} mois';
   @override
@@ -4272,7 +4281,7 @@ class _Translations$history$seismograph$fr
   @override
   String get conflictedTag => 'en conflit';
   @override
-  String get dirtyTag => 'sale';
+  String get dirtyTag => 'dirty';
   @override
   String get drillInTag => 'creuser';
   @override
@@ -4326,7 +4335,7 @@ class _Translations$history$contextMenu$fr
       'Appliquer les changements du commit sur ${branch}';
   @override
   String revertCommitOn({required Object branch}) =>
-      'Annuler les changements du commit sur ${branch}';
+      'Revert des changements du commit sur ${branch}';
 }
 
 // Path: history.cherryPick
@@ -4341,14 +4350,14 @@ class _Translations$history$cherryPick$fr
   // Translations
   @override
   String get paused =>
-      'Picorage en pause. Terminez les conflits restants sur la page Modifications.';
+      'Cherry-pick en pause. Terminez les conflits restants sur la page Modifications.';
   @override
-  String failed({required Object error}) => 'Échec du picorage : ${error}';
+  String failed({required Object error}) => 'Échec du cherry-pick : ${error}';
   @override
   String pickedResolved({required Object short}) =>
-      'Picoré ${short} (conflits résolus)';
+      'Cherry-pické ${short} (conflits résolus)';
   @override
-  String picked({required Object short}) => 'Picoré ${short}';
+  String picked({required Object short}) => 'Cherry-pické ${short}';
 }
 
 // Path: history.revert
@@ -4362,14 +4371,14 @@ class _Translations$history$revert$fr extends Translations$history$revert$en {
   // Translations
   @override
   String get paused =>
-      'Annulation en pause. Terminez les conflits restants sur la page Modifications.';
+      'Revert en pause. Terminez les conflits restants sur la page Modifications.';
   @override
-  String failed({required Object error}) => 'Échec de l\'annulation : ${error}';
+  String failed({required Object error}) => 'Échec du revert : ${error}';
   @override
   String revertedResolved({required Object short}) =>
-      'Annulé ${short} (conflits résolus)';
+      'Reverté ${short} (conflits résolus)';
   @override
-  String reverted({required Object short}) => 'Annulé ${short}';
+  String reverted({required Object short}) => 'Reverté ${short}';
 }
 
 // Path: history.reflog
@@ -4448,7 +4457,7 @@ class _Translations$history$inFlight$fr
   @override
   String get header => 'EN VOL';
   @override
-  String get deskFallbackLabel => 'bureau';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -4549,14 +4558,14 @@ class _Translations$historySurgery$understand$fr
       'Les pointeurs de branche et d\'étiquette sont déplacés vers les nouveaux SHA de commits. Les anciens objets subsistent jusqu\'au ramasse-miettes. ';
   @override
   String worktreesNeedRecheckout({required Object n}) =>
-      'Vos ${n} arbre(s) de travail devront être re-extraits.';
+      'Vos ${n} arbre(s) de travail devront refaire un checkout.';
   @override
   String get noWorktreesAffected => 'Aucun arbre de travail n\'est affecté.';
   @override
-  String get forcePushTitle => 'Poussée forcée';
+  String get forcePushTitle => 'Force push';
   @override
   String get forcePushBody =>
-      'Après vérification de la purge, vous choisissez les branches à forcer. Utilise --force-with-lease pour échouer sans risque si quelqu\'un d\'autre a poussé entre-temps.';
+      'Après vérification de la purge, vous choisissez les branches à forcer. Utilise --force-with-lease pour échouer sans risque si quelqu\'un d\'autre a pushé entre-temps.';
   @override
   String get plumbingNote =>
       'Contrairement à filter-repo ou BFG, ceci passe entièrement par les commandes de plomberie git (cat-file, mktree, commit-tree, update-ref). Aucune dépendance externe. Le suivi des renommages suit une chaîne par fichier — si un fichier a été copié et les deux copies renommées indépendamment, vérifiez le résultat de la purge après exécution.';
@@ -4581,18 +4590,18 @@ class _Translations$historySurgery$confirm$fr
       '${n} commits seront réécrits';
   @override
   String get forcePushRequired =>
-      'Une poussée forcée sera nécessaire pour les branches distantes';
+      'Un force push sera nécessaire pour les branches distantes';
   @override
   String worktreesRecheckout({required Object n}) =>
-      '${n} arbres de travail devront être re-extraits';
+      '${n} arbres de travail devront refaire un checkout';
   @override
   String stashesInvalid({required Object n}) =>
-      '${n} remisages peuvent devenir invalides';
+      '${n} stash peuvent devenir invalides';
   @override
   String get heading => 'Cette opération réécrit l\'historique git';
   @override
   String get subheading =>
-      'Elle ne peut pas être annulée automatiquement après une poussée forcée.';
+      'Elle ne peut pas être annulée automatiquement après un force push.';
   @override
   String typeHint({required Object word}) => 'tapez ${word}';
   @override
@@ -4670,11 +4679,11 @@ class _Translations$historySurgery$forcePush$fr
 
   // Translations
   @override
-  String get pushing => 'poussée...';
+  String get pushing => 'push...';
   @override
   String get forcePushAll => 'Tout forcer';
   @override
-  String get confirmPush => 'confirmer la poussée';
+  String get confirmPush => 'confirmer le push';
   @override
   String get cancel => 'annuler';
 }
@@ -5188,7 +5197,7 @@ class _Translations$palette$chips$fr extends Translations$palette$chips$en {
   @override
   String get ver => 'VER';
   @override
-  String get desk => 'BUREAU';
+  String get desk => 'DESK';
   @override
   String get det => 'DÉT';
   @override
@@ -5308,7 +5317,7 @@ class _Translations$palette$desks$fr extends Translations$palette$desks$en {
   @override
   String get detached => 'détachée';
   @override
-  String dirty({required Object count}) => '${count} sales';
+  String dirty({required Object count}) => '${count} dirty';
 }
 
 // Path: palette.actions
@@ -5356,9 +5365,9 @@ class _Translations$palette$gitCommands$fr
 
   // Translations
   @override
-  String get fetch => 'Récupérer';
+  String get fetch => 'Fetch';
   @override
-  String get pull => 'Tirer';
+  String get pull => 'Pull';
   @override
   String pullBehind({required Object count}) => '${count} en retard';
   @override
@@ -5367,7 +5376,7 @@ class _Translations$palette$gitCommands$fr
     required Object upstream,
   }) => '${behind} ${upstream}';
   @override
-  String get push => 'Pousser';
+  String get push => 'Push';
   @override
   String pushCommits({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
@@ -5381,12 +5390,12 @@ class _Translations$palette$gitCommands$fr
     required Object upstream,
   }) => '${commits} vers ${upstream}';
   @override
-  String get forcePush => 'Poussée forcée';
+  String get forcePush => 'Force push';
   @override
   String forcePushNoUpstream({required Object branch}) =>
-      'Impossible de forcer la poussée : aucun amont défini pour ${branch}.';
+      'Impossible de forcer le push : aucun amont défini pour ${branch}.';
   @override
-  String get commit => 'Valider';
+  String get commit => 'Committer';
   @override
   String get stageAll => 'Tout indexer';
   @override
@@ -5400,22 +5409,22 @@ class _Translations$palette$gitCommands$fr
   @override
   String get renameBranch => 'Renommer la branche';
   @override
-  String get stash => 'Remiser';
+  String get stash => 'Stash';
   @override
-  String get stashPop => 'Dépiler le remisage';
+  String get stashPop => 'Dépiler le stash';
   @override
-  String get stashApply => 'Appliquer le remisage';
+  String get stashApply => 'Appliquer le stash';
   @override
-  String get stashDrop => 'Supprimer le remisage';
+  String get stashDrop => 'Supprimer le stash';
   @override
   String get createTag => 'Créer une étiquette';
   @override
-  String get cherryPick => 'Picorer';
+  String get cherryPick => 'Cherry-pick';
   @override
-  String get revert => 'Annuler';
+  String get revert => 'Revert';
   @override
   String get stashConflictMessage =>
-      'Remisage appliqué avec des conflits. Résolvez-les sur la page Modifications.';
+      'Stash appliqué avec des conflits. Résolvez-les sur la page Modifications.';
 }
 
 // Path: palette.pr
@@ -5430,7 +5439,7 @@ class _Translations$palette$pr$fr extends Translations$palette$pr$en {
   @override
   String get create => 'Créer une PR';
   @override
-  String get merge => 'Fusionner la PR';
+  String get merge => 'Merger la PR';
   @override
   String get markReady => 'Marquer la PR prête';
 }
@@ -5540,7 +5549,7 @@ class _Translations$palette$settings$fr
   @override
   String get aiReadOnly => 'IA en lecture seule';
   @override
-  String get stashCabinetExpanded => 'Armoire de remisage déployée';
+  String get stashCabinetExpanded => 'Armoire de stash déployée';
   @override
   String get fileSortInverted => 'Tri des fichiers inversé';
 }
@@ -5593,7 +5602,7 @@ class _Translations$palette$dev$fr extends Translations$palette$dev$en {
 
   // Translations
   @override
-  String get testMergeEditor => 'Tester l\'éditeur de fusion';
+  String get testMergeEditor => 'Tester l\'éditeur de merge';
   @override
   String get testHistorySurgery => 'Tester la chirurgie de l\'historique';
   @override
@@ -6262,7 +6271,7 @@ class _Translations$settings$keybindingProfile$fr
   @override
   String get label => 'Profil de raccourcis';
   @override
-  String get porcelain => 'Porcelaine';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => 'Numérique';
   @override
@@ -6343,7 +6352,7 @@ class _Translations$settings$shortcuts$fr
   @override
   String get pinContext => 'Épingler le contexte';
   @override
-  String get commit => 'Valider';
+  String get commit => 'Committer';
   @override
   String get acceptHint => 'Accepter l\'indice';
   @override
@@ -6353,7 +6362,7 @@ class _Translations$settings$shortcuts$fr
   @override
   String get expand => 'Développer';
   @override
-  String get checkout => 'Extraire';
+  String get checkout => 'Checkout';
   @override
   String get approve => 'Approuver';
   @override
@@ -6392,7 +6401,7 @@ class _Translations$settings$toggles$fr
   String get rememberWipDescription =>
       'Conserve vos brouillons de commit et votre sélection de fichiers entre les sessions.';
   @override
-  String get stashCabinetLabel => 'L\'armoire de remisage démarre déployée';
+  String get stashCabinetLabel => 'L\'armoire de stash démarre déployée';
   @override
   String get stashCabinetDescription =>
       'Affiche le tiroir de l\'armoire ouvert par défaut quand un dépôt a des étagères.';
@@ -6509,7 +6518,7 @@ class _Translations$settings$aiFeatures$fr
       'Rédige des messages de commit à partir des changements indexés selon vos préférences de structure, de voix et de couverture.';
   @override
   String get reviewDescription =>
-      'Relit le périmètre du commit actuel avant que vous ne validiez.';
+      'Relit le périmètre du commit actuel avant que vous ne committiez.';
   @override
   String get museDescription =>
       'Oracle en trois phases qui remue-méninge puis synthétise une direction à suivre pour le diff.';
@@ -7485,17 +7494,17 @@ class _Translations$sync$actions$fr extends Translations$sync$actions$en {
   String get syncLabel => 'Synchroniser';
   @override
   String get syncOpenRepoDetail =>
-      'Ouvrez un dépôt pour gérer les opérations pousser et tirer.';
+      'Ouvrez un dépôt pour gérer les opérations push et pull.';
   @override
   String get detachedHeadLabel => 'HEAD détachée';
   @override
   String get detachedHeadDetail =>
-      'Basculez sur une branche avant de pousser ou tirer.';
+      'Basculez sur une branche avant de pusher ou puller.';
   @override
   String get publishBranchLabel => 'Publier la branche';
   @override
   String publishBranchDetail({required Object branch}) =>
-      'Pousser ${branch} et définir sa branche de suivi amont.';
+      'Pusher ${branch} et définir sa branche de suivi amont.';
   @override
   String get publishButtonLabel => 'Publier';
   @override
@@ -7504,24 +7513,24 @@ class _Translations$sync$actions$fr extends Translations$sync$actions$en {
   String syncBranchDetail({
     required Object behindCount,
     required Object aheadCount,
-  }) => 'Tirer ${behindCount} en rebasant, puis pousser ${aheadCount}.';
+  }) => 'Puller ${behindCount} en rebasant, puis pusher ${aheadCount}.';
   @override
-  String get syncBranchButtonLabel => 'Tirer (rebaser) puis pousser';
+  String get syncBranchButtonLabel => 'Pull (rebase) puis push';
   @override
-  String get pushBranchLabel => 'Pousser la branche';
+  String get pushBranchLabel => 'Pusher la branche';
   @override
   String pushBranchDetail({required Object count, required Object upstream}) =>
-      'Pousser ${count} vers ${upstream}.';
+      'Pusher ${count} vers ${upstream}.';
   @override
-  String get pushBranchButtonLabel => 'Pousser les commits';
+  String get pushBranchButtonLabel => 'Pusher les commits';
   @override
-  String get pullUpdatesLabel => 'Tirer les mises à jour';
+  String get pullUpdatesLabel => 'Puller les mises à jour';
   @override
   String pullUpdatesDetail({required Object count, required Object upstream}) =>
-      'Tirer ${count} depuis ${upstream}.';
+      'Puller ${count} depuis ${upstream}.';
   @override
   String syncUpToDateDetail({required Object upstream}) =>
-      'Récupérer depuis ${upstream} et actualiser l\'état amont.';
+      'Fetcher depuis ${upstream} et actualiser l\'état amont.';
 }
 
 // Path: sync.panel
@@ -7551,13 +7560,13 @@ class _Translations$sync$panel$fr extends Translations$sync$panel$en {
   @override
   String get runningSync => 'Synchronisation en cours…';
   @override
-  String get fetching => 'Récupération…';
+  String get fetching => 'Fetch…';
   @override
-  String get fetchOnly => 'Récupérer seulement';
+  String get fetchOnly => 'Fetch seulement';
   @override
   String get syncFailed => 'Échec de la synchronisation';
   @override
-  String get forcePushRecoveryLabel => 'Poussée forcée (avec bail)';
+  String get forcePushRecoveryLabel => 'Force push (avec bail)';
   @override
   String get conflictsToResolveTitle => 'Conflits à résoudre';
   @override
@@ -7583,10 +7592,10 @@ class _Translations$sync$panel$fr extends Translations$sync$panel$en {
     required Object count,
     required Object list,
   }) =>
-      '${count} ont des modifications non validées, validez-les d\'abord pour synchroniser par rebasage (${list}).';
+      '${count} ont des modifications non committées, committez-les d\'abord pour synchroniser par rebasage (${list}).';
   @override
   String noUpstreamForForcePush({required Object branch}) =>
-      'Impossible de forcer la poussée : aucun amont n\'est configuré pour « ${branch} ».';
+      'Impossible de forcer le push : aucun amont n\'est configuré pour « ${branch} ».';
 }
 
 // Path: sync.forcePush
@@ -7599,15 +7608,15 @@ class _Translations$sync$forcePush$fr extends Translations$sync$forcePush$en {
 
   // Translations
   @override
-  String get confirmTitle => 'Forcer la poussée (avec bail) ?';
+  String get confirmTitle => 'Force push (avec bail) ?';
   @override
   String target({required Object remote, required Object branch}) =>
       'Cible : ${remote}/${branch}';
   @override
   String get warning =>
-      'Ceci réécrit la branche distante avec votre historique local. Avec bail, l\'opération s\'interrompt si quelqu\'un a poussé sur le distant après votre dernière récupération, mais les changements déjà récupérés seront tout de même écrasés. À n\'utiliser que lorsque vous avez volontairement rebasé ou amendé au point de faire diverger la branche.';
+      'Ceci réécrit la branche distante avec votre historique local. Avec bail, l\'opération s\'interrompt si quelqu\'un a pushé sur le distant après votre dernier fetch, mais les changements déjà fetchés seront tout de même écrasés. À n\'utiliser que lorsque vous avez volontairement rebasé ou amendé au point de faire diverger la branche.';
   @override
-  String get confirmButton => 'Forcer la poussée';
+  String get confirmButton => 'Force push';
 }
 
 // Path: xray.board
@@ -7759,7 +7768,7 @@ class _Translations$xray$header$fr extends Translations$xray$header$en {
 
   // Translations
   @override
-  String get dirtyBadge => 'sale';
+  String get dirtyBadge => 'dirty';
   @override
   String get machineChip => 'machine';
   @override
@@ -7767,7 +7776,7 @@ class _Translations$xray$header$fr extends Translations$xray$header$en {
   @override
   String get refreshing => 'Actualisation...';
   @override
-  String get title => 'Radiographie du dépôt';
+  String get title => 'X-Ray du dépôt';
 }
 
 // Path: xray.hotspot
@@ -7822,8 +7831,8 @@ class _Translations$xray$inspector$fr extends Translations$xray$inspector$en {
   String mergeCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
         n,
-        one: '${n} fusion',
-        other: '${n} fusions',
+        one: '${n} merge',
+        other: '${n} merges',
       );
   @override
   String get noTags => 'aucune étiquette';
@@ -7844,15 +7853,15 @@ class _Translations$xray$inspector$fr extends Translations$xray$inspector$en {
   @override
   String get shapeLinear => 'linéaire';
   @override
-  String get shapeMergeHeavy => 'riche en fusions';
+  String get shapeMergeHeavy => 'riche en merges';
   @override
   String get shapeMostlyLinear => 'quasi linéaire';
   @override
   String stashCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
         n,
-        one: '${n} remisage',
-        other: '${n} remisages',
+        one: '${n} stash',
+        other: '${n} stash',
       );
   @override
   String get stressLabel => 'contrainte';
@@ -7886,13 +7895,13 @@ class _Translations$xray$loadingCard$fr
   String get buildingMessage =>
       'Sondage de l\'historique Git, des réfs, de la cadence et des points chauds.';
   @override
-  String get buildingTitle => 'Construction de la radiographie du dépôt';
+  String get buildingTitle => 'Construction du X-Ray du dépôt';
   @override
   String get idleMessage => 'Rouvrez le panneau pour sonder le dépôt actuel.';
   @override
-  String get idleTitle => 'Radiographie du dépôt';
+  String get idleTitle => 'X-Ray du dépôt';
   @override
-  String get unavailableTitle => 'Radiographie du dépôt indisponible';
+  String get unavailableTitle => 'X-Ray du dépôt indisponible';
 }
 
 // Path: xray.metabolism
@@ -7952,7 +7961,12 @@ class _Translations$xray$recency$fr extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n} sem';
   @override
-  String years({required Object n}) => '${n} an';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
+        n,
+        one: '${n} an',
+        other: '${n} ans',
+      );
 }
 
 // Path: xray.rings
@@ -8228,17 +8242,17 @@ class _Translations$changes$mergeFlow$op$fr
 
   // Translations
   @override
-  String get merge => 'fusion';
+  String get merge => 'merge';
   @override
-  String get cherryPick => 'picorage';
+  String get cherryPick => 'cherry-pick';
   @override
-  String get revert => 'annulation';
+  String get revert => 'revert';
   @override
   String get resolve => 'résolution';
   @override
   String get switchOp => 'bascule';
   @override
-  String get pull => 'tirage';
+  String get pull => 'pull';
   @override
   String get rebase => 'rebasage';
   @override
@@ -8551,7 +8565,7 @@ class _Translations$onboarding$preview$panels$fr
 
   // Translations
   @override
-  String get xray => 'radiographie du dépôt';
+  String get xray => 'x-ray du dépôt';
   @override
   String get settings => 'paramètres';
 }
@@ -8588,7 +8602,7 @@ class _Translations$onboarding$preview$changes$fr
   @override
   String get commitMessageHint => 'Message de commit…';
   @override
-  String get commitAndPush => 'Valider et pousser';
+  String get commitAndPush => 'Committer et pusher';
 }
 
 // Path: onboarding.preview.history
@@ -8636,7 +8650,7 @@ class _Translations$onboarding$preview$branches$fr
   @override
   String get absorbed => 'absorbée';
   @override
-  String get desk => 'bureau';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override
@@ -8688,7 +8702,7 @@ class _Translations$releaseNotes$about$spectralEngine$fr
   String get question => 'QU\'EST-CE QUE LE MOTEUR SPECTRAL ?';
   @override
   String get body =>
-      'Chaque fois que vous validez, les fichiers que vous modifiez ensemble forment des motifs au fil du temps. Le moteur spectral lit votre graphe de commits et décompose ces motifs de co-changement en signaux : quels fichiers sont couplés, à quel point, et quel rôle structurel ils jouent dans le dépôt. En gros, de l\'analyse spectrale sur votre historique de développement. Dans un client git. Volontairement.\n\nLes maths sont nouvelles, alors je les traite comme le game feel : régler, tester, ajuster, et continuer jusqu\'à ce que les signaux sonnent juste.\n\nCes signaux alimentent tout. Le sismographe dans l\'historique, les barres peintes sous les intitulés de commits, le système de revue, la Muse, la constellation de fichiers. Toute l\'application raisonne depuis cette couche vers le haut, jamais l\'inverse.';
+      'Chaque fois que vous committez, les fichiers que vous modifiez ensemble forment des motifs au fil du temps. Le moteur spectral lit votre graphe de commits et décompose ces motifs de co-changement en signaux : quels fichiers sont couplés, à quel point, et quel rôle structurel ils jouent dans le dépôt. En gros, de l\'analyse spectrale sur votre historique de développement. Dans un client git. Volontairement.\n\nLes maths sont nouvelles, alors je les traite comme le game feel : régler, tester, ajuster, et continuer jusqu\'à ce que les signaux sonnent juste.\n\nCes signaux alimentent tout. Le sismographe dans l\'historique, les barres peintes sous les intitulés de commits, le système de revue, la Muse, la constellation de fichiers. Toute l\'application raisonne depuis cette couche vers le haut, jamais l\'inverse.';
 }
 
 // Path: releaseNotes.about.whereGoing

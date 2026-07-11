@@ -200,8 +200,8 @@
   "snack": {
     "sameWorktree": "Mismo árbol de trabajo — no hay nada que volcar.",
     "diffFailed": "Falló el diff: {error}",
-    "deskEmpty": "El escritorio no tiene nada por delante de ti — volcado vacío.",
-    "sourceDesk": "escritorio {label}",
+    "deskEmpty": "El Desk no tiene nada por delante de ti — volcado vacío.",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "Falló la lectura del estante: {error}",
     "shelfEmpty": "Estante vacío — no hay nada que volcar.",
     "sourceShelf": "estante {label}",
@@ -232,7 +232,7 @@
   },
   "dropHint": {
     "fromShelf": "suelta para traer los cambios de este estante aquí",
-    "fromDesk": "suelta para traer los cambios de este escritorio aquí"
+    "fromDesk": "suelta para traer los cambios de este Desk aquí"
   },
   "diffEmpty": {
     "title": "Ningún archivo seleccionado",
@@ -359,7 +359,7 @@
     "dismiss": "Descartar"
   },
   "muse": {
-    "title": "Musa",
+    "title": "Muse",
     "youPulledThis": "tú sacaste esto",
     "fromIdea": "de la idea: \"{text}\"",
     "foothold": "punto de apoyo — ",
@@ -367,12 +367,12 @@
     "strandTooltip": "{label} · {count}",
     "copyN": "Copiar {count}",
     "clear": "Limpiar",
-    "chooseBeforeMuse": "Elige al menos un archivo antes de invocar a la musa.",
-    "aiUnavailable": "La IA de la Musa aún no está disponible.",
-    "failed": "Falló la Musa.",
-    "noRuntimeModels": "No hay modelos descubiertos en tiempo de ejecución disponibles para la musa.",
-    "needsModel": "La Musa necesita al menos un modelo configurado.",
-    "dreaming": "la musa está soñando..."
+    "chooseBeforeMuse": "Elige al menos un archivo antes de invocar a la muse.",
+    "aiUnavailable": "La IA de la muse aún no está disponible.",
+    "failed": "Falló la muse.",
+    "noRuntimeModels": "No hay modelos descubiertos en tiempo de ejecución disponibles para la muse.",
+    "needsModel": "La muse necesita al menos un modelo configurado.",
+    "dreaming": "la muse está soñando..."
   },
   "debug": {
     "title": "Depurar",
@@ -415,12 +415,12 @@
     "commitConfigure": "configura los mensajes de commit en Ajustes > Dinámicas de comportamiento > Mensajes de commit.",
     "fastFallback": "rápido",
     "commitGenerateWith": "generar el mensaje de commit con el modelo {label}",
-    "museConsulting": "consultando a la musa...",
-    "showMuse": "mostrar la musa",
-    "museSelectFile": "selecciona al menos un archivo para la musa.",
-    "showMuseError": "mostrar error de la musa",
-    "museAsk": "pide dirección a la musa",
-    "museAskWithModels": "pide dirección a la musa\n{brainstorm} → {synthesis}",
+    "museConsulting": "consultando a la muse...",
+    "showMuse": "mostrar la muse",
+    "museSelectFile": "selecciona al menos un archivo para la muse.",
+    "showMuseError": "mostrar error de la muse",
+    "museAsk": "pide dirección a la muse",
+    "museAskWithModels": "pide dirección a la muse\n{brainstorm} → {synthesis}",
     "qualityFallback": "calidad",
     "reviewing": "revisando...",
     "showReview": "mostrar la revisión",

@@ -1,0 +1,201 @@
+{
+  "active": "etkin",
+  "prefixes": {
+    "askHint": "sor: [soru]",
+    "nearHint": "yakın: [dosya]",
+    "whoHint": "kim: [dosya]",
+    "logHint": "log: [mesaj]",
+    "runHint": "çalıştır: [araç]",
+    "askLabel": "Sor ({name}): {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} inceleyici · {touches} dokunma",
+    "whoTouchesLabel": "{name} — {touches} dokunma",
+    "whoTouchesSubtitle": "{path} · inceleyici kaydı yok"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "YAKIN",
+    "who": "KİM",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "SICAK",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "PANO",
+    "sync": "EŞİT",
+    "force": "ZORLA",
+    "pr": "PR",
+    "draft": "TASLAK",
+    "undo": "GERİ AL",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "DESK",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "GİTTİ",
+    "remote": "UZAK",
+    "local": "YEREL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "%{percent} momentum"
+  },
+  "topTouched": {
+    "subtitle": "{count} dokunma · {path}"
+  },
+  "coherence": {
+    "label": "Hazırlama tutarlılığı: %{percent}",
+    "subtitle": "{count} dosya"
+  },
+  "keystone": {
+    "subtitle": "{path} · kilit taşı {score}"
+  },
+  "repoSub": {
+    "changes": "{name} deposunda Değişiklikler",
+    "history": "{name} deposunda Geçmiş",
+    "branches": "{name} deposunda Dallar",
+    "terminal": "{name} deposunda Terminal",
+    "generateCommit": "Commit Üret · {name}",
+    "reviewChanges": "{name} deposunda Değişiklikleri İncele",
+    "muse": "{name} deposunda Muse"
+  },
+  "desks": {
+    "mainWorktree": "ana çalışma ağacı",
+    "detached": "detached",
+    "dirty": "{count} kirli"
+  },
+  "actions": {
+    "openInBrowser": "Tarayıcıda Aç",
+    "terminal": "Terminal",
+    "revealInFiles": "Dosya Yöneticisinde Göster",
+    "copyPath": "Yolu Kopyala",
+    "copyBranch": "Dalı Kopyala"
+  },
+  "tools": {
+    "launch": "{label} başlat"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} geride",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commit"},
+    "pushCommitsUpstream": "{commits}, {upstream} hedefine",
+    "forcePush": "Force Push",
+    "forcePushNoUpstream": "Force-push yapılamıyor: {branch} için upstream ayarlanmamış.",
+    "commit": "Commit",
+    "stageAll": "Tümünü Hazırla",
+    "unstageAll": "Tümünü Hazırlıktan Çıkar",
+    "discardAll": "Tümünü Sil",
+    "createBranch": "Dal Oluştur",
+    "deleteBranch": "Dal Sil",
+    "renameBranch": "Dalı Yeniden Adlandır",
+    "stash": "Stash",
+    "stashPop": "Stash Pop",
+    "stashApply": "Stash Apply",
+    "stashDrop": "Stash Drop",
+    "createTag": "Etiket Oluştur",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash çakışmalarla uygulandı. Onları Değişiklikler sayfasında çöz."
+  },
+  "pr": {
+    "create": "PR Oluştur",
+    "merge": "PR'ı Merge Et",
+    "markReady": "PR'ı Hazır İşaretle"
+  },
+  "ai": {
+    "generateCommit": "Commit Üret",
+    "reviewChanges": "Değişiklikleri İncele",
+    "runMuse": "Muse Çalıştır",
+    "debugRepo": "Hata Ayıkla: {name}",
+    "describeSymptom": "bir belirti tarif et",
+    "viewResult": "{kind} görüntüle",
+    "unseenResult": "görülmemiş sonuç",
+    "runningResult": "AI: {kind}…",
+    "running": "çalışıyor",
+    "kindCommitMessage": "Commit Mesajı",
+    "kindCodeReview": "Kod İncelemesi",
+    "kindMuseResult": "Muse Sonucu",
+    "kindPresentation": "Sunum",
+    "kindDebugResult": "Hata Ayıklama Sonucu"
+  },
+  "undo": {
+    "cancel": "İptal: {label}"
+  },
+  "navigation": {
+    "changes": "Değişiklikler",
+    "history": "Geçmiş",
+    "branches": "Dallar",
+    "xray": "X-Ray",
+    "settings": "Ayarlar",
+    "refresh": "Yenile"
+  },
+  "settings": {
+    "reduceMotion": "Hareketi Azalt",
+    "animateLogoUnfocused": "Logoyu Odak Dışıyken Canlandır",
+    "instantBlameHover": "Anında Blame Vurgusu",
+    "autoSelectChanges": "Değişiklikleri Otomatik Seç",
+    "fetchOnlineIssues": "Çevrimiçi Issue'ları Fetch Et",
+    "rememberWip": "Devam Eden İşi Hatırla",
+    "hideAiFeatures": "AI Özelliklerini Gizle",
+    "crashReporting": "Çökme Raporlama",
+    "aiReadOnly": "AI Salt Okunur",
+    "stashCabinetExpanded": "Stash Dolabı Açık",
+    "fileSortInverted": "Dosya Sıralaması Ters"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Motor Durumu",
+    "engineStatusSubtitle": "LogosGit spektral motor tanılaması",
+    "fileCoupling": "Dosya Bağlaşımı",
+    "fileCouplingSubtitle": "Hazırlanan dosyalar için en yakın ortak-değişim komşuları",
+    "themeSpecimen": "Tema Örneği",
+    "themeSpecimenSubtitle": "Tüm renkler, simgeler, metin katmanları ve geometri"
+  },
+  "dev": {
+    "testMergeEditor": "Merge Editörünü Test Et",
+    "testHistorySurgery": "Geçmiş Cerrahisini Test Et",
+    "back": "geri",
+    "cancel": "iptal",
+    "buildingConflicts": "geçmişten test çakışmaları oluşturuluyor…"
+  },
+  "historySurgery": {
+    "label": "Geçmiş Cerrahisi",
+    "subtitle": "Dosyaları kalıcı olarak kaldırmak için geçmişi yeniden yaz"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Deponun yapısal geçmişini manifold boyunca tara"
+  },
+  "command": {
+    "complete": "{label} tamamlandı",
+    "failed": "{label} başarısız: {message}",
+    "copy": "Kopyala"
+  },
+  "search": {
+    "hintDefault": "her şeyde ara...",
+    "hintElevated": "yükseltilmiş — tüm eylemler",
+    "emptyTypeToSearch": "aramak için yaz",
+    "emptyNoResults": "sonuç yok"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "bağlı"
+  },
+  "gitCache": {
+    "current": "güncel",
+    "staged": "hazırlanmış",
+    "modified": "değiştirilmiş"
+  }
+}

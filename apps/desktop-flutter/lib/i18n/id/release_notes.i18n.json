@@ -1,0 +1,18 @@
+{
+  "@@locale": "id",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "KENAPA FLUTTER?",
+      "body": "Versi pertama ini dulunya aplikasi Tauri (Rust + TypeScript). Aku sudah merasa itu lambat. Lalu aku dengar seorang streamer bilang hal yang sama di sebuah stream yang biasanya tidak kutonton, dan itu jadi dorongan untuk akhirnya berpindah. Dia tidak menyarankan Flutter; justru jauh dari itu. Dart kutemukan sendiri, kurakit sebuah prototipe, dan waktu startup turun dari sekitar 15 detik jadi di bawah satu detik. Bagai siang dan malam. Selamat tinggal era Tauri.\n\nPipeline rendering Flutter lebih dekat ke game engine ketimbang DOM, dan untuk aplikasi desktop di mana UI adalah produknya, itu berarti segalanya. Dart ternyata juga bahasa yang benar-benar bagus. Matematika di balik spectral engine diprototipekan di Rust dulu, jadi kerja itu terbawa dengan mulus.\n\nFlutter lintas-platform secara default, yang mana bagus, tapi sifatnya Googley jadi ada beberapa keanehan."
+    },
+    "spectralEngine": {
+      "question": "APA ITU SPECTRAL ENGINE?",
+      "body": "Setiap kali kamu commit, file-file yang kamu ubah bersamaan membentuk pola seiring waktu. Spectral engine membaca commit graph-mu dan menguraikan pola co-change itu jadi sinyal: file mana yang terkopel, seberapa erat, dan peran struktural apa yang mereka mainkan di repo. Pada dasarnya analisis spektral atas history pengembanganmu. Di dalam git client. Dengan sengaja.\n\nMatematikanya baru, jadi aku memperlakukannya seperti game feel: setel, uji, sesuaikan, dan terus lanjut sampai sinyalnya terasa benar.\n\nSinyal-sinyal itu memberi makan segalanya. Seismograf di history, bar yang dilukis di bawah subjek commit, sistem review, Muse, konstelasi file. Seluruh aplikasi bernalar dari lapisan ini ke bawah, bukan sebaliknya."
+    },
+    "whereGoing": {
+      "question": "MAU DIBAWA KE MANA INI?",
+      "body": "Milestone pertama adalah kesetaraan penuh dengan GitHub Desktop, SourceTree, dan GitKraken. Git client lintas-platform yang terasa cepat dan menangani hal-hal dasar lebih baik dari yang lain. Sebagian besar sudah di sini. Spectral engine sudah memberi kita keunggulan untuk operasi yang membuatmu harus berpikir manual di client lain.\n\nSetelah itu, tujuannya adalah melampaui setiap git client lain dalam kecepatan, aksesibilitas, kecerdasan, dan UX keseluruhan. Ada lebih banyak di pipeline daripada yang diumumkan di sini."
+    }
+  }
+}

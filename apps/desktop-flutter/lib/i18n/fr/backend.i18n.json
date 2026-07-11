@@ -1,8 +1,8 @@
 {
   "@@locale": "fr",
   "ops": {
-    "merge": "Fusion",
-    "pull": "Tirage",
+    "merge": "Merge",
+    "pull": "Pull",
     "apply": "Application",
     "switchOp": "Bascule",
     "sync": "Synchronisation"
@@ -19,8 +19,8 @@
       "other": "{n} conflits résolus."
     },
     "uncommittedEdits": {
-      "one": "{n} fichier a des modifications non validées — validez-le d'abord.",
-      "other": "{n} fichiers ont des modifications non validées — validez-les d'abord."
+      "one": "{n} fichier a des modifications non committées — committez-le d'abord.",
+      "other": "{n} fichiers ont des modifications non committées — committez-les d'abord."
     }
   }
 }

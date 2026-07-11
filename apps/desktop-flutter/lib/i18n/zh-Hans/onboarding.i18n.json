@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "仓库透视",
+      "xray": "仓库 X-Ray",
       "settings": "设置"
     },
     "sidebar": {
@@ -85,7 +85,7 @@
       "lensBranches": "分支",
       "lensPRs": "PR",
       "absorbed": "已吸收",
-      "desk": "工作台",
+      "desk": "Desk",
       "head": "HEAD",
       "tracking": "→ 跟踪：{ref}"
     },

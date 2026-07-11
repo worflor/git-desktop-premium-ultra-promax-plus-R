@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -196,7 +197,8 @@ class _OrreryViewState extends State<OrreryView>
   /// Shared cross-highlight channel: a finding index that both the rail rows and
   /// the timeline markers light up on, so hovering one echoes on the other.
   final ValueNotifier<int?> _hoveredFinding = ValueNotifier<int?>(null);
-  late final List<OrreryFinding> _findings;
+  late List<OrreryFinding> _findings;
+  StreamSubscription<AppLocale>? _findingsLocaleSub;
   bool _playing = false;
 
   // Level of detail. The disk swaps between files and module super-nodes; the
@@ -241,6 +243,14 @@ class _OrreryViewState extends State<OrreryView>
   void initState() {
     super.initState();
     _findings = computeFindings(widget.model);
+    // The findings ledger (rail) and timeline markers bake translated strings,
+    // so re-derive them on a live locale switch. The surrounding chrome is
+    // already reactive via context.t; only this cached list needs the nudge.
+    _findingsLocaleSub = LocaleSettings.getLocaleStream().listen((_) {
+      if (mounted) {
+        setState(() => _findings = computeFindings(widget.model));
+      }
+    });
     // Lead with the aggregated view on large repos — a handful of modules reads
     // where thousands of file-dots fog out. An explicit initialLod overrides.
     _lod = widget.initialLod ??
@@ -267,6 +277,7 @@ class _OrreryViewState extends State<OrreryView>
 
   @override
   void dispose() {
+    _findingsLocaleSub?.cancel();
     _play.dispose();
     _head.dispose();
     _hover.dispose();

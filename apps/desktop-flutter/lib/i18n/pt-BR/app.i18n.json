@@ -14,7 +14,7 @@
     "changes": "Mudanças",
     "history": "Histórico",
     "branches": "Branches",
-    "xray": "Raio-X",
+    "xray": "X-Ray",
     "switchAlways": "Trocar (sempre)",
     "commandPalette": "Paleta de Comandos",
     "elevatedPalette": "Paleta Elevada",
@@ -38,31 +38,31 @@
 
   "commandPaletteTooltip": "Paleta de comandos   /",
 
-  "newDeskFallback": "nova mesa",
-  "deskFallback": "mesa",
+  "newDeskFallback": "nova Desk",
+  "deskFallback": "Desk",
   "currentDeskFallback": "atual",
   "noRepositoryOpen": "Nenhum repositório aberto",
 
-  "couldntOpenAsDesk": "Não foi possível abrir como mesa: {error}",
+  "couldntOpenAsDesk": "Não foi possível abrir como Desk: {error}",
   "couldNotDetectForge": "Não foi possível detectar o forge: {error}",
   "cannotFetchPrNoForge": "Não é possível buscar o PR: forge não detectado para este repo.",
   "overwriteRefConfirm": "Sobrescrever {ref} com o mais recente do remoto?",
   "overwrite": "Sobrescrever",
   "couldntFetchPr": "Não foi possível buscar o PR: {error}",
 
-  "promoteDeskToPr": "Promover mesa a PR",
+  "promoteDeskToPr": "Promover Desk a PR",
   "applyToMain": "Aplicar na main",
   "updateDeskFrom": "Atualizar {target} a partir de {source}",
   "bringChangesFromHere": "Trazer mudanças de {source} para cá",
   "editLocalPr": "Editar PR local",
   "discardLocalPr": "Descartar PR local",
-  "closeDesk": "Fechar mesa",
+  "closeDesk": "Fechar Desk",
 
   "couldntPromote": "Não foi possível promover: {error}",
-  "commitOrShelveBeforeApplying": "Faça commit ou guarde na prateleira as mudanças da mesa antes de aplicar.",
+  "commitOrShelveBeforeApplying": "Faça commit ou guarde na prateleira as mudanças da Desk antes de aplicar.",
   "couldNotResolveMainWorktree": "Não foi possível resolver o caminho do worktree principal.",
-  "couldntPromoteDesk": "Não foi possível promover a mesa: {error}",
-  "couldntDetermineBaseBranch": "Não foi possível determinar o branch base desta mesa.",
+  "couldntPromoteDesk": "Não foi possível promover a Desk: {error}",
+  "couldntDetermineBaseBranch": "Não foi possível determinar o branch base desta Desk.",
   "prBaseHeadSame": "A base e o head do PR são o mesmo branch ({branch}) — nada a aplicar.",
   "appliedBranchToBase": "Aplicado {branch} em {base}",
 
@@ -92,7 +92,7 @@
   "cancelLower": "cancelar",
   "saveLower": "salvar",
   "couldntSave": "Não foi possível salvar: {error}",
-  "stashedNoOtherDesk": "Mudanças guardadas no stash — nenhuma outra mesa para aplicá-las. Use git stash pop para recuperar.",
+  "stashedNoOtherDesk": "Mudanças guardadas no stash — nenhuma outra Desk para aplicá-las. Use git stash pop para recuperar.",
 
   "suggestedSource": "origem sugerida",
   "tooltipModifiedCount": "{n} modificados",
@@ -110,7 +110,7 @@
   "driftSummaryRemainder": "{summary} +{remainder}",
 
   "uncommittedChanges": "Mudanças sem commit",
-  "closeDeskQuestion": "Fechar mesa?",
+  "closeDeskQuestion": "Fechar Desk?",
   "uncommittedFileCount": {
     "one": "{n} arquivo sem commit.",
     "other": "{n} arquivos sem commit."
@@ -143,14 +143,14 @@
   "publish": "Publicar",
   "noRemoteConfigured": "Nenhum remoto configurado para este repositório.",
 
-  "jumpToDesk": "Ir para a mesa",
+  "jumpToDesk": "Ir para a Desk",
   "arrowOpen": "→ abrir",
-  "openOnANewDesk": "Abrir em uma nova mesa",
-  "plusDesk": "+ mesa",
+  "openOnANewDesk": "Abrir em uma nova Desk",
+  "plusDesk": "+ Desk",
   "plusSpace": "+ ",
   "newBranchNameHint": "nome-do-novo-branch",
   "escLower": "esc",
-  "plusNewDesk": "+ nova mesa",
+  "plusNewDesk": "+ nova Desk",
   "fromHeadEllipsis": "a partir do HEAD...",
   "viewAllBranches": "Ver todos os branches",
 

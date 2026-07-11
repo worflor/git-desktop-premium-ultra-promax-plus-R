@@ -1,0 +1,523 @@
+{
+  "@@locale": "id",
+  "usage": {
+    "caption": "{input} masuk · {output} keluar",
+    "captionCached": "{fresh} masuk · {cached} cache · {out} keluar",
+    "inWord": "masuk",
+    "cachedWord": "cache",
+    "outWord": "keluar",
+    "tipIn": "{value}  masuk",
+    "tipCacheRead": "{value}  baca cache",
+    "tipCacheWrite": "{value}  tulis cache",
+    "tipOut": "{value}  keluar",
+    "tipReasoning": "{value}  penalaran",
+    "tipWallClock": "{value}s  waktu nyata"
+  },
+  "tabs": {
+    "defaultLabel": "Changes",
+    "empty": "Kosong"
+  },
+  "tabStrip": {
+    "newDiffTab": "Tab Diff Baru"
+  },
+  "select": {
+    "selectAll": "Pilih semua",
+    "deselectAll": "Batalkan semua"
+  },
+  "constellationToggle": {
+    "backToList": "kembali ke daftar",
+    "atlas": "atlas, lihat kandidat commit"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\nterkopel dengan {anchor} · {pct}%{receipts}"
+  },
+  "minimap": {
+    "roleNew": "baru",
+    "roleBridge": "jembatan",
+    "roleHub": "hub",
+    "roleLeaf": "daun",
+    "roleConnected": "terhubung",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "berubah bersama {name}",
+    "newFile": "file baru",
+    "nearOtherChanges": "dekat {count} perubahan lain di {dir}",
+    "usuallyChangesWithFile": "{name} biasanya berubah bersama file ini"
+  },
+  "tagInput": {
+    "hint": "tag..."
+  },
+  "composer": {
+    "hintPlaceholder": "pesan commit...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Commit perubahan",
+    "primaryCommitChangesDetail": "Detached HEAD: commit lokal tanpa sync.",
+    "primaryPublish": "Commit & publikasikan",
+    "primaryPublishDetail": "Buat commit dan publikasikan branch ini dalam satu langkah.",
+    "primarySync": "Commit & sync",
+    "primarySyncDetail": "Buat commit, lalu rekonsiliasi dan kirim branch.",
+    "primaryPush": "Commit & push",
+    "primaryPushDetail": "Buat commit dan langsung push.",
+    "amendLast": "Amend commit terakhir",
+    "amendAnd": "Amend & {action}",
+    "chooseFile": "Pilih setidaknya satu file untuk commit berikutnya.",
+    "writeMessage": "Tulis pesan commit dulu.",
+    "committing": "Meng-commit",
+    "committingSync": "Meng-commit dan sync",
+    "committed": "Ter-commit.",
+    "undoFailed": "Undo gagal.",
+    "working": "Mengerjakan…",
+    "commitOnly": "Commit saja",
+    "noRuntimeModels": "Tidak ada model hasil-discovery runtime yang tersedia untuk pesan commit.",
+    "restoreFailedRetry": "{err}\nTidak bisa memulihkan staging file yang dikecualikan; periksa index sebelum mencoba lagi.",
+    "committedSummary": "Ter-commit {summary} ({hash}).",
+    "restoreFailedSync": "Tidak bisa men-stage ulang pilihan file yang dikecualikan; sync dilewati. Periksa index sebelum sync.",
+    "noModelLabel": "Tidak ada model",
+    "chooseBeforeGenerate": "Pilih setidaknya satu file sebelum membuat.",
+    "aiUnavailable": "AI pesan-commit belum tersedia.",
+    "generateFailed": "Pembuatan gagal.",
+    "stageFailed": "Gagal men-stage file.",
+    "commitFailed": "Commit gagal.",
+    "committedAndRan": "Ter-commit {summary} ({hash}) dan menjalankan {operation}.",
+    "committedResolved": {
+      "other": "Ter-commit {summary} ({hash}); {n} konflik terselesaikan."
+    },
+    "conflictsLeft": {
+      "other": "{n} konflik tersisa untuk diselesaikan."
+    },
+    "syncBlocked": {
+      "other": "Commit berhasil, tapi sync terhalang oleh {n} file yang belum di-commit."
+    },
+    "syncStalled": "Commit berhasil, tapi sync mandek: {message}",
+    "syncFailed": "Commit berhasil, tapi sync gagal: {message}"
+  },
+  "rebase": {
+    "continueFailed": "Tidak bisa melanjutkan rebase."
+  },
+  "editor": {
+    "closeBarrier": "Tutup editor"
+  },
+  "editorTitles": {
+    "any": [
+      "wahai git-log terkasih",
+      "maaf-git-kan aku karena aku telah…",
+      "beri nama momen ini",
+      "cuap terus",
+      "bicaralah!",
+      "ibumu sebuah dangling reference dan ayahmu berbau titik koma"
+    ],
+    "short": [
+      "oh?",
+      "halo:)",
+      "btw:",
+      "beberapa kata",
+      "versi sopannya",
+      "tinggalkan catatan",
+      "tadi mau bilang apa..?",
+      "ayo, keluarkan"
+    ],
+    "mid": [
+      "sebagai catatan",
+      "bilang ke dirimu di masa depan",
+      "tapi dulu?",
+      "gimana jadinya",
+      "dengan kata-katamu sendiri",
+      "kamu ngapain tadi?",
+      "dicatat",
+      "kamu menarik perhatianku"
+    ],
+    "long": [
+      "mimpi-mimpimu, dong",
+      "bilang sesuatu yang manis",
+      "... lalu aku bilang:",
+      "anak cucu menanti",
+      "menulis lebih banyak membuat bug-mu lenyap",
+      "wah",
+      "kitab suci"
+    ]
+  },
+  "askHint": {
+    "round": "ronde {n} — perhalus atau tambah konteks.",
+    "symptom": "jelaskan gejalanya.",
+    "broken": "apa yang rusak?",
+    "bug": "jelaskan bug-nya.",
+    "error": "tempel error-nya."
+  },
+  "fileMenu": {
+    "ripple": "Riak",
+    "includeCoChanges": "Sertakan co-change",
+    "deleteFile": "Hapus {name}…",
+    "discardChangesTo": "Buang perubahan pada {name}…",
+    "ignore": "Abaikan",
+    "diffTabFromSelection": "Tab Diff dari pilihan",
+    "addSelectedToTab": "Tambah pilihan ke {name}",
+    "diffTabFromFile": "Tab Diff dari {name}",
+    "addFileToTab": "Tambah {file} ke {tab}",
+    "copyFilePath": "Salin path file",
+    "showInExplorer": "Tampilkan di Explorer"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "terkopel erat",
+    "cohesionLoose": "terkait longgar",
+    "cohesionScattered": "tersebar secara struktural",
+    "clusterOne": "semua dalam satu klaster",
+    "clusterSpansDetailed": "merentang {count} klaster ({parts} file)",
+    "clusterSpans": "merentang {count} klaster",
+    "roleLine": "{count} file · {cohesion}",
+    "usuallyChangesWithGroup": "{file} biasanya berubah bersama grup ini",
+    "splitToNewTab": "Pisah ke tab baru",
+    "copyPaths": "Salin {count} path"
+  },
+  "ignoreMenu": {
+    "extension": "ekstensi .{ext}",
+    "allSelected": "Semua {count} terpilih",
+    "couplesWith": {
+      "other": "Terkopel dengan {n} file yang disertakan"
+    },
+    "updateFailed": "Gagal memperbarui .gitignore."
+  },
+  "discard": {
+    "deleteTitle": "Hapus {name}?",
+    "discardTitle": "Buang perubahan pada {name}?",
+    "deleteBody": "{path} akan dihapus dari disk. Ini tidak bisa dibatalkan dari dalam aplikasi.",
+    "discardBody": "Semua perubahan pada {path} akan dikembalikan ke keadaannya di HEAD. Ini tidak bisa dibatalkan.",
+    "discard": "Buang",
+    "deletingFile": "Menghapus {name}",
+    "discardingFile": "Membuang {name}",
+    "discardFailed": "Gagal membuang perubahan.",
+    "discardManyTitle": "Buang perubahan pada {count} file?",
+    "discardManyBody": "File yang di-track akan dikembalikan ke keadaannya di HEAD; file yang tak di-track akan dihapus dari disk. Ini tidak bisa dibatalkan.",
+    "discardManyConfirm": "Buang {count}",
+    "discardingManyFiles": "Membuang {count} file",
+    "failedOpenExplorer": "Gagal membuka file explorer: {error}",
+    "someFailed": "Beberapa pembuangan gagal."
+  },
+  "snack": {
+    "sameWorktree": "Worktree sama — tidak ada yang dituang.",
+    "diffFailed": "Diff gagal: {error}",
+    "deskEmpty": "Desk tidak punya apa pun di depanmu — tuangan kosong.",
+    "sourceDesk": "desk {label}",
+    "shelfReadFailed": "Baca rak gagal: {error}",
+    "shelfEmpty": "Rak kosong — tidak ada yang dituang.",
+    "sourceShelf": "rak {label}",
+    "noModelConfigured": "Tidak ada model dikonfigurasi untuk \"{label}\".",
+    "fetchFailed": "Fetch gagal: {error}"
+  },
+  "trace": {
+    "title": "Jejak verifikasi",
+    "draftReview": "Draf review"
+  },
+  "cleanTree": {
+    "title": "Working tree bersih",
+    "subtitle": "Tidak ada perubahan staged atau unstaged terdeteksi.",
+    "noUpstream": "  ·  tanpa upstream",
+    "ahead": " di depan",
+    "behind": " di belakang",
+    "refreshing": "Menyegarkan...",
+    "refresh": "Refresh",
+    "check": "cek",
+    "checkTooltip": "Fetch dan refresh lokal.",
+    "sync": "& sync"
+  },
+  "guardrail": {
+    "loose": "Longgar",
+    "balanced": "Seimbang",
+    "strict": "Ketat",
+    "paranoid": "Paranoid"
+  },
+  "dropHint": {
+    "fromShelf": "jatuhkan untuk membawa perubahan dari rak ini ke sini",
+    "fromDesk": "jatuhkan untuk membawa perubahan dari desk ini ke sini"
+  },
+  "diffEmpty": {
+    "title": "Tidak ada file dipilih",
+    "message": "Pilih sebuah file yang berubah untuk memeriksa diff-nya."
+  },
+  "shelvePill": {
+    "shelveN": "↓ rak {count}",
+    "shelve": "↓ rak",
+    "shelvedCount": "{count} di-rak {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "ambil",
+    "peek": "intip",
+    "toss": "buang"
+  },
+  "stashContents": {
+    "reading": "membaca rak…",
+    "empty": "rak kosong"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "commit baris yang di-stage saja",
+    "doubleClickToggle": "klik ganda: toggle seluruh grup",
+    "repoRoot": "Root repository"
+  },
+  "resolveStrip": {
+    "reading": {
+      "other": "membaca {n} file · menyusun resolusi…"
+    },
+    "conflictsAcross": {
+      "other": "{n} konflik di {files}"
+    },
+    "resolve": "Selesaikan",
+    "orWith": "ATAU DENGAN",
+    "resolveWith": "selesaikan dengan {label}",
+    "resolveWithModel": "selesaikan dengan {label}  ·  {model}",
+    "resolving": "menyelesaikan…",
+    "resolveWithGlyph": "↵  selesaikan dengan {label}",
+    "orWithAnother": "atau dengan model lain"
+  },
+  "badge": {
+    "stagedEdit": "Edit di-stage",
+    "edited": "Diedit",
+    "stagedAdd": "Tambah di-stage",
+    "added": "Ditambah",
+    "stagedDelete": "Hapus di-stage",
+    "deleted": "Dihapus",
+    "stagedRename": "Ganti nama di-stage",
+    "renamed": "Diganti nama",
+    "stagedCopy": "Salin di-stage",
+    "copied": "Disalin",
+    "conflict": "Konflik",
+    "stagedTypeChange": "Ganti tipe di-stage",
+    "typeChanged": "Tipe berubah",
+    "untracked": "Tak di-track"
+  },
+  "review": {
+    "title": "Code review",
+    "includedFiles": {
+      "other": "{n} file disertakan"
+    },
+    "hunkCount": {
+      "other": "{n} hunk"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "Review tidak tersedia",
+    "backToDiff": "Kembali ke diff",
+    "verified": "Terverifikasi",
+    "draftOnly": "Draf saja",
+    "runAgain": "Jalankan lagi",
+    "draftShownBelow": "{error} Draf review ditampilkan di bawah.",
+    "hideTrace": "Sembunyikan jejak",
+    "showTrace": "Tampilkan jejak",
+    "showVerificationTrace": "Tampilkan jejak verifikasi",
+    "whyLanded": "Kenapa review ini mendarat di sini",
+    "noFindings": "Tidak ada temuan",
+    "findings": "Temuan",
+    "noEvidenceIssues": "Tidak ada masalah berbukti yang muncul untuk cakupan commit ini.",
+    "observations": "Observasi",
+    "chooseBeforeReview": "Pilih setidaknya satu file sebelum review.",
+    "aiUnavailable": "Review AI belum tersedia.",
+    "failed": "Review gagal.",
+    "noRuntimeModels": "Tidak ada model hasil-discovery runtime yang tersedia untuk review commit."
+  },
+  "commitBtn": {
+    "switchTo": "Beralih ke: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "bertanya dengan {cat}…",
+    "askWith": "tanya dengan {cat}",
+    "noModel": "tidak ada model AI dikonfigurasi",
+    "nextTooltip": "berikutnya: {cat}  ·  shift-klik untuk sebelumnya",
+    "onlyOne": "hanya satu kategori AI dikonfigurasi"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "other": "{pct}% déjà vu — {n} edge hantu dari timeline yang dibuang menyentuh diff ini"
+    },
+    "label": "déjà vu"
+  },
+  "identity": {
+    "none": "tidak ada identitas commit dikonfigurasi",
+    "asName": "sebagai {name}",
+    "asNameEmail": "sebagai {name} <{email}>",
+    "asNameSpace": "sebagai {name} ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\ncommit pertama di repo ini",
+    "newToRepo": "\nbaru di repo ini"
+  },
+  "staleScope": {
+    "message": "pilihan berubah sejak ini dijalankan",
+    "rerun": "jalankan ulang"
+  },
+  "finding": {
+    "openDiff": "Buka diff",
+    "recorded": "tercatat",
+    "dismiss": "Tutup"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "kamu menarik ini",
+    "fromIdea": "dari ide: \"{text}\"",
+    "foothold": "pijakan — ",
+    "brainstormSpew": "semburan brainstorm",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "Salin {count}",
+    "clear": "Bersihkan",
+    "chooseBeforeMuse": "Pilih setidaknya satu file sebelum memanggil muse.",
+    "aiUnavailable": "Muse AI belum tersedia.",
+    "failed": "Muse gagal.",
+    "noRuntimeModels": "Tidak ada model hasil-discovery runtime yang tersedia untuk muse.",
+    "needsModel": "Muse butuh setidaknya satu model yang dikonfigurasi.",
+    "dreaming": "muse sedang bermimpi..."
+  },
+  "debug": {
+    "title": "Debug",
+    "round": "· ronde {n}",
+    "clear": "bersihkan",
+    "close": "tutup",
+    "analyzing": "menganalisis gejala…",
+    "describeSymptom": "jelaskan sebuah gejala, lalu tekan debug.",
+    "evidenceFor": "untuk",
+    "evidenceAgainst": "tapi",
+    "narrowDown": "yang bisa membantu mempersempit:",
+    "failed": "Debug gagal.",
+    "refinementFailed": "Penghalusan debug gagal."
+  },
+  "includeSummary": {
+    "none": "Tidak ada",
+    "stagedSuffix": " · {count} di-stage",
+    "full": {
+      "other": "Semua {n} file{staged}"
+    },
+    "partial": "{count} dari {n}{staged}",
+    "shortAll": "Semua {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "Status repository tidak tersedia",
+    "loadingTitle": "Memuat status repository",
+    "loadingMessage": "Membaca working tree."
+  },
+  "stash": {
+    "appliedWithConflicts": "Stash diterapkan dengan konflik — selesaikan di halaman Changes (entri stash tetap disimpan).",
+    "couldNotPop": "Tidak bisa mem-pop stash.",
+    "listChanged": "Daftar stash berubah; drop dilewati. Coba lagi.",
+    "droppingStash": "Mem-drop stash"
+  },
+  "tooltips": {
+    "commitGenerating": "membuat pesan commit...",
+    "commitPreparing": "menyiapkan pesan-commit...",
+    "commitSelectFile": "pilih setidaknya satu file untuk membuat pesan commit.",
+    "commitConfigure": "atur pesan-commit di Pengaturan > Behavioural Dynamics > Commit Messages.",
+    "fastFallback": "cepat",
+    "commitGenerateWith": "buat pesan commit dengan model {label}",
+    "museConsulting": "berkonsultasi dengan muse...",
+    "showMuse": "tampilkan muse",
+    "museSelectFile": "pilih setidaknya satu file untuk muse.",
+    "showMuseError": "tampilkan error muse",
+    "museAsk": "minta arahan pada muse",
+    "museAskWithModels": "minta arahan pada muse\n{brainstorm} → {synthesis}",
+    "qualityFallback": "kualitas",
+    "reviewing": "me-review...",
+    "showReview": "tampilkan review",
+    "reviewPreparing": "menyiapkan review commit...",
+    "reviewSelectFile": "pilih setidaknya satu file untuk di-review.",
+    "reviewConfigure": "atur review AI di pengaturan.",
+    "viewingReview": "melihat review",
+    "reviewWith": "review {guardrail} dengan model {label}"
+  },
+  "mergeEditor": {
+    "resolutionYours": "milikmu",
+    "resolutionTheirs": "milik mereka",
+    "resolutionCustom": "kustom",
+    "keepBoth": "simpan keduanya",
+    "trust": {
+      "manual": "manual",
+      "safe": "aman",
+      "guided": "terpandu",
+      "assisted": "terbantu",
+      "full": "penuh",
+      "label": "trust: {label}"
+    },
+    "allResolved": "semua terselesaikan",
+    "resolveEasy": "selesaikan konflik mudah",
+    "base": "base",
+    "cancel": "batal",
+    "save": "simpan",
+    "complete": "selesai",
+    "nextFile": "file berikutnya",
+    "edit": "edit",
+    "auto": "otomatis",
+    "undo": "undo",
+    "keyHints": {
+      "accept": "terima",
+      "other": "lainnya",
+      "both": "keduanya",
+      "navigate": "navigasi",
+      "jumpNext": "lompat berikut"
+    },
+    "favoredTooltip": "diunggulkan secara struktural oleh analisis kopling",
+    "newOnBothSides": "(baru di kedua sisi)",
+    "writeFailed": "Gagal menulis file yang terselesaikan: {error}",
+    "neighborsCoChanged": "{changed}/{total} tetangga co-change",
+    "integrity": "integritas {pct}%",
+    "reviewer": "reviewer: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "Tidak ada model dikonfigurasi untuk \"{category}\". Set satu di Pengaturan → AI.",
+    "sensitiveFilesSkipped": {
+      "other": "{n} file sensitif dilewati — selesaikan manual."
+    },
+    "couldNotReadFiles": "Tidak bisa membaca file konflik apa pun.",
+    "blockedSecret": "Terblokir — sebuah file konflik tampak berisi {secret}. Selesaikan manual.",
+    "resolutionFailed": "Resolusi gagal: {error}",
+    "mergeResolutionLabel": "◇ resolusi merge · {resolved}/{total} file · {category}",
+    "conflictSummary": "{op} · {conflicts} di {files}",
+    "conflictCount": {
+      "other": "{n} konflik"
+    },
+    "mergeEditorButton": "⇋ merge editor",
+    "noAiModel": "tidak ada model AI",
+    "later": "nanti",
+    "discard": "buang",
+    "resolveWithAi": "◇ selesaikan dengan AI",
+    "otherModel": "model lain",
+    "withModel": "dengan {model}"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "merge",
+      "cherryPick": "cherry-pick",
+      "revert": "revert",
+      "resolve": "selesaikan",
+      "switchOp": "pindah",
+      "pull": "pull",
+      "rebase": "rebase",
+      "rebaseOnto": "rebase {branch} ke {base}"
+    },
+    "pushFailed": "Push gagal",
+    "rebasedAndPushed": "Di-rebase dan di-push.",
+    "switchedTo": "Berpindah ke {name}.",
+    "switchFailed": "Perpindahan gagal.",
+    "switchedToCarried": "Berpindah ke {name} (perubahan terbawa).",
+    "alreadyUpToDate": "Sudah paling baru.",
+    "merged": "Di-merge {upstream} ({n} file).",
+    "rebaseNotConverge": "Rebase tidak konvergen — selesaikan manual.",
+    "rebased": "Di-rebase.",
+    "rebasedResolved": {
+      "other": "Di-rebase ({n} file terselesaikan)."
+    },
+    "detachedHead": "Tidak bisa sync: keadaan detached HEAD. Checkout sebuah branch dulu.",
+    "publishFailed": "Publikasi gagal.",
+    "noRemote": "Tidak ada remote dikonfigurasi. Tambahkan satu untuk mempublikasikan branch ini.",
+    "failed": "gagal"
+  },
+  "constellation": {
+    "axisStructure": "STRUKTUR",
+    "axisCoChange": "CO-CHANGE",
+    "axisSpectralProfile": "PROFIL SPEKTRAL",
+    "axisPathSiblings": "SAUDARA PATH",
+    "axisDiffStructure": "STRUKTUR DIFF",
+    "axisSpectral": "SPEKTRAL",
+    "titleUnsorted": "TAK TERURUT",
+    "titleSingleton": "TUNGGAL",
+    "titleMixed": "CAMPURAN",
+    "untie": "lepas",
+    "bind": "ikat",
+    "emptyClusters": "belum ada klaster"
+  }
+}

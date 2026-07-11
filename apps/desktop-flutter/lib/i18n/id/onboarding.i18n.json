@@ -1,0 +1,96 @@
+{
+  "@@locale": "id",
+  "nav": {
+    "back": "Kembali",
+    "continueLabel": "Lanjut",
+    "letsGo": "Ayo mulai"
+  },
+  "naming": {
+    "question": "ini apa buat kamu?",
+    "questionEmphasis": "ini",
+    "iAmPrefix": "Aku ",
+    "iAmSuffix": " , Git Client pribadimu."
+  },
+  "theme": {
+    "title": "dandani {name}.",
+    "themesHeader": "TEMA",
+    "keybindingsHeader": "KEYBINDING",
+    "previewBadge": "pratinjau",
+    "useDefaults": "pakai bawaan"
+  },
+  "repo": {
+    "title": "arahkan {name} ke sesuatu.",
+    "later": "nanti aja",
+    "doors": {
+      "open": {
+        "title": "Buka",
+        "subtitle": "yang ada",
+        "hint": "yang sudah kamu punya"
+      },
+      "clone": {
+        "title": "Clone",
+        "subtitle": "dari URL",
+        "hint": "tempel URL remote"
+      },
+      "create": {
+        "title": "Buat",
+        "subtitle": "baru",
+        "hint": "mulai sesuatu yang segar"
+      }
+    },
+    "cloneForm": {
+      "title": "Clone dari URL",
+      "urlLabel": "URL Repository",
+      "targetLabel": "Folder tujuan",
+      "browse": "Jelajahi…",
+      "clone": "Clone",
+      "cloning": "Meng-clone…"
+    },
+    "pickers": {
+      "openRepository": "Buka Repository",
+      "createRepository": "Buat Repository",
+      "cloneTarget": "Target Clone"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL dan path tujuan wajib diisi.",
+      "createFailed": "Gagal membuat repository.",
+      "cloneFailed": "Gagal meng-clone repository."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "x-ray repo",
+      "settings": "pengaturan"
+    },
+    "sidebar": {
+      "projectsHeader": "Proyek"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} dari {total} file",
+      "stagedCount": "{n} di-stage",
+      "commitMessageHint": "Pesan commit…",
+      "commitAndPush": "Commit & push"
+    },
+    "history": {
+      "header": "History",
+      "viewingLast": "melihat 20 commit terakhir",
+      "inFlight": "SEDANG JALAN",
+      "you": "kamu",
+      "commit1": "ajari rubah mengendus sebelum menelan",
+      "commit2": "amber: tahan aroma semalaman",
+      "commit3": "pensiunkan kubis demi amber + duri",
+      "commit4": "duri menjaga gerbang"
+    },
+    "branches": {
+      "lensBranches": "BRANCHES",
+      "lensPRs": "PRs",
+      "absorbed": "terserap",
+      "desk": "desk",
+      "head": "HEAD",
+      "tracking": "→ tracking: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Git client pribadimu."
+    }
+  }
+}

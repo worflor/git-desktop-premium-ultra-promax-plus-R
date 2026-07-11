@@ -1,0 +1,264 @@
+{
+  "@@locale": "id",
+  "board": {
+    "movesWithModule": "bergerak bersama modul lain",
+    "reviewerCount": {
+      "other": "{n} reviewer"
+    },
+    "territory": "Teritori",
+    "unreviewed": "belum di-review"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commit · {days} hari\n{lines}",
+    "burstTooltipSingle": "{n} commit pada {label}",
+    "gapTooltip": "jeda {n} hari · {label}",
+    "reflogTooltip": "{n} peristiwa reflog pada {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "Repository punya cukup permukaan branch untuk mengganjar navigasi yang sadar-branch.",
+      "broadTitle": "Model branch punya luas permukaan",
+      "localBranchesDetail": "{count} branch lokal.",
+      "localBranchesLabel": "Branch lokal",
+      "remoteBranchesDetail": "{count} branch remote.",
+      "remoteBranchesLabel": "Branch remote",
+      "simpleClaim": "Model branch yang terlihat itu sempit.",
+      "simpleTitle": "Model branch sederhana"
+    },
+    "bursty": {
+      "claim": "Pekerjaan mendarat dalam ledakan terkonsentrasi ketimbang ritme harian yang rata.",
+      "title": "Kadensi pengembangan meledak-ledak"
+    },
+    "hiddenRefs": {
+      "claim": "{count} ref hidup di luar ruang branch/tag normal.",
+      "evidenceDetail": "{count} ref di luar heads/remotes/tags.",
+      "evidenceLabel": "Ref tersembunyi",
+      "namespacesLabel": "Namespace",
+      "title": "Namespace Git tersembunyi"
+    },
+    "keystone": {
+      "claim": {
+        "other": "Sekelompok kecil file mengemban bobot co-change tak sebanding relatif terhadap jumlah sentuhannya."
+      },
+      "evidenceDetail": {
+        "other": "{n} sentuhan · tarik φ={score}"
+      },
+      "title": {
+        "other": "{n} file jembatan keystone"
+      }
+    },
+    "machineHistory": {
+      "claim": "Commit gaya checkpoint secara material mendistorsi metrik history yang naif.",
+      "machineCommitsDetail": "{count} commit cocok dengan pola mesin/sesi.",
+      "machineCommitsLabel": "Commit mesin",
+      "rawVsFilteredDetail": "{raw} commit mentah vs {filtered} commit tersaring.",
+      "rawVsFilteredLabel": "Mentah vs tersaring",
+      "title": "History mesin mendominasi metrik mentah"
+    },
+    "migration": {
+      "claim": "History bergeser dari `{older}` ke `{newer}`, mengisyaratkan transisi stack atau permukaan.",
+      "stratumDetail": "{touches} sentuhan, terakhir aktif {lastActive}.",
+      "title": "Migrasi arsitektur terlihat"
+    },
+    "narrowHotspot": {
+      "claim": "Sekelompok kecil file dan direktori menyerap porsi perubahan yang tak sebanding.",
+      "title": "Konsentrasi hotspot itu sempit",
+      "topHotspotDetail": "{path} menyumbang {pct}% dari kumpulan hotspot yang terlihat.",
+      "topHotspotLabel": "Hotspot teratas",
+      "visibleAuthorsDetail": "{count} penulis di potongan history ini.",
+      "visibleAuthorsLabel": "Penulis terlihat"
+    },
+    "noTags": {
+      "claim": "Tag git tidak dipakai sebagai lapisan rilis atau milestone yang terlihat.",
+      "remoteEndpointsDetail": "{count} endpoint remote dikonfigurasi.",
+      "remoteEndpointsLabel": "Endpoint remote",
+      "tagCountDetail": "0 tag ditemukan.",
+      "tagCountLabel": "Jumlah tag",
+      "title": "Tidak ada jejak rilis/tag formal"
+    },
+    "reflog": {
+      "claim": "Volume reflog mengisyaratkan iterasi lokal terkonsentrasi melampaui commit yang dipublikasikan.",
+      "peakReflogDayLabel": "Hari reflog puncak",
+      "title": "Sesi editing lokal intens"
+    },
+    "singleOwner": {
+      "claim": "`{path}` adalah {kind} yang sering disentuh dengan satu penulis terlihat yang jelas.",
+      "ownerCountDetail": "{count} penulis berbeda.",
+      "ownerCountLabel": "Jumlah pemilik",
+      "title": "Hotspot pemilik-tunggal",
+      "touchCountLabel": "Jumlah sentuhan",
+      "touchDetailFiltered": "{count} sentuhan di history tersaring.",
+      "touchDetailRaw": "{count} sentuhan di history mentah."
+    }
+  },
+  "cardTitle": {
+    "branches": "branches",
+    "bursty": "meledak",
+    "hiddenRefs": "ref tersembunyi",
+    "machineHeavy": "berat-mesin",
+    "migration": "migrasi",
+    "narrowHotspot": "hotspot sempit",
+    "noTags": "tanpa tag",
+    "reflog": "reflog",
+    "singleOwner": "pemilik-tunggal"
+  },
+  "grain": {
+    "coarsest": "paling kasar — modul tingkat-atas",
+    "finest": "butir terhalus",
+    "mid": "butir sedang",
+    "oneCharacteristic": "satu skala karakteristik"
+  },
+  "header": {
+    "dirtyBadge": "kotor",
+    "machineChip": "mesin",
+    "refresh": "Refresh",
+    "refreshing": "Menyegarkan...",
+    "title": "X-Ray Repo"
+  },
+  "hotspot": {
+    "clusterPeers": "tetangga klaster",
+    "coChangers": "co-changer",
+    "keystone": "keystone",
+    "keystoneScore": "keystone  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "branch",
+    "commitsHumanMachine": "manusia · {n} mesin",
+    "commitsLabel": "commit",
+    "confidenceLabel": "keyakinan",
+    "curlLabel": "curl",
+    "engineSection": "engine",
+    "gradientLabel": "gradien",
+    "harmonicLabel": "harmonik",
+    "headLabel": "head",
+    "hiddenRefsLabel": "ref tersembunyi",
+    "mergeCount": {
+      "other": "{n} merge"
+    },
+    "noTags": "tanpa tag",
+    "notesLabel": "notes",
+    "openCommit": "Buka commit",
+    "pathLabel": "path",
+    "remoteCount": "{n} remote",
+    "renamesLabel": "penggantian nama",
+    "scannedAt": "dipindai {time}",
+    "selectedCount": "{n} dipilih",
+    "shapeLinear": "linear",
+    "shapeMergeHeavy": "berat-merge",
+    "shapeMostlyLinear": "sebagian besar linear",
+    "stashCount": {
+      "other": "{n} stash"
+    },
+    "stressLabel": "stress",
+    "tagCount": {
+      "other": "{n} tag"
+    },
+    "worktreeCount": {
+      "other": "{n} worktree"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Menyelidik history git, ref, kadensi, dan hotspot.",
+    "buildingTitle": "Membangun X-Ray Repo",
+    "idleMessage": "Buka panel lagi untuk menyelidik repository saat ini.",
+    "idleTitle": "X-Ray Repo",
+    "unavailableTitle": "X-Ray Repo tidak tersedia"
+  },
+  "metabolism": {
+    "halfLife": "waktu-paruh {n}h"
+  },
+  "multi": {
+    "clusterCount": {
+      "other": "{n} klaster"
+    },
+    "clusterSingle": "klaster {id}",
+    "couplingSuffix": "kopling {parts}",
+    "externalCount": "{n} eksternal",
+    "mutualCount": "{n} timbal balik"
+  },
+  "recency": {
+    "days": "{n}h",
+    "months": "{n}bl",
+    "today": "hari ini",
+    "weeks": "{n}mg",
+    "years": {
+      "one": "{n}th",
+      "other": "{n}th"
+    }
+  },
+  "rings": {
+    "hintOneBlended": "satu struktur menyatu",
+    "hintSelfSimilar": "mandiri-serupa",
+    "oneBlendedBody": "Satu struktur menyatu — belum ada skala modul terpisah yang teruraikan.",
+    "overHistory": "Sepanjang history",
+    "parts": "bagian",
+    "readingHint": "membaca struktur…",
+    "scaleCount": {
+      "other": "{n} skala"
+    },
+    "scaleDissolved": "sebuah skala struktural luruh",
+    "scaleEmerged": "sebuah skala struktural muncul",
+    "scaleSpectrum": "spektrum skala",
+    "selfSimilarBody": "Mandiri-serupa — struktur berulang lintas skala, tanpa satu level karakteristik.",
+    "shiftInHistory": {
+      "other": "{n} pergeseran di history"
+    },
+    "structuralShiftCount": {
+      "other": "{n} pergeseran struktural"
+    },
+    "title": "Lingkaran pertumbuhan",
+    "unavailable": "tidak tersedia"
+  },
+  "stats": {
+    "alive": "hidup",
+    "files": "file",
+    "lastTouched": "terakhir disentuh",
+    "owner": {
+      "other": "pemilik"
+    },
+    "touches": "sentuhan"
+  },
+  "stratumLabel": {
+    "current": "saat ini",
+    "legacy": "warisan",
+    "zone": "zona repo"
+  },
+  "summary": {
+    "analysisFailed": "Analisis gagal: {error}",
+    "analyze": "Analisis",
+    "copied": "Ringkasan disalin ke clipboard.",
+    "directionHint": "arah",
+    "download": "Unduh",
+    "emptyState": "Jalankan analisis Logos untuk memetakan struktur dan region repository ini.\n(tw: acakadut nih)",
+    "exit": "Keluar",
+    "generating": "Membaca repo dan mengklaster fitur…",
+    "noModel": "Tidak ada model AI dikonfigurasi.",
+    "noModelConfigured": "tidak ada model AI dikonfigurasi",
+    "presentWith": "presentasikan dengan {label}",
+    "presentingWith": "mempresentasikan dengan {label}…",
+    "reanalyze": "Analisis ulang",
+    "saveDialogTitle": "Simpan ringkasan repository",
+    "saveFailed": "Penyimpanan gagal: {error}",
+    "savePresentationDialogTitle": "Simpan presentasi",
+    "savedTo": "Disimpan ke {path}"
+  },
+  "tabs": {
+    "map": "Peta",
+    "signals": "Sinyal",
+    "summary": "Ringkasan",
+    "time": "Waktu"
+  },
+  "trajectory": {
+    "connectivity": "konektivitas",
+    "events": "{n} peristiwa",
+    "openInOrrery": "Buka di Orrery",
+    "readingHint": "membaca history…",
+    "snapshots": "{n} snapshot",
+    "steady": "Stabil — tidak ada peristiwa struktural di jendela ini.",
+    "title": "Trajektori struktural"
+  },
+  "verdict": {
+    "canonical": "{pct}% kanonik",
+    "tooltip": "{archetype} · {canonical}% kanonik · {decisive}% menentukan"
+  }
+}

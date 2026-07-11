@@ -64,7 +64,7 @@
     "terminal": "Terminal en {name}",
     "generateCommit": "Generar commit · {name}",
     "reviewChanges": "Revisar cambios en {name}",
-    "muse": "Musa en {name}"
+    "muse": "Muse en {name}"
   },
   "desks": {
     "mainWorktree": "árbol de trabajo principal",
@@ -115,7 +115,7 @@
   "ai": {
     "generateCommit": "Generar commit",
     "reviewChanges": "Revisar cambios",
-    "runMuse": "Invocar la Musa",
+    "runMuse": "Invocar Muse",
     "debugRepo": "Depurar {name}",
     "describeSymptom": "describe un síntoma",
     "viewResult": "Ver {kind}",
@@ -124,7 +124,7 @@
     "running": "en curso",
     "kindCommitMessage": "Mensaje de commit",
     "kindCodeReview": "Revisión de código",
-    "kindMuseResult": "Resultado de la Musa",
+    "kindMuseResult": "Resultado de Muse",
     "kindPresentation": "Presentación",
     "kindDebugResult": "Resultado de depuración"
   },
@@ -135,7 +135,7 @@
     "changes": "Cambios",
     "history": "Historial",
     "branches": "Ramas",
-    "xray": "Radiografía",
+    "xray": "X-Ray",
     "settings": "Ajustes",
     "refresh": "Actualizar"
   },

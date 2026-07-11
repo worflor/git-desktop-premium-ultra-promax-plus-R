@@ -1,0 +1,591 @@
+{
+  "@@locale": "tr",
+  "language": {
+    "title": "Dil",
+    "summary": "Bu uygulama için arayüz dili. Git çıktısı, günlükler ve tanılamalar İngilizce kalır, böylece hata raporları aranabilir kalır.",
+    "label": "GÖRÜNÜM DİLİ",
+    "systemDefault": "Sistem varsayılanı",
+    "systemDefaultDetail": "İşletim sistemi dilini takip eder ({resolved})",
+    "disclosureSource": "Kaynak dil, geliştiriciler tarafından yazıldı.",
+    "disclosureAi": "{model} tarafından makine çevirisi, henüz insan tarafından incelenmedi. Düzeltmeler memnuniyetle karşılanır.",
+    "disclosureAiReviewed": "{model} tarafından makine çevirisi. %{percent} insan tarafından incelendi.",
+    "disclosureHuman": "İnsan çevirisi, topluluk tarafından sürdürülüyor.",
+    "reviewedBy": "{names} tarafından incelendi."
+  },
+  "sectionLabels": {
+    "preferences": "Tercihler",
+    "shortcuts": "Kısayollar",
+    "behaviour": "Davranış",
+    "aiProviders": "AI Sağlayıcıları",
+    "modelSlots": "Model Yuvaları",
+    "tools": "Araçlar",
+    "diagnostics": "Tanılama",
+    "offenders": "İhlaller",
+    "release": "Sürüm"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Koruma profili kaydedilemedi.",
+    "saveRetentionPolicy": "Saklama politikası kaydedilemedi.",
+    "saveUpdateChannel": "Güncelleme kanalı kaydedilemedi.",
+    "saveModelSelection": "AI model seçimi kaydedilemedi.",
+    "saveModelAlias": "Model takma adı kaydedilemedi.",
+    "saveCommitMessageModelSlot": "Commit mesajı model yuvası kaydedilemedi.",
+    "saveReviewModelSlot": "İnceleme model yuvası kaydedilemedi.",
+    "saveCommitMessageCustomPrompt": "Commit mesajı özel istemi kaydedilemedi.",
+    "saveReviewGuide": "İnceleme kılavuzu kaydedilemedi.",
+    "saveMuseNotes": "Muse notları kaydedilemedi.",
+    "saveReviewDoubleCheck": "İnceleme çift kontrol modu kaydedilemedi.",
+    "saveApiPiggybackCli": "API sırtlama CLI'ı kaydedilemedi.",
+    "clearLocalData": "Yerel veri temizlenemedi: {error}"
+  },
+  "promptStatus": {
+    "editing": "Düzenleniyor",
+    "saving": "Kaydediliyor",
+    "saveFailed": "Kaydetme başarısız"
+  },
+  "clearData": {
+    "dialogTitle": "Yerel veriyi temizle",
+    "clear": "Temizle",
+    "confirmDiagnostics": "Yerel tanılama örnekleri ve performans zamanlamaları temizlensin mi?",
+    "confirmAudit": "Yerel AI denetim meta veri kayıtları temizlensin mi?",
+    "confirmAll": "Tüm yerel tanılama örnekleri ve AI denetim meta veri kayıtları temizlensin mi?",
+    "confirmWipeAll": "Son depolar listesi dahil tüm yerel uygulama verisi silinip çıkılsın mı? Diskteki gerçek git depolarına dokunulmaz.",
+    "confirmReset": "Yerel uygulama verisi sıfırlanıp çıkılsın mı?\n\nAyarlar, tema, ilk kullanım, AI tercihleri, telemetri ve engram önbellekleri temizlenir. Son depolar listesi korunur."
+  },
+  "guardrailStageLabels": ["Gevşek", "Dengeli", "Katı", "Paranoyak"],
+  "guardrailMacro": {
+    "loose": "gevşek",
+    "balanced": "dengeli",
+    "strict": "katı",
+    "paranoid": "paranoyak"
+  },
+  "guardrails": {
+    "title": "Koruma Önlemleri",
+    "summary": "Tüm deneyim boyunca otomasyonun ne kadar dikkatli olduğu."
+  },
+  "appearance": {
+    "title": "Görünüm",
+    "summary": "Küresel arayüz havası ve atmosferi."
+  },
+  "retention": {
+    "title": "Yerel Veri Saklama",
+    "summaryDiagnostics": "Tanılama saklama politikası.",
+    "summaryWithAudit": "Tanılama ve AI denetim saklama politikası.",
+    "unitDays": "gün",
+    "unitMb": "MB",
+    "includesNote": "Tanılamayı, performans zamanlamalarını ve meta veriyi içerir."
+  },
+  "navigation": {
+    "title": "Gezinme ve Dinamikler",
+    "summaryShortcuts": "Kısayollar ve arayüz davranışı.",
+    "summaryWithAi": "Kısayollar, arayüz davranışı ve AI yönlendirme."
+  },
+  "behaviour": {
+    "title": "Davranışsal Dinamikler"
+  },
+  "retentionClear": {
+    "diag": "Tanı",
+    "audit": "Denetim",
+    "all": "Tümü",
+    "clearsHint": "<-- temizler"
+  },
+  "channels": {
+    "stable": "KARARLI",
+    "beta": "BETA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "güncel",
+    "updateAvailable": "{version} mevcut",
+    "notConfigured": "güncelleme sunucusu yok",
+    "notFound": "{channel} sürümü yok",
+    "unreachable": "erişilemez",
+    "badManifest": "bozuk manifest"
+  },
+  "keybindingProfile": {
+    "label": "Tuş atama profili",
+    "porcelain": "Porcelain",
+    "numeric": "Sayısal",
+    "porcelainDescription": "Akorlu kısayollar (G sonra C, H, B…).",
+    "numericDescription": "Tek tuşlu sayısal kısayollar (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "api anahtarı",
+    "endpointHint": "uç nokta",
+    "test": "Test",
+    "hide": "Gizle",
+    "show": "Göster"
+  },
+  "shortcuts": {
+    "navigate": "gezin",
+    "staging": "hazırlama",
+    "branchesPrs": "dallar & PR'lar",
+    "modifiers": "değiştiriciler",
+    "changes": "Değişiklikler",
+    "history": "Geçmiş",
+    "branches": "Dallar",
+    "xray": "X-Ray",
+    "switchAlways": "Geçiş (her zaman)",
+    "search": "Ara",
+    "dismiss": "Kapat",
+    "refresh": "Yenile",
+    "shortcuts": "Kısayollar",
+    "nextChange": "Sonraki değişiklik",
+    "prevChange": "Önceki değişiklik",
+    "toggleLine": "Satırı aç/kapa",
+    "toggleHunk": "Hunk'ı aç/kapa",
+    "toggleFile": "Dosyayı aç/kapa",
+    "pinContext": "Bağlamı sabitle",
+    "commit": "Commit",
+    "acceptHint": "İpucunu kabul et",
+    "undo": "Geri al",
+    "navigateRow": "Gezin",
+    "expand": "Genişlet",
+    "checkout": "Checkout",
+    "approve": "Onayla",
+    "requestChanges": "Değişiklik iste",
+    "selectRange": "Aralık seç",
+    "extendedMenu": "Genişletilmiş menü"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI salt okunur modu",
+    "aiReadOnlyDescription": "AI'ın otomatik olarak değişiklik yazmasını ya da hazırlamasını engeller.",
+    "logoMotionLabel": "Sekme dışındayken logo canlanır",
+    "logoMotionDescriptionEnabled": "Verimli olacak şekilde tasarlandı, kalbini kırma",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Devam eden işi hatırla",
+    "rememberWipDescription": "Commit taslaklarını ve dosya seçimini oturumlar arasında koru.",
+    "stashCabinetLabel": "Stash dolabı açık başlar",
+    "stashCabinetDescription": "Bir deponun rafları olduğunda dosya dolabı çekmecesini varsayılan olarak açık göster.",
+    "instantBlameLabel": "Anında blame vurgusu",
+    "instantBlameDescription": "Bir diff satırında blame bilgisi belirmeden önceki 180ms gecikmeyi atla.",
+    "autoSelectLabel": "Yeni değişiklikleri otomatik seç",
+    "autoSelectDescription": "Yeni izlenen ya da değişen dosyalar otomatik olarak commit seçimine eklenir.",
+    "fetchIssuesLabel": "Dal yüklenirken çevrimiçi issue'ları fetch et",
+    "fetchIssuesDescription": "Dallar sayfası açıldığında PR ve issue ayrıntılarını git sağlayıcından arka planda çek.",
+    "hateAiLabel": "AI'dan nefret ediyorum",
+    "hateAiDescription": "Tüm LLM destekli özellikleri kov. Logos çalışmaya devam eder çünkü o sadece spektral matematik."
+  },
+  "diffDiffability": {
+    "title": "diff diff-lenebilirliği"
+  },
+  "modelSlots": {
+    "loadingProviders": "Sağlayıcılar yükleniyor...",
+    "refreshingProviders": "Sağlayıcı tanılaması yenileniyor...",
+    "routeDescription": "Yapılandırmaları algılanan herhangi bir sağlayıcı modeline yeniden adlandır ve yönlendir.",
+    "loadingCategories": "Model kategorileri yükleniyor...",
+    "noOptions": "Henüz model seçeneği yok. Önce uyumlu bir yerel AI CLI'ı algıla.",
+    "slotsAppearWhenAvailable": "Sağlayıcı modelleri hazır olduğunda model yuvası ayarları burada görünecek.",
+    "effortDefault": "varsayılan",
+    "noModelsForSlot": "Bu yuva için model algılanmadı.",
+    "viaProvider": "{provider} üzerinden",
+    "customModelId": "özel model kimliği"
+  },
+  "modelPicker": {
+    "noMatch": "\"{query}\" ile eşleşen model yok",
+    "noModels": "kullanılabilir model yok",
+    "filterHint": "modelleri filtrele...",
+    "warming": "ısınıyor…",
+    "detailsUnavailable": "ayrıntılar kullanılamıyor",
+    "free": "ücretsiz"
+  },
+  "aiFeatures": {
+    "commitDescription": "Yapını, sesini ve kapsam tercihlerini kullanarak hazırlanan değişikliklerden commit mesajları taslağı oluştur.",
+    "reviewDescription": "Commit'lemeden önce mevcut commit kapsamını incele.",
+    "museDescription": "Beyin fırtınası yapıp sonra diff için ileri bir yön sentezleyen üç aşamalı kâhin."
+  },
+  "commitEditor": {
+    "styleGuide": "Stil Kılavuzu",
+    "styleGuideHint": "İsteğe bağlı. Ses / ton / yasaklar. Yukarıdaki biçim iskeleti halleder."
+  },
+  "review": {
+    "additionalNotes": "İncelemede kullanılacak ek notlar",
+    "doubleCheckLabel": "İncelemeyi çift kontrol et",
+    "doubleCheckDescription": "Nihai raporu göstermeden önce ikinci bir doğrulama turu çalıştır."
+  },
+  "museHint": {
+    "loose": "nazikçe yönlendirilecek bir şey var mı? bugün ruh hali iyi.",
+    "balanced": "neye odaklanılacak, ne atlanacak. dürüst, ama sert değil.",
+    "strict": "standartlar. yasaklar. muse'un geçmeyeceği şeyler.",
+    "paranoid": "merceği ayarla. manifold hangi frekanslarda uğuldamalı?"
+  },
+  "museEditor": {
+    "additionalNotes": "Muse için ek notlar"
+  },
+  "museStage": {
+    "brainstorm": "BEYİN FIRTINASI",
+    "synthesize": "SENTEZLE",
+    "slot": "yuva",
+    "ideaCountLoose": "~12 fikir",
+    "ideaCountBalanced": "~16 fikir",
+    "ideaCountStrict": "~20 fikir",
+    "ideaCountParanoid": "~24 fikir",
+    "guardrailHint": "{ideas}  ·  koruma: {macro}"
+  },
+  "lensAxis": {
+    "folder": "KLASÖR",
+    "history": "GEÇMİŞ",
+    "far": "UZAK",
+    "near": "YAKIN"
+  },
+  "logosLens": {
+    "moduleMap": "modül haritası",
+    "repoCenters": "repo merkezleri",
+    "neighbors": "komşular",
+    "toTouch": "sırada neye dokunmalı",
+    "relevanceEngine": "ilgililik motoru",
+    "description": "dosyaların yapı, geçmiş ve ritim boyunca nasıl birlikte hareket ettiğini okur, böylece Manifold neyin değiştiğini değil, neyin önemli olduğunu bilir.",
+    "withinReach": "erişilebilir",
+    "gate": "kapı",
+    "nearest": "en yakın",
+    "warming": "ısınıyor",
+    "emptyOpenRepo": "merceği canlı görmek için\nbir repo aç",
+    "emptyNoFiles": "erişimde dosya yok\n— GEÇMİŞ'e doğru\nsürükle"
+  },
+  "sortGuide": {
+    "title": "Değişiklik sıralama kılavuzu",
+    "related": "Birlikte değişen dosyalar birlikte kümelenir. Önce mesele gelir; bağlam onu izler.",
+    "relatedInverted": "İzole değişiklikler önce gelir. Sıkı bağlı kümeler dibe iner.",
+    "alphabetical": "Yola göre düz A → Z. Büyük/küçük harf duyarsız, sayılar doğal sıralı.",
+    "alphabeticalInverted": "Yola göre düz Z → A. Büyük/küçük harf duyarsız, sayılar doğal sıralı.",
+    "impact": "En ağır değişiklikler önce çıkar. Çalkantı ağırlıklandırılır; ikili ve yeni dosyalar öne çıkarılır.",
+    "impactInverted": "En hafif değişiklikler önce çıkar. Hızlı kazançlar üstte; ağır işler bekler.",
+    "nearRelated": "yakın ilişkili",
+    "alphabeticalShort": "alfabetik",
+    "byImpact": "etkiye göre",
+    "flipped": "ters çevrildi",
+    "peek": "göz at"
+  },
+  "piggyback": {
+    "apiModelsUse": "API modelleri şunu kullanır",
+    "codexNotDetected": "codex algılanmadı",
+    "dormant": "UYKUDA"
+  },
+  "diffStage": {
+    "viewer": "görüntüleyici",
+    "media": "medya",
+    "binary": "ikili",
+    "hidden": "gizli"
+  },
+  "undoScope": {
+    "destructiveActions": "yıkıcı eylemler",
+    "discards": "iptaller",
+    "commits": "commit'ler",
+    "commitPush": "commit + push",
+    "all": "tümü"
+  },
+  "undoWindow": {
+    "label": "Geri alma penceresi",
+    "off": "Kapalı",
+    "descriptionInstant": "{scope} anında kesinleşir.",
+    "descriptionDelayed": "{scope} kesinleşmeden önce {seconds}sn.",
+    "cycleScopeTooltip": "Kapsamı döngülemek için tıkla · kaydırıcıda yukarı/aşağı da sürükle",
+    "resetTooltip": "Her eylemi varsayılan pencereyi kullanacak şekilde sıfırla"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "Muhtemelen iyi demek, iyi demek",
+    "proper": "Düzgün bir okuma, mantık, entegrasyon, desenler",
+    "lookAgain": "Tekrar bak. Bir şey saklanıyor olabilir",
+    "assumeWrong": "Bir şeyin yanlış olduğunu varsay. Onu bul"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "örn. Üst düzey mantığa ve büyük hatalara odaklan. Kısa ve hoşgörülü ol.",
+    "surfaceBugs": "örn. Olası hataları, mimari tutarsızlıkları ve uç durum arızalarını ortaya çıkar.",
+    "scrutinize": "örn. Optimizasyon, güvenlik ve desen uyumu için her satırı didikle.",
+    "trustNothing": "örn. Hiçbir şeye güvenme. Her yan etkiyi sorgula. Her satırı olası bir arıza olarak ele al.",
+    "optional": "İncelemenin neyi önemsemesi gerektiğine dair isteğe bağlı yönlendirme."
+  },
+  "commitFormat": {
+    "title": "Biçim",
+    "peek": "göz at",
+    "structure": "Yapı",
+    "voice": "Ses",
+    "coverage": "Kapsam",
+    "structureTitleBody": "başlık + gövde",
+    "structureTitleOnly": "yalnızca başlık",
+    "structureFreeform": "serbest biçim",
+    "voiceVerbLed": "eylem odaklı",
+    "voiceDescriptive": "betimleyici",
+    "voiceNarrative": "anlatısal",
+    "coverageEssentials": "temeller",
+    "coverageBalanced": "dengeli",
+    "coverageEverything": "her şey"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Tilkinin kötü kokan kurabiyeleri atlamasına izin ver",
+        "s2": "Tilkiye yutmadan önce kurcalanmış kurabiyeleri reddetmeyi öğret",
+        "s3": "Tilkiyi kapıda her kurabiyeyi adli olarak incelemeye zorla",
+        "def": "Tilkiye kötü kurabiyeleri reddetmeyi öğret"
+      },
+      "descriptive": {
+        "s0": "tilki artık kurabiyeleri seçiyor",
+        "s2": "Kurabiye-inceleme rutini, tilkiye tembihlendi",
+        "s3": "Kurabiye-doğrulama adli incelemesi, tekrarla tilkiye işlendi",
+        "def": "Kurabiye-koklama protokolü, tilkiye kuruldu"
+      },
+      "narrative": {
+        "s0": "tilki yanlış kokan kurabiyeleri atlamaya başladı",
+        "s2": "Tilkiyle oturup hangi kurabiyelerin reddedileceğini adım adım çalıştık",
+        "s3": "Öğleden sonranın büyük kısmını tilkiyi, sunulan her kurabiyenin iyi niyetle bir kurabiye olmadığına ikna etmekle geçirdim",
+        "def": "Tilkiden kurabiyeleri yemeden önce koklamasını istedim"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Tilki şöyle bir bakar. Ters olan ne varsa bırakılır.",
+        "s2": "Tilki her token'ı inceler, kokusu ters olan her şeyi reddeder ve reddi verandaya not eder.",
+        "s3": "Tilki her token'ın etrafında döner, havayı üç açıdan koklar, yanlış okuduğu her token'ı reddeder ve reddin oturması için bir an bekler.",
+        "def": "Tilki artık her token'ı koklar ve şüphelileri kibarca reddeder."
+      },
+      "descriptive": {
+        "s0": "Garip olanlara yumuşak bir geçiş, çoğunlukla.",
+        "s2": "Kokusu ters her token'a, verandadan verilip not edilen belgeli bir ret.",
+        "s3": "Kokusu ters her token için, biri havada biri sabit bir pençeyle verandadan verilen noter onaylı bir ret.",
+        "def": "Şüpheli token'lara verandadan verilen kibar bir ret."
+      },
+      "narrative": {
+        "s0": "Tilki garip olanları yemeyi öylece bıraktı. Kolay.",
+        "s2": "Eskiden her token pek düşünülmeden yutulurdu; şimdi bir duraklama, düzgün bir bakış ve içine sinmeyenler için bir ret var.",
+        "s3": "Eskiden her token düşünülmeden yutulurdu. Şimdi: bir duraklama. Hava, içe çekilir. Hava, tutulur. Tilki, bir şey ters gittiğinde bazen olan o küçük seğirme için veranda tahtalarını izler ve karar ancak o zaman verilir.",
+        "def": "Eskiden her token merasimsiz yutulurdu; şimdi önce bir koklama var."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Veranda iyi. Arka bahçe her neyse.",
+        "s2": " Her retten sonra veranda süpürülür; arka bahçe çamuruna ilan edilen saatler içinde izin verilir.",
+        "s3": " Veranda süpürülür ve yeniden süpürülür; arka bahçe çamuru pençe iziyle ve havaya göre kataloglanır, ve tilki eşikte eskisinden daha uzun oyalanır.",
+        "def": " Veranda temiz kalır; arka bahçe çamur haklarını korur."
+      },
+      "descriptive": {
+        "s0": " Veranda tamam. Arka bahçe arka bahçelik işler yapar.",
+        "s2": " Veranda kanıt-temizliğinde bir bölge; arka bahçe belirlenmiş çamur bölgesi, saatler ilan edilmiş.",
+        "s3": " Veranda kanıt-kalitesinde temiz oda; arka bahçe kataloglanmış çamur arşivi; eşik ise tilkinin durup fazla uzun düşündüğü bir yer.",
+        "def": " Temiz veranda; çamur hakları arka bahçede korunur."
+      },
+      "narrative": {
+        "s0": " Veranda iyiydi. Arka bahçe, kim bilir.",
+        "s2": " Veranda sonrasında temiz tutuldu; tilki, düşünmenin gerçekleştiği yer olan arka bahçeye çekildi.",
+        "s3": " O akşam veranda iki kez fırçalandı. Tilki arka bahçede yavaşça yürüdü, hep aynı çit direğinde durdu ve verandaya, sanki veranda ona bir şey borçluymuş gibi baktı.",
+        "def": " Veranda temiz kalır, gerçi onur meselesinde arka bahçe hâlâ kazanır."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Amber orada. Drift sürüklenir. Diken, gerekirse batar. Çoğunlukla hiçbir şey.",
+        "s2": " Amber her kokuyu inceleme için tutar. Drift günün havasını kapı dikenine taşır, o da her reddi akşam sayımı için işaretler.",
+        "s3": " Amber her kokuyu tutar ve saate göre farklı bir ağırlık verir. Drift, önemsiz olması gereken ama olan açılarda verandanın içinden geçer. Kapı dikeni retler için bir kez, tilkinin neredeyse kaçırdıkları için iki kez batar, ve başka kimse bilmese bile tilki farkı bilir.",
+        "def": " Amber kokuyu tutar. Drift onu taşır. Kapı dikeni geçmemesi gerekeni yakalar."
+      },
+      "descriptive": {
+        "s0": " Amber direkte. Drift havada. Diken kapıda. İyi.",
+        "s2": " Amber belirlenmiş koku-tanığı; drift kayıtlı bir ortam; diken-işaretleri günün ret kaydı, alaca karanlıkta uzlaştırılır.",
+        "s3": " Amber, sessizliği başlı başına bir okuma olan bir koku-tanığı; drift, bir şey ters olduğu günlerde yanlış hareket eden desenli bir ortam; diken kapının sayım tutucusu, işaretlerini tilki yatmadan önce ve şafaktan önce yeniden kontrol eder.",
+        "def": " Amber koku-tanığı; drift ortam bağlamı; diken kapının sessiz ret-işareti."
+      },
+      "narrative": {
+        "s0": " Amber etraftaydı. Drift gelip gitti. Diken sessiz işini yaptı. Neyse, rahattı.",
+        "s2": " Amber günün koku-kaydını tuttu, drift yön ve saate göre not edildi, ve dikenin işaretleri sayılıp veranda tarafından karşı-imzalandı.",
+        "s3": " Amber koku-kaydını tuttu, ama tilki belirli sabahlar daha ağır bastığına yemin ediyor. Drift verandanın içinden hep yaptığı gibi geçti, yani önemli olan günlerde yanlış. Kapı dikeni her reddi işaretledi; tilki ilk ışıkta onları saymaya çıktı, tıpkı zaten saydığın basamakları saydığın gibi.",
+        "def": " Amber koku-kaydını tuttu, drift havayı taşıdı, ve kapı dikeni yakalanması gerekeni yakaladı."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "Harici Araçlar",
+    "summary": "Bunlardan biriyle açmak için kenar çubuğundaki bir projeye sağ tıkla. Argümanlar proje klasörü için \\{path} kullanır.",
+    "detecting": "Kurulu araçlar algılanıyor…",
+    "allPresetsAdded": "Bilinen tüm hazır ayarlar zaten eklendi. Daha fazlası için “+ Özel” kullan.",
+    "noToolsConfigured": "Henüz araç yapılandırılmadı. Yukarıdan bir tane ekle.",
+    "categoryAi": "ai",
+    "categoryEditors": "editörler",
+    "categoryExplore": "keşfet",
+    "categoryOps": "ops",
+    "categoryGitOps": "git ops",
+    "nameHint": "Ad",
+    "commandHint": "komut",
+    "test": "test",
+    "removeTool": "Aracı kaldır",
+    "modeTerminal": "terminal",
+    "modeDetached": "ayrık"
+  },
+  "apiUsage": {
+    "thisMonth": "bu ay {used}{limit}"
+  },
+  "gitea": {
+    "title": "Gitea token'ları",
+    "hostHint": "ana bilgisayar",
+    "tokenHint": "token",
+    "save": "kaydet"
+  },
+  "wick": {
+    "selectExecutable": "wick yürütülebilir dosyasını seç",
+    "connected": "wick · bağlı",
+    "pathToExecutable": "wick · yürütülebilir dosya yolu"
+  },
+  "integrations": {
+    "title": "& Entegrasyonlar",
+    "alpha": "alpha",
+    "planned": "planlandı",
+    "lspComingSoon": "lsp · yakında",
+    "alphaMathConnected": "alpha-math · bağlı",
+    "alphaMathComingSoon": "alpha-math · yakında"
+  },
+  "reduceMotion": {
+    "label": "Hareketi azalt",
+    "subtitleStill": "Buz gibi… durgun mu?",
+    "subtitleFlow": "Su gibi ak."
+  },
+  "resetQuit": {
+    "resetAndQuit": "SIFIRLA & ÇIK",
+    "keepRepos": "DEPOLARI KORU",
+    "wipeAll": "TÜMÜNÜ SİL"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Komut Tanılaması",
+    "networkFlowTelemetry": "Ağ Akışı Telemetrisi",
+    "clearSamples": "Örnekleri Temizle",
+    "clearMetrics": "Metrikleri Temizle",
+    "clearTimings": "Zamanlamaları Temizle",
+    "recalibrate": "YENİDEN AYARLA",
+    "ok": "tamam",
+    "noCommandTimings": "Henüz komut zamanlaması yakalanmadı. Tanılamayı doldurmak için normal eylemler çalıştır.",
+    "noBackendSamples": "Henüz arka uç komut örneği yakalanmadı. Bu günlüğü doldurmak için git ve ayar eylemleri çalıştır.",
+    "noDiffSessions": "Henüz diff oluşturma oturumu yakalanmadı. Bu paneli doldurmak için dosya diff'lerini aç ve kaydır.",
+    "noUiSessions": "Henüz UI zamanlama oturumu yakalanmadı. Bu paneli doldurmak için panelleri aç ve rotalarda gez.",
+    "recentOperations": "Son İşlemler",
+    "recentBackendOperations": "Son Arka Uç İşlemleri",
+    "recentDiffSessions": "Son Diff Oturumları",
+    "recentUiTimings": "Son UI Zamanlamaları",
+    "uniqueCommands": {
+      "one": "{n} benzersiz komut",
+      "other": "{n} benzersiz komut"
+    },
+    "scopedCommands": {
+      "one": "{n} kapsamlı komut",
+      "other": "{n} kapsamlı komut"
+    },
+    "instrumentedEvents": {
+      "one": "{n} enstrümanlı olay",
+      "other": "{n} enstrümanlı olay"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | takılma %{jank}",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["komut", "p50", "güvenilirlik", "aralık"],
+    "headersBackend": ["kapsam", "p50", "p95", "hatalar"],
+    "headersDiff": ["oluşturucu", "ilk çizim", "kare p95", "raster p95", "takılma"],
+    "headersUi": ["olay", "p50", "hatalar", "aralık"]
+  },
+  "telemetry": {
+    "samples": {
+      "one": "{n} örnek",
+      "other": "{n} örnek"
+    },
+    "commands": {
+      "one": "{n} komut",
+      "other": "{n} komut"
+    },
+    "sessions": {
+      "one": "{n} oturum",
+      "other": "{n} oturum"
+    },
+    "events": {
+      "one": "{n} olay",
+      "other": "{n} olay"
+    },
+    "stability": "%{pct} kararlılık",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "yürütme-akışı",
+    "description": "kod üzerinde osilatörler simüle eder. hataya dönüşmeden önce kırılgan yürütme yollarını ortaya çıkarır.",
+    "idle": "boşta",
+    "emptyOpenRepo": "akış analizini görmek için\nbir repo aç",
+    "scanning": "taranıyor",
+    "analysing": "mercekteki dosyalar\nanaliz ediliyor…",
+    "fragility": "kırılganlık",
+    "findings": "bulgular",
+    "gap": "boşluk",
+    "clean": "temiz",
+    "severity": "önem",
+    "critical": "kritik",
+    "warn": "uyarı",
+    "info": "bilgi"
+  },
+  "museStrands": {
+    "spark": "ilham kıvılcımı · hemen sonraki adım",
+    "current": "sudaki akıntı · şimdiki zaman uzantıları",
+    "horizon": "ufkun ötesine bak · uzanan yönler",
+    "fever": "ateşli bir rüyadan uyan · kışkırtmalar",
+    "echo": "kanyondaki bir yankı · başka yerlerdeki benzerler",
+    "vertigo": "uçurum kenarında baş dönmesi · komşu riskler",
+    "ghost": "olanın hayaleti · tarihsel bağlam",
+    "mirror": "durgun sudaki bir ayna · tersine çevirmeler"
+  },
+  "cliPiggyback": {
+    "title": "CLI Sırtlama",
+    "clearCacheLabel": "Önbelleği temizle",
+    "clearCacheTooltip": "Önbelleğe alınmış modelleri sil ve yeniden sonda gönder. Bir sağlayıcının bıraktıklarını temizler.",
+    "refreshLabel": "Sağlayıcıları yenile",
+    "refreshTooltip": "Her sağlayıcıyı şimdi yeniden sonda gönder.",
+    "body": "Arayüz mesajlarını doğrudan yerel sağlayıcı ikili dosyalarına aktar."
+  },
+  "header": {
+    "title": "Çalışma Alanı Tercihleri",
+    "subtitle": "Tüm çalışma alanı için küresel estetiği, arayüz dinamiklerini ve temel operasyonel güvenceleri yapılandır.",
+    "releaseNotesTooltip": "Sürüm notları",
+    "replayOnboardingTooltip": "İlk kullanımı tekrar oynat"
+  },
+  "diagnosticsPanel": {
+    "title": "Performans Tanılaması",
+    "copyTrace": "İzi Kopyala",
+    "offenderRanking": "İhlal Sıralaması",
+    "offenderRankingSubtitle": "Akışlar genelinde gecikme kaynakları.",
+    "noOffenders": "Henüz ihlal sıralaması yok. Bu listeyi doldurmak için tanılama etkinliği yakala."
+  },
+  "release": {
+    "title": "Sürüm Dağıtımı",
+    "summary": "Güncellemeyle ilgili ayarlar.",
+    "deploymentChannel": "DAĞITIM KANALI",
+    "captureCrashDiagnostics": "Çökme tanılamalarını yakala",
+    "comingSoon": "Yakında.",
+    "checking": "KONTROL EDİLİYOR…",
+    "pollForUpdates": "GÜNCELLEMELERİ YOKLA"
+  },
+  "providerStatus": {
+    "detecting": "Algılanıyor...",
+    "ready": "Hazır",
+    "notDetected": "Algılanmadı",
+    "configured": "{count} yapılandırıldı",
+    "notConfigured": "Yapılandırılmadı",
+    "cliManaged": "CLI-yönetimli",
+    "connected": "Bağlı",
+    "modelCount": {
+      "one": "{n} model",
+      "other": "{n} model"
+    },
+    "providerCount": {
+      "one": "{n} sağlayıcı",
+      "other": "{n} sağlayıcı"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Komut",
+    "diffStream": "Diff Oluşturma",
+    "uiStream": "UI Zamanlama",
+    "rendererName": "{mode} oluşturucu",
+    "latencyFailMetric": "{p95}ms p95 | %{fail} hata",
+    "jankFrameMetric": "%{jank} takılma | {frame}ms kare p95",
+    "inStream": "{stream} içinde"
+  }
+}

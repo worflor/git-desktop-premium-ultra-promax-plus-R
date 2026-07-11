@@ -125,16 +125,16 @@ class _Translations$app$ru extends Translations$app$en {
   @override
   String get commandPaletteTooltip => 'Палитра команд   /';
   @override
-  String get newDeskFallback => 'новый стол';
+  String get newDeskFallback => 'новый Desk';
   @override
-  String get deskFallback => 'стол';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => 'текущий';
   @override
   String get noRepositoryOpen => 'Репозиторий не открыт';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Не удалось открыть как стол: ${error}';
+      'Не удалось открыть как Desk: ${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       'Не удалось определить форж: ${error}';
@@ -150,7 +150,7 @@ class _Translations$app$ru extends Translations$app$en {
   String couldntFetchPr({required Object error}) =>
       'Не удалось получить PR: ${error}';
   @override
-  String get promoteDeskToPr => 'Продвинуть стол в PR';
+  String get promoteDeskToPr => 'Продвинуть Desk в PR';
   @override
   String get applyToMain => 'Применить к main';
   @override
@@ -164,22 +164,22 @@ class _Translations$app$ru extends Translations$app$en {
   @override
   String get discardLocalPr => 'Отбросить локальный PR';
   @override
-  String get closeDesk => 'Закрыть стол';
+  String get closeDesk => 'Закрыть Desk';
   @override
   String couldntPromote({required Object error}) =>
       'Не удалось продвинуть: ${error}';
   @override
   String get commitOrShelveBeforeApplying =>
-      'Закоммитьте или отложите изменения стола перед применением.';
+      'Закоммитьте или отложите изменения Desk перед применением.';
   @override
   String get couldNotResolveMainWorktree =>
       'Не удалось определить путь главного рабочего каталога.';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      'Не удалось продвинуть стол: ${error}';
+      'Не удалось продвинуть Desk: ${error}';
   @override
   String get couldntDetermineBaseBranch =>
-      'Не удалось определить базовую ветку для этого стола.';
+      'Не удалось определить базовую ветку для этого Desk.';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'База и вершина PR — одна и та же ветка (${branch}) — применять нечего.';
@@ -259,7 +259,7 @@ class _Translations$app$ru extends Translations$app$en {
       'Не удалось сохранить: ${error}';
   @override
   String get stashedNoOtherDesk =>
-      'Изменения спрятаны — нет другого стола для их применения. Используйте git stash pop для восстановления.';
+      'Изменения спрятаны — нет другого Desk для их применения. Используйте git stash pop для восстановления.';
   @override
   String get suggestedSource => 'предложенный источник';
   @override
@@ -297,7 +297,7 @@ class _Translations$app$ru extends Translations$app$en {
   @override
   String get uncommittedChanges => 'Незакоммиченные изменения';
   @override
-  String get closeDeskQuestion => 'Закрыть стол?';
+  String get closeDeskQuestion => 'Закрыть Desk?';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
@@ -364,13 +364,13 @@ class _Translations$app$ru extends Translations$app$en {
   String get noRemoteConfigured =>
       'Для этого репозитория удалённый не настроен.';
   @override
-  String get jumpToDesk => 'Перейти к столу';
+  String get jumpToDesk => 'Перейти к Desk';
   @override
   String get arrowOpen => '→ открыть';
   @override
-  String get openOnANewDesk => 'Открыть на новом столе';
+  String get openOnANewDesk => 'Открыть на новом Desk';
   @override
-  String get plusDesk => '+ стол';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -378,7 +378,7 @@ class _Translations$app$ru extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ новый стол';
+  String get plusNewDesk => '+ новый Desk';
   @override
   String get fromHeadEllipsis => 'от HEAD...';
   @override
@@ -557,7 +557,7 @@ class _Translations$branches$ru extends Translations$branches$en {
       'Не удалось опубликовать: ${error}';
   @override
   String couldntOpenDesk({required Object error}) =>
-      'Не удалось открыть стол: ${error}';
+      'Не удалось открыть Desk: ${error}';
   @override
   String syncFailed({required Object error}) => 'Сбой синхронизации: ${error}';
   @override
@@ -576,12 +576,11 @@ class _Translations$branches$ru extends Translations$branches$en {
   String deletingBranch({required Object name}) => 'Удаляю ${name}';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '«${name}» открыта на столе «${desk}».';
+      '«${name}» открыта на Desk «${desk}».';
   @override
-  String get openDesk => 'Открыть стол';
+  String get openDesk => 'Открыть Desk';
   @override
-  String openInDeskShort({required Object desk}) =>
-      'открыть на столе «${desk}»';
+  String openInDeskShort({required Object desk}) => 'открыть на Desk «${desk}»';
   @override
   String get couldNotPinBranch =>
       'не удалось закрепить вершину ветки; удаление пропущено';
@@ -597,13 +596,13 @@ class _Translations$branches$ru extends Translations$branches$en {
   String prSourceLabel({required Object number, required Object title}) =>
       'PR #${number}: ${title}';
   @override
-  String mergeIntoDesk({required Object branch}) => 'Слить в ${branch}…';
+  String mergeIntoDesk({required Object branch}) => 'Мёржить в ${branch}…';
   @override
   String get checkoutThisPr => 'Checkout этого PR';
   @override
-  String get mergeIntoNewDesk => 'Слить в новый стол…';
+  String get mergeIntoNewDesk => 'Мёржить в новый Desk…';
   @override
-  String get pushToForge => 'Отправить в форж';
+  String get pushToForge => 'Запушить в форж';
   @override
   String get linkToIssue => 'Связать с задачей…';
   @override
@@ -632,7 +631,7 @@ class _Translations$branches$ru extends Translations$branches$en {
       'Не удалось получить PR: ${error}';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Не удалось открыть как стол: ${error}';
+      'Не удалось открыть как Desk: ${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       'Не удалось открыть в браузере: ${error}';
@@ -647,10 +646,10 @@ class _Translations$branches$ru extends Translations$branches$en {
       'Связать PR #${number} с задачей(ами)';
   @override
   String get noPrsYetLocal =>
-      'Пока нет PR. Откройте один в upstream или продвиньте стол в PR.';
+      'Пока нет PR. Откройте один в upstream или продвиньте Desk в PR.';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      'Удалённые задачи могут связываться только с локальными PR. Сначала продвиньте стол в PR.';
+      'Удалённые задачи могут связываться только с локальными PR. Сначала продвиньте Desk в PR.';
   @override
   String linkIssueToPrs({required Object number}) =>
       'Связать задачу #${number} с PR';
@@ -698,7 +697,7 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String get noOpenPullRequests => 'Нет открытых pull request';
   @override
-  String get noPullRequestsHint => 'Откройте из ветки или продвиньте стол.';
+  String get noPullRequestsHint => 'Откройте из ветки или продвиньте Desk.';
   @override
   String get noPrsMatchFilters => 'Ни один PR не подходит под фильтры';
   @override
@@ -738,7 +737,7 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => 'Модель для ревью не настроена.';
   @override
-  String get deskFallback => 'стол';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({
     required num n,
@@ -755,10 +754,10 @@ class _Translations$branches$ru extends Translations$branches$en {
         '${branch} содержит ${n} незакоммиченных изменений — сначала закоммитьте или спрячьте.',
   );
   @override
-  String get targetDeskNoBranch => 'У целевого стола нет ветки.';
+  String get targetDeskNoBranch => 'У целевого Desk нет ветки.';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
-      'Слить PR #${number} в ${branch}';
+      'Мёржить PR #${number} в ${branch}';
   @override
   String get conflictCheckUnavailableVersion =>
       'Проверка конфликтов недоступна — нужен git 2.38+';
@@ -780,12 +779,12 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String get squash => 'Squash';
   @override
-  String get mergeCommit => 'Коммит слияния';
+  String get mergeCommit => 'Мёрж-коммит';
   @override
   String noDeskForBranch({required Object branch}) =>
-      'Для ветки ${branch} стол не найден';
+      'Для ветки ${branch} Desk не найден';
   @override
-  String get mergeAnyway => 'Слить всё равно';
+  String get mergeAnyway => 'Мёржить всё равно';
   @override
   String get readingIssues => 'Читаю задачи…';
   @override
@@ -1028,17 +1027,17 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ ревью pr';
   @override
-  String get actionOpenAsDesk => '⊞ открыть как стол';
+  String get actionOpenAsDesk => '⊞ открыть как Desk';
   @override
   String get actionCheckout => '[c] checkout';
   @override
-  String get actionMerge => '[m] слить ▾';
+  String get actionMerge => '[m] мёрж ▾';
   @override
-  String get mergeMenuMergeCommit => 'коммит слияния';
+  String get mergeMenuMergeCommit => 'мёрж-коммит';
   @override
-  String get mergeMenuSquash => 'squash и слить';
+  String get mergeMenuSquash => 'squash и мёрж';
   @override
-  String get mergeMenuRebase => 'rebase и слить';
+  String get mergeMenuRebase => 'rebase и мёрж';
   @override
   String get deleteBranchAfter => 'удалить ветку после';
   @override
@@ -1077,7 +1076,7 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String get corpseAbsorbed => 'поглощена';
   @override
-  String get corpseSquashed => 'сплющена';
+  String get corpseSquashed => 'засквошена';
   @override
   String absorbedDeliveredIn({required Object hash}) => 'доставлено в ${hash}';
   @override
@@ -1088,7 +1087,7 @@ class _Translations$branches$ru extends Translations$branches$en {
   String corpseTagAbsorbed({required Object receipt}) =>
       'поглощена, ${receipt}';
   @override
-  String get corpseTagSquashed => 'сплющена и слита';
+  String get corpseTagSquashed => 'засквошена и смёржена';
   @override
   String semanticsCurrentBranch({required Object name}) =>
       '${name}, текущая ветка';
@@ -1111,7 +1110,7 @@ class _Translations$branches$ru extends Translations$branches$en {
     required Object phrase,
   }) => '${name}, ${tag}, ${phrase}';
   @override
-  String get crossLinkDesk => 'стол';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -2257,7 +2256,7 @@ class _Translations$app$cheatsheet$ru extends Translations$app$cheatsheet$en {
   @override
   String get branches => 'Ветки';
   @override
-  String get xray => 'Рентген';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Переключить (всегда)';
   @override
@@ -2309,9 +2308,9 @@ class _Translations$backend$ops$ru extends Translations$backend$ops$en {
 
   // Translations
   @override
-  String get merge => 'Слияние';
+  String get merge => 'Мёрж';
   @override
-  String get pull => 'Забрать';
+  String get pull => 'Пул';
   @override
   String get apply => 'Применить';
   @override
@@ -2932,9 +2931,9 @@ class _Translations$changes$snack$ru extends Translations$changes$snack$en {
   @override
   String diffFailed({required Object error}) => 'Сбой diff: ${error}';
   @override
-  String get deskEmpty => 'У стола нет ничего впереди вас — пустой сброс.';
+  String get deskEmpty => 'У Desk нет ничего впереди вас — пустой сброс.';
   @override
-  String sourceDesk({required Object label}) => 'стол ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) =>
       'Не удалось прочитать полку: ${error}';
@@ -2946,7 +2945,7 @@ class _Translations$changes$snack$ru extends Translations$changes$snack$en {
   String noModelConfigured({required Object label}) =>
       'Для «${label}» модель не настроена.';
   @override
-  String fetchFailed({required Object error}) => 'Сбой получения: ${error}';
+  String fetchFailed({required Object error}) => 'Сбой фетча: ${error}';
 }
 
 // Path: changes.trace
@@ -2991,7 +2990,7 @@ class _Translations$changes$cleanTree$ru
   @override
   String get check => 'проверить';
   @override
-  String get checkTooltip => 'Получить и локально обновить.';
+  String get checkTooltip => 'Зафетчить и локально обновить.';
   @override
   String get sync => '& синхр';
 }
@@ -3029,7 +3028,7 @@ class _Translations$changes$dropHint$ru
   @override
   String get fromShelf => 'бросьте, чтобы принести изменения с этой полки сюда';
   @override
-  String get fromDesk => 'бросьте, чтобы принести изменения с этого стола сюда';
+  String get fromDesk => 'бросьте, чтобы принести изменения с этого Desk сюда';
 }
 
 // Path: changes.diffEmpty
@@ -3863,7 +3862,12 @@ class _Translations$common$time$ru extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => '${n} мес назад';
   @override
-  String yearsAgo({required Object n}) => '${n} г назад';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '${n} г назад',
+        other: '${n} г назад',
+      );
   @override
   String minutesShort({required Object n}) => '${n} мин';
   @override
@@ -3875,7 +3879,12 @@ class _Translations$common$time$ru extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n} мес';
   @override
-  String yearsShort({required Object n}) => '${n} г';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '${n} г',
+        other: '${n} г',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n} мес';
   @override
@@ -4525,7 +4534,7 @@ class _Translations$history$inFlight$ru
   @override
   String get header => 'В РАБОТЕ';
   @override
-  String get deskFallbackLabel => 'стол';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -4630,10 +4639,10 @@ class _Translations$historySurgery$understand$ru
   @override
   String get noWorktreesAffected => 'Рабочие каталоги не затронуты.';
   @override
-  String get forcePushTitle => 'Принудительная отправка';
+  String get forcePushTitle => 'Форс-пуш';
   @override
   String get forcePushBody =>
-      'После проверки вычистки вы выбираете, какие ветки принудительно отправить. Используется --force-with-lease, поэтому операция безопасно прервётся, если кто-то отправил в это время.';
+      'После проверки вычистки вы выбираете, какие ветки сделать форс-пушем. Используется --force-with-lease, поэтому операция безопасно прервётся, если кто-то запушил в это время.';
   @override
   String get plumbingNote =>
       'В отличие от filter-repo или BFG, это работает целиком через plumbing-команды git (cat-file, mktree, commit-tree, update-ref). Без внешних зависимостей. Отслеживание переименований идёт по одной цепочке на файл — если файл был скопирован, а обе копии переименованы независимо, проверьте результат вычистки после выполнения.';
@@ -4657,8 +4666,7 @@ class _Translations$historySurgery$confirm$ru
   String commitsRewritten({required Object n}) =>
       'Будет перезаписано ${n} коммитов';
   @override
-  String get forcePushRequired =>
-      'Для удалённых веток потребуется принудительная отправка';
+  String get forcePushRequired => 'Для удалённых веток потребуется форс-пуш';
   @override
   String worktreesRecheckout({required Object n}) =>
       '${n} рабочим каталогам потребуется повторный checkout';
@@ -4668,8 +4676,7 @@ class _Translations$historySurgery$confirm$ru
   @override
   String get heading => 'Эта операция переписывает историю git';
   @override
-  String get subheading =>
-      'Её нельзя автоматически отменить после принудительной отправки.';
+  String get subheading => 'Её нельзя автоматически отменить после форс-пуша.';
   @override
   String typeHint({required Object word}) => 'введите ${word}';
   @override
@@ -4747,11 +4754,11 @@ class _Translations$historySurgery$forcePush$ru
 
   // Translations
   @override
-  String get pushing => 'отправка...';
+  String get pushing => 'пуш...';
   @override
-  String get forcePushAll => 'Принудительно отправить всё';
+  String get forcePushAll => 'Форс-пуш всего';
   @override
-  String get confirmPush => 'подтвердить отправку';
+  String get confirmPush => 'подтвердить пуш';
   @override
   String get cancel => 'отмена';
 }
@@ -4882,7 +4889,7 @@ class _Translations$orrery$header$ru extends Translations$orrery$header$en {
 
   // Translations
   @override
-  String get title => 'Оррери';
+  String get title => 'Orrery';
   @override
   String get modeScrub => 'Прокрутка';
   @override
@@ -4903,7 +4910,7 @@ class _Translations$orrery$status$ru extends Translations$orrery$status$en {
 
   // Translations
   @override
-  String get loading => 'Прослеживаю манифолд сквозь историю…';
+  String get loading => 'Прослеживаю manifold сквозь историю…';
   @override
   String get loadError => 'Не удалось прочитать историю этого репозитория.';
   @override
@@ -4911,7 +4918,7 @@ class _Translations$orrery$status$ru extends Translations$orrery$status$en {
       'Пока недостаточно истории, чтобы построить траекторию.';
   @override
   String get notEnoughHistoryDetail =>
-      'Оррери нужно несколько коммитов, чтобы начертить.';
+      'Orrery нужно несколько коммитов, чтобы начертить.';
 }
 
 // Path: orrery.legend
@@ -5264,7 +5271,7 @@ class _Translations$palette$chips$ru extends Translations$palette$chips$en {
   @override
   String get ver => 'ВЕР';
   @override
-  String get desk => 'СТОЛ';
+  String get desk => 'DESK';
   @override
   String get det => 'ОТСЦ';
   @override
@@ -5431,9 +5438,9 @@ class _Translations$palette$gitCommands$ru
 
   // Translations
   @override
-  String get fetch => 'Получить';
+  String get fetch => 'Фетч';
   @override
-  String get pull => 'Забрать';
+  String get pull => 'Пул';
   @override
   String pullBehind({required Object count}) => '${count} позади';
   @override
@@ -5442,7 +5449,7 @@ class _Translations$palette$gitCommands$ru
     required Object upstream,
   }) => '${behind} ${upstream}';
   @override
-  String get push => 'Отправить';
+  String get push => 'Пуш';
   @override
   String pushCommits({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
@@ -5458,10 +5465,10 @@ class _Translations$palette$gitCommands$ru
     required Object upstream,
   }) => '${commits} в ${upstream}';
   @override
-  String get forcePush => 'Принудительная отправка';
+  String get forcePush => 'Форс-пуш';
   @override
   String forcePushNoUpstream({required Object branch}) =>
-      'Принудительная отправка невозможна: для ${branch} не задан upstream.';
+      'Форс-пуш невозможен: для ${branch} не задан upstream.';
   @override
   String get commit => 'Коммит';
   @override
@@ -5489,7 +5496,7 @@ class _Translations$palette$gitCommands$ru
   @override
   String get cherryPick => 'Cherry-pick';
   @override
-  String get revert => 'Откатить';
+  String get revert => 'Ревёрт';
   @override
   String get stashConflictMessage =>
       'Стэш применён с конфликтами. Устраните их на странице «Изменения».';
@@ -5507,7 +5514,7 @@ class _Translations$palette$pr$ru extends Translations$palette$pr$en {
   @override
   String get create => 'Создать PR';
   @override
-  String get merge => 'Слить PR';
+  String get merge => 'Мёржить PR';
   @override
   String get markReady => 'Пометить PR готовым';
 }
@@ -5581,7 +5588,7 @@ class _Translations$palette$navigation$ru
   @override
   String get branches => 'Ветки';
   @override
-  String get xray => 'Рентген';
+  String get xray => 'X-Ray';
   @override
   String get settings => 'Настройки';
   @override
@@ -5708,10 +5715,10 @@ class _Translations$palette$orrery$ru extends Translations$palette$orrery$en {
 
   // Translations
   @override
-  String get label => 'Оррери';
+  String get label => 'Orrery';
   @override
   String get subtitle =>
-      'Прокрутите структурную историю репозитория сквозь манифолд';
+      'Прокрутите структурную историю репозитория сквозь manifold';
 }
 
 // Path: palette.command
@@ -6342,7 +6349,7 @@ class _Translations$settings$keybindingProfile$ru
   @override
   String get label => 'Профиль горячих клавиш';
   @override
-  String get porcelain => 'Фарфор';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => 'Цифровой';
   @override
@@ -6399,7 +6406,7 @@ class _Translations$settings$shortcuts$ru
   @override
   String get branches => 'Ветки';
   @override
-  String get xray => 'Рентген';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Переключить (всегда)';
   @override
@@ -6647,7 +6654,7 @@ class _Translations$settings$museHint$ru
   String get strict => 'стандарты. запреты. что муза не спустит.';
   @override
   String get paranoid =>
-      'настройте линзу. на каких частотах должен гудеть манифолд?';
+      'настройте линзу. на каких частотах должен гудеть manifold?';
 }
 
 // Path: settings.museEditor
@@ -7582,17 +7589,17 @@ class _Translations$sync$actions$ru extends Translations$sync$actions$en {
   String get syncLabel => 'Синхронизировать';
   @override
   String get syncOpenRepoDetail =>
-      'Откройте репозиторий, чтобы управлять отправкой и получением.';
+      'Откройте репозиторий, чтобы управлять пушем и пулом.';
   @override
   String get detachedHeadLabel => 'Отсоединённый HEAD';
   @override
   String get detachedHeadDetail =>
-      'Переключитесь на ветку перед отправкой или получением.';
+      'Переключитесь на ветку перед пушем или пулом.';
   @override
   String get publishBranchLabel => 'Опубликовать ветку';
   @override
   String publishBranchDetail({required Object branch}) =>
-      'Отправить ${branch} и задать её upstream-ветку слежения.';
+      'Запушить ${branch} и задать её upstream-ветку слежения.';
   @override
   String get publishButtonLabel => 'Опубликовать';
   @override
@@ -7601,24 +7608,24 @@ class _Translations$sync$actions$ru extends Translations$sync$actions$en {
   String syncBranchDetail({
     required Object behindCount,
     required Object aheadCount,
-  }) => 'Забрать ${behindCount} с rebase, затем отправить ${aheadCount}.';
+  }) => 'Запулить ${behindCount} с rebase, затем запушить ${aheadCount}.';
   @override
-  String get syncBranchButtonLabel => 'Забрать (rebase), затем отправить';
+  String get syncBranchButtonLabel => 'Запулить (rebase), затем запушить';
   @override
-  String get pushBranchLabel => 'Отправить ветку';
+  String get pushBranchLabel => 'Запушить ветку';
   @override
   String pushBranchDetail({required Object count, required Object upstream}) =>
-      'Отправить ${count} в ${upstream}.';
+      'Запушить ${count} в ${upstream}.';
   @override
-  String get pushBranchButtonLabel => 'Отправить коммиты';
+  String get pushBranchButtonLabel => 'Запушить коммиты';
   @override
-  String get pullUpdatesLabel => 'Забрать обновления';
+  String get pullUpdatesLabel => 'Запулить обновления';
   @override
   String pullUpdatesDetail({required Object count, required Object upstream}) =>
-      'Забрать ${count} из ${upstream}.';
+      'Запулить ${count} из ${upstream}.';
   @override
   String syncUpToDateDetail({required Object upstream}) =>
-      'Получить из ${upstream} и обновить статус upstream.';
+      'Зафетчить из ${upstream} и обновить статус upstream.';
 }
 
 // Path: sync.panel
@@ -7647,13 +7654,13 @@ class _Translations$sync$panel$ru extends Translations$sync$panel$en {
   @override
   String get runningSync => 'Синхронизация…';
   @override
-  String get fetching => 'Получение…';
+  String get fetching => 'Фетч…';
   @override
-  String get fetchOnly => 'Только получить';
+  String get fetchOnly => 'Только фетч';
   @override
   String get syncFailed => 'Сбой синхронизации';
   @override
-  String get forcePushRecoveryLabel => 'Принудительная отправка (with lease)';
+  String get forcePushRecoveryLabel => 'Форс-пуш (with lease)';
   @override
   String get conflictsToResolveTitle => 'Конфликты к устранению';
   @override
@@ -7682,7 +7689,7 @@ class _Translations$sync$panel$ru extends Translations$sync$panel$en {
       '${count} с незакоммиченными правками, сначала закоммитьте их для rebase-синхронизации (${list}).';
   @override
   String noUpstreamForForcePush({required Object branch}) =>
-      'Принудительная отправка невозможна: для «${branch}» не настроен upstream.';
+      'Форс-пуш невозможен: для «${branch}» не настроен upstream.';
 }
 
 // Path: sync.forcePush
@@ -7695,15 +7702,15 @@ class _Translations$sync$forcePush$ru extends Translations$sync$forcePush$en {
 
   // Translations
   @override
-  String get confirmTitle => 'Принудительная отправка (with lease)?';
+  String get confirmTitle => 'Форс-пуш (with lease)?';
   @override
   String target({required Object remote, required Object branch}) =>
       'Цель: ${remote}/${branch}';
   @override
   String get warning =>
-      'Это перезапишет удалённую ветку вашей локальной историей. Режим with lease прервётся, если кто-то отправил в удалённый после вашего последнего fetch, но уже полученные изменения всё равно будут перезаписаны. Используйте только когда вы намеренно сделали rebase или amend, разошедшийся с веткой.';
+      'Это перезапишет удалённую ветку вашей локальной историей. Режим with lease прервётся, если кто-то запушил в удалённый после вашего последнего fetch, но уже полученные изменения всё равно будут перезаписаны. Используйте только когда вы намеренно сделали rebase или amend, разошедшийся с веткой.';
   @override
-  String get confirmButton => 'Принудительно отправить';
+  String get confirmButton => 'Форс-пуш';
 }
 
 // Path: xray.board
@@ -7865,7 +7872,7 @@ class _Translations$xray$header$ru extends Translations$xray$header$en {
   @override
   String get refreshing => 'Обновление...';
   @override
-  String get title => 'Рентген репозитория';
+  String get title => 'X-Ray репозитория';
 }
 
 // Path: xray.hotspot
@@ -7997,9 +8004,9 @@ class _Translations$xray$loadingCard$ru
   String get idleMessage =>
       'Откройте панель снова, чтобы прозондировать текущий репозиторий.';
   @override
-  String get idleTitle => 'Рентген репозитория';
+  String get idleTitle => 'X-Ray репозитория';
   @override
-  String get unavailableTitle => 'Рентген репозитория недоступен';
+  String get unavailableTitle => 'X-Ray репозитория недоступен';
 }
 
 // Path: xray.metabolism
@@ -8061,7 +8068,12 @@ class _Translations$xray$recency$ru extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n} нед';
   @override
-  String years({required Object n}) => '${n} г';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '${n} г',
+        other: '${n} г',
+      );
 }
 
 // Path: xray.rings
@@ -8255,7 +8267,7 @@ class _Translations$xray$trajectory$ru extends Translations$xray$trajectory$en {
   @override
   String events({required Object n}) => '${n} событий';
   @override
-  String get openInOrrery => 'Открыть в Оррери';
+  String get openInOrrery => 'Открыть в Orrery';
   @override
   String get readingHint => 'читаю историю…';
   @override
@@ -8750,7 +8762,7 @@ class _Translations$onboarding$preview$branches$ru
   @override
   String get absorbed => 'поглощена';
   @override
-  String get desk => 'стол';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override

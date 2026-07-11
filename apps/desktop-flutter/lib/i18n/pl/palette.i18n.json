@@ -1,0 +1,201 @@
+{
+  "active": "aktywne",
+  "prefixes": {
+    "askHint": "ask: [pytanie]",
+    "nearHint": "near: [plik]",
+    "whoHint": "who: [plik]",
+    "logHint": "log: [wiadomość]",
+    "runHint": "run: [narzędzie]",
+    "askLabel": "Zapytaj {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} recenzentów · {touches} dotknięć",
+    "whoTouchesLabel": "{name} — {touches} dotknięć",
+    "whoTouchesSubtitle": "{path} · brak zapisanych recenzentów"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "BLISKO",
+    "who": "KTO",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "GOR",
+    "key": "KLAW",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "SCHOW",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "SZKIC",
+    "undo": "COFNIJ",
+    "thm": "MOTYW",
+    "ver": "WER",
+    "desk": "DESK",
+    "det": "ODŁ",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "BRAK",
+    "remote": "ZDAL",
+    "local": "LOK",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% rozpędu"
+  },
+  "topTouched": {
+    "subtitle": "{count} dotknięć · {path}"
+  },
+  "coherence": {
+    "label": "Spójność indeksu: {percent}%",
+    "subtitle": "{count} plików"
+  },
+  "keystone": {
+    "subtitle": "{path} · zwornik {score}"
+  },
+  "repoSub": {
+    "changes": "Zmiany w {name}",
+    "history": "Historia w {name}",
+    "branches": "Gałęzie w {name}",
+    "terminal": "Terminal w {name}",
+    "generateCommit": "Wygeneruj commit · {name}",
+    "reviewChanges": "Przegląd zmian w {name}",
+    "muse": "Muse w {name}"
+  },
+  "desks": {
+    "mainWorktree": "główne drzewo robocze",
+    "detached": "odłączony",
+    "dirty": "{count} brudnych"
+  },
+  "actions": {
+    "openInBrowser": "Otwórz w przeglądarce",
+    "terminal": "Terminal",
+    "revealInFiles": "Pokaż w plikach",
+    "copyPath": "Kopiuj ścieżkę",
+    "copyBranch": "Kopiuj gałąź"
+  },
+  "tools": {
+    "launch": "Uruchom {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} w tyle",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "few": "{n} commity", "many": "{n} commitów", "other": "{n} commita"},
+    "pushCommitsUpstream": "{commits} do {upstream}",
+    "forcePush": "Wymuś push",
+    "forcePushNoUpstream": "Nie można wymusić push: dla {branch} nie ustawiono upstream.",
+    "commit": "Commit",
+    "stageAll": "Dodaj wszystko do indeksu",
+    "unstageAll": "Usuń wszystko z indeksu",
+    "discardAll": "Odrzuć wszystko",
+    "createBranch": "Utwórz gałąź",
+    "deleteBranch": "Usuń gałąź",
+    "renameBranch": "Zmień nazwę gałęzi",
+    "stash": "Stash",
+    "stashPop": "Wyjmij stash",
+    "stashApply": "Zastosuj stash",
+    "stashDrop": "Porzuć stash",
+    "createTag": "Utwórz tag",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash zastosowany z konfliktami. Rozwiąż je na stronie „Zmiany”."
+  },
+  "pr": {
+    "create": "Utwórz PR",
+    "merge": "Merge PR",
+    "markReady": "Oznacz PR jako gotowy"
+  },
+  "ai": {
+    "generateCommit": "Wygeneruj commit",
+    "reviewChanges": "Przegląd zmian",
+    "runMuse": "Uruchom Muse",
+    "debugRepo": "Debuguj {name}",
+    "describeSymptom": "opisz objaw",
+    "viewResult": "Zobacz {kind}",
+    "unseenResult": "nieobejrzany wynik",
+    "runningResult": "AI: {kind}…",
+    "running": "wykonuje się",
+    "kindCommitMessage": "Wiadomość commita",
+    "kindCodeReview": "Przegląd kodu",
+    "kindMuseResult": "Wynik Muse",
+    "kindPresentation": "Prezentacja",
+    "kindDebugResult": "Wynik debugowania"
+  },
+  "undo": {
+    "cancel": "Anuluj: {label}"
+  },
+  "navigation": {
+    "changes": "Zmiany",
+    "history": "Historia",
+    "branches": "Gałęzie",
+    "xray": "X-Ray",
+    "settings": "Ustawienia",
+    "refresh": "Odśwież"
+  },
+  "settings": {
+    "reduceMotion": "Ogranicz animacje",
+    "animateLogoUnfocused": "Animuj logo poza fokusem",
+    "instantBlameHover": "Natychmiastowy blame przy najechaniu",
+    "autoSelectChanges": "Automatyczny wybór zmian",
+    "fetchOnlineIssues": "Pobieraj zgłoszenia online",
+    "rememberWip": "Pamiętaj pracę w toku",
+    "hideAiFeatures": "Ukryj funkcje AI",
+    "crashReporting": "Raportowanie awarii",
+    "aiReadOnly": "AI tylko do odczytu",
+    "stashCabinetExpanded": "Szafka stash rozwinięta",
+    "fileSortInverted": "Odwrócone sortowanie plików"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Status silnika",
+    "engineStatusSubtitle": "Diagnostyka silnika spektralnego LogosGit",
+    "fileCoupling": "Sprzężenie plików",
+    "fileCouplingSubtitle": "Najbliżsi sąsiedzi po wspólnych zmianach dla plików w indeksie",
+    "themeSpecimen": "Próbka motywu",
+    "themeSpecimenSubtitle": "Wszystkie kolory, ikony, poziomy tekstu i geometria"
+  },
+  "dev": {
+    "testMergeEditor": "Test edytora merge'a",
+    "testHistorySurgery": "Test chirurgii historii",
+    "back": "wstecz",
+    "cancel": "anuluj",
+    "buildingConflicts": "buduję testowe konflikty z historii…"
+  },
+  "historySurgery": {
+    "label": "Chirurgia historii",
+    "subtitle": "Przepisz historię, aby trwale usunąć pliki"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Przewiń strukturalną historię repozytorium przez manifold"
+  },
+  "command": {
+    "complete": "{label} — zakończono",
+    "failed": "{label} — błąd: {message}",
+    "copy": "Kopiuj"
+  },
+  "search": {
+    "hintDefault": "szukaj wszędzie...",
+    "hintElevated": "rozszerzone — wszystkie akcje",
+    "emptyTypeToSearch": "pisz, aby szukać",
+    "emptyNoResults": "brak wyników"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "sprzężony"
+  },
+  "gitCache": {
+    "current": "bieżący",
+    "staged": "w indeksie",
+    "modified": "zmieniony"
+  }
+}

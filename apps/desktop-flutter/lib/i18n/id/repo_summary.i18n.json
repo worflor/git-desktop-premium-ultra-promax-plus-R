@@ -1,0 +1,60 @@
+{
+  "@@locale": "id",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "other": "{n} baris"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "other": "{n} file."
+    },
+    "lines": {
+      "other": "{n} baris ({bytes})."
+    },
+    "roles": "Peran — {parts}.",
+    "showingNofM": "Menampilkan {active} dari {total} file, diperingkat berdasarkan sentralitas struktural."
+  },
+  "heading": {
+    "atAGlance": "Sekilas",
+    "core": "Inti",
+    "gettingStarted": "Memulai",
+    "regions": "Region",
+    "shape": "Bentuk"
+  },
+  "historyStarvedCaveat": "Pemeringkatan terbatas: graf kopling tidak punya edge (clone baru atau terlalu sedikit commit). Urutan file mencerminkan ukuran, bukan sentralitas struktural.",
+  "pitch": {
+    "empty": "Repository tanpa file teks yang bisa dibaca{detail}.",
+    "emptyBinary": "{n} biner",
+    "emptyUnreadable": "{n} tak terbaca",
+    "noRegions": {
+      "other": "Repository dengan {n} file aktif."
+    },
+    "withRegions": {
+      "other": "Repository dengan {n} file aktif — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Semua di bawah `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "other": "{n} inti"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "other": "{n} file"
+    },
+    "connectsTo": "Terhubung ke: {linked}.",
+    "filesLabel": "File:"
+  },
+  "shape": {
+    "bulk": "Codebase yang terhubung rapat: sebagian besar file ikut serta dalam satu lingkungan besar berbagi perubahan.",
+    "crystalline": "Codebase berbentuk kisi: kopling seragam dan teratur antar file dengan struktur lokal yang bisa ditebak.",
+    "goe": "Codebase yang saling terhubung kaya: kopling menyebar antar file tanpa tulang punggung dominan.",
+    "modular": "Codebase modular: beberapa region kohesif dengan kopling silang terbatas. Kerja di satu region jarang mengganggu region lain.",
+    "poisson": "Codebase terkopel longgar: file kebanyakan berkembang sendiri-sendiri, dengan perubahan bersama sesekali.",
+    "tree": "Codebase berbentuk pohon: satu tulang punggung dominan dengan cabang bergantung. Perubahan biasanya merambat keluar dari inti."
+  }
+}

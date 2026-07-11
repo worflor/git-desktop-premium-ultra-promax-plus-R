@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "Profil de raccourcis",
-    "porcelain": "Porcelaine",
+    "porcelain": "Porcelain",
     "numeric": "Numérique",
     "porcelainDescription": "Raccourcis en accords (G puis C, H, B…).",
     "numericDescription": "Raccourcis numériques à une touche (1, 2, 3…)."
@@ -136,12 +136,12 @@
     "toggleHunk": "Basculer la section",
     "toggleFile": "Basculer le fichier",
     "pinContext": "Épingler le contexte",
-    "commit": "Valider",
+    "commit": "Committer",
     "acceptHint": "Accepter l'indice",
     "undo": "Annuler",
     "navigateRow": "Naviguer",
     "expand": "Développer",
-    "checkout": "Extraire",
+    "checkout": "Checkout",
     "approve": "Approuver",
     "requestChanges": "Demander des modifications",
     "selectRange": "Sélectionner une plage",
@@ -155,7 +155,7 @@
     "logoMotionDescriptionDisabled": ":(",
     "rememberWipLabel": "Mémoriser le travail en cours",
     "rememberWipDescription": "Conserve vos brouillons de commit et votre sélection de fichiers entre les sessions.",
-    "stashCabinetLabel": "L'armoire de remisage démarre déployée",
+    "stashCabinetLabel": "L'armoire de stash démarre déployée",
     "stashCabinetDescription": "Affiche le tiroir de l'armoire ouvert par défaut quand un dépôt a des étagères.",
     "instantBlameLabel": "Survol blame instantané",
     "instantBlameDescription": "Passe le délai de 180 ms avant l'affichage du blame sur une ligne de diff.",
@@ -191,7 +191,7 @@
   },
   "aiFeatures": {
     "commitDescription": "Rédige des messages de commit à partir des changements indexés selon vos préférences de structure, de voix et de couverture.",
-    "reviewDescription": "Relit le périmètre du commit actuel avant que vous ne validiez.",
+    "reviewDescription": "Relit le périmètre du commit actuel avant que vous ne committiez.",
     "museDescription": "Oracle en trois phases qui remue-méninge puis synthétise une direction à suivre pour le diff."
   },
   "commitEditor": {

@@ -37,13 +37,19 @@
     "daysAgo": "{n} 日前",
     "weeksAgo": "{n} 週間前",
     "monthsAgo": "{n} か月前",
-    "yearsAgo": "{n} 年前",
+    "yearsAgo": {
+      "one": "{n} 年前",
+      "other": "{n} 年前"
+    },
     "minutesShort": "{n}分",
     "hoursShort": "{n}時間",
     "daysShort": "{n}日",
     "weeksShort": "{n}週",
     "monthsShort": "{n}か月",
-    "yearsShort": "{n}年",
+    "yearsShort": {
+      "one": "{n}年",
+      "other": "{n}年"
+    },
     "commitMonthsShort": "{n}か月",
     "idle": "停滞",
     "idleDays": "停滞 {n} 日",

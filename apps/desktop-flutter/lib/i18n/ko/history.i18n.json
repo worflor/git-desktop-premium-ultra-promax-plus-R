@@ -60,13 +60,13 @@
     "revertCommitOn": "{branch}에서 커밋 변경 되돌리기"
   },
   "cherryPick": {
-    "paused": "체리픽 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하세요.",
+    "paused": "체리픽 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하십시오.",
     "failed": "체리픽 실패: {error}",
     "pickedResolved": "{short} 체리픽됨 (충돌 해결)",
     "picked": "{short} 체리픽됨"
   },
   "revert": {
-    "paused": "되돌리기 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하세요.",
+    "paused": "되돌리기 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하십시오.",
     "failed": "되돌리기 실패: {error}",
     "revertedResolved": "{short} 되돌림 (충돌 해결)",
     "reverted": "{short} 되돌림"
@@ -93,7 +93,7 @@
   "viewingLast": "최근 보기",
   "commitsUnit": "커밋",
   "noCommitSelectedTitle": "선택된 커밋 없음",
-  "noCommitSelectedMessage": "변경 내용을 살펴보려면 커밋을 선택하세요.",
+  "noCommitSelectedMessage": "변경 내용을 살펴보려면 커밋을 선택하십시오.",
   "loadingCommitTitle": "커밋 불러오는 중",
   "loadingCommitMessage": "커밋 세부 정보를 읽는 중.",
   "commitUnavailableTitle": "커밋을 사용할 수 없음",
@@ -120,6 +120,6 @@
   },
   "inFlight": {
     "header": "진행 중",
-    "deskFallbackLabel": "데스크"
+    "deskFallbackLabel": "Desk"
   }
 }

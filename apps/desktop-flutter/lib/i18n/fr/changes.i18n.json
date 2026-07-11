@@ -51,49 +51,49 @@
     "hintWithChar": "{hint}  ·  {char}"
   },
   "commit": {
-    "primaryCommitChanges": "Valider les modifications",
-    "primaryCommitChangesDetail": "HEAD détachée : validez localement sans synchroniser.",
-    "primaryPublish": "Valider et publier",
+    "primaryCommitChanges": "Committer les modifications",
+    "primaryCommitChangesDetail": "HEAD détachée : committez localement sans synchroniser.",
+    "primaryPublish": "Committer et publier",
     "primaryPublishDetail": "Créer le commit et publier cette branche d'un coup.",
-    "primarySync": "Valider et synchroniser",
+    "primarySync": "Committer et synchroniser",
     "primarySyncDetail": "Créer le commit, puis réconcilier et livrer la branche.",
-    "primaryPush": "Valider et pousser",
-    "primaryPushDetail": "Créer le commit et le pousser immédiatement.",
+    "primaryPush": "Committer et pusher",
+    "primaryPushDetail": "Créer le commit et le pusher immédiatement.",
     "amendLast": "Amender le dernier commit",
     "amendAnd": "Amender et {action}",
     "chooseFile": "Choisissez au moins un fichier pour le prochain commit.",
     "writeMessage": "Écrivez d'abord un message de commit.",
-    "committing": "Validation",
-    "committingSync": "Validation et synchronisation",
-    "committed": "Validé.",
+    "committing": "Commit",
+    "committingSync": "Commit et synchronisation",
+    "committed": "Committé.",
     "undoFailed": "Échec de l'annulation.",
     "working": "En cours…",
-    "commitOnly": "Valider seulement",
+    "commitOnly": "Committer seulement",
     "noRuntimeModels": "Aucun modèle découvert à l'exécution n'est disponible pour les messages de commit.",
     "restoreFailedRetry": "{err}\nImpossible de restaurer l'indexation des fichiers exclus ; vérifiez l'index avant de réessayer.",
-    "committedSummary": "Validé {summary} ({hash}).",
+    "committedSummary": "Committé {summary} ({hash}).",
     "restoreFailedSync": "Impossible de réindexer les sélections des fichiers exclus ; synchronisation ignorée. Vérifiez l'index avant de synchroniser.",
     "noModelLabel": "Aucun modèle",
     "chooseBeforeGenerate": "Choisissez au moins un fichier avant de générer.",
     "aiUnavailable": "L'IA de message de commit n'est pas encore disponible.",
     "generateFailed": "Échec de la génération.",
     "stageFailed": "Échec de l'indexation des fichiers.",
-    "commitFailed": "Échec de la validation.",
-    "committedAndRan": "Validé {summary} ({hash}) et exécuté {operation}.",
+    "commitFailed": "Échec du commit.",
+    "committedAndRan": "Committé {summary} ({hash}) et exécuté {operation}.",
     "committedResolved": {
-      "one": "Validé {summary} ({hash}) ; {n} conflit résolu.",
-      "other": "Validé {summary} ({hash}) ; {n} conflits résolus."
+      "one": "Committé {summary} ({hash}) ; {n} conflit résolu.",
+      "other": "Committé {summary} ({hash}) ; {n} conflits résolus."
     },
     "conflictsLeft": {
       "one": "{n} conflit restant à résoudre.",
       "other": "{n} conflits restants à résoudre."
     },
     "syncBlocked": {
-      "one": "Validation réussie, mais la synchronisation a été bloquée par {n} fichier non validé.",
-      "other": "Validation réussie, mais la synchronisation a été bloquée par {n} fichiers non validés."
+      "one": "Commit réussi, mais la synchronisation a été bloquée par {n} fichier non committé.",
+      "other": "Commit réussi, mais la synchronisation a été bloquée par {n} fichiers non committés."
     },
-    "syncStalled": "Validation réussie, mais la synchronisation a calé : {message}",
-    "syncFailed": "Validation réussie, mais la synchronisation a échoué : {message}"
+    "syncStalled": "Commit réussi, mais la synchronisation a calé : {message}",
+    "syncFailed": "Commit réussi, mais la synchronisation a échoué : {message}"
   },
   "rebase": {
     "continueFailed": "Impossible de poursuivre le rebasage."
@@ -200,13 +200,13 @@
   "snack": {
     "sameWorktree": "Même arbre de travail — rien à déverser.",
     "diffFailed": "Échec du diff : {error}",
-    "deskEmpty": "Le bureau n'a rien en avance sur vous — déversement vide.",
-    "sourceDesk": "bureau {label}",
+    "deskEmpty": "Le Desk n'a rien en avance sur vous — déversement vide.",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "Échec de lecture de l'étagère : {error}",
     "shelfEmpty": "Étagère vide — rien à déverser.",
     "sourceShelf": "étagère {label}",
     "noModelConfigured": "Aucun modèle configuré pour « {label} ».",
-    "fetchFailed": "Échec de la récupération : {error}"
+    "fetchFailed": "Échec du fetch : {error}"
   },
   "trace": {
     "title": "Trace de vérification",
@@ -221,7 +221,7 @@
     "refreshing": "Actualisation...",
     "refresh": "Actualiser",
     "check": "vérifier",
-    "checkTooltip": "Récupérer et actualiser en local.",
+    "checkTooltip": "Fetch et actualiser en local.",
     "sync": "& sync"
   },
   "guardrail": {
@@ -232,7 +232,7 @@
   },
   "dropHint": {
     "fromShelf": "déposez pour amener ici les changements de cette étagère",
-    "fromDesk": "déposez pour amener ici les changements de ce bureau"
+    "fromDesk": "déposez pour amener ici les changements de ce Desk"
   },
   "diffEmpty": {
     "title": "Aucun fichier sélectionné",
@@ -256,7 +256,7 @@
     "binary": "bin"
   },
   "fileRow": {
-    "stagedLinesOnly": "valide seulement les lignes indexées",
+    "stagedLinesOnly": "committe seulement les lignes indexées",
     "doubleClickToggle": "double-clic : basculer tout le groupe",
     "repoRoot": "Racine du dépôt"
   },
@@ -403,10 +403,10 @@
     "loadingMessage": "Lecture de l'arbre de travail."
   },
   "stash": {
-    "appliedWithConflicts": "Remisage appliqué avec des conflits — résolvez-les sur la page Modifications (l'entrée de remisage a été conservée).",
-    "couldNotPop": "Impossible de dépiler le remisage.",
-    "listChanged": "La liste des remisages a changé ; suppression ignorée. Réessayez.",
-    "droppingStash": "Suppression du remisage"
+    "appliedWithConflicts": "Stash appliqué avec des conflits — résolvez-les sur la page Modifications (l'entrée de stash a été conservée).",
+    "couldNotPop": "Impossible de dépiler le stash.",
+    "listChanged": "La liste des stash a changé ; suppression ignorée. Réessayez.",
+    "droppingStash": "Suppression du stash"
   },
   "tooltips": {
     "commitGenerating": "génération du message de commit...",
@@ -476,13 +476,13 @@
     "couldNotReadFiles": "Impossible de lire les fichiers en conflit.",
     "blockedSecret": "Bloqué — un fichier en conflit semble contenir un {secret}. Résolvez à la main.",
     "resolutionFailed": "Échec de la résolution : {error}",
-    "mergeResolutionLabel": "◇ résolution de fusion · {resolved}/{total} fichiers · {category}",
+    "mergeResolutionLabel": "◇ résolution de merge · {resolved}/{total} fichiers · {category}",
     "conflictSummary": "{op} · {conflicts} dans {files}",
     "conflictCount": {
       "one": "{n} conflit",
       "other": "{n} conflits"
     },
-    "mergeEditorButton": "⇋ éditeur de fusion",
+    "mergeEditorButton": "⇋ éditeur de merge",
     "noAiModel": "aucun modèle IA",
     "later": "plus tard",
     "discard": "abandonner",
@@ -492,22 +492,22 @@
   },
   "mergeFlow": {
     "op": {
-      "merge": "fusion",
-      "cherryPick": "picorage",
-      "revert": "annulation",
+      "merge": "merge",
+      "cherryPick": "cherry-pick",
+      "revert": "revert",
       "resolve": "résolution",
       "switchOp": "bascule",
-      "pull": "tirage",
+      "pull": "pull",
       "rebase": "rebasage",
       "rebaseOnto": "rebaser {branch} sur {base}"
     },
-    "pushFailed": "Échec de la poussée",
-    "rebasedAndPushed": "Rebasé et poussé.",
+    "pushFailed": "Échec du push",
+    "rebasedAndPushed": "Rebasé et pushé.",
     "switchedTo": "Basculé vers {name}.",
     "switchFailed": "Échec de la bascule.",
     "switchedToCarried": "Basculé vers {name} (changements reportés).",
     "alreadyUpToDate": "Déjà à jour.",
-    "merged": "{upstream} fusionné ({n} fichiers).",
+    "merged": "{upstream} mergé ({n} fichiers).",
     "rebaseNotConverge": "Le rebasage n'a pas convergé — résolvez manuellement.",
     "rebased": "Rebasé.",
     "rebasedResolved": {

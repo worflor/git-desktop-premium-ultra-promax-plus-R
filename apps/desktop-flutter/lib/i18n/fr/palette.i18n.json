@@ -34,7 +34,7 @@
     "undo": "ANNULER",
     "thm": "THM",
     "ver": "VER",
-    "desk": "BUREAU",
+    "desk": "DESK",
     "det": "DÉT",
     "main": "MAIN",
     "head": "HEAD",
@@ -69,7 +69,7 @@
   "desks": {
     "mainWorktree": "arbre de travail principal",
     "detached": "détachée",
-    "dirty": "{count} sales"
+    "dirty": "{count} dirty"
   },
   "actions": {
     "openInBrowser": "Ouvrir dans le navigateur",
@@ -82,34 +82,34 @@
     "launch": "Lancer {label}"
   },
   "gitCommands": {
-    "fetch": "Récupérer",
-    "pull": "Tirer",
+    "fetch": "Fetch",
+    "pull": "Pull",
     "pullBehind": "{count} en retard",
     "pullBehindUpstream": "{behind} {upstream}",
-    "push": "Pousser",
+    "push": "Push",
     "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
     "pushCommitsUpstream": "{commits} vers {upstream}",
-    "forcePush": "Poussée forcée",
-    "forcePushNoUpstream": "Impossible de forcer la poussée : aucun amont défini pour {branch}.",
-    "commit": "Valider",
+    "forcePush": "Force push",
+    "forcePushNoUpstream": "Impossible de forcer le push : aucun amont défini pour {branch}.",
+    "commit": "Committer",
     "stageAll": "Tout indexer",
     "unstageAll": "Tout désindexer",
     "discardAll": "Tout abandonner",
     "createBranch": "Créer une branche",
     "deleteBranch": "Supprimer la branche",
     "renameBranch": "Renommer la branche",
-    "stash": "Remiser",
-    "stashPop": "Dépiler le remisage",
-    "stashApply": "Appliquer le remisage",
-    "stashDrop": "Supprimer le remisage",
+    "stash": "Stash",
+    "stashPop": "Dépiler le stash",
+    "stashApply": "Appliquer le stash",
+    "stashDrop": "Supprimer le stash",
     "createTag": "Créer une étiquette",
-    "cherryPick": "Picorer",
-    "revert": "Annuler",
-    "stashConflictMessage": "Remisage appliqué avec des conflits. Résolvez-les sur la page Modifications."
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash appliqué avec des conflits. Résolvez-les sur la page Modifications."
   },
   "pr": {
     "create": "Créer une PR",
-    "merge": "Fusionner la PR",
+    "merge": "Merger la PR",
     "markReady": "Marquer la PR prête"
   },
   "ai": {
@@ -149,7 +149,7 @@
     "hideAiFeatures": "Masquer les fonctions IA",
     "crashReporting": "Rapports de plantage",
     "aiReadOnly": "IA en lecture seule",
-    "stashCabinetExpanded": "Armoire de remisage déployée",
+    "stashCabinetExpanded": "Armoire de stash déployée",
     "fileSortInverted": "Tri des fichiers inversé"
   },
   "info": {
@@ -164,7 +164,7 @@
     "themeSpecimenSubtitle": "Toutes les couleurs, icônes, niveaux de texte et géométrie"
   },
   "dev": {
-    "testMergeEditor": "Tester l'éditeur de fusion",
+    "testMergeEditor": "Tester l'éditeur de merge",
     "testHistorySurgery": "Tester la chirurgie de l'historique",
     "back": "retour",
     "cancel": "annuler",

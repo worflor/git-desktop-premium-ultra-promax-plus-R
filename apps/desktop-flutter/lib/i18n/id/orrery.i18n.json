@@ -1,0 +1,101 @@
+{
+  "@@locale": "id",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Scrub",
+    "modeCompare": "Banding",
+    "lodModules": "Modul",
+    "lodFiles": "File"
+  },
+  "status": {
+    "loading": "Melacak manifold melintasi history…",
+    "loadError": "Tidak bisa membaca history repo ini.",
+    "notEnoughHistory": "Belum cukup history untuk memplot trajektori.",
+    "notEnoughHistoryDetail": "Orrery butuh beberapa commit untuk dipetakan."
+  },
+  "legend": {
+    "central": "sentral",
+    "peripheral": "periferal"
+  },
+  "node": {
+    "module": "modul",
+    "moduleWithCount": "{path} · {n} file",
+    "fileFallback": "file #{id}",
+    "nodeFallback": "node #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "genesis",
+    "now": "sekarang",
+    "reorganized": "direorganisasi",
+    "becameArchetype": "menjadi {archetype}",
+    "snapshot": "snapshot"
+  },
+  "structure": {
+    "forming": "membentuk…",
+    "canonical": "kanonik",
+    "connectivity": "konektivitas",
+    "rigidity": "kekakuan",
+    "entropy": "entropi"
+  },
+  "rail": {
+    "structureLabel": "STRUKTUR",
+    "fieldLabel": "MEDAN",
+    "findingsLabel": "TEMUAN",
+    "selectedLabel": "TERPILIH",
+    "noFindings": "Tidak ada peristiwa struktural terdeteksi di history ini."
+  },
+  "selection": {
+    "notPresent": "Tidak hadir pada titik history ini.",
+    "roleCentral": "Sentral-kopling — perubahan di sini beriak ke seluruh sistem.",
+    "rolePeripheral": "Periferal — terkopel longgar, kebanyakan berubah sendiri.",
+    "roleMid": "Struktur-tengah — terkopel sedang.",
+    "driftOutward": " Menghanyut keluar — melepas kopling.",
+    "driftInward": " Menghanyut ke dalam — mengintegrasi.",
+    "driftHolding": " Mempertahankan posisinya."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "MENGHANYUT KELUAR",
+    "driftIn": "MENGHANYUT MASUK",
+    "tangle": "MERUWET",
+    "clarify": "MENJERNIH",
+    "regime": "REORG",
+    "thrash": "MERACAU",
+    "reshuffle": "MENGOCOK ULANG",
+    "forecast": "PRAKIRAAN"
+  },
+  "findings": {
+    "forecastSplit": "Konektivitas terus menurun dan mendekati titik terendahnya — jika ini bertahan, codebase menuju perpecahan jadi dua bagian yang terkopel longgar. Putuskan sekarang apakah itu memang niatnya.",
+    "forecastConsolidate": "Konektivitas terus naik menuju puncaknya — jika ini bertahan, codebase mengonsolidasi jadi satu massa yang terkopel erat. Waspadai ia mengeras jadi monolit.",
+    "thrash": "{name} terus direorganisasi bolak-balik — banyak gejolak struktural, sedikit pergerakan bersih. Selesaikan koplingnya atau berhenti menyentuhnya.",
+    "reshuffle": "Commit ini tampak rutin tapi diam-diam menggeser file mana yang sentral — bentuk keseluruhan bertahan sementara struktur mengocok ulang di bawahnya. Tinjau dengan cermat.",
+    "hub": "{name} berada di inti struktural — sistem bereorganisasi di sekitarnya. Perlakukan perubahan di sini sebagai berdaya ledak tinggi.",
+    "driftOut": "{name} telah menghanyut dari inti ke tepi — ia melepas kopling dari sistem. Entah sedang dipensiunkan, atau diam-diam membusuk.",
+    "driftIn": "{name} telah bermigrasi ke inti — ia jadi penopang beban. Pastikan ia teruji baik sebelum lebih banyak yang bergantung padanya.",
+    "regime": "Codebase bereorganisasi tajam di sini — konektivitasnya melonjak. Tinjau apa yang memisah atau menyatu.",
+    "tangleTrend": "Sepanjang history-nya codebase cenderung menuju struktur yang lebih ruwet — konektivitasnya makin padat dan kurang modular.",
+    "clarifyTrend": "Sepanjang history-nya codebase cenderung menuju struktur yang lebih bersih — ia memisah jadi modul-modul yang lebih jelas."
+  },
+  "anchor": {
+    "core": "inti",
+    "drift": "hanyut",
+    "trend": "tren",
+    "thrash": "racau"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "PERUBAHAN",
+    "movers": "PENGGERAK",
+    "noMovers": "Tidak ada file yang berpindah antara frame ini.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "file",
+    "deltaConnectivity": "konektivitas",
+    "deltaRigidity": "kekakuan",
+    "deltaEntropy": "entropi",
+    "wayOutward": "keluar",
+    "wayInward": "ke dalam",
+    "wayShifted": "bergeser"
+  }
+}

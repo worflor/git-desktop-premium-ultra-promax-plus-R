@@ -1,0 +1,23 @@
+{
+  "@@locale": "tr",
+  "noRepositoryOpen": "Açık depo yok.",
+  "scanningProgress": "{scanned} / {total} dosya taranıyor…",
+  "findingsAcrossFiles": "{files} dosyada {count} bulgu",
+  "copiedFindings": "{count} bulgu kopyalandı",
+  "copy": "KOPYALA",
+  "noFindings": "Yürütme akışı bulgusu yok.",
+  "severity": {
+    "critical": "kritik",
+    "warn": "uyarı",
+    "info": "bilgi",
+    "joint": "eklem"
+  },
+  "kind": {
+    "staleValue": "bayat değer",
+    "temporalShift": "zamansal kayma",
+    "contextInversion": "bağlam tersine dönüşü",
+    "contradictoryFlow": "çelişkili akış"
+  },
+  "lineLabel": "S{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

@@ -1,0 +1,83 @@
+{
+  "@@locale": "tr",
+  "chrome": {
+    "title": "Geçmiş Cerrahisi",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "PROVA"
+  },
+  "select": {
+    "prompt": "Geçmişten kaldırılacak dosyaları seç",
+    "selectedCount": "{n} seçili",
+    "searchHint": "ara...",
+    "readingTree": "ağaç okunuyor...",
+    "continueDisabled": "devam için dosya seç",
+    "continueEnabled": "devam →",
+    "toPurgeCount": "{n} temizlenecek",
+    "analyzing": "analiz ediliyor...",
+    "riskLow": "düşük risk",
+    "riskModerate": "orta risk",
+    "riskHigh": "yüksek risk",
+    "impactCommitsLabel": "commit'ler",
+    "impactBranchesLabel": "dallar",
+    "impactWorktreesLabel": "çalışma ağaçları",
+    "impactCouplingLabel": "bağlaşım",
+    "impactCouplingIsland": "ada",
+    "impactCouplingNeighbors": "{n} komşu",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Bu nasıl çalışır",
+    "backupTitle": "Yedek",
+    "backupBody": "Herhangi bir şey değişmeden önce her dal ve etiket referansı bir yedek ad alanına kopyalanır. Bir şeyler ters giderse, tek tıkla özgün durum geri yüklenir.",
+    "rewriteTitle": "Yeniden yaz",
+    "rewriteBody": "Her commit kökten uca kadar gezilir. Hedef dosyaları içeren her commit için, bu dosyalar ağaçtan çıkarılmış yeni bir commit oluşturulur. Topolojiyi korumak için ebeveyn zincirleri yeniden eşlenir. ",
+    "rewriteSummary": "{total} commit'ten {affected} tanesi yeniden yazılacak.",
+    "updateRefsTitle": "Referansları güncelle",
+    "updateRefsBody": "Dal ve etiket işaretçileri yeni commit SHA'larına taşınır. Eski nesneler çöp toplama gerçekleşene kadar var olmaya devam eder. ",
+    "worktreesNeedRecheckout": "{n} çalışma ağacın yeniden checkout edilmeli.",
+    "noWorktreesAffected": "Hiçbir çalışma ağacı etkilenmiyor.",
+    "forcePushTitle": "Force-push",
+    "forcePushBody": "Temizliği doğruladıktan sonra, hangi dalların force-push edileceğini seçersin. --force-with-lease kullanır; böylece bu sırada başkası push ettiyse güvenli şekilde başarısız olur.",
+    "plumbingNote": "filter-repo veya BFG'nin aksine, bu tamamen git plumbing komutlarıyla çalışır (cat-file, mktree, commit-tree, update-ref). Harici bağımlılık yok. Yeniden adlandırma takibi dosya başına bir zinciri izler — bir dosya kopyalandıysa ve iki kopya bağımsız olarak yeniden adlandırıldıysa, yürütmeden sonra temizlik sonucunu doğrula.",
+    "back": "← Geri",
+    "continueLabel": "Anladım, devam →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commit yeniden yazılacak",
+    "forcePushRequired": "Uzak dallar için force-push gerekecek",
+    "worktreesRecheckout": "{n} çalışma ağacı yeniden checkout edilmeli",
+    "stashesInvalid": "{n} zula geçersiz hale gelebilir",
+    "heading": "Bu işlem git geçmişini yeniden yazar",
+    "subheading": "Force-push sonrası otomatik olarak geri alınamaz.",
+    "typeHint": "{word} yaz",
+    "goBack": "Geri Dön",
+    "begin": "Cerrahiye Başla"
+  },
+  "execute": {
+    "preparing": "Hazırlanıyor...",
+    "backingUpRefs": "Referanslar yedekleniyor...",
+    "rewritingCommits": "Commit'ler yeniden yazılıyor...",
+    "updatingRefs": "Referanslar güncelleniyor..."
+  },
+  "verify": {
+    "complete": "Cerrahi Tamamlandı",
+    "failed": "Cerrahi Başarısız",
+    "commitsRewrittenLabel": "Yeniden yazılan commit'ler",
+    "refsUpdatedLabel": "Güncellenen referanslar",
+    "oldHeadLabel": "Eski HEAD",
+    "newHeadLabel": "Yeni HEAD",
+    "purgeVerifiedLabel": "Temizlik doğrulandı",
+    "purgeClean": "temiz",
+    "purgeTracesRemain": "İZLER KALDI",
+    "displacedWorktrees": "Yeri Değişen Çalışma Ağaçları",
+    "undoSurgery": "Cerrahiyi Geri Al",
+    "rolledBack": "Yedek referanslara geri dönüldü.",
+    "done": "Tamam"
+  },
+  "forcePush": {
+    "pushing": "push ediliyor...",
+    "forcePushAll": "Tümünü Force Push",
+    "confirmPush": "push'u onayla",
+    "cancel": "iptal"
+  }
+}

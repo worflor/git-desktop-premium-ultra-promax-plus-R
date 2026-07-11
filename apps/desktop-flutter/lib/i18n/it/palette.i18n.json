@@ -1,0 +1,201 @@
+{
+  "active": "attivo",
+  "prefixes": {
+    "askHint": "chiedi: [domanda]",
+    "nearHint": "vicino: [file]",
+    "whoHint": "chi: [file]",
+    "logHint": "log: [messaggio]",
+    "runHint": "avvia: [tool]",
+    "askLabel": "Chiedi a {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} reviewer · {touches} tocchi",
+    "whoTouchesLabel": "{name} — {touches} tocchi",
+    "whoTouchesSubtitle": "{path} · nessun reviewer registrato"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "VICINO",
+    "who": "CHI",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "CALDO",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "BOZZA",
+    "undo": "ANNULLA",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "BANCO",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "SPARITO",
+    "remote": "REMOTO",
+    "local": "LOCALE",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% slancio"
+  },
+  "topTouched": {
+    "subtitle": "{count} tocchi · {path}"
+  },
+  "coherence": {
+    "label": "Coerenza in stage: {percent}%",
+    "subtitle": "{count} file"
+  },
+  "keystone": {
+    "subtitle": "{path} · pietra angolare {score}"
+  },
+  "repoSub": {
+    "changes": "Modifiche in {name}",
+    "history": "Cronologia in {name}",
+    "branches": "Branch in {name}",
+    "terminal": "Terminale in {name}",
+    "generateCommit": "Genera commit · {name}",
+    "reviewChanges": "Rivedi le modifiche in {name}",
+    "muse": "Muse in {name}"
+  },
+  "desks": {
+    "mainWorktree": "worktree principale",
+    "detached": "scollegato",
+    "dirty": "{count} sporchi"
+  },
+  "actions": {
+    "openInBrowser": "Apri nel browser",
+    "terminal": "Terminale",
+    "revealInFiles": "Mostra nei file",
+    "copyPath": "Copia percorso",
+    "copyBranch": "Copia branch"
+  },
+  "tools": {
+    "launch": "Avvia {label}"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} indietro",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commit"},
+    "pushCommitsUpstream": "{commits} verso {upstream}",
+    "forcePush": "Force push",
+    "forcePushNoUpstream": "Force push impossibile: nessun upstream impostato per {branch}.",
+    "commit": "Commit",
+    "stageAll": "Stage di tutto",
+    "unstageAll": "Unstage di tutto",
+    "discardAll": "Scarta tutto",
+    "createBranch": "Crea branch",
+    "deleteBranch": "Elimina branch",
+    "renameBranch": "Rinomina branch",
+    "stash": "Stash",
+    "stashPop": "Stash pop",
+    "stashApply": "Stash apply",
+    "stashDrop": "Stash drop",
+    "createTag": "Crea tag",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash applicato con conflitti. Risolvili nella pagina Modifiche."
+  },
+  "pr": {
+    "create": "Crea PR",
+    "merge": "Merge PR",
+    "markReady": "Segna PR come pronta"
+  },
+  "ai": {
+    "generateCommit": "Genera commit",
+    "reviewChanges": "Rivedi le modifiche",
+    "runMuse": "Avvia Muse",
+    "debugRepo": "Debug di {name}",
+    "describeSymptom": "descrivi un sintomo",
+    "viewResult": "Vedi {kind}",
+    "unseenResult": "risultato non visto",
+    "runningResult": "AI: {kind}…",
+    "running": "in corso",
+    "kindCommitMessage": "Messaggio di commit",
+    "kindCodeReview": "Code review",
+    "kindMuseResult": "Risultato Muse",
+    "kindPresentation": "Presentazione",
+    "kindDebugResult": "Risultato debug"
+  },
+  "undo": {
+    "cancel": "Annulla: {label}"
+  },
+  "navigation": {
+    "changes": "Modifiche",
+    "history": "Cronologia",
+    "branches": "Branch",
+    "xray": "X-Ray",
+    "settings": "Impostazioni",
+    "refresh": "Aggiorna"
+  },
+  "settings": {
+    "reduceMotion": "Riduci il movimento",
+    "animateLogoUnfocused": "Anima il logo non a fuoco",
+    "instantBlameHover": "Blame istantaneo al passaggio",
+    "autoSelectChanges": "Auto-seleziona le modifiche",
+    "fetchOnlineIssues": "Recupera le issue online",
+    "rememberWip": "Ricorda il lavoro in corso",
+    "hideAiFeatures": "Nascondi le funzioni AI",
+    "crashReporting": "Segnalazione crash",
+    "aiReadOnly": "AI in sola lettura",
+    "stashCabinetExpanded": "Armadietto stash espanso",
+    "fileSortInverted": "Ordinamento file invertito"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Stato del motore",
+    "engineStatusSubtitle": "Diagnostica del motore spettrale LogosGit",
+    "fileCoupling": "Coupling dei file",
+    "fileCouplingSubtitle": "Vicini di co-change più prossimi per i file in stage",
+    "themeSpecimen": "Campione del tema",
+    "themeSpecimenSubtitle": "Tutti i colori, le icone, i livelli di testo e la geometria"
+  },
+  "dev": {
+    "testMergeEditor": "Testa l'editor di merge",
+    "testHistorySurgery": "Testa la chirurgia della cronologia",
+    "back": "indietro",
+    "cancel": "annulla",
+    "buildingConflicts": "costruzione dei conflitti di test dalla cronologia…"
+  },
+  "historySurgery": {
+    "label": "Chirurgia della cronologia",
+    "subtitle": "Riscrivi la cronologia per rimuovere i file in modo definitivo"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Scorri la cronologia strutturale del repo attraverso il manifold"
+  },
+  "command": {
+    "complete": "{label} completato",
+    "failed": "{label} non riuscito: {message}",
+    "copy": "Copia"
+  },
+  "search": {
+    "hintDefault": "cerca in tutto...",
+    "hintElevated": "elevata — tutte le azioni",
+    "emptyTypeToSearch": "digita per cercare",
+    "emptyNoResults": "nessun risultato"
+  },
+  "wick": {
+    "label": "Wick",
+    "coupledFallback": "accoppiato"
+  },
+  "gitCache": {
+    "current": "corrente",
+    "staged": "in stage",
+    "modified": "modificato"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "@@locale": "id",
+  "noRepositoryOpen": "Tidak ada repository yang terbuka.",
+  "scanningProgress": "memindai {scanned} / {total} file…",
+  "findingsAcrossFiles": "{count} temuan di {files} file",
+  "copiedFindings": "{count} temuan tersalin",
+  "copy": "SALIN",
+  "noFindings": "Tidak ada temuan alur eksekusi.",
+  "severity": {
+    "critical": "kritis",
+    "warn": "peringatan",
+    "info": "info",
+    "joint": "sendi"
+  },
+  "kind": {
+    "staleValue": "nilai usang",
+    "temporalShift": "pergeseran temporal",
+    "contextInversion": "inversi konteks",
+    "contradictoryFlow": "alur bertentangan"
+  },
+  "lineLabel": "B{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

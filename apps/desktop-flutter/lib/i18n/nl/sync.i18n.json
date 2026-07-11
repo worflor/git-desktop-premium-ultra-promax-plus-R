@@ -1,0 +1,51 @@
+{
+  "@@locale": "nl",
+  "actions": {
+    "syncLabel": "Sync",
+    "syncOpenRepoDetail": "Open een repository om push- en pull-bewerkingen te beheren.",
+    "detachedHeadLabel": "Detached HEAD",
+    "detachedHeadDetail": "Check een branch uit voordat je pusht of pullt.",
+    "publishBranchLabel": "Branch publiceren",
+    "publishBranchDetail": "Push {branch} en stel de upstream-tracking-branch in.",
+    "publishButtonLabel": "Publiceren",
+    "syncBranchLabel": "Branch synchroniseren",
+    "syncBranchDetail": "Pull {behindCount} met rebase, push dan {aheadCount}.",
+    "syncBranchButtonLabel": "Pullen (rebase), dan pushen",
+    "pushBranchLabel": "Branch pushen",
+    "pushBranchDetail": "Push {count} naar {upstream}.",
+    "pushBranchButtonLabel": "Commits pushen",
+    "pullUpdatesLabel": "Updates pullen",
+    "pullUpdatesDetail": "Pull {count} van {upstream}.",
+    "syncUpToDateDetail": "Fetch van {upstream} en ververs de upstream-status."
+  },
+  "panel": {
+    "loadingTitle": "Externe status laden",
+    "loadingMessage": "Branch-tracking-informatie controleren.",
+    "remoteStatusUnavailable": "Externe status niet beschikbaar",
+    "noUpstream": "geen upstream",
+    "aheadLabel": "Voor",
+    "behindLabel": "Achter",
+    "treeLabel": "Boom",
+    "runningSync": "Sync bezig…",
+    "fetching": "Fetchen…",
+    "fetchOnly": "Alleen fetchen",
+    "syncFailed": "Sync mislukt",
+    "forcePushRecoveryLabel": "Force-push (met lease)",
+    "conflictsToResolveTitle": "Op te lossen conflicten",
+    "conflictsToResolveBody": "{count} moeten worden opgelost: {list}",
+    "resolveConflicts": "Conflicten oplossen",
+    "workingEllipsis": "Bezig…",
+    "lastActivity": "Laatste activiteit: {operation}",
+    "noOutput": "Geen uitvoer.",
+    "resolvedConflicts": "{count} opgelost.",
+    "cancelledUnchanged": "Geannuleerd, werkboom ongewijzigd.",
+    "uncommittedEditsBlocked": "{count} hebben niet-gecommitte wijzigingen, commit ze eerst om te rebase-syncen ({list}).",
+    "noUpstreamForForcePush": "Force-push niet mogelijk: voor \"{branch}\" is geen upstream geconfigureerd."
+  },
+  "forcePush": {
+    "confirmTitle": "Force-push (met lease)?",
+    "target": "Doel: {remote}/{branch}",
+    "warning": "Dit overschrijft de externe branch met je lokale geschiedenis. Met lease breekt het af als iemand na je laatste fetch naar de remote heeft gepusht, maar al gefetchte wijzigingen worden alsnog overschreven. Gebruik het alleen wanneer je een rebase of amend bedoelde die de branch liet divergeren.",
+    "confirmButton": "Force-push"
+  }
+}

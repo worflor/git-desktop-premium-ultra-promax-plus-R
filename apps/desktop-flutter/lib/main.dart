@@ -42,6 +42,7 @@ import 'app/workspace_shell.dart';
 import 'backend/external_tools.dart';
 import 'backend/engram_bootstrap.dart';
 import 'backend/logos_git_resolver.dart' as logos_resolver;
+import 'backend/ai_language.dart';
 import 'backend/settings_store.dart';
 import 'backend/undo_controller.dart';
 import 'diagnostics/diagnostics_state.dart';
@@ -79,6 +80,15 @@ class _SmoothScrollBehavior extends MaterialScrollBehavior {
 final RouteObserver<ModalRoute<void>> manifoldRouteObserver =
     RouteObserver<ModalRoute<void>>();
 
+/// Point the conversational-AI reply language at the current UI locale.
+/// English (and unknown tags) clear it, so a switch back to English correctly
+/// drops any prior instruction and the model returns to its default.
+void _syncAiLanguage() {
+  final l = LocaleSettings.currentLocale;
+  AiLanguage.preferredName =
+      AiLanguage.nameForLocale(l.languageCode, l.scriptCode, l.countryCode);
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -102,6 +112,11 @@ void main() async {
       AppLocaleUtils.supportedLocalesRaw.contains(settings.localeOverride)) {
     LocaleSettings.setLocaleRawSync(settings.localeOverride);
   }
+  // Keep the conversational-AI reply language in sync with the resolved UI
+  // locale — now and on every live switch. Commit-message generation ignores
+  // this (it follows the repo), so this only steers review/muse/debug output.
+  _syncAiLanguage();
+  LocaleSettings.getLocaleStream().listen((_) => _syncAiLanguage());
   final appIdentityState = AppIdentityState();
   appIdentityState.loadFromSettings(settings);
   final onboardingState = OnboardingState();

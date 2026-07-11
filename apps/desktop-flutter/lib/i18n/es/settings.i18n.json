@@ -33,7 +33,7 @@
     "saveReviewModelSlot": "No se pudo guardar la ranura del modelo de revisión.",
     "saveCommitMessageCustomPrompt": "No se pudo guardar el prompt personalizado de mensaje de commit.",
     "saveReviewGuide": "No se pudo guardar la guía de revisión.",
-    "saveMuseNotes": "No se pudieron guardar las notas de la musa.",
+    "saveMuseNotes": "No se pudieron guardar las notas de la muse.",
     "saveReviewDoubleCheck": "No se pudo guardar el modo de doble verificación de la revisión.",
     "saveApiPiggybackCli": "No se pudo guardar la CLI de piggyback de API.",
     "clearLocalData": "No se pudieron limpiar los datos locales: {error}"
@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "Perfil de atajos",
-    "porcelain": "Porcelana",
+    "porcelain": "Porcelain",
     "numeric": "Numérico",
     "porcelainDescription": "Atajos encadenados (G y luego C, H, B…).",
     "numericDescription": "Atajos numéricos de una tecla (1, 2, 3…)."
@@ -124,7 +124,7 @@
     "changes": "Cambios",
     "history": "Historial",
     "branches": "Ramas",
-    "xray": "Radiografía",
+    "xray": "X-Ray",
     "switchAlways": "Cambiar (siempre)",
     "search": "Buscar",
     "dismiss": "Descartar",
@@ -206,11 +206,11 @@
   "museHint": {
     "loose": "¿algo hacia lo que orientar con suavidad? hoy el ánimo es amable.",
     "balanced": "en qué detenerse, qué saltar. honesto, no áspero.",
-    "strict": "los estándares. las prohibiciones. lo que la musa no dejará pasar.",
+    "strict": "los estándares. las prohibiciones. lo que la muse no dejará pasar.",
     "paranoid": "ajusta la lente. ¿a qué frecuencias debería vibrar el manifold?"
   },
   "museEditor": {
-    "additionalNotes": "Notas adicionales para la musa"
+    "additionalNotes": "Notas adicionales para la muse"
   },
   "museStage": {
     "brainstorm": "LLUVIA DE IDEAS",

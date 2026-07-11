@@ -125,15 +125,15 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get commandPaletteTooltip => '명령 팔레트   /';
   @override
-  String get newDeskFallback => '새 데스크';
+  String get newDeskFallback => '새 Desk';
   @override
-  String get deskFallback => '데스크';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => '현재';
   @override
   String get noRepositoryOpen => '열린 저장소 없음';
   @override
-  String couldntOpenAsDesk({required Object error}) => '데스크로 열 수 없음: ${error}';
+  String couldntOpenAsDesk({required Object error}) => 'Desk로 열 수 없음: ${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       '포지를 감지할 수 없음: ${error}';
@@ -147,7 +147,7 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String couldntFetchPr({required Object error}) => 'PR을 가져올 수 없음: ${error}';
   @override
-  String get promoteDeskToPr => '데스크를 PR로 승격';
+  String get promoteDeskToPr => 'Desk를 PR로 승격';
   @override
   String get applyToMain => 'main에 적용';
   @override
@@ -161,18 +161,18 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get discardLocalPr => '로컬 PR 버리기';
   @override
-  String get closeDesk => '데스크 닫기';
+  String get closeDesk => 'Desk 닫기';
   @override
   String couldntPromote({required Object error}) => '승격할 수 없음: ${error}';
   @override
-  String get commitOrShelveBeforeApplying => '적용 전에 데스크의 변경을 커밋하거나 보류하세요.';
+  String get commitOrShelveBeforeApplying => '적용 전에 Desk의 변경을 커밋하거나 보류하십시오.';
   @override
   String get couldNotResolveMainWorktree => '메인 작업 트리 경로를 확인할 수 없습니다.';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      '데스크를 승격할 수 없음: ${error}';
+      'Desk를 승격할 수 없음: ${error}';
   @override
-  String get couldntDetermineBaseBranch => '이 데스크의 기준 브랜치를 결정할 수 없습니다.';
+  String get couldntDetermineBaseBranch => '이 Desk의 기준 브랜치를 결정할 수 없습니다.';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'PR base와 head가 같은 브랜치(${branch})입니다 — 적용할 것이 없습니다.';
@@ -245,7 +245,7 @@ class _Translations$app$ko extends Translations$app$en {
   String couldntSave({required Object error}) => '저장할 수 없음: ${error}';
   @override
   String get stashedNoOtherDesk =>
-      '변경을 스태시했습니다 — 적용할 다른 데스크가 없습니다. git stash pop으로 복구하세요.';
+      '변경을 스태시했습니다 — 적용할 다른 Desk가 없습니다. git stash pop으로 복구하십시오.';
   @override
   String get suggestedSource => '추천 소스';
   @override
@@ -281,7 +281,7 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get uncommittedChanges => '커밋되지 않은 변경';
   @override
-  String get closeDeskQuestion => '데스크를 닫을까요?';
+  String get closeDeskQuestion => 'Desk를 닫으시겠습니까?';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
@@ -324,7 +324,7 @@ class _Translations$app$ko extends Translations$app$en {
   String get abandonIssue => '이슈 포기';
   @override
   String permanentlyRemoveLocalIssueConfirm({required Object id}) =>
-      '로컬 이슈 #${id} 영구 제거할까요? ref가 삭제되며 되돌릴 수 없습니다.';
+      '로컬 이슈 #${id}을(를) 영구 제거하시겠습니까? ref가 삭제되며 되돌릴 수 없습니다.';
   @override
   String get abandon => '포기';
   @override
@@ -336,13 +336,13 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get noRemoteConfigured => '이 저장소에 구성된 원격이 없습니다.';
   @override
-  String get jumpToDesk => '데스크로 이동';
+  String get jumpToDesk => 'Desk로 이동';
   @override
   String get arrowOpen => '→ 열기';
   @override
-  String get openOnANewDesk => '새 데스크에서 열기';
+  String get openOnANewDesk => '새 Desk에서 열기';
   @override
-  String get plusDesk => '+ 데스크';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -350,9 +350,9 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ 새 데스크';
+  String get plusNewDesk => '+ 새 Desk';
   @override
-  String get fromHeadEllipsis => 'HEAD에서...';
+  String get fromHeadEllipsis => 'HEAD에서…';
   @override
   String get viewAllBranches => '모든 브랜치 보기';
   @override
@@ -401,13 +401,13 @@ class _Translations$app$ko extends Translations$app$en {
   @override
   String get createFromTemplateInDialogTitle => '템플릿에서 생성 위치';
   @override
-  String get notAGitRepoInitConfirm => 'git 저장소가 아닙니다. 여기에 초기화할까요?';
+  String get notAGitRepoInitConfirm => 'git 저장소가 아닙니다. 여기에 초기화하시겠습니까?';
   @override
   String get repositoryUrlRequired => '저장소 URL이 필요합니다.';
   @override
   String get failedToCloneRepository => '저장소 클론에 실패했습니다.';
   @override
-  String cloningEllipsis({required Object name}) => '${name} 클론 중...';
+  String cloningEllipsis({required Object name}) => '${name} 클론 중…';
   @override
   String get cloneCancelled => '클론이 취소됐습니다.';
   @override
@@ -524,7 +524,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String publishFailed({required Object error}) => '게시 실패: ${error}';
   @override
-  String couldntOpenDesk({required Object error}) => '데스크를 열 수 없음: ${error}';
+  String couldntOpenDesk({required Object error}) => 'Desk를 열 수 없음: ${error}';
   @override
   String syncFailed({required Object error}) => '동기화 실패: ${error}';
   @override
@@ -542,11 +542,11 @@ class _Translations$branches$ko extends Translations$branches$en {
   String deletingBranch({required Object name}) => '${name} 삭제 중';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '\'${name}\' 브랜치가 데스크 \'${desk}\'에서 열려 있습니다.';
+      '\'${name}\' 브랜치가 Desk \'${desk}\'에서 열려 있습니다.';
   @override
-  String get openDesk => '데스크 열기';
+  String get openDesk => 'Desk 열기';
   @override
-  String openInDeskShort({required Object desk}) => '데스크 \'${desk}\'에서 열기';
+  String openInDeskShort({required Object desk}) => 'Desk \'${desk}\'에서 열기';
   @override
   String get couldNotPinBranch => '브랜치 팁을 고정할 수 없음, 삭제 건너뜀';
   @override
@@ -561,11 +561,11 @@ class _Translations$branches$ko extends Translations$branches$en {
   String prSourceLabel({required Object number, required Object title}) =>
       'PR #${number}: ${title}';
   @override
-  String mergeIntoDesk({required Object branch}) => '${branch}에 병합…';
+  String mergeIntoDesk({required Object branch}) => '${branch}에 머지…';
   @override
   String get checkoutThisPr => '이 PR 체크아웃';
   @override
-  String get mergeIntoNewDesk => '새 데스크에 병합…';
+  String get mergeIntoNewDesk => '새 Desk에 머지…';
   @override
   String get pushToForge => '포지에 푸시';
   @override
@@ -585,7 +585,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get markAsUnread => '안 읽음으로 표시';
   @override
-  String get replaceLocalCommitsTitle => '로컬 커밋을 교체할까요?';
+  String get replaceLocalCommitsTitle => '로컬 커밋을 교체하시겠습니까?';
   @override
   String replaceLocalCommitsBody({required Object ref}) =>
       '${ref}에 원격 PR head에 없는 로컬 커밋이 있습니다. 업데이트하면 원격의 최신 내용으로 교체됩니다.';
@@ -594,23 +594,23 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String couldntFetchPr({required Object error}) => 'PR을 가져올 수 없음: ${error}';
   @override
-  String couldntOpenAsDesk({required Object error}) => '데스크로 열 수 없음: ${error}';
+  String couldntOpenAsDesk({required Object error}) => 'Desk로 열 수 없음: ${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       '브라우저에서 열 수 없음: ${error}';
   @override
   String get noIssuesYetLocal =>
-      '아직 이슈가 없습니다. 업스트림에서 하나 열거나, 이슈 렌즈에서 "+ new local issue"를 사용하세요.';
+      '아직 이슈가 없습니다. 업스트림에서 하나 열거나, 이슈 렌즈에서 "+ new local issue"를 사용하십시오.';
   @override
   String get remotePrsLinkLocalOnly =>
-      '원격 PR은 로컬 이슈에만 연결할 수 있습니다. "+ new local issue"로 하나 생성하세요.';
+      '원격 PR은 로컬 이슈에만 연결할 수 있습니다. "+ new local issue"로 하나 생성하십시오.';
   @override
   String linkPrToIssues({required Object number}) => 'PR #${number} 이슈에 연결';
   @override
-  String get noPrsYetLocal => '아직 PR이 없습니다. 업스트림에서 하나 열거나, 데스크를 PR로 승격하세요.';
+  String get noPrsYetLocal => '아직 PR이 없습니다. 업스트림에서 하나 열거나, Desk를 PR로 승격하십시오.';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      '원격 이슈는 로컬 PR에만 연결할 수 있습니다. 먼저 데스크를 PR로 승격하세요.';
+      '원격 이슈는 로컬 PR에만 연결할 수 있습니다. 먼저 Desk를 PR로 승격하십시오.';
   @override
   String linkIssueToPrs({required Object number}) => '이슈 #${number} PR에 연결';
   @override
@@ -655,11 +655,11 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get noOpenPullRequests => '열린 풀 리퀘스트 없음';
   @override
-  String get noPullRequestsHint => '브랜치에서 하나 열거나, 데스크를 승격하세요.';
+  String get noPullRequestsHint => '브랜치에서 하나 열거나, Desk를 승격하십시오.';
   @override
   String get noPrsMatchFilters => '이 필터에 맞는 PR이 없습니다';
   @override
-  String get toggleFiltersRowAbove => '위 행에서 필터를 끄세요.';
+  String get toggleFiltersRowAbove => '위 행에서 필터를 끄십시오.';
   @override
   String get issuesNewestFirst => '이슈, 최신순';
   @override
@@ -675,7 +675,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get nothingMatches => '일치하는 항목 없음';
   @override
-  String get toggleFiltersAbove => '위에서 필터를 끄세요.';
+  String get toggleFiltersAbove => '위에서 필터를 끄십시오.';
   @override
   String get bucketFresh => '신선함';
   @override
@@ -694,18 +694,18 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => '구성된 리뷰 모델이 없습니다.';
   @override
-  String get deskFallback => '데스크';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({required num n, required Object branch}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
         n,
-        other: '${branch}에 커밋되지 않은 변경 ${n}개 — 먼저 커밋하거나 스태시하세요.',
+        other: '${branch}에 커밋되지 않은 변경 ${n}개 — 먼저 커밋하거나 스태시하십시오.',
       );
   @override
-  String get targetDeskNoBranch => '대상 데스크에 브랜치가 없습니다.';
+  String get targetDeskNoBranch => '대상 Desk에 브랜치가 없습니다.';
   @override
   String mergePrIntoDesk({required Object branch, required Object number}) =>
-      '${branch}에 PR #${number} 병합';
+      '${branch}에 PR #${number} 머지';
   @override
   String get conflictCheckUnavailableVersion =>
       '충돌 검사를 사용할 수 없음 — git 2.38+ 필요';
@@ -724,16 +724,16 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get squash => '스쿼시';
   @override
-  String get mergeCommit => '병합 커밋';
+  String get mergeCommit => '머지 커밋';
   @override
   String noDeskForBranch({required Object branch}) =>
-      '브랜치 ${branch}에 대한 데스크를 찾을 수 없습니다';
+      '브랜치 ${branch}에 대한 Desk를 찾을 수 없습니다';
   @override
-  String get mergeAnyway => '그래도 병합';
+  String get mergeAnyway => '그래도 머지';
   @override
   String get readingIssues => '이슈 읽는 중…';
   @override
-  String get openUpstreamOrLocal => '업스트림에서 하나 열거나, 로컬에서 여세요.';
+  String get openUpstreamOrLocal => '업스트림에서 하나 열거나, 로컬에서 여십시오.';
   @override
   String get noIssuesMatchFilters => '이 필터에 맞는 이슈가 없습니다';
   @override
@@ -764,7 +764,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   String get abandonIssueTitle => '이슈 포기';
   @override
   String abandonIssueMessage({required Object id}) =>
-      '로컬 이슈 #${id} 영구 제거할까요? ref가 삭제되며 되돌릴 수 없습니다.';
+      '로컬 이슈 #${id}을(를) 영구 제거하시겠습니까? ref가 삭제되며 되돌릴 수 없습니다.';
   @override
   String couldntAbandon({required Object error}) => '포기할 수 없음: ${error}';
   @override
@@ -804,7 +804,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   String get kbPressToDismiss => '아무 곳이나 눌러 닫기';
   @override
   String get overrideScarTooltip =>
-      '실패한 검사와 함께 또는 승인 리뷰 없이 병합됨 — 급할 때 먼저 조사하세요';
+      '실패한 검사와 함께 또는 승인 리뷰 없이 머지됨 — 급할 때 먼저 조사하십시오';
   @override
   String filesOverlapUncommitted({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
@@ -891,7 +891,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get touchesYourLocalWork => '로컬 작업을 건드림';
   @override
-  String get mergingWillConflict => '병합 시 커밋되지 않은 변경과 충돌할 가능성이 높습니다';
+  String get mergingWillConflict => '머지 시 커밋되지 않은 변경과 충돌할 가능성이 높습니다';
   @override
   String get closesHeading => '닫음';
   @override
@@ -948,17 +948,17 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ PR 리뷰';
   @override
-  String get actionOpenAsDesk => '⊞ 데스크로 열기';
+  String get actionOpenAsDesk => '⊞ Desk로 열기';
   @override
   String get actionCheckout => '[c] 체크아웃';
   @override
-  String get actionMerge => '[m] 병합 ▾';
+  String get actionMerge => '[m] 머지 ▾';
   @override
-  String get mergeMenuMergeCommit => '병합 커밋';
+  String get mergeMenuMergeCommit => '머지 커밋';
   @override
-  String get mergeMenuSquash => '스쿼시 & 병합';
+  String get mergeMenuSquash => '스쿼시 & 머지';
   @override
-  String get mergeMenuRebase => '리베이스 & 병합';
+  String get mergeMenuRebase => '리베이스 & 머지';
   @override
   String get deleteBranchAfter => '이후 브랜치 삭제';
   @override
@@ -1000,13 +1000,13 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String absorbedDeliveredIn({required Object hash}) => '${hash}에서 전달됨';
   @override
-  String get absorbedNoChanges => '병합해도 변경이 추가되지 않음';
+  String get absorbedNoChanges => '머지해도 변경이 추가되지 않음';
   @override
   String get corpseTagUpstreamGone => '업스트림 사라짐';
   @override
   String corpseTagAbsorbed({required Object receipt}) => '흡수됨, ${receipt}';
   @override
-  String get corpseTagSquashed => '스쿼시 후 병합됨';
+  String get corpseTagSquashed => '스쿼시 후 머지됨';
   @override
   String semanticsCurrentBranch({required Object name}) => '${name}, 현재 브랜치';
   @override
@@ -1027,7 +1027,7 @@ class _Translations$branches$ko extends Translations$branches$en {
     required Object phrase,
   }) => '${name}, ${tag}, ${phrase}';
   @override
-  String get crossLinkDesk => '데스크';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -1081,7 +1081,7 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String get opening => '여는 중…';
   @override
-  String get mergeEditor => '⇋ 병합 편집기';
+  String get mergeEditor => '⇋ 머지 편집기';
   @override
   String get staging => '스테이징 중…';
   @override
@@ -1543,7 +1543,7 @@ class _Translations$history$ko extends Translations$history$en {
   @override
   String get noCommitSelectedTitle => '선택된 커밋 없음';
   @override
-  String get noCommitSelectedMessage => '변경 내용을 살펴보려면 커밋을 선택하세요.';
+  String get noCommitSelectedMessage => '변경 내용을 살펴보려면 커밋을 선택하십시오.';
   @override
   String get loadingCommitTitle => '커밋 불러오는 중';
   @override
@@ -2125,7 +2125,7 @@ class _Translations$app$cheatsheet$ko extends Translations$app$cheatsheet$en {
   @override
   String get branches => '브랜치';
   @override
-  String get xray => '엑스레이';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '전환 (항상)';
   @override
@@ -2177,7 +2177,7 @@ class _Translations$backend$ops$ko extends Translations$backend$ops$en {
 
   // Translations
   @override
-  String get merge => '병합';
+  String get merge => '머지';
   @override
   String get pull => '풀';
   @override
@@ -2206,7 +2206,7 @@ class _Translations$backend$mergeOutcome$ko
   String conflictsLeft({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
         n,
-        other: '충돌 ${n}개 남음 — 변경사항 페이지에서 해결하세요.',
+        other: '충돌 ${n}개 남음 — 변경사항 페이지에서 해결하십시오.',
       );
   @override
   String resolvedConflicts({required num n}) =>
@@ -2218,7 +2218,7 @@ class _Translations$backend$mergeOutcome$ko
   String uncommittedEdits({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
         n,
-        other: '파일 ${n}개에 커밋되지 않은 변경이 있습니다 — 먼저 커밋하세요.',
+        other: '파일 ${n}개에 커밋되지 않은 변경이 있습니다 — 먼저 커밋하십시오.',
       );
 }
 
@@ -2384,7 +2384,7 @@ class _Translations$changes$tagInput$ko
 
   // Translations
   @override
-  String get hint => '태그...';
+  String get hint => '태그…';
 }
 
 // Path: changes.composer
@@ -2398,7 +2398,7 @@ class _Translations$changes$composer$ko
 
   // Translations
   @override
-  String get hintPlaceholder => '커밋 메시지...';
+  String get hintPlaceholder => '커밋 메시지…';
   @override
   String hintWithChar({required Object hint, required Object char}) =>
       '${hint}  ·  ${char}';
@@ -2434,9 +2434,9 @@ class _Translations$changes$commit$ko extends Translations$changes$commit$en {
   @override
   String amendAnd({required Object action}) => '수정 & ${action}';
   @override
-  String get chooseFile => '다음 커밋을 위해 최소 한 개 파일을 선택하세요.';
+  String get chooseFile => '다음 커밋을 위해 최소 한 개 파일을 선택하십시오.';
   @override
-  String get writeMessage => '먼저 커밋 메시지를 작성하세요.';
+  String get writeMessage => '먼저 커밋 메시지를 작성하십시오.';
   @override
   String get committing => '커밋 중';
   @override
@@ -2453,17 +2453,17 @@ class _Translations$changes$commit$ko extends Translations$changes$commit$en {
   String get noRuntimeModels => '커밋 메시지에 사용할 수 있는 런타임 발견 모델이 없습니다.';
   @override
   String restoreFailedRetry({required Object err}) =>
-      '${err}\n제외된 파일의 스테이징을 복원할 수 없습니다. 다시 시도하기 전에 인덱스를 확인하세요.';
+      '${err}\n제외된 파일의 스테이징을 복원할 수 없습니다. 다시 시도하기 전에 인덱스를 확인하십시오.';
   @override
   String committedSummary({required Object summary, required Object hash}) =>
       '${summary} 커밋됨 (${hash}).';
   @override
   String get restoreFailedSync =>
-      '제외된 파일의 선택을 다시 스테이징할 수 없습니다. 동기화를 건너뜁니다. 동기화 전에 인덱스를 확인하세요.';
+      '제외된 파일의 선택을 다시 스테이징할 수 없습니다. 동기화를 건너뜁니다. 동기화 전에 인덱스를 확인하십시오.';
   @override
   String get noModelLabel => '모델 없음';
   @override
-  String get chooseBeforeGenerate => '생성 전에 최소 한 개 파일을 선택하세요.';
+  String get chooseBeforeGenerate => '생성 전에 최소 한 개 파일을 선택하십시오.';
   @override
   String get aiUnavailable => '커밋 메시지 AI를 아직 사용할 수 없습니다.';
   @override
@@ -2578,7 +2578,7 @@ class _Translations$changes$editorTitles$ko
   List<String> get long => [
     '당신의 꿈을, 부디',
     '좋은 말 좀 해봐',
-    '... 그러고 나서 내가 말했지:',
+    '… 그러고 나서 내가 말했지:',
     '후세가 기다린다',
     '더 많이 쓰면 버그가 사라진다',
     '우와',
@@ -2596,15 +2596,15 @@ class _Translations$changes$askHint$ko extends Translations$changes$askHint$en {
 
   // Translations
   @override
-  String round({required Object n}) => '라운드 ${n} — 다듬거나 맥락을 추가하세요.';
+  String round({required Object n}) => '라운드 ${n} — 다듬거나 맥락을 추가하십시오.';
   @override
-  String get symptom => '증상을 설명하세요.';
+  String get symptom => '증상을 설명하십시오.';
   @override
-  String get broken => '무엇이 고장 났나요?';
+  String get broken => '무엇이 고장 났습니까?';
   @override
-  String get bug => '버그를 설명하세요.';
+  String get bug => '버그를 설명하십시오.';
   @override
-  String get error => '오류를 붙여넣으세요.';
+  String get error => '오류를 붙여넣으십시오.';
 }
 
 // Path: changes.fileMenu
@@ -2711,9 +2711,9 @@ class _Translations$changes$discard$ko extends Translations$changes$discard$en {
 
   // Translations
   @override
-  String deleteTitle({required Object name}) => '${name} 삭제할까요?';
+  String deleteTitle({required Object name}) => '${name} 삭제하시겠습니까?';
   @override
-  String discardTitle({required Object name}) => '${name}의 변경을 버릴까요?';
+  String discardTitle({required Object name}) => '${name}의 변경을 버리시겠습니까?';
   @override
   String deleteBody({required Object path}) =>
       '${path} — 디스크에서 제거됩니다. 앱 내부에서는 되돌릴 수 없습니다.';
@@ -2729,7 +2729,8 @@ class _Translations$changes$discard$ko extends Translations$changes$discard$en {
   @override
   String get discardFailed => '변경 버리기에 실패했습니다.';
   @override
-  String discardManyTitle({required Object count}) => '파일 ${count}개의 변경을 버릴까요?';
+  String discardManyTitle({required Object count}) =>
+      '파일 ${count}개의 변경을 버리시겠습니까?';
   @override
   String get discardManyBody =>
       '추적된 파일은 HEAD 상태로 되돌아가고, 추적되지 않은 파일은 디스크에서 제거됩니다. 되돌릴 수 없습니다.';
@@ -2758,9 +2759,9 @@ class _Translations$changes$snack$ko extends Translations$changes$snack$en {
   @override
   String diffFailed({required Object error}) => 'Diff 실패: ${error}';
   @override
-  String get deskEmpty => '데스크에 앞선 것이 없습니다 — 빈 덤프.';
+  String get deskEmpty => 'Desk에 앞선 것이 없습니다 — 빈 덤프.';
   @override
-  String sourceDesk({required Object label}) => '데스크 ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) => '선반 읽기 실패: ${error}';
   @override
@@ -2810,7 +2811,7 @@ class _Translations$changes$cleanTree$ko
   @override
   String get behind => ' 뒤처짐';
   @override
-  String get refreshing => '새로고침 중...';
+  String get refreshing => '새로고침 중…';
   @override
   String get refresh => '새로고침';
   @override
@@ -2852,9 +2853,9 @@ class _Translations$changes$dropHint$ko
 
   // Translations
   @override
-  String get fromShelf => '이 선반의 변경을 여기로 가져오려면 놓으세요';
+  String get fromShelf => '이 선반의 변경을 여기로 가져오려면 놓으십시오';
   @override
-  String get fromDesk => '이 데스크의 변경을 여기로 가져오려면 놓으세요';
+  String get fromDesk => '이 Desk의 변경을 여기로 가져오려면 놓으십시오';
 }
 
 // Path: changes.diffEmpty
@@ -2870,7 +2871,7 @@ class _Translations$changes$diffEmpty$ko
   @override
   String get title => '선택된 파일 없음';
   @override
-  String get message => 'diff를 살펴보려면 변경된 파일을 선택하세요.';
+  String get message => 'diff를 살펴보려면 변경된 파일을 선택하십시오.';
 }
 
 // Path: changes.shelvePill
@@ -3091,7 +3092,7 @@ class _Translations$changes$review$ko extends Translations$changes$review$en {
   @override
   String get observations => '관찰';
   @override
-  String get chooseBeforeReview => '리뷰 전에 최소 한 개 파일을 선택하세요.';
+  String get chooseBeforeReview => '리뷰 전에 최소 한 개 파일을 선택하십시오.';
   @override
   String get aiUnavailable => '리뷰 AI를 아직 사용할 수 없습니다.';
   @override
@@ -3242,7 +3243,7 @@ class _Translations$changes$muse$ko extends Translations$changes$muse$en {
   @override
   String get clear => '지우기';
   @override
-  String get chooseBeforeMuse => 'muse를 호출하기 전에 최소 한 개 파일을 선택하세요.';
+  String get chooseBeforeMuse => 'muse를 호출하기 전에 최소 한 개 파일을 선택하십시오.';
   @override
   String get aiUnavailable => 'Muse AI를 아직 사용할 수 없습니다.';
   @override
@@ -3252,7 +3253,7 @@ class _Translations$changes$muse$ko extends Translations$changes$muse$en {
   @override
   String get needsModel => 'Muse에는 구성된 모델이 최소 하나 필요합니다.';
   @override
-  String get dreaming => 'muse가 꿈꾸는 중...';
+  String get dreaming => 'muse가 꿈꾸는 중…';
 }
 
 // Path: changes.debug
@@ -3275,7 +3276,7 @@ class _Translations$changes$debug$ko extends Translations$changes$debug$en {
   @override
   String get analyzing => '증상 분석 중…';
   @override
-  String get describeSymptom => '증상을 설명한 뒤 디버그를 누르세요.';
+  String get describeSymptom => '증상을 설명한 뒤 디버그를 누르십시오.';
   @override
   String get evidenceFor => '근거';
   @override
@@ -3347,11 +3348,11 @@ class _Translations$changes$stash$ko extends Translations$changes$stash$en {
   // Translations
   @override
   String get appliedWithConflicts =>
-      '충돌과 함께 스태시가 적용됐습니다 — 변경사항 페이지에서 해결하세요 (스태시 항목은 유지됨).';
+      '충돌과 함께 스태시가 적용됐습니다 — 변경사항 페이지에서 해결하십시오 (스태시 항목은 유지됨).';
   @override
   String get couldNotPop => '스태시를 팝할 수 없습니다.';
   @override
-  String get listChanged => '스태시 목록이 변경됐습니다. 버리기를 건너뜁니다. 다시 시도하세요.';
+  String get listChanged => '스태시 목록이 변경됐습니다. 버리기를 건너뜁니다. 다시 시도하십시오.';
   @override
   String get droppingStash => '스태시 버리는 중';
 }
@@ -3367,24 +3368,24 @@ class _Translations$changes$tooltips$ko
 
   // Translations
   @override
-  String get commitGenerating => '커밋 메시지 생성 중...';
+  String get commitGenerating => '커밋 메시지 생성 중…';
   @override
-  String get commitPreparing => '커밋 메시지 준비 중...';
+  String get commitPreparing => '커밋 메시지 준비 중…';
   @override
-  String get commitSelectFile => '커밋 메시지를 생성하려면 최소 한 개 파일을 선택하세요.';
+  String get commitSelectFile => '커밋 메시지를 생성하려면 최소 한 개 파일을 선택하십시오.';
   @override
-  String get commitConfigure => '설정 > 행동 다이내믹스 > 커밋 메시지에서 커밋 메시지를 구성하세요.';
+  String get commitConfigure => '설정 > 행동 다이내믹스 > 커밋 메시지에서 커밋 메시지를 구성하십시오.';
   @override
   String get fastFallback => '빠름';
   @override
   String commitGenerateWith({required Object label}) =>
       '${label} 모델로 커밋 메시지 생성';
   @override
-  String get museConsulting => 'muse에게 자문 중...';
+  String get museConsulting => 'muse에게 자문 중…';
   @override
   String get showMuse => 'muse 보기';
   @override
-  String get museSelectFile => 'muse를 위해 최소 한 개 파일을 선택하세요.';
+  String get museSelectFile => 'muse를 위해 최소 한 개 파일을 선택하십시오.';
   @override
   String get showMuseError => 'muse 오류 보기';
   @override
@@ -3397,15 +3398,15 @@ class _Translations$changes$tooltips$ko
   @override
   String get qualityFallback => '품질';
   @override
-  String get reviewing => '리뷰 중...';
+  String get reviewing => '리뷰 중…';
   @override
   String get showReview => '리뷰 보기';
   @override
-  String get reviewPreparing => '커밋 리뷰 준비 중...';
+  String get reviewPreparing => '커밋 리뷰 준비 중…';
   @override
-  String get reviewSelectFile => '리뷰하려면 최소 한 개 파일을 선택하세요.';
+  String get reviewSelectFile => '리뷰하려면 최소 한 개 파일을 선택하십시오.';
   @override
-  String get reviewConfigure => '설정에서 리뷰 AI를 구성하세요.';
+  String get reviewConfigure => '설정에서 리뷰 AI를 구성하십시오.';
   @override
   String get viewingReview => '리뷰 보는 중';
   @override
@@ -3484,18 +3485,18 @@ class _Translations$changes$conflictResolution$ko
   // Translations
   @override
   String noModelConfigured({required Object category}) =>
-      '"${category}"에 구성된 모델이 없습니다. 설정 → AI에서 설정하세요.';
+      '"${category}"에 구성된 모델이 없습니다. 설정 → AI에서 설정하십시오.';
   @override
   String sensitiveFilesSkipped({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
         n,
-        other: '민감한 파일 ${n}개 건너뜀 — 직접 해결하세요.',
+        other: '민감한 파일 ${n}개 건너뜀 — 직접 해결하십시오.',
       );
   @override
   String get couldNotReadFiles => '충돌 파일을 하나도 읽을 수 없습니다.';
   @override
   String blockedSecret({required Object secret}) =>
-      '차단됨 — 충돌 파일에 ${secret} 유형의 비밀이 포함된 것으로 보입니다. 직접 해결하세요.';
+      '차단됨 — 충돌 파일에 ${secret} 유형의 비밀이 포함된 것으로 보입니다. 직접 해결하십시오.';
   @override
   String resolutionFailed({required Object error}) => '해결 실패: ${error}';
   @override
@@ -3503,7 +3504,7 @@ class _Translations$changes$conflictResolution$ko
     required Object resolved,
     required Object total,
     required Object category,
-  }) => '◇ 병합 해결 · 파일 ${resolved}/${total}개 · ${category}';
+  }) => '◇ 머지 해결 · 파일 ${resolved}/${total}개 · ${category}';
   @override
   String conflictSummary({
     required Object op,
@@ -3517,7 +3518,7 @@ class _Translations$changes$conflictResolution$ko
         other: '충돌 ${n}개',
       );
   @override
-  String get mergeEditorButton => '⇋ 병합 편집기';
+  String get mergeEditorButton => '⇋ 머지 편집기';
   @override
   String get noAiModel => 'AI 모델 없음';
   @override
@@ -3560,9 +3561,9 @@ class _Translations$changes$mergeFlow$ko
   String get alreadyUpToDate => '이미 최신입니다.';
   @override
   String merged({required Object upstream, required Object n}) =>
-      '${upstream} 병합됨 (파일 ${n}개).';
+      '${upstream} 머지됨 (파일 ${n}개).';
   @override
-  String get rebaseNotConverge => '리베이스가 수렴하지 않았습니다 — 직접 해결하세요.';
+  String get rebaseNotConverge => '리베이스가 수렴하지 않았습니다 — 직접 해결하십시오.';
   @override
   String get rebased => '리베이스됨.';
   @override
@@ -3572,11 +3573,11 @@ class _Translations$changes$mergeFlow$ko
         other: '리베이스됨 (파일 ${n}개 해결).',
       );
   @override
-  String get detachedHead => '동기화할 수 없음: 분리된 HEAD 상태입니다. 먼저 브랜치를 체크아웃하세요.';
+  String get detachedHead => '동기화할 수 없음: 분리된 HEAD 상태입니다. 먼저 브랜치를 체크아웃하십시오.';
   @override
   String get publishFailed => '게시 실패.';
   @override
-  String get noRemote => '구성된 원격이 없습니다. 이 브랜치를 게시하려면 하나 추가하세요.';
+  String get noRemote => '구성된 원격이 없습니다. 이 브랜치를 게시하려면 하나 추가하십시오.';
   @override
   String get failed => '실패';
 }
@@ -3643,7 +3644,12 @@ class _Translations$common$time$ko extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => '${n}개월 전';
   @override
-  String yearsAgo({required Object n}) => '${n}년 전';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '${n}년 전',
+        other: '${n}년 전',
+      );
   @override
   String minutesShort({required Object n}) => '${n}분';
   @override
@@ -3655,7 +3661,12 @@ class _Translations$common$time$ko extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n}개월';
   @override
-  String yearsShort({required Object n}) => '${n}년';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '${n}년',
+        other: '${n}년',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n}개월';
   @override
@@ -3735,7 +3746,7 @@ class _Translations$diff$toolbar$ko extends Translations$diff$toolbar$en {
 
   // Translations
   @override
-  String get searchHint => 'diff 검색...';
+  String get searchHint => 'diff 검색…';
   @override
   String lineCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
@@ -3743,7 +3754,7 @@ class _Translations$diff$toolbar$ko extends Translations$diff$toolbar$en {
         other: '${n}줄',
       );
   @override
-  String get blameLoading => 'blame...';
+  String get blameLoading => 'blame…';
   @override
   String get blame => 'blame';
   @override
@@ -3786,7 +3797,7 @@ class _Translations$diff$trail$ko extends Translations$diff$trail$en {
 
   // Translations
   @override
-  String get loading => '자취 불러오는 중...';
+  String get loading => '자취 불러오는 중…';
   @override
   String get noHistory => '히스토리 없음';
   @override
@@ -4160,7 +4171,7 @@ class _Translations$history$cherryPick$ko
 
   // Translations
   @override
-  String get paused => '체리픽 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하세요.';
+  String get paused => '체리픽 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하십시오.';
   @override
   String failed({required Object error}) => '체리픽 실패: ${error}';
   @override
@@ -4179,7 +4190,7 @@ class _Translations$history$revert$ko extends Translations$history$revert$en {
 
   // Translations
   @override
-  String get paused => '되돌리기 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하세요.';
+  String get paused => '되돌리기 일시 중지됨. 남은 충돌을 변경사항 페이지에서 마무리하십시오.';
   @override
   String failed({required Object error}) => '되돌리기 실패: ${error}';
   @override
@@ -4260,7 +4271,7 @@ class _Translations$history$inFlight$ko
   @override
   String get header => '진행 중';
   @override
-  String get deskFallbackLabel => '데스크';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -4296,17 +4307,17 @@ class _Translations$historySurgery$select$ko
   @override
   String selectedCount({required Object n}) => '${n}개 선택됨';
   @override
-  String get searchHint => '검색...';
+  String get searchHint => '검색…';
   @override
-  String get readingTree => '트리 읽는 중...';
+  String get readingTree => '트리 읽는 중…';
   @override
-  String get continueDisabled => '계속하려면 파일을 선택하세요';
+  String get continueDisabled => '계속하려면 파일을 선택하십시오';
   @override
   String get continueEnabled => '계속 →';
   @override
   String toPurgeCount({required Object n}) => '제거 대상 ${n}개';
   @override
-  String get analyzing => '분석 중...';
+  String get analyzing => '분석 중…';
   @override
   String get riskLow => '낮은 위험';
   @override
@@ -4371,7 +4382,7 @@ class _Translations$historySurgery$understand$ko
       '제거를 검증한 뒤, 강제 푸시할 브랜치를 선택합니다. --force-with-lease를 사용하므로 그사이 다른 사람이 푸시했다면 안전하게 실패합니다.';
   @override
   String get plumbingNote =>
-      'filter-repo나 BFG와 달리, 이 작업은 전적으로 git 플러밍 명령(cat-file, mktree, commit-tree, update-ref)으로 실행됩니다. 외부 의존성이 없습니다. 이름 변경 추적은 파일당 하나의 체인을 따릅니다 — 파일이 복사되고 두 복사본이 각각 이름 변경된 경우, 실행 후 제거 결과를 검증하세요.';
+      'filter-repo나 BFG와 달리, 이 작업은 전적으로 git 플러밍 명령(cat-file, mktree, commit-tree, update-ref)으로 실행됩니다. 외부 의존성이 없습니다. 이름 변경 추적은 파일당 하나의 체인을 따릅니다 — 파일이 복사되고 두 복사본이 각각 이름 변경된 경우, 실행 후 제거 결과를 검증하십시오.';
   @override
   String get back => '← 뒤로';
   @override
@@ -4420,13 +4431,13 @@ class _Translations$historySurgery$execute$ko
 
   // Translations
   @override
-  String get preparing => '준비 중...';
+  String get preparing => '준비 중…';
   @override
-  String get backingUpRefs => 'ref 백업 중...';
+  String get backingUpRefs => 'ref 백업 중…';
   @override
-  String get rewritingCommits => '커밋 재작성 중...';
+  String get rewritingCommits => '커밋 재작성 중…';
   @override
-  String get updatingRefs => 'ref 업데이트 중...';
+  String get updatingRefs => 'ref 업데이트 중…';
 }
 
 // Path: historySurgery.verify
@@ -4478,7 +4489,7 @@ class _Translations$historySurgery$forcePush$ko
 
   // Translations
   @override
-  String get pushing => '푸시 중...';
+  String get pushing => '푸시 중…';
   @override
   String get forcePushAll => '전체 강제 푸시';
   @override
@@ -4634,7 +4645,7 @@ class _Translations$orrery$status$ko extends Translations$orrery$status$en {
 
   // Translations
   @override
-  String get loading => '히스토리를 따라 매니폴드를 추적하는 중…';
+  String get loading => '히스토리를 따라 Manifold를 추적하는 중…';
   @override
   String get loadError => '이 저장소의 히스토리를 읽을 수 없습니다.';
   @override
@@ -4812,28 +4823,28 @@ class _Translations$orrery$findings$ko extends Translations$orrery$findings$en {
   // Translations
   @override
   String get forecastSplit =>
-      '연결성이 계속 떨어져 최저치에 근접했습니다 — 이대로 유지되면 코드베이스는 느슨하게 결합된 두 조각으로 갈라지는 방향으로 향합니다. 그게 의도인지 지금 결정하세요.';
+      '연결성이 계속 떨어져 최저치에 근접했습니다 — 이대로 유지되면 코드베이스는 느슨하게 결합된 두 조각으로 갈라지는 방향으로 향합니다. 그게 의도인지 지금 결정하십시오.';
   @override
   String get forecastConsolidate =>
-      '연결성이 정점을 향해 계속 오르고 있습니다 — 이대로 유지되면 코드베이스는 단단히 결합된 하나의 덩어리로 통합됩니다. 모놀리스로 굳어지는지 주시하세요.';
+      '연결성이 정점을 향해 계속 오르고 있습니다 — 이대로 유지되면 코드베이스는 단단히 결합된 하나의 덩어리로 통합됩니다. 모놀리스로 굳어지는지 주시하십시오.';
   @override
   String thrash({required Object name}) =>
-      '${name} — 이리저리 계속 재편됩니다. 구조적 변동은 많지만 순 이동은 적습니다. 결합을 안정시키거나 건드리지 마세요.';
+      '${name} — 이리저리 계속 재편됩니다. 구조적 변동은 많지만 순 이동은 적습니다. 결합을 안정시키거나 건드리지 마십시오.';
   @override
   String get reshuffle =>
-      '이 커밋은 일상적으로 보였지만 어떤 파일이 중심인지를 조용히 바꿔놓았습니다 — 전체 형태는 유지된 채 그 아래에서 구조가 재배치됐습니다. 주의 깊게 검토하세요.';
+      '이 커밋은 일상적으로 보였지만 어떤 파일이 중심인지를 조용히 바꿔놓았습니다 — 전체 형태는 유지된 채 그 아래에서 구조가 재배치됐습니다. 주의 깊게 검토하십시오.';
   @override
   String hub({required Object name}) =>
-      '${name} — 구조적 핵심에 자리합니다. 시스템이 이를 중심으로 재편됩니다. 여기서의 변경은 영향 반경이 크다고 여기세요.';
+      '${name} — 구조적 핵심에 자리합니다. 시스템이 이를 중심으로 재편됩니다. 여기서의 변경은 영향 반경이 크다고 여기십시오.';
   @override
   String driftOut({required Object name}) =>
       '${name} — 핵심에서 가장자리로 표류했습니다. 시스템에서 결합이 풀리고 있습니다. 은퇴 중이거나, 조용히 썩어가는 중입니다.';
   @override
   String driftIn({required Object name}) =>
-      '${name} — 핵심 쪽으로 이동했습니다. 하중을 견디는 요소가 되어가고 있습니다. 더 많은 것이 의존하기 전에 충분히 테스트되었는지 확인하세요.';
+      '${name} — 핵심 쪽으로 이동했습니다. 하중을 견디는 요소가 되어가고 있습니다. 더 많은 것이 의존하기 전에 충분히 테스트되었는지 확인하십시오.';
   @override
   String get regime =>
-      '코드베이스가 여기서 급격히 재편됐습니다 — 연결성이 급증했습니다. 무엇이 갈라졌거나 병합됐는지 검토하세요.';
+      '코드베이스가 여기서 급격히 재편됐습니다 — 연결성이 급증했습니다. 무엇이 갈라졌거나 머지됐는지 검토하십시오.';
   @override
   String get tangleTrend =>
       '히스토리 전반에 걸쳐 코드베이스가 더 얽힌 구조로 향하는 추세입니다 — 연결성이 점점 촘촘해지고 모듈성이 떨어집니다.';
@@ -4990,7 +5001,7 @@ class _Translations$palette$chips$ko extends Translations$palette$chips$en {
   @override
   String get ver => '버전';
   @override
-  String get desk => '데스크';
+  String get desk => 'Desk';
   @override
   String get det => '분리';
   @override
@@ -5213,7 +5224,7 @@ class _Translations$palette$gitCommands$ko
   @override
   String get revert => '되돌리기';
   @override
-  String get stashConflictMessage => '충돌과 함께 스태시가 적용됐습니다. 변경사항 페이지에서 해결하세요.';
+  String get stashConflictMessage => '충돌과 함께 스태시가 적용됐습니다. 변경사항 페이지에서 해결하십시오.';
 }
 
 // Path: palette.pr
@@ -5228,7 +5239,7 @@ class _Translations$palette$pr$ko extends Translations$palette$pr$en {
   @override
   String get create => 'PR 생성';
   @override
-  String get merge => 'PR 병합';
+  String get merge => 'PR 머지';
   @override
   String get markReady => 'PR 준비 완료 표시';
 }
@@ -5302,7 +5313,7 @@ class _Translations$palette$navigation$ko
   @override
   String get branches => '브랜치';
   @override
-  String get xray => '엑스레이';
+  String get xray => 'X-Ray';
   @override
   String get settings => '설정';
   @override
@@ -5389,7 +5400,7 @@ class _Translations$palette$dev$ko extends Translations$palette$dev$en {
 
   // Translations
   @override
-  String get testMergeEditor => '병합 편집기 테스트';
+  String get testMergeEditor => '머지 편집기 테스트';
   @override
   String get testHistorySurgery => '히스토리 수술 테스트';
   @override
@@ -5428,7 +5439,7 @@ class _Translations$palette$orrery$ko extends Translations$palette$orrery$en {
   @override
   String get label => 'Orrery';
   @override
-  String get subtitle => '매니폴드를 통해 저장소의 구조적 히스토리를 스크럽';
+  String get subtitle => 'Manifold를 통해 저장소의 구조적 히스토리를 스크럽';
 }
 
 // Path: palette.command
@@ -5459,11 +5470,11 @@ class _Translations$palette$search$ko extends Translations$palette$search$en {
 
   // Translations
   @override
-  String get hintDefault => '전체 검색...';
+  String get hintDefault => '전체 검색…';
   @override
   String get hintElevated => '확장 — 모든 동작';
   @override
-  String get emptyTypeToSearch => '검색하려면 입력하세요';
+  String get emptyTypeToSearch => '검색하려면 입력하십시오';
   @override
   String get emptyNoResults => '결과 없음';
 }
@@ -5828,17 +5839,17 @@ class _Translations$settings$clearData$ko
   @override
   String get clear => '지우기';
   @override
-  String get confirmDiagnostics => '로컬 진단 샘플과 성능 측정값을 지울까요?';
+  String get confirmDiagnostics => '로컬 진단 샘플과 성능 측정값을 지우시겠습니까?';
   @override
-  String get confirmAudit => '로컬 AI 감사 메타데이터 기록을 지울까요?';
+  String get confirmAudit => '로컬 AI 감사 메타데이터 기록을 지우시겠습니까?';
   @override
-  String get confirmAll => '모든 로컬 진단 샘플과 AI 감사 메타데이터 기록을 지울까요?';
+  String get confirmAll => '모든 로컬 진단 샘플과 AI 감사 메타데이터 기록을 지우시겠습니까?';
   @override
   String get confirmWipeAll =>
-      '최근 저장소 목록을 포함한 모든 로컬 앱 데이터를 지우고 종료할까요? 디스크의 실제 git 저장소는 건드리지 않습니다.';
+      '최근 저장소 목록을 포함한 모든 로컬 앱 데이터를 지우고 종료하시겠습니까? 디스크의 실제 git 저장소는 건드리지 않습니다.';
   @override
   String get confirmReset =>
-      '로컬 앱 데이터를 초기화하고 종료할까요?\n\n설정, 테마, 온보딩, AI 환경설정, 텔레메트리, engram 캐시가 지워집니다. 최근 저장소 목록은 유지됩니다.';
+      '로컬 앱 데이터를 초기화하고 종료하시겠습니까?\n\n설정, 테마, 온보딩, AI 환경설정, 텔레메트리, engram 캐시가 지워집니다. 최근 저장소 목록은 유지됩니다.';
 }
 
 // Path: settings.guardrailMacro
@@ -6024,7 +6035,7 @@ class _Translations$settings$keybindingProfile$ko
   @override
   String get label => '키 바인딩 프로필';
   @override
-  String get porcelain => '포슬린';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => '숫자형';
   @override
@@ -6080,7 +6091,7 @@ class _Translations$settings$shortcuts$ko
   @override
   String get branches => '브랜치';
   @override
-  String get xray => '엑스레이';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '전환 (항상)';
   @override
@@ -6199,15 +6210,15 @@ class _Translations$settings$modelSlots$ko
 
   // Translations
   @override
-  String get loadingProviders => '제공자 불러오는 중...';
+  String get loadingProviders => '제공자 불러오는 중…';
   @override
-  String get refreshingProviders => '제공자 진단 새로고침 중...';
+  String get refreshingProviders => '제공자 진단 새로고침 중…';
   @override
   String get routeDescription => '구성의 이름을 바꾸고 감지된 제공자 모델로 라우팅합니다.';
   @override
-  String get loadingCategories => '모델 카테고리 불러오는 중...';
+  String get loadingCategories => '모델 카테고리 불러오는 중…';
   @override
-  String get noOptions => '아직 사용 가능한 모델 옵션이 없습니다. 먼저 호환되는 로컬 AI CLI를 감지하세요.';
+  String get noOptions => '아직 사용 가능한 모델 옵션이 없습니다. 먼저 호환되는 로컬 AI CLI를 감지하십시오.';
   @override
   String get slotsAppearWhenAvailable => '제공자 모델이 준비되면 모델 슬롯 설정이 여기에 나타납니다.';
   @override
@@ -6235,7 +6246,7 @@ class _Translations$settings$modelPicker$ko
   @override
   String get noModels => '사용 가능한 모델 없음';
   @override
-  String get filterHint => '모델 필터...';
+  String get filterHint => '모델 필터…';
   @override
   String get warming => '예열 중…';
   @override
@@ -6313,7 +6324,7 @@ class _Translations$settings$museHint$ko
   @override
   String get strict => '기준. 금지. muse가 그냥 넘어가지 않을 것들.';
   @override
-  String get paranoid => '렌즈를 조율하세요. 매니폴드가 어떤 주파수로 울려야 할까요?';
+  String get paranoid => '렌즈를 조율하세요. Manifold가 어떤 주파수로 울려야 할까요?';
 }
 
 // Path: settings.museEditor
@@ -6411,7 +6422,7 @@ class _Translations$settings$logosLens$ko
   @override
   String get warming => '예열 중';
   @override
-  String get emptyOpenRepo => '렌즈가 살아 움직이는 걸\n보려면 저장소를 여세요';
+  String get emptyOpenRepo => '렌즈가 살아 움직이는 걸\n보려면 저장소를 여십시오';
   @override
   String get emptyNoFiles => '닿는 범위에\n파일 없음 — 히스토리\n쪽으로 드래그';
 }
@@ -6553,9 +6564,9 @@ class _Translations$settings$guardrailPhrase$ko
   @override
   String get proper => '제대로 된 읽기, 로직, 통합, 패턴';
   @override
-  String get lookAgain => '다시 보세요. 뭔가 숨어 있을 수 있습니다';
+  String get lookAgain => '다시 보십시오. 뭔가 숨어 있을 수 있습니다';
   @override
-  String get assumeWrong => '뭔가 잘못됐다고 가정하세요. 찾아내세요';
+  String get assumeWrong => '뭔가 잘못됐다고 가정하십시오. 찾아내십시오';
 }
 
 // Path: settings.reviewGuideHint
@@ -6569,14 +6580,14 @@ class _Translations$settings$reviewGuideHint$ko
 
   // Translations
   @override
-  String get focusHigh => '예: 고수준 로직과 주요 버그에 집중하세요. 간결하고 관대하게.';
+  String get focusHigh => '예: 고수준 로직과 주요 버그에 집중하십시오. 간결하고 관대하게.';
   @override
-  String get surfaceBugs => '예: 잠재적 버그, 아키텍처 불일치, 엣지 케이스 실패를 드러내세요.';
+  String get surfaceBugs => '예: 잠재적 버그, 아키텍처 불일치, 엣지 케이스 실패를 드러내십시오.';
   @override
-  String get scrutinize => '예: 최적화, 보안, 패턴 준수를 위해 모든 줄을 면밀히 살피세요.';
+  String get scrutinize => '예: 최적화, 보안, 패턴 준수를 위해 모든 줄을 면밀히 살피십시오.';
   @override
   String get trustNothing =>
-      '예: 아무것도 믿지 마세요. 모든 부작용을 의심하세요. 모든 줄을 잠재적 실패로 취급하세요.';
+      '예: 아무것도 믿지 마십시오. 모든 부작용을 의심하십시오. 모든 줄을 잠재적 실패로 취급하십시오.';
   @override
   String get optional => '리뷰가 무엇에 신경 써야 하는지에 대한 선택적 지침.';
 }
@@ -6668,9 +6679,9 @@ class _Translations$settings$externalTools$ko
   String get detecting => '설치된 도구 감지 중…';
   @override
   String get allPresetsAdded =>
-      '알려진 프리셋은 이미 모두 추가됐습니다. 더 추가하려면 “+ Custom”을 사용하세요.';
+      '알려진 프리셋은 이미 모두 추가됐습니다. 더 추가하려면 “+ Custom”을 사용하십시오.';
   @override
-  String get noToolsConfigured => '아직 구성된 도구가 없습니다. 위에서 하나 추가하세요.';
+  String get noToolsConfigured => '아직 구성된 도구가 없습니다. 위에서 하나 추가하십시오.';
   @override
   String get categoryAi => 'ai';
   @override
@@ -6831,16 +6842,16 @@ class _Translations$settings$diagnostics$ko
   @override
   String get ok => '정상';
   @override
-  String get noCommandTimings => '아직 캡처된 명령 측정값이 없습니다. 일반 동작을 실행하여 진단을 채우세요.';
+  String get noCommandTimings => '아직 캡처된 명령 측정값이 없습니다. 일반 동작을 실행하여 진단을 채우십시오.';
   @override
   String get noBackendSamples =>
-      '아직 캡처된 백엔드 명령 샘플이 없습니다. git과 설정 동작을 실행하여 이 로그를 채우세요.';
+      '아직 캡처된 백엔드 명령 샘플이 없습니다. git과 설정 동작을 실행하여 이 로그를 채우십시오.';
   @override
   String get noDiffSessions =>
-      '아직 캡처된 diff 렌더 세션이 없습니다. 파일 diff를 열고 스크롤하여 이 패널을 채우세요.';
+      '아직 캡처된 diff 렌더 세션이 없습니다. 파일 diff를 열고 스크롤하여 이 패널을 채우십시오.';
   @override
   String get noUiSessions =>
-      '아직 캡처된 UI 측정 세션이 없습니다. 패널을 열고 경로를 이동하여 이 패널을 채우세요.';
+      '아직 캡처된 UI 측정 세션이 없습니다. 패널을 열고 경로를 이동하여 이 패널을 채우십시오.';
   @override
   String get recentOperations => '최근 작업';
   @override
@@ -6953,7 +6964,7 @@ class _Translations$settings$flowEngine$ko
   @override
   String get idle => '유휴';
   @override
-  String get emptyOpenRepo => '흐름 분석을 보려면\n저장소를 여세요';
+  String get emptyOpenRepo => '흐름 분석을 보려면\n저장소를 여십시오';
   @override
   String get scanning => '스캔 중';
   @override
@@ -7066,7 +7077,7 @@ class _Translations$settings$diagnosticsPanel$ko
   @override
   String get offenderRankingSubtitle => '스트림 전반의 지연 유발 요인.';
   @override
-  String get noOffenders => '아직 문제 요소 순위가 없습니다. 진단 활동을 캡처하여 이 목록을 채우세요.';
+  String get noOffenders => '아직 문제 요소 순위가 없습니다. 진단 활동을 캡처하여 이 목록을 채우십시오.';
 }
 
 // Path: settings.release
@@ -7106,7 +7117,7 @@ class _Translations$settings$providerStatus$ko
 
   // Translations
   @override
-  String get detecting => '감지 중...';
+  String get detecting => '감지 중…';
   @override
   String get ready => '준비됨';
   @override
@@ -7189,11 +7200,11 @@ class _Translations$sync$actions$ko extends Translations$sync$actions$en {
   @override
   String get syncLabel => '동기화';
   @override
-  String get syncOpenRepoDetail => '푸시와 풀 작업을 관리하려면 저장소를 여세요.';
+  String get syncOpenRepoDetail => '푸시와 풀 작업을 관리하려면 저장소를 여십시오.';
   @override
   String get detachedHeadLabel => '분리된 HEAD';
   @override
-  String get detachedHeadDetail => '푸시나 풀 전에 브랜치를 체크아웃하세요.';
+  String get detachedHeadDetail => '푸시나 풀 전에 브랜치를 체크아웃하십시오.';
   @override
   String get publishBranchLabel => '브랜치 게시';
   @override
@@ -7283,7 +7294,7 @@ class _Translations$sync$panel$ko extends Translations$sync$panel$en {
   String uncommittedEditsBlocked({
     required Object count,
     required Object list,
-  }) => '${count}에 커밋되지 않은 변경이 있습니다. 리베이스 동기화하려면 먼저 커밋하세요 (${list}).';
+  }) => '${count}에 커밋되지 않은 변경이 있습니다. 리베이스 동기화하려면 먼저 커밋하십시오 (${list}).';
   @override
   String noUpstreamForForcePush({required Object branch}) =>
       '강제 푸시할 수 없음: "${branch}"에 업스트림이 구성되어 있지 않습니다.';
@@ -7305,7 +7316,7 @@ class _Translations$sync$forcePush$ko extends Translations$sync$forcePush$en {
       '대상: ${remote}/${branch}';
   @override
   String get warning =>
-      '원격 브랜치를 로컬 히스토리로 덮어씁니다. 리스 사용 시 마지막 페치 이후 누군가 원격에 푸시했다면 중단되지만, 이미 페치한 변경은 여전히 덮어써집니다. 브랜치를 갈라지게 한 리베이스나 amend를 의도한 경우에만 사용하세요.';
+      '원격 브랜치를 로컬 히스토리로 덮어씁니다. 리스 사용 시 마지막 페치 이후 누군가 원격에 푸시했다면 중단되지만, 이미 페치한 변경은 여전히 덮어써집니다. 브랜치를 갈라지게 한 리베이스나 amend를 의도한 경우에만 사용하십시오.';
   @override
   String get confirmButton => '강제 푸시';
 }
@@ -7464,9 +7475,9 @@ class _Translations$xray$header$ko extends Translations$xray$header$en {
   @override
   String get refresh => '새로고침';
   @override
-  String get refreshing => '새로고침 중...';
+  String get refreshing => '새로고침 중…';
   @override
-  String get title => '저장소 엑스레이';
+  String get title => '저장소 X-Ray';
 }
 
 // Path: xray.hotspot
@@ -7521,7 +7532,7 @@ class _Translations$xray$inspector$ko extends Translations$xray$inspector$en {
   String mergeCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
         n,
-        other: '병합 ${n}개',
+        other: '머지 ${n}개',
       );
   @override
   String get noTags => '태그 없음';
@@ -7542,7 +7553,7 @@ class _Translations$xray$inspector$ko extends Translations$xray$inspector$en {
   @override
   String get shapeLinear => '선형';
   @override
-  String get shapeMergeHeavy => '병합 과다';
+  String get shapeMergeHeavy => '머지 과다';
   @override
   String get shapeMostlyLinear => '대체로 선형';
   @override
@@ -7580,13 +7591,13 @@ class _Translations$xray$loadingCard$ko
   @override
   String get buildingMessage => 'Git 히스토리, ref, 리듬, 핫스폿을 조사하는 중.';
   @override
-  String get buildingTitle => '저장소 엑스레이 생성 중';
+  String get buildingTitle => '저장소 X-Ray 생성 중';
   @override
-  String get idleMessage => '현재 저장소를 조사하려면 패널을 다시 여세요.';
+  String get idleMessage => '현재 저장소를 조사하려면 패널을 다시 여십시오.';
   @override
-  String get idleTitle => '저장소 엑스레이';
+  String get idleTitle => '저장소 X-Ray';
   @override
-  String get unavailableTitle => '저장소 엑스레이를 사용할 수 없음';
+  String get unavailableTitle => '저장소 X-Ray를 사용할 수 없음';
 }
 
 // Path: xray.metabolism
@@ -7645,7 +7656,12 @@ class _Translations$xray$recency$ko extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n}주';
   @override
-  String years({required Object n}) => '${n}년';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '${n}년',
+        other: '${n}년',
+      );
 }
 
 // Path: xray.rings
@@ -7766,7 +7782,7 @@ class _Translations$xray$summary$ko extends Translations$xray$summary$en {
   String get download => '다운로드';
   @override
   String get emptyState =>
-      'Logos 분석을 실행하여 이 저장소의 구조와 영역을 매핑하세요.\n(tw: slop rn)';
+      'Logos 분석을 실행하여 이 저장소의 구조와 영역을 매핑하십시오.\n(tw: slop rn)';
   @override
   String get exit => '종료';
   @override
@@ -7911,7 +7927,7 @@ class _Translations$changes$mergeFlow$op$ko
 
   // Translations
   @override
-  String get merge => '병합';
+  String get merge => '머지';
   @override
   String get cherryPick => '체리픽';
   @override
@@ -8225,7 +8241,7 @@ class _Translations$onboarding$preview$panels$ko
 
   // Translations
   @override
-  String get xray => '저장소 엑스레이';
+  String get xray => '저장소 X-Ray';
   @override
   String get settings => '설정';
 }
@@ -8310,7 +8326,7 @@ class _Translations$onboarding$preview$branches$ko
   @override
   String get absorbed => '흡수됨';
   @override
-  String get desk => '데스크';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override

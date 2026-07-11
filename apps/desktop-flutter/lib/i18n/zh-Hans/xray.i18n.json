@@ -113,7 +113,7 @@
     "machineChip": "机器",
     "refresh": "刷新",
     "refreshing": "正在刷新…",
-    "title": "仓库透视"
+    "title": "仓库 X-Ray"
   },
   "hotspot": {
     "clusterPeers": "簇内同伴",
@@ -159,10 +159,10 @@
   },
   "loadingCard": {
     "buildingMessage": "正在探查 Git 历史、引用、节奏和热点。",
-    "buildingTitle": "正在构建仓库透视",
+    "buildingTitle": "正在构建仓库 X-Ray",
     "idleMessage": "再次打开面板以探查当前仓库。",
-    "idleTitle": "仓库透视",
-    "unavailableTitle": "仓库透视不可用"
+    "idleTitle": "仓库 X-Ray",
+    "unavailableTitle": "仓库 X-Ray 不可用"
   },
   "metabolism": {
     "halfLife": "{n} 天半衰期"
@@ -181,7 +181,10 @@
     "months": "{n} 月",
     "today": "今天",
     "weeks": "{n} 周",
-    "years": "{n} 年"
+    "years": {
+      "one": "{n} 年",
+      "other": "{n} 年"
+    }
   },
   "rings": {
     "hintOneBlended": "一个混合结构",
@@ -248,7 +251,7 @@
   "trajectory": {
     "connectivity": "连通性",
     "events": "{n} 个事件",
-    "openInOrrery": "在天象仪中打开",
+    "openInOrrery": "在 Orrery 中打开",
     "readingHint": "正在读取历史…",
     "snapshots": "{n} 个快照",
     "steady": "平稳 — 此窗口内无结构事件。",

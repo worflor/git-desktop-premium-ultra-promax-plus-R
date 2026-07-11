@@ -1,0 +1,101 @@
+{
+  "@@locale": "pl",
+  "listSeparator": ", ",
+  "cancel": "Anuluj",
+  "close": "Zamknij",
+  "save": "Zapisz",
+  "delete": "Usuń",
+  "retry": "Ponów",
+  "copy": "Kopiuj",
+  "copied": "Skopiowano",
+  "done": "Gotowe",
+  "loading": "Ładowanie…",
+  "fileCount": {
+    "one": "{n} plik",
+    "few": "{n} pliki",
+    "many": "{n} plików",
+    "other": "{n} pliku"
+  },
+  "commitCount": {
+    "one": "{n} commit",
+    "few": "{n} commity",
+    "many": "{n} commitów",
+    "other": "{n} commita"
+  },
+  "branchCount": {
+    "one": "{n} gałąź",
+    "few": "{n} gałęzie",
+    "many": "{n} gałęzi",
+    "other": "{n} gałęzi"
+  },
+  "localCommitCount": {
+    "one": "{n} lokalny commit",
+    "few": "{n} lokalne commity",
+    "many": "{n} lokalnych commitów",
+    "other": "{n} lokalnego commita"
+  },
+  "remoteCommitCount": {
+    "one": "{n} zdalny commit",
+    "few": "{n} zdalne commity",
+    "many": "{n} zdalnych commitów",
+    "other": "{n} zdalnego commita"
+  },
+  "conflictedFileCount": {
+    "one": "{n} plik z konfliktem",
+    "few": "{n} pliki z konfliktami",
+    "many": "{n} plików z konfliktami",
+    "other": "{n} pliku z konfliktami"
+  },
+  "time": {
+    "now": "teraz",
+    "justNow": "przed chwilą",
+    "today": "DZIŚ",
+    "minutesAgo": "{n} min temu",
+    "hoursAgo": "{n} godz temu",
+    "daysAgo": "{n} dni temu",
+    "weeksAgo": "{n} tyg temu",
+    "monthsAgo": "{n} mies temu",
+    "yearsAgo": {
+      "one": "{n} lat temu",
+      "other": "{n} lat temu"
+    },
+    "minutesShort": "{n} min",
+    "hoursShort": "{n} godz",
+    "daysShort": "{n} dni",
+    "weeksShort": "{n} tyg",
+    "monthsShort": "{n} mies",
+    "yearsShort": {
+      "one": "{n} lat",
+      "other": "{n} lat"
+    },
+    "commitMonthsShort": "{n} mies",
+    "idle": "bezczynny",
+    "idleDays": "bezczynny {n} dni",
+    "idleYears": {
+      "one": "bezczynny {n} rok",
+      "few": "bezczynny {n} lata",
+      "many": "bezczynny {n} lat",
+      "other": "bezczynny {n} roku"
+    },
+    "monthAbbrevs(slang=list)": [
+      "sty",
+      "lut",
+      "mar",
+      "kwi",
+      "maj",
+      "cze",
+      "lip",
+      "sie",
+      "wrz",
+      "paź",
+      "lis",
+      "gru"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

@@ -2,9 +2,9 @@
   "@@locale": "ko",
   "actions": {
     "syncLabel": "동기화",
-    "syncOpenRepoDetail": "푸시와 풀 작업을 관리하려면 저장소를 여세요.",
+    "syncOpenRepoDetail": "푸시와 풀 작업을 관리하려면 저장소를 여십시오.",
     "detachedHeadLabel": "분리된 HEAD",
-    "detachedHeadDetail": "푸시나 풀 전에 브랜치를 체크아웃하세요.",
+    "detachedHeadDetail": "푸시나 풀 전에 브랜치를 체크아웃하십시오.",
     "publishBranchLabel": "브랜치 게시",
     "publishBranchDetail": "{branch} 푸시 후 업스트림 추적 브랜치를 설정합니다.",
     "publishButtonLabel": "게시",
@@ -39,13 +39,13 @@
     "noOutput": "출력 없음.",
     "resolvedConflicts": "{count} 해결됨.",
     "cancelledUnchanged": "취소됨, 작업 트리 변경 없음.",
-    "uncommittedEditsBlocked": "{count}에 커밋되지 않은 변경이 있습니다. 리베이스 동기화하려면 먼저 커밋하세요 ({list}).",
+    "uncommittedEditsBlocked": "{count}에 커밋되지 않은 변경이 있습니다. 리베이스 동기화하려면 먼저 커밋하십시오 ({list}).",
     "noUpstreamForForcePush": "강제 푸시할 수 없음: \"{branch}\"에 업스트림이 구성되어 있지 않습니다."
   },
   "forcePush": {
     "confirmTitle": "강제 푸시(리스 사용)?",
     "target": "대상: {remote}/{branch}",
-    "warning": "원격 브랜치를 로컬 히스토리로 덮어씁니다. 리스 사용 시 마지막 페치 이후 누군가 원격에 푸시했다면 중단되지만, 이미 페치한 변경은 여전히 덮어써집니다. 브랜치를 갈라지게 한 리베이스나 amend를 의도한 경우에만 사용하세요.",
+    "warning": "원격 브랜치를 로컬 히스토리로 덮어씁니다. 리스 사용 시 마지막 페치 이후 누군가 원격에 푸시했다면 중단되지만, 이미 페치한 변경은 여전히 덮어써집니다. 브랜치를 갈라지게 한 리베이스나 amend를 의도한 경우에만 사용하십시오.",
     "confirmButton": "강제 푸시"
   }
 }

@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "repo-röntgen",
+      "xray": "repo x-ray",
       "settings": "einstellungen"
     },
     "sidebar": {
@@ -85,7 +85,7 @@
       "lensBranches": "BRANCHES",
       "lensPRs": "PRs",
       "absorbed": "absorbiert",
-      "desk": "tisch",
+      "desk": "desk",
       "head": "HEAD",
       "tracking": "→ verfolgt: {ref}"
     },

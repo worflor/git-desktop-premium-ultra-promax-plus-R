@@ -113,11 +113,11 @@
     "oneCharacteristic": "une échelle caractéristique"
   },
   "header": {
-    "dirtyBadge": "sale",
+    "dirtyBadge": "dirty",
     "machineChip": "machine",
     "refresh": "Actualiser",
     "refreshing": "Actualisation...",
-    "title": "Radiographie du dépôt"
+    "title": "X-Ray du dépôt"
   },
   "hotspot": {
     "clusterPeers": "pairs de grappe",
@@ -137,8 +137,8 @@
     "headLabel": "head",
     "hiddenRefsLabel": "réfs cachées",
     "mergeCount": {
-      "one": "{n} fusion",
-      "other": "{n} fusions"
+      "one": "{n} merge",
+      "other": "{n} merges"
     },
     "noTags": "aucune étiquette",
     "notesLabel": "notes",
@@ -149,11 +149,11 @@
     "scannedAt": "scanné {time}",
     "selectedCount": "{n} sélectionnés",
     "shapeLinear": "linéaire",
-    "shapeMergeHeavy": "riche en fusions",
+    "shapeMergeHeavy": "riche en merges",
     "shapeMostlyLinear": "quasi linéaire",
     "stashCount": {
-      "one": "{n} remisage",
-      "other": "{n} remisages"
+      "one": "{n} stash",
+      "other": "{n} stash"
     },
     "stressLabel": "contrainte",
     "tagCount": {
@@ -167,10 +167,10 @@
   },
   "loadingCard": {
     "buildingMessage": "Sondage de l'historique Git, des réfs, de la cadence et des points chauds.",
-    "buildingTitle": "Construction de la radiographie du dépôt",
+    "buildingTitle": "Construction du X-Ray du dépôt",
     "idleMessage": "Rouvrez le panneau pour sonder le dépôt actuel.",
-    "idleTitle": "Radiographie du dépôt",
-    "unavailableTitle": "Radiographie du dépôt indisponible"
+    "idleTitle": "X-Ray du dépôt",
+    "unavailableTitle": "X-Ray du dépôt indisponible"
   },
   "metabolism": {
     "halfLife": "demi-vie de {n} j"
@@ -190,7 +190,10 @@
     "months": "{n} mois",
     "today": "aujourd'hui",
     "weeks": "{n} sem",
-    "years": "{n} an"
+    "years": {
+      "one": "{n} an",
+      "other": "{n} ans"
+    }
   },
   "rings": {
     "hintOneBlended": "une structure fondue",

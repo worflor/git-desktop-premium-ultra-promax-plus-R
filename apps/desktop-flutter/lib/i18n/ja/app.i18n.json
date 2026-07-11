@@ -14,7 +14,7 @@
     "changes": "変更",
     "history": "履歴",
     "branches": "ブランチ",
-    "xray": "X 線",
+    "xray": "X-Ray",
     "switchAlways": "切り替え（常時）",
     "commandPalette": "コマンドパレット",
     "elevatedPalette": "昇格パレット",
@@ -38,31 +38,31 @@
 
   "commandPaletteTooltip": "コマンドパレット   /",
 
-  "newDeskFallback": "新規デスク",
-  "deskFallback": "デスク",
+  "newDeskFallback": "新規 Desk",
+  "deskFallback": "Desk",
   "currentDeskFallback": "現在",
   "noRepositoryOpen": "リポジトリが開かれていません",
 
-  "couldntOpenAsDesk": "デスクとして開けませんでした：{error}",
+  "couldntOpenAsDesk": "Desk として開けませんでした：{error}",
   "couldNotDetectForge": "フォージを検出できませんでした：{error}",
   "cannotFetchPrNoForge": "PR を取得できません：このリポジトリのフォージを検出できません。",
   "overwriteRefConfirm": "{ref}をリモートの最新で上書きしますか？",
   "overwrite": "上書き",
   "couldntFetchPr": "PR を取得できませんでした：{error}",
 
-  "promoteDeskToPr": "デスクを PR に昇格",
+  "promoteDeskToPr": "Desk を PR に昇格",
   "applyToMain": "main に適用",
   "updateDeskFrom": "{target}を{source}から更新",
   "bringChangesFromHere": "{source}の変更をここに取り込む",
   "editLocalPr": "ローカル PR を編集",
   "discardLocalPr": "ローカル PR を破棄",
-  "closeDesk": "デスクを閉じる",
+  "closeDesk": "Desk を閉じる",
 
   "couldntPromote": "昇格できませんでした：{error}",
-  "commitOrShelveBeforeApplying": "適用する前にデスクの変更をコミットまたは棚上げしてください。",
+  "commitOrShelveBeforeApplying": "適用する前に Desk の変更をコミットまたは棚上げしてください。",
   "couldNotResolveMainWorktree": "メイン作業ツリーのパスを解決できませんでした。",
-  "couldntPromoteDesk": "デスクを昇格できませんでした：{error}",
-  "couldntDetermineBaseBranch": "このデスクのベースブランチを特定できませんでした。",
+  "couldntPromoteDesk": "Desk を昇格できませんでした：{error}",
+  "couldntDetermineBaseBranch": "この Desk のベースブランチを特定できませんでした。",
   "prBaseHeadSame": "PR のベースとヘッドが同じブランチ（{branch}）です — 適用するものがありません。",
   "appliedBranchToBase": "{branch}を{base}に適用しました",
 
@@ -90,7 +90,7 @@
   "cancelLower": "キャンセル",
   "saveLower": "保存",
   "couldntSave": "保存できませんでした：{error}",
-  "stashedNoOtherDesk": "変更をスタッシュしました — 適用先の他のデスクがありません。git stash pop で復元してください。",
+  "stashedNoOtherDesk": "変更をスタッシュしました — 適用先の他の Desk がありません。git stash pop で復元してください。",
 
   "suggestedSource": "推奨ソース",
   "tooltipModifiedCount": "{n} 件変更",
@@ -108,7 +108,7 @@
   "driftSummaryRemainder": "{summary} +{remainder}",
 
   "uncommittedChanges": "未コミットの変更",
-  "closeDeskQuestion": "デスクを閉じますか？",
+  "closeDeskQuestion": "Desk を閉じますか？",
   "uncommittedFileCount": {
     "other": "未コミットのファイル {n} 件。"
   },
@@ -138,14 +138,14 @@
   "publish": "公開",
   "noRemoteConfigured": "このリポジトリにリモートが設定されていません。",
 
-  "jumpToDesk": "デスクへジャンプ",
+  "jumpToDesk": "Desk へジャンプ",
   "arrowOpen": "→ 開く",
-  "openOnANewDesk": "新しいデスクで開く",
-  "plusDesk": "+ デスク",
+  "openOnANewDesk": "新しい Desk で開く",
+  "plusDesk": "+ Desk",
   "plusSpace": "+ ",
   "newBranchNameHint": "new-branch-name",
   "escLower": "esc",
-  "plusNewDesk": "+ 新規デスク",
+  "plusNewDesk": "+ 新規 Desk",
   "fromHeadEllipsis": "HEAD から…",
   "viewAllBranches": "すべてのブランチを表示",
 

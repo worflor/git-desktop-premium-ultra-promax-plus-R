@@ -1,0 +1,96 @@
+{
+  "@@locale": "tr",
+  "nav": {
+    "back": "Geri",
+    "continueLabel": "Devam",
+    "letsGo": "Hadi başlayalım"
+  },
+  "naming": {
+    "question": "bu senin için ne?",
+    "questionEmphasis": "bu",
+    "iAmPrefix": "Ben ",
+    "iAmSuffix": " , kişisel Git İstemcin."
+  },
+  "theme": {
+    "title": "{name} giyinsin.",
+    "themesHeader": "TEMALAR",
+    "keybindingsHeader": "KISAYOL TUŞLARI",
+    "previewBadge": "önizleme",
+    "useDefaults": "varsayılanları kullan"
+  },
+  "repo": {
+    "title": "{name} bir şeye baksın.",
+    "later": "bunu sonra yaparım",
+    "doors": {
+      "open": {
+        "title": "Aç",
+        "subtitle": "mevcut",
+        "hint": "zaten sahip olduğun biri"
+      },
+      "clone": {
+        "title": "Klonla",
+        "subtitle": "URL'den",
+        "hint": "bir uzak URL yapıştır"
+      },
+      "create": {
+        "title": "Oluştur",
+        "subtitle": "yeni",
+        "hint": "sıfırdan bir şey başlat"
+      }
+    },
+    "cloneForm": {
+      "title": "URL'den klonla",
+      "urlLabel": "Depo URL'si",
+      "targetLabel": "Hedef klasör",
+      "browse": "Gözat…",
+      "clone": "Klonla",
+      "cloning": "Klonlanıyor…"
+    },
+    "pickers": {
+      "openRepository": "Depo Aç",
+      "createRepository": "Depo Oluştur",
+      "cloneTarget": "Klon Hedefi"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL ve hedef yol gerekli.",
+      "createFailed": "Depo oluşturulamadı.",
+      "cloneFailed": "Depo klonlanamadı."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "repo x-ray",
+      "settings": "ayarlar"
+    },
+    "sidebar": {
+      "projectsHeader": "Projeler"
+    },
+    "changes": {
+      "filesStagedCount": "{total} dosyadan {staged} tanesi",
+      "stagedCount": "{n} hazırlandı",
+      "commitMessageHint": "Commit mesajı…",
+      "commitAndPush": "Commit & push"
+    },
+    "history": {
+      "header": "Geçmiş",
+      "viewingLast": "son 20 commit görüntüleniyor",
+      "inFlight": "YOLDA",
+      "you": "sen",
+      "commit1": "tilkiye yutmadan önce koklamayı öğret",
+      "commit2": "amber: kokuyu gece boyu tut",
+      "commit3": "lahanayı bırak, yerine amber + diken",
+      "commit4": "diken kapıyı korur"
+    },
+    "branches": {
+      "lensBranches": "DALLAR",
+      "lensPRs": "PR'lar",
+      "absorbed": "soğuruldu",
+      "desk": "desk",
+      "head": "HEAD",
+      "tracking": "→ izleniyor: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Kişisel Git istemcin."
+    }
+  }
+}

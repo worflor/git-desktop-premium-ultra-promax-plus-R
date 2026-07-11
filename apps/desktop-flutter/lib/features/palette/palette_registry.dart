@@ -52,7 +52,7 @@ typedef PaletteCallbacks = ({
 List<PaletteEntry> buildStaticEntries(
   BuildContext context,
   PaletteCallbacks callbacks, {
-  Map<String, String> forgeByPath = const {},
+  Map<String, String?> forgeByPath = const {},
 }) {
   final prefs = context.read<PreferencesState>();
   final theme = context.read<ThemeState>();
@@ -775,13 +775,18 @@ List<PaletteEntry> _keystoneEntries(
 List<PaletteEntry> _repoEntries(
   RepositoryState repo,
   PaletteCallbacks cb,
-  Map<String, String> forgeByPath,
+  Map<String, String?> forgeByPath,
 ) {
   final active = repo.activePath;
   return repo.recentPaths.map((path) {
     final name = path.split(Platform.pathSeparator).last;
     final isActive = active != null && _normPath(active) == _normPath(path);
-    final forge = forgeByPath[path]?.toUpperCase();
+    // absent = not yet warmed (no chip); present-null = resolved local
+    // (fresh "local" chip in the current locale); present = forge brand.
+    final forge = !forgeByPath.containsKey(path)
+        ? null
+        : (forgeByPath[path]?.toUpperCase() ??
+            t.palette.chips.local.toUpperCase());
     return PaletteEntry(
       id: 'repo.$path',
       label: name,

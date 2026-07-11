@@ -1,0 +1,87 @@
+{
+  "@@locale": "tr",
+  "listSeparator": ", ",
+  "cancel": "İptal",
+  "close": "Kapat",
+  "save": "Kaydet",
+  "delete": "Sil",
+  "retry": "Yeniden dene",
+  "copy": "Kopyala",
+  "copied": "Kopyalandı",
+  "done": "Tamam",
+  "loading": "Yükleniyor…",
+  "fileCount": {
+    "one": "{n} dosya",
+    "other": "{n} dosya"
+  },
+  "commitCount": {
+    "one": "{n} commit",
+    "other": "{n} commit"
+  },
+  "branchCount": {
+    "one": "{n} dal",
+    "other": "{n} dal"
+  },
+  "localCommitCount": {
+    "one": "{n} yerel commit",
+    "other": "{n} yerel commit"
+  },
+  "remoteCommitCount": {
+    "one": "{n} uzak commit",
+    "other": "{n} uzak commit"
+  },
+  "conflictedFileCount": {
+    "one": "{n} çakışan dosya",
+    "other": "{n} çakışan dosya"
+  },
+  "time": {
+    "now": "şimdi",
+    "justNow": "az önce",
+    "today": "BUGÜN",
+    "minutesAgo": "{n}dk önce",
+    "hoursAgo": "{n}sa önce",
+    "daysAgo": "{n}g önce",
+    "weeksAgo": "{n}h önce",
+    "monthsAgo": "{n}ay önce",
+    "yearsAgo": {
+      "one": "{n}y önce",
+      "other": "{n}y önce"
+    },
+    "minutesShort": "{n}dk",
+    "hoursShort": "{n}sa",
+    "daysShort": "{n}g",
+    "weeksShort": "{n}h",
+    "monthsShort": "{n}ay",
+    "yearsShort": {
+      "one": "{n}y",
+      "other": "{n}y"
+    },
+    "commitMonthsShort": "{n}ay",
+    "idle": "boşta",
+    "idleDays": "{n} gündür boşta",
+    "idleYears": {
+      "one": "{n} yıldır boşta",
+      "other": "{n} yıldır boşta"
+    },
+    "monthAbbrevs(slang=list)": [
+      "Oca",
+      "Şub",
+      "Mar",
+      "Nis",
+      "May",
+      "Haz",
+      "Tem",
+      "Ağu",
+      "Eyl",
+      "Eki",
+      "Kas",
+      "Ara"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

@@ -125,16 +125,16 @@ class _Translations$app$es extends Translations$app$en {
   @override
   String get commandPaletteTooltip => 'Paleta de comandos   /';
   @override
-  String get newDeskFallback => 'escritorio nuevo';
+  String get newDeskFallback => 'Desk nuevo';
   @override
-  String get deskFallback => 'escritorio';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => 'actual';
   @override
   String get noRepositoryOpen => 'No hay ningún repositorio abierto';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'No se pudo abrir como escritorio: ${error}';
+      'No se pudo abrir como Desk: ${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       'No se pudo detectar la forja: ${error}';
@@ -150,7 +150,7 @@ class _Translations$app$es extends Translations$app$en {
   String couldntFetchPr({required Object error}) =>
       'No se pudo traer el PR: ${error}';
   @override
-  String get promoteDeskToPr => 'Promover el escritorio a PR';
+  String get promoteDeskToPr => 'Promover el Desk a PR';
   @override
   String get applyToMain => 'Aplicar a main';
   @override
@@ -164,22 +164,22 @@ class _Translations$app$es extends Translations$app$en {
   @override
   String get discardLocalPr => 'Descartar PR local';
   @override
-  String get closeDesk => 'Cerrar escritorio';
+  String get closeDesk => 'Cerrar Desk';
   @override
   String couldntPromote({required Object error}) =>
       'No se pudo promover: ${error}';
   @override
   String get commitOrShelveBeforeApplying =>
-      'Haz commit o guarda en el estante los cambios del escritorio antes de aplicar.';
+      'Haz commit o guarda en el estante los cambios del Desk antes de aplicar.';
   @override
   String get couldNotResolveMainWorktree =>
       'No se pudo resolver la ruta del árbol de trabajo principal.';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      'No se pudo promover el escritorio: ${error}';
+      'No se pudo promover el Desk: ${error}';
   @override
   String get couldntDetermineBaseBranch =>
-      'No se pudo determinar la rama base de este escritorio.';
+      'No se pudo determinar la rama base de este Desk.';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'La base y la punta del PR son la misma rama (${branch}) — no hay nada que aplicar.';
@@ -254,7 +254,7 @@ class _Translations$app$es extends Translations$app$en {
   String couldntSave({required Object error}) => 'No se pudo guardar: ${error}';
   @override
   String get stashedNoOtherDesk =>
-      'Cambios guardados en stash — no hay otro escritorio donde aplicarlos. Usa git stash pop para recuperarlos.';
+      'Cambios guardados en stash — no hay otro Desk donde aplicarlos. Usa git stash pop para recuperarlos.';
   @override
   String get suggestedSource => 'fuente sugerida';
   @override
@@ -294,7 +294,7 @@ class _Translations$app$es extends Translations$app$en {
   @override
   String get uncommittedChanges => 'Cambios sin commit';
   @override
-  String get closeDeskQuestion => '¿Cerrar el escritorio?';
+  String get closeDeskQuestion => '¿Cerrar el Desk?';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('es'))(
@@ -355,13 +355,13 @@ class _Translations$app$es extends Translations$app$en {
   String get noRemoteConfigured =>
       'No hay remoto configurado para este repositorio.';
   @override
-  String get jumpToDesk => 'Saltar al escritorio';
+  String get jumpToDesk => 'Saltar al Desk';
   @override
   String get arrowOpen => '→ abrir';
   @override
-  String get openOnANewDesk => 'Abrir en un escritorio nuevo';
+  String get openOnANewDesk => 'Abrir en un Desk nuevo';
   @override
-  String get plusDesk => '+ escritorio';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -369,7 +369,7 @@ class _Translations$app$es extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ escritorio nuevo';
+  String get plusNewDesk => '+ Desk nuevo';
   @override
   String get fromHeadEllipsis => 'desde HEAD...';
   @override
@@ -477,7 +477,7 @@ class _Translations$app$es extends Translations$app$en {
   @override
   String get aiKindReview => 'revisión';
   @override
-  String get aiKindMuse => 'musa';
+  String get aiKindMuse => 'muse';
   @override
   String get aiKindPresent => 'presentar';
   @override
@@ -550,7 +550,7 @@ class _Translations$branches$es extends Translations$branches$en {
       'Falló la publicación: ${error}';
   @override
   String couldntOpenDesk({required Object error}) =>
-      'No se pudo abrir el escritorio: ${error}';
+      'No se pudo abrir el Desk: ${error}';
   @override
   String syncFailed({required Object error}) =>
       'Falló la sincronización: ${error}';
@@ -570,12 +570,12 @@ class _Translations$branches$es extends Translations$branches$en {
   String deletingBranch({required Object name}) => 'Eliminando ${name}';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '\'${name}\' está abierta en el escritorio \'${desk}\'.';
+      '\'${name}\' está abierta en el Desk \'${desk}\'.';
   @override
-  String get openDesk => 'Abrir escritorio';
+  String get openDesk => 'Abrir Desk';
   @override
   String openInDeskShort({required Object desk}) =>
-      'abrir en el escritorio \'${desk}\'';
+      'abrir en el Desk \'${desk}\'';
   @override
   String get couldNotPinBranch =>
       'no se pudo fijar la punta de la rama; se omitió la eliminación';
@@ -596,7 +596,7 @@ class _Translations$branches$es extends Translations$branches$en {
   @override
   String get checkoutThisPr => 'Checkout de este PR';
   @override
-  String get mergeIntoNewDesk => 'Merge en un escritorio nuevo…';
+  String get mergeIntoNewDesk => 'Merge en un Desk nuevo…';
   @override
   String get pushToForge => 'Hacer push a la forja';
   @override
@@ -627,7 +627,7 @@ class _Translations$branches$es extends Translations$branches$en {
       'No se pudo traer el PR: ${error}';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'No se pudo abrir como escritorio: ${error}';
+      'No se pudo abrir como Desk: ${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       'No se pudo abrir en el navegador: ${error}';
@@ -642,10 +642,10 @@ class _Translations$branches$es extends Translations$branches$en {
       'Vincular el PR #${number} a issue(s)';
   @override
   String get noPrsYetLocal =>
-      'Aún no hay PRs. Abre uno en el upstream, o promueve un escritorio a PR.';
+      'Aún no hay PRs. Abre uno en el upstream, o promueve un Desk a PR.';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      'Las issues remotas solo pueden vincularse a PRs locales. Promueve primero un escritorio a PR.';
+      'Las issues remotas solo pueden vincularse a PRs locales. Promueve primero un Desk a PR.';
   @override
   String linkIssueToPrs({required Object number}) =>
       'Vincular la issue #${number} a PR(s)';
@@ -695,7 +695,7 @@ class _Translations$branches$es extends Translations$branches$en {
   String get noOpenPullRequests => 'Sin pull requests abiertos';
   @override
   String get noPullRequestsHint =>
-      'Abre uno desde una rama, o promueve un escritorio.';
+      'Abre uno desde una rama, o promueve un Desk.';
   @override
   String get noPrsMatchFilters => 'Ningún PR coincide con estos filtros';
   @override
@@ -739,7 +739,7 @@ class _Translations$branches$es extends Translations$branches$en {
   String get noReviewModelConfigured =>
       'No hay ningún modelo de revisión configurado.';
   @override
-  String get deskFallback => 'escritorio';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({
     required num n,
@@ -751,7 +751,7 @@ class _Translations$branches$es extends Translations$branches$en {
         '${branch} tiene ${n} cambios sin commit — haz commit o stash primero.',
   );
   @override
-  String get targetDeskNoBranch => 'El escritorio de destino no tiene rama.';
+  String get targetDeskNoBranch => 'El Desk de destino no tiene rama.';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
       'Merge del PR #${number} en ${branch}';
@@ -778,7 +778,7 @@ class _Translations$branches$es extends Translations$branches$en {
   String get mergeCommit => 'Commit de merge';
   @override
   String noDeskForBranch({required Object branch}) =>
-      'No se encontró escritorio para la rama ${branch}';
+      'No se encontró Desk para la rama ${branch}';
   @override
   String get mergeAnyway => 'Merge de todos modos';
   @override
@@ -1013,7 +1013,7 @@ class _Translations$branches$es extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ revisar pr';
   @override
-  String get actionOpenAsDesk => '⊞ abrir como escritorio';
+  String get actionOpenAsDesk => '⊞ abrir como Desk';
   @override
   String get actionCheckout => '[c] checkout';
   @override
@@ -1096,7 +1096,7 @@ class _Translations$branches$es extends Translations$branches$en {
     required Object phrase,
   }) => '${name}, ${tag}, ${phrase}';
   @override
-  String get crossLinkDesk => 'escritorio';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -2223,7 +2223,7 @@ class _Translations$app$cheatsheet$es extends Translations$app$cheatsheet$en {
   @override
   String get branches => 'Ramas';
   @override
-  String get xray => 'Radiografía';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Cambiar (siempre)';
   @override
@@ -2881,9 +2881,9 @@ class _Translations$changes$snack$es extends Translations$changes$snack$en {
   String diffFailed({required Object error}) => 'Falló el diff: ${error}';
   @override
   String get deskEmpty =>
-      'El escritorio no tiene nada por delante de ti — volcado vacío.';
+      'El Desk no tiene nada por delante de ti — volcado vacío.';
   @override
-  String sourceDesk({required Object label}) => 'escritorio ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) =>
       'Falló la lectura del estante: ${error}';
@@ -2978,8 +2978,7 @@ class _Translations$changes$dropHint$es
   @override
   String get fromShelf => 'suelta para traer los cambios de este estante aquí';
   @override
-  String get fromDesk =>
-      'suelta para traer los cambios de este escritorio aquí';
+  String get fromDesk => 'suelta para traer los cambios de este Desk aquí';
 }
 
 // Path: changes.diffEmpty
@@ -3365,7 +3364,7 @@ class _Translations$changes$muse$es extends Translations$changes$muse$en {
 
   // Translations
   @override
-  String get title => 'Musa';
+  String get title => 'Muse';
   @override
   String get youPulledThis => 'tú sacaste esto';
   @override
@@ -3383,18 +3382,18 @@ class _Translations$changes$muse$es extends Translations$changes$muse$en {
   String get clear => 'Limpiar';
   @override
   String get chooseBeforeMuse =>
-      'Elige al menos un archivo antes de invocar a la musa.';
+      'Elige al menos un archivo antes de invocar a la muse.';
   @override
-  String get aiUnavailable => 'La IA de la Musa aún no está disponible.';
+  String get aiUnavailable => 'La IA de la muse aún no está disponible.';
   @override
-  String get failed => 'Falló la Musa.';
+  String get failed => 'Falló la muse.';
   @override
   String get noRuntimeModels =>
-      'No hay modelos descubiertos en tiempo de ejecución disponibles para la musa.';
+      'No hay modelos descubiertos en tiempo de ejecución disponibles para la muse.';
   @override
-  String get needsModel => 'La Musa necesita al menos un modelo configurado.';
+  String get needsModel => 'La muse necesita al menos un modelo configurado.';
   @override
-  String get dreaming => 'la musa está soñando...';
+  String get dreaming => 'la muse está soñando...';
 }
 
 // Path: changes.debug
@@ -3526,20 +3525,20 @@ class _Translations$changes$tooltips$es
   String commitGenerateWith({required Object label}) =>
       'generar el mensaje de commit con el modelo ${label}';
   @override
-  String get museConsulting => 'consultando a la musa...';
+  String get museConsulting => 'consultando a la muse...';
   @override
-  String get showMuse => 'mostrar la musa';
+  String get showMuse => 'mostrar la muse';
   @override
-  String get museSelectFile => 'selecciona al menos un archivo para la musa.';
+  String get museSelectFile => 'selecciona al menos un archivo para la muse.';
   @override
-  String get showMuseError => 'mostrar error de la musa';
+  String get showMuseError => 'mostrar error de la muse';
   @override
-  String get museAsk => 'pide dirección a la musa';
+  String get museAsk => 'pide dirección a la muse';
   @override
   String museAskWithModels({
     required Object brainstorm,
     required Object synthesis,
-  }) => 'pide dirección a la musa\n${brainstorm} → ${synthesis}';
+  }) => 'pide dirección a la muse\n${brainstorm} → ${synthesis}';
   @override
   String get qualityFallback => 'calidad';
   @override
@@ -3799,7 +3798,12 @@ class _Translations$common$time$es extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => 'hace ${n}mes';
   @override
-  String yearsAgo({required Object n}) => 'hace ${n}a';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('es'))(
+        n,
+        one: 'hace ${n}a',
+        other: 'hace ${n}a',
+      );
   @override
   String minutesShort({required Object n}) => '${n}min';
   @override
@@ -3811,7 +3815,12 @@ class _Translations$common$time$es extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n}mes';
   @override
-  String yearsShort({required Object n}) => '${n}a';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('es'))(
+        n,
+        one: '${n}a',
+        other: '${n}a',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n}mes';
   @override
@@ -4440,7 +4449,7 @@ class _Translations$history$inFlight$es
   @override
   String get header => 'EN VUELO';
   @override
-  String get deskFallbackLabel => 'escritorio';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -5282,7 +5291,7 @@ class _Translations$palette$repoSub$es extends Translations$palette$repoSub$en {
   @override
   String reviewChanges({required Object name}) => 'Revisar cambios en ${name}';
   @override
-  String muse({required Object name}) => 'Musa en ${name}';
+  String muse({required Object name}) => 'Muse en ${name}';
 }
 
 // Path: palette.desks
@@ -5440,7 +5449,7 @@ class _Translations$palette$ai$es extends Translations$palette$ai$en {
   @override
   String get reviewChanges => 'Revisar cambios';
   @override
-  String get runMuse => 'Invocar la Musa';
+  String get runMuse => 'Invocar Muse';
   @override
   String debugRepo({required Object name}) => 'Depurar ${name}';
   @override
@@ -5458,7 +5467,7 @@ class _Translations$palette$ai$es extends Translations$palette$ai$en {
   @override
   String get kindCodeReview => 'Revisión de código';
   @override
-  String get kindMuseResult => 'Resultado de la Musa';
+  String get kindMuseResult => 'Resultado de Muse';
   @override
   String get kindPresentation => 'Presentación';
   @override
@@ -5495,7 +5504,7 @@ class _Translations$palette$navigation$es
   @override
   String get branches => 'Ramas';
   @override
-  String get xray => 'Radiografía';
+  String get xray => 'X-Ray';
   @override
   String get settings => 'Ajustes';
   @override
@@ -6004,7 +6013,7 @@ class _Translations$settings$errors$es extends Translations$settings$errors$en {
   @override
   String get saveReviewGuide => 'No se pudo guardar la guía de revisión.';
   @override
-  String get saveMuseNotes => 'No se pudieron guardar las notas de la musa.';
+  String get saveMuseNotes => 'No se pudieron guardar las notas de la muse.';
   @override
   String get saveReviewDoubleCheck =>
       'No se pudo guardar el modo de doble verificación de la revisión.';
@@ -6252,7 +6261,7 @@ class _Translations$settings$keybindingProfile$es
   @override
   String get label => 'Perfil de atajos';
   @override
-  String get porcelain => 'Porcelana';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => 'Numérico';
   @override
@@ -6308,7 +6317,7 @@ class _Translations$settings$shortcuts$es
   @override
   String get branches => 'Ramas';
   @override
-  String get xray => 'Radiografía';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Cambiar (siempre)';
   @override
@@ -6555,7 +6564,7 @@ class _Translations$settings$museHint$es
   String get balanced => 'en qué detenerse, qué saltar. honesto, no áspero.';
   @override
   String get strict =>
-      'los estándares. las prohibiciones. lo que la musa no dejará pasar.';
+      'los estándares. las prohibiciones. lo que la muse no dejará pasar.';
   @override
   String get paranoid =>
       'ajusta la lente. ¿a qué frecuencias debería vibrar el manifold?';
@@ -6572,7 +6581,7 @@ class _Translations$settings$museEditor$es
 
   // Translations
   @override
-  String get additionalNotes => 'Notas adicionales para la musa';
+  String get additionalNotes => 'Notas adicionales para la muse';
 }
 
 // Path: settings.museStage
@@ -7756,7 +7765,7 @@ class _Translations$xray$header$es extends Translations$xray$header$en {
   @override
   String get refreshing => 'Actualizando...';
   @override
-  String get title => 'Radiografía del repo';
+  String get title => 'X-Ray del repo';
 }
 
 // Path: xray.hotspot
@@ -7875,14 +7884,14 @@ class _Translations$xray$loadingCard$es
   String get buildingMessage =>
       'Sondeando el historial de Git, refs, cadencia y puntos calientes.';
   @override
-  String get buildingTitle => 'Construyendo la radiografía del repo';
+  String get buildingTitle => 'Construyendo el X-Ray del repo';
   @override
   String get idleMessage =>
       'Abre el panel de nuevo para sondear el repositorio actual.';
   @override
-  String get idleTitle => 'Radiografía del repo';
+  String get idleTitle => 'X-Ray del repo';
   @override
-  String get unavailableTitle => 'Radiografía del repo no disponible';
+  String get unavailableTitle => 'X-Ray del repo no disponible';
 }
 
 // Path: xray.metabolism
@@ -7942,7 +7951,12 @@ class _Translations$xray$recency$es extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n}sem';
   @override
-  String years({required Object n}) => '${n}a';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('es'))(
+        n,
+        one: '${n}a',
+        other: '${n}a',
+      );
 }
 
 // Path: xray.rings
@@ -8535,7 +8549,7 @@ class _Translations$onboarding$preview$panels$es
 
   // Translations
   @override
-  String get xray => 'radiografía del repo';
+  String get xray => 'X-Ray del repo';
   @override
   String get settings => 'ajustes';
 }
@@ -8620,7 +8634,7 @@ class _Translations$onboarding$preview$branches$es
   @override
   String get absorbed => 'absorbida';
   @override
-  String get desk => 'escritorio';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override
@@ -8672,7 +8686,7 @@ class _Translations$releaseNotes$about$spectralEngine$es
   String get question => '¿QUÉ ES EL MOTOR ESPECTRAL?';
   @override
   String get body =>
-      'Cada vez que haces commit, los archivos que cambias juntos forman patrones a lo largo del tiempo. El motor espectral lee tu grafo de commits y descompone esos patrones de co-cambio en señales: qué archivos están acoplados, con qué fuerza, y qué rol estructural juegan en el repo. Básicamente análisis espectral sobre tu historial de desarrollo. En un cliente de git. A propósito.\n\nLa matemática es nueva, así que la trato como el feel de un juego: la ajusto, la pruebo, la retoco, y sigo hasta que las señales se sienten correctas.\n\nEsas señales alimentan todo. El sismógrafo en el historial, las barras pintadas bajo los asuntos de los commits, el sistema de revisión, la Musa, la constelación de archivos. La app entera razona desde esta capa hacia abajo, no al revés.';
+      'Cada vez que haces commit, los archivos que cambias juntos forman patrones a lo largo del tiempo. El motor espectral lee tu grafo de commits y descompone esos patrones de co-cambio en señales: qué archivos están acoplados, con qué fuerza, y qué rol estructural juegan en el repo. Básicamente análisis espectral sobre tu historial de desarrollo. En un cliente de git. A propósito.\n\nLa matemática es nueva, así que la trato como el feel de un juego: la ajusto, la pruebo, la retoco, y sigo hasta que las señales se sienten correctas.\n\nEsas señales alimentan todo. El sismógrafo en el historial, las barras pintadas bajo los asuntos de los commits, el sistema de revisión, Muse, la constelación de archivos. La app entera razona desde esta capa hacia abajo, no al revés.';
 }
 
 // Path: releaseNotes.about.whereGoing

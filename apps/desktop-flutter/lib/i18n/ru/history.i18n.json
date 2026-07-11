@@ -147,6 +147,6 @@
   },
   "inFlight": {
     "header": "В РАБОТЕ",
-    "deskFallbackLabel": "стол"
+    "deskFallbackLabel": "Desk"
   }
 }

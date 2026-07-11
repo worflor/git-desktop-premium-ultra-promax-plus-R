@@ -117,7 +117,7 @@
     "machineChip": "máquina",
     "refresh": "Atualizar",
     "refreshing": "Atualizando...",
-    "title": "Raio-X do Repo"
+    "title": "X-Ray do Repo"
   },
   "hotspot": {
     "clusterPeers": "pares do cluster",
@@ -167,10 +167,10 @@
   },
   "loadingCard": {
     "buildingMessage": "Sondando histórico do Git, refs, cadência e hotspots.",
-    "buildingTitle": "Montando o Raio-X do Repo",
+    "buildingTitle": "Montando o X-Ray do Repo",
     "idleMessage": "Abra o painel de novo para sondar o repositório atual.",
-    "idleTitle": "Raio-X do Repo",
-    "unavailableTitle": "Raio-X do Repo indisponível"
+    "idleTitle": "X-Ray do Repo",
+    "unavailableTitle": "X-Ray do Repo indisponível"
   },
   "metabolism": {
     "halfLife": "meia-vida de {n}d"
@@ -190,7 +190,10 @@
     "months": "{n}mês",
     "today": "hoje",
     "weeks": "{n}sem",
-    "years": "{n}a"
+    "years": {
+      "one": "{n}a",
+      "other": "{n}a"
+    }
   },
   "rings": {
     "hintOneBlended": "uma estrutura mesclada",

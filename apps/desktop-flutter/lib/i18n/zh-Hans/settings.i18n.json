@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "快捷键配置",
-    "porcelain": "瓷釉",
+    "porcelain": "Porcelain",
     "numeric": "数字",
     "porcelainDescription": "组合键快捷方式（先按 G，再按 C、H、B…）。",
     "numericDescription": "单个数字键快捷方式（1、2、3…）。"
@@ -124,7 +124,7 @@
     "changes": "更改",
     "history": "历史",
     "branches": "分支",
-    "xray": "透视",
+    "xray": "X-Ray",
     "switchAlways": "切换（始终）",
     "search": "搜索",
     "dismiss": "关闭",
@@ -207,7 +207,7 @@
     "loose": "有什么想温和引导的？今天心情不错。",
     "balanced": "该着墨什么，该略过什么。诚实，但不刻薄。",
     "strict": "标准。禁忌。muse 不会放过的东西。",
-    "paranoid": "调校透镜。流形该以什么频率共鸣？"
+    "paranoid": "调校透镜。manifold该以什么频率共鸣？"
   },
   "museEditor": {
     "additionalNotes": "给 muse 的附加备注"

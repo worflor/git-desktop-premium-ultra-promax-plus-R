@@ -200,8 +200,8 @@
   "snack": {
     "sameWorktree": "Mesmo worktree — nada para despejar.",
     "diffFailed": "Diff falhou: {error}",
-    "deskEmpty": "A mesa não tem nada à sua frente — despejo vazio.",
-    "sourceDesk": "mesa {label}",
+    "deskEmpty": "A Desk não tem nada à sua frente — despejo vazio.",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "Falha ao ler a prateleira: {error}",
     "shelfEmpty": "Prateleira vazia — nada para despejar.",
     "sourceShelf": "prateleira {label}",
@@ -232,7 +232,7 @@
   },
   "dropHint": {
     "fromShelf": "solte para trazer as mudanças desta prateleira para cá",
-    "fromDesk": "solte para trazer as mudanças desta mesa para cá"
+    "fromDesk": "solte para trazer as mudanças desta Desk para cá"
   },
   "diffEmpty": {
     "title": "Nenhum arquivo selecionado",

@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "radiographie du dépôt",
+      "xray": "x-ray du dépôt",
       "settings": "paramètres"
     },
     "sidebar": {
@@ -69,7 +69,7 @@
       "filesStagedCount": "{staged} sur {total} fichiers",
       "stagedCount": "{n} indexés",
       "commitMessageHint": "Message de commit…",
-      "commitAndPush": "Valider et pousser"
+      "commitAndPush": "Committer et pusher"
     },
     "history": {
       "header": "Historique",
@@ -85,7 +85,7 @@
       "lensBranches": "BRANCHES",
       "lensPRs": "PR",
       "absorbed": "absorbée",
-      "desk": "bureau",
+      "desk": "Desk",
       "head": "HEAD",
       "tracking": "→ suivi : {ref}"
     },

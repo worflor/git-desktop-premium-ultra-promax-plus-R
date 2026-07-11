@@ -45,7 +45,7 @@
     },
     "largestChangeInView": "plus grande modification de cette vue",
     "conflictedTag": "en conflit",
-    "dirtyTag": "sale",
+    "dirtyTag": "dirty",
     "drillInTag": "creuser",
     "changeTypeRenamed": "renommé",
     "changeTypeCopied": "copié",
@@ -63,19 +63,19 @@
   "contextMenu": {
     "currentBranchFallback": "branche actuelle",
     "applyCommitOnto": "Appliquer les changements du commit sur {branch}",
-    "revertCommitOn": "Annuler les changements du commit sur {branch}"
+    "revertCommitOn": "Revert des changements du commit sur {branch}"
   },
   "cherryPick": {
-    "paused": "Picorage en pause. Terminez les conflits restants sur la page Modifications.",
-    "failed": "Échec du picorage : {error}",
-    "pickedResolved": "Picoré {short} (conflits résolus)",
-    "picked": "Picoré {short}"
+    "paused": "Cherry-pick en pause. Terminez les conflits restants sur la page Modifications.",
+    "failed": "Échec du cherry-pick : {error}",
+    "pickedResolved": "Cherry-pické {short} (conflits résolus)",
+    "picked": "Cherry-pické {short}"
   },
   "revert": {
-    "paused": "Annulation en pause. Terminez les conflits restants sur la page Modifications.",
-    "failed": "Échec de l'annulation : {error}",
-    "revertedResolved": "Annulé {short} (conflits résolus)",
-    "reverted": "Annulé {short}"
+    "paused": "Revert en pause. Terminez les conflits restants sur la page Modifications.",
+    "failed": "Échec du revert : {error}",
+    "revertedResolved": "Reverté {short} (conflits résolus)",
+    "reverted": "Reverté {short}"
   },
   "reflog": {
     "createBranchFromHere": "Créer une branche à partir d'ici…",
@@ -129,6 +129,6 @@
   },
   "inFlight": {
     "header": "EN VOL",
-    "deskFallbackLabel": "bureau"
+    "deskFallbackLabel": "Desk"
   }
 }

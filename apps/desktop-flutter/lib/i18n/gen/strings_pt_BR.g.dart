@@ -122,16 +122,16 @@ class _Translations$app$pt_BR extends Translations$app$en {
   @override
   String get commandPaletteTooltip => 'Paleta de comandos   /';
   @override
-  String get newDeskFallback => 'nova mesa';
+  String get newDeskFallback => 'nova Desk';
   @override
-  String get deskFallback => 'mesa';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => 'atual';
   @override
   String get noRepositoryOpen => 'Nenhum repositório aberto';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Não foi possível abrir como mesa: ${error}';
+      'Não foi possível abrir como Desk: ${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       'Não foi possível detectar o forge: ${error}';
@@ -147,7 +147,7 @@ class _Translations$app$pt_BR extends Translations$app$en {
   String couldntFetchPr({required Object error}) =>
       'Não foi possível buscar o PR: ${error}';
   @override
-  String get promoteDeskToPr => 'Promover mesa a PR';
+  String get promoteDeskToPr => 'Promover Desk a PR';
   @override
   String get applyToMain => 'Aplicar na main';
   @override
@@ -161,22 +161,22 @@ class _Translations$app$pt_BR extends Translations$app$en {
   @override
   String get discardLocalPr => 'Descartar PR local';
   @override
-  String get closeDesk => 'Fechar mesa';
+  String get closeDesk => 'Fechar Desk';
   @override
   String couldntPromote({required Object error}) =>
       'Não foi possível promover: ${error}';
   @override
   String get commitOrShelveBeforeApplying =>
-      'Faça commit ou guarde na prateleira as mudanças da mesa antes de aplicar.';
+      'Faça commit ou guarde na prateleira as mudanças da Desk antes de aplicar.';
   @override
   String get couldNotResolveMainWorktree =>
       'Não foi possível resolver o caminho do worktree principal.';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      'Não foi possível promover a mesa: ${error}';
+      'Não foi possível promover a Desk: ${error}';
   @override
   String get couldntDetermineBaseBranch =>
-      'Não foi possível determinar o branch base desta mesa.';
+      'Não foi possível determinar o branch base desta Desk.';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'A base e o head do PR são o mesmo branch (${branch}) — nada a aplicar.';
@@ -252,7 +252,7 @@ class _Translations$app$pt_BR extends Translations$app$en {
       'Não foi possível salvar: ${error}';
   @override
   String get stashedNoOtherDesk =>
-      'Mudanças guardadas no stash — nenhuma outra mesa para aplicá-las. Use git stash pop para recuperar.';
+      'Mudanças guardadas no stash — nenhuma outra Desk para aplicá-las. Use git stash pop para recuperar.';
   @override
   String get suggestedSource => 'origem sugerida';
   @override
@@ -292,7 +292,7 @@ class _Translations$app$pt_BR extends Translations$app$en {
   @override
   String get uncommittedChanges => 'Mudanças sem commit';
   @override
-  String get closeDeskQuestion => 'Fechar mesa?';
+  String get closeDeskQuestion => 'Fechar Desk?';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pt'))(
@@ -353,13 +353,13 @@ class _Translations$app$pt_BR extends Translations$app$en {
   String get noRemoteConfigured =>
       'Nenhum remoto configurado para este repositório.';
   @override
-  String get jumpToDesk => 'Ir para a mesa';
+  String get jumpToDesk => 'Ir para a Desk';
   @override
   String get arrowOpen => '→ abrir';
   @override
-  String get openOnANewDesk => 'Abrir em uma nova mesa';
+  String get openOnANewDesk => 'Abrir em uma nova Desk';
   @override
-  String get plusDesk => '+ mesa';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -367,7 +367,7 @@ class _Translations$app$pt_BR extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ nova mesa';
+  String get plusNewDesk => '+ nova Desk';
   @override
   String get fromHeadEllipsis => 'a partir do HEAD...';
   @override
@@ -546,7 +546,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
       'Falha ao publicar: ${error}';
   @override
   String couldntOpenDesk({required Object error}) =>
-      'Não foi possível abrir a mesa: ${error}';
+      'Não foi possível abrir a Desk: ${error}';
   @override
   String syncFailed({required Object error}) =>
       'Falha na sincronização: ${error}';
@@ -565,11 +565,11 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   String deletingBranch({required Object name}) => 'Excluindo ${name}';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '\'${name}\' está aberto na mesa \'${desk}\'.';
+      '\'${name}\' está aberto na Desk \'${desk}\'.';
   @override
-  String get openDesk => 'Abrir mesa';
+  String get openDesk => 'Abrir Desk';
   @override
-  String openInDeskShort({required Object desk}) => 'abrir na mesa \'${desk}\'';
+  String openInDeskShort({required Object desk}) => 'abrir na Desk \'${desk}\'';
   @override
   String get couldNotPinBranch =>
       'não foi possível fixar a ponta do branch; exclusão ignorada';
@@ -590,7 +590,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   @override
   String get checkoutThisPr => 'Checkout deste PR';
   @override
-  String get mergeIntoNewDesk => 'Fazer merge em nova mesa…';
+  String get mergeIntoNewDesk => 'Fazer merge em nova Desk…';
   @override
   String get pushToForge => 'Push para o forge';
   @override
@@ -621,7 +621,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
       'Não foi possível buscar o PR: ${error}';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'Não foi possível abrir como mesa: ${error}';
+      'Não foi possível abrir como Desk: ${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       'Não foi possível abrir no navegador: ${error}';
@@ -636,10 +636,10 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
       'Vincular PR #${number} a issue(s)';
   @override
   String get noPrsYetLocal =>
-      'Nenhum PR ainda. Abra um no upstream, ou promova uma mesa a PR.';
+      'Nenhum PR ainda. Abra um no upstream, ou promova uma Desk a PR.';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      'Issues remotas só podem vincular a PRs locais. Promova uma mesa a PR primeiro.';
+      'Issues remotas só podem vincular a PRs locais. Promova uma Desk a PR primeiro.';
   @override
   String linkIssueToPrs({required Object number}) =>
       'Vincular issue #${number} a PR(s)';
@@ -689,7 +689,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   String get noOpenPullRequests => 'Nenhum pull request aberto';
   @override
   String get noPullRequestsHint =>
-      'Abra um a partir de um branch, ou promova uma mesa.';
+      'Abra um a partir de um branch, ou promova uma Desk.';
   @override
   String get noPrsMatchFilters => 'Nenhum PR bate com esses filtros';
   @override
@@ -730,7 +730,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => 'Nenhum modelo de review configurado.';
   @override
-  String get deskFallback => 'mesa';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({
     required num n,
@@ -743,7 +743,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
         '${branch} tem ${n} mudanças sem commit — faça commit ou stash primeiro.',
   );
   @override
-  String get targetDeskNoBranch => 'A mesa de destino não tem branch.';
+  String get targetDeskNoBranch => 'A Desk de destino não tem branch.';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
       'Fazer merge do PR #${number} em ${branch}';
@@ -769,7 +769,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   String get mergeCommit => 'Commit de merge';
   @override
   String noDeskForBranch({required Object branch}) =>
-      'Nenhuma mesa encontrada para o branch ${branch}';
+      'Nenhuma Desk encontrada para o branch ${branch}';
   @override
   String get mergeAnyway => 'Fazer merge mesmo assim';
   @override
@@ -1003,7 +1003,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ review de pr';
   @override
-  String get actionOpenAsDesk => '⊞ abrir como mesa';
+  String get actionOpenAsDesk => '⊞ abrir como Desk';
   @override
   String get actionCheckout => '[c] checkout';
   @override
@@ -1086,7 +1086,7 @@ class _Translations$branches$pt_BR extends Translations$branches$en {
     required Object phrase,
   }) => '${name}, ${tag}, ${phrase}';
   @override
-  String get crossLinkDesk => 'mesa';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -2200,7 +2200,7 @@ class _Translations$app$cheatsheet$pt_BR
   @override
   String get branches => 'Branches';
   @override
-  String get xray => 'Raio-X';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Trocar (sempre)';
   @override
@@ -2864,9 +2864,9 @@ class _Translations$changes$snack$pt_BR extends Translations$changes$snack$en {
   @override
   String diffFailed({required Object error}) => 'Diff falhou: ${error}';
   @override
-  String get deskEmpty => 'A mesa não tem nada à sua frente — despejo vazio.';
+  String get deskEmpty => 'A Desk não tem nada à sua frente — despejo vazio.';
   @override
-  String sourceDesk({required Object label}) => 'mesa ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) =>
       'Falha ao ler a prateleira: ${error}';
@@ -2962,7 +2962,7 @@ class _Translations$changes$dropHint$pt_BR
   String get fromShelf =>
       'solte para trazer as mudanças desta prateleira para cá';
   @override
-  String get fromDesk => 'solte para trazer as mudanças desta mesa para cá';
+  String get fromDesk => 'solte para trazer as mudanças desta Desk para cá';
 }
 
 // Path: changes.diffEmpty
@@ -3789,7 +3789,12 @@ class _Translations$common$time$pt_BR extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => 'há ${n}mês';
   @override
-  String yearsAgo({required Object n}) => 'há ${n}a';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pt'))(
+        n,
+        one: 'há ${n}a',
+        other: 'há ${n}a',
+      );
   @override
   String minutesShort({required Object n}) => '${n}min';
   @override
@@ -3801,7 +3806,12 @@ class _Translations$common$time$pt_BR extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n}mês';
   @override
-  String yearsShort({required Object n}) => '${n}a';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pt'))(
+        n,
+        one: '${n}a',
+        other: '${n}a',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n}m';
   @override
@@ -4434,7 +4444,7 @@ class _Translations$history$inFlight$pt_BR
   @override
   String get header => 'EM VOO';
   @override
-  String get deskFallbackLabel => 'mesa';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -5494,7 +5504,7 @@ class _Translations$palette$navigation$pt_BR
   @override
   String get branches => 'Branches';
   @override
-  String get xray => 'Raio-X';
+  String get xray => 'X-Ray';
   @override
   String get settings => 'Configurações';
   @override
@@ -6251,7 +6261,7 @@ class _Translations$settings$keybindingProfile$pt_BR
   @override
   String get label => 'Perfil de atalhos';
   @override
-  String get porcelain => 'Porcelana';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => 'Numérico';
   @override
@@ -6308,7 +6318,7 @@ class _Translations$settings$shortcuts$pt_BR
   @override
   String get branches => 'Branches';
   @override
-  String get xray => 'Raio-X';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => 'Trocar (sempre)';
   @override
@@ -7760,7 +7770,7 @@ class _Translations$xray$header$pt_BR extends Translations$xray$header$en {
   @override
   String get refreshing => 'Atualizando...';
   @override
-  String get title => 'Raio-X do Repo';
+  String get title => 'X-Ray do Repo';
 }
 
 // Path: xray.hotspot
@@ -7880,14 +7890,14 @@ class _Translations$xray$loadingCard$pt_BR
   String get buildingMessage =>
       'Sondando histórico do Git, refs, cadência e hotspots.';
   @override
-  String get buildingTitle => 'Montando o Raio-X do Repo';
+  String get buildingTitle => 'Montando o X-Ray do Repo';
   @override
   String get idleMessage =>
       'Abra o painel de novo para sondar o repositório atual.';
   @override
-  String get idleTitle => 'Raio-X do Repo';
+  String get idleTitle => 'X-Ray do Repo';
   @override
-  String get unavailableTitle => 'Raio-X do Repo indisponível';
+  String get unavailableTitle => 'X-Ray do Repo indisponível';
 }
 
 // Path: xray.metabolism
@@ -7948,7 +7958,12 @@ class _Translations$xray$recency$pt_BR extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n}sem';
   @override
-  String years({required Object n}) => '${n}a';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pt'))(
+        n,
+        one: '${n}a',
+        other: '${n}a',
+      );
 }
 
 // Path: xray.rings
@@ -8626,7 +8641,7 @@ class _Translations$onboarding$preview$branches$pt_BR
   @override
   String get absorbed => 'absorvido';
   @override
-  String get desk => 'mesa';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override

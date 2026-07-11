@@ -1,0 +1,125 @@
+{
+  "@@locale": "id",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "kepentingan tinggi",
+      "importanceModerate": "kepentingan sedang",
+      "mostlyAdditions": "sebagian besar penambahan",
+      "mostlyDeletions": "sebagian besar penghapusan",
+      "tightlyCoupled": "file yang terkopel erat",
+      "overlapsWorkingTree": "tumpang tindih dengan working tree-mu"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(root)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} lagi",
+    "filesInDir": {
+      "other": "{n} file di {path}/"
+    },
+    "moreFilesCount": {
+      "other": "{n} file lagi"
+    },
+    "breadcrumbAll": "semua",
+    "breadcrumbCurrentFocus": "Fokus saat ini: {target}",
+    "breadcrumbViewAllChanges": "Lihat semua perubahan di commit ini",
+    "breadcrumbDrillUpTo": "Naik ke {target}",
+    "trackStats": {
+      "other": "{n} file  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "other": "{n} subdir"
+    },
+    "segmentLeafSummary": "{path}, {adds} ditambah, {dels} dihapus",
+    "segmentContainerSummary": {
+      "other": "{n} file, {adds} ditambah, {dels} dihapus"
+    },
+    "hunkCount": {
+      "other": "{n} hunk"
+    },
+    "largestChangeInView": "perubahan terbesar di tampilan ini",
+    "conflictedTag": "konflik",
+    "dirtyTag": "kotor",
+    "drillInTag": "selami",
+    "changeTypeRenamed": "diganti nama",
+    "changeTypeCopied": "disalin",
+    "changeTypeTypechange": "ganti tipe",
+    "changeTypeConflict": "konflik",
+    "coreFile": "file inti",
+    "staleFile": "usang",
+    "filterPathHint": "filter path",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Tutup worldline",
+    "dragToOpenWorldline": "Seret untuk membuka worldline"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "branch saat ini",
+    "applyCommitOnto": "Terapkan perubahan commit ke {branch}",
+    "revertCommitOn": "Revert perubahan commit di {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick dijeda. Selesaikan sisa konflik di halaman Changes.",
+    "failed": "Cherry-pick gagal: {error}",
+    "pickedResolved": "Cherry-pick {short} (konflik terselesaikan)",
+    "picked": "Cherry-pick {short}"
+  },
+  "revert": {
+    "paused": "Revert dijeda. Selesaikan sisa konflik di halaman Changes.",
+    "failed": "Revert gagal: {error}",
+    "revertedResolved": "Revert {short} (konflik terselesaikan)",
+    "reverted": "Revert {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "Buat branch dari sini…",
+    "copyCommitHash": "Salin hash commit",
+    "createBranchDialogTitle": "Buat branch dari entri reflog",
+    "anchorLine": "Jangkar: {short}  ·  {summary}",
+    "branchNameHint": "nama branch",
+    "createAction": "Buat",
+    "createBranchFailed": "Gagal membuat branch: {error}",
+    "branchCreatedAt": "Branch \"{name}\" dibuat di {short}."
+  },
+  "revealCeilingExceeded": {
+    "other": "Commit itu lebih dalam dari {n} commit yang dimuat."
+  },
+  "deleteTagFailed": "Gagal menghapus tag: {error}",
+  "loadingTitle": "Memuat history",
+  "loadingMessage": "Membaca commit terbaru.",
+  "unavailableTitle": "History tidak tersedia",
+  "toggleWorldline": "Toggle worldline",
+  "pageTitle": "History",
+  "viewingLast": "Melihat terakhir",
+  "commitsUnit": "commit",
+  "noCommitSelectedTitle": "Tidak ada commit dipilih",
+  "noCommitSelectedMessage": "Pilih sebuah commit untuk memeriksa perubahannya.",
+  "loadingCommitTitle": "Memuat commit",
+  "loadingCommitMessage": "Membaca detail commit.",
+  "commitUnavailableTitle": "Commit tidak tersedia",
+  "couldNotLoadCommit": "Tidak bisa memuat commit.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Muat reflog",
+  "createTag": "Buat tag",
+  "newTagName": "Nama tag baru",
+  "newTagNameError": "Nama tag baru — {error}",
+  "allFilesHeader": {
+    "other": "{n} file · semua perubahan"
+  },
+  "allChangesLabel": "semua perubahan",
+  "rebase": {
+    "firstCommitCannotBe": "Commit pertama tidak bisa {action}",
+    "rebaseCommitCount": {
+      "other": "Rebase {n} commit"
+    },
+    "resetLabel": "reset",
+    "dragToReorderHint": "seret untuk menata ulang, pilih aksi tiap commit",
+    "newMessageHint": "pesan baru",
+    "runningEllipsis": "…",
+    "startRebase": "Mulai Rebase"
+  },
+  "inFlight": {
+    "header": "SEDANG JALAN",
+    "deskFallbackLabel": "desk"
+  }
+}

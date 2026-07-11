@@ -1,0 +1,51 @@
+{
+  "@@locale": "pl",
+  "actions": {
+    "syncLabel": "Synchronizuj",
+    "syncOpenRepoDetail": "Otwórz repozytorium, aby zarządzać operacjami push i pull.",
+    "detachedHeadLabel": "Odłączony HEAD",
+    "detachedHeadDetail": "Przełącz się na gałąź przed pushem lub pullem.",
+    "publishBranchLabel": "Opublikuj gałąź",
+    "publishBranchDetail": "Pushnij {branch} i ustaw jej gałąź śledzenia upstream.",
+    "publishButtonLabel": "Opublikuj",
+    "syncBranchLabel": "Synchronizuj gałąź",
+    "syncBranchDetail": "Pullnij {behindCount} z rebase, następnie pushnij {aheadCount}.",
+    "syncBranchButtonLabel": "Pullnij (rebase), potem pushnij",
+    "pushBranchLabel": "Pushnij gałąź",
+    "pushBranchDetail": "Pushnij {count} do {upstream}.",
+    "pushBranchButtonLabel": "Pushnij commity",
+    "pullUpdatesLabel": "Pullnij aktualizacje",
+    "pullUpdatesDetail": "Pullnij {count} z {upstream}.",
+    "syncUpToDateDetail": "Wykonaj fetch z {upstream} i odśwież status upstream."
+  },
+  "panel": {
+    "loadingTitle": "Ładowanie statusu zdalnego",
+    "loadingMessage": "Sprawdzanie danych śledzenia gałęzi.",
+    "remoteStatusUnavailable": "Status zdalnego niedostępny",
+    "noUpstream": "brak upstream",
+    "aheadLabel": "Do przodu",
+    "behindLabel": "W tyle",
+    "treeLabel": "Drzewo",
+    "runningSync": "Synchronizacja…",
+    "fetching": "Fetchowanie…",
+    "fetchOnly": "Tylko fetch",
+    "syncFailed": "Synchronizacja nie powiodła się",
+    "forcePushRecoveryLabel": "Wymuś push (with lease)",
+    "conflictsToResolveTitle": "Konflikty do rozwiązania",
+    "conflictsToResolveBody": "{count} wymaga rozwiązania: {list}",
+    "resolveConflicts": "Rozwiąż konflikty",
+    "workingEllipsis": "Pracuję…",
+    "lastActivity": "Ostatnia aktywność: {operation}",
+    "noOutput": "Brak wyjścia.",
+    "resolvedConflicts": "Rozwiązano: {count}.",
+    "cancelledUnchanged": "Anulowano, drzewo robocze bez zmian.",
+    "uncommittedEditsBlocked": "{count} ma niezacommitowane zmiany, zacommituj je najpierw, aby zsynchronizować z rebase ({list}).",
+    "noUpstreamForForcePush": "Nie można wymusić push: dla „{branch}” nie skonfigurowano upstream."
+  },
+  "forcePush": {
+    "confirmTitle": "Wymusić push (with lease)?",
+    "target": "Cel: {remote}/{branch}",
+    "warning": "To nadpisze zdalną gałąź twoją lokalną historią. Tryb with lease przerwie operację, jeśli ktoś pushnął do zdalnego po twoim ostatnim fetch, ale już pobrane zmiany i tak zostaną nadpisane. Używaj tylko wtedy, gdy celowo zrobiłeś rebase lub amend, który rozszedł się z gałęzią.",
+    "confirmButton": "Wymuś push"
+  }
+}

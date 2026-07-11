@@ -1,0 +1,277 @@
+{
+  "@@locale": "nl",
+  "board": {
+    "movesWithModule": "beweegt mee met een andere module",
+    "reviewerCount": {
+      "one": "{n} reviewer",
+      "other": "{n} reviewers"
+    },
+    "territory": "Territorium",
+    "unreviewed": "niet gereviewd"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commits · {days} dagen\n{lines}",
+    "burstTooltipSingle": "{n} commits op {label}",
+    "gapTooltip": "gat van {n} dagen · {label}",
+    "reflogTooltip": "{n} reflog-gebeurtenissen op {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "De repository heeft genoeg branch-oppervlak om branchbewuste navigatie te belonen.",
+      "broadTitle": "Branch-model heeft oppervlak",
+      "localBranchesDetail": "{count} lokale branches.",
+      "localBranchesLabel": "Lokale branches",
+      "remoteBranchesDetail": "{count} externe branches.",
+      "remoteBranchesLabel": "Externe branches",
+      "simpleClaim": "Het zichtbare branch-model is smal.",
+      "simpleTitle": "Eenvoudig branch-model"
+    },
+    "bursty": {
+      "claim": "Werk landt in geconcentreerde uitbarstingen in plaats van een vlak dagelijks ritme.",
+      "title": "Uitbarstend ontwikkeltempo"
+    },
+    "hiddenRefs": {
+      "claim": "{count} refs leven buiten de normale branch-/tag-ruimte.",
+      "evidenceDetail": "{count} refs buiten heads/remotes/tags.",
+      "evidenceLabel": "Verborgen refs",
+      "namespacesLabel": "Namespaces",
+      "title": "Verborgen Git-namespaces"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Eén bestand draagt onevenredig veel co-change-gewicht ten opzichte van zijn aanraaktelling.",
+        "other": "Een kleine set bestanden draagt onevenredig veel co-change-gewicht ten opzichte van hun aanraaktellingen."
+      },
+      "evidenceDetail": {
+        "one": "{n} aanraking · trek φ={score}",
+        "other": "{n} aanrakingen · trek φ={score}"
+      },
+      "title": {
+        "one": "Sluitsteen-brugbestand",
+        "other": "{n} sluitsteen-brugbestanden"
+      }
+    },
+    "machineHistory": {
+      "claim": "Checkpoint-achtige commits vertekenen naïeve geschiedenismetrieken aanzienlijk.",
+      "machineCommitsDetail": "{count} commits kwamen overeen met machine-/sessiepatronen.",
+      "machineCommitsLabel": "Machine-commits",
+      "rawVsFilteredDetail": "{raw} ruwe commits vs {filtered} gefilterde commits.",
+      "rawVsFilteredLabel": "Ruw vs gefilterd",
+      "title": "Machine-geschiedenis domineert de ruwe metrieken"
+    },
+    "migration": {
+      "claim": "De geschiedenis verschuift van `{older}` naar `{newer}`, wat op een stack- of oppervlakteovergang duidt.",
+      "stratumDetail": "{touches} aanrakingen, laatst actief {lastActive}.",
+      "title": "Architectuurmigratie zichtbaar"
+    },
+    "narrowHotspot": {
+      "claim": "Een kleine set bestanden en mappen absorbeert een onevenredig aandeel van de wijzigingen.",
+      "title": "Hotspot-concentratie is smal",
+      "topHotspotDetail": "{path} vormt {pct}% van de zichtbare hotspot-set.",
+      "topHotspotLabel": "Top-hotspot",
+      "visibleAuthorsDetail": "{count} auteurs in dit geschiedenissegment.",
+      "visibleAuthorsLabel": "Zichtbare auteurs"
+    },
+    "noTags": {
+      "claim": "Git-tags worden niet gebruikt als zichtbare release- of mijlpaallaag.",
+      "remoteEndpointsDetail": "{count} externe endpoints geconfigureerd.",
+      "remoteEndpointsLabel": "Externe endpoints",
+      "tagCountDetail": "0 tags gevonden.",
+      "tagCountLabel": "Tag-aantal",
+      "title": "Geen formeel release-/tag-spoor"
+    },
+    "reflog": {
+      "claim": "Het reflog-volume duidt op geconcentreerde lokale iteratie voorbij gepubliceerde commits.",
+      "peakReflogDayLabel": "Piekdag reflog",
+      "title": "Intense lokale bewerksessies"
+    },
+    "singleOwner": {
+      "claim": "`{path}` is een zwaar aangeraakte {kind} met één duidelijke zichtbare auteur.",
+      "ownerCountDetail": "{count} unieke auteurs.",
+      "ownerCountLabel": "Aantal eigenaren",
+      "title": "Hotspot met één eigenaar",
+      "touchCountLabel": "Aanraaktelling",
+      "touchDetailFiltered": "{count} aanrakingen in gefilterde geschiedenis.",
+      "touchDetailRaw": "{count} aanrakingen in ruwe geschiedenis."
+    }
+  },
+  "cardTitle": {
+    "branches": "branches",
+    "bursty": "uitbarstend",
+    "hiddenRefs": "verborgen refs",
+    "machineHeavy": "machine-zwaar",
+    "migration": "migratie",
+    "narrowHotspot": "smalle hotspot",
+    "noTags": "geen tags",
+    "reflog": "reflog",
+    "singleOwner": "één-eigenaar"
+  },
+  "grain": {
+    "coarsest": "grofste — topniveau-modules",
+    "finest": "fijnste korrel",
+    "mid": "middenkorrel",
+    "oneCharacteristic": "één karakteristieke schaal"
+  },
+  "header": {
+    "dirtyBadge": "vuil",
+    "machineChip": "machine",
+    "refresh": "Verversen",
+    "refreshing": "Verversen...",
+    "title": "Repo X-Ray"
+  },
+  "hotspot": {
+    "clusterPeers": "cluster-buren",
+    "coChangers": "co-changers",
+    "keystone": "sluitsteen",
+    "keystoneScore": "sluitsteen  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "branch",
+    "commitsHumanMachine": "mens · {n} machine",
+    "commitsLabel": "commits",
+    "confidenceLabel": "vertrouwen",
+    "curlLabel": "curl",
+    "engineSection": "engine",
+    "gradientLabel": "gradiënt",
+    "harmonicLabel": "harmonisch",
+    "headLabel": "head",
+    "hiddenRefsLabel": "verborgen refs",
+    "mergeCount": {
+      "one": "{n} merge",
+      "other": "{n} merges"
+    },
+    "noTags": "geen tags",
+    "notesLabel": "notes",
+    "openCommit": "Commit openen",
+    "pathLabel": "pad",
+    "remoteCount": "{n} remote",
+    "renamesLabel": "hernoemingen",
+    "scannedAt": "gescand {time}",
+    "selectedCount": "{n} geselecteerd",
+    "shapeLinear": "lineair",
+    "shapeMergeHeavy": "merge-zwaar",
+    "shapeMostlyLinear": "meestal lineair",
+    "stashCount": {
+      "one": "{n} stash",
+      "other": "{n} stashes"
+    },
+    "stressLabel": "stress",
+    "tagCount": {
+      "one": "{n} tag",
+      "other": "{n} tags"
+    },
+    "worktreeCount": {
+      "one": "{n} worktree",
+      "other": "{n} worktrees"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Git-geschiedenis, refs, tempo en hotspots sonderen.",
+    "buildingTitle": "Repo X-Ray bouwen",
+    "idleMessage": "Open het paneel opnieuw om de huidige repository te sonderen.",
+    "idleTitle": "Repo X-Ray",
+    "unavailableTitle": "Repo X-Ray niet beschikbaar"
+  },
+  "metabolism": {
+    "halfLife": "{n}d halfwaardetijd"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} cluster",
+      "other": "{n} clusters"
+    },
+    "clusterSingle": "cluster {id}",
+    "couplingSuffix": "{parts} koppeling",
+    "externalCount": "{n} extern",
+    "mutualCount": "{n} wederzijds"
+  },
+  "recency": {
+    "days": "{n}d",
+    "months": "{n}mnd",
+    "today": "vandaag",
+    "weeks": "{n}w",
+    "years": {
+      "one": "{n}j",
+      "other": "{n}j"
+    }
+  },
+  "rings": {
+    "hintOneBlended": "één versmolten structuur",
+    "hintSelfSimilar": "zelfgelijkvormig",
+    "oneBlendedBody": "Eén versmolten structuur — nog geen scheidbare moduleschalen op te lossen.",
+    "overHistory": "Over de geschiedenis",
+    "parts": "delen",
+    "readingHint": "structuur lezen…",
+    "scaleCount": {
+      "one": "{n} schaal",
+      "other": "{n} schalen"
+    },
+    "scaleDissolved": "een structurele schaal loste op",
+    "scaleEmerged": "een structurele schaal ontstond",
+    "scaleSpectrum": "schaalspectrum",
+    "selfSimilarBody": "Zelfgelijkvormig — structuur herhaalt zich over schalen heen, zonder één karakteristiek niveau.",
+    "shiftInHistory": {
+      "one": "{n} verschuiving in de geschiedenis",
+      "other": "{n} verschuivingen in de geschiedenis"
+    },
+    "structuralShiftCount": {
+      "one": "{n} structurele verschuiving",
+      "other": "{n} structurele verschuivingen"
+    },
+    "title": "Groeiringen",
+    "unavailable": "niet beschikbaar"
+  },
+  "stats": {
+    "alive": "levend",
+    "files": "bestanden",
+    "lastTouched": "laatst aangeraakt",
+    "owner": {
+      "one": "eigenaar",
+      "other": "eigenaren"
+    },
+    "touches": "aanrakingen"
+  },
+  "stratumLabel": {
+    "current": "actueel",
+    "legacy": "legacy",
+    "zone": "repo-zone"
+  },
+  "summary": {
+    "analysisFailed": "Analyse mislukt: {error}",
+    "analyze": "Analyseren",
+    "copied": "Samenvatting naar klembord gekopieerd.",
+    "directionHint": "richting",
+    "download": "Downloaden",
+    "emptyState": "Start de Logos-analyse om de structuur en regio's van deze repository in kaart te brengen.\n(tw: nogal brak rn)",
+    "exit": "Afsluiten",
+    "generating": "De repo lezen en kenmerken clusteren…",
+    "noModel": "Geen AI-model geconfigureerd.",
+    "noModelConfigured": "geen AI-model geconfigureerd",
+    "presentWith": "presenteren met {label}",
+    "presentingWith": "presenteren met {label}…",
+    "reanalyze": "Opnieuw analyseren",
+    "saveDialogTitle": "Repository-samenvatting opslaan",
+    "saveFailed": "Opslaan mislukt: {error}",
+    "savePresentationDialogTitle": "Presentatie opslaan",
+    "savedTo": "Opgeslagen naar {path}"
+  },
+  "tabs": {
+    "map": "Kaart",
+    "signals": "Signalen",
+    "summary": "Samenvatting",
+    "time": "Tijd"
+  },
+  "trajectory": {
+    "connectivity": "connectiviteit",
+    "events": "{n} gebeurtenissen",
+    "openInOrrery": "Openen in Orrery",
+    "readingHint": "geschiedenis lezen…",
+    "snapshots": "{n} snapshots",
+    "steady": "Stabiel — geen structurele gebeurtenissen in dit venster.",
+    "title": "Structureel traject"
+  },
+  "verdict": {
+    "canonical": "{pct}% canoniek",
+    "tooltip": "{archetype} · {canonical}% canoniek · {decisive}% beslissend"
+  }
+}

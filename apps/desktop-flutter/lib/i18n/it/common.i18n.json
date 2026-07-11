@@ -1,0 +1,87 @@
+{
+  "@@locale": "it",
+  "listSeparator": ", ",
+  "cancel": "Annulla",
+  "close": "Chiudi",
+  "save": "Salva",
+  "delete": "Elimina",
+  "retry": "Riprova",
+  "copy": "Copia",
+  "copied": "Copiato",
+  "done": "Fatto",
+  "loading": "Caricamento…",
+  "fileCount": {
+    "one": "{n} file",
+    "other": "{n} file"
+  },
+  "commitCount": {
+    "one": "{n} commit",
+    "other": "{n} commit"
+  },
+  "branchCount": {
+    "one": "{n} branch",
+    "other": "{n} branch"
+  },
+  "localCommitCount": {
+    "one": "{n} commit locale",
+    "other": "{n} commit locali"
+  },
+  "remoteCommitCount": {
+    "one": "{n} commit remoto",
+    "other": "{n} commit remoti"
+  },
+  "conflictedFileCount": {
+    "one": "{n} file in conflitto",
+    "other": "{n} file in conflitto"
+  },
+  "time": {
+    "now": "ora",
+    "justNow": "adesso",
+    "today": "OGGI",
+    "minutesAgo": "{n} min fa",
+    "hoursAgo": "{n} h fa",
+    "daysAgo": "{n} g fa",
+    "weeksAgo": "{n} sett fa",
+    "monthsAgo": "{n} mes fa",
+    "yearsAgo": {
+      "one": "{n} a fa",
+      "other": "{n} a fa"
+    },
+    "minutesShort": "{n} min",
+    "hoursShort": "{n} h",
+    "daysShort": "{n} g",
+    "weeksShort": "{n} sett",
+    "monthsShort": "{n} mes",
+    "yearsShort": {
+      "one": "{n} a",
+      "other": "{n} a"
+    },
+    "commitMonthsShort": "{n} m",
+    "idle": "inattivo",
+    "idleDays": "inattivo da {n} giorni",
+    "idleYears": {
+      "one": "inattivo da {n} anno",
+      "other": "inattivo da {n} anni"
+    },
+    "monthAbbrevs(slang=list)": [
+      "Gen",
+      "Feb",
+      "Mar",
+      "Apr",
+      "Mag",
+      "Giu",
+      "Lug",
+      "Ago",
+      "Set",
+      "Ott",
+      "Nov",
+      "Dic"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

@@ -1,17 +1,17 @@
 {
   "@@locale": "ru",
   "header": {
-    "title": "Оррери",
+    "title": "Orrery",
     "modeScrub": "Прокрутка",
     "modeCompare": "Сравнение",
     "lodModules": "Модули",
     "lodFiles": "Файлы"
   },
   "status": {
-    "loading": "Прослеживаю манифолд сквозь историю…",
+    "loading": "Прослеживаю manifold сквозь историю…",
     "loadError": "Не удалось прочитать историю этого репозитория.",
     "notEnoughHistory": "Пока недостаточно истории, чтобы построить траекторию.",
-    "notEnoughHistoryDetail": "Оррери нужно несколько коммитов, чтобы начертить."
+    "notEnoughHistoryDetail": "Orrery нужно несколько коммитов, чтобы начертить."
   },
   "legend": {
     "central": "центральный",

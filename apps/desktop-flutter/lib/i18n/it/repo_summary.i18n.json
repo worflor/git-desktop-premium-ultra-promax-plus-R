@@ -1,0 +1,67 @@
+{
+  "@@locale": "it",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} riga",
+      "other": "{n} righe"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} file.",
+      "other": "{n} file."
+    },
+    "lines": {
+      "one": "{n} riga ({bytes}).",
+      "other": "{n} righe ({bytes})."
+    },
+    "roles": "Ruoli — {parts}.",
+    "showingNofM": "Mostro {active} di {total} file, ordinati per centralità strutturale."
+  },
+  "heading": {
+    "atAGlance": "In sintesi",
+    "core": "Nucleo",
+    "gettingStarted": "Per iniziare",
+    "regions": "Regioni",
+    "shape": "Forma"
+  },
+  "historyStarvedCaveat": "Ordinamento limitato: il grafo di coupling non aveva archi (clone recente o troppo pochi commit). L'ordine dei file riflette la dimensione, non la centralità strutturale.",
+  "pitch": {
+    "empty": "Un repository senza file di testo leggibili{detail}.",
+    "emptyBinary": "{n} binario",
+    "emptyUnreadable": "{n} illeggibile",
+    "noRegions": {
+      "one": "Un repository con {n} file attivo.",
+      "other": "Un repository con {n} file attivi."
+    },
+    "withRegions": {
+      "one": "Un repository con {n} file attivo — {regions}.",
+      "other": "Un repository con {n} file attivi — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Tutto sotto `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 nucleo",
+      "other": "{n} nucleo"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Un file",
+      "other": "{n} file"
+    },
+    "connectsTo": "Si collega a: {linked}.",
+    "filesLabel": "File:"
+  },
+  "shape": {
+    "bulk": "Codebase densamente interconnessa: la maggior parte dei file partecipa a un unico grande vicinato di modifiche condivise.",
+    "crystalline": "Codebase a reticolo: coupling uniforme e regolare tra i file con struttura locale prevedibile.",
+    "goe": "Codebase riccamente interconnessa: i coupling si diffondono tra i file senza una spina dorsale dominante.",
+    "modular": "Codebase modulare: diverse regioni coese con coupling incrociato limitato. Il lavoro in una regione raramente disturba un'altra.",
+    "poisson": "Codebase debolmente accoppiata: i file evolvono per lo più da soli, con occasionali modifiche condivise.",
+    "tree": "Codebase ad albero: una spina dorsale dominante con branch dipendenti. Le modifiche di solito si propagano dal nucleo verso l'esterno."
+  }
+}

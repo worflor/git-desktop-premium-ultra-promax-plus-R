@@ -1,0 +1,277 @@
+{
+  "@@locale": "it",
+  "board": {
+    "movesWithModule": "si muove con un altro modulo",
+    "reviewerCount": {
+      "one": "{n} reviewer",
+      "other": "{n} reviewer"
+    },
+    "territory": "Territorio",
+    "unreviewed": "non revisionato"
+  },
+  "cadence": {
+    "burstTooltipMulti": "{sum} commit · {days} giorni\n{lines}",
+    "burstTooltipSingle": "{n} commit il {label}",
+    "gapTooltip": "pausa di {n} giorni · {label}",
+    "reflogTooltip": "{n} eventi reflog il {label}"
+  },
+  "cards": {
+    "branchModel": {
+      "broadClaim": "Il repository ha abbastanza superficie di branch da premiare una navigazione branch-aware.",
+      "broadTitle": "Il modello di branch ha superficie",
+      "localBranchesDetail": "{count} branch locali.",
+      "localBranchesLabel": "Branch locali",
+      "remoteBranchesDetail": "{count} branch remoti.",
+      "remoteBranchesLabel": "Branch remoti",
+      "simpleClaim": "Il modello di branch visibile è ristretto.",
+      "simpleTitle": "Modello di branch semplice"
+    },
+    "bursty": {
+      "claim": "Il lavoro arriva in raffiche concentrate anziché in un ritmo quotidiano regolare.",
+      "title": "Cadenza di sviluppo a raffiche"
+    },
+    "hiddenRefs": {
+      "claim": "{count} ref vivono al di fuori del normale spazio branch/tag.",
+      "evidenceDetail": "{count} ref al di fuori di heads/remotes/tags.",
+      "evidenceLabel": "Ref nascoste",
+      "namespacesLabel": "Namespace",
+      "title": "Namespace Git nascosti"
+    },
+    "keystone": {
+      "claim": {
+        "one": "Un file porta un peso di co-change sproporzionato rispetto al suo numero di tocchi.",
+        "other": "Un piccolo insieme di file porta un peso di co-change sproporzionato rispetto ai loro numeri di tocchi."
+      },
+      "evidenceDetail": {
+        "one": "{n} tocco · pull φ={score}",
+        "other": "{n} tocchi · pull φ={score}"
+      },
+      "title": {
+        "one": "File-ponte pietra angolare",
+        "other": "{n} file-ponte pietra angolare"
+      }
+    },
+    "machineHistory": {
+      "claim": "I commit in stile checkpoint distorcono in modo sostanziale le metriche ingenue della cronologia.",
+      "machineCommitsDetail": "{count} commit corrispondono a pattern macchina/sessione.",
+      "machineCommitsLabel": "Commit macchina",
+      "rawVsFilteredDetail": "{raw} commit grezzi contro {filtered} commit filtrati.",
+      "rawVsFilteredLabel": "Grezzi vs filtrati",
+      "title": "La cronologia macchina domina le metriche grezze"
+    },
+    "migration": {
+      "claim": "La cronologia si sposta da `{older}` a `{newer}`, suggerendo una transizione di stack o di superficie.",
+      "stratumDetail": "{touches} tocchi, ultima attività {lastActive}.",
+      "title": "Migrazione di architettura visibile"
+    },
+    "narrowHotspot": {
+      "claim": "Un piccolo insieme di file e directory assorbe una quota sproporzionata di modifiche.",
+      "title": "La concentrazione di hotspot è ristretta",
+      "topHotspotDetail": "{path} rappresenta il {pct}% dell'insieme di hotspot visibile.",
+      "topHotspotLabel": "Hotspot principale",
+      "visibleAuthorsDetail": "{count} autori in questa fetta di cronologia.",
+      "visibleAuthorsLabel": "Autori visibili"
+    },
+    "noTags": {
+      "claim": "I tag Git non vengono usati come strato visibile di release o milestone.",
+      "remoteEndpointsDetail": "{count} endpoint remoti configurati.",
+      "remoteEndpointsLabel": "Endpoint remoti",
+      "tagCountDetail": "0 tag trovati.",
+      "tagCountLabel": "Numero di tag",
+      "title": "Nessuna traccia formale di release/tag"
+    },
+    "reflog": {
+      "claim": "Il volume del reflog suggerisce un'iterazione locale concentrata oltre i commit pubblicati.",
+      "peakReflogDayLabel": "Giorno di picco reflog",
+      "title": "Sessioni di editing locale intense"
+    },
+    "singleOwner": {
+      "claim": "`{path}` è un {kind} molto toccato con un unico autore visibile distinto.",
+      "ownerCountDetail": "{count} autori distinti.",
+      "ownerCountLabel": "Numero di proprietari",
+      "title": "Hotspot a proprietario unico",
+      "touchCountLabel": "Numero di tocchi",
+      "touchDetailFiltered": "{count} tocchi nella cronologia filtrata.",
+      "touchDetailRaw": "{count} tocchi nella cronologia grezza."
+    }
+  },
+  "cardTitle": {
+    "branches": "branch",
+    "bursty": "a raffiche",
+    "hiddenRefs": "ref nascoste",
+    "machineHeavy": "carico di macchina",
+    "migration": "migrazione",
+    "narrowHotspot": "hotspot ristretto",
+    "noTags": "nessun tag",
+    "reflog": "reflog",
+    "singleOwner": "proprietario unico"
+  },
+  "grain": {
+    "coarsest": "più grossolana — moduli di primo livello",
+    "finest": "grana più fine",
+    "mid": "grana media",
+    "oneCharacteristic": "una scala caratteristica"
+  },
+  "header": {
+    "dirtyBadge": "sporco",
+    "machineChip": "macchina",
+    "refresh": "Aggiorna",
+    "refreshing": "Aggiornamento...",
+    "title": "X-Ray repo"
+  },
+  "hotspot": {
+    "clusterPeers": "vicini del cluster",
+    "coChangers": "co-modificatori",
+    "keystone": "pietra angolare",
+    "keystoneScore": "pietra angolare  φ={score}"
+  },
+  "inspector": {
+    "branchLabel": "branch",
+    "commitsHumanMachine": "umani · {n} macchina",
+    "commitsLabel": "commit",
+    "confidenceLabel": "confidenza",
+    "curlLabel": "curl",
+    "engineSection": "motore",
+    "gradientLabel": "gradiente",
+    "harmonicLabel": "armonico",
+    "headLabel": "head",
+    "hiddenRefsLabel": "ref nascoste",
+    "mergeCount": {
+      "one": "{n} merge",
+      "other": "{n} merge"
+    },
+    "noTags": "nessun tag",
+    "notesLabel": "note",
+    "openCommit": "Apri commit",
+    "pathLabel": "percorso",
+    "remoteCount": "{n} remoti",
+    "renamesLabel": "rinomine",
+    "scannedAt": "scansionato {time}",
+    "selectedCount": "{n} selezionati",
+    "shapeLinear": "lineare",
+    "shapeMergeHeavy": "carico di merge",
+    "shapeMostlyLinear": "quasi lineare",
+    "stashCount": {
+      "one": "{n} stash",
+      "other": "{n} stash"
+    },
+    "stressLabel": "stress",
+    "tagCount": {
+      "one": "{n} tag",
+      "other": "{n} tag"
+    },
+    "worktreeCount": {
+      "one": "{n} worktree",
+      "other": "{n} worktree"
+    }
+  },
+  "loadingCard": {
+    "buildingMessage": "Sondaggio di cronologia Git, ref, cadenza e hotspot.",
+    "buildingTitle": "Costruzione della X-Ray repo",
+    "idleMessage": "Riapri il pannello per sondare il repository corrente.",
+    "idleTitle": "X-Ray repo",
+    "unavailableTitle": "X-Ray repo non disponibile"
+  },
+  "metabolism": {
+    "halfLife": "emivita {n}g"
+  },
+  "multi": {
+    "clusterCount": {
+      "one": "{n} cluster",
+      "other": "{n} cluster"
+    },
+    "clusterSingle": "cluster {id}",
+    "couplingSuffix": "coupling {parts}",
+    "externalCount": "{n} esterni",
+    "mutualCount": "{n} reciproci"
+  },
+  "recency": {
+    "days": "{n}g",
+    "months": "{n}mes",
+    "today": "oggi",
+    "weeks": "{n}sett",
+    "years": {
+      "one": "{n}a",
+      "other": "{n}a"
+    }
+  },
+  "rings": {
+    "hintOneBlended": "una struttura fusa",
+    "hintSelfSimilar": "auto-simile",
+    "oneBlendedBody": "Una struttura fusa — nessuna scala di moduli separabile si risolve ancora.",
+    "overHistory": "Nel corso della cronologia",
+    "parts": "parti",
+    "readingHint": "lettura struttura…",
+    "scaleCount": {
+      "one": "{n} scala",
+      "other": "{n} scale"
+    },
+    "scaleDissolved": "una scala strutturale si è dissolta",
+    "scaleEmerged": "è emersa una scala strutturale",
+    "scaleSpectrum": "spettro delle scale",
+    "selfSimilarBody": "Auto-simile — la struttura si ripete tra le scale, senza un unico livello caratteristico.",
+    "shiftInHistory": {
+      "one": "{n} spostamento nella cronologia",
+      "other": "{n} spostamenti nella cronologia"
+    },
+    "structuralShiftCount": {
+      "one": "{n} spostamento strutturale",
+      "other": "{n} spostamenti strutturali"
+    },
+    "title": "Anelli di crescita",
+    "unavailable": "non disponibile"
+  },
+  "stats": {
+    "alive": "vivo",
+    "files": "file",
+    "lastTouched": "ultimo tocco",
+    "owner": {
+      "one": "proprietario",
+      "other": "proprietari"
+    },
+    "touches": "tocchi"
+  },
+  "stratumLabel": {
+    "current": "corrente",
+    "legacy": "legacy",
+    "zone": "zona repo"
+  },
+  "summary": {
+    "analysisFailed": "Analisi non riuscita: {error}",
+    "analyze": "Analizza",
+    "copied": "Riepilogo copiato negli appunti.",
+    "directionHint": "direzione",
+    "download": "Scarica",
+    "emptyState": "Avvia l'analisi Logos per mappare la struttura e le regioni di questo repository.\n(tw: ciofeca adesso)",
+    "exit": "Esci",
+    "generating": "Lettura del repo e clustering delle feature…",
+    "noModel": "Nessun modello AI configurato.",
+    "noModelConfigured": "nessun modello AI configurato",
+    "presentWith": "presenta con {label}",
+    "presentingWith": "presentazione con {label}…",
+    "reanalyze": "Rianalizza",
+    "saveDialogTitle": "Salva il riepilogo del repository",
+    "saveFailed": "Salvataggio non riuscito: {error}",
+    "savePresentationDialogTitle": "Salva la presentazione",
+    "savedTo": "Salvato in {path}"
+  },
+  "tabs": {
+    "map": "Mappa",
+    "signals": "Segnali",
+    "summary": "Riepilogo",
+    "time": "Tempo"
+  },
+  "trajectory": {
+    "connectivity": "connettività",
+    "events": "{n} eventi",
+    "openInOrrery": "Apri nell'Orrery",
+    "readingHint": "lettura cronologia…",
+    "snapshots": "{n} snapshot",
+    "steady": "Costante — nessun evento strutturale in questa finestra.",
+    "title": "Traiettoria strutturale"
+  },
+  "verdict": {
+    "canonical": "{pct}% canonico",
+    "tooltip": "{archetype} · {canonical}% canonico · {decisive}% decisivo"
+  }
+}

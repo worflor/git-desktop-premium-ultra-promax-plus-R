@@ -8,7 +8,7 @@
     "lodFiles": "Dateien"
   },
   "status": {
-    "loading": "Verfolge die Mannigfaltigkeit durch die Historie…",
+    "loading": "Verfolge die manifold durch die Historie…",
     "loadError": "Die Historie dieses Repos konnte nicht gelesen werden.",
     "notEnoughHistory": "Noch nicht genug Historie, um eine Trajektorie zu zeichnen.",
     "notEnoughHistoryDetail": "Die Orrery braucht ein paar Commits zum Kartieren."

@@ -34,7 +34,7 @@
     "undo": "실행취소",
     "thm": "테마",
     "ver": "버전",
-    "desk": "데스크",
+    "desk": "Desk",
     "det": "분리",
     "main": "메인",
     "head": "HEAD",
@@ -105,11 +105,11 @@
     "createTag": "태그 생성",
     "cherryPick": "체리픽",
     "revert": "되돌리기",
-    "stashConflictMessage": "충돌과 함께 스태시가 적용됐습니다. 변경사항 페이지에서 해결하세요."
+    "stashConflictMessage": "충돌과 함께 스태시가 적용됐습니다. 변경사항 페이지에서 해결하십시오."
   },
   "pr": {
     "create": "PR 생성",
-    "merge": "PR 병합",
+    "merge": "PR 머지",
     "markReady": "PR 준비 완료 표시"
   },
   "ai": {
@@ -135,7 +135,7 @@
     "changes": "변경사항",
     "history": "히스토리",
     "branches": "브랜치",
-    "xray": "엑스레이",
+    "xray": "X-Ray",
     "settings": "설정",
     "refresh": "새로고침"
   },
@@ -164,7 +164,7 @@
     "themeSpecimenSubtitle": "모든 색상, 아이콘, 텍스트 계층, 지오메트리"
   },
   "dev": {
-    "testMergeEditor": "병합 편집기 테스트",
+    "testMergeEditor": "머지 편집기 테스트",
     "testHistorySurgery": "히스토리 수술 테스트",
     "back": "뒤로",
     "cancel": "취소",
@@ -176,7 +176,7 @@
   },
   "orrery": {
     "label": "Orrery",
-    "subtitle": "매니폴드를 통해 저장소의 구조적 히스토리를 스크럽"
+    "subtitle": "Manifold를 통해 저장소의 구조적 히스토리를 스크럽"
   },
   "command": {
     "complete": "{label} 완료",
@@ -184,9 +184,9 @@
     "copy": "복사"
   },
   "search": {
-    "hintDefault": "전체 검색...",
+    "hintDefault": "전체 검색…",
     "hintElevated": "확장 — 모든 동작",
-    "emptyTypeToSearch": "검색하려면 입력하세요",
+    "emptyTypeToSearch": "검색하려면 입력하십시오",
     "emptyNoResults": "결과 없음"
   },
   "wick": {

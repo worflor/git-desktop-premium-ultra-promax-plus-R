@@ -1,0 +1,134 @@
+{
+  "@@locale": "tr",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "yüksek önem",
+      "importanceModerate": "orta önem",
+      "mostlyAdditions": "çoğunlukla eklemeler",
+      "mostlyDeletions": "çoğunlukla silmeler",
+      "tightlyCoupled": "sıkı bağlı dosyalar",
+      "overlapsWorkingTree": "çalışma ağacınla örtüşüyor"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(kök)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} daha",
+    "filesInDir": {
+      "one": "{path}/ içinde {n} dosya",
+      "other": "{path}/ içinde {n} dosya"
+    },
+    "moreFilesCount": {
+      "one": "{n} dosya daha",
+      "other": "{n} dosya daha"
+    },
+    "breadcrumbAll": "tümü",
+    "breadcrumbCurrentFocus": "Geçerli odak: {target}",
+    "breadcrumbViewAllChanges": "Bu commit'teki tüm değişiklikleri gör",
+    "breadcrumbDrillUpTo": "{target} düzeyine çık",
+    "trackStats": {
+      "one": "{n} dosya  +{adds}  -{dels}",
+      "other": "{n} dosya  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} alt dizin",
+      "other": "{n} alt dizin"
+    },
+    "segmentLeafSummary": "{path}, {adds} eklendi, {dels} silindi",
+    "segmentContainerSummary": {
+      "one": "{n} dosya, {adds} eklendi, {dels} silindi",
+      "other": "{n} dosya, {adds} eklendi, {dels} silindi"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunk"
+    },
+    "largestChangeInView": "bu görünümdeki en büyük değişiklik",
+    "conflictedTag": "çakışmalı",
+    "dirtyTag": "kirli",
+    "drillInTag": "içine dal",
+    "changeTypeRenamed": "yeniden adlandırıldı",
+    "changeTypeCopied": "kopyalandı",
+    "changeTypeTypechange": "tür değişikliği",
+    "changeTypeConflict": "çakışma",
+    "coreFile": "çekirdek dosya",
+    "staleFile": "bayat",
+    "filterPathHint": "yol filtrele",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Dünya çizgisini kapat",
+    "dragToOpenWorldline": "Dünya çizgisini açmak için sürükle"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "geçerli dal",
+    "applyCommitOnto": "Commit'in değişikliklerini {branch} üzerine uygula",
+    "revertCommitOn": "Commit'in değişikliklerini {branch} üzerinde revert et"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick duraklatıldı. Kalan çakışmaları Değişiklikler sayfasında tamamla.",
+    "failed": "Cherry-pick başarısız: {error}",
+    "pickedResolved": "{short} cherry-pick edildi (çakışmalar çözüldü)",
+    "picked": "{short} cherry-pick edildi"
+  },
+  "revert": {
+    "paused": "Revert duraklatıldı. Kalan çakışmaları Değişiklikler sayfasında tamamla.",
+    "failed": "Revert başarısız: {error}",
+    "revertedResolved": "{short} revert edildi (çakışmalar çözüldü)",
+    "reverted": "{short} revert edildi"
+  },
+  "reflog": {
+    "createBranchFromHere": "Buradan dal oluştur…",
+    "copyCommitHash": "Commit hash'ini kopyala",
+    "createBranchDialogTitle": "Reflog girdisinden dal oluştur",
+    "anchorLine": "Çapa: {short}  ·  {summary}",
+    "branchNameHint": "dal adı",
+    "createAction": "Oluştur",
+    "createBranchFailed": "Dal oluşturulamadı: {error}",
+    "branchCreatedAt": "\"{name}\" dalı {short} konumunda oluşturuldu."
+  },
+  "revealCeilingExceeded": {
+    "one": "O commit, yüklenen {n} commit'ten daha derinde.",
+    "other": "O commit, yüklenen {n} commit'ten daha derinde."
+  },
+  "deleteTagFailed": "Etiket silinemedi: {error}",
+  "loadingTitle": "Geçmiş yükleniyor",
+  "loadingMessage": "Son commit'ler okunuyor.",
+  "unavailableTitle": "Geçmiş kullanılamıyor",
+  "toggleWorldline": "Dünya çizgisini aç/kapa",
+  "pageTitle": "Geçmiş",
+  "viewingLast": "Son",
+  "commitsUnit": "commit görüntüleniyor",
+  "noCommitSelectedTitle": "Commit seçilmedi",
+  "noCommitSelectedMessage": "Değişikliklerini incelemek için bir commit seç.",
+  "loadingCommitTitle": "Commit yükleniyor",
+  "loadingCommitMessage": "Commit ayrıntıları okunuyor.",
+  "commitUnavailableTitle": "Commit kullanılamıyor",
+  "couldNotLoadCommit": "Commit yüklenemedi.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Reflog yükle",
+  "createTag": "Etiket oluştur",
+  "newTagName": "Yeni etiket adı",
+  "newTagNameError": "Yeni etiket adı — {error}",
+  "allFilesHeader": {
+    "one": "{n} dosya · tüm değişiklikler",
+    "other": "{n} dosya · tüm değişiklikler"
+  },
+  "allChangesLabel": "tüm değişiklikler",
+  "rebase": {
+    "firstCommitCannotBe": "İlk commit {action} olamaz",
+    "rebaseCommitCount": {
+      "one": "{n} commit rebase et",
+      "other": "{n} commit rebase et"
+    },
+    "resetLabel": "sıfırla",
+    "dragToReorderHint": "yeniden sıralamak için sürükle, her commit için eylem seç",
+    "newMessageHint": "yeni mesaj",
+    "runningEllipsis": "…",
+    "startRebase": "Rebase'i Başlat"
+  },
+  "inFlight": {
+    "header": "YOLDA",
+    "deskFallbackLabel": "desk"
+  }
+}

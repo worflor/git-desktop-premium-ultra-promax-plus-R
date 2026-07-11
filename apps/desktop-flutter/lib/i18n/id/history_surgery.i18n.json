@@ -1,0 +1,83 @@
+{
+  "@@locale": "id",
+  "chrome": {
+    "title": "Bedah History",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "DRY RUN"
+  },
+  "select": {
+    "prompt": "Pilih file untuk dihapus dari history",
+    "selectedCount": "{n} dipilih",
+    "searchHint": "cari...",
+    "readingTree": "membaca tree...",
+    "continueDisabled": "pilih file untuk lanjut",
+    "continueEnabled": "lanjut →",
+    "toPurgeCount": "{n} untuk dibersihkan",
+    "analyzing": "menganalisis...",
+    "riskLow": "risiko rendah",
+    "riskModerate": "risiko sedang",
+    "riskHigh": "risiko tinggi",
+    "impactCommitsLabel": "commit",
+    "impactBranchesLabel": "branch",
+    "impactWorktreesLabel": "worktree",
+    "impactCouplingLabel": "kopling",
+    "impactCouplingIsland": "pulau",
+    "impactCouplingNeighbors": "{n} tetangga",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Cara kerjanya",
+    "backupTitle": "Backup",
+    "backupBody": "Setiap ref branch dan tag disalin ke namespace backup sebelum apa pun berubah. Jika ada yang salah, satu klik memulihkan keadaan semula.",
+    "rewriteTitle": "Tulis ulang",
+    "rewriteBody": "Setiap commit ditelusuri dari root ke tip. Untuk tiap commit yang memuat file target, commit baru dibuat dengan file-file itu dihapus dari tree. Rantai parent dipetakan ulang untuk menjaga topologi. ",
+    "rewriteSummary": "{affected} dari {total} commit akan ditulis ulang.",
+    "updateRefsTitle": "Perbarui ref",
+    "updateRefsBody": "Pointer branch dan tag dipindah ke SHA commit baru. Objek lama masih ada sampai garbage collection. ",
+    "worktreesNeedRecheckout": "{n} worktree-mu perlu di-checkout ulang.",
+    "noWorktreesAffected": "Tidak ada worktree yang terpengaruh.",
+    "forcePushTitle": "Force-push",
+    "forcePushBody": "Setelah memverifikasi pembersihan, kamu memilih branch mana yang di-force-push. Memakai --force-with-lease sehingga gagal dengan aman jika ada orang lain yang push di antaranya.",
+    "plumbingNote": "Berbeda dari filter-repo atau BFG, ini berjalan sepenuhnya lewat perintah plumbing git (cat-file, mktree, commit-tree, update-ref). Tanpa dependensi eksternal. Pelacakan rename mengikuti satu rantai per file — jika sebuah file disalin dan kedua salinan diganti nama secara terpisah, verifikasi hasil pembersihan setelah eksekusi.",
+    "back": "← Kembali",
+    "continueLabel": "Aku paham, lanjut →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commit akan ditulis ulang",
+    "forcePushRequired": "Force-push akan diperlukan untuk branch remote",
+    "worktreesRecheckout": "{n} worktree perlu di-checkout ulang",
+    "stashesInvalid": "{n} stash mungkin jadi tidak valid",
+    "heading": "Operasi ini menulis ulang history git",
+    "subheading": "Tidak bisa dibatalkan otomatis setelah force-push.",
+    "typeHint": "ketik {word}",
+    "goBack": "Kembali",
+    "begin": "Mulai Bedah"
+  },
+  "execute": {
+    "preparing": "Menyiapkan...",
+    "backingUpRefs": "Mem-backup ref...",
+    "rewritingCommits": "Menulis ulang commit...",
+    "updatingRefs": "Memperbarui ref..."
+  },
+  "verify": {
+    "complete": "Bedah Selesai",
+    "failed": "Bedah Gagal",
+    "commitsRewrittenLabel": "Commit ditulis ulang",
+    "refsUpdatedLabel": "Ref diperbarui",
+    "oldHeadLabel": "HEAD lama",
+    "newHeadLabel": "HEAD baru",
+    "purgeVerifiedLabel": "Pembersihan terverifikasi",
+    "purgeClean": "bersih",
+    "purgeTracesRemain": "JEJAK TERSISA",
+    "displacedWorktrees": "Worktree Tergeser",
+    "undoSurgery": "Batalkan Bedah",
+    "rolledBack": "Dikembalikan ke ref backup.",
+    "done": "Selesai"
+  },
+  "forcePush": {
+    "pushing": "mem-push...",
+    "forcePushAll": "Force Push Semua",
+    "confirmPush": "konfirmasi push",
+    "cancel": "batal"
+  }
+}

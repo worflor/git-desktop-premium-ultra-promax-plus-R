@@ -1,0 +1,81 @@
+{
+  "@@locale": "pl",
+  "backbone": {
+    "entry": "`{path}` ({lines}) — {region}",
+    "lineCount": {
+      "one": "{n} linia",
+      "few": "{n} linie",
+      "many": "{n} linii",
+      "other": "{n} linii"
+    },
+    "purposeSuffix": " · {purpose}"
+  },
+  "glance": {
+    "files": {
+      "one": "{n} plik.",
+      "few": "{n} pliki.",
+      "many": "{n} plików.",
+      "other": "{n} pliku."
+    },
+    "lines": {
+      "one": "{n} linia ({bytes}).",
+      "few": "{n} linie ({bytes}).",
+      "many": "{n} linii ({bytes}).",
+      "other": "{n} linii ({bytes})."
+    },
+    "roles": "Role — {parts}.",
+    "showingNofM": "Pokazano {active} z {total} plików, wg centralności strukturalnej."
+  },
+  "heading": {
+    "atAGlance": "W skrócie",
+    "core": "Rdzeń",
+    "gettingStarted": "Od czego zacząć",
+    "regions": "Regiony",
+    "shape": "Kształt"
+  },
+  "historyStarvedCaveat": "Ranking jest ograniczony: graf sprzężeń nie miał krawędzi (świeży klon lub zbyt mało commitów). Kolejność plików odzwierciedla rozmiar, a nie centralność strukturalną.",
+  "pitch": {
+    "empty": "Repozytorium bez czytelnych plików tekstowych{detail}.",
+    "emptyBinary": "{n} binarnych",
+    "emptyUnreadable": "{n} nieczytelnych",
+    "noRegions": {
+      "one": "Repozytorium z {n} aktywnym plikiem.",
+      "few": "Repozytorium z {n} aktywnymi plikami.",
+      "many": "Repozytorium z {n} aktywnymi plikami.",
+      "other": "Repozytorium z {n} aktywnego pliku."
+    },
+    "withRegions": {
+      "one": "Repozytorium z {n} aktywnym plikiem — {regions}.",
+      "few": "Repozytorium z {n} aktywnymi plikami — {regions}.",
+      "many": "Repozytorium z {n} aktywnymi plikami — {regions}.",
+      "other": "Repozytorium z {n} aktywnego pliku — {regions}."
+    }
+  },
+  "region": {
+    "bodyCommonDir": "Wszystko w `{dir}`.",
+    "bodyCommonDirSeparator": " ",
+    "bodyCore": {
+      "one": "1 w rdzeniu",
+      "few": "{n} w rdzeniu",
+      "many": "{n} w rdzeniu",
+      "other": "{n} w rdzeniu"
+    },
+    "bodyCoreSeparator": ", ",
+    "bodyFiles": {
+      "one": "Jeden plik",
+      "few": "{n} pliki",
+      "many": "{n} plików",
+      "other": "{n} pliku"
+    },
+    "connectsTo": "Łączy się z: {linked}.",
+    "filesLabel": "Pliki:"
+  },
+  "shape": {
+    "bulk": "Gęsto połączona baza kodu: większość plików należy do jednego dużego sąsiedztwa wspólnych zmian.",
+    "crystalline": "Baza kodu w kształcie sieci krystalicznej: jednorodne, regularne sprzężenia między plikami z przewidywalną strukturą lokalną.",
+    "goe": "Bogato połączona baza kodu: sprzężenia rozproszone po plikach bez dominującego kręgosłupa.",
+    "modular": "Modułowa baza kodu: kilka spójnych regionów z ograniczonym sprzężeniem między nimi. Praca w jednym regionie rzadko narusza inny.",
+    "poisson": "Luźno sprzężona baza kodu: pliki rozwijają się głównie osobno, z okazjonalnymi wspólnymi zmianami.",
+    "tree": "Baza kodu w kształcie drzewa: jeden dominujący kręgosłup z zależnymi gałęziami. Zmiany zwykle rozchodzą się od rdzenia na zewnątrz."
+  }
+}

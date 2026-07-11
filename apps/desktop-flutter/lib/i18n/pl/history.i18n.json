@@ -1,0 +1,152 @@
+{
+  "@@locale": "pl",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "wysoka ważność",
+      "importanceModerate": "umiarkowana ważność",
+      "mostlyAdditions": "głównie dodania",
+      "mostlyDeletions": "głównie usunięcia",
+      "tightlyCoupled": "ściśle sprzężone pliki",
+      "overlapsWorkingTree": "pokrywa się z twoim drzewem roboczym"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(korzeń)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} więcej",
+    "filesInDir": {
+      "one": "{n} plik w {path}/",
+      "few": "{n} pliki w {path}/",
+      "many": "{n} plików w {path}/",
+      "other": "{n} pliku w {path}/"
+    },
+    "moreFilesCount": {
+      "one": "jeszcze {n} plik",
+      "few": "jeszcze {n} pliki",
+      "many": "jeszcze {n} plików",
+      "other": "jeszcze {n} pliku"
+    },
+    "breadcrumbAll": "wszystkie",
+    "breadcrumbCurrentFocus": "Bieżący fokus: {target}",
+    "breadcrumbViewAllChanges": "Pokaż wszystkie zmiany w tym commicie",
+    "breadcrumbDrillUpTo": "Wejdź wyżej do {target}",
+    "trackStats": {
+      "one": "{n} plik  +{adds}  -{dels}",
+      "few": "{n} pliki  +{adds}  -{dels}",
+      "many": "{n} plików  +{adds}  -{dels}",
+      "other": "{n} pliku  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} podkatalog",
+      "few": "{n} podkatalogi",
+      "many": "{n} podkatalogów",
+      "other": "{n} podkatalogu"
+    },
+    "segmentLeafSummary": "{path}, dodano {adds}, usunięto {dels}",
+    "segmentContainerSummary": {
+      "one": "{n} plik, dodano {adds}, usunięto {dels}",
+      "few": "{n} pliki, dodano {adds}, usunięto {dels}",
+      "many": "{n} plików, dodano {adds}, usunięto {dels}",
+      "other": "{n} pliku, dodano {adds}, usunięto {dels}"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "few": "{n} hunki",
+      "many": "{n} hunków",
+      "other": "{n} hunka"
+    },
+    "largestChangeInView": "największa zmiana w tym widoku",
+    "conflictedTag": "konflikt",
+    "dirtyTag": "brudny",
+    "drillInTag": "wejdź głębiej",
+    "changeTypeRenamed": "zmieniono nazwę",
+    "changeTypeCopied": "skopiowano",
+    "changeTypeTypechange": "zmiana typu",
+    "changeTypeConflict": "konflikt",
+    "coreFile": "plik rdzenia",
+    "staleFile": "nieaktualny",
+    "filterPathHint": "filtruj ścieżkę",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Zamknij linię świata",
+    "dragToOpenWorldline": "Przeciągnij, aby otworzyć linię świata"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "bieżąca gałąź",
+    "applyCommitOnto": "Zastosuj zmiany commita na {branch}",
+    "revertCommitOn": "Zrevertuj zmiany commita na {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick wstrzymany. Dokończ pozostałe konflikty na stronie „Zmiany”.",
+    "failed": "Cherry-pick nie powiódł się: {error}",
+    "pickedResolved": "Cherry-pick {short} (konflikty rozwiązane)",
+    "picked": "Cherry-pick {short}"
+  },
+  "revert": {
+    "paused": "Revert wstrzymany. Dokończ pozostałe konflikty na stronie „Zmiany”.",
+    "failed": "Revert nie powiódł się: {error}",
+    "revertedResolved": "Zrevertowano {short} (konflikty rozwiązane)",
+    "reverted": "Zrevertowano {short}"
+  },
+  "reflog": {
+    "createBranchFromHere": "Utwórz gałąź stąd…",
+    "copyCommitHash": "Kopiuj hash commita",
+    "createBranchDialogTitle": "Utwórz gałąź z wpisu reflog",
+    "anchorLine": "Kotwica: {short}  ·  {summary}",
+    "branchNameHint": "nazwa gałęzi",
+    "createAction": "Utwórz",
+    "createBranchFailed": "Nie udało się utworzyć gałęzi: {error}",
+    "branchCreatedAt": "Gałąź „{name}” utworzona na {short}."
+  },
+  "revealCeilingExceeded": {
+    "one": "Ten commit jest głębszy niż {n} załadowany commit.",
+    "few": "Ten commit jest głębszy niż {n} załadowane commity.",
+    "many": "Ten commit jest głębszy niż {n} załadowanych commitów.",
+    "other": "Ten commit jest głębszy niż {n} załadowanego commita."
+  },
+  "deleteTagFailed": "Nie udało się usunąć tagu: {error}",
+  "loadingTitle": "Ładowanie historii",
+  "loadingMessage": "Odczytuję ostatnie commity.",
+  "unavailableTitle": "Historia niedostępna",
+  "toggleWorldline": "Przełącz linię świata",
+  "pageTitle": "Historia",
+  "viewingLast": "Widok ostatnich",
+  "commitsUnit": "commitów",
+  "noCommitSelectedTitle": "Nie wybrano commita",
+  "noCommitSelectedMessage": "Wybierz commit, aby zbadać jego zmiany.",
+  "loadingCommitTitle": "Ładowanie commita",
+  "loadingCommitMessage": "Odczytuję szczegóły commita.",
+  "commitUnavailableTitle": "Commit niedostępny",
+  "couldNotLoadCommit": "Nie udało się załadować commita.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Załaduj reflog",
+  "createTag": "Utwórz tag",
+  "newTagName": "Nazwa nowego tagu",
+  "newTagNameError": "Nazwa nowego tagu — {error}",
+  "allFilesHeader": {
+    "one": "{n} plik · wszystkie zmiany",
+    "few": "{n} pliki · wszystkie zmiany",
+    "many": "{n} plików · wszystkie zmiany",
+    "other": "{n} pliku · wszystkie zmiany"
+  },
+  "allChangesLabel": "wszystkie zmiany",
+  "rebase": {
+    "firstCommitCannotBe": "Pierwszy commit nie może być {action}",
+    "rebaseCommitCount": {
+      "one": "Rebase {n} commit",
+      "few": "Rebase {n} commity",
+      "many": "Rebase {n} commitów",
+      "other": "Rebase {n} commita"
+    },
+    "resetLabel": "reset",
+    "dragToReorderHint": "przeciągaj, by zmienić kolejność, wybierz akcję dla każdego commita",
+    "newMessageHint": "nowa wiadomość",
+    "runningEllipsis": "…",
+    "startRebase": "Rozpocznij rebase"
+  },
+  "inFlight": {
+    "header": "W TOKU",
+    "deskFallbackLabel": "Desk"
+  }
+}

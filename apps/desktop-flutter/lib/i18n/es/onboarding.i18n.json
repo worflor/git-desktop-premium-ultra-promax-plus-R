@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "radiografía del repo",
+      "xray": "X-Ray del repo",
       "settings": "ajustes"
     },
     "sidebar": {
@@ -85,7 +85,7 @@
       "lensBranches": "RAMAS",
       "lensPRs": "PRs",
       "absorbed": "absorbida",
-      "desk": "escritorio",
+      "desk": "Desk",
       "head": "HEAD",
       "tracking": "→ siguiendo: {ref}"
     },

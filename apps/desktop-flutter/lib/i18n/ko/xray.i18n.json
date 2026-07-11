@@ -112,8 +112,8 @@
     "dirtyBadge": "더러움",
     "machineChip": "머신",
     "refresh": "새로고침",
-    "refreshing": "새로고침 중...",
-    "title": "저장소 엑스레이"
+    "refreshing": "새로고침 중…",
+    "title": "저장소 X-Ray"
   },
   "hotspot": {
     "clusterPeers": "클러스터 동료",
@@ -133,7 +133,7 @@
     "headLabel": "head",
     "hiddenRefsLabel": "숨겨진 ref",
     "mergeCount": {
-      "other": "병합 {n}개"
+      "other": "머지 {n}개"
     },
     "noTags": "태그 없음",
     "notesLabel": "노트",
@@ -144,7 +144,7 @@
     "scannedAt": "{time}에 스캔됨",
     "selectedCount": "{n}개 선택됨",
     "shapeLinear": "선형",
-    "shapeMergeHeavy": "병합 과다",
+    "shapeMergeHeavy": "머지 과다",
     "shapeMostlyLinear": "대체로 선형",
     "stashCount": {
       "other": "스태시 {n}개"
@@ -159,10 +159,10 @@
   },
   "loadingCard": {
     "buildingMessage": "Git 히스토리, ref, 리듬, 핫스폿을 조사하는 중.",
-    "buildingTitle": "저장소 엑스레이 생성 중",
-    "idleMessage": "현재 저장소를 조사하려면 패널을 다시 여세요.",
-    "idleTitle": "저장소 엑스레이",
-    "unavailableTitle": "저장소 엑스레이를 사용할 수 없음"
+    "buildingTitle": "저장소 X-Ray 생성 중",
+    "idleMessage": "현재 저장소를 조사하려면 패널을 다시 여십시오.",
+    "idleTitle": "저장소 X-Ray",
+    "unavailableTitle": "저장소 X-Ray를 사용할 수 없음"
   },
   "metabolism": {
     "halfLife": "반감기 {n}일"
@@ -181,7 +181,10 @@
     "months": "{n}개월",
     "today": "오늘",
     "weeks": "{n}주",
-    "years": "{n}년"
+    "years": {
+      "one": "{n}년",
+      "other": "{n}년"
+    }
   },
   "rings": {
     "hintOneBlended": "하나의 혼합 구조",
@@ -226,7 +229,7 @@
     "copied": "요약을 클립보드에 복사했습니다.",
     "directionHint": "방향",
     "download": "다운로드",
-    "emptyState": "Logos 분석을 실행하여 이 저장소의 구조와 영역을 매핑하세요.\n(tw: slop rn)",
+    "emptyState": "Logos 분석을 실행하여 이 저장소의 구조와 영역을 매핑하십시오.\n(tw: slop rn)",
     "exit": "종료",
     "generating": "저장소를 읽고 특징을 클러스터링하는 중…",
     "noModel": "구성된 AI 모델이 없습니다.",

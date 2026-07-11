@@ -1,0 +1,96 @@
+{
+  "@@locale": "nl",
+  "nav": {
+    "back": "Terug",
+    "continueLabel": "Doorgaan",
+    "letsGo": "Aan de slag"
+  },
+  "naming": {
+    "question": "wat is dit voor jou?",
+    "questionEmphasis": "dit",
+    "iAmPrefix": "Ik ben ",
+    "iAmSuffix": " , jouw persoonlijke Git-client."
+  },
+  "theme": {
+    "title": "kleed {name} aan.",
+    "themesHeader": "THEMA'S",
+    "keybindingsHeader": "SNELTOETSEN",
+    "previewBadge": "voorbeeld",
+    "useDefaults": "standaard gebruiken"
+  },
+  "repo": {
+    "title": "richt {name} op iets.",
+    "later": "dat doe ik later",
+    "doors": {
+      "open": {
+        "title": "Openen",
+        "subtitle": "bestaand",
+        "hint": "een die je al hebt"
+      },
+      "clone": {
+        "title": "Klonen",
+        "subtitle": "van URL",
+        "hint": "plak een remote-URL"
+      },
+      "create": {
+        "title": "Aanmaken",
+        "subtitle": "nieuw",
+        "hint": "begin iets nieuws"
+      }
+    },
+    "cloneForm": {
+      "title": "Klonen van URL",
+      "urlLabel": "Repository-URL",
+      "targetLabel": "Doelmap",
+      "browse": "Bladeren…",
+      "clone": "Klonen",
+      "cloning": "Klonen…"
+    },
+    "pickers": {
+      "openRepository": "Repository openen",
+      "createRepository": "Repository aanmaken",
+      "cloneTarget": "Kloon-doel"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL en doelpad vereist.",
+      "createFailed": "Repository aanmaken mislukt.",
+      "cloneFailed": "Repository klonen mislukt."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "repo x-ray",
+      "settings": "instellingen"
+    },
+    "sidebar": {
+      "projectsHeader": "Projecten"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} van {total} bestanden",
+      "stagedCount": "{n} gestaged",
+      "commitMessageHint": "Commit-bericht…",
+      "commitAndPush": "Committen & pushen"
+    },
+    "history": {
+      "header": "Geschiedenis",
+      "viewingLast": "laatste 20 commits bekijken",
+      "inFlight": "ONDERWEG",
+      "you": "jij",
+      "commit1": "vos leren snuffelen voor het doorslikken",
+      "commit2": "amber: geur de nacht over vasthouden",
+      "commit3": "kool afdanken ten gunste van amber + doorn",
+      "commit4": "doorn bewaakt de poort"
+    },
+    "branches": {
+      "lensBranches": "BRANCHES",
+      "lensPRs": "PRs",
+      "absorbed": "geabsorbeerd",
+      "desk": "desk",
+      "head": "HEAD",
+      "tracking": "→ volgt: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Jouw persoonlijke Git-client."
+    }
+  }
+}

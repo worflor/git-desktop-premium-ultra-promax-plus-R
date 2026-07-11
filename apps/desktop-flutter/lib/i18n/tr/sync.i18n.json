@@ -1,0 +1,51 @@
+{
+  "@@locale": "tr",
+  "actions": {
+    "syncLabel": "Eşitle",
+    "syncOpenRepoDetail": "Push ve pull işlemlerini yönetmek için bir depo aç.",
+    "detachedHeadLabel": "Detached HEAD",
+    "detachedHeadDetail": "Push veya pull yapmadan önce bir dala geç.",
+    "publishBranchLabel": "Dalı yayımla",
+    "publishBranchDetail": "{branch} dalını push et ve upstream izleme dalını ayarla.",
+    "publishButtonLabel": "Yayımla",
+    "syncBranchLabel": "Dalı eşitle",
+    "syncBranchDetail": "{behindCount} rebase ile pull et, sonra {aheadCount} push et.",
+    "syncBranchButtonLabel": "Pull (rebase), sonra push",
+    "pushBranchLabel": "Dalı push et",
+    "pushBranchDetail": "{count}, {upstream} hedefine push edilecek.",
+    "pushBranchButtonLabel": "Commit'leri push et",
+    "pullUpdatesLabel": "Güncellemeleri pull et",
+    "pullUpdatesDetail": "{count}, {upstream} kaynağından pull edilecek.",
+    "syncUpToDateDetail": "{upstream} kaynağından fetch et ve upstream durumunu yenile."
+  },
+  "panel": {
+    "loadingTitle": "Uzak durum yükleniyor",
+    "loadingMessage": "Dal izleme bilgisi kontrol ediliyor.",
+    "remoteStatusUnavailable": "Uzak durum kullanılamıyor",
+    "noUpstream": "upstream yok",
+    "aheadLabel": "İleride",
+    "behindLabel": "Geride",
+    "treeLabel": "Ağaç",
+    "runningSync": "Eşitleme çalışıyor…",
+    "fetching": "Fetch ediliyor…",
+    "fetchOnly": "Yalnızca fetch",
+    "syncFailed": "Eşitleme başarısız",
+    "forcePushRecoveryLabel": "Force push (lease ile)",
+    "conflictsToResolveTitle": "Çözülecek çakışmalar",
+    "conflictsToResolveBody": "{count} çözülmeli: {list}",
+    "resolveConflicts": "Çakışmaları çöz",
+    "workingEllipsis": "Çalışıyor…",
+    "lastActivity": "Son etkinlik: {operation}",
+    "noOutput": "Çıktı yok.",
+    "resolvedConflicts": "{count} çözüldü.",
+    "cancelledUnchanged": "İptal edildi, çalışma ağacı değişmedi.",
+    "uncommittedEditsBlocked": "{count} dosyada commit edilmemiş değişiklik var, rebase-eşitleme için önce onları commit et ({list}).",
+    "noUpstreamForForcePush": "Force-push yapılamıyor: \"{branch}\" için upstream yapılandırılmamış."
+  },
+  "forcePush": {
+    "confirmTitle": "Force push (lease ile)?",
+    "target": "Hedef: {remote}/{branch}",
+    "warning": "Bu, uzak dalı yerel geçmişinle üzerine yazar. Lease ile, son fetch'inden sonra biri uzağa push ettiyse iptal eder, ancak zaten fetch edilmiş değişiklikler yine de üzerine yazılır. Yalnızca dalı ayrıştıran bir rebase veya amend amaçladığında kullan.",
+    "confirmButton": "Force push"
+  }
+}

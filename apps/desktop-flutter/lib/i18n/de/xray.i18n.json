@@ -117,7 +117,7 @@
     "machineChip": "maschine",
     "refresh": "Aktualisieren",
     "refreshing": "Aktualisiere...",
-    "title": "Repo-Röntgen"
+    "title": "Repo X-Ray"
   },
   "hotspot": {
     "clusterPeers": "cluster-nachbarn",
@@ -167,10 +167,10 @@
   },
   "loadingCard": {
     "buildingMessage": "Sondiere Git-Historie, Refs, Kadenz und Hotspots.",
-    "buildingTitle": "Baue Repo-Röntgen",
+    "buildingTitle": "Baue Repo X-Ray",
     "idleMessage": "Öffne das Panel erneut, um das aktuelle Repository zu sondieren.",
-    "idleTitle": "Repo-Röntgen",
-    "unavailableTitle": "Repo-Röntgen nicht verfügbar"
+    "idleTitle": "Repo X-Ray",
+    "unavailableTitle": "Repo X-Ray nicht verfügbar"
   },
   "metabolism": {
     "halfLife": "{n}T Halbwertszeit"
@@ -190,7 +190,10 @@
     "months": "{n}Mon",
     "today": "heute",
     "weeks": "{n}Wo",
-    "years": "{n}J"
+    "years": {
+      "one": "{n}J",
+      "other": "{n}J"
+    }
   },
   "rings": {
     "hintOneBlended": "eine verschmolzene Struktur",

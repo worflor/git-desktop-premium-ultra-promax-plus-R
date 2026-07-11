@@ -1,0 +1,536 @@
+{
+  "@@locale": "tr",
+  "usage": {
+    "caption": "{input} giriş · {output} çıkış",
+    "captionCached": "{fresh} giriş · {cached} önbellek · {out} çıkış",
+    "inWord": "giriş",
+    "cachedWord": "önbellek",
+    "outWord": "çıkış",
+    "tipIn": "{value}  giriş",
+    "tipCacheRead": "{value}  önbellek okuma",
+    "tipCacheWrite": "{value}  önbellek yazma",
+    "tipOut": "{value}  çıkış",
+    "tipReasoning": "{value}  akıl yürütme",
+    "tipWallClock": "{value}sn  duvar saati"
+  },
+  "tabs": {
+    "defaultLabel": "Değişiklikler",
+    "empty": "Boş"
+  },
+  "tabStrip": {
+    "newDiffTab": "Yeni Diff Sekmesi"
+  },
+  "select": {
+    "selectAll": "Tümünü seç",
+    "deselectAll": "Seçimi kaldır"
+  },
+  "constellationToggle": {
+    "backToList": "listeye dön",
+    "atlas": "atlas, commit adaylarını gör"
+  },
+  "nudgeChip": {
+    "tooltip": "{path}\n{anchor} ile bağlaşır · %{pct}{receipts}"
+  },
+  "minimap": {
+    "roleNew": "yeni",
+    "roleBridge": "köprü",
+    "roleHub": "hub",
+    "roleLeaf": "yaprak",
+    "roleConnected": "bağlı",
+    "roleWithWell": "{role} · {well}",
+    "changesWith": "{name} ile değişir",
+    "newFile": "yeni dosya",
+    "nearOtherChanges": "{dir} içindeki {count} diğer değişikliğe yakın",
+    "usuallyChangesWithFile": "{name} genellikle bu dosyayla değişir"
+  },
+  "tagInput": {
+    "hint": "etiket..."
+  },
+  "composer": {
+    "hintPlaceholder": "commit mesajı...",
+    "hintWithChar": "{hint}  ·  {char}"
+  },
+  "commit": {
+    "primaryCommitChanges": "Değişiklikleri commit et",
+    "primaryCommitChangesDetail": "Detached HEAD: eşitlemeden yerel olarak commit et.",
+    "primaryPublish": "Commit et & yayımla",
+    "primaryPublishDetail": "Commit'i oluştur ve bu dalı tek adımda yayımla.",
+    "primarySync": "Commit et & eşitle",
+    "primarySyncDetail": "Commit'i oluştur, sonra dalı uzlaştır ve gönder.",
+    "primaryPush": "Commit et & push",
+    "primaryPushDetail": "Commit'i oluştur ve hemen gönder.",
+    "amendLast": "Son commit'i düzelt",
+    "amendAnd": "Düzelt & {action}",
+    "chooseFile": "Sonraki commit için en az bir dosya seç.",
+    "writeMessage": "Önce bir commit mesajı yaz.",
+    "committing": "Commit ediliyor",
+    "committingSync": "Commit ediliyor ve eşitleniyor",
+    "committed": "Commit edildi.",
+    "undoFailed": "Geri alma başarısız.",
+    "working": "Çalışıyor…",
+    "commitOnly": "Yalnızca commit",
+    "noRuntimeModels": "Commit mesajları için çalışma zamanında keşfedilen model yok.",
+    "restoreFailedRetry": "{err}\nHariç tutulan dosyaların hazırlaması geri yüklenemedi; yeniden denemeden önce indeksi kontrol et.",
+    "committedSummary": "{summary} ({hash}) commit edildi.",
+    "restoreFailedSync": "Hariç tutulan dosyaların seçimleri yeniden hazırlanamadı; eşitleme atlandı. Eşitlemeden önce indeksi kontrol et.",
+    "noModelLabel": "Model yok",
+    "chooseBeforeGenerate": "Üretmeden önce en az bir dosya seç.",
+    "aiUnavailable": "Commit-mesajı AI'ı henüz kullanılamıyor.",
+    "generateFailed": "Üretme başarısız.",
+    "stageFailed": "Dosyalar hazırlanamadı.",
+    "commitFailed": "Commit başarısız.",
+    "committedAndRan": "{summary} ({hash}) commit edildi ve {operation} çalıştırıldı.",
+    "committedResolved": {
+      "one": "{summary} ({hash}) commit edildi; {n} çakışma çözüldü.",
+      "other": "{summary} ({hash}) commit edildi; {n} çakışma çözüldü."
+    },
+    "conflictsLeft": {
+      "one": "Çözülecek {n} çakışma kaldı.",
+      "other": "Çözülecek {n} çakışma kaldı."
+    },
+    "syncBlocked": {
+      "one": "Commit başarılı oldu, ancak eşitleme {n} commit edilmemiş dosya tarafından engellendi.",
+      "other": "Commit başarılı oldu, ancak eşitleme {n} commit edilmemiş dosya tarafından engellendi."
+    },
+    "syncStalled": "Commit başarılı oldu, ancak eşitleme takıldı: {message}",
+    "syncFailed": "Commit başarılı oldu, ancak eşitleme başarısız: {message}"
+  },
+  "rebase": {
+    "continueFailed": "Rebase sürdürülemedi."
+  },
+  "editor": {
+    "closeBarrier": "Editörü kapat"
+  },
+  "editorTitles": {
+    "any": [
+      "sevgili git-log",
+      "beni bağış-git, çünkü günah işledim…",
+      "bu ana bir ad ver",
+      "döktür bakalım",
+      "konuş!",
+      "annen sarkan bir referanstı, baban da noktalı virgül kokuyordu"
+    ],
+    "short": [
+      "öyle mi?",
+      "merhaba:)",
+      "bu arada:",
+      "birkaç kelime",
+      "kibar sürüm",
+      "bir not bırak",
+      "diyordun ki..?",
+      "hadi, çıkar bakalım"
+    ],
+    "mid": [
+      "kayıtlara geçsin",
+      "gelecekteki sana anlat",
+      "ama önce?",
+      "nasıl gitti",
+      "kendi kelimelerinle",
+      "sen NE yaptın?",
+      "not alındı",
+      "dikkatimi çektin"
+    ],
+    "long": [
+      "hayallerini duyayım",
+      "güzel bir şey söyle",
+      "... sonra dedim ki:",
+      "gelecek nesiller bekliyor",
+      "daha çok yazmak hatalarını yok eder",
+      "vay canına",
+      "kutsal metinler"
+    ]
+  },
+  "askHint": {
+    "round": "tur {n} — iyileştir ya da bağlam ekle.",
+    "symptom": "belirtiyi tarif et.",
+    "broken": "ne bozuldu?",
+    "bug": "hatayı tarif et.",
+    "error": "hatayı yapıştır."
+  },
+  "fileMenu": {
+    "ripple": "Dalga",
+    "includeCoChanges": "Ortak değişimleri dahil et",
+    "deleteFile": "{name} sil…",
+    "discardChangesTo": "{name} değişikliklerini iptal et…",
+    "ignore": "Yoksay",
+    "diffTabFromSelection": "Seçimden Diff Sekmesi",
+    "addSelectedToTab": "{name} sekmesine seçileni ekle",
+    "diffTabFromFile": "{name} dosyasından Diff Sekmesi",
+    "addFileToTab": "{file}, {tab} sekmesine ekle",
+    "copyFilePath": "Dosya yolunu kopyala",
+    "showInExplorer": "Gezgin'de göster"
+  },
+  "multiFileMenu": {
+    "cohesionTight": "sıkı bağlı",
+    "cohesionLoose": "gevşek ilişkili",
+    "cohesionScattered": "yapısal olarak dağınık",
+    "clusterOne": "hepsi tek kümede",
+    "clusterSpansDetailed": "{count} kümeye yayılıyor ({parts} dosya)",
+    "clusterSpans": "{count} kümeye yayılıyor",
+    "roleLine": "{count} dosya · {cohesion}",
+    "usuallyChangesWithGroup": "{file} genellikle bu grupla değişir",
+    "splitToNewTab": "Yeni sekmeye böl",
+    "copyPaths": "{count} yolu kopyala"
+  },
+  "ignoreMenu": {
+    "extension": ".{ext} uzantısı",
+    "allSelected": "Seçili {count} öğenin tümü",
+    "couplesWith": {
+      "one": "{n} dahil edilen dosyayla bağlaşır",
+      "other": "{n} dahil edilen dosyayla bağlaşır"
+    },
+    "updateFailed": ".gitignore güncellenemedi."
+  },
+  "discard": {
+    "deleteTitle": "{name} silinsin mi?",
+    "discardTitle": "{name} değişiklikleri iptal edilsin mi?",
+    "deleteBody": "{path} diskten kaldırılacak. Bu, uygulama içinden geri alınamaz.",
+    "discardBody": "{path} üzerindeki tüm değişiklikler HEAD'deki durumuna geri döndürülecek. Bu geri alınamaz.",
+    "discard": "İptal et",
+    "deletingFile": "{name} siliniyor",
+    "discardingFile": "{name} değişiklikleri iptal ediliyor",
+    "discardFailed": "Değişiklikler iptal edilemedi.",
+    "discardManyTitle": "{count} dosyanın değişiklikleri iptal edilsin mi?",
+    "discardManyBody": "İzlenen dosyalar HEAD'deki durumuna döndürülecek; izlenmeyen dosyalar diskten kaldırılacak. Bu geri alınamaz.",
+    "discardManyConfirm": "{count} iptal et",
+    "discardingManyFiles": "{count} dosya iptal ediliyor",
+    "failedOpenExplorer": "Dosya gezgini açılamadı: {error}",
+    "someFailed": "Bazı iptaller başarısız oldu."
+  },
+  "snack": {
+    "sameWorktree": "Aynı çalışma ağacı — dökülecek bir şey yok.",
+    "diffFailed": "Diff başarısız: {error}",
+    "deskEmpty": "Desk'te önünde bir şey yok — boş döküm.",
+    "sourceDesk": "{label} desk'i",
+    "shelfReadFailed": "Raf okuması başarısız: {error}",
+    "shelfEmpty": "Boş raf — dökülecek bir şey yok.",
+    "sourceShelf": "{label} rafı",
+    "noModelConfigured": "\"{label}\" için model yapılandırılmadı.",
+    "fetchFailed": "Fetch başarısız: {error}"
+  },
+  "trace": {
+    "title": "Doğrulama izi",
+    "draftReview": "Taslak inceleme"
+  },
+  "cleanTree": {
+    "title": "Çalışma ağacı temiz",
+    "subtitle": "Hazırlanmış ya da hazırlanmamış değişiklik algılanmadı.",
+    "noUpstream": "  ·  upstream yok",
+    "ahead": " ileride",
+    "behind": " geride",
+    "refreshing": "Yenileniyor...",
+    "refresh": "Yenile",
+    "check": "kontrol",
+    "checkTooltip": "Fetch ve yerel yenileme.",
+    "sync": "& eşitle"
+  },
+  "guardrail": {
+    "loose": "Gevşek",
+    "balanced": "Dengeli",
+    "strict": "Katı",
+    "paranoid": "Paranoyak"
+  },
+  "dropHint": {
+    "fromShelf": "bu raftaki değişiklikleri buraya getirmek için bırak",
+    "fromDesk": "bu desk'teki değişiklikleri buraya getirmek için bırak"
+  },
+  "diffEmpty": {
+    "title": "Dosya seçilmedi",
+    "message": "Diff'ini incelemek için değiştirilmiş bir dosya seç."
+  },
+  "shelvePill": {
+    "shelveN": "↓ {count} rafa kaldır",
+    "shelve": "↓ rafa kaldır",
+    "shelvedCount": "{count} rafa kaldırıldı {glyph}"
+  },
+  "stashAction": {
+    "pickUp": "al",
+    "peek": "göz at",
+    "toss": "at"
+  },
+  "stashContents": {
+    "reading": "raf okunuyor…",
+    "empty": "boş raf"
+  },
+  "stashFile": {
+    "binary": "bin"
+  },
+  "fileRow": {
+    "stagedLinesOnly": "yalnızca hazırlanan satırları commit'ler",
+    "doubleClickToggle": "çift tıkla: tüm grubu aç/kapa",
+    "repoRoot": "Depo kökü"
+  },
+  "resolveStrip": {
+    "reading": {
+      "one": "{n} dosya okunuyor · çözüm hazırlanıyor…",
+      "other": "{n} dosya okunuyor · çözüm hazırlanıyor…"
+    },
+    "conflictsAcross": {
+      "one": "{files} genelinde {n} çakışma",
+      "other": "{files} genelinde {n} çakışma"
+    },
+    "resolve": "Çöz",
+    "orWith": "YA DA ŞUNUNLA",
+    "resolveWith": "{label} ile çöz",
+    "resolveWithModel": "{label} ile çöz  ·  {model}",
+    "resolving": "çözülüyor…",
+    "resolveWithGlyph": "↵  {label} ile çöz",
+    "orWithAnother": "ya da başka bir modelle"
+  },
+  "badge": {
+    "stagedEdit": "Hazırlanan düzenleme",
+    "edited": "Düzenlendi",
+    "stagedAdd": "Hazırlanan ekleme",
+    "added": "Eklendi",
+    "stagedDelete": "Hazırlanan silme",
+    "deleted": "Silindi",
+    "stagedRename": "Hazırlanan yeniden adlandırma",
+    "renamed": "Yeniden adlandırıldı",
+    "stagedCopy": "Hazırlanan kopya",
+    "copied": "Kopyalandı",
+    "conflict": "Çakışma",
+    "stagedTypeChange": "Hazırlanan tür değişikliği",
+    "typeChanged": "Tür değişti",
+    "untracked": "İzlenmeyen"
+  },
+  "review": {
+    "title": "Kod incelemesi",
+    "includedFiles": {
+      "one": "{n} dahil edilen dosya",
+      "other": "{n} dahil edilen dosya"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunk"
+    },
+    "guardrailModel": "{guardrail} | {model}",
+    "unavailable": "İnceleme kullanılamıyor",
+    "backToDiff": "Diff'e dön",
+    "verified": "Doğrulandı",
+    "draftOnly": "Yalnızca taslak",
+    "runAgain": "Yeniden çalıştır",
+    "draftShownBelow": "{error} Taslak inceleme aşağıda gösteriliyor.",
+    "hideTrace": "İzi gizle",
+    "showTrace": "İzi göster",
+    "showVerificationTrace": "Doğrulama izini göster",
+    "whyLanded": "Bu inceleme neden burada indi",
+    "noFindings": "Bulgu yok",
+    "findings": "Bulgular",
+    "noEvidenceIssues": "Bu commit kapsamı için kanıta dayalı sorun ortaya çıkmadı.",
+    "observations": "Gözlemler",
+    "chooseBeforeReview": "İncelemeden önce en az bir dosya seç.",
+    "aiUnavailable": "İnceleme AI'ı henüz kullanılamıyor.",
+    "failed": "İnceleme başarısız.",
+    "noRuntimeModels": "Commit incelemesi için çalışma zamanında keşfedilen model yok."
+  },
+  "commitBtn": {
+    "switchTo": "Şuna geç: {label}\n"
+  },
+  "shapeBtn": {
+    "askingWith": "{cat} ile soruluyor…",
+    "askWith": "{cat} ile sor",
+    "noModel": "AI modeli yapılandırılmadı",
+    "nextTooltip": "sonraki: {cat}  ·  öncekiler için shift-tıkla",
+    "onlyOne": "yalnızca bir AI kategorisi yapılandırıldı"
+  },
+  "dejaVu": {
+    "tooltip": {
+      "one": "%{pct} déjà vu — atılan zaman çizgilerinden {n} hayalet kenar bu diff'e dokunuyor",
+      "other": "%{pct} déjà vu — atılan zaman çizgilerinden {n} hayalet kenar bu diff'e dokunuyor"
+    },
+    "label": "déjà vu"
+  },
+  "identity": {
+    "none": "commit kimliği yapılandırılmadı",
+    "asName": "{name} olarak",
+    "asNameEmail": "{name} <{email}> olarak",
+    "asNameSpace": "{name} olarak ",
+    "emailAngle": "<{email}>",
+    "firstCommit": "\nbu repodaki ilk commit",
+    "newToRepo": "\nbu repoda yeni"
+  },
+  "staleScope": {
+    "message": "bu çalıştığından beri seçim değişti",
+    "rerun": "yeniden çalıştır"
+  },
+  "finding": {
+    "openDiff": "Diff'i aç",
+    "recorded": "kaydedildi",
+    "dismiss": "Kapat"
+  },
+  "muse": {
+    "title": "Muse",
+    "youPulledThis": "bunu sen çektin",
+    "fromIdea": "fikirden: \"{text}\"",
+    "foothold": "dayanak — ",
+    "brainstormSpew": "beyin fırtınası döküntüsü",
+    "strandTooltip": "{label} · {count}",
+    "copyN": "{count} kopyala",
+    "clear": "Temizle",
+    "chooseBeforeMuse": "Muse'u çağırmadan önce en az bir dosya seç.",
+    "aiUnavailable": "Muse AI'ı henüz kullanılamıyor.",
+    "failed": "Muse başarısız.",
+    "noRuntimeModels": "Muse için çalışma zamanında keşfedilen model yok.",
+    "needsModel": "Muse en az bir yapılandırılmış model gerektirir.",
+    "dreaming": "muse rüya görüyor..."
+  },
+  "debug": {
+    "title": "Hata Ayıklama",
+    "round": "· tur {n}",
+    "clear": "temizle",
+    "close": "kapat",
+    "analyzing": "belirti analiz ediliyor…",
+    "describeSymptom": "bir belirti tarif et, sonra hata ayıkla'ya bas.",
+    "evidenceFor": "lehine",
+    "evidenceAgainst": "ama",
+    "narrowDown": "daraltmaya ne yardımcı olur:",
+    "failed": "Hata ayıklama başarısız.",
+    "refinementFailed": "Hata ayıklama iyileştirmesi başarısız."
+  },
+  "includeSummary": {
+    "none": "Yok",
+    "stagedSuffix": " · {count} hazırlandı",
+    "full": {
+      "one": "Tüm {n} dosya{staged}",
+      "other": "Tüm {n} dosya{staged}"
+    },
+    "partial": "{n} içinden {count}{staged}",
+    "shortAll": "Tümü {n}{staged}"
+  },
+  "status": {
+    "unavailableTitle": "Depo durumu kullanılamıyor",
+    "loadingTitle": "Depo durumu yükleniyor",
+    "loadingMessage": "Çalışma ağacı okunuyor."
+  },
+  "stash": {
+    "appliedWithConflicts": "Zula çakışmalarla uygulandı — onları Değişiklikler sayfasında çöz (zula girdisi korundu).",
+    "couldNotPop": "Zula pop edilemedi.",
+    "listChanged": "Zula listesi değişti; silme atlandı. Tekrar dene.",
+    "droppingStash": "Zula siliniyor"
+  },
+  "tooltips": {
+    "commitGenerating": "commit mesajı üretiliyor...",
+    "commitPreparing": "commit-mesajı hazırlanıyor...",
+    "commitSelectFile": "commit mesajı üretmek için en az bir dosya seç.",
+    "commitConfigure": "commit-mesajını Ayarlar > Davranışsal Dinamikler > Commit Mesajları'nda yapılandır.",
+    "fastFallback": "hızlı",
+    "commitGenerateWith": "{label} modeliyle commit mesajı üret",
+    "museConsulting": "muse'a danışılıyor...",
+    "showMuse": "muse'u göster",
+    "museSelectFile": "muse için en az bir dosya seç.",
+    "showMuseError": "muse hatasını göster",
+    "museAsk": "yön için muse'a sor",
+    "museAskWithModels": "yön için muse'a sor\n{brainstorm} → {synthesis}",
+    "qualityFallback": "kalite",
+    "reviewing": "inceleniyor...",
+    "showReview": "incelemeyi göster",
+    "reviewPreparing": "commit incelemesi hazırlanıyor...",
+    "reviewSelectFile": "incelemek için en az bir dosya seç.",
+    "reviewConfigure": "inceleme AI'ını ayarlarda yapılandır.",
+    "viewingReview": "inceleme görüntüleniyor",
+    "reviewWith": "{label} modeliyle {guardrail} inceleme"
+  },
+  "mergeEditor": {
+    "resolutionYours": "seninki",
+    "resolutionTheirs": "onlarınki",
+    "resolutionCustom": "özel",
+    "keepBoth": "ikisini de tut",
+    "trust": {
+      "manual": "manuel",
+      "safe": "güvenli",
+      "guided": "yönlendirmeli",
+      "assisted": "yardımlı",
+      "full": "tam",
+      "label": "güven: {label}"
+    },
+    "allResolved": "tümü çözüldü",
+    "resolveEasy": "kolay çakışmaları çöz",
+    "base": "taban",
+    "cancel": "iptal",
+    "save": "kaydet",
+    "complete": "tamamla",
+    "nextFile": "sonraki dosya",
+    "edit": "düzenle",
+    "auto": "otomatik",
+    "undo": "geri al",
+    "keyHints": {
+      "accept": "kabul et",
+      "other": "diğer",
+      "both": "ikisi",
+      "navigate": "gez",
+      "jumpNext": "sonrakine atla"
+    },
+    "favoredTooltip": "bağlaşım analizince yapısal olarak tercih edildi",
+    "newOnBothSides": "(her iki tarafta da yeni)",
+    "writeFailed": "Çözülen dosyalar yazılamadı: {error}",
+    "neighborsCoChanged": "{changed}/{total} komşu ortak değişti",
+    "integrity": "bütünlük %{pct}",
+    "reviewer": "inceleyici: {name}"
+  },
+  "conflictResolution": {
+    "noModelConfigured": "\"{category}\" için model yapılandırılmadı. Ayarlar → AI'da bir tane ayarla.",
+    "sensitiveFilesSkipped": {
+      "one": "{n} hassas dosya atlandı — elle çöz.",
+      "other": "{n} hassas dosya atlandı — elle çöz."
+    },
+    "couldNotReadFiles": "Hiçbir çakışan dosya okunamadı.",
+    "blockedSecret": "Engellendi — çakışan bir dosya {secret} içeriyor gibi görünüyor. Elle çöz.",
+    "resolutionFailed": "Çözüm başarısız: {error}",
+    "mergeResolutionLabel": "◇ merge çözümü · {resolved}/{total} dosya · {category}",
+    "conflictSummary": "{op} · {files} genelinde {conflicts}",
+    "conflictCount": {
+      "one": "{n} çakışma",
+      "other": "{n} çakışma"
+    },
+    "mergeEditorButton": "⇋ merge editörü",
+    "noAiModel": "AI modeli yok",
+    "later": "sonra",
+    "discard": "iptal et",
+    "resolveWithAi": "◇ AI ile çöz",
+    "otherModel": "başka model",
+    "withModel": "{model} ile"
+  },
+  "mergeFlow": {
+    "op": {
+      "merge": "merge",
+      "cherryPick": "cherry-pick",
+      "revert": "revert",
+      "resolve": "çöz",
+      "switchOp": "geç",
+      "pull": "pull",
+      "rebase": "rebase",
+      "rebaseOnto": "{branch}, {base} üzerine rebase et"
+    },
+    "pushFailed": "Gönderme başarısız",
+    "rebasedAndPushed": "Rebase edildi ve gönderildi.",
+    "switchedTo": "{name} dalına geçildi.",
+    "switchFailed": "Geçiş başarısız.",
+    "switchedToCarried": "{name} dalına geçildi (değişiklikler taşındı).",
+    "alreadyUpToDate": "Zaten güncel.",
+    "merged": "{upstream} birleştirildi ({n} dosya).",
+    "rebaseNotConverge": "Rebase yakınsamadı — elle çöz.",
+    "rebased": "Rebase edildi.",
+    "rebasedResolved": {
+      "one": "Rebase edildi ({n} dosya çözüldü).",
+      "other": "Rebase edildi ({n} dosya çözüldü)."
+    },
+    "detachedHead": "Eşitlenemiyor: detached HEAD durumu. Önce bir dala geç.",
+    "publishFailed": "Yayımlama başarısız.",
+    "noRemote": "Uzak yapılandırılmadı. Bu dalı yayımlamak için bir tane ekle.",
+    "failed": "başarısız"
+  },
+  "constellation": {
+    "axisStructure": "YAPI",
+    "axisCoChange": "ORTAK DEĞİŞİM",
+    "axisSpectralProfile": "SPEKTRAL PROFİL",
+    "axisPathSiblings": "YOL KARDEŞLERİ",
+    "axisDiffStructure": "DIFF YAPISI",
+    "axisSpectral": "SPEKTRAL",
+    "titleUnsorted": "SIRALANMAMIŞ",
+    "titleSingleton": "TEKİL",
+    "titleMixed": "KARIŞIK",
+    "untie": "ayır",
+    "bind": "bağla",
+    "emptyClusters": "henüz küme yok"
+  }
+}

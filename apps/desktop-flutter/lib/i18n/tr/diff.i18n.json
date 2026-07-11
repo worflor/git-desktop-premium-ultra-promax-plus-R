@@ -1,0 +1,145 @@
+{
+  "@@locale": "tr",
+  "status": {
+    "loadingTitle": "Diff yükleniyor",
+    "loadingMessage": "Dosya değişiklikleri okunuyor.",
+    "unavailableTitle": "Diff kullanılamıyor",
+    "noChangesTitle": "Değişiklik yok",
+    "noChangesMessage": "Bu dosyada gösterilecek diff içeriği yok."
+  },
+  "toolbar": {
+    "searchHint": "diff'te ara...",
+    "lineCount": {
+      "one": "{n} satır",
+      "other": "{n} satır"
+    },
+    "blameLoading": "blame...",
+    "blame": "blame",
+    "wearMapOn": "aşınma · açık",
+    "wearMapOnHint": "aşınma haritası açık — gizlemek için tıkla",
+    "wearMapOffHint": "aşınma haritasını göster (etkinlik ısı haritası)",
+    "trailBadge": "· iz"
+  },
+  "hunkDropdown": {
+    "tooltip": "Değişiklik bloğuna atla. Git bunlara hunk der.",
+    "changeCount": {
+      "one": "{n} değişiklik",
+      "other": "{n} değişiklik"
+    }
+  },
+  "stagingFailed": "Kısmi hazırlama başarısız: {error}",
+  "trail": {
+    "loading": "iz yükleniyor...",
+    "noHistory": "geçmiş bulunamadı",
+    "nowWorkingCopy": "şimdi · çalışma kopyası",
+    "stopLabel": "{hash} · {author} · {time} · {subject}"
+  },
+  "pinned": {
+    "loadingContext": "sabitlenmiş bağlam yükleniyor",
+    "pageManifold": "Manifold",
+    "pageSignals": "Sinyaller",
+    "echoesTitle": "Yankılar",
+    "technicalLedger": "Teknik Defter",
+    "noSecondaryCues": "İkincil ipucu algılanmadı.",
+    "linkedPaths": "Bağlı Yollar",
+    "moreCount": "+{n} daha",
+    "localSeam": "Yerel dikiş",
+    "sharedOwnership": "paylaşılan sahiplik",
+    "historyWarmingUp": "Geçmiş ısınıyor",
+    "echoesTotal": "{n} TOPLAM",
+    "noEchoes": "Bu diff'te yankı yok.",
+    "openRelatedFile": "İlgili dosyayı aç: {name}",
+    "inspectFile": "{name} incele",
+    "jumpEcho": "yankıya atla",
+    "copyLine": "satırı kopyala",
+    "signalTempo": "T",
+    "signalNovelty": "N",
+    "signalReach": "R",
+    "tempo": {
+      "hotOwnerLane": "Yakında güçlü bir sahiple birlikte yakın zamanlı hareket.",
+      "activeSeam": "Yakında birden çok elden yakın zamanlı hareket.",
+      "stableOwnerLane": "Tek baskın sahibi olan uzun ömürlü şerit.",
+      "sharedLongLivedSeam": "Zamanla birikmiş paylaşılan dikiş.",
+      "sharedLane": "Tek baskın sahibi olmayan paylaşılan şerit.",
+      "resolving": "Geçmiş bu satırın etrafında hâlâ çözülüyor."
+    },
+    "tone": {
+      "hot": "Sıcak",
+      "novel": "Yeni",
+      "contested": "Çekişmeli",
+      "spreading": "Yayılıyor",
+      "stable": "Kararlı"
+    },
+    "summary": {
+      "livesIn": "{concept} içinde yaşıyor",
+      "sitsInLocalSeam": "Yerel bir dikişte oturuyor",
+      "workedMostlyBy": "çoğunlukla yakındaki {owner} tarafından işlendi",
+      "echoesInSpots": {
+        "one": "{n} başka noktada yankılanıyor",
+        "other": "{n} başka noktada yankılanıyor"
+      },
+      "inspectNext": "sırada {path} incele{detail}",
+      "inspectDetail": " ({reason})"
+    },
+    "tightness": {
+      "tight": "sıkı oturuş",
+      "close": "yakın oturuş",
+      "loose": "gevşek oturuş"
+    },
+    "conceptWithTightness": "{concept} ({tightness})",
+    "storyWhyThisMatters": "Bu neden önemli",
+    "storyConfidence": "Güven",
+    "storySecondarySignal": "İkincil sinyal",
+    "storyNeighbourhood": "Komşuluk",
+    "neighbourhoodDetail": "Bu satır, mevcut kod tabanı alanında {name} ile komşu.",
+    "propagationLane": "Yayılma şeridi",
+    "propagationLaneNamed": "Yayılma şeridi: {lane}",
+    "witness": {
+      "nearbySupport": "Yakın destek · {label}",
+      "localizedMove": "Yerelleşmiş hareket · {label}",
+      "surprisingMove": "Şaşırtıcı hareket · {label}"
+    },
+    "integrity": {
+      "stableStructure": "Kararlı yapı",
+      "conflictingSignals": "Çelişen sinyaller",
+      "novelShape": "Yeni biçim"
+    },
+    "related": {
+      "testMirror": "Test aynası",
+      "semanticHistorySibling": "Anlamsal + geçmiş kardeşi",
+      "recentCoChange": "Yakın zamanlı ortak değişim",
+      "semanticSibling": "Anlamsal kardeş",
+      "relatedStructure": "İlgili yapı",
+      "tightlyBound": "sıkı bağlı",
+      "orbiting": "yörüngede",
+      "weaklyCoupled": "zayıf bağlı",
+      "baseWithTier": "{base} · {tier}"
+    },
+    "axis": {
+      "historyTrail": "geçmiş izi",
+      "testMirrorLane": "test aynası şeridi",
+      "structuralLane": "yapısal şerit",
+      "semanticNeighbourhood": "anlamsal komşuluk"
+    }
+  },
+  "hunkHint": {
+    "hiddenCount": "{n} gizli",
+    "landing": "iniş"
+  },
+  "binary": {
+    "tooLargeToPreview": "{size} MB (önizleme için çok büyük)",
+    "unableToLoadBlob": "Blob yüklenemedi",
+    "omittedKindMedia": "medya",
+    "omittedKindBinary": "ikili",
+    "omittedStub": "{kind} · gizli"
+  },
+  "media": {
+    "unableToDecodeImage": "Görüntü çözülemedi",
+    "sizeLabel": "{format}  {size}",
+    "sizeDelta": "{oldSize} → {newSize}  ({sign}{delta})",
+    "stateAdded": "eklendi",
+    "stateDeleted": "silindi",
+    "stateModified": "değiştirildi",
+    "fallbackFormatName": "İkili"
+  }
+}

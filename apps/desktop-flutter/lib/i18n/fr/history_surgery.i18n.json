@@ -34,21 +34,21 @@
     "rewriteSummary": "{affected} des {total} commits seront réécrits.",
     "updateRefsTitle": "Mise à jour des réfs",
     "updateRefsBody": "Les pointeurs de branche et d'étiquette sont déplacés vers les nouveaux SHA de commits. Les anciens objets subsistent jusqu'au ramasse-miettes. ",
-    "worktreesNeedRecheckout": "Vos {n} arbre(s) de travail devront être re-extraits.",
+    "worktreesNeedRecheckout": "Vos {n} arbre(s) de travail devront refaire un checkout.",
     "noWorktreesAffected": "Aucun arbre de travail n'est affecté.",
-    "forcePushTitle": "Poussée forcée",
-    "forcePushBody": "Après vérification de la purge, vous choisissez les branches à forcer. Utilise --force-with-lease pour échouer sans risque si quelqu'un d'autre a poussé entre-temps.",
+    "forcePushTitle": "Force push",
+    "forcePushBody": "Après vérification de la purge, vous choisissez les branches à forcer. Utilise --force-with-lease pour échouer sans risque si quelqu'un d'autre a pushé entre-temps.",
     "plumbingNote": "Contrairement à filter-repo ou BFG, ceci passe entièrement par les commandes de plomberie git (cat-file, mktree, commit-tree, update-ref). Aucune dépendance externe. Le suivi des renommages suit une chaîne par fichier — si un fichier a été copié et les deux copies renommées indépendamment, vérifiez le résultat de la purge après exécution.",
     "back": "← Retour",
     "continueLabel": "J'ai compris, continuer →"
   },
   "confirm": {
     "commitsRewritten": "{n} commits seront réécrits",
-    "forcePushRequired": "Une poussée forcée sera nécessaire pour les branches distantes",
-    "worktreesRecheckout": "{n} arbres de travail devront être re-extraits",
-    "stashesInvalid": "{n} remisages peuvent devenir invalides",
+    "forcePushRequired": "Un force push sera nécessaire pour les branches distantes",
+    "worktreesRecheckout": "{n} arbres de travail devront refaire un checkout",
+    "stashesInvalid": "{n} stash peuvent devenir invalides",
     "heading": "Cette opération réécrit l'historique git",
-    "subheading": "Elle ne peut pas être annulée automatiquement après une poussée forcée.",
+    "subheading": "Elle ne peut pas être annulée automatiquement après un force push.",
     "typeHint": "tapez {word}",
     "goBack": "Revenir",
     "begin": "Commencer la chirurgie"
@@ -75,9 +75,9 @@
     "done": "Terminé"
   },
   "forcePush": {
-    "pushing": "poussée...",
+    "pushing": "push...",
     "forcePushAll": "Tout forcer",
-    "confirmPush": "confirmer la poussée",
+    "confirmPush": "confirmer le push",
     "cancel": "annuler"
   }
 }

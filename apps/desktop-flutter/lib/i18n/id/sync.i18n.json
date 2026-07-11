@@ -1,0 +1,51 @@
+{
+  "@@locale": "id",
+  "actions": {
+    "syncLabel": "Sync",
+    "syncOpenRepoDetail": "Buka sebuah repository untuk mengelola operasi push dan pull.",
+    "detachedHeadLabel": "Detached HEAD",
+    "detachedHeadDetail": "Checkout sebuah branch sebelum push atau pull.",
+    "publishBranchLabel": "Publikasikan branch",
+    "publishBranchDetail": "Push {branch} dan set upstream tracking branch-nya.",
+    "publishButtonLabel": "Publikasikan",
+    "syncBranchLabel": "Sync branch",
+    "syncBranchDetail": "Pull {behindCount} dengan rebase, lalu push {aheadCount}.",
+    "syncBranchButtonLabel": "Pull (rebase) lalu push",
+    "pushBranchLabel": "Push branch",
+    "pushBranchDetail": "Push {count} ke {upstream}.",
+    "pushBranchButtonLabel": "Push commit",
+    "pullUpdatesLabel": "Pull update",
+    "pullUpdatesDetail": "Pull {count} dari {upstream}.",
+    "syncUpToDateDetail": "Fetch dari {upstream} dan segarkan status upstream."
+  },
+  "panel": {
+    "loadingTitle": "Memuat status remote",
+    "loadingMessage": "Memeriksa informasi tracking branch.",
+    "remoteStatusUnavailable": "Status remote tidak tersedia",
+    "noUpstream": "tanpa upstream",
+    "aheadLabel": "Di depan",
+    "behindLabel": "Di belakang",
+    "treeLabel": "Tree",
+    "runningSync": "Menjalankan sync…",
+    "fetching": "Mengambil…",
+    "fetchOnly": "Fetch saja",
+    "syncFailed": "Sync gagal",
+    "forcePushRecoveryLabel": "Force push (dengan lease)",
+    "conflictsToResolveTitle": "Konflik untuk diselesaikan",
+    "conflictsToResolveBody": "{count} perlu diselesaikan: {list}",
+    "resolveConflicts": "Selesaikan konflik",
+    "workingEllipsis": "Mengerjakan…",
+    "lastActivity": "Aktivitas terakhir: {operation}",
+    "noOutput": "Tidak ada output.",
+    "resolvedConflicts": "{count} terselesaikan.",
+    "cancelledUnchanged": "Dibatalkan, working tree tidak berubah.",
+    "uncommittedEditsBlocked": "{count} punya perubahan belum di-commit, commit dulu untuk rebase-sync ({list}).",
+    "noUpstreamForForcePush": "Tidak bisa force-push: tidak ada upstream yang dikonfigurasi untuk \"{branch}\"."
+  },
+  "forcePush": {
+    "confirmTitle": "Force push (dengan lease)?",
+    "target": "Target: {remote}/{branch}",
+    "warning": "Ini menulis ulang branch remote dengan history lokalmu. Dengan lease, operasi dibatalkan jika ada yang push ke remote setelah fetch terakhirmu, tapi perubahan yang sudah di-fetch tetap akan tertimpa. Pakai hanya saat kamu memang bermaksud rebase atau amend yang membuat branch menyimpang.",
+    "confirmButton": "Force push"
+  }
+}

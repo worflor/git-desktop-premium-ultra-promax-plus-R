@@ -1,0 +1,134 @@
+{
+  "@@locale": "nl",
+  "commitLede": {
+    "semantics": {
+      "importanceHigh": "hoog belang",
+      "importanceModerate": "matig belang",
+      "mostlyAdditions": "overwegend toevoegingen",
+      "mostlyDeletions": "overwegend verwijderingen",
+      "tightlyCoupled": "strak gekoppelde bestanden",
+      "overlapsWorkingTree": "overlapt je werkboom"
+    }
+  },
+  "seismograph": {
+    "rootTrackLabel": "(root)",
+    "dirTrackLabel": "({name})",
+    "moreLabel": "+{n} meer",
+    "filesInDir": {
+      "one": "{n} bestand in {path}/",
+      "other": "{n} bestanden in {path}/"
+    },
+    "moreFilesCount": {
+      "one": "{n} bestand meer",
+      "other": "{n} bestanden meer"
+    },
+    "breadcrumbAll": "alle",
+    "breadcrumbCurrentFocus": "Huidige focus: {target}",
+    "breadcrumbViewAllChanges": "Alle wijzigingen in deze commit bekijken",
+    "breadcrumbDrillUpTo": "Omhoog naar {target}",
+    "trackStats": {
+      "one": "{n} bestand  +{adds}  -{dels}",
+      "other": "{n} bestanden  +{adds}  -{dels}"
+    },
+    "subdirCount": {
+      "one": "{n} submap",
+      "other": "{n} submappen"
+    },
+    "segmentLeafSummary": "{path}, {adds} toegevoegd, {dels} verwijderd",
+    "segmentContainerSummary": {
+      "one": "{n} bestand, {adds} toegevoegd, {dels} verwijderd",
+      "other": "{n} bestanden, {adds} toegevoegd, {dels} verwijderd"
+    },
+    "hunkCount": {
+      "one": "{n} hunk",
+      "other": "{n} hunks"
+    },
+    "largestChangeInView": "grootste wijziging in deze weergave",
+    "conflictedTag": "conflict",
+    "dirtyTag": "vuil",
+    "drillInTag": "induiken",
+    "changeTypeRenamed": "hernoemd",
+    "changeTypeCopied": "gekopieerd",
+    "changeTypeTypechange": "typewijziging",
+    "changeTypeConflict": "conflict",
+    "coreFile": "kernbestand",
+    "staleFile": "verouderd",
+    "filterPathHint": "pad filteren",
+    "escHint": "esc"
+  },
+  "worldline": {
+    "closeWorldline": "Wereldlijn sluiten",
+    "dragToOpenWorldline": "Sleep om wereldlijn te openen"
+  },
+  "contextMenu": {
+    "currentBranchFallback": "huidige branch",
+    "applyCommitOnto": "Wijzigingen van commit toepassen op {branch}",
+    "revertCommitOn": "Wijzigingen van commit terugdraaien op {branch}"
+  },
+  "cherryPick": {
+    "paused": "Cherry-pick gepauzeerd. Rond de resterende conflicten af op de Wijzigingen-pagina.",
+    "failed": "Cherry-pick mislukt: {error}",
+    "pickedResolved": "{short} cherry-gepickt (conflicten opgelost)",
+    "picked": "{short} cherry-gepickt"
+  },
+  "revert": {
+    "paused": "Revert gepauzeerd. Rond de resterende conflicten af op de Wijzigingen-pagina.",
+    "failed": "Revert mislukt: {error}",
+    "revertedResolved": "{short} teruggedraaid (conflicten opgelost)",
+    "reverted": "{short} teruggedraaid"
+  },
+  "reflog": {
+    "createBranchFromHere": "Branch vanaf hier maken…",
+    "copyCommitHash": "Commit-hash kopiëren",
+    "createBranchDialogTitle": "Branch maken uit reflog-item",
+    "anchorLine": "Anker: {short}  ·  {summary}",
+    "branchNameHint": "branch-naam",
+    "createAction": "Maken",
+    "createBranchFailed": "Branch maken mislukt: {error}",
+    "branchCreatedAt": "Branch \"{name}\" gemaakt bij {short}."
+  },
+  "revealCeilingExceeded": {
+    "one": "Die commit ligt dieper dan de {n} geladen commit.",
+    "other": "Die commit ligt dieper dan de {n} geladen commits."
+  },
+  "deleteTagFailed": "Tag verwijderen mislukt: {error}",
+  "loadingTitle": "Geschiedenis laden",
+  "loadingMessage": "Recente commits lezen.",
+  "unavailableTitle": "Geschiedenis niet beschikbaar",
+  "toggleWorldline": "Wereldlijn omschakelen",
+  "pageTitle": "Geschiedenis",
+  "viewingLast": "Toont laatste",
+  "commitsUnit": "commits",
+  "noCommitSelectedTitle": "Geen commit geselecteerd",
+  "noCommitSelectedMessage": "Kies een commit om de wijzigingen te inspecteren.",
+  "loadingCommitTitle": "Commit laden",
+  "loadingCommitMessage": "Commit-details lezen.",
+  "commitUnavailableTitle": "Commit niet beschikbaar",
+  "couldNotLoadCommit": "Commit kon niet worden geladen.",
+  "reflogDividerLabel": "reflog",
+  "loadReflog": "Reflog laden",
+  "createTag": "Tag maken",
+  "newTagName": "Nieuwe tag-naam",
+  "newTagNameError": "Nieuwe tag-naam — {error}",
+  "allFilesHeader": {
+    "one": "{n} bestand · alle wijzigingen",
+    "other": "{n} bestanden · alle wijzigingen"
+  },
+  "allChangesLabel": "alle wijzigingen",
+  "rebase": {
+    "firstCommitCannotBe": "Eerste commit kan niet {action}",
+    "rebaseCommitCount": {
+      "one": "{n} commit rebasen",
+      "other": "{n} commits rebasen"
+    },
+    "resetLabel": "resetten",
+    "dragToReorderHint": "sleep om te herordenen, kies actie per commit",
+    "newMessageHint": "nieuw bericht",
+    "runningEllipsis": "…",
+    "startRebase": "Rebase starten"
+  },
+  "inFlight": {
+    "header": "ONDERWEG",
+    "deskFallbackLabel": "desk"
+  }
+}

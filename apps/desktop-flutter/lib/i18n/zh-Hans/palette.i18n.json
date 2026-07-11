@@ -135,7 +135,7 @@
     "changes": "更改",
     "history": "历史",
     "branches": "分支",
-    "xray": "透视",
+    "xray": "X-Ray",
     "settings": "设置",
     "refresh": "刷新"
   },
@@ -175,8 +175,8 @@
     "subtitle": "重写历史以永久移除文件"
   },
   "orrery": {
-    "label": "天象仪",
-    "subtitle": "沿流形拖拽仓库的结构历史"
+    "label": "Orrery",
+    "subtitle": "沿manifold拖拽仓库的结构历史"
   },
   "command": {
     "complete": "{label}完成",

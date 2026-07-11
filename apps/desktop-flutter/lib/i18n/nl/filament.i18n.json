@@ -1,0 +1,23 @@
+{
+  "@@locale": "nl",
+  "noRepositoryOpen": "Geen repository geopend.",
+  "scanningProgress": "scannen {scanned} / {total} bestanden…",
+  "findingsAcrossFiles": "{count} bevindingen in {files} bestanden",
+  "copiedFindings": "{count} bevindingen gekopieerd",
+  "copy": "KOPIËREN",
+  "noFindings": "Geen bevindingen in de uitvoeringsstroom.",
+  "severity": {
+    "critical": "kritiek",
+    "warn": "waarschuwing",
+    "info": "info",
+    "joint": "gewricht"
+  },
+  "kind": {
+    "staleValue": "verouderde waarde",
+    "temporalShift": "temporele verschuiving",
+    "contextInversion": "context-inversie",
+    "contradictoryFlow": "tegenstrijdige stroom"
+  },
+  "lineLabel": "R{line}",
+  "findingSourceWithKind": "{source} — {kind}"
+}

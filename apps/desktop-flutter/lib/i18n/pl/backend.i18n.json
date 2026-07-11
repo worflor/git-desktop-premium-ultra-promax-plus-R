@@ -1,0 +1,32 @@
+{
+  "@@locale": "pl",
+  "ops": {
+    "merge": "Merge",
+    "pull": "Pull",
+    "apply": "Zastosowanie",
+    "switchOp": "Przełączanie",
+    "sync": "Synchr."
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} — anulowano.",
+    "complete": "{op} — zakończono.",
+    "conflictsLeft": {
+      "one": "Pozostał {n} konflikt — rozwiąż go na stronie „Zmiany”.",
+      "few": "Pozostały {n} konflikty — rozwiąż je na stronie „Zmiany”.",
+      "many": "Pozostało {n} konfliktów — rozwiąż je na stronie „Zmiany”.",
+      "other": "Pozostało {n} konfliktu — rozwiąż je na stronie „Zmiany”."
+    },
+    "resolvedConflicts": {
+      "one": "Rozwiązano {n} konflikt.",
+      "few": "Rozwiązano {n} konflikty.",
+      "many": "Rozwiązano {n} konfliktów.",
+      "other": "Rozwiązano {n} konfliktu."
+    },
+    "uncommittedEdits": {
+      "one": "{n} plik ma zmiany bez commita — najpierw je zacommituj.",
+      "few": "{n} pliki mają zmiany bez commita — najpierw je zacommituj.",
+      "many": "{n} plików ma zmiany bez commita — najpierw je zacommituj.",
+      "other": "{n} pliku ma zmiany bez commita — najpierw je zacommituj."
+    }
+  }
+}

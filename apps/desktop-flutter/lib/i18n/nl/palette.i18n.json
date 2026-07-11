@@ -1,0 +1,201 @@
+{
+  "active": "actief",
+  "prefixes": {
+    "askHint": "vraag: [vraag]",
+    "nearHint": "nabij: [bestand]",
+    "whoHint": "wie: [bestand]",
+    "logHint": "log: [bericht]",
+    "runHint": "start: [tool]",
+    "askLabel": "Vraag {name}: {body}",
+    "nearSubtitle": "{path} · φ={phi}",
+    "whoReviewersLabel": "{name} — {reviewers}",
+    "whoReviewersSubtitle": "{path} · {count} reviewers · {touches} aanrakingen",
+    "whoTouchesLabel": "{name} — {touches} aanrakingen",
+    "whoTouchesSubtitle": "{path} · geen reviewers vastgelegd"
+  },
+  "chips": {
+    "ai": "AI",
+    "near": "NABIJ",
+    "who": "WIE",
+    "term": "TERM",
+    "gui": "GUI",
+    "dev": "DEV",
+    "debug": "DEBUG",
+    "alpha": "ALPHA",
+    "hot": "HEET",
+    "key": "KEY",
+    "web": "WEB",
+    "sys": "SYS",
+    "clip": "CLIP",
+    "sync": "SYNC",
+    "force": "FORCE",
+    "pr": "PR",
+    "draft": "DRAFT",
+    "undo": "UNDO",
+    "thm": "THM",
+    "ver": "VER",
+    "desk": "BUREAU",
+    "det": "DET",
+    "main": "MAIN",
+    "head": "HEAD",
+    "gone": "WEG",
+    "remote": "REMOTE",
+    "local": "LOKAAL",
+    "an": "AN",
+    "lw": "LW"
+  },
+  "predictive": {
+    "momentumSuffix": "{percent}% momentum"
+  },
+  "topTouched": {
+    "subtitle": "{count} aanrakingen · {path}"
+  },
+  "coherence": {
+    "label": "Staging-coherentie: {percent}%",
+    "subtitle": "{count} bestanden"
+  },
+  "keystone": {
+    "subtitle": "{path} · sluitsteen {score}"
+  },
+  "repoSub": {
+    "changes": "Wijzigingen in {name}",
+    "history": "Geschiedenis in {name}",
+    "branches": "Branches in {name}",
+    "terminal": "Terminal in {name}",
+    "generateCommit": "Commit genereren · {name}",
+    "reviewChanges": "Wijzigingen reviewen in {name}",
+    "muse": "Muse in {name}"
+  },
+  "desks": {
+    "mainWorktree": "hoofd-worktree",
+    "detached": "detached",
+    "dirty": "{count} vuil"
+  },
+  "actions": {
+    "openInBrowser": "Openen in browser",
+    "terminal": "Terminal",
+    "revealInFiles": "Tonen in bestandsbeheer",
+    "copyPath": "Pad kopiëren",
+    "copyBranch": "Branch kopiëren"
+  },
+  "tools": {
+    "launch": "{label} starten"
+  },
+  "gitCommands": {
+    "fetch": "Fetch",
+    "pull": "Pull",
+    "pullBehind": "{count} achter",
+    "pullBehindUpstream": "{behind} {upstream}",
+    "push": "Push",
+    "pushCommits": {"one": "{n} commit", "other": "{n} commits"},
+    "pushCommitsUpstream": "{commits} naar {upstream}",
+    "forcePush": "Force-push",
+    "forcePushNoUpstream": "Force-push niet mogelijk: geen upstream ingesteld voor {branch}.",
+    "commit": "Commit",
+    "stageAll": "Alles stagen",
+    "unstageAll": "Alles unstagen",
+    "discardAll": "Alles verwerpen",
+    "createBranch": "Branch maken",
+    "deleteBranch": "Branch verwijderen",
+    "renameBranch": "Branch hernoemen",
+    "stash": "Stash",
+    "stashPop": "Stash pop",
+    "stashApply": "Stash apply",
+    "stashDrop": "Stash drop",
+    "createTag": "Tag maken",
+    "cherryPick": "Cherry-pick",
+    "revert": "Revert",
+    "stashConflictMessage": "Stash toegepast met conflicten. Los ze op de Wijzigingen-pagina op."
+  },
+  "pr": {
+    "create": "PR maken",
+    "merge": "PR mergen",
+    "markReady": "PR als klaar markeren"
+  },
+  "ai": {
+    "generateCommit": "Commit genereren",
+    "reviewChanges": "Wijzigingen reviewen",
+    "runMuse": "Muse starten",
+    "debugRepo": "{name} debuggen",
+    "describeSymptom": "beschrijf een symptoom",
+    "viewResult": "{kind} bekijken",
+    "unseenResult": "ongezien resultaat",
+    "runningResult": "AI: {kind}…",
+    "running": "bezig",
+    "kindCommitMessage": "Commit-bericht",
+    "kindCodeReview": "Code-review",
+    "kindMuseResult": "Muse-resultaat",
+    "kindPresentation": "Presentatie",
+    "kindDebugResult": "Debug-resultaat"
+  },
+  "undo": {
+    "cancel": "Annuleren: {label}"
+  },
+  "navigation": {
+    "changes": "Wijzigingen",
+    "history": "Geschiedenis",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "settings": "Instellingen",
+    "refresh": "Verversen"
+  },
+  "settings": {
+    "reduceMotion": "Beweging verminderen",
+    "animateLogoUnfocused": "Logo animeren zonder focus",
+    "instantBlameHover": "Directe blame bij hover",
+    "autoSelectChanges": "Wijzigingen auto-selecteren",
+    "fetchOnlineIssues": "Online issues ophalen",
+    "rememberWip": "Work in progress onthouden",
+    "hideAiFeatures": "AI-functies verbergen",
+    "crashReporting": "Crashrapportage",
+    "aiReadOnly": "AI alleen-lezen",
+    "stashCabinetExpanded": "Stash-kast uitgeklapt",
+    "fileSortInverted": "Bestandssortering omgekeerd"
+  },
+  "info": {
+    "version": "Manifold {version}"
+  },
+  "debug": {
+    "engineStatus": "Engine-status",
+    "engineStatusSubtitle": "LogosGit spectrale-engine-diagnostiek",
+    "fileCoupling": "Bestandskoppeling",
+    "fileCouplingSubtitle": "Dichtstbijzijnde co-change-buren voor gestagede bestanden",
+    "themeSpecimen": "Thema-specimen",
+    "themeSpecimenSubtitle": "Alle kleuren, iconen, tekst-tiers en geometrie"
+  },
+  "dev": {
+    "testMergeEditor": "Merge-editor testen",
+    "testHistorySurgery": "Geschiedenis-chirurgie testen",
+    "back": "terug",
+    "cancel": "annuleren",
+    "buildingConflicts": "testconflicten uit de geschiedenis bouwen…"
+  },
+  "historySurgery": {
+    "label": "Geschiedenis-chirurgie",
+    "subtitle": "Geschiedenis herschrijven om bestanden permanent te verwijderen"
+  },
+  "orrery": {
+    "label": "Orrery",
+    "subtitle": "Scrub de structurele geschiedenis van de repo door de manifold"
+  },
+  "command": {
+    "complete": "{label} voltooid",
+    "failed": "{label} mislukt: {message}",
+    "copy": "Kopiëren"
+  },
+  "search": {
+    "hintDefault": "alles doorzoeken...",
+    "hintElevated": "verhoogd — alle acties",
+    "emptyTypeToSearch": "typ om te zoeken",
+    "emptyNoResults": "geen resultaten"
+  },
+  "wick": {
+    "label": "wick",
+    "coupledFallback": "gekoppeld"
+  },
+  "gitCache": {
+    "current": "actueel",
+    "staged": "gestaged",
+    "modified": "gewijzigd"
+  }
+}

@@ -120,6 +120,6 @@
   },
   "inFlight": {
     "header": "进行中",
-    "deskFallbackLabel": "工作台"
+    "deskFallbackLabel": "Desk"
   }
 }

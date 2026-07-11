@@ -1,0 +1,80 @@
+{
+  "@@locale": "id",
+  "listSeparator": ", ",
+  "cancel": "Batal",
+  "close": "Tutup",
+  "save": "Simpan",
+  "delete": "Hapus",
+  "retry": "Coba lagi",
+  "copy": "Salin",
+  "copied": "Tersalin",
+  "done": "Selesai",
+  "loading": "Memuat…",
+  "fileCount": {
+    "other": "{n} file"
+  },
+  "commitCount": {
+    "other": "{n} commit"
+  },
+  "branchCount": {
+    "other": "{n} branch"
+  },
+  "localCommitCount": {
+    "other": "{n} commit lokal"
+  },
+  "remoteCommitCount": {
+    "other": "{n} commit remote"
+  },
+  "conflictedFileCount": {
+    "other": "{n} file konflik"
+  },
+  "time": {
+    "now": "sekarang",
+    "justNow": "baru saja",
+    "today": "HARI INI",
+    "minutesAgo": "{n}mnt lalu",
+    "hoursAgo": "{n}j lalu",
+    "daysAgo": "{n}h lalu",
+    "weeksAgo": "{n}mg lalu",
+    "monthsAgo": "{n}bl lalu",
+    "yearsAgo": {
+      "one": "{n}th lalu",
+      "other": "{n}th lalu"
+    },
+    "minutesShort": "{n}mnt",
+    "hoursShort": "{n}j",
+    "daysShort": "{n}h",
+    "weeksShort": "{n}mg",
+    "monthsShort": "{n}bl",
+    "yearsShort": {
+      "one": "{n}th",
+      "other": "{n}th"
+    },
+    "commitMonthsShort": "{n}bl",
+    "idle": "diam",
+    "idleDays": "diam {n} hari",
+    "idleYears": {
+      "other": "diam {n} tahun"
+    },
+    "monthAbbrevs(slang=list)": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "Mei",
+      "Jun",
+      "Jul",
+      "Agu",
+      "Sep",
+      "Okt",
+      "Nov",
+      "Des"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

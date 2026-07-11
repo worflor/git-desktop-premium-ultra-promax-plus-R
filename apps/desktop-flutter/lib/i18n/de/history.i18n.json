@@ -129,6 +129,6 @@
   },
   "inFlight": {
     "header": "UNTERWEGS",
-    "deskFallbackLabel": "tisch"
+    "deskFallbackLabel": "desk"
   }
 }

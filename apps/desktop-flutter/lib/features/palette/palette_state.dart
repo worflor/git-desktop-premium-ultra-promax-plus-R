@@ -25,12 +25,33 @@ import 'palette_registry.dart';
 import 'palette_scorer.dart';
 
 typedef _EntryRebuilder = List<PaletteEntry> Function(
-    Map<String, String> forgeByPath);
+    Map<String, String?> forgeByPath);
 
 class PaletteState extends ChangeNotifier {
+  PaletteState() {
+    // Rebuild the open palette's entries on a live locale switch. The entry
+    // labels are baked at open() into _staticEntries, so moving the forge
+    // fallback to render-time isn't enough on its own — the whole list has to
+    // be re-materialized. buildStaticEntries reads the global `t` (now on the
+    // new locale) via the rebuilder; the forge cache is locale-invariant so it
+    // carries over. No-op while the palette is closed (rebuilder is null).
+    _localeSub = LocaleSettings.getLocaleStream().listen((_) {
+      if (_disposed || _rebuilder == null) return;
+      _staticEntries = _rebuilder!(_forgeCache);
+      _reScore();
+      notifyListeners();
+    });
+  }
+
+  StreamSubscription<AppLocale>? _localeSub;
   final PaletteScorer _scorer = PaletteScorer();
   final PaletteGitCache _gitCache = PaletteGitCache();
-  final Map<String, String> _forgeCache = {};
+  // Value is the resolved forge brand ("GitHub"/"GitLab", locale-invariant),
+  // or null for a resolved-but-local repo. Keyed by path only: containsKey
+  // distinguishes "resolved, no forge" (present-null) from "not yet warmed"
+  // (absent). The translated "local" chip is NOT stored here — it's resolved
+  // fresh at render so it tracks live locale switches.
+  final Map<String, String?> _forgeCache = {};
 
   /// Notifies listeners, but never *during* a build/layout/paint phase.
   ///
@@ -131,6 +152,7 @@ class PaletteState extends ChangeNotifier {
   void dispose() {
     if (_disposed) return; // idempotent — safe against a double dispose
     _disposed = true;
+    _localeSub?.cancel();
     _debounce?.cancel();
     _hoverDebounce?.cancel();
     _persistTimer?.cancel();
@@ -231,7 +253,9 @@ class PaletteState extends ChangeNotifier {
       if (_forgeCache.containsKey(path)) continue;
       final info = await resolveRepoWebInfo(path);
       if (gen != _generation) return;
-      _forgeCache[path] = info?.label ?? t.palette.chips.local;
+      // Cache the resolution (brand or null-for-local), never the translated
+      // fallback — that would freeze the "local" chip in one language.
+      _forgeCache[path] = info?.label;
       forgeChanged = true;
     }
 

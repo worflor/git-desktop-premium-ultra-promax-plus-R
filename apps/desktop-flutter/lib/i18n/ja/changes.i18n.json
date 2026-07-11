@@ -196,8 +196,8 @@
   "snack": {
     "sameWorktree": "同じ作業ツリー — 移すものがありません。",
     "diffFailed": "差分に失敗しました：{error}",
-    "deskEmpty": "デスクにはあなたより先行するものがありません — 空の移動です。",
-    "sourceDesk": "デスク {label}",
+    "deskEmpty": "Desk にはあなたより先行するものがありません — 空の移動です。",
+    "sourceDesk": "Desk {label}",
     "shelfReadFailed": "棚の読み込みに失敗しました：{error}",
     "shelfEmpty": "空の棚 — 移すものがありません。",
     "sourceShelf": "棚 {label}",
@@ -228,7 +228,7 @@
   },
   "dropHint": {
     "fromShelf": "ドロップしてこの棚の変更をここに取り込む",
-    "fromDesk": "ドロップしてこのデスクの変更をここに取り込む"
+    "fromDesk": "ドロップしてこの Desk の変更をここに取り込む"
   },
   "diffEmpty": {
     "title": "ファイルが未選択",

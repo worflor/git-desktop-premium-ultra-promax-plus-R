@@ -1,0 +1,83 @@
+{
+  "@@locale": "nl",
+  "chrome": {
+    "title": "Geschiedenis-chirurgie",
+    "alphaBadge": "alpha",
+    "dryRunBadge": "DROOGRUN"
+  },
+  "select": {
+    "prompt": "Kies bestanden om uit de geschiedenis te verwijderen",
+    "selectedCount": "{n} geselecteerd",
+    "searchHint": "zoeken...",
+    "readingTree": "boom lezen...",
+    "continueDisabled": "kies bestanden om door te gaan",
+    "continueEnabled": "doorgaan →",
+    "toPurgeCount": "{n} te wissen",
+    "analyzing": "analyseren...",
+    "riskLow": "laag risico",
+    "riskModerate": "matig risico",
+    "riskHigh": "hoog risico",
+    "impactCommitsLabel": "commits",
+    "impactBranchesLabel": "branches",
+    "impactWorktreesLabel": "worktrees",
+    "impactCouplingLabel": "koppeling",
+    "impactCouplingIsland": "eiland",
+    "impactCouplingNeighbors": "{n} buren",
+    "renameArrow": "← {path}"
+  },
+  "understand": {
+    "heading": "Zo werkt dit",
+    "backupTitle": "Back-up",
+    "backupBody": "Elke branch- en tag-ref wordt naar een back-up-namespace gekopieerd voordat er iets verandert. Als er iets misgaat, herstelt één klik de oorspronkelijke staat.",
+    "rewriteTitle": "Herschrijven",
+    "rewriteBody": "Elke commit wordt van root tot tip doorlopen. Voor elke commit die de doelbestanden bevat, wordt een nieuwe commit gemaakt met die bestanden verwijderd uit de boom. Ouderketens worden opnieuw gekoppeld om de topologie te behouden. ",
+    "rewriteSummary": "{affected} van {total} commits worden herschreven.",
+    "updateRefsTitle": "Refs bijwerken",
+    "updateRefsBody": "Branch- en tag-pointers worden verplaatst naar de nieuwe commit-SHA's. De oude objecten blijven bestaan tot de garbage collection ze opruimt. ",
+    "worktreesNeedRecheckout": "Je {n} worktree(s) moeten opnieuw worden uitgecheckt.",
+    "noWorktreesAffected": "Geen worktrees getroffen.",
+    "forcePushTitle": "Force-push",
+    "forcePushBody": "Na het verifiëren van het wissen kies je welke branches je force-pusht. Gebruikt --force-with-lease zodat het veilig faalt als iemand anders ondertussen heeft gepusht.",
+    "plumbingNote": "Anders dan filter-repo of BFG loopt dit volledig via git-plumbing-commando's (cat-file, mktree, commit-tree, update-ref). Geen externe afhankelijkheden. De hernoem-tracking volgt één keten per bestand — als een bestand is gekopieerd en beide kopieën onafhankelijk zijn hernoemd, verifieer dan het wisresultaat na uitvoering.",
+    "back": "← Terug",
+    "continueLabel": "Ik snap het, doorgaan →"
+  },
+  "confirm": {
+    "commitsRewritten": "{n} commits worden herschreven",
+    "forcePushRequired": "Voor externe branches is een force-push vereist",
+    "worktreesRecheckout": "{n} worktrees moeten opnieuw worden uitgecheckt",
+    "stashesInvalid": "{n} stashes kunnen ongeldig worden",
+    "heading": "Deze operatie herschrijft de git-geschiedenis",
+    "subheading": "Na het force-pushen kan het niet automatisch ongedaan worden gemaakt.",
+    "typeHint": "typ {word}",
+    "goBack": "Terug",
+    "begin": "Chirurgie beginnen"
+  },
+  "execute": {
+    "preparing": "Voorbereiden...",
+    "backingUpRefs": "Refs back-uppen...",
+    "rewritingCommits": "Commits herschrijven...",
+    "updatingRefs": "Refs bijwerken..."
+  },
+  "verify": {
+    "complete": "Chirurgie voltooid",
+    "failed": "Chirurgie mislukt",
+    "commitsRewrittenLabel": "Commits herschreven",
+    "refsUpdatedLabel": "Refs bijgewerkt",
+    "oldHeadLabel": "Oude HEAD",
+    "newHeadLabel": "Nieuwe HEAD",
+    "purgeVerifiedLabel": "Wissen geverifieerd",
+    "purgeClean": "schoon",
+    "purgeTracesRemain": "SPOREN RESTEREN",
+    "displacedWorktrees": "Verplaatste worktrees",
+    "undoSurgery": "Chirurgie ongedaan maken",
+    "rolledBack": "Teruggezet naar back-up-refs.",
+    "done": "Klaar"
+  },
+  "forcePush": {
+    "pushing": "pushen...",
+    "forcePushAll": "Alles force-pushen",
+    "confirmPush": "push bevestigen",
+    "cancel": "annuleren"
+  }
+}

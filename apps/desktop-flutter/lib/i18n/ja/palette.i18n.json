@@ -135,7 +135,7 @@
     "changes": "変更",
     "history": "履歴",
     "branches": "ブランチ",
-    "xray": "X 線",
+    "xray": "X-Ray",
     "settings": "設定",
     "refresh": "更新"
   },
@@ -175,8 +175,8 @@
     "subtitle": "履歴を書き換えてファイルを永久に削除"
   },
   "orrery": {
-    "label": "オーラリー",
-    "subtitle": "リポジトリの構造的履歴をマニフォールドでスクラブ"
+    "label": "Orrery",
+    "subtitle": "リポジトリの構造的履歴をmanifoldでスクラブ"
   },
   "command": {
     "complete": "{label}が完了しました",

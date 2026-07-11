@@ -1,0 +1,87 @@
+{
+  "@@locale": "nl",
+  "listSeparator": ", ",
+  "cancel": "Annuleren",
+  "close": "Sluiten",
+  "save": "Opslaan",
+  "delete": "Verwijderen",
+  "retry": "Opnieuw",
+  "copy": "Kopiëren",
+  "copied": "Gekopieerd",
+  "done": "Klaar",
+  "loading": "Laden…",
+  "fileCount": {
+    "one": "{n} bestand",
+    "other": "{n} bestanden"
+  },
+  "commitCount": {
+    "one": "{n} commit",
+    "other": "{n} commits"
+  },
+  "branchCount": {
+    "one": "{n} branch",
+    "other": "{n} branches"
+  },
+  "localCommitCount": {
+    "one": "{n} lokale commit",
+    "other": "{n} lokale commits"
+  },
+  "remoteCommitCount": {
+    "one": "{n} externe commit",
+    "other": "{n} externe commits"
+  },
+  "conflictedFileCount": {
+    "one": "{n} bestand met conflict",
+    "other": "{n} bestanden met conflict"
+  },
+  "time": {
+    "now": "nu",
+    "justNow": "zojuist",
+    "today": "VANDAAG",
+    "minutesAgo": "{n}m geleden",
+    "hoursAgo": "{n}u geleden",
+    "daysAgo": "{n}d geleden",
+    "weeksAgo": "{n}w geleden",
+    "monthsAgo": "{n}mnd geleden",
+    "yearsAgo": {
+      "one": "{n}j geleden",
+      "other": "{n}j geleden"
+    },
+    "minutesShort": "{n}m",
+    "hoursShort": "{n}u",
+    "daysShort": "{n}d",
+    "weeksShort": "{n}w",
+    "monthsShort": "{n}mnd",
+    "yearsShort": {
+      "one": "{n}j",
+      "other": "{n}j"
+    },
+    "commitMonthsShort": "{n}m",
+    "idle": "inactief",
+    "idleDays": "inactief {n} dagen",
+    "idleYears": {
+      "one": "inactief {n} jaar",
+      "other": "inactief {n} jaar"
+    },
+    "monthAbbrevs(slang=list)": [
+      "jan",
+      "feb",
+      "mrt",
+      "apr",
+      "mei",
+      "jun",
+      "jul",
+      "aug",
+      "sep",
+      "okt",
+      "nov",
+      "dec"
+    ]
+  },
+  "size": {
+    "bytes": "{n} B",
+    "kb": "{n} KB",
+    "mb": "{n} MB",
+    "gb": "{n} GB"
+  }
+}

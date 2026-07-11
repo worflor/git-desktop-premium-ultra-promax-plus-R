@@ -1,0 +1,18 @@
+{
+  "@@locale": "it",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "PERCHÉ FLUTTER?",
+      "body": "La prima versione di questo era un'app Tauri (Rust + TypeScript). Sapevo già che sembrava lenta. Poi ho beccato uno streamer dire la stessa cosa in una live che di solito non guardo, e quella è stata la spinta a cambiare finalmente. Lui non ha suggerito Flutter; tutt'altro. Dart l'ho trovato da solo, ho buttato giù un prototipo, e l'avvio è passato da circa 15 secondi a meno di uno. Come il giorno e la notte. Addio era Tauri.\n\nLa pipeline di rendering di Flutter è più vicina a un motore di gioco che a un DOM, e per un'app desktop dove la UI è il prodotto questo è tutto. Dart si è rivelato anche un linguaggio davvero valido. La matematica dietro il motore spettrale è stata prototipata prima in Rust, quindi quel lavoro si è trasferito senza problemi.\n\nFlutter è cross-platform di default, il che è ottimo, ma è googloso di natura, quindi ci sono un po' di stranezze."
+    },
+    "spectralEngine": {
+      "question": "COS'È IL MOTORE SPETTRALE?",
+      "body": "Ogni volta che fai un commit, i file che modifichi insieme formano schemi nel tempo. Il motore spettrale legge il tuo grafo dei commit e scompone questi schemi di co-change in segnali: quali file sono accoppiati, quanto strettamente, e che ruolo strutturale hanno nel repo. In pratica analisi spettrale della tua cronologia di sviluppo. In un git client. Di proposito.\n\nLa matematica è nuova, quindi la tratto come il feel di un gioco: la regolo, la testo, la aggiusto, e vado avanti finché i segnali non sembrano corretti.\n\nQuei segnali alimentano tutto. Il sismografo nella cronologia, le barre dipinte sotto i titoli dei commit, il sistema di review, Muse, la costellazione dei file. L'intera app ragiona da questo strato in giù, non al contrario."
+    },
+    "whereGoing": {
+      "question": "DOVE STA ANDANDO TUTTO QUESTO?",
+      "body": "Il primo traguardo è la piena parità con GitHub Desktop, SourceTree e GitKraken. Un git client cross-platform che sembra veloce e gestisce i fondamentali meglio di qualsiasi altro. Ci siamo quasi. Il motore spettrale ci dà già un vantaggio per le operazioni che gli altri client ti fanno ragionare a mano.\n\nOltre a questo, l'obiettivo è superare ogni altro git client in velocità, accessibilità, intelligenza e UX complessiva. C'è più roba in cantiere di quanto annunciato qui."
+    }
+  }
+}

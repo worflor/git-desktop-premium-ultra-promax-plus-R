@@ -1,0 +1,591 @@
+{
+  "@@locale": "nl",
+  "language": {
+    "title": "Taal",
+    "summary": "UI-taal voor deze app. Git-uitvoer, logs en diagnostiek blijven Engels, zodat bugrapporten doorzoekbaar blijven.",
+    "label": "WEERGAVETAAL",
+    "systemDefault": "Systeemstandaard",
+    "systemDefaultDetail": "Volgt je OS-taal ({resolved})",
+    "disclosureSource": "Brontaal, geschreven door de ontwikkelaars.",
+    "disclosureAi": "Machinaal vertaald door {model}, nog niet door mensen gecontroleerd. Correcties welkom.",
+    "disclosureAiReviewed": "Machinaal vertaald door {model}. {percent}% door mensen gecontroleerd.",
+    "disclosureHuman": "Menselijke vertaling, onderhouden door de community.",
+    "reviewedBy": "Gecontroleerd door {names}."
+  },
+  "sectionLabels": {
+    "preferences": "Voorkeuren",
+    "shortcuts": "Sneltoetsen",
+    "behaviour": "Gedrag",
+    "aiProviders": "AI-providers",
+    "modelSlots": "Modelslots",
+    "tools": "Tools",
+    "diagnostics": "Diagnostiek",
+    "offenders": "Overtreders",
+    "release": "Release"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Guardrail-profiel kon niet worden opgeslagen.",
+    "saveRetentionPolicy": "Bewaarbeleid kon niet worden opgeslagen.",
+    "saveUpdateChannel": "Update-kanaal kon niet worden opgeslagen.",
+    "saveModelSelection": "AI-modelselectie kon niet worden opgeslagen.",
+    "saveModelAlias": "Model-alias kon niet worden opgeslagen.",
+    "saveCommitMessageModelSlot": "Modelslot voor commit-berichten kon niet worden opgeslagen.",
+    "saveReviewModelSlot": "Review-modelslot kon niet worden opgeslagen.",
+    "saveCommitMessageCustomPrompt": "Eigen commit-bericht-prompt kon niet worden opgeslagen.",
+    "saveReviewGuide": "Review-gids kon niet worden opgeslagen.",
+    "saveMuseNotes": "Muse-notities konden niet worden opgeslagen.",
+    "saveReviewDoubleCheck": "Review-dubbelcheckmodus kon niet worden opgeslagen.",
+    "saveApiPiggybackCli": "API-piggyback-CLI kon niet worden opgeslagen.",
+    "clearLocalData": "Lokale gegevens konden niet worden gewist: {error}"
+  },
+  "promptStatus": {
+    "editing": "Bewerken",
+    "saving": "Opslaan",
+    "saveFailed": "Opslaan mislukt"
+  },
+  "clearData": {
+    "dialogTitle": "Lokale gegevens wissen",
+    "clear": "Wissen",
+    "confirmDiagnostics": "Lokale diagnostiek-samples en performance-timings wissen?",
+    "confirmAudit": "Lokale AI-audit-metadata wissen?",
+    "confirmAll": "Alle lokale diagnostiek-samples en AI-audit-metadata wissen?",
+    "confirmWipeAll": "Alle lokale app-gegevens — inclusief de lijst met recente repo's — wissen en afsluiten? Je daadwerkelijke git-repo's op schijf worden niet aangeraakt.",
+    "confirmReset": "Lokale app-gegevens resetten en afsluiten?\n\nInstellingen, thema, onboarding, AI-voorkeuren, telemetrie en engram-caches worden gewist. Je lijst met recente repo's blijft behouden."
+  },
+  "guardrailStageLabels": ["Los", "Gebalanceerd", "Streng", "Paranoïde"],
+  "guardrailMacro": {
+    "loose": "los",
+    "balanced": "gebalanceerd",
+    "strict": "streng",
+    "paranoid": "paranoïde"
+  },
+  "guardrails": {
+    "title": "Guardrails",
+    "summary": "Hoe oplettend de automatisering is door de hele ervaring heen."
+  },
+  "appearance": {
+    "title": "Uiterlijk",
+    "summary": "Globale sfeer en ambiance van de interface."
+  },
+  "retention": {
+    "title": "Lokale gegevensbewaring",
+    "summaryDiagnostics": "Bewaarbeleid voor diagnostiek.",
+    "summaryWithAudit": "Bewaarbeleid voor diagnostiek en AI-audit.",
+    "unitDays": "dagen",
+    "unitMb": "MB",
+    "includesNote": "Omvat diagnostiek, performance-timings en metadata."
+  },
+  "navigation": {
+    "title": "Navigatie en dynamiek",
+    "summaryShortcuts": "Sneltoetsen en interfacegedrag.",
+    "summaryWithAi": "Sneltoetsen, interfacegedrag en AI-routing."
+  },
+  "behaviour": {
+    "title": "Gedragsdynamiek"
+  },
+  "retentionClear": {
+    "diag": "Diag",
+    "audit": "Audit",
+    "all": "Alle",
+    "clearsHint": "<-- wist"
+  },
+  "channels": {
+    "stable": "STABLE",
+    "beta": "BETA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "bij",
+    "updateAvailable": "{version} beschikbaar",
+    "notConfigured": "geen update-server",
+    "notFound": "geen {channel}-releases",
+    "unreachable": "onbereikbaar",
+    "badManifest": "ongeldig manifest"
+  },
+  "keybindingProfile": {
+    "label": "Sneltoetsprofiel",
+    "porcelain": "Porcelain",
+    "numeric": "Numeriek",
+    "porcelainDescription": "Akkoord-sneltoetsen (G dan C, H, B…).",
+    "numericDescription": "Numerieke enkeltoets-sneltoetsen (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "api-key",
+    "endpointHint": "endpoint",
+    "test": "Testen",
+    "hide": "Verbergen",
+    "show": "Tonen"
+  },
+  "shortcuts": {
+    "navigate": "navigeren",
+    "staging": "staging",
+    "branchesPrs": "branches & PRs",
+    "modifiers": "modifiers",
+    "changes": "Wijzigingen",
+    "history": "Geschiedenis",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "switchAlways": "Wisselen (altijd)",
+    "search": "Zoeken",
+    "dismiss": "Sluiten",
+    "refresh": "Verversen",
+    "shortcuts": "Sneltoetsen",
+    "nextChange": "Volgende wijziging",
+    "prevChange": "Vorige wijziging",
+    "toggleLine": "Regel omschakelen",
+    "toggleHunk": "Hunk omschakelen",
+    "toggleFile": "Bestand omschakelen",
+    "pinContext": "Context vastzetten",
+    "commit": "Commit",
+    "acceptHint": "Hint accepteren",
+    "undo": "Ongedaan maken",
+    "navigateRow": "Navigeren",
+    "expand": "Uitklappen",
+    "checkout": "Checkout",
+    "approve": "Goedkeuren",
+    "requestChanges": "Wijzigingen vragen",
+    "selectRange": "Bereik selecteren",
+    "extendedMenu": "Uitgebreid menu"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "AI alleen-lezen-modus",
+    "aiReadOnlyDescription": "Voorkomt dat AI automatisch wijzigingen schrijft of staged.",
+    "logoMotionLabel": "Logo animeert wanneer weggetabt",
+    "logoMotionDescriptionEnabled": "Het is ontworpen om efficiënt te zijn, kwets zijn gevoelens niet",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Work in progress onthouden",
+    "rememberWipDescription": "Bewaar je commit-concepten en bestandsselectie tussen sessies.",
+    "stashCabinetLabel": "Stash-kast start uitgeklapt",
+    "stashCabinetDescription": "Toon de archiefkast-lade standaard open wanneer een repo bergingen heeft.",
+    "instantBlameLabel": "Directe blame bij hover",
+    "instantBlameDescription": "Sla de vertraging van 180 ms over voordat blame-info op een diff-regel verschijnt.",
+    "autoSelectLabel": "Nieuwe wijzigingen auto-selecteren",
+    "autoSelectDescription": "Nieuw getrackte of gewijzigde bestanden worden automatisch aan de commit-selectie toegevoegd.",
+    "fetchIssuesLabel": "Online issues ophalen bij laden van branches",
+    "fetchIssuesDescription": "Haal PR- en issue-details op de achtergrond op bij je git-provider wanneer de branches-pagina opent.",
+    "hateAiLabel": "Ik haat AI",
+    "hateAiDescription": "Verban alle LLM-gestuurde functies. Logos blijft draaien omdat het puur spectrale wiskunde is."
+  },
+  "diffDiffability": {
+    "title": "diff-diffbaarheid"
+  },
+  "modelSlots": {
+    "loadingProviders": "Providers laden...",
+    "refreshingProviders": "Provider-diagnostiek verversen...",
+    "routeDescription": "Hernoem configuraties en route ze naar elk gedetecteerd provider-model.",
+    "loadingCategories": "Modelcategorieën laden...",
+    "noOptions": "Nog geen modelopties beschikbaar. Detecteer eerst een compatibele lokale AI-CLI.",
+    "slotsAppearWhenAvailable": "Modelslot-instellingen verschijnen hier zodra provider-modellen beschikbaar zijn.",
+    "effortDefault": "standaard",
+    "noModelsForSlot": "Geen modellen gedetecteerd voor dit slot.",
+    "viaProvider": "via {provider}",
+    "customModelId": "eigen model-id"
+  },
+  "modelPicker": {
+    "noMatch": "geen modellen passen bij \"{query}\"",
+    "noModels": "geen modellen beschikbaar",
+    "filterHint": "modellen filteren...",
+    "warming": "opwarmen…",
+    "detailsUnavailable": "details niet beschikbaar",
+    "free": "gratis"
+  },
+  "aiFeatures": {
+    "commitDescription": "Stel commit-berichten op uit gestagede wijzigingen volgens je structuur-, stem- en dekkingsvoorkeuren.",
+    "reviewDescription": "Review de huidige commit-scope voordat je commit.",
+    "museDescription": "Driefasig orakel dat brainstormt en dan een voorwaartse richting voor de diff synthetiseert."
+  },
+  "commitEditor": {
+    "styleGuide": "Stijlgids",
+    "styleGuideHint": "Optioneel. Stem / toon / verboden. Het formaat hierboven regelt het geraamte."
+  },
+  "review": {
+    "additionalNotes": "Extra notities om mee te reviewen",
+    "doubleCheckLabel": "Review dubbel checken",
+    "doubleCheckDescription": "Voer een tweede verificatieronde uit voordat het definitieve rapport wordt getoond."
+  },
+  "museHint": {
+    "loose": "iets om zachtjes naartoe te sturen? de stemming is vandaag mild.",
+    "balanced": "waar bij stil te staan, wat over te slaan. eerlijk, niet hard.",
+    "strict": "de standaarden. de verboden. wat de muse niet laat passeren.",
+    "paranoid": "stel de lens af. op welke frequenties moet de manifold neuriën?"
+  },
+  "museEditor": {
+    "additionalNotes": "Extra notities voor de muse"
+  },
+  "museStage": {
+    "brainstorm": "BRAINSTORM",
+    "synthesize": "SYNTHESE",
+    "slot": "slot",
+    "ideaCountLoose": "~12 ideeën",
+    "ideaCountBalanced": "~16 ideeën",
+    "ideaCountStrict": "~20 ideeën",
+    "ideaCountParanoid": "~24 ideeën",
+    "guardrailHint": "{ideas}  ·  guardrail: {macro}"
+  },
+  "lensAxis": {
+    "folder": "MAP",
+    "history": "HISTORIE",
+    "far": "VER",
+    "near": "NABIJ"
+  },
+  "logosLens": {
+    "moduleMap": "module-kaart",
+    "repoCenters": "repo-centra",
+    "neighbors": "buren",
+    "toTouch": "wat als volgende aan te raken",
+    "relevanceEngine": "relevantie-engine",
+    "description": "leest hoe bestanden samen bewegen over structuur, geschiedenis en ritme, zodat Manifold weet wat ertoe doet, niet alleen wat er is gewijzigd.",
+    "withinReach": "binnen bereik",
+    "gate": "poort",
+    "nearest": "dichtstbij",
+    "warming": "opwarmen",
+    "emptyOpenRepo": "open een repo om\nde lens live te zien",
+    "emptyNoFiles": "geen bestanden binnen\nbereik — sleep\nrichting HISTORIE"
+  },
+  "sortGuide": {
+    "title": "Sorteergids voor wijzigingen",
+    "related": "Bestanden die samen wijzigen, clusteren samen. Het aandachtspunt eerst; de context volgt.",
+    "relatedInverted": "Geïsoleerde wijzigingen eerst. Strak gekoppelde clusters zakken naar onderen.",
+    "alphabetical": "Simpelweg A → Z op pad. Hoofdletterongevoelig, cijfers natuurlijk gesorteerd.",
+    "alphabeticalInverted": "Simpelweg Z → A op pad. Hoofdletterongevoelig, cijfers natuurlijk gesorteerd.",
+    "impact": "Zwaarste wijzigingen bovenaan. Churn wordt gewogen; binaire en nieuwe bestanden krijgen een boost.",
+    "impactInverted": "Lichtste wijzigingen bovenaan. Snelle winsten boven; het zware werk wacht.",
+    "nearRelated": "nabij verwant",
+    "alphabeticalShort": "alfabetisch",
+    "byImpact": "op impact",
+    "flipped": "omgekeerd",
+    "peek": "gluren"
+  },
+  "piggyback": {
+    "apiModelsUse": "API-modellen gebruiken",
+    "codexNotDetected": "codex niet gedetecteerd",
+    "dormant": "SLAPEND"
+  },
+  "diffStage": {
+    "viewer": "viewer",
+    "media": "media",
+    "binary": "binair",
+    "hidden": "verborgen"
+  },
+  "undoScope": {
+    "destructiveActions": "destructieve acties",
+    "discards": "verwerpingen",
+    "commits": "commits",
+    "commitPush": "commit + push",
+    "all": "alle"
+  },
+  "undoWindow": {
+    "label": "Ongedaan-maken-venster",
+    "off": "Uit",
+    "descriptionInstant": "{scope} worden direct definitief.",
+    "descriptionDelayed": "{seconds}s voordat {scope} definitief worden.",
+    "cycleScopeTooltip": "Klik om de scope te doorlopen · sleep ook omhoog/omlaag op de slider",
+    "resetTooltip": "Elke actie terugzetten naar het standaardvenster"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "Waarschijnlijk oké betekent oké",
+    "proper": "Een grondige lezing: logica, integratie, patronen",
+    "lookAgain": "Kijk nog eens. Er kan iets verscholen zitten",
+    "assumeWrong": "Ga ervan uit dat er iets mis is. Vind het"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "bijv. Focus op high-level logica en grote bugs. Wees beknopt en mild.",
+    "surfaceBugs": "bijv. Breng mogelijke bugs, architecturale inconsistenties en edge-case-fouten aan het licht.",
+    "scrutinize": "bijv. Onderzoek elke regel op optimalisatie, beveiliging en patroonnaleving.",
+    "trustNothing": "bijv. Vertrouw niets. Bevraag elk neveneffect. Behandel elke regel als een mogelijke fout.",
+    "optional": "Optionele richtlijn voor waar de review op moet letten."
+  },
+  "commitFormat": {
+    "title": "Formaat",
+    "peek": "gluren",
+    "structure": "Structuur",
+    "voice": "Stem",
+    "coverage": "Dekking",
+    "structureTitleBody": "titel + tekst",
+    "structureTitleOnly": "alleen titel",
+    "structureFreeform": "vrije vorm",
+    "voiceVerbLed": "actiegericht",
+    "voiceDescriptive": "beschrijvend",
+    "voiceNarrative": "verhalend",
+    "coverageEssentials": "essentie",
+    "coverageBalanced": "gebalanceerd",
+    "coverageEverything": "alles"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Laat vos koekjes overslaan die vreemd ruiken",
+        "s2": "Leer vos geknoeide koekjes te weigeren vóór het doorslikken",
+        "s3": "Dwing vos elk koekje forensisch te keuren bij de poort",
+        "def": "Leer vos slechte koekjes te weigeren"
+      },
+      "descriptive": {
+        "s0": "vos kiest nu de koekjes",
+        "s2": "Koekje-inspectieroutine, de vos ingedrild",
+        "s3": "Koekje-keuringsforensiek, in de vos verankerd door herhaling",
+        "def": "Koekje-snuffelprotocol, in de vos geïnstalleerd"
+      },
+      "narrative": {
+        "s0": "de vos begon koekjes over te slaan die verkeerd roken",
+        "s2": "Ben met de vos gaan zitten en heb doorgenomen welke koekjes te weigeren",
+        "s3": "Een groot deel van een middag besteed om de vos ervan te overtuigen dat niet elk aangeboden koekje, te goeder trouw, een koekje is",
+        "def": "De vos gevraagd koekjes te besnuffelen voordat hij ze opeet"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Vos werpt een blik. Alles wat vreemd is, blijft liggen.",
+        "s2": "Vos inspecteert elk token, wijst alles met een vreemde geur af en noteert de weigering op de veranda.",
+        "s3": "Vos cirkelt om elk token, proeft de lucht vanuit drie hoeken, weigert elk dat verkeerd aanvoelt en wacht een tel om zeker te weten dat de weigering blijft plakken.",
+        "def": "Vos besnuffelt nu elk token en wijst de verdachte beleefd af."
+      },
+      "descriptive": {
+        "s0": "Zachte doorloop bij de rare, meestal.",
+        "s2": "Een gedocumenteerde weigering bij elk token met vreemde geur, uitgevaardigd vanaf de veranda en genoteerd.",
+        "s3": "Een notarieel bekrachtigde weigering per token met vreemde geur, uitgevaardigd vanaf de veranda met één poot geheven, de andere stil.",
+        "def": "Een beleefde weigering bij verdachte tokens, uitgevaardigd vanaf de veranda."
+      },
+      "narrative": {
+        "s0": "De vos hield gewoon zo'n beetje op met het opeten van de rare. Makkelijk.",
+        "s2": "Vroeger ging elk token zonder veel nadenken naar binnen; nu is er een pauze, een goede blik en een weigering voor die die niet lekker zitten.",
+        "s3": "Vroeger ging elk token naar binnen zonder nadenken. Nu: een pauze. De lucht, ingeademd. De lucht, vastgehouden. De vos let op de verandaplanken op het kleine trillen dat ze soms hebben als er iets mis is, en pas dan valt de beslissing.",
+        "def": "Vroeger werd elk token zonder ceremonie doorgeslikt; nu is er eerst een snuf."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Veranda is prima. Achtertuin boeit niet.",
+        "s2": " Veranda geveegd na elke weigering; achtertuinmodder toegestaan binnen de aangekondigde uren.",
+        "s3": " Veranda geveegd en opnieuw geveegd; achtertuinmodder gecatalogiseerd op pootafdruk en weer, en de vos talmt langer bij de drempel dan voorheen.",
+        "def": " Veranda blijft schoon; achtertuin behoudt zijn modderrechten."
+      },
+      "descriptive": {
+        "s0": " Veranda oké. Achtertuin doet achtertuindingen.",
+        "s2": " Veranda als bewijs-schone zone; achtertuin als aangewezen modderzone, uren aangekondigd.",
+        "s3": " Veranda als cleanroom van bewijskwaliteit; achtertuin als gecatalogiseerd modderarchief; drempel als plek waar de vos staat en te lang nadenkt.",
+        "def": " Schone veranda; modderrechten behouden in de achtertuin."
+      },
+      "narrative": {
+        "s0": " Veranda was prima. Achtertuin, wie zal het zeggen.",
+        "s2": " De veranda werd daarna schoon gehouden; de vos trok zich terug in de achtertuin, waar het denken gebeurt.",
+        "s3": " De veranda werd die avond twee keer geschrobd. De vos liep langzaam door de achtertuin, pauzeerde bij dezelfde hekpaal als altijd, en keek terug naar de veranda alsof de veranda hem iets schuldig was.",
+        "def": " De veranda blijft schoon, al wint de achtertuin nog steeds op waardigheid."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Amber is er. Drift drijft. Doorn prikt als het moet. Meestal niets.",
+        "s2": " Amber houdt elke geur vast ter beoordeling. Drift draagt de dagluchten naar de poortdoorn, die elke weigering markeert voor de avondtelling.",
+        "s3": " Amber houdt elke geur vast en geeft hem een ander gewicht afhankelijk van het uur. Drift beweegt door de veranda onder hoeken die er niet toe zouden moeten doen maar dat wel doen. De poortdoorn prikt één keer voor weigeringen en twee keer voor die die de vos bijna miste, en de vos kent het verschil zelfs als niemand anders dat doet.",
+        "def": " Amber houdt de geur vast. Drift draagt hem verder. De poortdoorn vangt wat er niet door hoort."
+      },
+      "descriptive": {
+        "s0": " Amber op de paal. Drift in de lucht. Doorn bij de poort. Prima.",
+        "s2": " Amber als aangewezen geurgetuige; drift als gelogde omgeving; doornmarkeringen als het weigeringsregister van de dag, verzoend bij schemering.",
+        "s3": " Amber als geurgetuige wiens stilte zelf al een aflezing is; drift als een patroonrijke omgeving die verkeerd beweegt op de dagen dat er iets mis is; doorn als de tellenhouder van de poort, wiens markeringen de vos controleert voor het slapen en opnieuw voor zonsopgang.",
+        "def": " Amber als geurgetuige; drift als omgevingscontext; doorn als de stille weigeringsmarkering van de poort."
+      },
+      "narrative": {
+        "s0": " Amber was in de buurt. Drift kwam en ging. Doorn deed zijn stille ding. Boeit niet, het was chill.",
+        "s2": " Amber hield het geurregister van de dag bij, drift werd genoteerd op richting en uur, en de markeringen van de doorn werden geteld en medeondertekend door de veranda.",
+        "s3": " Amber hield het geurregister bij, maar de vos zweert dat het op bepaalde ochtenden zwaarder weegt. Drift bewoog door de veranda zoals het dat altijd doet, wat wil zeggen: verkeerd op de dagen die ertoe doen. De poortdoorn markeerde elke weigering; de vos ging bij het eerste licht naar buiten om ze te tellen, zoals je treden telt die je al geteld hebt.",
+        "def": " Amber hield het geurregister vast, drift bewoog de lucht, en de poortdoorn ving wat gevangen moest worden."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "Externe tools",
+    "summary": "Rechtsklik op een project in de zijbalk om het met een van deze te openen. Argumenten gebruiken \\{path} voor de projectmap.",
+    "detecting": "Geïnstalleerde tools detecteren…",
+    "allPresetsAdded": "Alle bekende presets zijn al toegevoegd. Gebruik „+ Eigen” om meer toe te voegen.",
+    "noToolsConfigured": "Nog geen tools geconfigureerd. Voeg er hierboven een toe.",
+    "categoryAi": "ai",
+    "categoryEditors": "editors",
+    "categoryExplore": "verkennen",
+    "categoryOps": "ops",
+    "categoryGitOps": "git-ops",
+    "nameHint": "Naam",
+    "commandHint": "opdracht",
+    "test": "testen",
+    "removeTool": "Tool verwijderen",
+    "modeTerminal": "terminal",
+    "modeDetached": "losgekoppeld"
+  },
+  "apiUsage": {
+    "thisMonth": "{used}{limit} deze maand"
+  },
+  "gitea": {
+    "title": "Gitea-tokens",
+    "hostHint": "host",
+    "tokenHint": "token",
+    "save": "opslaan"
+  },
+  "wick": {
+    "selectExecutable": "wick-executable kiezen",
+    "connected": "wick · verbonden",
+    "pathToExecutable": "wick · pad naar executable"
+  },
+  "integrations": {
+    "title": "& Integraties",
+    "alpha": "alpha",
+    "planned": "gepland",
+    "lspComingSoon": "lsp · binnenkort",
+    "alphaMathConnected": "alpha-math · verbonden",
+    "alphaMathComingSoon": "alpha-math · binnenkort"
+  },
+  "reduceMotion": {
+    "label": "Beweging verminderen",
+    "subtitleStill": "Stil… als ijs?",
+    "subtitleFlow": "Stroom als water."
+  },
+  "resetQuit": {
+    "resetAndQuit": "RESETTEN & AFSLUITEN",
+    "keepRepos": "REPO'S BEHOUDEN",
+    "wipeAll": "ALLES WISSEN"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Opdracht-diagnostiek",
+    "networkFlowTelemetry": "Netwerkstroom-telemetrie",
+    "clearSamples": "Samples wissen",
+    "clearMetrics": "Metrieken wissen",
+    "clearTimings": "Timings wissen",
+    "recalibrate": "HERKALIBREREN",
+    "ok": "ok",
+    "noCommandTimings": "Nog geen opdracht-timings vastgelegd. Voer normale acties uit om de diagnostiek te vullen.",
+    "noBackendSamples": "Nog geen backend-opdracht-samples vastgelegd. Voer git- en instellingenacties uit om deze log te vullen.",
+    "noDiffSessions": "Nog geen diff-rendersessies vastgelegd. Open en scroll bestandsdiffs om dit paneel te vullen.",
+    "noUiSessions": "Nog geen UI-timingsessies vastgelegd. Open panelen en navigeer routes om dit paneel te vullen.",
+    "recentOperations": "Recente bewerkingen",
+    "recentBackendOperations": "Recente backend-bewerkingen",
+    "recentDiffSessions": "Recente diff-sessies",
+    "recentUiTimings": "Recente UI-timings",
+    "uniqueCommands": {
+      "one": "{n} unieke opdracht",
+      "other": "{n} unieke opdrachten"
+    },
+    "scopedCommands": {
+      "one": "{n} scoped opdracht",
+      "other": "{n} scoped opdrachten"
+    },
+    "instrumentedEvents": {
+      "one": "{n} geïnstrumenteerde gebeurtenis",
+      "other": "{n} geïnstrumenteerde gebeurtenissen"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | jank {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["opdracht", "p50", "betrouwbaarheid", "bereik"],
+    "headersBackend": ["scope", "p50", "p95", "fouten"],
+    "headersDiff": ["renderer", "eerste paint", "frame p95", "raster p95", "jank"],
+    "headersUi": ["gebeurtenis", "p50", "fouten", "bereik"]
+  },
+  "telemetry": {
+    "samples": {
+      "one": "{n} sample",
+      "other": "{n} samples"
+    },
+    "commands": {
+      "one": "{n} opdracht",
+      "other": "{n} opdrachten"
+    },
+    "sessions": {
+      "one": "{n} sessie",
+      "other": "{n} sessies"
+    },
+    "events": {
+      "one": "{n} gebeurtenis",
+      "other": "{n} gebeurtenissen"
+    },
+    "stability": "{pct}% stabiliteit",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "uitvoeringsstroom",
+    "description": "simuleert oscillatoren op code. brengt fragiele uitvoeringspaden aan het licht voordat ze als bugs uitkristalliseren.",
+    "idle": "inactief",
+    "emptyOpenRepo": "open een repo om\nde stroomanalyse te zien",
+    "scanning": "scannen",
+    "analysing": "bestanden analyseren\nin de lens…",
+    "fragility": "fragiliteit",
+    "findings": "bevindingen",
+    "gap": "gat",
+    "clean": "schoon",
+    "severity": "ernst",
+    "critical": "kritiek",
+    "warn": "waarschuwing",
+    "info": "info"
+  },
+  "museStrands": {
+    "spark": "vonk van inspiratie · de eerstvolgende stap",
+    "current": "stroming in het water · uitbreidingen in de tegenwoordige tijd",
+    "horizon": "kijk over de horizon · reikende richtingen",
+    "fever": "ontwaak uit een koortsdroom · provocaties",
+    "echo": "een echo over de kloof · analogieën elders",
+    "vertigo": "duizeling aan de rand van de klif · aangrenzende risico's",
+    "ghost": "de geest van wat was · historische context",
+    "mirror": "een spiegel op stil water · inversies"
+  },
+  "cliPiggyback": {
+    "title": "CLI-piggybacking",
+    "clearCacheLabel": "Cache wissen",
+    "clearCacheTooltip": "Gecachte modellen wissen en opnieuw sonderen. Ruimt die op die een provider heeft laten vallen.",
+    "refreshLabel": "Providers verversen",
+    "refreshTooltip": "Elke provider nu opnieuw sonderen.",
+    "body": "Leid interface-berichten direct door naar lokale provider-binaries."
+  },
+  "header": {
+    "title": "Werkruimte-voorkeuren",
+    "subtitle": "Configureer globale esthetiek, interfacedynamiek en centrale operationele beveiligingen voor de hele werkruimte.",
+    "releaseNotesTooltip": "Release notes",
+    "replayOnboardingTooltip": "Onboarding opnieuw afspelen"
+  },
+  "diagnosticsPanel": {
+    "title": "Performance-diagnostiek",
+    "copyTrace": "Trace kopiëren",
+    "offenderRanking": "Overtreders-ranglijst",
+    "offenderRankingSubtitle": "Latentie-aanjagers over de streams heen.",
+    "noOffenders": "Nog geen overtreders-ranglijst. Leg diagnostiek-activiteit vast om deze lijst te vullen."
+  },
+  "release": {
+    "title": "Release-deployment",
+    "summary": "Update-gerelateerde instellingen.",
+    "deploymentChannel": "DEPLOYMENT-KANAAL",
+    "captureCrashDiagnostics": "Crash-diagnostiek vastleggen",
+    "comingSoon": "Binnenkort.",
+    "checking": "CONTROLEREN…",
+    "pollForUpdates": "OP UPDATES CONTROLEREN"
+  },
+  "providerStatus": {
+    "detecting": "Detecteren...",
+    "ready": "Klaar",
+    "notDetected": "Niet gedetecteerd",
+    "configured": "{count} geconfigureerd",
+    "notConfigured": "Niet geconfigureerd",
+    "cliManaged": "CLI-beheerd",
+    "connected": "Verbonden",
+    "modelCount": {
+      "one": "{n} model",
+      "other": "{n} modellen"
+    },
+    "providerCount": {
+      "one": "{n} provider",
+      "other": "{n} providers"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Opdracht",
+    "diffStream": "Diff-render",
+    "uiStream": "UI-timing",
+    "rendererName": "{mode}-renderer",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% fout",
+    "jankFrameMetric": "{jank}% jank | {frame}ms frame p95",
+    "inStream": "in {stream}"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "@@locale": "nl",
+  "ops": {
+    "merge": "Merge",
+    "pull": "Pull",
+    "apply": "Toepassen",
+    "switchOp": "Wisselen",
+    "sync": "Sync"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} geannuleerd.",
+    "complete": "{op} voltooid.",
+    "conflictsLeft": {
+      "one": "Nog {n} conflict — los het op de Wijzigingen-pagina op.",
+      "other": "Nog {n} conflicten — los ze op de Wijzigingen-pagina op."
+    },
+    "resolvedConflicts": {
+      "one": "{n} conflict opgelost.",
+      "other": "{n} conflicten opgelost."
+    },
+    "uncommittedEdits": {
+      "one": "{n} bestand heeft niet-gecommitte wijzigingen — commit ze eerst.",
+      "other": "{n} bestanden hebben niet-gecommitte wijzigingen — commit ze eerst."
+    }
+  }
+}

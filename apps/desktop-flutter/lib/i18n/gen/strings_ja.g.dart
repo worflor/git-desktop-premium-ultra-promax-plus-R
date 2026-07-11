@@ -125,16 +125,16 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String get commandPaletteTooltip => 'コマンドパレット   /';
   @override
-  String get newDeskFallback => '新規デスク';
+  String get newDeskFallback => '新規 Desk';
   @override
-  String get deskFallback => 'デスク';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => '現在';
   @override
   String get noRepositoryOpen => 'リポジトリが開かれていません';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'デスクとして開けませんでした：${error}';
+      'Desk として開けませんでした：${error}';
   @override
   String couldNotDetectForge({required Object error}) =>
       'フォージを検出できませんでした：${error}';
@@ -148,7 +148,7 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String couldntFetchPr({required Object error}) => 'PR を取得できませんでした：${error}';
   @override
-  String get promoteDeskToPr => 'デスクを PR に昇格';
+  String get promoteDeskToPr => 'Desk を PR に昇格';
   @override
   String get applyToMain => 'main に適用';
   @override
@@ -162,18 +162,19 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String get discardLocalPr => 'ローカル PR を破棄';
   @override
-  String get closeDesk => 'デスクを閉じる';
+  String get closeDesk => 'Desk を閉じる';
   @override
   String couldntPromote({required Object error}) => '昇格できませんでした：${error}';
   @override
-  String get commitOrShelveBeforeApplying => '適用する前にデスクの変更をコミットまたは棚上げしてください。';
+  String get commitOrShelveBeforeApplying =>
+      '適用する前に Desk の変更をコミットまたは棚上げしてください。';
   @override
   String get couldNotResolveMainWorktree => 'メイン作業ツリーのパスを解決できませんでした。';
   @override
   String couldntPromoteDesk({required Object error}) =>
-      'デスクを昇格できませんでした：${error}';
+      'Desk を昇格できませんでした：${error}';
   @override
-  String get couldntDetermineBaseBranch => 'このデスクのベースブランチを特定できませんでした。';
+  String get couldntDetermineBaseBranch => 'この Desk のベースブランチを特定できませんでした。';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'PR のベースとヘッドが同じブランチ（${branch}）です — 適用するものがありません。';
@@ -246,7 +247,7 @@ class _Translations$app$ja extends Translations$app$en {
   String couldntSave({required Object error}) => '保存できませんでした：${error}';
   @override
   String get stashedNoOtherDesk =>
-      '変更をスタッシュしました — 適用先の他のデスクがありません。git stash pop で復元してください。';
+      '変更をスタッシュしました — 適用先の他の Desk がありません。git stash pop で復元してください。';
   @override
   String get suggestedSource => '推奨ソース';
   @override
@@ -282,7 +283,7 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String get uncommittedChanges => '未コミットの変更';
   @override
-  String get closeDeskQuestion => 'デスクを閉じますか？';
+  String get closeDeskQuestion => 'Desk を閉じますか？';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
@@ -338,13 +339,13 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String get noRemoteConfigured => 'このリポジトリにリモートが設定されていません。';
   @override
-  String get jumpToDesk => 'デスクへジャンプ';
+  String get jumpToDesk => 'Desk へジャンプ';
   @override
   String get arrowOpen => '→ 開く';
   @override
-  String get openOnANewDesk => '新しいデスクで開く';
+  String get openOnANewDesk => '新しい Desk で開く';
   @override
-  String get plusDesk => '+ デスク';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -352,7 +353,7 @@ class _Translations$app$ja extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ 新規デスク';
+  String get plusNewDesk => '+ 新規 Desk';
   @override
   String get fromHeadEllipsis => 'HEAD から…';
   @override
@@ -526,7 +527,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String publishFailed({required Object error}) => '公開に失敗しました：${error}';
   @override
-  String couldntOpenDesk({required Object error}) => 'デスクを開けませんでした：${error}';
+  String couldntOpenDesk({required Object error}) => 'Desk を開けませんでした：${error}';
   @override
   String syncFailed({required Object error}) => '同期に失敗しました：${error}';
   @override
@@ -544,11 +545,11 @@ class _Translations$branches$ja extends Translations$branches$en {
   String deletingBranch({required Object name}) => '${name}を削除中';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '「${name}」はデスク「${desk}」で開かれています。';
+      '「${name}」は Desk「${desk}」で開かれています。';
   @override
-  String get openDesk => 'デスクを開く';
+  String get openDesk => 'Desk を開く';
   @override
-  String openInDeskShort({required Object desk}) => 'デスク「${desk}」で開く';
+  String openInDeskShort({required Object desk}) => 'Desk「${desk}」で開く';
   @override
   String get couldNotPinBranch => 'ブランチの先端をピン留めできませんでした。削除をスキップしました';
   @override
@@ -567,7 +568,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String get checkoutThisPr => 'この PR をチェックアウト';
   @override
-  String get mergeIntoNewDesk => '新しいデスクにマージ…';
+  String get mergeIntoNewDesk => '新しい Desk にマージ…';
   @override
   String get pushToForge => 'フォージにプッシュ';
   @override
@@ -597,7 +598,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   String couldntFetchPr({required Object error}) => 'PR を取得できませんでした：${error}';
   @override
   String couldntOpenAsDesk({required Object error}) =>
-      'デスクとして開けませんでした：${error}';
+      'Desk として開けませんでした：${error}';
   @override
   String couldntOpenInBrowser({required Object error}) =>
       'ブラウザーで開けませんでした：${error}';
@@ -611,10 +612,10 @@ class _Translations$branches$ja extends Translations$branches$en {
   String linkPrToIssues({required Object number}) =>
       'PR #${number} を Issue にリンク';
   @override
-  String get noPrsYetLocal => 'まだ PR がありません。上流で開くか、デスクを PR に昇格してください。';
+  String get noPrsYetLocal => 'まだ PR がありません。上流で開くか、Desk を PR に昇格してください。';
   @override
   String get remoteIssuesLinkLocalOnly =>
-      'リモート Issue はローカル PR にのみリンクできます。まずデスクを PR に昇格してください。';
+      'リモート Issue はローカル PR にのみリンクできます。まず Desk を PR に昇格してください。';
   @override
   String linkIssueToPrs({required Object number}) =>
       'Issue #${number} を PR にリンク';
@@ -661,7 +662,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String get noOpenPullRequests => 'オープンなプルリクエストなし';
   @override
-  String get noPullRequestsHint => 'ブランチから開くか、デスクを昇格してください。';
+  String get noPullRequestsHint => 'ブランチから開くか、Desk を昇格してください。';
   @override
   String get noPrsMatchFilters => '条件に合う PR がありません';
   @override
@@ -700,7 +701,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => 'レビューモデルが設定されていません。';
   @override
-  String get deskFallback => 'デスク';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({required num n, required Object branch}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
@@ -708,7 +709,7 @@ class _Translations$branches$ja extends Translations$branches$en {
         other: '${branch}に未コミットの変更が ${n} 件あります — 先にコミットまたはスタッシュしてください。',
       );
   @override
-  String get targetDeskNoBranch => '対象のデスクにブランチがありません。';
+  String get targetDeskNoBranch => '対象の Desk にブランチがありません。';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
       'PR #${number} を${branch}にマージ';
@@ -733,7 +734,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   String get mergeCommit => 'マージコミット';
   @override
   String noDeskForBranch({required Object branch}) =>
-      'ブランチ ${branch} のデスクが見つかりません';
+      'ブランチ ${branch} の Desk が見つかりません';
   @override
   String get mergeAnyway => 'それでもマージ';
   @override
@@ -955,7 +956,7 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ PR レビュー';
   @override
-  String get actionOpenAsDesk => '⊞ デスクとして開く';
+  String get actionOpenAsDesk => '⊞ Desk として開く';
   @override
   String get actionCheckout => '[c] チェックアウト';
   @override
@@ -1035,7 +1036,7 @@ class _Translations$branches$ja extends Translations$branches$en {
     required Object phrase,
   }) => '${name}、${tag}、${phrase}';
   @override
-  String get crossLinkDesk => 'デスク';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -1101,13 +1102,13 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String get refineHint => '調整…（例：「ロガーの変更も外して」）';
   @override
-  String get reverseArmedTooltip => '準備完了 — 次の適用でパッチをリバートします（-R）';
+  String get reverseArmedTooltip => '準備完了 — 次の適用でパッチを逆適用します（-R）';
   @override
-  String get reverseDisarmedTooltip => 'リバートを準備（-R） — 適用ではなく取り消す';
+  String get reverseDisarmedTooltip => '逆適用を準備（-R） — 適用ではなく取り消す';
   @override
-  String get reverseArmedLabel => '⟲ リバート ✓';
+  String get reverseArmedLabel => '⟲ 逆適用 ✓';
   @override
-  String get reverseLabel => '⟲ リバート';
+  String get reverseLabel => '⟲ 逆適用';
   @override
   String get untouchedHeading => '⚠ 未変更';
   @override
@@ -2133,7 +2134,7 @@ class _Translations$app$cheatsheet$ja extends Translations$app$cheatsheet$en {
   @override
   String get branches => 'ブランチ';
   @override
-  String get xray => 'X 線';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '切り替え（常時）';
   @override
@@ -2767,9 +2768,9 @@ class _Translations$changes$snack$ja extends Translations$changes$snack$en {
   @override
   String diffFailed({required Object error}) => '差分に失敗しました：${error}';
   @override
-  String get deskEmpty => 'デスクにはあなたより先行するものがありません — 空の移動です。';
+  String get deskEmpty => 'Desk にはあなたより先行するものがありません — 空の移動です。';
   @override
-  String sourceDesk({required Object label}) => 'デスク ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) => '棚の読み込みに失敗しました：${error}';
   @override
@@ -2863,7 +2864,7 @@ class _Translations$changes$dropHint$ja
   @override
   String get fromShelf => 'ドロップしてこの棚の変更をここに取り込む';
   @override
-  String get fromDesk => 'ドロップしてこのデスクの変更をここに取り込む';
+  String get fromDesk => 'ドロップしてこの Desk の変更をここに取り込む';
 }
 
 // Path: changes.diffEmpty
@@ -3653,7 +3654,12 @@ class _Translations$common$time$ja extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => '${n} か月前';
   @override
-  String yearsAgo({required Object n}) => '${n} 年前';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '${n} 年前',
+        other: '${n} 年前',
+      );
   @override
   String minutesShort({required Object n}) => '${n}分';
   @override
@@ -3665,7 +3671,12 @@ class _Translations$common$time$ja extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n}か月';
   @override
-  String yearsShort({required Object n}) => '${n}年';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '${n}年',
+        other: '${n}年',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n}か月';
   @override
@@ -3822,7 +3833,7 @@ class _Translations$diff$pinned$ja extends Translations$diff$pinned$en {
   @override
   String get loadingContext => 'ピン留めした文脈を読み込み中';
   @override
-  String get pageManifold => 'マニフォールド';
+  String get pageManifold => 'Manifold';
   @override
   String get pageSignals => 'シグナル';
   @override
@@ -4273,7 +4284,7 @@ class _Translations$history$inFlight$ja
   @override
   String get header => '進行中';
   @override
-  String get deskFallbackLabel => 'デスク';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -4626,7 +4637,7 @@ class _Translations$orrery$header$ja extends Translations$orrery$header$en {
 
   // Translations
   @override
-  String get title => 'オーラリー';
+  String get title => 'Orrery';
   @override
   String get modeScrub => 'スクラブ';
   @override
@@ -4647,13 +4658,13 @@ class _Translations$orrery$status$ja extends Translations$orrery$status$en {
 
   // Translations
   @override
-  String get loading => '履歴を通してマニフォールドを追跡中…';
+  String get loading => '履歴を通してmanifoldを追跡中…';
   @override
   String get loadError => 'このリポジトリの履歴を読み取れませんでした。';
   @override
   String get notEnoughHistory => '軌道を描くにはまだ履歴が足りません。';
   @override
-  String get notEnoughHistoryDetail => 'オーラリーには図示のためにいくつかのコミットが必要です。';
+  String get notEnoughHistoryDetail => 'Orrery には図示のためにいくつかのコミットが必要です。';
 }
 
 // Path: orrery.legend
@@ -5315,7 +5326,7 @@ class _Translations$palette$navigation$ja
   @override
   String get branches => 'ブランチ';
   @override
-  String get xray => 'X 線';
+  String get xray => 'X-Ray';
   @override
   String get settings => '設定';
   @override
@@ -5439,9 +5450,9 @@ class _Translations$palette$orrery$ja extends Translations$palette$orrery$en {
 
   // Translations
   @override
-  String get label => 'オーラリー';
+  String get label => 'Orrery';
   @override
-  String get subtitle => 'リポジトリの構造的履歴をマニフォールドでスクラブ';
+  String get subtitle => 'リポジトリの構造的履歴をmanifoldでスクラブ';
 }
 
 // Path: palette.command
@@ -6035,7 +6046,7 @@ class _Translations$settings$keybindingProfile$ja
   @override
   String get label => 'キーバインドプロファイル';
   @override
-  String get porcelain => 'ポーセリン';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => 'ニューメリック';
   @override
@@ -6091,7 +6102,7 @@ class _Translations$settings$shortcuts$ja
   @override
   String get branches => 'ブランチ';
   @override
-  String get xray => 'X 線';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '切り替え（常時）';
   @override
@@ -6325,7 +6336,7 @@ class _Translations$settings$museHint$ja
   @override
   String get strict => '基準。禁止事項。Muse が見逃さないこと。';
   @override
-  String get paranoid => 'レンズを調整。マニフォールドはどの周波数で響くべき？';
+  String get paranoid => 'レンズを調整。manifoldはどの周波数で響くべき？';
 }
 
 // Path: settings.museEditor
@@ -7483,7 +7494,7 @@ class _Translations$xray$header$ja extends Translations$xray$header$en {
   @override
   String get refreshing => '更新中…';
   @override
-  String get title => 'リポジトリ X 線';
+  String get title => 'リポジトリ X-Ray';
 }
 
 // Path: xray.hotspot
@@ -7597,13 +7608,13 @@ class _Translations$xray$loadingCard$ja
   @override
   String get buildingMessage => 'Git 履歴、ref、ペース、ホットスポットを調査中。';
   @override
-  String get buildingTitle => 'リポジトリ X 線を構築中';
+  String get buildingTitle => 'リポジトリ X-Ray を構築中';
   @override
   String get idleMessage => 'パネルを再度開くと現在のリポジトリを調査します。';
   @override
-  String get idleTitle => 'リポジトリ X 線';
+  String get idleTitle => 'リポジトリ X-Ray';
   @override
-  String get unavailableTitle => 'リポジトリ X 線を取得できません';
+  String get unavailableTitle => 'リポジトリ X-Ray を取得できません';
 }
 
 // Path: xray.metabolism
@@ -7662,7 +7673,12 @@ class _Translations$xray$recency$ja extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n}週';
   @override
-  String years({required Object n}) => '${n}年';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '${n}年',
+        other: '${n}年',
+      );
 }
 
 // Path: xray.rings
@@ -7840,7 +7856,7 @@ class _Translations$xray$trajectory$ja extends Translations$xray$trajectory$en {
   @override
   String events({required Object n}) => '${n} イベント';
   @override
-  String get openInOrrery => 'オーラリーで開く';
+  String get openInOrrery => 'Orrery で開く';
   @override
   String get readingHint => '履歴を読み込み中…';
   @override
@@ -8241,7 +8257,7 @@ class _Translations$onboarding$preview$panels$ja
 
   // Translations
   @override
-  String get xray => 'リポジトリ X 線';
+  String get xray => 'リポジトリ X-Ray';
   @override
   String get settings => '設定';
 }
@@ -8326,7 +8342,7 @@ class _Translations$onboarding$preview$branches$ja
   @override
   String get absorbed => '吸収済み';
   @override
-  String get desk => 'デスク';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override

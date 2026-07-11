@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "Perfil de atalhos",
-    "porcelain": "Porcelana",
+    "porcelain": "Porcelain",
     "numeric": "Numérico",
     "porcelainDescription": "Atalhos encadeados (G e depois C, H, B…).",
     "numericDescription": "Atalhos numéricos de uma tecla (1, 2, 3…)."
@@ -124,7 +124,7 @@
     "changes": "Mudanças",
     "history": "Histórico",
     "branches": "Branches",
-    "xray": "Raio-X",
+    "xray": "X-Ray",
     "switchAlways": "Trocar (sempre)",
     "search": "Buscar",
     "dismiss": "Dispensar",

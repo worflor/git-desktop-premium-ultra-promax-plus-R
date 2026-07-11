@@ -125,7 +125,7 @@
     "machineChip": "машинный",
     "refresh": "Обновить",
     "refreshing": "Обновление...",
-    "title": "Рентген репозитория"
+    "title": "X-Ray репозитория"
   },
   "hotspot": {
     "clusterPeers": "соседи по кластеру",
@@ -185,8 +185,8 @@
     "buildingMessage": "Зондирую историю Git, ссылки, ритм и горячие точки.",
     "buildingTitle": "Строю рентген репозитория",
     "idleMessage": "Откройте панель снова, чтобы прозондировать текущий репозиторий.",
-    "idleTitle": "Рентген репозитория",
-    "unavailableTitle": "Рентген репозитория недоступен"
+    "idleTitle": "X-Ray репозитория",
+    "unavailableTitle": "X-Ray репозитория недоступен"
   },
   "metabolism": {
     "halfLife": "период полураспада {n} дн"
@@ -208,7 +208,10 @@
     "months": "{n} мес",
     "today": "сегодня",
     "weeks": "{n} нед",
-    "years": "{n} г"
+    "years": {
+      "one": "{n} г",
+      "other": "{n} г"
+    }
   },
   "rings": {
     "hintOneBlended": "одна смешанная структура",
@@ -287,7 +290,7 @@
   "trajectory": {
     "connectivity": "связность",
     "events": "{n} событий",
-    "openInOrrery": "Открыть в Оррери",
+    "openInOrrery": "Открыть в Orrery",
     "readingHint": "читаю историю…",
     "snapshots": "{n} снимков",
     "steady": "Ровно — структурных событий в этом окне нет.",

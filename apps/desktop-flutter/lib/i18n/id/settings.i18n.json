@@ -1,0 +1,582 @@
+{
+  "@@locale": "id",
+  "language": {
+    "title": "Bahasa",
+    "summary": "Bahasa UI untuk aplikasi ini. Output git, log, dan diagnostik tetap Inggris agar laporan bug tetap bisa dicari.",
+    "label": "BAHASA TAMPILAN",
+    "systemDefault": "Bawaan sistem",
+    "systemDefaultDetail": "Mengikuti bahasa OS-mu ({resolved})",
+    "disclosureSource": "Bahasa sumber, ditulis oleh para pengembang.",
+    "disclosureAi": "Diterjemahkan mesin oleh {model}, belum ditinjau manusia. Koreksi dipersilakan.",
+    "disclosureAiReviewed": "Diterjemahkan mesin oleh {model}. {percent}% ditinjau manusia.",
+    "disclosureHuman": "Terjemahan manusia, dirawat oleh komunitas.",
+    "reviewedBy": "Ditinjau oleh {names}."
+  },
+  "sectionLabels": {
+    "preferences": "Preferensi",
+    "shortcuts": "Pintasan",
+    "behaviour": "Perilaku",
+    "aiProviders": "Provider AI",
+    "modelSlots": "Slot Model",
+    "tools": "Tools",
+    "diagnostics": "Diagnostik",
+    "offenders": "Pelanggar",
+    "release": "Rilis"
+  },
+  "errors": {
+    "saveGuardrailProfile": "Gagal menyimpan profil guardrail.",
+    "saveRetentionPolicy": "Gagal menyimpan kebijakan retensi.",
+    "saveUpdateChannel": "Gagal menyimpan channel update.",
+    "saveModelSelection": "Gagal menyimpan pilihan model AI.",
+    "saveModelAlias": "Gagal menyimpan alias model.",
+    "saveCommitMessageModelSlot": "Gagal menyimpan slot model pesan commit.",
+    "saveReviewModelSlot": "Gagal menyimpan slot model review.",
+    "saveCommitMessageCustomPrompt": "Gagal menyimpan prompt kustom pesan commit.",
+    "saveReviewGuide": "Gagal menyimpan panduan review.",
+    "saveMuseNotes": "Gagal menyimpan catatan muse.",
+    "saveReviewDoubleCheck": "Gagal menyimpan mode cek-ganda review.",
+    "saveApiPiggybackCli": "Gagal menyimpan CLI piggyback API.",
+    "clearLocalData": "Tidak bisa membersihkan data lokal: {error}"
+  },
+  "promptStatus": {
+    "editing": "Mengedit",
+    "saving": "Menyimpan",
+    "saveFailed": "Penyimpanan gagal"
+  },
+  "clearData": {
+    "dialogTitle": "Bersihkan data lokal",
+    "clear": "Bersihkan",
+    "confirmDiagnostics": "Bersihkan sampel diagnostik lokal dan pengukuran waktu performa?",
+    "confirmAudit": "Bersihkan catatan metadata audit AI lokal?",
+    "confirmAll": "Bersihkan semua sampel diagnostik lokal dan catatan metadata audit AI?",
+    "confirmWipeAll": "Hapus semua data aplikasi lokal — termasuk daftar repo terkini — dan keluar? Repo git-mu yang sebenarnya di disk tidak disentuh.",
+    "confirmReset": "Reset data aplikasi lokal dan keluar?\n\nPengaturan, tema, onboarding, preferensi AI, telemetri, dan cache engram dibersihkan. Daftar repo terkinimu tetap ada."
+  },
+  "guardrailStageLabels": ["Longgar", "Seimbang", "Ketat", "Paranoid"],
+  "guardrailMacro": {
+    "loose": "longgar",
+    "balanced": "seimbang",
+    "strict": "ketat",
+    "paranoid": "paranoid"
+  },
+  "guardrails": {
+    "title": "Guardrail",
+    "summary": "Seberapa jeli otomatisasi di seluruh pengalaman."
+  },
+  "appearance": {
+    "title": "Tampilan",
+    "summary": "Suasana dan atmosfer antarmuka global."
+  },
+  "retention": {
+    "title": "Retensi Data Lokal",
+    "summaryDiagnostics": "Kebijakan retensi diagnostik.",
+    "summaryWithAudit": "Kebijakan retensi diagnostik dan audit AI.",
+    "unitDays": "hari",
+    "unitMb": "MB",
+    "includesNote": "Termasuk diagnostik, pengukuran waktu performa, dan metadata."
+  },
+  "navigation": {
+    "title": "Navigasi dan Dinamika",
+    "summaryShortcuts": "Pintasan dan perilaku antarmuka.",
+    "summaryWithAi": "Pintasan, perilaku antarmuka, dan routing AI."
+  },
+  "behaviour": {
+    "title": "Dinamika Perilaku"
+  },
+  "retentionClear": {
+    "diag": "Diag",
+    "audit": "Audit",
+    "all": "Semua",
+    "clearsHint": "<-- membersihkan"
+  },
+  "channels": {
+    "stable": "STABLE",
+    "beta": "BETA",
+    "dev": "DEV"
+  },
+  "pollResult": {
+    "upToDate": "paling baru",
+    "updateAvailable": "{version} tersedia",
+    "notConfigured": "tidak ada server update",
+    "notFound": "tidak ada rilis {channel}",
+    "unreachable": "tak terjangkau",
+    "badManifest": "manifest rusak"
+  },
+  "keybindingProfile": {
+    "label": "Profil keybinding",
+    "porcelain": "Porcelain",
+    "numeric": "Numerik",
+    "porcelainDescription": "Pintasan berakor (G lalu C, H, B…).",
+    "numericDescription": "Pintasan numerik satu-tombol (1, 2, 3…)."
+  },
+  "apiKeys": {
+    "keyHintDefault": "api key",
+    "endpointHint": "endpoint",
+    "test": "Uji",
+    "hide": "Sembunyikan",
+    "show": "Tampilkan"
+  },
+  "shortcuts": {
+    "navigate": "navigasi",
+    "staging": "staging",
+    "branchesPrs": "branch & PR",
+    "modifiers": "modifier",
+    "changes": "Changes",
+    "history": "History",
+    "branches": "Branches",
+    "xray": "X-Ray",
+    "switchAlways": "Pindah (selalu)",
+    "search": "Cari",
+    "dismiss": "Tutup",
+    "refresh": "Refresh",
+    "shortcuts": "Pintasan",
+    "nextChange": "Perubahan berikut",
+    "prevChange": "Perubahan sebelum",
+    "toggleLine": "Toggle baris",
+    "toggleHunk": "Toggle hunk",
+    "toggleFile": "Toggle file",
+    "pinContext": "Pin konteks",
+    "commit": "Commit",
+    "acceptHint": "Terima saran",
+    "undo": "Undo",
+    "navigateRow": "Navigasi",
+    "expand": "Perluas",
+    "checkout": "Checkout",
+    "approve": "Setujui",
+    "requestChanges": "Minta perubahan",
+    "selectRange": "Pilih rentang",
+    "extendedMenu": "Menu diperluas"
+  },
+  "toggles": {
+    "aiReadOnlyLabel": "Mode AI baca-saja",
+    "aiReadOnlyDescription": "Mencegah AI menulis atau men-stage perubahan secara otomatis.",
+    "logoMotionLabel": "Logo beranimasi saat tab tak aktif",
+    "logoMotionDescriptionEnabled": "Ia dirancang efisien, jangan lukai perasaannya",
+    "logoMotionDescriptionDisabled": ":(",
+    "rememberWipLabel": "Ingat pekerjaan berjalan",
+    "rememberWipDescription": "Simpan draf commit dan pilihan file-mu antar sesi.",
+    "stashCabinetLabel": "Lemari stash mulai terbuka",
+    "stashCabinetDescription": "Tampilkan laci lemari arsip terbuka secara default saat repo punya rak.",
+    "instantBlameLabel": "Blame instan saat hover",
+    "instantBlameDescription": "Lewati jeda 180ms sebelum info blame muncul di baris diff.",
+    "autoSelectLabel": "Pilih otomatis perubahan baru",
+    "autoSelectDescription": "File yang baru di-track atau berubah otomatis ditambahkan ke pilihan commit.",
+    "fetchIssuesLabel": "Ambil issue online saat branch dimuat",
+    "fetchIssuesDescription": "Tarik detail PR dan issue dari provider git-mu di latar belakang saat halaman branches dibuka.",
+    "hateAiLabel": "Aku benci AI",
+    "hateAiDescription": "Usir semua fitur bertenaga LLM. Logos tetap berjalan karena ia cuma matematika spektral."
+  },
+  "diffDiffability": {
+    "title": "kemampu-diff-an diff"
+  },
+  "modelSlots": {
+    "loadingProviders": "Memuat provider...",
+    "refreshingProviders": "Menyegarkan diagnostik provider...",
+    "routeDescription": "Ganti nama dan arahkan konfigurasi ke model provider mana pun yang terdeteksi.",
+    "loadingCategories": "Memuat kategori model...",
+    "noOptions": "Belum ada opsi model tersedia. Deteksi dulu CLI AI lokal yang kompatibel.",
+    "slotsAppearWhenAvailable": "Pengaturan slot-model akan muncul di sini begitu model provider tersedia.",
+    "effortDefault": "default",
+    "noModelsForSlot": "Tidak ada model terdeteksi untuk slot ini.",
+    "viaProvider": "via {provider}",
+    "customModelId": "id model kustom"
+  },
+  "modelPicker": {
+    "noMatch": "tidak ada model cocok dengan \"{query}\"",
+    "noModels": "tidak ada model tersedia",
+    "filterHint": "filter model...",
+    "warming": "memanas…",
+    "detailsUnavailable": "detail tidak tersedia",
+    "free": "gratis"
+  },
+  "aiFeatures": {
+    "commitDescription": "Susun pesan commit dari perubahan yang di-stage sesuai preferensi struktur, suara, dan cakupanmu.",
+    "reviewDescription": "Review cakupan commit saat ini sebelum kamu commit.",
+    "museDescription": "Orakel tiga-fase yang brainstorm lalu menyintesis arah maju untuk diff."
+  },
+  "commitEditor": {
+    "styleGuide": "Panduan Gaya",
+    "styleGuideHint": "Opsional. Suara / nada / larangan. Format di atas menangani kerangkanya."
+  },
+  "review": {
+    "additionalNotes": "Catatan tambahan untuk ikut di-review",
+    "doubleCheckLabel": "Cek-ganda review",
+    "doubleCheckDescription": "Jalankan lintasan verifikasi kedua sebelum menampilkan laporan akhir."
+  },
+  "museHint": {
+    "loose": "ada yang mau diarahkan pelan-pelan? suasana hati lagi baik hari ini.",
+    "balanced": "apa yang perlu didalami, apa yang dilewati. jujur, tanpa kasar.",
+    "strict": "standarnya. larangannya. apa yang tak akan dibiarkan muse lolos.",
+    "paranoid": "setel lensanya. di frekuensi apa manifold harus berdengung?"
+  },
+  "museEditor": {
+    "additionalNotes": "Catatan tambahan untuk muse"
+  },
+  "museStage": {
+    "brainstorm": "BRAINSTORM",
+    "synthesize": "SINTESIS",
+    "slot": "slot",
+    "ideaCountLoose": "~12 ide",
+    "ideaCountBalanced": "~16 ide",
+    "ideaCountStrict": "~20 ide",
+    "ideaCountParanoid": "~24 ide",
+    "guardrailHint": "{ideas}  ·  guardrail: {macro}"
+  },
+  "lensAxis": {
+    "folder": "FOLDER",
+    "history": "HISTORY",
+    "far": "JAUH",
+    "near": "DEKAT"
+  },
+  "logosLens": {
+    "moduleMap": "peta modul",
+    "repoCenters": "pusat repo",
+    "neighbors": "tetangga",
+    "toTouch": "apa yang disentuh berikutnya",
+    "relevanceEngine": "engine relevansi",
+    "description": "membaca bagaimana file bergerak bersama lintas struktur, history, dan ritme, jadi Manifold tahu apa yang penting, bukan cuma apa yang berubah.",
+    "withinReach": "dalam jangkauan",
+    "gate": "gerbang",
+    "nearest": "terdekat",
+    "warming": "memanas",
+    "emptyOpenRepo": "buka sebuah repo untuk\nmelihat lensa secara langsung",
+    "emptyNoFiles": "tidak ada file dalam\njangkauan — seret\nke arah HISTORY"
+  },
+  "sortGuide": {
+    "title": "Panduan urutan perubahan",
+    "related": "File yang berubah bersamaan mengelompok bersama. Perkara utama dulu; konteks menyusul.",
+    "relatedInverted": "Perubahan terisolasi lebih dulu. Klaster yang terkopel erat tenggelam ke bawah.",
+    "alphabetical": "Cukup A → Z berdasarkan path. Tanpa peduli huruf besar/kecil, angka diurutkan alami.",
+    "alphabeticalInverted": "Cukup Z → A berdasarkan path. Tanpa peduli huruf besar/kecil, angka diurutkan alami.",
+    "impact": "Perubahan terberat muncul dulu. Churn dibobot; biner dan file baru dinaikkan.",
+    "impactInverted": "Perubahan teringan muncul dulu. Kemenangan cepat di atas; yang berat menunggu.",
+    "nearRelated": "yang terkait dekat",
+    "alphabeticalShort": "alfabetis",
+    "byImpact": "berdasarkan dampak",
+    "flipped": "dibalik",
+    "peek": "intip"
+  },
+  "piggyback": {
+    "apiModelsUse": "Model API memakai",
+    "codexNotDetected": "codex tidak terdeteksi",
+    "dormant": "DORMAN"
+  },
+  "diffStage": {
+    "viewer": "viewer",
+    "media": "media",
+    "binary": "biner",
+    "hidden": "tersembunyi"
+  },
+  "undoScope": {
+    "destructiveActions": "aksi destruktif",
+    "discards": "pembuangan",
+    "commits": "commit",
+    "commitPush": "commit + push",
+    "all": "semua"
+  },
+  "undoWindow": {
+    "label": "Jendela undo",
+    "off": "Mati",
+    "descriptionInstant": "{scope} difinalisasi seketika.",
+    "descriptionDelayed": "{seconds}s sebelum {scope} difinalisasi.",
+    "cycleScopeTooltip": "Klik untuk menggilir cakupan · seret naik/turun di slider juga bisa",
+    "resetTooltip": "Reset setiap aksi agar memakai jendela default"
+  },
+  "guardrailPhrase": {
+    "probablyFine": "Kemungkinan aman berarti aman",
+    "proper": "Bacaan yang benar, logika, integrasi, pola",
+    "lookAgain": "Lihat lagi. Mungkin ada yang bersembunyi",
+    "assumeWrong": "Anggap ada yang salah. Temukan"
+  },
+  "reviewGuideHint": {
+    "focusHigh": "mis. Fokus pada logika tingkat-tinggi dan bug besar. Ringkas dan pemaaf.",
+    "surfaceBugs": "mis. Munculkan potensi bug, inkonsistensi arsitektur, dan kegagalan edge case.",
+    "scrutinize": "mis. Telisik setiap baris untuk optimasi, keamanan, dan kepatuhan pola.",
+    "trustNothing": "mis. Jangan percaya apa pun. Pertanyakan setiap efek samping. Perlakukan tiap baris sebagai potensi kegagalan.",
+    "optional": "Panduan opsional tentang apa yang harus diperhatikan review."
+  },
+  "commitFormat": {
+    "title": "Format",
+    "peek": "intip",
+    "structure": "Struktur",
+    "voice": "Suara",
+    "coverage": "Cakupan",
+    "structureTitleBody": "judul + isi",
+    "structureTitleOnly": "judul saja",
+    "structureFreeform": "bebas",
+    "voiceVerbLed": "berorientasi aksi",
+    "voiceDescriptive": "deskriptif",
+    "voiceNarrative": "naratif",
+    "coverageEssentials": "esensial",
+    "coverageBalanced": "seimbang",
+    "coverageEverything": "semuanya"
+  },
+  "commitPreview": {
+    "title": {
+      "verbLed": {
+        "s0": "Biarkan rubah melewati kue yang baunya aneh",
+        "s2": "Latih rubah menolak kue yang dirusak sebelum menelan",
+        "s3": "Paksa rubah memeriksa forensik setiap kue di gerbang",
+        "def": "Ajari rubah menolak kue busuk"
+      },
+      "descriptive": {
+        "s0": "rubah kini yang memilih kuenya",
+        "s2": "Rutinitas inspeksi kue, ditanamkan pada rubah",
+        "s3": "Forensik pemeriksaan kue, dibenamkan pada rubah lewat pengulangan",
+        "def": "Protokol endus-kue, terpasang dalam rubah"
+      },
+      "narrative": {
+        "s0": "rubah mulai melewati kue yang baunya salah",
+        "s2": "Duduk bersama rubah dan menelaah kue mana yang harus ditolak",
+        "s3": "Menghabiskan sebagian besar sore meyakinkan rubah bahwa tidak setiap kue yang ditawarkan, dengan itikad baik, adalah kue",
+        "def": "Meminta rubah mengendus kue sebelum memakannya"
+      }
+    },
+    "base": {
+      "verbLed": {
+        "s0": "Rubah melirik. Yang mencurigakan ditinggal.",
+        "s2": "Rubah memeriksa tiap token, menolak yang baunya salah, dan mencatat penolakan di teras.",
+        "s3": "Rubah mengitari tiap token, mengendus udara dari tiga sudut, menolak yang terbaca salah, dan menunggu sejenak memastikan penolakannya melekat.",
+        "def": "Rubah kini mengendus tiap token dan dengan sopan menolak yang mencurigakan."
+      },
+      "descriptive": {
+        "s0": "Lolos halus untuk yang aneh, kebanyakan.",
+        "s2": "Penolakan terdokumentasi pada tiap token beraroma salah, dikeluarkan dari teras dan dicatat.",
+        "s3": "Penolakan bermeterai per token beraroma salah, dikeluarkan dari teras dengan satu cakar terangkat, satunya diam.",
+        "def": "Penolakan sopan pada token mencurigakan, dikeluarkan dari teras."
+      },
+      "narrative": {
+        "s0": "Rubah begitu saja berhenti memakan yang aneh. Gampang.",
+        "s2": "Dulu tiap token ditelan tanpa banyak pikir; kini ada jeda, tinjauan yang benar, dan penolakan untuk yang terasa janggal.",
+        "s3": "Dulu tiap token ditelan tanpa berpikir. Kini: sebuah jeda. Udara, dihirup. Udara, ditahan. Rubah mengamati papan teras untuk kedutan kecil yang kadang muncul saat ada yang salah, dan baru kemudian keputusan dibuat.",
+        "def": "Dulu tiap token ditelan tanpa upacara; kini ada endusan dulu."
+      }
+    },
+    "balancedSuffix": {
+      "verbLed": {
+        "s0": " Teras aman. Halaman belakang terserah.",
+        "s2": " Teras disapu setiap kali menolak; lumpur halaman belakang diizinkan dalam jam yang tertera.",
+        "s3": " Teras disapu dan disapu ulang; lumpur halaman belakang dikatalog per jejak-cakar dan cuaca, dan rubah berlama-lama di ambang lebih lama dari biasanya.",
+        "def": " Teras tetap bersih; halaman belakang menjaga hak lumpurnya."
+      },
+      "descriptive": {
+        "s0": " Teras oke. Halaman belakang berbuat sesuka halaman belakang.",
+        "s2": " Teras sebagai zona bersih-bukti; halaman belakang sebagai zona lumpur yang ditentukan, jamnya tertera.",
+        "s3": " Teras sebagai ruang bersih tingkat-bukti; halaman belakang sebagai arsip lumpur terkatalog; ambang sebagai tempat rubah berdiri dan berpikir terlalu lama.",
+        "def": " Teras bersih; hak lumpur dijaga di halaman belakang."
+      },
+      "narrative": {
+        "s0": " Teras aman. Halaman belakang, entahlah.",
+        "s2": " Teras dijaga bersih sesudahnya; rubah mundur ke halaman belakang, tempat berpikir berlangsung.",
+        "s3": " Teras digosok dua kali malam itu. Rubah menyusuri halaman belakang perlahan, berhenti di tiang pagar yang sama seperti biasa, dan menoleh ke teras seolah teras berutang sesuatu.",
+        "def": " Teras tetap bersih, meski halaman belakang tetap menang soal martabat."
+      }
+    },
+    "everythingSuffix": {
+      "verbLed": {
+        "s0": " Amber di sana. Drift menghanyut. Duri menusuk kalau perlu. Kebanyakan tak terjadi apa-apa.",
+        "s2": " Amber menahan tiap aroma untuk ditinjau. Drift membawa udara hari itu menuju duri gerbang, yang menandai tiap penolakan untuk hitungan malam.",
+        "s3": " Amber menahan tiap aroma dan memberi bobot berbeda tergantung jam. Drift bergerak melintasi teras dengan sudut yang seharusnya tak penting tapi penting. Duri gerbang menusuk sekali untuk penolakan dan dua kali untuk yang hampir terlewat rubah, dan rubah tahu bedanya bahkan saat tak ada yang lain tahu.",
+        "def": " Amber menahan aroma. Drift membawanya lanjut. Duri gerbang menangkap yang tak boleh lewat."
+      },
+      "descriptive": {
+        "s0": " Amber di tiang. Drift di udara. Duri di gerbang. Aman.",
+        "s2": " Amber sebagai saksi-aroma yang ditunjuk; drift sebagai ambien yang dicatat; tanda-duri sebagai rekaman penolakan hari itu, direkonsiliasi saat senja.",
+        "s3": " Amber sebagai saksi-aroma yang keheningannya sendiri adalah sebuah bacaan; drift sebagai ambien berpola yang bergerak salah di hari-hari saat ada yang salah; duri sebagai penjaga-hitungan gerbang, yang tandanya diperiksa rubah sebelum tidur dan lagi sebelum fajar.",
+        "def": " Amber sebagai saksi-aroma; drift sebagai konteks ambien; duri sebagai tanda-penolakan gerbang yang diam."
+      },
+      "narrative": {
+        "s0": " Amber ada di sekitar. Drift datang dan pergi. Duri melakukan hal tenangnya. Ya sudah, santai.",
+        "s2": " Amber menyimpan rekaman-aroma hari itu, drift dicatat berdasarkan arah dan jam, dan tanda duri dihitung serta ditandatangani balik oleh teras.",
+        "s3": " Amber menyimpan rekaman-aroma, tapi rubah bersumpah bobotnya lebih berat di pagi-pagi tertentu. Drift bergerak melintasi teras seperti biasanya, yang artinya salah di hari-hari yang penting. Duri gerbang menandai tiap penolakan; rubah keluar saat cahaya pertama untuk menghitungnya, seperti cara kau menghitung anak tangga yang sudah kau hitung.",
+        "def": " Amber menyimpan rekaman-aroma, drift menggerakkan udara, dan duri gerbang menangkap yang perlu ditangkap."
+      }
+    }
+  },
+  "externalTools": {
+    "title": "Tools Eksternal",
+    "summary": "Klik-kanan sebuah proyek di sidebar untuk membukanya dengan salah satu ini. Argumen memakai \\{path} untuk folder proyek.",
+    "detecting": "Mendeteksi tools terpasang…",
+    "allPresetsAdded": "Semua preset yang dikenal sudah ditambahkan. Pakai “+ Custom” untuk menambah lagi.",
+    "noToolsConfigured": "Belum ada tools dikonfigurasi. Tambahkan satu di atas.",
+    "categoryAi": "ai",
+    "categoryEditors": "editor",
+    "categoryExplore": "jelajah",
+    "categoryOps": "ops",
+    "categoryGitOps": "git ops",
+    "nameHint": "Nama",
+    "commandHint": "command",
+    "test": "uji",
+    "removeTool": "Hapus tool",
+    "modeTerminal": "terminal",
+    "modeDetached": "detached"
+  },
+  "apiUsage": {
+    "thisMonth": "{used}{limit} bulan ini"
+  },
+  "gitea": {
+    "title": "Token Gitea",
+    "hostHint": "host",
+    "tokenHint": "token",
+    "save": "simpan"
+  },
+  "wick": {
+    "selectExecutable": "Pilih executable wick",
+    "connected": "wick · terhubung",
+    "pathToExecutable": "wick · path ke executable"
+  },
+  "integrations": {
+    "title": "& Integrasi",
+    "alpha": "alpha",
+    "planned": "direncanakan",
+    "lspComingSoon": "lsp · segera hadir",
+    "alphaMathConnected": "alpha-math · terhubung",
+    "alphaMathComingSoon": "alpha-math · segera hadir"
+  },
+  "reduceMotion": {
+    "label": "Kurangi gerakan",
+    "subtitleStill": "Diam… seperti es?",
+    "subtitleFlow": "Mengalir seperti air."
+  },
+  "resetQuit": {
+    "resetAndQuit": "RESET & KELUAR",
+    "keepRepos": "SIMPAN REPO",
+    "wipeAll": "HAPUS SEMUA"
+  },
+  "diagnostics": {
+    "commandDiagnostics": "Diagnostik Command",
+    "networkFlowTelemetry": "Telemetri Aliran Jaringan",
+    "clearSamples": "Bersihkan Sampel",
+    "clearMetrics": "Bersihkan Metrik",
+    "clearTimings": "Bersihkan Timing",
+    "recalibrate": "KALIBRASI ULANG",
+    "ok": "ok",
+    "noCommandTimings": "Belum ada timing command tertangkap. Jalankan aksi normal untuk mengisi diagnostik.",
+    "noBackendSamples": "Belum ada sampel command backend tertangkap. Jalankan aksi git dan pengaturan untuk mengisi log ini.",
+    "noDiffSessions": "Belum ada sesi render diff tertangkap. Buka dan gulir diff file untuk mengisi panel ini.",
+    "noUiSessions": "Belum ada sesi timing UI tertangkap. Buka panel dan navigasi rute untuk mengisi panel ini.",
+    "recentOperations": "Operasi Terkini",
+    "recentBackendOperations": "Operasi Backend Terkini",
+    "recentDiffSessions": "Sesi Diff Terkini",
+    "recentUiTimings": "Timing UI Terkini",
+    "uniqueCommands": {
+      "other": "{n} command unik"
+    },
+    "scopedCommands": {
+      "other": "{n} command bercakup"
+    },
+    "instrumentedEvents": {
+      "other": "{n} peristiwa terinstrumentasi"
+    },
+    "summaryCommand": "{samples} | {commands}",
+    "summaryBackend": "{samples} | {commands}",
+    "summaryDiff": "{sessions} | jank {jank}%",
+    "summaryUi": "{samples} | {events}",
+    "headersCommand": ["command", "p50", "keandalan", "rentang"],
+    "headersBackend": ["cakupan", "p50", "p95", "kegagalan"],
+    "headersDiff": ["renderer", "paint pertama", "frame p95", "raster p95", "jank"],
+    "headersUi": ["peristiwa", "p50", "kegagalan", "rentang"]
+  },
+  "telemetry": {
+    "samples": {
+      "other": "{n} sampel"
+    },
+    "commands": {
+      "other": "{n} command"
+    },
+    "sessions": {
+      "other": "{n} sesi"
+    },
+    "events": {
+      "other": "{n} peristiwa"
+    },
+    "stability": "{pct}% stabilitas",
+    "metaCommand": "{samples} | {commands}",
+    "metaDiff": "{sessions} | {stability}",
+    "metaUi": "{samples} | {events}"
+  },
+  "flowEngine": {
+    "executionFlow": "alur-eksekusi",
+    "description": "simulasikan osilator pada kode. memunculkan jalur eksekusi rapuh sebelum mengkristal jadi bug.",
+    "idle": "diam",
+    "emptyOpenRepo": "buka sebuah repo untuk\nmelihat analisis alur",
+    "scanning": "memindai",
+    "analysing": "menganalisis file\ndi lensa…",
+    "fragility": "kerapuhan",
+    "findings": "temuan",
+    "gap": "jeda",
+    "clean": "bersih",
+    "severity": "keparahan",
+    "critical": "kritis",
+    "warn": "peringatan",
+    "info": "info"
+  },
+  "museStrands": {
+    "spark": "percikan inspirasi · langkah berikutnya yang segera",
+    "current": "arus di air · perluasan bermasa-kini",
+    "horizon": "menatap ke cakrawala · arah yang menjangkau",
+    "fever": "terbangun dari mimpi demam · provokasi",
+    "echo": "gema melintasi ngarai · analogi di tempat lain",
+    "vertigo": "vertigo di tepi jurang · risiko yang bersebelahan",
+    "ghost": "hantu dari yang dulu · konteks historis",
+    "mirror": "cermin di air tenang · inversi"
+  },
+  "cliPiggyback": {
+    "title": "Piggyback CLI",
+    "clearCacheLabel": "Bersihkan cache",
+    "clearCacheTooltip": "Hapus model yang di-cache dan periksa ulang. Membersihkan yang sudah dijatuhkan provider.",
+    "refreshLabel": "Segarkan provider",
+    "refreshTooltip": "Periksa ulang setiap provider sekarang.",
+    "body": "Pipa langsung pesan antarmuka ke biner provider lokal."
+  },
+  "header": {
+    "title": "Preferensi Workspace",
+    "subtitle": "Atur estetika global, dinamika antarmuka, dan pengaman operasional inti untuk seluruh workspace.",
+    "releaseNotesTooltip": "Catatan rilis",
+    "replayOnboardingTooltip": "Ulang onboarding"
+  },
+  "diagnosticsPanel": {
+    "title": "Diagnostik Performa",
+    "copyTrace": "Salin Trace",
+    "offenderRanking": "Peringkat Pelanggar",
+    "offenderRankingSubtitle": "Pendorong latensi lintas stream.",
+    "noOffenders": "Belum ada peringkat pelanggar. Tangkap aktivitas diagnostik untuk mengisi daftar ini."
+  },
+  "release": {
+    "title": "Deployment Rilis",
+    "summary": "Pengaturan terkait update.",
+    "deploymentChannel": "CHANNEL DEPLOYMENT",
+    "captureCrashDiagnostics": "Tangkap diagnostik crash",
+    "comingSoon": "Segera hadir.",
+    "checking": "MEMERIKSA…",
+    "pollForUpdates": "CEK UPDATE"
+  },
+  "providerStatus": {
+    "detecting": "Mendeteksi...",
+    "ready": "Siap",
+    "notDetected": "Tidak terdeteksi",
+    "configured": "{count} dikonfigurasi",
+    "notConfigured": "Tidak dikonfigurasi",
+    "cliManaged": "Dikelola-CLI",
+    "connected": "Terhubung",
+    "modelCount": {
+      "other": "{n} model"
+    },
+    "providerCount": {
+      "other": "{n} provider"
+    }
+  },
+  "meridiem": {
+    "am": "AM",
+    "pm": "PM"
+  },
+  "offenders": {
+    "commandStream": "Command",
+    "diffStream": "Render Diff",
+    "uiStream": "Timing UI",
+    "rendererName": "renderer {mode}",
+    "latencyFailMetric": "{p95}ms p95 | {fail}% gagal",
+    "jankFrameMetric": "{jank}% jank | {frame}ms frame p95",
+    "inStream": "di {stream}"
+  }
+}

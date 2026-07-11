@@ -13642,9 +13642,11 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   static List<String> _titleHat = [];
   static int _titleHatCursor = 0;
   static int? _titleHatTier;
+  static AppLocale? _titleHatLocale;
 
   static String _pickEditorTitle(int charCount) {
     final titles = t.changes.editorTitles;
+    final locale = LocaleSettings.currentLocale;
     final tier = charCount > 600
         ? 2
         : charCount > 300
@@ -13655,8 +13657,14 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         : tier == 1
             ? titles.mid
             : titles.short;
-    if (tier != _titleHatTier || _titleHatCursor >= _titleHat.length) {
+    // The hat caches shuffled titles for the whole session, so it must be
+    // rebuilt when the locale changes (live switch, no restart) — otherwise
+    // it keeps dealing the previous language's titles until it empties.
+    if (tier != _titleHatTier ||
+        locale != _titleHatLocale ||
+        _titleHatCursor >= _titleHat.length) {
       _titleHatTier = tier;
+      _titleHatLocale = locale;
       _titleHat = [...tierList, ...titles.any]..shuffle(_titleRng);
       _titleHatCursor = 0;
     }

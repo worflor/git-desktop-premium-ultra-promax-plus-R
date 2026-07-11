@@ -1,0 +1,23 @@
+{
+  "@@locale": "id",
+  "ops": {
+    "merge": "Merge",
+    "pull": "Pull",
+    "apply": "Terapkan",
+    "switchOp": "Pindah",
+    "sync": "Sync"
+  },
+  "mergeOutcome": {
+    "cancelled": "{op} dibatalkan.",
+    "complete": "{op} selesai.",
+    "conflictsLeft": {
+      "other": "Sisa {n} konflik — selesaikan di halaman Changes."
+    },
+    "resolvedConflicts": {
+      "other": "{n} konflik terselesaikan."
+    },
+    "uncommittedEdits": {
+      "other": "{n} file punya perubahan yang belum di-commit — commit dulu."
+    }
+  }
+}

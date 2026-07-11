@@ -1,0 +1,96 @@
+{
+  "@@locale": "it",
+  "nav": {
+    "back": "Indietro",
+    "continueLabel": "Continua",
+    "letsGo": "Andiamo"
+  },
+  "naming": {
+    "question": "cos'è questo per te?",
+    "questionEmphasis": "questo",
+    "iAmPrefix": "Sono ",
+    "iAmSuffix": " , il tuo Git Client personale."
+  },
+  "theme": {
+    "title": "vesti {name} a festa.",
+    "themesHeader": "TEMI",
+    "keybindingsHeader": "SCORCIATOIE",
+    "previewBadge": "anteprima",
+    "useDefaults": "usa i predefiniti"
+  },
+  "repo": {
+    "title": "punta {name} verso qualcosa.",
+    "later": "lo farò dopo",
+    "doors": {
+      "open": {
+        "title": "Apri",
+        "subtitle": "esistente",
+        "hint": "uno che hai già"
+      },
+      "clone": {
+        "title": "Clona",
+        "subtitle": "da URL",
+        "hint": "incolla un URL remoto"
+      },
+      "create": {
+        "title": "Crea",
+        "subtitle": "nuovo",
+        "hint": "inizia qualcosa da zero"
+      }
+    },
+    "cloneForm": {
+      "title": "Clona da URL",
+      "urlLabel": "URL del repository",
+      "targetLabel": "Cartella di destinazione",
+      "browse": "Sfoglia…",
+      "clone": "Clona",
+      "cloning": "Clonazione…"
+    },
+    "pickers": {
+      "openRepository": "Apri repository",
+      "createRepository": "Crea repository",
+      "cloneTarget": "Destinazione clone"
+    },
+    "errors": {
+      "urlAndTargetRequired": "URL e percorso di destinazione richiesti.",
+      "createFailed": "Creazione del repository non riuscita.",
+      "cloneFailed": "Clonazione del repository non riuscita."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "X-Ray repo",
+      "settings": "impostazioni"
+    },
+    "sidebar": {
+      "projectsHeader": "Progetti"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} di {total} file",
+      "stagedCount": "{n} in stage",
+      "commitMessageHint": "Messaggio di commit…",
+      "commitAndPush": "Committa e push"
+    },
+    "history": {
+      "header": "Cronologia",
+      "viewingLast": "ultimi 20 commit",
+      "inFlight": "IN VOLO",
+      "you": "tu",
+      "commit1": "insegna alla volpe ad annusare prima di inghiottire",
+      "commit2": "ambra: trattieni il profumo per la notte",
+      "commit3": "ritira il cavolo a favore di ambra + spina",
+      "commit4": "la spina sorveglia il cancello"
+    },
+    "branches": {
+      "lensBranches": "BRANCH",
+      "lensPRs": "PR",
+      "absorbed": "assorbito",
+      "desk": "Desk",
+      "head": "HEAD",
+      "tracking": "→ tracking: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Il tuo Git client personale."
+    }
+  }
+}

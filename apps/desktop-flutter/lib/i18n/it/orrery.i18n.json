@@ -1,0 +1,101 @@
+{
+  "@@locale": "it",
+  "header": {
+    "title": "Orrery",
+    "modeScrub": "Scorri",
+    "modeCompare": "Confronta",
+    "lodModules": "Moduli",
+    "lodFiles": "File"
+  },
+  "status": {
+    "loading": "Traccio il manifold attraverso la cronologia…",
+    "loadError": "Impossibile leggere la cronologia di questo repo.",
+    "notEnoughHistory": "Cronologia ancora insufficiente per tracciare una traiettoria.",
+    "notEnoughHistoryDetail": "L'Orrery ha bisogno di qualche commit per disegnare la mappa."
+  },
+  "legend": {
+    "central": "centrale",
+    "peripheral": "periferico"
+  },
+  "node": {
+    "module": "modulo",
+    "moduleWithCount": "{path} · {n} file",
+    "fileFallback": "file #{id}",
+    "nodeFallback": "nodo #{id}",
+    "rootModule": "(root)"
+  },
+  "milestone": {
+    "genesis": "genesi",
+    "now": "ora",
+    "reorganized": "riorganizzato",
+    "becameArchetype": "diventato {archetype}",
+    "snapshot": "snapshot"
+  },
+  "structure": {
+    "forming": "in formazione…",
+    "canonical": "canonico",
+    "connectivity": "connettività",
+    "rigidity": "rigidità",
+    "entropy": "entropia"
+  },
+  "rail": {
+    "structureLabel": "STRUTTURA",
+    "fieldLabel": "CAMPO",
+    "findingsLabel": "RISCONTRI",
+    "selectedLabel": "SELEZIONATO",
+    "noFindings": "Nessun evento strutturale rilevato in questa cronologia."
+  },
+  "selection": {
+    "notPresent": "Non presente a questo punto della cronologia.",
+    "roleCentral": "Centrale nel coupling — le modifiche qui si propagano in tutto il sistema.",
+    "rolePeripheral": "Periferico — debolmente accoppiato, per lo più cambia da solo.",
+    "roleMid": "Struttura intermedia — moderatamente accoppiato.",
+    "driftOutward": " Deriva verso l'esterno — si disaccoppia.",
+    "driftInward": " Deriva verso l'interno — si integra.",
+    "driftHolding": " Mantiene la sua posizione."
+  },
+  "findingKind": {
+    "hub": "HUB",
+    "driftOut": "IN DERIVA VERSO L'ESTERNO",
+    "driftIn": "IN DERIVA VERSO L'INTERNO",
+    "tangle": "AGGROVIGLIAMENTO",
+    "clarify": "CHIARIFICAZIONE",
+    "regime": "RIORG",
+    "thrash": "SBATTIMENTO",
+    "reshuffle": "RIMESCOLAMENTO",
+    "forecast": "PREVISIONE"
+  },
+  "findings": {
+    "forecastSplit": "La connettività è in calo ed è vicina al suo minimo — se prosegue così, la codebase sta andando verso una divisione in due metà debolmente accoppiate. Decidi ora se è ciò che vuoi.",
+    "forecastConsolidate": "La connettività sta salendo verso il suo picco — se prosegue così, la codebase si sta consolidando in un'unica massa strettamente accoppiata. Attento a che non si indurisca in un monolite.",
+    "thrash": "{name} continua a essere riorganizzato avanti e indietro — molto rimescolio strutturale, poco movimento netto. Definisci il suo coupling o smetti di toccarlo.",
+    "reshuffle": "Questo commit sembrava di routine ma ha spostato in sordina quali file sono centrali — la forma complessiva ha tenuto mentre la struttura si rimescolava sotto. Rivedilo con attenzione.",
+    "hub": "{name} sta al nucleo strutturale — il sistema si riorganizza attorno a lui. Tratta le modifiche qui come ad alto raggio d'impatto.",
+    "driftOut": "{name} è derivato dal nucleo verso il bordo — si sta disaccoppiando dal sistema. O lo stai dismettendo, o sta marcendo in silenzio.",
+    "driftIn": "{name} è migrato verso il nucleo — sta diventando portante. Assicurati che sia ben testato prima che altro dipenda da lui.",
+    "regime": "La codebase si è riorganizzata bruscamente qui — la sua connettività è balzata. Rivedi cosa si è staccato o fuso.",
+    "tangleTrend": "Nel corso della sua cronologia la codebase ha teso verso una struttura più aggrovigliata — la sua connettività diventa più densa e meno modulare.",
+    "clarifyTrend": "Nel corso della sua cronologia la codebase ha teso verso una struttura più pulita — si sta separando in moduli più chiari."
+  },
+  "anchor": {
+    "core": "nucleo",
+    "drift": "deriva",
+    "trend": "tendenza",
+    "thrash": "sbattimento"
+  },
+  "compare": {
+    "header": "A → B",
+    "change": "VARIAZIONE",
+    "movers": "IN MOVIMENTO",
+    "noMovers": "Nessun file si è mosso tra questi frame.",
+    "badgeA": "A",
+    "badgeB": "B",
+    "deltaFiles": "file",
+    "deltaConnectivity": "connettività",
+    "deltaRigidity": "rigidità",
+    "deltaEntropy": "entropia",
+    "wayOutward": "verso l'esterno",
+    "wayInward": "verso l'interno",
+    "wayShifted": "spostato"
+  }
+}

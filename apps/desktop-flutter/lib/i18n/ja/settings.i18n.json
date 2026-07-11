@@ -104,7 +104,7 @@
   },
   "keybindingProfile": {
     "label": "キーバインドプロファイル",
-    "porcelain": "ポーセリン",
+    "porcelain": "Porcelain",
     "numeric": "ニューメリック",
     "porcelainDescription": "コードショートカット（G のあと C、H、B…）。",
     "numericDescription": "数字キー単押しのショートカット（1、2、3…）。"
@@ -124,7 +124,7 @@
     "changes": "変更",
     "history": "履歴",
     "branches": "ブランチ",
-    "xray": "X 線",
+    "xray": "X-Ray",
     "switchAlways": "切り替え（常時）",
     "search": "検索",
     "dismiss": "閉じる",
@@ -207,7 +207,7 @@
     "loose": "そっと導きたい方向は？ 今日のムードは優しめ。",
     "balanced": "何にこだわり、何を飛ばすか。正直に、でも厳しすぎず。",
     "strict": "基準。禁止事項。Muse が見逃さないこと。",
-    "paranoid": "レンズを調整。マニフォールドはどの周波数で響くべき？"
+    "paranoid": "レンズを調整。manifoldはどの周波数で響くべき？"
   },
   "museEditor": {
     "additionalNotes": "Muse への追加のノート"

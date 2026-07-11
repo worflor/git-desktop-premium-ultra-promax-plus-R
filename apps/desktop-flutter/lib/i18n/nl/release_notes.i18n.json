@@ -1,0 +1,18 @@
+{
+  "@@locale": "nl",
+  "versionFallback": "dev",
+  "about": {
+    "whyFlutter": {
+      "question": "WAAROM FLUTTER?",
+      "body": "De eerste versie hiervan was een Tauri-app (Rust + TypeScript). Ik voelde al dat het traag aanvoelde. Toen hoorde ik een streamer precies hetzelfde zeggen in een stream die ik normaal niet kijk, en dat was het duwtje om eindelijk over te stappen. Hij stelde geen Flutter voor; verre van dat. Dart vond ik zelf, ik klapte een prototype in elkaar, en de opstarttijd ging van zo'n 15 seconden naar onder een seconde. Dag en nacht verschil. Vaarwel Tauri-tijdperk.\n\nFlutters rendering-pipeline ligt dichter bij een game-engine dan bij een DOM, en voor een desktop-app waarbij de UI het product is, is dat alles. Dart bleek daarbij een oprecht goede taal. De wiskunde achter de spectrale engine is eerst in Rust geprototyped, dus dat werk droeg prima over.\n\nFlutter is standaard cross-platform, wat geweldig is, maar het is van nature nogal Google-erig, dus er zijn een paar eigenaardigheden."
+    },
+    "spectralEngine": {
+      "question": "WAT IS DE SPECTRALE ENGINE?",
+      "body": "Elke keer dat je commit, vormen de bestanden die je samen wijzigt patronen in de tijd. De spectrale engine leest je commit-graaf en ontleedt die co-change-patronen tot signalen: welke bestanden gekoppeld zijn, hoe strak, en welke structurele rol ze in de repo spelen. In essentie spectrale analyse op je ontwikkelgeschiedenis. In een git-client. Met opzet.\n\nDe wiskunde is nieuw, dus ik behandel het als game feel: afstemmen, testen, bijstellen en doorgaan tot de signalen goed aanvoelen.\n\nDie signalen voeden alles. De seismograaf in de geschiedenis, de geschilderde balken onder commit-onderwerpen, het reviewsysteem, Muse, de bestandsconstellatie. De hele app redeneert vanaf deze laag naar beneden, niet andersom."
+    },
+    "whereGoing": {
+      "question": "WAAR GAAT DIT HEEN?",
+      "body": "De eerste mijlpaal is volledige pariteit met GitHub Desktop, SourceTree en GitKraken. Een cross-platform git-client die snel aanvoelt en de fundamenten beter afhandelt dan wat dan ook. Dat is grotendeels er. De spectrale engine geeft ons nu al een voordeel bij bewerkingen die andere clients je handmatig laten doordenken.\n\nDaarna is het doel om elke andere git-client te overtreffen in snelheid, toegankelijkheid, intelligentie en algehele UX. Er zit meer in de pijplijn dan hier is aangekondigd."
+    }
+  }
+}

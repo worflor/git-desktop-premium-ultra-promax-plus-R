@@ -1,17 +1,17 @@
 {
   "@@locale": "zh-Hans",
   "header": {
-    "title": "天象仪",
+    "title": "Orrery",
     "modeScrub": "拖拽",
     "modeCompare": "对比",
     "lodModules": "模块",
     "lodFiles": "文件"
   },
   "status": {
-    "loading": "正在沿历史追溯流形…",
+    "loading": "正在沿历史追溯manifold…",
     "loadError": "无法读取此仓库的历史。",
     "notEnoughHistory": "历史尚不足以绘制轨迹。",
-    "notEnoughHistoryDetail": "天象仪需要几个提交才能作图。"
+    "notEnoughHistoryDetail": "Orrery 需要几个提交才能作图。"
   },
   "legend": {
     "central": "中心",

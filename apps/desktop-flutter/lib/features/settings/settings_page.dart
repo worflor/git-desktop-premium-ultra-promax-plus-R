@@ -3138,10 +3138,15 @@ class _LanguageCard extends StatelessWidget {
     'de': 'Deutsch',
     'es': 'Español',
     'fr': 'Français',
+    'id': 'Bahasa Indonesia',
+    'it': 'Italiano',
     'ja': '日本語',
     'ko': '한국어',
+    'nl': 'Nederlands',
+    'pl': 'Polski',
     'pt-BR': 'Português (Brasil)',
     'ru': 'Русский',
+    'tr': 'Türkçe',
     'zh-Hans': '中文（简体）',
   };
 

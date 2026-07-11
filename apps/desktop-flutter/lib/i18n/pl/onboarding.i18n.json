@@ -1,0 +1,96 @@
+{
+  "@@locale": "pl",
+  "nav": {
+    "back": "Wstecz",
+    "continueLabel": "Kontynuuj",
+    "letsGo": "Zaczynajmy"
+  },
+  "naming": {
+    "question": "czym to dla ciebie jest?",
+    "questionEmphasis": "to",
+    "iAmPrefix": "Jestem ",
+    "iAmSuffix": " , twój osobisty klient Git."
+  },
+  "theme": {
+    "title": "przystrój {name}.",
+    "themesHeader": "MOTYWY",
+    "keybindingsHeader": "SKRÓTY KLAWISZOWE",
+    "previewBadge": "podgląd",
+    "useDefaults": "użyj domyślnych"
+  },
+  "repo": {
+    "title": "wskaż {name} na coś.",
+    "later": "zrobię to później",
+    "doors": {
+      "open": {
+        "title": "Otwórz",
+        "subtitle": "istniejący",
+        "hint": "taki, który już masz"
+      },
+      "clone": {
+        "title": "Klonuj",
+        "subtitle": "z URL",
+        "hint": "wklej zdalny URL"
+      },
+      "create": {
+        "title": "Utwórz",
+        "subtitle": "nowy",
+        "hint": "zacznij coś od zera"
+      }
+    },
+    "cloneForm": {
+      "title": "Klonuj z URL",
+      "urlLabel": "URL repozytorium",
+      "targetLabel": "Folder docelowy",
+      "browse": "Przeglądaj…",
+      "clone": "Klonuj",
+      "cloning": "Klonowanie…"
+    },
+    "pickers": {
+      "openRepository": "Otwórz repozytorium",
+      "createRepository": "Utwórz repozytorium",
+      "cloneTarget": "Cel klonowania"
+    },
+    "errors": {
+      "urlAndTargetRequired": "Wymagany URL i ścieżka docelowa.",
+      "createFailed": "Nie udało się utworzyć repozytorium.",
+      "cloneFailed": "Nie udało się sklonować repozytorium."
+    }
+  },
+  "preview": {
+    "panels": {
+      "xray": "X-Ray repozytorium",
+      "settings": "ustawienia"
+    },
+    "sidebar": {
+      "projectsHeader": "Projekty"
+    },
+    "changes": {
+      "filesStagedCount": "{staged} z {total} plików",
+      "stagedCount": "{n} w indeksie",
+      "commitMessageHint": "Wiadomość commita…",
+      "commitAndPush": "Commit i push"
+    },
+    "history": {
+      "header": "Historia",
+      "viewingLast": "ostatnie 20 commitów",
+      "inFlight": "W TOKU",
+      "you": "ty",
+      "commit1": "naucz lisa wąchać, zanim połknie",
+      "commit2": "bursztyn: utrzymaj zapach przez noc",
+      "commit3": "wycofaj kapustę na rzecz bursztynu i ciernia",
+      "commit4": "cierń strzeże bramy"
+    },
+    "branches": {
+      "lensBranches": "GAŁĘZIE",
+      "lensPRs": "PR",
+      "absorbed": "wchłonięta",
+      "desk": "Desk",
+      "head": "HEAD",
+      "tracking": "→ śledzenie: {ref}"
+    },
+    "diff": {
+      "readmeTagline": "Twój osobisty klient Git."
+    }
+  }
+}

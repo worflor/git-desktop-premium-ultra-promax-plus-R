@@ -126,15 +126,15 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String get commandPaletteTooltip => '命令面板   /';
   @override
-  String get newDeskFallback => '新工作台';
+  String get newDeskFallback => '新 Desk';
   @override
-  String get deskFallback => '工作台';
+  String get deskFallback => 'Desk';
   @override
   String get currentDeskFallback => '当前';
   @override
   String get noRepositoryOpen => '未打开仓库';
   @override
-  String couldntOpenAsDesk({required Object error}) => '无法作为工作台打开：${error}';
+  String couldntOpenAsDesk({required Object error}) => '无法作为 Desk 打开：${error}';
   @override
   String couldNotDetectForge({required Object error}) => '无法检测代码托管平台：${error}';
   @override
@@ -146,7 +146,7 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String couldntFetchPr({required Object error}) => '无法抓取 PR：${error}';
   @override
-  String get promoteDeskToPr => '将工作台提升为 PR';
+  String get promoteDeskToPr => '将 Desk 提升为 PR';
   @override
   String get applyToMain => '应用到 main';
   @override
@@ -160,17 +160,17 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String get discardLocalPr => '丢弃本地 PR';
   @override
-  String get closeDesk => '关闭工作台';
+  String get closeDesk => '关闭 Desk';
   @override
   String couldntPromote({required Object error}) => '无法提升：${error}';
   @override
-  String get commitOrShelveBeforeApplying => '应用前请先提交或搁置工作台的改动。';
+  String get commitOrShelveBeforeApplying => '应用前请先提交或搁置 Desk 的改动。';
   @override
   String get couldNotResolveMainWorktree => '无法解析主工作树路径。';
   @override
-  String couldntPromoteDesk({required Object error}) => '无法提升工作台：${error}';
+  String couldntPromoteDesk({required Object error}) => '无法提升 Desk：${error}';
   @override
-  String get couldntDetermineBaseBranch => '无法确定此工作台的基础分支。';
+  String get couldntDetermineBaseBranch => '无法确定此 Desk 的基础分支。';
   @override
   String prBaseHeadSame({required Object branch}) =>
       'PR 的基础分支与头分支相同（${branch}）— 无内容可应用。';
@@ -241,7 +241,7 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String couldntSave({required Object error}) => '无法保存：${error}';
   @override
-  String get stashedNoOtherDesk => '改动已储藏 — 没有其他工作台可应用。用 git stash pop 恢复。';
+  String get stashedNoOtherDesk => '改动已储藏 — 没有其他 Desk 可应用。用 git stash pop 恢复。';
   @override
   String get suggestedSource => '建议来源';
   @override
@@ -277,7 +277,7 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String get uncommittedChanges => '未提交的改动';
   @override
-  String get closeDeskQuestion => '关闭工作台？';
+  String get closeDeskQuestion => '关闭 Desk？';
   @override
   String uncommittedFileCount({required num n}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
@@ -332,13 +332,13 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String get noRemoteConfigured => '此仓库未配置远程。';
   @override
-  String get jumpToDesk => '跳到工作台';
+  String get jumpToDesk => '跳到 Desk';
   @override
   String get arrowOpen => '→ 打开';
   @override
-  String get openOnANewDesk => '在新工作台打开';
+  String get openOnANewDesk => '在新 Desk 打开';
   @override
-  String get plusDesk => '+ 工作台';
+  String get plusDesk => '+ Desk';
   @override
   String get plusSpace => '+ ';
   @override
@@ -346,7 +346,7 @@ class _Translations$app$zh_Hans extends Translations$app$en {
   @override
   String get escLower => 'esc';
   @override
-  String get plusNewDesk => '+ 新工作台';
+  String get plusNewDesk => '+ 新 Desk';
   @override
   String get fromHeadEllipsis => '从 HEAD…';
   @override
@@ -519,7 +519,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String publishFailed({required Object error}) => '发布失败：${error}';
   @override
-  String couldntOpenDesk({required Object error}) => '无法打开工作台：${error}';
+  String couldntOpenDesk({required Object error}) => '无法打开 Desk：${error}';
   @override
   String syncFailed({required Object error}) => '同步失败：${error}';
   @override
@@ -536,11 +536,11 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   String deletingBranch({required Object name}) => '正在删除 ${name}';
   @override
   String branchOpenInDesk({required Object name, required Object desk}) =>
-      '“${name}”已在工作台“${desk}”中打开。';
+      '“${name}”已在 Desk“${desk}”中打开。';
   @override
-  String get openDesk => '打开工作台';
+  String get openDesk => '打开 Desk';
   @override
-  String openInDeskShort({required Object desk}) => '在工作台“${desk}”中打开';
+  String openInDeskShort({required Object desk}) => '在 Desk“${desk}”中打开';
   @override
   String get couldNotPinBranch => '无法固定分支顶端；已跳过删除';
   @override
@@ -559,7 +559,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String get checkoutThisPr => '检出此 PR';
   @override
-  String get mergeIntoNewDesk => '合并到新工作台…';
+  String get mergeIntoNewDesk => '合并到新 Desk…';
   @override
   String get pushToForge => '推送到托管平台';
   @override
@@ -588,7 +588,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String couldntFetchPr({required Object error}) => '无法抓取 PR：${error}';
   @override
-  String couldntOpenAsDesk({required Object error}) => '无法作为工作台打开：${error}';
+  String couldntOpenAsDesk({required Object error}) => '无法作为 Desk 打开：${error}';
   @override
   String couldntOpenInBrowser({required Object error}) => '无法在浏览器中打开：${error}';
   @override
@@ -598,9 +598,9 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String linkPrToIssues({required Object number}) => '将 PR #${number} 关联到议题';
   @override
-  String get noPrsYetLocal => '还没有 PR。在上游开一个，或将工作台提升为 PR。';
+  String get noPrsYetLocal => '还没有 PR。在上游开一个，或将 Desk 提升为 PR。';
   @override
-  String get remoteIssuesLinkLocalOnly => '远程议题只能关联到本地 PR。请先将工作台提升为 PR。';
+  String get remoteIssuesLinkLocalOnly => '远程议题只能关联到本地 PR。请先将 Desk 提升为 PR。';
   @override
   String linkIssueToPrs({required Object number}) => '将议题 #${number} 关联到 PR';
   @override
@@ -644,7 +644,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String get noOpenPullRequests => '无开放的拉取请求';
   @override
-  String get noPullRequestsHint => '从分支开一个，或提升一个工作台。';
+  String get noPullRequestsHint => '从分支开一个，或提升一个 Desk。';
   @override
   String get noPrsMatchFilters => '没有 PR 匹配这些筛选';
   @override
@@ -682,7 +682,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String get noReviewModelConfigured => '未配置审查模型。';
   @override
-  String get deskFallback => '工作台';
+  String get deskFallback => 'Desk';
   @override
   String deskUncommittedChanges({required num n, required Object branch}) =>
       (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
@@ -690,7 +690,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
         other: '${branch} 有 ${n} 个未提交的改动 — 请先提交或储藏。',
       );
   @override
-  String get targetDeskNoBranch => '目标工作台没有分支。';
+  String get targetDeskNoBranch => '目标 Desk 没有分支。';
   @override
   String mergePrIntoDesk({required Object number, required Object branch}) =>
       '将 PR #${number} 合并到 ${branch}';
@@ -713,7 +713,8 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String get mergeCommit => '合并提交';
   @override
-  String noDeskForBranch({required Object branch}) => '未找到分支 ${branch} 对应的工作台';
+  String noDeskForBranch({required Object branch}) =>
+      '未找到分支 ${branch} 对应的 Desk';
   @override
   String get mergeAnyway => '仍然合并';
   @override
@@ -930,7 +931,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   @override
   String get actionPrReview => '✦ pr 审查';
   @override
-  String get actionOpenAsDesk => '⊞ 作为工作台打开';
+  String get actionOpenAsDesk => '⊞ 作为 Desk 打开';
   @override
   String get actionCheckout => '[c] 检出';
   @override
@@ -1009,7 +1010,7 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
     required Object phrase,
   }) => '${name}，${tag}，${phrase}';
   @override
-  String get crossLinkDesk => '工作台';
+  String get crossLinkDesk => 'Desk';
   @override
   String get crossLinkPr => 'PR';
   @override
@@ -2095,7 +2096,7 @@ class _Translations$app$cheatsheet$zh_Hans
   @override
   String get branches => '分支';
   @override
-  String get xray => '透视';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '切换（始终）';
   @override
@@ -2228,7 +2229,7 @@ class _Translations$changes$usage$zh_Hans
   @override
   String tipReasoning({required Object value}) => '${value}  推理';
   @override
-  String tipWallClock({required Object value}) => '${value}s  墙钟';
+  String tipWallClock({required Object value}) => '${value}s  实际耗时';
 }
 
 // Path: changes.tabs
@@ -2729,9 +2730,9 @@ class _Translations$changes$snack$zh_Hans
   @override
   String diffFailed({required Object error}) => '差异失败：${error}';
   @override
-  String get deskEmpty => '工作台没有领先于你的内容 — 空倒。';
+  String get deskEmpty => 'Desk 没有领先于你的内容 — 空倒。';
   @override
-  String sourceDesk({required Object label}) => '工作台 ${label}';
+  String sourceDesk({required Object label}) => 'Desk ${label}';
   @override
   String shelfReadFailed({required Object error}) => '搁架读取失败：${error}';
   @override
@@ -2825,7 +2826,7 @@ class _Translations$changes$dropHint$zh_Hans
   @override
   String get fromShelf => '拖放以把此搁架的改动带到这里';
   @override
-  String get fromDesk => '拖放以把此工作台的改动带到这里';
+  String get fromDesk => '拖放以把此 Desk 的改动带到这里';
 }
 
 // Path: changes.diffEmpty
@@ -3400,9 +3401,9 @@ class _Translations$changes$mergeEditor$zh_Hans
 
   // Translations
   @override
-  String get resolutionYours => '你的';
+  String get resolutionYours => '我方';
   @override
-  String get resolutionTheirs => '他们的';
+  String get resolutionTheirs => '他方';
   @override
   String get resolutionCustom => '自定义';
   @override
@@ -3618,7 +3619,12 @@ class _Translations$common$time$zh_Hans extends Translations$common$time$en {
   @override
   String monthsAgo({required Object n}) => '${n} 个月前';
   @override
-  String yearsAgo({required Object n}) => '${n} 年前';
+  String yearsAgo({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '${n} 年前',
+        other: '${n} 年前',
+      );
   @override
   String minutesShort({required Object n}) => '${n} 分';
   @override
@@ -3630,7 +3636,12 @@ class _Translations$common$time$zh_Hans extends Translations$common$time$en {
   @override
   String monthsShort({required Object n}) => '${n} 月';
   @override
-  String yearsShort({required Object n}) => '${n} 年';
+  String yearsShort({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '${n} 年',
+        other: '${n} 年',
+      );
   @override
   String commitMonthsShort({required Object n}) => '${n} 月';
   @override
@@ -4238,7 +4249,7 @@ class _Translations$history$inFlight$zh_Hans
   @override
   String get header => '进行中';
   @override
-  String get deskFallbackLabel => '工作台';
+  String get deskFallbackLabel => 'Desk';
 }
 
 // Path: historySurgery.chrome
@@ -4590,7 +4601,7 @@ class _Translations$orrery$header$zh_Hans
 
   // Translations
   @override
-  String get title => '天象仪';
+  String get title => 'Orrery';
   @override
   String get modeScrub => '拖拽';
   @override
@@ -4612,13 +4623,13 @@ class _Translations$orrery$status$zh_Hans
 
   // Translations
   @override
-  String get loading => '正在沿历史追溯流形…';
+  String get loading => '正在沿历史追溯manifold…';
   @override
   String get loadError => '无法读取此仓库的历史。';
   @override
   String get notEnoughHistory => '历史尚不足以绘制轨迹。';
   @override
-  String get notEnoughHistoryDetail => '天象仪需要几个提交才能作图。';
+  String get notEnoughHistoryDetail => 'Orrery 需要几个提交才能作图。';
 }
 
 // Path: orrery.legend
@@ -5285,7 +5296,7 @@ class _Translations$palette$navigation$zh_Hans
   @override
   String get branches => '分支';
   @override
-  String get xray => '透视';
+  String get xray => 'X-Ray';
   @override
   String get settings => '设置';
   @override
@@ -5411,9 +5422,9 @@ class _Translations$palette$orrery$zh_Hans
 
   // Translations
   @override
-  String get label => '天象仪';
+  String get label => 'Orrery';
   @override
-  String get subtitle => '沿流形拖拽仓库的结构历史';
+  String get subtitle => '沿manifold拖拽仓库的结构历史';
 }
 
 // Path: palette.command
@@ -6010,7 +6021,7 @@ class _Translations$settings$keybindingProfile$zh_Hans
   @override
   String get label => '快捷键配置';
   @override
-  String get porcelain => '瓷釉';
+  String get porcelain => 'Porcelain';
   @override
   String get numeric => '数字';
   @override
@@ -6066,7 +6077,7 @@ class _Translations$settings$shortcuts$zh_Hans
   @override
   String get branches => '分支';
   @override
-  String get xray => '透视';
+  String get xray => 'X-Ray';
   @override
   String get switchAlways => '切换（始终）';
   @override
@@ -6296,7 +6307,7 @@ class _Translations$settings$museHint$zh_Hans
   @override
   String get strict => '标准。禁忌。muse 不会放过的东西。';
   @override
-  String get paranoid => '调校透镜。流形该以什么频率共鸣？';
+  String get paranoid => '调校透镜。manifold该以什么频率共鸣？';
 }
 
 // Path: settings.museEditor
@@ -7444,7 +7455,7 @@ class _Translations$xray$header$zh_Hans extends Translations$xray$header$en {
   @override
   String get refreshing => '正在刷新…';
   @override
-  String get title => '仓库透视';
+  String get title => '仓库 X-Ray';
 }
 
 // Path: xray.hotspot
@@ -7559,13 +7570,13 @@ class _Translations$xray$loadingCard$zh_Hans
   @override
   String get buildingMessage => '正在探查 Git 历史、引用、节奏和热点。';
   @override
-  String get buildingTitle => '正在构建仓库透视';
+  String get buildingTitle => '正在构建仓库 X-Ray';
   @override
   String get idleMessage => '再次打开面板以探查当前仓库。';
   @override
-  String get idleTitle => '仓库透视';
+  String get idleTitle => '仓库 X-Ray';
   @override
-  String get unavailableTitle => '仓库透视不可用';
+  String get unavailableTitle => '仓库 X-Ray 不可用';
 }
 
 // Path: xray.metabolism
@@ -7625,7 +7636,12 @@ class _Translations$xray$recency$zh_Hans extends Translations$xray$recency$en {
   @override
   String weeks({required Object n}) => '${n} 周';
   @override
-  String years({required Object n}) => '${n} 年';
+  String years({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '${n} 年',
+        other: '${n} 年',
+      );
 }
 
 // Path: xray.rings
@@ -7803,7 +7819,7 @@ class _Translations$xray$trajectory$zh_Hans
   @override
   String events({required Object n}) => '${n} 个事件';
   @override
-  String get openInOrrery => '在天象仪中打开';
+  String get openInOrrery => '在 Orrery 中打开';
   @override
   String get readingHint => '正在读取历史…';
   @override
@@ -8204,7 +8220,7 @@ class _Translations$onboarding$preview$panels$zh_Hans
 
   // Translations
   @override
-  String get xray => '仓库透视';
+  String get xray => '仓库 X-Ray';
   @override
   String get settings => '设置';
 }
@@ -8289,7 +8305,7 @@ class _Translations$onboarding$preview$branches$zh_Hans
   @override
   String get absorbed => '已吸收';
   @override
-  String get desk => '工作台';
+  String get desk => 'Desk';
   @override
   String get head => 'HEAD';
   @override

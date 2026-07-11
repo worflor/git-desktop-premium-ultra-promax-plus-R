@@ -55,13 +55,19 @@
     "daysAgo": "{n} дн назад",
     "weeksAgo": "{n} нед назад",
     "monthsAgo": "{n} мес назад",
-    "yearsAgo": "{n} г назад",
+    "yearsAgo": {
+      "one": "{n} г назад",
+      "other": "{n} г назад"
+    },
     "minutesShort": "{n} мин",
     "hoursShort": "{n} ч",
     "daysShort": "{n} дн",
     "weeksShort": "{n} нед",
     "monthsShort": "{n} мес",
-    "yearsShort": "{n} г",
+    "yearsShort": {
+      "one": "{n} г",
+      "other": "{n} г"
+    },
     "commitMonthsShort": "{n} мес",
     "idle": "простой",
     "idleDays": "простой {n} дн",

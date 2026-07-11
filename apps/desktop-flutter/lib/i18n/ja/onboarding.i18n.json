@@ -59,7 +59,7 @@
   },
   "preview": {
     "panels": {
-      "xray": "リポジトリ X 線",
+      "xray": "リポジトリ X-Ray",
       "settings": "設定"
     },
     "sidebar": {
@@ -85,7 +85,7 @@
       "lensBranches": "ブランチ",
       "lensPRs": "PR",
       "absorbed": "吸収済み",
-      "desk": "デスク",
+      "desk": "Desk",
       "head": "HEAD",
       "tracking": "→ 追跡：{ref}"
     },
