@@ -156,7 +156,7 @@ Future<String> syncedLinuxProjectDir() async {
       'git -C $worktree rev-parse --is-inside-work-tree '
       '2>/dev/null || echo INVALID',
     );
-    usable = check.lines.any((line) => line.trim() == 'true');
+    usable = check.split('\n').any((line) => line.trim() == 'true');
   }
 
   if (!usable) {
