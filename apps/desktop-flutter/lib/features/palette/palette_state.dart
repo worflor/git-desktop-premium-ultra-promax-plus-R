@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
+import '../../backend/atomic_write.dart';
 import '../../backend/git.dart' as git_backend;
 import '../../backend/logos_git.dart';
 import '../../backend/repo_web_url.dart';
@@ -65,6 +66,13 @@ class PaletteState extends ChangeNotifier {
   bool _isLoading = false;
   Timer? _debounce;
   Timer? _hoverDebounce;
+  // Usage-persistence scheduling (see _persistUsage): a coalescing debounce +
+  // single-flight drain so the frequent fire-and-forget writes never overlap
+  // and never tear the file.
+  static const Duration _kPersistDebounce = Duration(seconds: 1);
+  Timer? _persistTimer;
+  bool _persistDirty = false;
+  Future<void>? _persistDraining;
   PaletteContext _context = const PaletteContext();
   LogosGit? _engine;
   bool elevated = false;
@@ -120,9 +128,20 @@ class PaletteState extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return; // idempotent — safe against a double dispose
     _disposed = true;
     _debounce?.cancel();
     _hoverDebounce?.cancel();
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    // Flush-on-dispose: persist any pending usage the debounce hadn't yet
+    // written. Best-effort and fire-and-forget — at app shutdown the isolate
+    // may end first, but usage stats are non-critical (the loader tolerates a
+    // missing/partial file) and the atomic write keeps even this last one
+    // torn-free.
+    if (_persistDirty && _persistDraining == null) {
+      unawaited(_writeUsageSnapshot());
+    }
     super.dispose();
   }
 
@@ -528,68 +547,76 @@ class PaletteState extends ChangeNotifier {
       final raw =
           jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
 
-      final repos = raw['repos'] as Map<String, dynamic>?;
-      if (repos != null) {
-        for (final e in repos.entries) {
-          final rd = e.value as Map<String, dynamic>;
-          _allFrequency[e.key] = (rd['frequency'] as Map<String, dynamic>?)
-                  ?.map((k, v) => MapEntry(k, v as int)) ??
-              {};
-          _allRecency[e.key] = (rd['recency'] as Map<String, dynamic>?)
-                  ?.map((k, v) =>
-                      MapEntry(k, DateTime.parse(v as String))) ??
-              {};
-          _allQueryFrequency[e.key] =
-              (rd['queryFrequency'] as Map<String, dynamic>?)?.map(
-                    (k, v) => MapEntry(
-                      k,
-                      (v as Map<String, dynamic>)
-                          .map((k2, v2) => MapEntry(k2, v2 as int)),
-                    ),
-                  ) ??
-                  {};
-          _allTransitions[e.key] =
-              (rd['transitions'] as Map<String, dynamic>?)?.map(
-                    (k, v) => MapEntry(
-                      k,
-                      (v as Map<String, dynamic>)
-                          .map((k2, v2) => MapEntry(k2, v2 as int)),
-                    ),
-                  ) ??
-                  {};
-        }
-        _lastExecutedId = raw['lastExecutedId'] as String?;
-        return;
-      }
-
-      final freq = raw['frequency'] as Map<String, dynamic>?;
-      final rec = raw['recency'] as Map<String, dynamic>?;
-      final qf = raw['queryFrequency'] as Map<String, dynamic>?;
-      if (freq != null) {
-        _allFrequency[''] = freq.map((k, v) => MapEntry(k, v as int));
-      }
-      if (rec != null) {
-        _allRecency[''] = rec.map(
-          (k, v) => MapEntry(k, DateTime.parse(v as String)),
-        );
-      }
-      if (qf != null) {
-        _allQueryFrequency[''] = qf.map(
-          (k, v) => MapEntry(
-            k,
-            (v as Map<String, dynamic>)
-                .map((k2, v2) => MapEntry(k2, v2 as int)),
-          ),
-        );
-      }
+      // Parse EVERYTHING into locals first (parsePaletteUsage throws on any
+      // malformed field), then commit all four maps together. Previously each
+      // map was assigned in sequence with eager casts, so a wrong-typed later
+      // field threw AFTER an earlier map had already committed — a silent
+      // partial (franken) load, since the enclosing catch swallowed the throw.
+      // All-or-nothing makes that state unrepresentable: a bad field means we
+      // commit nothing and degrade to empty.
+      final parsed = parsePaletteUsage(raw);
+      _allFrequency.addAll(parsed.frequency);
+      _allRecency.addAll(parsed.recency);
+      _allQueryFrequency.addAll(parsed.queryFrequency);
+      _allTransitions.addAll(parsed.transitions);
+      _lastExecutedId = parsed.lastExecutedId;
     } catch (_) {}
   }
 
-  Future<void> _persistUsage() async {
+  /// Marks usage state dirty and schedules an atomic flush. Called
+  /// fire-and-forget from [recordUsage] on EVERY command execution, so it must
+  /// not (a) block the UI or (b) let two writes to the same file race. It is
+  /// coalesced (a burst of executions collapses to one write within
+  /// [_kPersistDebounce]) and single-flighted (never two writes in flight),
+  /// and the actual write goes through [writeFileAtomicString] so the file is
+  /// never torn — previously each execution did a bare `writeAsString`, which
+  /// two overlapping fire-and-forget calls could interleave and corrupt with
+  /// no crash required. The snapshot is rebuilt from the live maps AT WRITE
+  /// TIME, so a coalesced flush always persists the latest state.
+  void _persistUsage() {
+    _persistDirty = true;
+    // Fixed-window coalesce: fire once, ~1s after the first dirtying in a
+    // burst. A resetting debounce could starve under continuous use; this
+    // bounds staleness to _kPersistDebounce.
+    _persistTimer ??= Timer(_kPersistDebounce, () {
+      _persistTimer = null;
+      if (_disposed) return;
+      unawaited(_drainUsageWrites());
+    });
+  }
+
+  /// Single-flight drain: writes while dirty, re-capturing the latest state
+  /// each pass, so at most one write is ever in flight for this file.
+  Future<void> _drainUsageWrites() async {
+    if (_persistDraining != null) return; // already draining
+    Future<void> loop() async {
+      while (_persistDirty) {
+        _persistDirty = false;
+        await _writeUsageSnapshot();
+      }
+    }
+
+    _persistDraining = loop();
+    try {
+      await _persistDraining;
+    } finally {
+      _persistDraining = null;
+    }
+  }
+
+  /// Forces any pending usage write to complete now, bypassing the debounce.
+  /// Test-only: lets a test assert the persisted file deterministically
+  /// without waiting on the real timer.
+  @visibleForTesting
+  Future<void> debugFlushUsage() async {
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    await _drainUsageWrites();
+  }
+
+  Future<void> _writeUsageSnapshot() async {
     try {
       final file = await _usageFile();
-      final dir = file.parent;
-      if (!dir.existsSync()) dir.createSync(recursive: true);
       final repos = <String, dynamic>{};
       for (final rk in {
         ..._allFrequency.keys,
@@ -605,10 +632,10 @@ class PaletteState extends ChangeNotifier {
           'transitions': _allTransitions[rk] ?? {},
         };
       }
-      await file.writeAsString(jsonEncode({
-        'repos': repos,
-        'lastExecutedId': _lastExecutedId,
-      }));
+      await writeFileAtomicString(
+        file,
+        jsonEncode({'repos': repos, 'lastExecutedId': _lastExecutedId}),
+      );
     } catch (_) {}
   }
 
@@ -626,4 +653,97 @@ class PaletteState extends ChangeNotifier {
     final dir = await StoragePaths.gdpuDataDir();
     return File('${dir.path}${Platform.pathSeparator}palette_usage.json');
   }
+}
+
+/// The four per-repo usage maps plus the last-executed id, parsed
+/// all-or-nothing from a `palette_usage.json` payload. Exposed for the
+/// franken-load law: the maps are plain data, so a headless test can parse a
+/// hostile payload and assert the parse either yields a complete result or
+/// throws — never a partial commit.
+@visibleForTesting
+class PaletteUsageParse {
+  const PaletteUsageParse({
+    required this.frequency,
+    required this.recency,
+    required this.queryFrequency,
+    required this.transitions,
+    required this.lastExecutedId,
+  });
+
+  final Map<String, Map<String, int>> frequency;
+  final Map<String, Map<String, DateTime>> recency;
+  final Map<String, Map<String, Map<String, int>>> queryFrequency;
+  final Map<String, Map<String, Map<String, int>>> transitions;
+  final String? lastExecutedId;
+}
+
+/// Pure, side-effect-free parse of a `palette_usage.json` [raw] payload into a
+/// [PaletteUsageParse]. THROWS on any malformed field (a non-int frequency, a
+/// non-parseable recency date, a wrong-shaped nested map) so the caller can
+/// commit every map together or none — there is no return path that yields a
+/// partially-populated result. Handles both the current per-repo `repos`
+/// shape and the legacy single-repo top-level shape.
+///
+/// `@visibleForTesting`: [PaletteState._loadUsageSync] is the only production
+/// caller, but the parse is the whole risk surface, so it is drivable
+/// headless without the five-provider `open` path.
+@visibleForTesting
+PaletteUsageParse parsePaletteUsage(Map<String, dynamic> raw) {
+  final frequency = <String, Map<String, int>>{};
+  final recency = <String, Map<String, DateTime>>{};
+  final queryFrequency = <String, Map<String, Map<String, int>>>{};
+  final transitions = <String, Map<String, Map<String, int>>>{};
+
+  Map<String, Map<String, int>> nested(Map<String, dynamic>? m) =>
+      m?.map((k, v) => MapEntry(
+            k,
+            (v as Map<String, dynamic>)
+                .map((k2, v2) => MapEntry(k2, v2 as int)),
+          )) ??
+      {};
+
+  final repos = raw['repos'] as Map<String, dynamic>?;
+  if (repos != null) {
+    for (final e in repos.entries) {
+      final rd = e.value as Map<String, dynamic>;
+      frequency[e.key] = (rd['frequency'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(k, v as int)) ??
+          {};
+      recency[e.key] = (rd['recency'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(k, DateTime.parse(v as String))) ??
+          {};
+      queryFrequency[e.key] =
+          nested(rd['queryFrequency'] as Map<String, dynamic>?);
+      transitions[e.key] =
+          nested(rd['transitions'] as Map<String, dynamic>?);
+    }
+    return PaletteUsageParse(
+      frequency: frequency,
+      recency: recency,
+      queryFrequency: queryFrequency,
+      transitions: transitions,
+      lastExecutedId: raw['lastExecutedId'] as String?,
+    );
+  }
+
+  // Legacy single-repo (top-level) shape.
+  final freq = raw['frequency'] as Map<String, dynamic>?;
+  final rec = raw['recency'] as Map<String, dynamic>?;
+  final qf = raw['queryFrequency'] as Map<String, dynamic>?;
+  if (freq != null) {
+    frequency[''] = freq.map((k, v) => MapEntry(k, v as int));
+  }
+  if (rec != null) {
+    recency[''] = rec.map((k, v) => MapEntry(k, DateTime.parse(v as String)));
+  }
+  if (qf != null) {
+    queryFrequency[''] = nested(qf);
+  }
+  return PaletteUsageParse(
+    frequency: frequency,
+    recency: recency,
+    queryFrequency: queryFrequency,
+    transitions: transitions,
+    lastExecutedId: null,
+  );
 }

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'atomic_write.dart';
+import 'clock.dart';
 import 'json_safety.dart';
 import 'storage_paths.dart';
 
@@ -19,8 +21,15 @@ class ShadowCouplingCacheData {
     this.edgeTypeCounts = const {},
   });
 
-  bool get isFresh =>
-      DateTime.now().difference(discoveredAt).inMinutes < 60;
+  bool get isFresh => isFreshAt(const SystemClock());
+
+  /// Testable form of [isFresh]: the cache is fresh while fewer than 60
+  /// whole minutes have elapsed between [discoveredAt] and [clock]'s now.
+  /// [isFresh] delegates here with the real clock, so production behaviour
+  /// is bit-identical to the old `DateTime.now()` check; a test injects a
+  /// `FakeClock` to pin the 60-minute boundary.
+  bool isFreshAt(Clock clock) =>
+      clock.now().difference(discoveredAt).inMinutes < 60;
 
   Map<String, dynamic> toJson() => {
         'headHash': headHash,
@@ -101,6 +110,16 @@ class ShadowCouplingCacheData {
 }
 
 class ShadowCouplingCache {
+  /// Per-cache-file async mutex. Two callers that run the classic
+  /// load→mergeWith→save cycle concurrently would otherwise both observe the
+  /// pre-merge state and the second [save] would clobber the first's edges
+  /// (a lost update). Serialising [save] per key — and RE-LOADING + folding
+  /// inside the lock (see [_saveLocked]) — makes the read-modify-write
+  /// convergent for ALL callers, so the caller's own pre-merge is belt-and-
+  /// suspenders rather than load-bearing. Mirrors NudgeLedger's `_writeLock`,
+  /// keyed by the cache-file hash so unrelated repos still save in parallel.
+  static final Map<String, Future<void>> _saveLocks = {};
+
   static Future<ShadowCouplingCacheData?> load(String repoPath) async {
     try {
       final file = await _cacheFile(repoPath);
@@ -114,18 +133,44 @@ class ShadowCouplingCache {
     }
   }
 
-  static Future<void> save(
+  static Future<void> save(String repoPath, ShadowCouplingCacheData data) {
+    final key = _fnv1a(repoPath);
+    final prev = _saveLocks[key] ?? Future<void>.value();
+    // Best-effort like the original: swallow write errors (the shadow cache
+    // is a bonus signal, never load-bearing) and never let one save's failure
+    // break the chain for the next.
+    final next = prev.then((_) => _saveLocked(repoPath, data)).catchError((_) {});
+    _saveLocks[key] = next;
+    // Prune the tail once drained so the map stays bounded by live repos.
+    next.whenComplete(() {
+      if (identical(_saveLocks[key], next)) _saveLocks.remove(key);
+    });
+    return next;
+  }
+
+  /// The serialised body of [save]: under the per-key lock, re-load the
+  /// current on-disk state and fold [data] into it before writing, so a save
+  /// that raced another's write still keeps BOTH contributors' edges.
+  ///
+  /// mergeWith's freshness semantics (:74-100) are what make save-as-merge
+  /// correct: within one generation (same [headHash]) it is a pure max-union
+  /// on edges/counts — monotone, so re-applying on a reloaded state never
+  /// regresses an edge — and it adopts the newer headHash/discoveredAt. A
+  /// DIFFERENT headHash means a new generation (HEAD moved); the incoming save
+  /// supersedes rather than unioning stale edges from a prior HEAD, matching
+  /// both mergeWith's newer-wins head policy and the resolver's refusal to
+  /// reuse coupling across a checkout/reset.
+  static Future<void> _saveLocked(
       String repoPath, ShadowCouplingCacheData data) async {
-    try {
-      final file = await _cacheFile(repoPath);
-      await file.parent.create(recursive: true);
-      final tmp = File('${file.path}.tmp');
-      await tmp.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(data.toJson()),
-        flush: true,
-      );
-      await tmp.rename(file.path);
-    } catch (_) {}
+    final current = await load(repoPath);
+    final toWrite = (current == null || current.headHash != data.headHash)
+        ? data
+        : current.mergeWith(data);
+    final file = await _cacheFile(repoPath);
+    await writeFileAtomicString(
+      file,
+      const JsonEncoder.withIndent('  ').convert(toWrite.toJson()),
+    );
   }
 
   static Future<File> _cacheFile(String repoPath) async {

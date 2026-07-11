@@ -157,7 +157,28 @@ class NudgeLedger {
       try {
         final file = await _file();
         await file.parent.create(recursive: true);
-        await file.writeAsString('$line\n',
+        // Torn-tail guard: `writeAsString(append)` is not atomic, so a crash
+        // mid-append can leave a partial last line with no trailing newline.
+        // If the file doesn't already end in '\n', prepend one so that partial
+        // line stays its own (skipped-on-read) line instead of swallowing this
+        // event into an unparseable `{partial}{line}` concatenation — i.e. a
+        // torn write loses at most the already-torn line, never the next one.
+        // The static `_writeLock` serialisation makes the length/last-byte
+        // probe race-free, and on the clean path it adds no bytes. Copied from
+        // CommandTelemetryStore._appendSample.
+        var prefix = '';
+        final length = await file.exists() ? await file.length() : 0;
+        if (length > 0) {
+          final raf = await file.open();
+          try {
+            await raf.setPosition(length - 1);
+            final last = await raf.read(1);
+            if (last.isEmpty || last[0] != 0x0A) prefix = '\n';
+          } finally {
+            await raf.close();
+          }
+        }
+        await file.writeAsString('$prefix$line\n',
             mode: FileMode.append, flush: true);
       } catch (_) {
         // best-effort; a nudge is never load-bearing

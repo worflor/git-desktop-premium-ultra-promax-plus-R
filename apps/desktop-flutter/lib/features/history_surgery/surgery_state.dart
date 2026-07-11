@@ -136,7 +136,12 @@ class SurgeryState extends ChangeNotifier {
   bool get confirmationComplete =>
       checkboxes.isNotEmpty &&
       checkboxes.every((c) => c) &&
-      typedConfirmation.trim().toUpperCase() == 'PURGE';
+      // Exact, case-sensitive, no surrounding whitespace. This gate is the
+      // sole barrier before an irreversible history rewrite + force-push, so
+      // it must not accept near-misses ("purge", "Purge", " PURGE ") that a
+      // trim()/toUpperCase() would have silently waved through — the user is
+      // asked to type the literal word PURGE and nothing else counts.
+      typedConfirmation == 'PURGE';
 
   // ── Phase 4: Execute ──
 
@@ -227,6 +232,13 @@ class SurgeryState extends ChangeNotifier {
   final Set<String> pushedBranches = {};
   String? get pushError => pushErrors.isEmpty ? null : pushErrors.join('\n');
 
+  /// Test seam mirroring [git.pushRemote]'s success/error surface without a
+  /// live remote. When null (production) [forcePush] shells out to real git.
+  /// Injected only by tests so the per-branch push loop's failure-accumulation
+  /// can be exercised deterministically.
+  @visibleForTesting
+  Future<({bool ok, String? error})> Function(String branch)? forcePushOverride;
+
   Future<void> forcePush(String branch) async {
     if (rolledBack) return;
     if (dryRun) {
@@ -234,13 +246,20 @@ class SurgeryState extends ChangeNotifier {
       _safeNotify();
       return;
     }
-    final result = await git.pushRemote(
-      repoPath,
-      branch: branch,
-      forceWithLease: true,
-    );
-    if (!result.ok) {
-      pushErrors.add('$branch: ${result.error ?? 'unknown error'}');
+    final ({bool ok, String? error}) outcome;
+    final override = forcePushOverride;
+    if (override != null) {
+      outcome = await override(branch);
+    } else {
+      final result = await git.pushRemote(
+        repoPath,
+        branch: branch,
+        forceWithLease: true,
+      );
+      outcome = (ok: result.ok, error: result.error);
+    }
+    if (!outcome.ok) {
+      pushErrors.add('$branch: ${outcome.error ?? 'unknown error'}');
     } else {
       pushedBranches.add(branch);
     }

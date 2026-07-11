@@ -601,9 +601,13 @@ void main() {
 
   group('numeric sibling — DeskIssueStore.refFor(int) — trivially safe, kept '
       'for symmetry', () {
+    // Issue ids start at 1 — `LiveManifoldRef.issue` makes id <= 0
+    // unrepresentable by construction (rejects it), so the domain fuzzed
+    // here is the real one (>= 1); the id <= 0 rejection is pinned
+    // separately below.
     test('refFor(id) is always contained under refs/manifold/issues/, fuzzed', () {
       forAll(
-        genInt(min: -1000000, max: 1000000),
+        genInt(min: 1, max: 1000000),
         count: 300 * fuzzScale(),
         describe: 'issue-ref-containment',
         check: (id) {
@@ -618,7 +622,7 @@ void main() {
 
     test('refFor is injective over distinct ints, fuzzed', () {
       forAll(
-        _pairGen(genInt(min: -1000000, max: 1000000)),
+        _pairGen(genInt(min: 1, max: 1000000)),
         count: 300 * fuzzScale(),
         describe: 'issue-ref-injectivity',
         check: (pair) {
@@ -627,6 +631,15 @@ void main() {
           expect(sameRef, equals(a == b), reason: 'a=$a b=$b');
         },
       );
+    });
+
+    test('refFor rejects a non-positive id (issue ids start at 1)', () {
+      // The tightened contract: an out-of-range id is unrepresentable, not
+      // silently mapped to a namespaced ref. Pins the precondition so a
+      // future loosening is a conscious change, not an accident.
+      expect(() => DeskIssueStore.refFor(0), throwsArgumentError);
+      expect(() => DeskIssueStore.refFor(-1), throwsArgumentError);
+      expect(() => DeskIssueStore.refFor(-1000000), throwsArgumentError);
     });
   });
 }

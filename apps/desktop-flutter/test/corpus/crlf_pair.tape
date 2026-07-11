@@ -2,3 +2,4 @@
 # Replayed before every random case. One tape per line, comma-separated.
 # Written automatically by forAll(); safe to delete, safe to commit.
 0,0,0
+0,5,37,47,30,10,62,1

@@ -18,11 +18,15 @@ import 'package:git_desktop/ui/tokens.dart';
 
 import 'orrery_test_harness.dart';
 
-const _repo =
-    'C:/Users/mini server/Documents/Projects/git-desktop-premium-ultra-promax-plus-R';
+// The monorepo root, resolved portably: `flutter test` runs with
+// apps/desktop-flutter as CWD on every OS (including the WSL worktree), so a
+// hardcoded Windows path would fail everywhere but the machine it was written
+// on — Linux included.
+final _repo = Directory.current.parent.parent.path;
 
 Future<void> _writeImage(ui.Image image, String path) async {
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose(); // ui.Image holds native memory — release it (leak_tracker)
   final file = File(path);
   await file.parent.create(recursive: true);
   await file.writeAsBytes(bytes!.buffer.asUint8List());
@@ -61,7 +65,9 @@ void main() {
       final canvas = Canvas(recorder, Offset.zero & size);
       OrreryPainter(model: m, head: m.headPosition, colors: colors)
           .paint(canvas, size);
-      final image = await recorder.endRecording().toImage(900, 900);
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(900, 900);
+      picture.dispose(); // Picture holds native memory too — release it
       await _writeImage(image, '.preview/orrery_REAL_disk.png');
     });
 
@@ -85,7 +91,9 @@ void main() {
       final canvas = Canvas(recorder, Offset.zero & size);
       OrreryPainter(model: modules, head: modules.headPosition, colors: colors)
           .paint(canvas, size);
-      final image = await recorder.endRecording().toImage(900, 900);
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(900, 900);
+      picture.dispose(); // Picture holds native memory too — release it
       await _writeImage(image, '.preview/orrery_REAL_modules.png');
     });
 

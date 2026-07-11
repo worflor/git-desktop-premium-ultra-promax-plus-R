@@ -13,6 +13,7 @@ import 'package:git_desktop/backend/desk_pr.dart';
 import 'package:git_desktop/backend/desk_pr_store.dart';
 import 'package:git_desktop/backend/git_result.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
+import '../support/must.dart';
 
 Future<Directory> _newRepo() async {
   final dir = await Directory.systemTemp.createTemp('manifold_test_');
@@ -57,9 +58,9 @@ class _RaceRefs extends ManifoldRefs {
 
   @override
   Future<GitResult<void>> updateRef({
-    required String ref,
-    required String newSha,
-    String? oldSha,
+    required LiveManifoldRef ref,
+    required CommitOid newSha,
+    Oid? oldSha,
   }) async {
     if (!_fired && onFirstUpdate != null) {
       _fired = true;
@@ -84,7 +85,7 @@ class _LeaseRaceRefs extends ManifoldRefs {
   Future<void> Function()? afterFetch;
 
   @override
-  Future<GitResult<void>> fetchToStaging({String? remote}) async {
+  Future<GitResult<void>> fetchToStaging({MetadataRemote? remote}) async {
     final r = await super.fetchToStaging(remote: remote);
     if (!_fired && afterFetch != null) {
       _fired = true;
@@ -152,13 +153,13 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/dup',
           title: 'first',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         final second = await store.create(
           branch: 'feat/dup',
           title: 'second',
@@ -178,25 +179,25 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/audit',
           title: 'audit',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
-        await store.addComment(
+        ));
+        await expectOk(store.addComment(
           branch: 'feat/audit',
           author: 'tester',
           body: 'first comment',
-        );
-        await store.addReview(
+        ));
+        await expectOk(store.addReview(
           branch: 'feat/audit',
           author: 'tester',
           verdict: 'APPROVED',
           body: 'lgtm',
-        );
-        await store.setState(branch: 'feat/audit', state: 'MERGED');
+        ));
+        await expectOk(store.setState(branch: 'feat/audit', state: 'MERGED'));
         // git log on the metadata ref should show 4 commits with the
         // expected subjects.
         final log = await Process.run(
@@ -225,20 +226,20 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'a',
           title: 'A',
           body: 'aaa',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
-        await store.create(
+        ));
+        await expectOk(store.create(
           branch: 'b',
           title: 'B',
           body: 'bbb',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         final all = await store.listAll();
         expect(all.ok, isTrue);
         expect(all.data!.length, 2);
@@ -272,24 +273,24 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/thread',
           title: 't',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
-        await store.addComment(
+        ));
+        await expectOk(store.addComment(
           branch: 'feat/thread',
           author: 'tester',
           body: 'looking now',
-        );
-        await store.addReview(
+        ));
+        await expectOk(store.addReview(
           branch: 'feat/thread',
           author: 'tester',
           verdict: 'APPROVED',
           body: 'looks good',
-        );
+        ));
         final pr = (await store.read('feat/thread')).data!;
         expect(pr.thread.length, 2);
         expect(pr.thread[0].verdict, '');
@@ -306,16 +307,16 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/abandon',
           title: 'a',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         final beforeAll = await store.listAll();
         expect(beforeAll.data!.length, 1);
-        await store.abandon('feat/abandon');
+        await expectOk(store.abandon('feat/abandon'));
         final afterAll = await store.listAll();
         expect(afterAll.data!.length, 0);
         final ref = await Process.run(
@@ -408,13 +409,13 @@ void main() {
       try {
         final store = DeskPrStore(_refs(repo));
         // Create on `feat-x`.
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat-x',
           title: 'first',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         // Try to create on `feat/~x`. Under the OLD lossy encoder,
         // both branches mapped to `feat-x` and the second create()
         // would silently overwrite. With bijective encoding they
@@ -486,13 +487,13 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/race',
           title: 't',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
 
         final raceRefs = _RaceRefs(
           repoPath: repo.path,
@@ -525,13 +526,13 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/concurrent',
           title: 't',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         await Future.wait([
           for (var i = 0; i < 5; i++)
             store.addComment(
@@ -609,20 +610,20 @@ void main() {
             workingDirectory: cloneA.path);
         final storeA = DeskPrStore(_refs(cloneA));
         final storeB = DeskPrStore(_refs(cloneB));
-        await storeA.create(
+        await expectOk(storeA.create(
             branch: 'feat/x',
             title: 't',
             body: '',
             baseRef: 'main',
-            authorIdentity: 'A');
+            authorIdentity: 'A'));
         expect((await storeA.syncWithRemote()).ok, isTrue);
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A comments locally (unpushed); B comments and pushes.
-        await storeA.addComment(
-            branch: 'feat/x', author: 'A', body: 'from A');
-        await storeB.addComment(
-            branch: 'feat/x', author: 'B', body: 'from B');
+        await expectOk(storeA.addComment(
+            branch: 'feat/x', author: 'A', body: 'from A'));
+        await expectOk(storeB.addComment(
+            branch: 'feat/x', author: 'B', body: 'from B'));
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A reconciles the divergence — union, not rewind.
@@ -662,18 +663,18 @@ void main() {
             workingDirectory: cloneA.path);
         final storeA = DeskPrStore(_refs(cloneA));
         final storeB = DeskPrStore(_refs(cloneB));
-        await storeA.create(
+        await expectOk(storeA.create(
             branch: 'feat/x',
             title: 't',
             body: '',
             baseRef: 'main',
-            authorIdentity: 'A');
+            authorIdentity: 'A'));
         expect((await storeA.syncWithRemote()).ok, isTrue);
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A has a local-ahead change to push.
-        await storeA.addComment(
-            branch: 'feat/x', author: 'A', body: 'from A');
+        await expectOk(storeA.addComment(
+            branch: 'feat/x', author: 'A', body: 'from A'));
 
         // Wire A's sync so a peer (B) pushes in the window after A fetched
         // staging but before A pushes — invalidating A's lease.
@@ -684,8 +685,8 @@ void main() {
         );
         final raceStore = DeskPrStore(raceRefs);
         raceRefs.afterFetch = () async {
-          await storeB.addComment(
-              branch: 'feat/x', author: 'B', body: 'from B');
+          await expectOk(storeB.addComment(
+              branch: 'feat/x', author: 'B', body: 'from B'));
           final s = await storeB.syncWithRemote();
           expect(s.ok, isTrue, reason: s.error);
         };
@@ -721,13 +722,13 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await store.create(
+        await expectOk(store.create(
           branch: 'feat/x',
           title: 't',
           body: '',
           baseRef: 'main',
           authorIdentity: 'tester',
-        );
+        ));
         final snapshot = (await store.read('feat/x')).data!;
 
         // The race store applies a remote-derived full update; an

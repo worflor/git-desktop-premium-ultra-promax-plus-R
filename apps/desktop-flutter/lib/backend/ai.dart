@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 
 import 'ai_api_keys_store.dart';
 import 'ai_api_provider.dart';
+import 'atomic_write.dart';
+import 'clock.dart';
 import 'codex_piggyback_proxy.dart';
 import 'cursor_effort.dart';
 import 'ai_audit_store.dart';
@@ -314,6 +316,52 @@ final Map<String, _TimedValue<_ProviderAvailability>>
     _providerAvailabilityCache = {};
 final Map<String, _TimedValue<_ProviderModelDiscovery?>>
     _providerModelDiscoveryCache = {};
+
+/// Wall-clock source backing every provider-cache TTL — the in-memory
+/// resolution/availability/model-discovery caches AND the 24h on-disk API
+/// model cache. Defaults to the real clock, so production behaviour is
+/// bit-identical to the pre-seam `DateTime.now()` reads; a test overrides
+/// it via [debugSetProviderCacheClock] to pin a freshness boundary in
+/// isolation (see clock.dart for the pattern).
+Clock _providerClock = const SystemClock();
+
+/// @visibleForTesting seam to drive the provider caches' clock. Reset to
+/// `const SystemClock()` in tearDown so no state leaks between tests.
+@visibleForTesting
+void debugSetProviderCacheClock(Clock clock) => _providerClock = clock;
+
+/// Freshness predicate shared by every in-memory provider cache: an entry
+/// stamped at [checkedAt] is fresh while less than [ttl] has elapsed per
+/// [_providerClock]. Identical to the old inline
+/// `DateTime.now().difference(checkedAt) < ttl` when the clock is the
+/// default [SystemClock].
+bool _providerCacheFresh(DateTime checkedAt, Duration ttl) =>
+    _providerClock.now().difference(checkedAt) < ttl;
+
+/// The on-disk API-model cache expires strictly more than 24 hours after
+/// its written timestamp. Mirrors the old inline
+/// `DateTime.now().difference(ts).inHours > 24`.
+bool _diskModelCacheExpired(DateTime ts) =>
+    _providerClock.now().difference(ts).inHours > 24;
+
+/// @visibleForTesting entry point: evaluate the in-memory cache freshness
+/// rule for an entry stamped at [checkedAt] with time-to-live [ttl],
+/// through the (possibly faked) provider clock. Lets a test pin the exact
+/// TTL boundary (e.g. the 30-minute model-discovery TTL,
+/// [debugModelDiscoveryCacheTtl]) without a network round-trip.
+@visibleForTesting
+bool debugProviderCacheFresh(DateTime checkedAt, Duration ttl) =>
+    _providerCacheFresh(checkedAt, ttl);
+
+/// @visibleForTesting entry point for the 24h on-disk model-cache expiry
+/// rule, driven through the (possibly faked) provider clock.
+@visibleForTesting
+bool debugDiskModelCacheExpired(DateTime ts) => _diskModelCacheExpired(ts);
+
+/// @visibleForTesting: the live 30-minute model-discovery TTL constant, so
+/// a boundary test doesn't have to hardcode (and drift from) the value.
+@visibleForTesting
+Duration get debugModelDiscoveryCacheTtl => _providerModelDiscoveryCacheTtl;
 
 const _modelValueSeparator = ':';
 const _diffStatWidth = 140;
@@ -1316,13 +1364,51 @@ bool isSensitivePath(String path) {
   for (final p in dirPrefixes) {
     if (lower.startsWith(p) || lower.contains('/$p')) return true;
   }
+  // Docker registry auth lives at `<home-or-repo>/.docker/config.json`. Scope
+  // to that exact path — blanket-matching `config.json` would block an
+  // ordinary, shareable filename that shows up all over a normal repo.
+  if (lower == '.docker/config.json' ||
+      lower.endsWith('/.docker/config.json')) {
+    return true;
+  }
   // Basename matches — the canonical secret-bearing files devs create.
-  if (name.startsWith('.env')) return true; // .env, .env.prod, .env.local
-  if (name.startsWith('id_rsa') || name.startsWith('id_ed25519')) return true;
-  if (name.startsWith('credentials')) return true;
+  if (name.startsWith('.env')) {
+    // `.env.example` / `.env.sample` / `.env.template` / `.env.dist` are the
+    // documented convention for a COMMITTED placeholder file (keys present,
+    // values blank/fake) — safe to share, so don't block them. Every other
+    // `.env*` (`.env`, `.env.local`, `.env.production`, …) is sensitive.
+    // (A leading-dot-less `env.example` never reaches here — it doesn't start
+    // with `.env` — so it too is treated as shareable.)
+    const shareableEnv = <String>[
+      '.env.example',
+      '.env.sample',
+      '.env.template',
+      '.env.dist',
+    ];
+    if (!shareableEnv.contains(name)) return true;
+  }
+  // SSH private keys: RSA, Ed25519, DSA, ECDSA.
+  if (name.startsWith('id_rsa') ||
+      name.startsWith('id_ed25519') ||
+      name.startsWith('id_dsa') ||
+      name.startsWith('id_ecdsa')) {
+    return true;
+  }
+  if (name.startsWith('credentials')) return true; // incl. .aws/credentials
+  // `git config credential.helper store` writes plaintext here; the leading
+  // `.git-` means `startsWith('credentials')` above never catches it.
+  if (name == '.git-credentials') return true;
   if (name == 'auth.json' || name == 'client_secret.json') return true;
+  // Package-registry credential files (npm `_authToken`, PyPI upload creds).
+  if (name == '.npmrc' || name == '.pypirc') return true;
+  // Shell/network credential stores.
+  if (name == '.netrc' || name == '_netrc') return true; // curl/ftp logins
+  if (name == '.pgpass') return true; // PostgreSQL password file
+  if (name == '.dockercfg') return true; // legacy docker registry auth
+  if (name == 'secring.gpg') return true; // GnuPG secret keyring
   if (name.endsWith('.pem') ||
       name.endsWith('.key') ||
+      name.endsWith('.ppk') || // PuTTY private key
       name.endsWith('.p12') ||
       name.endsWith('.pfx') ||
       name.endsWith('.tfvars') ||
@@ -1344,25 +1430,47 @@ bool isSensitivePath(String path) {
 /// obfuscation and it only knows common token shapes. But the normal
 /// failure mode (dev has `sk-abc123…` hardcoded in a .env that's
 /// somehow tracked) is exactly what regexes catch.
-/// Secret-pattern regex table. Hoisted to module-level so the 7 NFAs
-/// are compiled exactly once per process — previously each call to
+/// Secret-pattern regex table. Hoisted to module-level so every NFA is
+/// compiled exactly once per process — previously each call to
 /// `detectLikelySecretInPrompt` (fires before every AI prompt send)
-/// rebuilt all seven `RegExp` objects from scratch.
+/// rebuilt every `RegExp` object from scratch.
+///
+/// This stays HONEST-EFFORT: each entry is a well-known token SHAPE, so the
+/// table is bypassable by obfuscation and only knows common credentials. Every
+/// pattern is anchored on a distinctive vendor prefix plus a length floor so
+/// it fires on real tokens, not on ordinary prose or a normal code diff.
 final List<(RegExp, String)> _secretPatterns = <(RegExp, String)>[
   (RegExp(r'AKIA[0-9A-Z]{16}'), 'AWS access key ID'),
   (RegExp(r'AIza[0-9A-Za-z_\-]{35}'), 'Google API key'),
   (RegExp(r'gh[pousr]_[A-Za-z0-9]{30,}'), 'GitHub token'),
   (RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'),
       'OpenAI/Anthropic secret key'),
+  // Stripe secret/restricted LIVE keys use an UNDERSCORE (`sk_live_` /
+  // `rk_live_`), so the dash-anchored `sk-…` pattern above never sees them.
+  (RegExp(r'(?:sk|rk)_live_[0-9A-Za-z]{20,}'), 'Stripe live secret key'),
+  // GitLab personal/project/group access tokens.
+  (RegExp(r'glpat-[0-9A-Za-z_\-]{20,}'), 'GitLab access token'),
+  // npm automation/publish tokens: `npm_` + exactly 36 base62 chars.
+  (RegExp(r'npm_[0-9A-Za-z]{36}'), 'npm access token'),
   (RegExp(r'xox[baprs]-[A-Za-z0-9\-]{10,}'), 'Slack token'),
+  // Slack app-level (`xapp-`) and refresh (`xoxe-`) tokens — neither prefix
+  // is covered by the `xox[baprs]-` class above.
+  (RegExp(r'xapp-[A-Za-z0-9\-]{10,}'), 'Slack app-level token'),
+  (RegExp(r'xoxe-[A-Za-z0-9\-]{10,}'), 'Slack refresh token'),
   (
     RegExp(r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
     'JWT'
   ),
-  // Private-key block header.
+  // Private-key block header (RSA/EC/OpenSSH/DSA).
   (
     RegExp(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
     'private key block'
+  ),
+  // PGP private key block — its armor header ends `PRIVATE KEY BLOCK-----`,
+  // which the key-block pattern above (ending `PRIVATE KEY-----`) never matches.
+  (
+    RegExp(r'-----BEGIN PGP PRIVATE KEY BLOCK-----'),
+    'PGP private key block'
   ),
 ];
 
@@ -4387,14 +4495,13 @@ Future<_ProviderAvailability> _inspectProviderCached(
   final cached = _providerAvailabilityCache[cacheKey];
   if (!forceRefresh &&
       cached != null &&
-      DateTime.now().difference(cached.checkedAt) <
-          _providerAvailabilityCacheTtl) {
+      _providerCacheFresh(cached.checkedAt, _providerAvailabilityCacheTtl)) {
     return cached.value;
   }
 
   final availability = await _inspectProvider(provider);
   _providerAvailabilityCache[cacheKey] = _TimedValue(
-    checkedAt: DateTime.now(),
+    checkedAt: _providerClock.now(),
     value: availability,
   );
   return availability;
@@ -4445,8 +4552,7 @@ Future<_ProviderModelDiscovery?> _discoverProviderModelsCached(
   final cached = _providerModelDiscoveryCache[cacheKey];
   if (!forceRefresh &&
       cached != null &&
-      DateTime.now().difference(cached.checkedAt) <
-          _providerModelDiscoveryCacheTtl) {
+      _providerCacheFresh(cached.checkedAt, _providerModelDiscoveryCacheTtl)) {
     return cached.value;
   }
 
@@ -4457,7 +4563,7 @@ Future<_ProviderModelDiscovery?> _discoverProviderModelsCached(
     final disk = await _loadApiModelCacheFromDisk(cacheKey);
     if (disk != null) {
       _providerModelDiscoveryCache[cacheKey] = _TimedValue(
-        checkedAt: DateTime.now(),
+        checkedAt: _providerClock.now(),
         value: disk,
       );
       // Refresh in background so next access has fresh data.
@@ -4473,7 +4579,7 @@ Future<_ProviderModelDiscovery?> _discoverProviderModelsCached(
   // refreshModelCategories blocks re-discovery for the entire session.
   if (discovery != null || provider.kind != _ProviderKind.apiProvider) {
     _providerModelDiscoveryCache[cacheKey] = _TimedValue(
-      checkedAt: DateTime.now(),
+      checkedAt: _providerClock.now(),
       value: discovery,
     );
   }
@@ -4492,7 +4598,7 @@ void _refreshApiModelCacheInBackground(
     final discovery = await _discoverProviderModels(provider, resolution);
     if (discovery != null) {
       _providerModelDiscoveryCache[cacheKey] = _TimedValue(
-        checkedAt: DateTime.now(),
+        checkedAt: _providerClock.now(),
         value: discovery,
       );
       unawaited(_saveApiModelCacheToDisk(cacheKey, discovery));
@@ -4506,10 +4612,9 @@ Future<void> _saveApiModelCacheToDisk(
 ) async {
   try {
     final dir = await _apiModelCacheDir();
-    await dir.create(recursive: true);
     final file = File(p.join(dir.path, '$providerId.json'));
     final json = jsonEncode({
-      'ts': DateTime.now().toIso8601String(),
+      'ts': _providerClock.now().toIso8601String(),
       'models': discovery.models,
       'details': discovery.modelDetails,
       'pricing': {
@@ -4519,7 +4624,10 @@ Future<void> _saveApiModelCacheToDisk(
       'reasoning': discovery.reasoningModels.toList(),
       'fast': discovery.fastModels.toList(),
     });
-    await file.writeAsString(json, flush: true);
+    // Atomic temp-then-rename so a crash mid-write can't leave a torn cache
+    // file (the loader guards against it, but this closes the window; see
+    // atomic_write.dart). writeFileAtomic creates the parent dir.
+    await writeFileAtomicString(file, json);
   } catch (_) {}
 }
 
@@ -4536,7 +4644,7 @@ Future<_ProviderModelDiscovery?> _loadApiModelCacheFromDisk(
 
     // Expire disk cache after 24 hours.
     final ts = DateTime.tryParse(json['ts'] as String? ?? '');
-    if (ts != null && DateTime.now().difference(ts).inHours > 24) return null;
+    if (ts != null && _diskModelCacheExpired(ts)) return null;
 
     final models = (json['models'] as List?)?.cast<String>() ?? [];
     if (models.isEmpty) return null;
@@ -5298,8 +5406,7 @@ Future<_ProviderModelDiscovery?> _discoverOpenCodeModels(
   final warmed = _openCodeVerboseCache;
   if (warmed != null &&
       warmed.value != null &&
-      DateTime.now().difference(warmed.checkedAt) <
-          _providerModelDiscoveryCacheTtl) {
+      _providerCacheFresh(warmed.checkedAt, _providerModelDiscoveryCacheTtl)) {
     return warmed.value;
   }
   _warmOpenCodeVerbose(command);
@@ -5340,8 +5447,7 @@ void _warmOpenCodeVerbose(String command) {
   final warmed = _openCodeVerboseCache;
   if (warmed != null &&
       warmed.value != null &&
-      DateTime.now().difference(warmed.checkedAt) <
-          _providerModelDiscoveryCacheTtl) {
+      _providerCacheFresh(warmed.checkedAt, _providerModelDiscoveryCacheTtl)) {
     return;
   }
   _openCodeVerboseWarming = true;
@@ -5349,7 +5455,7 @@ void _warmOpenCodeVerbose(String command) {
     try {
       final verbose = await _discoverOpenCodeVerboseModels(command);
       if (verbose != null) {
-        final stamp = DateTime.now();
+        final stamp = _providerClock.now();
         _openCodeVerboseCache = _TimedValue(checkedAt: stamp, value: verbose);
         // Overwrite the MAIN discovery cache too: a plain (un-enriched) result
         // cached before the warm finished would otherwise sit there for the
@@ -5498,8 +5604,7 @@ Future<_ProviderResolution?> _resolveProviderCommand(String binary) async {
   final cacheKey = binary.trim().toLowerCase();
   final cached = _providerResolutionCache[cacheKey];
   if (cached != null &&
-      DateTime.now().difference(cached.checkedAt) <
-          _providerResolutionCacheTtl) {
+      _providerCacheFresh(cached.checkedAt, _providerResolutionCacheTtl)) {
     return cached.value;
   }
 
@@ -5518,7 +5623,7 @@ Future<_ProviderResolution?> _resolveProviderCommand(String binary) async {
   }
 
   _providerResolutionCache[cacheKey] = _TimedValue(
-    checkedAt: DateTime.now(),
+    checkedAt: _providerClock.now(),
     value: resolution,
   );
   return resolution;

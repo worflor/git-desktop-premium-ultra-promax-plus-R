@@ -162,7 +162,7 @@ flutter pub get
 flutter run -d windows
 ```
 
-Needs Flutter 3.22+, Dart 3.3+, and Git on your PATH.
+Needs Flutter 3.35+, Dart 3.9+, and Git on your PATH.
 
 ## On the code, openly
 

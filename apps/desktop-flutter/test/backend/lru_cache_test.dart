@@ -30,6 +30,11 @@ class _Oracle<K, V> {
   final List<K> recency = <K>[]; // oldest -> newest
   final Map<K, V> map = <K, V>{};
 
+  /// Reference model of the onEvict contract: values are logged here AS THEY
+  /// LEAVE — capacity eviction, overwrite-with-a-different-instance, remove,
+  /// and clear (oldest->newest). get() and a same-instance re-put never log.
+  final List<V> evicted = <V>[];
+
   V? get(K key) {
     if (!map.containsKey(key)) return null;
     recency.remove(key);
@@ -39,10 +44,12 @@ class _Oracle<K, V> {
 
   void put(K key, V value) {
     if (map.containsKey(key)) {
+      final prior = map[key] as V;
+      if (!identical(prior, value)) evicted.add(prior);
       recency.remove(key);
     } else if (recency.length >= maxSize) {
       final oldest = recency.removeAt(0);
-      map.remove(oldest);
+      evicted.add(map.remove(oldest) as V);
     }
     recency.add(key);
     map[key] = value;
@@ -53,10 +60,15 @@ class _Oracle<K, V> {
   V? remove(K key) {
     if (!map.containsKey(key)) return null;
     recency.remove(key);
-    return map.remove(key);
+    final removed = map.remove(key) as V;
+    evicted.add(removed);
+    return removed;
   }
 
   void clear() {
+    for (final k in recency) {
+      evicted.add(map[k] as V);
+    }
     recency.clear();
     map.clear();
   }
@@ -191,6 +203,21 @@ void _applyAndCheck(
   }
 }
 
+/// Same as [_applyAndCheck] but also asserts the onEvict eviction LOG agrees
+/// with the oracle after every op. Values are unique ints, so sorted-list
+/// equality is multiset equality — clear()'s emission order isn't over-pinned.
+void _applyAndCheckEvictions(
+  LruCache<int, int> cache,
+  _Oracle<int, int> oracle,
+  List<int> realEvicted,
+  _LruOp op,
+  int maxSize,
+) {
+  _applyAndCheck(cache, oracle, op, maxSize);
+  expect(realEvicted.toList()..sort(), oracle.evicted.toList()..sort(),
+      reason: 'onEvict log diverged from oracle after $op');
+}
+
 void main() {
   group('LruCache — model-based property', () {
     test('matches a reference LRU oracle across random op sequences', () {
@@ -206,6 +233,92 @@ void main() {
           }
         },
       );
+    });
+  });
+
+  group('LruCache — onEvict model-based property', () {
+    test('eviction log matches the oracle across random op sequences', () {
+      forAll<_LruCase>(
+        _genCase(),
+        describe: 'lru_cache onEvict model equivalence',
+        count: 300,
+        check: (testCase) {
+          final realEvicted = <int>[];
+          final cache = LruCache<int, int>(
+            maxSize: testCase.maxSize,
+            onEvict: realEvicted.add,
+          );
+          final oracle = _Oracle<int, int>(testCase.maxSize);
+          for (final op in testCase.ops) {
+            _applyAndCheckEvictions(
+                cache, oracle, realEvicted, op, testCase.maxSize);
+          }
+        },
+      );
+    });
+  });
+
+  group('LruCache — onEvict direct semantics', () {
+    test('capacity eviction fires onEvict with the evicted (oldest) value', () {
+      final evicted = <int>[];
+      final cache = LruCache<int, int>(maxSize: 2, onEvict: evicted.add);
+      cache.put(1, 10);
+      cache.put(2, 20);
+      expect(evicted, isEmpty, reason: 'no eviction under capacity');
+      cache.put(3, 30); // evicts key 1
+      expect(evicted, [10], reason: 'the evicted oldest value is emitted');
+    });
+
+    test('overwrite fires onEvict with the prior value, not the new one', () {
+      final evicted = <int>[];
+      final cache = LruCache<int, int>(maxSize: 3, onEvict: evicted.add);
+      cache.put(1, 10);
+      cache.put(1, 11); // overwrite
+      expect(evicted, [10],
+          reason: 'the replaced prior value is emitted, once');
+    });
+
+    test('re-putting the IDENTICAL instance does not fire onEvict (a bump)',
+        () {
+      final evicted = <Object>[];
+      final cache = LruCache<int, Object>(maxSize: 3, onEvict: evicted.add);
+      final shared = Object();
+      cache.put(1, shared);
+      cache.put(1, shared); // same instance → pure LRU bump, not a departure
+      expect(evicted, isEmpty,
+          reason: 'an identical-instance re-put is a bump, not an eviction');
+    });
+
+    test('remove fires onEvict with the removed value', () {
+      final evicted = <int>[];
+      final cache = LruCache<int, int>(maxSize: 3, onEvict: evicted.add);
+      cache.put(1, 10);
+      cache.put(2, 20);
+      cache.remove(1);
+      expect(evicted, [10]);
+      cache.remove(99); // absent → no fire
+      expect(evicted, [10], reason: 'removing an absent key fires nothing');
+    });
+
+    test('clear fires onEvict for every entry, oldest to newest', () {
+      final evicted = <int>[];
+      final cache = LruCache<int, int>(maxSize: 3, onEvict: evicted.add);
+      cache.put(1, 10);
+      cache.put(2, 20);
+      cache.put(3, 30);
+      cache.clear();
+      expect(evicted, [10, 20, 30],
+          reason: 'clear emits all values in oldest->newest order');
+      expect(cache.isEmpty, isTrue);
+    });
+
+    test('a null onEvict (the default) is simply never called', () {
+      // Smoke: the non-callback path must behave exactly as before.
+      final cache = LruCache<int, int>(maxSize: 1);
+      cache.put(1, 10);
+      cache.put(2, 20); // would evict; no callback to fire
+      expect(cache.containsKey(2), isTrue);
+      expect(cache.containsKey(1), isFalse);
     });
   });
 

@@ -40,6 +40,7 @@ Future<void> _capture(WidgetTester tester, Key key, String path) async {
     final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(key));
     final image = await boundary.toImage(pixelRatio: 5);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
     final file = File(path);
     await file.parent.create(recursive: true);
     await file.writeAsBytes(bytes!.buffer.asUint8List());
@@ -156,6 +157,7 @@ void main() {
             tester.renderObject<RenderRepaintBoundary>(find.byKey(key));
         final image = await boundary.toImage(pixelRatio: 7);
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        image.dispose(); // ui.Image holds native memory — release (leak_tracker)
         final file = File('.preview/vb_zoom_$name.png');
         await file.parent.create(recursive: true);
         await file.writeAsBytes(bytes!.buffer.asUint8List());

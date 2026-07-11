@@ -67,6 +67,7 @@ void main() {
       (WidgetTester tester) async {
     final identityState =
         AppIdentityState(defaultAppIdentity.copyWith(tag: null));
+    addTearDown(identityState.dispose);
 
     await tester.pumpWidget(
       _buildHarness(
@@ -88,10 +89,12 @@ void main() {
 
   testWidgets('titlebar strip prefers the active repo name',
       (WidgetTester tester) async {
+    final repositoryState = _FakeRepositoryState('example-repo');
+    addTearDown(repositoryState.dispose);
     await tester.pumpWidget(
       _buildHarness(
         const TitlebarStrip(),
-        repositoryState: _FakeRepositoryState('example-repo'),
+        repositoryState: repositoryState,
       ),
     );
 
@@ -106,21 +109,28 @@ Widget _buildHarness(
   RepositoryState? repositoryState,
   PreferencesState? preferencesState,
 }) {
+  // Owning `create:` providers when the harness makes its own default —
+  // provider then disposes them with the tree, so tests stay leak-free
+  // under leak_tracker. Caller-supplied instances ride the non-owning
+  // `.value` form; the CALLER must addTearDown(x.dispose).
   return MultiProvider(
     providers: [
-      ChangeNotifierProvider.value(
-        value: identityState ?? AppIdentityState(),
-      ),
-      ChangeNotifierProvider.value(
-        value: repositoryState ?? RepositoryState(),
-      ),
+      if (identityState != null)
+        ChangeNotifierProvider.value(value: identityState)
+      else
+        ChangeNotifierProvider(create: (_) => AppIdentityState()),
+      if (repositoryState != null)
+        ChangeNotifierProvider.value(value: repositoryState)
+      else
+        ChangeNotifierProvider(create: (_) => RepositoryState()),
       // BrandLockup selects on PreferencesState for the unfocused-logo
       // animation gate; without it the widget throws ProviderNotFound.
       // The default instance is fine — its in-memory defaults are
       // valid and load() is never called from these tests.
-      ChangeNotifierProvider.value(
-        value: preferencesState ?? PreferencesState(),
-      ),
+      if (preferencesState != null)
+        ChangeNotifierProvider.value(value: preferencesState)
+      else
+        ChangeNotifierProvider(create: (_) => PreferencesState()),
       // HypercubeLogo (nested in BrandLockup) reaches for HyperReactivity
       // to flip its drag-affordance state.
       ChangeNotifierProvider(create: (_) => HyperReactivity()),

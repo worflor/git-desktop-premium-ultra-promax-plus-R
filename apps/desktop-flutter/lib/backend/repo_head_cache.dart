@@ -13,6 +13,7 @@
 // One call site, one TTL. Every staleness check becomes a memory
 // lookup that occasionally falls back to a real subprocess.
 
+import 'clock.dart';
 import 'git.dart' show runGit;
 
 /// Default freshness window. Long enough that a wave of post-repo-switch
@@ -40,7 +41,13 @@ class RepoHeadCache {
   int _genCounter = 0;
   final Duration ttl;
 
-  RepoHeadCache({this.ttl = _kDefaultTtl});
+  /// Wall-clock source for the TTL comparison. Defaults to the real clock
+  /// so production behaviour is identical to the old `DateTime.now()`
+  /// path; a test can construct a fresh (non-shared) [RepoHeadCache] with
+  /// a `FakeClock` to pin the freshness boundary deterministically.
+  final Clock clock;
+
+  RepoHeadCache({this.ttl = _kDefaultTtl, this.clock = const SystemClock()});
 
   /// Singleton — every consumer should share one instance so the TTL
   /// actually deduplicates across subsystems.
@@ -53,7 +60,7 @@ class RepoHeadCache {
     if (!forceRefresh) {
       final cached = _entries[repoPath];
       if (cached != null &&
-          DateTime.now().difference(cached.fetchedAt) < ttl) {
+          clock.now().difference(cached.fetchedAt) < ttl) {
         return Future.value(cached.hash);
       }
     }
@@ -103,7 +110,7 @@ class RepoHeadCache {
       // started) between launch and landing, our gen is stale and
       // we discard the write without losing the return value.
       if (_fetchGen[repoPath] == myGen) {
-        _entries[repoPath] = _CachedHead(hash, DateTime.now());
+        _entries[repoPath] = _CachedHead(hash, clock.now());
       }
       return hash;
     } catch (_) {

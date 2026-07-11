@@ -20,6 +20,8 @@ Future<void> _renderPng(CustomPainter painter, Size size, String path) async {
   final picture = recorder.endRecording();
   final image = await picture.toImage(size.width.round(), size.height.round());
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose(); // ui.Image + Picture hold native memory — release both
+  picture.dispose();
   final file = File(path);
   await file.parent.create(recursive: true);
   await file.writeAsBytes(bytes!.buffer.asUint8List());

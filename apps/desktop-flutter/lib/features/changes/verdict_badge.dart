@@ -29,7 +29,7 @@ const double _vbPhiBot = 128; // 360 - phiTop (mirror)
 
 double _vbRad(double deg) => deg * math.pi / 180.0;
 
-class ReviewVerdictBadge extends StatelessWidget {
+class ReviewVerdictBadge extends StatefulWidget {
   final AppTokens tokens;
   final String verdict;
   final int score;
@@ -44,16 +44,42 @@ class ReviewVerdictBadge extends StatelessWidget {
   });
 
   @override
+  State<ReviewVerdictBadge> createState() => _ReviewVerdictBadgeState();
+}
+
+// Stateful purely for TextPainter LIFECYCLE: a CustomPainter has no
+// dispose hook, so painters minted in a StatelessWidget.build and handed
+// to one are orphaned on every rebuild (caught by leak_tracker). This
+// State owns the pair — rebuilds dispose the previous generation, unmount
+// disposes the last.
+class _ReviewVerdictBadgeState extends State<ReviewVerdictBadge> {
+  TextPainter? _labelPainter;
+  TextPainter? _scorePainter;
+
+  @override
+  void dispose() {
+    _labelPainter?.dispose();
+    _scorePainter?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final color = _reviewVerdictColor(verdict);
+    final color = _reviewVerdictColor(widget.verdict);
     final scaler = MediaQuery.textScalerOf(context);
     // Merge onto the ambient default style so the raw TextPainters inherit the
     // app font family (a bare TextStyle would fall to the platform default).
     final base = DefaultTextStyle.of(context).style;
 
+    // Retire the previous generation before minting the new one — the
+    // frame's paint always runs after this build, so nothing still holds
+    // the old painters.
+    _labelPainter?.dispose();
+    _scorePainter?.dispose();
+
     final labelPainter = TextPainter(
       text: TextSpan(
-        text: verdict,
+        text: widget.verdict,
         style: base.copyWith(
           color: color,
           fontSize: 11.5,
@@ -63,10 +89,11 @@ class ReviewVerdictBadge extends StatelessWidget {
       textDirection: TextDirection.ltr,
       textScaler: scaler,
     )..layout();
+    _labelPainter = labelPainter;
 
     final scorePainter = TextPainter(
       text: TextSpan(
-        text: '$score',
+        text: '${widget.score}',
         style: base.copyWith(
           color: color,
           fontSize: 11,
@@ -76,12 +103,14 @@ class ReviewVerdictBadge extends StatelessWidget {
       textDirection: TextDirection.ltr,
       textScaler: scaler,
     )..layout();
+    _scorePainter = scorePainter;
 
     final pillW = _vbLabelPad * 2 + labelPainter.width;
     final nodeCx = pillW - _vbOverlap + _vbR;
     // Only the shield (stage 2) protrudes past the node radius; the rest fit
     // inside _vbR.
-    final rightExtent = guardrailStage.clamp(0, 3) == 2 ? _vbR * 1.08 : _vbR;
+    final rightExtent =
+        widget.guardrailStage.clamp(0, 3) == 2 ? _vbR * 1.08 : _vbR;
 
     return SizedBox(
       width: nodeCx + rightExtent + 1.5,
@@ -89,8 +118,8 @@ class ReviewVerdictBadge extends StatelessWidget {
       child: CustomPaint(
         painter: _VerdictBadgePainter(
           color: color,
-          score: score,
-          guardrailStage: guardrailStage,
+          score: widget.score,
+          guardrailStage: widget.guardrailStage,
           pillW: pillW,
           labelPainter: labelPainter,
           scorePainter: scorePainter,

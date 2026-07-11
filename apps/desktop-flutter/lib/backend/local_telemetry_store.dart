@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'atomic_write.dart';
 import 'storage_paths.dart';
 
 class LocalTelemetryStore {
@@ -21,8 +22,10 @@ class LocalTelemetryStore {
 
   static Future<void> writeList(String fileName, List<dynamic> items) async {
     final file = await _file(fileName);
-    await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(items), flush: true);
+    // Atomic temp-then-rename so a crash mid-write can't leave a torn file
+    // that readList would silently fall back to empty over (see
+    // atomic_write.dart).
+    await writeFileAtomicString(file, jsonEncode(items));
   }
 
   static Future<void> clear(String fileName) async {

@@ -4,8 +4,14 @@ publish_to: 'none'
 version: 0.1.6
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
-  flutter: '>=3.22.0'
+  # Raised from 3.3.0/3.22.0: the `analyzer` dev-dependency (the source-law
+  # AST test suite) requires Dart ^3.9.0, which made the old floor
+  # unsatisfiable — `flutter pub get` failed on any SDK in the declared 3.3–3.8
+  # range. This is an app (publish_to: none), not a consumed library, and the
+  # Flutter toolchain pins the Dart version anyway, so the honest fix is to
+  # declare the real requirement. Flutter 3.35 ships Dart 3.9.
+  sdk: '>=3.9.0 <4.0.0'
+  flutter: '>=3.35.0'
 
 dependencies:
   flutter:
@@ -29,6 +35,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  analyzer: ^10.0.1
+  leak_tracker_flutter_testing: ^3.0.10
 
 flutter:
   uses-material-design: true

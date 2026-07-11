@@ -132,9 +132,14 @@ class EngramFileIndexCache {
     final file = await fileFor(repoPath);
     final bytes = _encode(pairs, entries);
     final tmp = File('${file.path}.tmp');
-    await tmp.writeAsBytes(bytes);
-    // Atomic replace. Windows rename fails if target exists; delete first.
-    if (await file.exists()) await file.delete();
+    // flush: true is the durability barrier — without it a power loss can
+    // tear the tmp's bytes AFTER the rename lands ("rename lands, data
+    // didn't"), publishing a torn .efix over a good one.
+    await tmp.writeAsBytes(bytes, flush: true);
+    // Atomic replace, no delete-first. Empirically verified on this machine:
+    // Dart File.rename over an existing target on Windows replaces atomically
+    // (MOVEFILE_REPLACE_EXISTING), so deleting the target first only opens a
+    // window where the cache is absent — harmful, never necessary.
     await tmp.rename(file.path);
   }
 

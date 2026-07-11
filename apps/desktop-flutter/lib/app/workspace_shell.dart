@@ -68,7 +68,9 @@ import 'preferences_state.dart';
 import 'window_activity.dart';
 import 'remote_issue_cache_state.dart';
 import 'hyper_reactivity.dart';
+import 'file_coupling_state.dart';
 import 'logos_git_state.dart';
+import 'repo_embedding_state.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
 import 'theme_state.dart';
@@ -81,6 +83,31 @@ import '../backend/undo_controller.dart';
 // rendered, not tappable. Flip to true to restore.
 // ignore: constant_identifier_names
 const bool testing_cmd_pallette_icon_in_top_icons = false;
+
+/// Evict every non-active repo's cached artifacts from the per-repo,
+/// HEAD-keyed state stores on a repo switch. Each store keeps at most
+/// the just-activated repo's entry warm; the siblings are dropped so a
+/// long multi-repo session can't accumulate coupling matrices,
+/// embeddings, and Logos engines without bound. Pass a null
+/// [activeRepoPath] to clear all four completely (no repo active).
+///
+/// Centralised so the four stores stay in lock-step: previously only
+/// [RepositoryXrayState] was evicted on switch and the other three grew
+/// unbounded. Keeping the eviction in one place makes forgetting a store
+/// unrepresentable — add a store, add one line here.
+@visibleForTesting
+void evictInactiveRepoCaches({
+  required String? activeRepoPath,
+  required RepositoryXrayState xray,
+  required FileCouplingState coupling,
+  required RepoEmbeddingState embedding,
+  required LogosGitState logos,
+}) {
+  xray.invalidateAllExcept(activeRepoPath);
+  coupling.invalidateAllExcept(activeRepoPath);
+  embedding.invalidateAllExcept(activeRepoPath);
+  logos.invalidateAllExcept(activeRepoPath);
+}
 
 enum _WorkspaceMode { changes, history, branches }
 
@@ -226,7 +253,13 @@ class _WorkspaceShellState extends State<WorkspaceShell>
         if (!mounted) {
           return;
         }
-        context.read<RepositoryXrayState>().invalidateAllExcept(activeRepoPath);
+        evictInactiveRepoCaches(
+          activeRepoPath: activeRepoPath,
+          xray: context.read<RepositoryXrayState>(),
+          coupling: context.read<FileCouplingState>(),
+          embedding: context.read<RepoEmbeddingState>(),
+          logos: context.read<LogosGitState>(),
+        );
         if (activeRepoPath != null) {
           final wick = context.read<WickState>();
           wick.setActiveRepo(activeRepoPath);

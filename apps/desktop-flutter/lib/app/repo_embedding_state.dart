@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../backend/repo_native_embedding.dart';
 import '../backend/repo_native_embedding_builder.dart';
 import 'per_repo_head_cache_state.dart';
@@ -13,8 +15,18 @@ class RepoEmbeddingState extends PerRepoHeadCacheState<RepoEmbeddingResult> {
   RepoNativeEmbedding? embeddingFor(String repoPath) =>
       valueFor(repoPath)?.embedding;
 
+  /// Test-only seam: when set, [compute] resolves through this instead
+  /// of the real git-driven [computeRepoEmbedding], so the per-repo
+  /// cache/eviction contract can be exercised headless with no
+  /// subprocess. Mirrors [RepositoryState]'s injectable-loader pattern.
+  @visibleForTesting
+  Future<ComputeOutcome<RepoEmbeddingResult>> Function(String repoPath)?
+      computeOverride;
+
   @override
   Future<ComputeOutcome<RepoEmbeddingResult>> compute(String repoPath) async {
+    final override = computeOverride;
+    if (override != null) return override(repoPath);
     // A null embedding (repo too small) is a valid, cacheable outcome — cache
     // it so we don't re-walk the repo on every changeset.
     final r = await computeRepoEmbedding(repoPath);

@@ -392,6 +392,119 @@ Set<int> _uniqueLines(List<String> mine, List<String> other) {
 }
 
 // ---------------------------------------------------------------------------
+// Resolution logic — pure, widget-free core of the interactive editor
+//
+// Extracted from _MergeConflictEditorState so the decisions that determine a
+// resolved file's final bytes — which side wins a block, the trust-slider
+// auto-resolver, and the one-shot "resolve easy" bulk action — are unit-
+// testable without pumping a widget. _MergeConflictEditorState delegates to
+// these; behavior is unchanged. The final-bytes assembly itself lives in
+// ConflictBlock.resolvedText / ConflictFile.buildResult (already pure).
+// ---------------------------------------------------------------------------
+
+/// Sentinel stored in [ConflictBlock.customText] for a block auto-resolved by
+/// the trust slider, so a later trust change can roll back only the machine's
+/// own picks and never a resolution the user made by hand.
+const String kAutoResolvedTag = '__auto__';
+
+/// Sentinel stored in [ConflictBlock.customText] for a block resolved by the
+/// one-shot "resolve easy conflicts" action.
+const String kEasyResolvedTag = '__easy__';
+
+/// The auto-resolve decision for a single [block] at [trustLevel] (0..4), or
+/// null when the level is too cautious to decide this block. Pure — a function
+/// of the block's text/bias and the level only.
+///
+///  * 0 manual   — never decides.
+///  * 1 safe     — byte-identical sides only.
+///  * 2 guided   — also whitespace-identical sides.
+///  * 3 assisted — one side empty (pure add) or a strict superset of the other.
+///  * 4 full     — Logos coherence bias breaks small, close diffs.
+ConflictSide? conflictTrustDecision(ConflictBlock block, int trustLevel) {
+  // Level 0: manual — never auto-resolve.
+  if (trustLevel <= 0) return null;
+  // Level 1: safe — byte-identical only.
+  if (block.oursText == block.theirsText) return ConflictSide.ours;
+  if (trustLevel <= 1) return null;
+  // Level 2: guided — also whitespace-identical.
+  if (block.oursText.trim() == block.theirsText.trim()) {
+    return ConflictSide.ours;
+  }
+  if (trustLevel <= 2) return null;
+  // Level 3: assisted — one side empty (pure add), or strict superset.
+  if (block.theirsText.trim().isEmpty) return ConflictSide.ours;
+  if (block.oursText.trim().isEmpty) return ConflictSide.theirs;
+  if (block.oursText.contains(block.theirsText)) return ConflictSide.ours;
+  if (block.theirsText.contains(block.oursText)) return ConflictSide.theirs;
+  if (trustLevel <= 3) return null;
+  // Level 4: full — Logos coherence makes the call on small diffs.
+  final bias = block.coherenceBias;
+  if (bias != null && bias.abs() > 0.08) {
+    final oursLines = block.oursText.split('\n').length;
+    final theirsLines = block.theirsText.split('\n').length;
+    if (oursLines <= 8 && theirsLines <= 8) {
+      return bias > 0 ? ConflictSide.ours : ConflictSide.theirs;
+    }
+  }
+  return null;
+}
+
+/// Reverts every block previously auto-resolved by the trust slider (tagged
+/// [kAutoResolvedTag]) back to unresolved, leaving user/explicit resolutions
+/// untouched. Pure mutation of [blocks].
+void clearAutoResolvedConflicts(List<ConflictBlock> blocks) {
+  for (final block in blocks) {
+    if (block.isResolved && block.customText == kAutoResolvedTag) {
+      block.resolution = ConflictSide.unresolved;
+      block.customText = null;
+    }
+  }
+}
+
+/// Applies [conflictTrustDecision] across every still-unresolved block at
+/// [trustLevel], tagging each machine pick with [kAutoResolvedTag]. Already-
+/// resolved blocks are never touched. Pure mutation of [blocks].
+void applyConflictTrust(List<ConflictBlock> blocks, int trustLevel) {
+  for (final block in blocks) {
+    if (block.isResolved) continue;
+    final autoSide = conflictTrustDecision(block, trustLevel);
+    if (autoSide != null) {
+      block.resolution = autoSide;
+      block.customText = kAutoResolvedTag;
+    }
+  }
+}
+
+/// Resolves every "cool" (low-[ConflictBlock.heat]) unresolved block toward
+/// the coherence-favored side — the one-shot "resolve easy conflicts" action.
+/// Blocks the engine is unsure about (heat >= 0.3) are left for the user.
+/// Pure mutation of [blocks].
+void resolveEasyConflicts(List<ConflictBlock> blocks) {
+  for (final block in blocks) {
+    if (block.isResolved) continue;
+    if (block.heat < 0.3) {
+      final bias = block.coherenceBias ?? 0;
+      block.resolution =
+          bias < -0.05 ? ConflictSide.theirs : ConflictSide.ours;
+      block.customText = kEasyResolvedTag;
+    }
+  }
+}
+
+/// Applies a single explicit resolution [side] to [block] — the pure core of
+/// the editor's accept-ours / accept-theirs / keep-both / custom-edit /
+/// unresolve actions. For [ConflictSide.custom], [customText] (when non-null)
+/// is stored verbatim as the resolved content; for every other side the
+/// resolved bytes come straight from [ConflictBlock.resolvedText].
+void applyConflictResolution(ConflictBlock block, ConflictSide side,
+    {String? customText}) {
+  block.resolution = side;
+  if (side == ConflictSide.custom && customText != null) {
+    block.customText = customText;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Merge conflict editor
 // ---------------------------------------------------------------------------
 
@@ -459,69 +572,15 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
     });
   }
 
-  void _applyTrust() {
-    for (final block in _blocks) {
-      if (block.isResolved) continue;
-      final autoSide = _trustDecision(block);
-      if (autoSide != null) {
-        block.resolution = autoSide;
-        block.customText = '__auto__';
-      }
-    }
-  }
+  void _applyTrust() => applyConflictTrust(_blocks, _trustLevel);
 
   void _setTrust(int level) {
     setState(() {
-      for (final block in _blocks) {
-        if (block.isResolved && block.customText == '__auto__') {
-          block.resolution = ConflictSide.unresolved;
-          block.customText = null;
-        }
-      }
+      clearAutoResolvedConflicts(_blocks);
       _trustLevel = level;
-      _applyTrustTagged();
+      applyConflictTrust(_blocks, _trustLevel);
     });
     widget.onResolutionChanged?.call();
-  }
-
-  void _applyTrustTagged() {
-    for (final block in _blocks) {
-      if (block.isResolved) continue;
-      final autoSide = _trustDecision(block);
-      if (autoSide != null) {
-        block.resolution = autoSide;
-        block.customText = '__auto__';
-      }
-    }
-  }
-
-  ConflictSide? _trustDecision(ConflictBlock block) {
-    // Level 0: manual — never auto-resolve
-    if (_trustLevel <= 0) return null;
-    // Level 1: safe — byte-identical only
-    if (block.oursText == block.theirsText) return ConflictSide.ours;
-    if (_trustLevel <= 1) return null;
-    // Level 2: guided — also whitespace-identical
-    if (block.oursText.trim() == block.theirsText.trim()) {
-      return ConflictSide.ours;
-    }
-    if (_trustLevel <= 2) return null;
-    // Level 3: assisted — one side empty (pure add), or strict superset
-    if (block.theirsText.trim().isEmpty) return ConflictSide.ours;
-    if (block.oursText.trim().isEmpty) return ConflictSide.theirs;
-    if (block.oursText.contains(block.theirsText)) return ConflictSide.ours;
-    if (block.theirsText.contains(block.oursText)) return ConflictSide.theirs;
-    if (_trustLevel <= 3) return null;
-    // Level 4: full — Logos coherence makes the call on small diffs
-    final bias = block.coherenceBias;
-    if (bias != null && bias.abs() > 0.08) {
-      final oursLines = block.oursText.split('\n').length;
-      final theirsLines = block.theirsText.split('\n').length;
-      if (oursLines <= 8 && theirsLines <= 8) {
-        return bias > 0 ? ConflictSide.ours : ConflictSide.theirs;
-      }
-    }
-    return null;
   }
 
   void _startEditing(int i) {
@@ -680,10 +739,8 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
 
   void _resolve(int i, ConflictSide side) {
     setState(() {
-      _blocks[i].resolution = side;
-      if (side == ConflictSide.custom) {
-        _blocks[i].customText = _customControllers[i].text;
-      }
+      applyConflictResolution(_blocks[i], side,
+          customText: _customControllers[i].text);
     });
     widget.onResolutionChanged?.call();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -692,7 +749,8 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   }
 
   void _unresolve(int i) {
-    setState(() => _blocks[i].resolution = ConflictSide.unresolved);
+    setState(() =>
+        applyConflictResolution(_blocks[i], ConflictSide.unresolved));
     widget.onResolutionChanged?.call();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _checkUnresolvedBelow();
@@ -724,17 +782,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
   }
 
   void _resolveEasy() {
-    setState(() {
-      for (final block in _blocks) {
-        if (block.isResolved) continue;
-        if (block.heat < 0.3) {
-          final bias = block.coherenceBias ?? 0;
-          block.resolution =
-              bias < -0.05 ? ConflictSide.theirs : ConflictSide.ours;
-          block.customText = '__easy__';
-        }
-      }
-    });
+    setState(() => resolveEasyConflicts(_blocks));
     widget.onResolutionChanged?.call();
   }
 
@@ -923,7 +971,7 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
             startLine: blockStartLine,
             customController: _customControllers[i],
             editing: _editingIndex == i,
-            autoResolved: block.customText == '__auto__',
+            autoResolved: block.customText == kAutoResolvedTag,
             onTap: () => _navigateTo(i, scroll: false),
             onResolve: (side) {
               _resolve(i, side);

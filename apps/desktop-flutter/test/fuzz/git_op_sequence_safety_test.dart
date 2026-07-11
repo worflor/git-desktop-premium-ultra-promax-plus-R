@@ -35,6 +35,7 @@ import 'package:git_desktop/backend/desk_pr_store.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
 
 import '../support/scratch_repo.dart';
+import '../support/must.dart';
 
 /// `MANIFOLD_FUZZ` env multiplier — scales seed count, not per-sequence
 /// op count, so a "deep" run explores far more independent sequences
@@ -225,9 +226,9 @@ void main() {
             authorIdentity: 'fuzz-bot',
           );
           expect(created.ok, isTrue, reason: created.error);
-          await prStore.addComment(
-              branch: branch, author: 'fuzz-bot', body: 'a comment');
-          await prStore.setState(branch: branch, state: 'MERGED');
+          await expectOk(prStore.addComment(
+              branch: branch, author: 'fuzz-bot', body: 'a comment'));
+          await expectOk(prStore.setState(branch: branch, state: 'MERGED'));
         }
         for (var i = 0; i < 3; i++) {
           final created = await issueStore.create(

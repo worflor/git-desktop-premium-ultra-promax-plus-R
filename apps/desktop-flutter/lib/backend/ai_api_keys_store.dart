@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'atomic_write.dart';
 import 'json_safety.dart';
 import 'storage_paths.dart';
 
@@ -79,14 +80,14 @@ class AiApiKeysStore {
 
   static Future<void> persist(AiApiKeysSnapshot snapshot) async {
     final file = await _keysFile();
-    await file.parent.create(recursive: true);
-    final tmp = File('${file.path}.tmp');
-    await tmp.writeAsString(
+    // Shared atomic choreography (unique temp name — a fixed `.tmp` races
+    // concurrent writers cross-process); permissions are stamped on the temp
+    // before it becomes visible under the target name.
+    await writeFileAtomicString(
+      file,
       const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
-      flush: true,
+      beforeRename: _restrictPermissions,
     );
-    await _restrictPermissions(tmp);
-    await tmp.rename(file.path);
   }
 
   static Future<void> _restrictPermissions(File file) async {

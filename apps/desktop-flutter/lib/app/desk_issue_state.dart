@@ -280,7 +280,8 @@ class DeskIssueState extends ChangeNotifier {
     if (!_syncing.add(main)) return 'sync already in progress';
     try {
       final store = DeskIssueStore(_refsFor(main));
-      final r = await store.syncWithRemote(remote: remote);
+      final r = await store.syncWithRemote(
+          remote: remote == null ? null : MetadataRemote(remote));
       if (!r.ok) return r.error;
       await refreshFor(main);
       // Surface any newly-synced remote links to other consumers.

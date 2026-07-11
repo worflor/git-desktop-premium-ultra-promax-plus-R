@@ -11,6 +11,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'atomic_write.dart';
 import 'review_ratchet.dart' show ClaimOutcomeRatchet;
 import 'storage_paths.dart' show StoragePaths;
 
@@ -62,8 +63,9 @@ class ReviewRatchetStore {
   ) async {
     try {
       final file = await _fileFor(repoPath);
-      await file.parent.create(recursive: true);
-      await file.writeAsString(ratchet.toJsonString(), flush: true);
+      // Atomic temp-then-rename so a crash mid-write can't leave a torn
+      // ratchet file (see atomic_write.dart).
+      await writeFileAtomicString(file, ratchet.toJsonString());
     } catch (_) {}
   }
 

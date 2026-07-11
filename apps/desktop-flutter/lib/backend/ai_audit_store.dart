@@ -109,9 +109,16 @@ class AiAuditStore {
     if (!await file.exists()) {
       return <AiAuditEntryData>[];
     }
-    final lines = await file.readAsLines();
+    // Read bytes + lenient UTF-8 decode rather than strict `readAsLines`: a
+    // crash that tears a write mid-multibyte-codepoint (an emoji / non-ASCII
+    // char straddling the flushed byte boundary) leaves an invalid UTF-8 tail.
+    // `readAsLines` would THROW there, bricking every future read AND write of
+    // the log. `allowMalformed` degrades the torn bytes to U+FFFD so the torn
+    // line simply fails its per-line jsonDecode and is skipped.
+    final bytes = await file.readAsBytes();
+    final content = utf8.decode(bytes, allowMalformed: true);
     final entries = <AiAuditEntryData>[];
-    for (final line in lines) {
+    for (final line in content.split('\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) {
         continue;

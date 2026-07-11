@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../backend/file_coupling.dart';
 import 'per_repo_head_cache_state.dart';
 
@@ -10,8 +12,18 @@ class FileCouplingState extends PerRepoHeadCacheState<FileCouplingMatrix> {
   /// the call site ("matrix for this repo" vs "value for this repo").
   FileCouplingMatrix? matrixFor(String repoPath) => valueFor(repoPath);
 
+  /// Test-only seam: when set, [compute] resolves through this instead
+  /// of the real git-driven [computeFileCoupling], so the per-repo
+  /// cache/eviction contract can be exercised headless with no
+  /// subprocess. Mirrors [RepositoryState]'s injectable-loader pattern.
+  @visibleForTesting
+  Future<ComputeOutcome<FileCouplingMatrix>> Function(String repoPath)?
+      computeOverride;
+
   @override
   Future<ComputeOutcome<FileCouplingMatrix>> compute(String repoPath) async {
+    final override = computeOverride;
+    if (override != null) return override(repoPath);
     final r = await computeFileCoupling(repoPath);
     if (r.ok && r.data != null) {
       return ComputeOutcome.success(r.data!);

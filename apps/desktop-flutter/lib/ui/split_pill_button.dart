@@ -100,7 +100,9 @@ class _SplitPillButtonState extends State<SplitPillButton> {
       textDirection: TextDirection.ltr,
       textScaler: scaler,
     )..layout();
-    return tp.size;
+    final size = tp.size;
+    tp.dispose();
+    return size;
   }
 
   @override

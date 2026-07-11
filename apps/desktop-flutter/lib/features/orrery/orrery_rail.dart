@@ -110,7 +110,7 @@ class _OrreryRailState extends State<OrreryRail> {
     Scrollable.ensureVisible(
       ctx,
       alignment: 0.5,
-      duration: context.motionRead(const Duration(milliseconds: 160)),
+      duration: context.motionRead(AppMotion.fade),
       curve: Curves.easeOutCubic,
     );
   }
@@ -355,7 +355,7 @@ class _ThinBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(1.5),
+      borderRadius: AppRadii.xxsAll,
       child: SizedBox(
         height: 3,
         child: Stack(

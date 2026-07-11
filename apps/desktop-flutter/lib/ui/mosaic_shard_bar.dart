@@ -110,7 +110,10 @@ class MosaicShard {
       textScaler: scaler,
       maxLines: 1,
     )..layout();
-    return Size((tp.width + _chrome).clamp(_minWidth, _maxWidth), tp.height);
+    final size =
+        Size((tp.width + _chrome).clamp(_minWidth, _maxWidth), tp.height);
+    tp.dispose();
+    return size;
   }
 }
 

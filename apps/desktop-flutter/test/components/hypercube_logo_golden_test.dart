@@ -169,7 +169,9 @@ Future<int> _renderSignature(HypercubeLogoPainter painter, double size) async {
   painter.paint(canvas, ui.Size(size, size));
   final picture = recorder.endRecording();
   final image = await picture.toImage(size.toInt(), size.toInt());
+  picture.dispose();
   final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  image.dispose();
   if (byteData == null) {
     return 0;
   }

@@ -50,6 +50,7 @@ void main() {
       await tester.runAsync(() async {
         final image = await boundary.toImage(pixelRatio: 2.0);
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        image.dispose(); // ui.Image holds native memory — release (leak_tracker)
         final file = File('.preview/orrery_findings_${theme.name}.png');
         await file.parent.create(recursive: true);
         await file.writeAsBytes(bytes!.buffer.asUint8List());

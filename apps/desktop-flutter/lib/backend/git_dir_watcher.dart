@@ -276,7 +276,16 @@ class GitDirWatcher {
 
   void _onRawEvent(FileSystemEvent event, bool Function(String) accept) {
     if (_disposed) return;
-    if (!accept(p.basename(event.path))) return;
+    // A rename carries TWO names, and git's atomic-write pattern puts the
+    // watched one on the DESTINATION side (`HEAD.lock` → `HEAD` on checkout).
+    // Linux inotify surfaces that as one move event whose `path` is the
+    // .lock source, so filtering on `path` alone made checkouts invisible to
+    // the watcher on Linux (Windows delivers per-name events and passed).
+    final touchesWatched = accept(p.basename(event.path)) ||
+        (event is FileSystemMoveEvent &&
+            event.destination != null &&
+            accept(p.basename(event.destination!)));
+    if (!touchesWatched) return;
     if (_paused) {
       _pendingWhilePaused = true;
       return;

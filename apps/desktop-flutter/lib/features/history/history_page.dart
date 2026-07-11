@@ -1242,6 +1242,11 @@ class _TimelinePainter extends CustomPainter {
         canvas,
         Offset(x0 + maxW - tail.width,
             y + (lineH - tail.height) / 2));
+    // Every tpOf painter is local to this caption paint — release their
+    // native (dart:ui) layouts now (this runs per repaint of the strip).
+    head.dispose();
+    subject?.dispose();
+    tail?.dispose();
   }
 
   double _selectedX() {
@@ -4315,7 +4320,9 @@ class _FittingTagRow extends StatelessWidget {
       maxLines: 1,
       textDirection: TextDirection.ltr,
     )..layout();
-    return tp.width;
+    final w = tp.width;
+    tp.dispose();
+    return w;
   }
 
   @override

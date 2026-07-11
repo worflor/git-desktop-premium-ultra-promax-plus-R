@@ -31,6 +31,7 @@ import 'package:git_desktop/backend/desk_issue_store.dart';
 import 'package:git_desktop/backend/desk_pr_store.dart';
 import 'package:git_desktop/backend/git_result.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
+import '../support/must.dart';
 
 // ─── Shared fixture plumbing (mirrors the sibling test files) ──────────
 
@@ -588,7 +589,7 @@ void main() {
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // B has a local-ahead change to push.
-        await storeB.addComment(id: issue.issueId, author: 'B', body: 'from B');
+        await expectOk(storeB.addComment(id: issue.issueId, author: 'B', body: 'from B'));
 
         // Wire B's sync so clone A pushes in the window after B fetched
         // staging but before B pushes — invalidating B's lease.
@@ -599,7 +600,7 @@ void main() {
         );
         final raceStore = DeskIssueStore(raceRefs);
         raceRefs.afterFetch = () async {
-          await storeA.addComment(id: issue.issueId, author: 'A', body: 'from A');
+          await expectOk(storeA.addComment(id: issue.issueId, author: 'A', body: 'from A'));
           final s = await storeA.syncWithRemote();
           expect(s.ok, isTrue, reason: s.error);
         };
@@ -691,8 +692,10 @@ void main() {
                 final commit = await clone.refs.commitTree(
                     treeSha: tree.data!,
                     message: 'regress counter to $regressed');
-                await clone.refs.updateRef(
-                    ref: 'refs/manifold/_id-counter', newSha: commit.data!);
+                final upd = await clone.refs.updateRef(
+                    ref: ManifoldNs.idCounter, newSha: commit.data!);
+                expect(upd.ok, isTrue,
+                    reason: 'counter-regress op must land: ${upd.error}');
                 break;
             }
           }
@@ -748,7 +751,7 @@ void main() {
         final syncFutures = <Future<void>>[];
         for (var i = 0; i < 8; i++) {
           futures.add(clone.refs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter',
+            ref: ManifoldNs.idCounter,
             filename: 'counter.txt',
             commitLabel: 'id',
           ));
@@ -778,7 +781,7 @@ void main() {
 
         // Local counter caught up to at least the max returned id.
         final localBlob = await clone.refs
-            .readRefBlob('refs/manifold/_id-counter', 'counter.txt');
+            .readRefBlob(ManifoldNs.idCounter, 'counter.txt');
         expect(localBlob.ok, isTrue);
         final localVal = int.parse(localBlob.data!.trim());
         expect(localVal, greaterThanOrEqualTo(maxId),
@@ -788,7 +791,7 @@ void main() {
         final fetch = await clone.refs.fetchToStaging();
         expect(fetch.ok, isTrue, reason: fetch.error);
         final stagedTip = await clone.refs
-            .resolveRef('refs/manifold-remote/origin/_id-counter');
+            .resolveRef(const MetadataRemote('origin').stage(ManifoldNs.idCounter));
         expect(stagedTip.ok, isTrue);
         expect(stagedTip.data, isNotNull,
             reason: 'remote never received the counter at all');
@@ -818,14 +821,14 @@ void main() {
         await _establishBaseline([cloneA, cloneB]);
 
         final aAlloc = await cloneA.refs.allocSequentialId(
-          ref: 'refs/manifold/_id-counter',
+          ref: ManifoldNs.idCounter,
           filename: 'counter.txt',
           commitLabel: 'id',
         );
         expect(aAlloc.ok, isTrue, reason: aAlloc.error);
 
         final bAlloc = await cloneB.refs.allocSequentialId(
-          ref: 'refs/manifold/_id-counter',
+          ref: ManifoldNs.idCounter,
           filename: 'counter.txt',
           commitLabel: 'id',
         );
@@ -848,7 +851,7 @@ void main() {
 
         for (final c in [cloneA, cloneB]) {
           final local = await c.refs
-              .readRefBlob('refs/manifold/_id-counter', 'counter.txt');
+              .readRefBlob(ManifoldNs.idCounter, 'counter.txt');
           expect(local.ok, isTrue);
           expect(int.parse(local.data!.trim()), greaterThanOrEqualTo(maxId),
               reason: '${c.label} local counter behind max id $maxId');
@@ -862,7 +865,7 @@ void main() {
           final sync = await cloneC.issues.syncWithRemote();
           expect(sync.ok, isTrue, reason: sync.error);
           final cBlob = await cloneC.refs
-              .readRefBlob('refs/manifold/_id-counter', 'counter.txt');
+              .readRefBlob(ManifoldNs.idCounter, 'counter.txt');
           expect(cBlob.ok, isTrue);
           expect(int.parse(cBlob.data!.trim()), greaterThanOrEqualTo(maxId),
               reason: 'third clone saw a remote counter behind max id $maxId');
@@ -887,7 +890,7 @@ void main() {
       try {
         await _establishBaseline([clone]);
         final refs = clone.refs;
-        const ref = 'refs/manifold/_id-counter';
+        const ref = ManifoldNs.idCounter;
         const filename = 'counter.txt';
 
         final baseTip = (await refs.resolveRef(ref)).data!;
@@ -910,7 +913,10 @@ void main() {
         final treeN1 = await refs.mkTree({filename: blobN1.data!});
         final commitN1 = await refs.commitTree(
             treeSha: treeN1.data!, parentSha: commitN.data!, message: 'N+1');
-        await refs.updateRef(ref: ref, newSha: commitN1.data!, oldSha: baseTip);
+        final advanced = await refs.updateRef(
+            ref: ref, newSha: commitN1.data!, oldSha: baseTip);
+        expect(advanced.ok, isTrue,
+            reason: 'local-ref advance to N+1 must land: ${advanced.error}');
 
         // Lease-push the OLDER sha (commitN) explicitly, leasing against
         // the remote's actual current tip (baseTip — the real bare remote
@@ -1123,12 +1129,12 @@ void main() {
         final futures = <Future<GitResult<int>>>[];
         for (var i = 0; i < 4; i++) {
           futures.add(mainRefs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter',
+            ref: ManifoldNs.idCounter,
             filename: 'counter.txt',
             commitLabel: 'id',
           ));
           futures.add(wtRefs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter',
+            ref: ManifoldNs.idCounter,
             filename: 'counter.txt',
             commitLabel: 'id',
           ));
@@ -1144,7 +1150,7 @@ void main() {
         final maxId = ids.reduce((a, b) => a > b ? a : b);
 
         final localBlob = await mainRefs.readRefBlob(
-            'refs/manifold/_id-counter', 'counter.txt');
+            ManifoldNs.idCounter, 'counter.txt');
         expect(localBlob.ok, isTrue);
         expect(int.parse(localBlob.data!.trim()), greaterThanOrEqualTo(maxId),
             reason: 'local counter behind max returned id');
@@ -1152,7 +1158,7 @@ void main() {
         final fetch = await mainRefs.fetchToStaging();
         expect(fetch.ok, isTrue, reason: fetch.error);
         final stagedTip = await mainRefs
-            .resolveRef('refs/manifold-remote/origin/_id-counter');
+            .resolveRef(const MetadataRemote('origin').stage(ManifoldNs.idCounter));
         expect(stagedTip.ok, isTrue);
         expect(stagedTip.data, isNotNull,
             reason: 'remote never received the counter at all');
@@ -1199,10 +1205,10 @@ void main() {
             ManifoldRefs.commonGitDirMemo.containsKey(wtDir.path), isFalse);
 
         final a = await mainRefs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter', filename: 'counter.txt');
+            ref: ManifoldNs.idCounter, filename: 'counter.txt');
         expect(a.ok, isTrue, reason: a.error);
         final b = await wtRefs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter', filename: 'counter.txt');
+            ref: ManifoldNs.idCounter, filename: 'counter.txt');
         expect(b.ok, isTrue, reason: b.error);
 
         // One memo entry per distinct PATH...
@@ -1224,7 +1230,7 @@ void main() {
         final beforeFuture = ManifoldRefs.commonGitDirMemo[mainClone.path];
         final keysBefore = Set.of(ManifoldRefs.commonGitDirMemo.keys);
         final c = await mainRefs.allocSequentialId(
-            ref: 'refs/manifold/_id-counter', filename: 'counter.txt');
+            ref: ManifoldNs.idCounter, filename: 'counter.txt');
         expect(c.ok, isTrue, reason: c.error);
         expect(Set.of(ManifoldRefs.commonGitDirMemo.keys), keysBefore,
             reason: 'a repeat allocation from an already-seen path must not '
@@ -1262,7 +1268,7 @@ void main() {
         // (and fails cleanly, since there is genuinely no ref to read in
         // a non-repo directory) rather than hanging or throwing.
         final r = await refs.allocSequentialId(
-          ref: 'refs/manifold/_id-counter',
+          ref: ManifoldNs.idCounter,
           filename: 'counter.txt',
         );
         expect(r.ok, isFalse,
@@ -1379,8 +1385,7 @@ void main() {
         expect(created.ok, isTrue, reason: created.error);
         expect(created.data!.issueId, 1);
 
-        final tip = await refs
-            .resolveRef('${ManifoldRefs.manifoldPrefix}_id-counter');
+        final tip = await refs.resolveRef(ManifoldNs.idCounter);
         expect(tip.ok, isTrue);
         expect(tip.data, isNotNull,
             reason: 'a remote-less repo must still commit the counter ref '
@@ -1406,9 +1411,9 @@ void main() {
         // 'origin' is present and is what resolveMetadataRemote() would
         // pick by default — but an explicit remote: argument must win.
         final r = await refs.allocSequentialId(
-          ref: '${ManifoldRefs.manifoldPrefix}_id-counter',
+          ref: ManifoldNs.idCounter,
           filename: 'counter.txt',
-          remote: 'upstream',
+          remote: const MetadataRemote('upstream'),
         );
         expect(r.ok, isTrue, reason: r.error);
 
@@ -1460,9 +1465,9 @@ void main() {
           expect((await storeB.syncWithRemote()).ok, isTrue);
 
           // A edits first (earlier updatedAt), B edits second (later).
-          await storeA.editMeta(id: issue.issueId, title: 'from A');
+          await expectOk(storeA.editMeta(id: issue.issueId, title: 'from A'));
           await Future<void>.delayed(const Duration(milliseconds: 5));
-          await storeB.editMeta(id: issue.issueId, title: 'from B');
+          await expectOk(storeB.editMeta(id: issue.issueId, title: 'from B'));
 
           if (order == 'A-first') {
             expect((await storeA.syncWithRemote()).ok, isTrue);
@@ -1506,8 +1511,8 @@ void main() {
                 .data!;
         expect((await storeA.syncWithRemote()).ok, isTrue);
         expect((await storeB.syncWithRemote()).ok, isTrue);
-        await storeA.addComment(id: issue.issueId, author: 'A', body: 'x');
-        await storeB.addComment(id: issue.issueId, author: 'B', body: 'y');
+        await expectOk(storeA.addComment(id: issue.issueId, author: 'A', body: 'x'));
+        await expectOk(storeB.addComment(id: issue.issueId, author: 'B', body: 'y'));
         expect((await storeB.syncWithRemote()).ok, isTrue);
         expect((await storeA.syncWithRemote()).ok, isTrue);
         expect((await storeB.syncWithRemote()).ok, isTrue);
@@ -1570,8 +1575,10 @@ void main() {
           final tree = await refs.mkTree({'issue.json': blob.data!});
           final commit = await refs.commitTree(
               treeSha: tree.data!, parentSha: baseTip, message: message);
-          await refs.updateRef(
+          final upd = await refs.updateRef(
               ref: baseRef, newSha: commit.data!, oldSha: baseTip);
+          expect(upd.ok, isTrue,
+              reason: 'divergence setup must land: ${upd.error}');
         }
 
         // Both sides branch from the SAME parent with a DIFFERENT
@@ -1653,8 +1660,10 @@ void main() {
             final tree = await refs.mkTree({'issue.json': blob.data!});
             final commit = await refs.commitTree(
                 treeSha: tree.data!, parentSha: baseTip, message: tie);
-            await refs.updateRef(
+            final upd = await refs.updateRef(
                 ref: baseRef, newSha: commit.data!, oldSha: baseTip);
+            expect(upd.ok, isTrue,
+                reason: 'tie-break setup must land: ${upd.error}');
             return commit.data!;
           }
 
@@ -1715,7 +1724,7 @@ class _LeaseRaceRefs extends ManifoldRefs {
   Future<void> Function()? afterFetch;
 
   @override
-  Future<GitResult<void>> fetchToStaging({String? remote}) async {
+  Future<GitResult<void>> fetchToStaging({MetadataRemote? remote}) async {
     final r = await super.fetchToStaging(remote: remote);
     if (!_fired && afterFetch != null) {
       _fired = true;
@@ -1743,15 +1752,15 @@ class _AfterCasRefs extends ManifoldRefs {
     required this.counterRef,
   });
 
-  final String counterRef;
+  final LiveManifoldRef counterRef;
   bool _fired = false;
-  Future<void> Function(String casSha)? afterCas;
+  Future<void> Function(CommitOid casSha)? afterCas;
 
   @override
   Future<GitResult<void>> updateRef({
-    required String ref,
-    required String newSha,
-    String? oldSha,
+    required LiveManifoldRef ref,
+    required CommitOid newSha,
+    Oid? oldSha,
   }) async {
     final r = await super.updateRef(ref: ref, newSha: newSha, oldSha: oldSha);
     if (r.ok && !_fired && ref == counterRef && afterCas != null) {

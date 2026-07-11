@@ -6440,7 +6440,10 @@ class _ChangesPageState extends State<ChangesPage> {
                                     maxLines: 1,
                                     textDirection: TextDirection.ltr,
                                   )..layout();
-                                  if (tp.width <= constraints.maxWidth) {
+                                  final fits =
+                                      tp.width <= constraints.maxWidth;
+                                  tp.dispose();
+                                  if (fits) {
                                     return Text(full, style: style,
                                         maxLines: 1);
                                   }

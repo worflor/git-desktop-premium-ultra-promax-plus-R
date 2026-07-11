@@ -21,6 +21,7 @@ Future<void> _capture(WidgetTester tester, GlobalKey key, String path) async {
   await tester.runAsync(() async {
     final image = await boundary.toImage(pixelRatio: 1.5);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose(); // ui.Image holds native memory — release it (leak_tracker)
     final file = File(path);
     await file.parent.create(recursive: true);
     await file.writeAsBytes(bytes!.buffer.asUint8List());

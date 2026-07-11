@@ -16,24 +16,28 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:meta/meta.dart';
+
 import 'desk_pr.dart';
 import 'git_result.dart';
 import 'manifold_refs.dart';
 import 'utf8_exact.dart';
 
 class DeskPrStore {
-  static const String refPrefix = 'refs/manifold/desks/';
+  static const String refPrefix = ManifoldNs.desksPrefix;
   static const String _metaFilename = 'meta.json';
-  static const String _idCounterRef = 'refs/manifold/_id-counter';
   static const String _counterFilename = 'counter.txt';
 
   final ManifoldRefs refs;
 
   DeskPrStore(this.refs);
 
-  /// Ref name for a desk PR keyed by its head branch.
-  static String refFor(String branch) =>
-      '$refPrefix${encodeBranch(branch)}';
+  /// Ref name for a desk PR keyed by its head branch. The typed factory
+  /// takes the ENCODED tail — [encodeBranch] is the only path from a raw
+  /// branch name to it, so a raw (unencoded) branch name can never reach
+  /// a ref.
+  static LiveManifoldRef refFor(String branch) =>
+      LiveManifoldRef.desk(encodeBranch(branch));
 
   /// Injective encoding of any non-empty Dart string into a legal git
   /// ref tail under `refs/manifold/desks/`.
@@ -125,7 +129,28 @@ class DeskPrStore {
       }
       prevRune = rune;
     }
-    return buf.toString();
+    final encoded = buf.toString();
+    // The injectivity law, checked on EVERY encode in debug/test builds
+    // (free in release AOT): decode∘encode is the identity. Any future
+    // edit to either function that breaks the round-trip trips this on
+    // the first encode any test performs.
+    //
+    // Compared against the UTF-8-normalized input, NOT `branch` verbatim:
+    // a lone unpaired surrogate is not UTF-8-representable, so the encode
+    // path (utf8.encode per rune) legitimately maps it to U+FFFD, and
+    // decode recovers U+FFFD — a graceful lossy degradation, not a broken
+    // round-trip. For every well-formed name the normalization is the
+    // identity, so the injectivity guarantee is unchanged; only a genuinely
+    // malformed lone surrogate is tolerated instead of crashing the assert
+    // (contract pinned by ref_namespace_safety_test's 'lone unpaired
+    // surrogate degrades without crashing'). utf8DecodeExact mirrors
+    // decodeBranch's own BOM-preserving decode so a BOM-leading name stays
+    // an exact match.
+    assert(
+        decodeBranch(encoded) ==
+            utf8DecodeExact(utf8.encode(branch), allowMalformed: true),
+        'encodeBranch round-trip broken for ${branch.runes.toList()}');
+    return encoded;
   }
 
   /// Inverse of [encodeBranch] — restores the original branch name
@@ -166,12 +191,13 @@ class DeskPrStore {
   }
 
   /// List every desk PR under the prefix, newest-updated first.
+  @useResult
   Future<GitResult<List<DeskPr>>> listAll() async {
     final r = await refs.listRefs(refPrefix);
     if (!r.ok) return GitResult.err(r.error ?? 'listRefs failed');
     final out = <DeskPr>[];
-    for (final ref in r.data!.keys) {
-      final blob = await refs.readRefBlob(ref, _metaFilename);
+    for (final sha in r.data!.values) {
+      final blob = await refs.readRefBlob(sha, _metaFilename);
       if (!blob.ok || blob.data == null) continue;
       try {
         out.add(DeskPr.fromBlob(blob.data!));
@@ -186,6 +212,7 @@ class DeskPrStore {
   }
 
   /// Read a single PR by its branch name.
+  @useResult
   Future<GitResult<DeskPr?>> read(String branch) async {
     final ref = refFor(branch);
     final blob = await refs.readRefBlob(ref, _metaFilename);
@@ -217,21 +244,20 @@ class DeskPrStore {
     if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
     final treeR = await refs.mkTree({_metaFilename: blobR.data!});
     if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
-    final cur = await refs.resolveRef(ref);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'resolveRef failed');
+    // First commit on a fresh orphan history — no parent.
     final commitR = await refs.commitTree(
       treeSha: treeR.data!,
-      parentSha: cur.data,
       message: message,
     );
     if (!commitR.ok) {
       return GitResult.err(commitR.error ?? 'commitTree failed');
     }
-    final updR = await refs.updateRef(
-      ref: ref,
-      newSha: commitR.data!,
-      oldSha: cur.data,
-    );
+    // CAS on non-existence (zero-OID). Resolving the absent ref to null and
+    // passing it to updateRef was an UNCONDITIONAL write, so a create that
+    // raced in first was silently clobbered and BOTH creators reported ok.
+    // createRef rejects the late writer, honoring this method's contract of
+    // surfacing the error rather than clobbering the other create.
+    final updR = await refs.createRef(ref: ref, newSha: commitR.data!);
     if (!updR.ok) return GitResult.err(updR.error ?? 'updateRef failed');
     return const GitResult.ok(null);
   }
@@ -297,19 +323,19 @@ class DeskPrStore {
   }
 
   /// Allocate the next sequential desk-id from the shared
-  /// [_idCounterRef] counter. CAS-protected — concurrent allocations
-  /// on the same machine see an update-ref conflict on the loser and
-  /// the caller can retry. PR-ids and issue-ids share the counter so
-  /// they never collide.
+  /// [ManifoldNs.idCounter] counter. CAS-protected — concurrent
+  /// allocations on the same machine see an update-ref conflict on the
+  /// loser and the caller can retry. PR-ids and issue-ids share the
+  /// counter so they never collide.
   ///
   /// [remote] is threaded in by the caller rather than resolved here: an
   /// operation that also calls [ManifoldRefs.ensureFetchRefspec] (like
   /// [create]) must use the SAME resolved remote for both, or a rename
   /// racing between the two resolutions could point the reservation and
   /// the refspec at different remotes.
-  Future<GitResult<int>> _allocId({required String remote}) =>
+  Future<GitResult<int>> _allocId({required MetadataRemote remote}) =>
       refs.allocSequentialId(
-        ref: _idCounterRef,
+        ref: ManifoldNs.idCounter,
         filename: _counterFilename,
         commitLabel: 'desk-id',
         remote: remote,
@@ -321,6 +347,7 @@ class DeskPrStore {
   /// refspec on the active remote so `git fetch origin` auto-pulls
   /// manifold metadata. Without this, a clone-and-recover loses every
   /// desk PR's metadata silently — a real data-loss vector.
+  @useResult
   Future<GitResult<DeskPr>> create({
     required String branch,
     required String title,
@@ -366,6 +393,7 @@ class DeskPrStore {
     return GitResult.ok(pr);
   }
 
+  @useResult
   Future<GitResult<DeskPr>> addComment({
     required String branch,
     required String author,
@@ -387,6 +415,7 @@ class DeskPrStore {
     );
   }
 
+  @useResult
   Future<GitResult<DeskPr>> addReview({
     required String branch,
     required String author,
@@ -414,6 +443,7 @@ class DeskPrStore {
   /// Mutate state ('OPEN' / 'MERGED' / 'CLOSED'). The actual git
   /// merge/close is the caller's responsibility — this method only
   /// records the metadata transition.
+  @useResult
   Future<GitResult<DeskPr>> setState({
     required String branch,
     required String state,
@@ -428,6 +458,7 @@ class DeskPrStore {
     );
   }
 
+  @useResult
   Future<GitResult<DeskPr>> editMeta({
     required String branch,
     String? title,
@@ -454,6 +485,7 @@ class DeskPrStore {
   /// conflict strip reflect reality without waiting for the next
   /// promotion-style mutation. Quiet — does not write a commit if the
   /// values are unchanged (no audit-trail noise on every refresh).
+  @useResult
   Future<GitResult<DeskPr?>> refreshDiffStats({
     required String branch,
     required int additions,
@@ -491,6 +523,7 @@ class DeskPrStore {
     return GitResult.ok(r.data);
   }
 
+  @useResult
   Future<GitResult<DeskPr>> setRemoteNumber(
       String branch, int remoteNumber) async {
     return _mutate(
@@ -510,6 +543,7 @@ class DeskPrStore {
   /// wholesale `_commit(pr)` could, on a lost race, resurrect the stale
   /// snapshot on top of the winner and erase a comment that landed
   /// meanwhile.
+  @useResult
   Future<GitResult<void>> updateFull(DeskPr pr, {String? message}) async {
     final r = await _mutate(
       pr.headRef,
@@ -538,6 +572,7 @@ class DeskPrStore {
     return const GitResult.ok(null);
   }
 
+  @useResult
   Future<GitResult<void>> abandon(String branch) async {
     return refs.deleteRef(refFor(branch));
   }
@@ -548,6 +583,7 @@ class DeskPrStore {
   /// [DeskPr.linkedRemoteIssues] for forge-hosted issues. Symmetric
   /// `addressedBy` write on a local issue is the caller's
   /// responsibility (DeskIssueStore.toggleAddressedBy).
+  @useResult
   Future<GitResult<DeskPr>> toggleLinkedIssue({
     required String branch,
     required int issueId,
@@ -603,7 +639,8 @@ class DeskPrStore {
   /// [ManifoldRefs.syncWithRemote] each resolve it independently) so both
   /// calls in this one operation agree even if a remote rename races
   /// between them.
-  Future<GitResult<void>> syncWithRemote({String? remote}) async {
+  @useResult
+  Future<GitResult<void>> syncWithRemote({MetadataRemote? remote}) async {
     final resolvedRemote = remote ?? await refs.resolveMetadataRemote();
     await refs.ensureFetchRefspec(remote: resolvedRemote);
     return refs.syncWithRemote(remote: resolvedRemote);

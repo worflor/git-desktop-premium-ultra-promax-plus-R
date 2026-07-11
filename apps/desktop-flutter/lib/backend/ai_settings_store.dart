@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'atomic_write.dart';
 import 'dtos.dart'
     show
         MuseQuiverEntry,
@@ -266,22 +267,29 @@ class AiSettingsStore {
       final parsed = jsonDecode(raw);
       if (parsed is Map<String, dynamic>) {
         final snapshot = AiSettingsSnapshot.fromJson(parsed);
-        await persist(snapshot);
         return snapshot;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Parse failure on an EXISTING file: return defaults in memory but
+      // leave the on-disk bytes untouched (mirrors SettingsStore._loadImpl).
+      // Re-persisting defaults here would destroy a torn file's forensic
+      // evidence and silently overwrite partially-valid real user settings;
+      // rewrite only on an explicit user reset via persist().
+      return AiSettingsSnapshot.defaults();
+    }
 
-    final defaults = AiSettingsSnapshot.defaults();
-    await persist(defaults);
-    return defaults;
+    // The file exists but decoded to a non-map (e.g. a bare `[]` or `"x"`).
+    // Same policy as the catch above: default in memory, don't clobber.
+    return AiSettingsSnapshot.defaults();
   }
 
   static Future<void> persist(AiSettingsSnapshot snapshot) async {
     final file = await _settingsFile();
-    await file.parent.create(recursive: true);
-    await file.writeAsString(
+    // Atomic temp-then-rename so a crash mid-write can't leave a torn
+    // ai_settings.json (see atomic_write.dart).
+    await writeFileAtomicString(
+      file,
       const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
-      flush: true,
     );
   }
 
@@ -308,8 +316,7 @@ class AiSettingsStore {
       return;
     }
 
-    await file.parent.create(recursive: true);
-    await file.writeAsString('$normalized\n', flush: true);
+    await writeFileAtomicString(file, '$normalized\n');
   }
 
   static Future<String> commitMessagePromptPath() async {
@@ -347,8 +354,7 @@ class AiSettingsStore {
       return;
     }
 
-    await file.parent.create(recursive: true);
-    await file.writeAsString('$normalized\n', flush: true);
+    await writeFileAtomicString(file, '$normalized\n');
   }
 
   static Future<String> reviewCommitPromptPath() async {
@@ -382,8 +388,7 @@ class AiSettingsStore {
       }
       return;
     }
-    await file.parent.create(recursive: true);
-    await file.writeAsString('$normalized\n', flush: true);
+    await writeFileAtomicString(file, '$normalized\n');
   }
 
   static Future<String> musePromptPath() async {
@@ -417,8 +422,7 @@ class AiSettingsStore {
       }
       return;
     }
-    await file.parent.create(recursive: true);
-    await file.writeAsString('$normalized\n', flush: true);
+    await writeFileAtomicString(file, '$normalized\n');
   }
 
   static Future<String> presentPromptPath() async {

@@ -233,7 +233,9 @@ class _NameFieldState extends State<_NameField> {
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    return tp.width;
+    final width = tp.width;
+    tp.dispose(); // native (dart:ui) resources — release after measuring
+    return width;
   }
 
   @override

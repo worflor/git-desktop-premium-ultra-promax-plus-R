@@ -721,7 +721,9 @@ double _measureWidth(String text, TextStyle s) {
     text: TextSpan(text: text, style: s),
     textDirection: TextDirection.ltr,
   )..layout();
-  return _measureWidthCache[key] = tp.width;
+  final w = tp.width;
+  tp.dispose(); // native (dart:ui) resources — only the value is cached
+  return _measureWidthCache[key] = w;
 }
 
 double _measureHeight(String text, TextStyle s) {
@@ -732,7 +734,9 @@ double _measureHeight(String text, TextStyle s) {
     text: TextSpan(text: text, style: s),
     textDirection: TextDirection.ltr,
   )..layout();
-  return _measureHeightCache[key] = tp.height;
+  final h = tp.height;
+  tp.dispose(); // native (dart:ui) resources — only the value is cached
+  return _measureHeightCache[key] = h;
 }
 
 

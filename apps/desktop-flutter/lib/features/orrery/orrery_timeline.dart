@@ -411,11 +411,12 @@ class _TimelinePlayButton extends StatelessWidget {
         width: _kTransportW,
         height: _kTransportW,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
+        decoration: ShapeDecoration(
           color: t.surface1.withValues(alpha: hovered ? 0.85 : 0.6),
-          border: Border.all(
-              color: t.chromeBorder.withValues(alpha: hovered ? 0.95 : 0.7)),
+          shape: CircleBorder(
+            side: BorderSide(
+                color: t.chromeBorder.withValues(alpha: hovered ? 0.95 : 0.7)),
+          ),
         ),
         child: Icon(
           playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -729,6 +730,10 @@ class _TimelinePainter extends CustomPainter {
     }
     x = x.clamp(0.0, math.max(0.0, laneWidth - tp.width));
     tp.paint(canvas, Offset(x, y));
+    // TextPainter holds native (dart:ui) resources; a fresh one is built per
+    // caption per paint, so it must be released or leak_tracker flags every
+    // repaint (surfaced as undisposed TextPainters in the orrery scrub tests).
+    tp.dispose();
   }
 
   @override

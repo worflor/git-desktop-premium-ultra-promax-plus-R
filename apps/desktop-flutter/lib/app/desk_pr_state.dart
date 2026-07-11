@@ -428,7 +428,8 @@ class DeskPrState extends ChangeNotifier {
     if (!_syncing.add(main)) return 'sync already in progress';
     try {
       final store = DeskPrStore(_refsFor(main));
-      final r = await store.syncWithRemote(remote: remote);
+      final r = await store.syncWithRemote(
+          remote: remote == null ? null : MetadataRemote(remote));
       if (!r.ok) return r.error;
       await refreshFor(main);
       return null;

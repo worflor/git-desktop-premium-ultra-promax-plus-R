@@ -3031,6 +3031,7 @@ class _DiffShellState extends State<DiffShell> {
       maxLines: 1,
     )..layout();
     final charWidth = painter.width > 0 ? painter.width : 7.5;
+    painter.dispose();
     const gutterW = 56.0;
     const sidePad = 16.0;
     const minW = 400.0;
@@ -5237,7 +5238,13 @@ Widget _buildInlineWordDiffText(
 /// key every frame and would churn the LRU with zero hit rate — they
 /// allocate fresh `TextPainter`s instead (see `_paintRun`).
 final LruCache<int, TextPainter> _diffTextPainterCache =
-    LruCache<int, TextPainter>(maxSize: 384);
+    LruCache<int, TextPainter>(
+  maxSize: 384,
+  // An evicted painter is never handed out again (callers re-fetch, missing
+  // → rebuild), so releasing its native (dart:ui) layout here is safe and
+  // stops the cache from leaking one painter per unique scrolled-past row.
+  onEvict: (tp) => tp.dispose(),
+);
 
 TextPainter _cachedDiffLineTextPainter({
   required String text,
@@ -5367,7 +5374,9 @@ class _DiffMeltTextPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
       maxLines: 1,
     )..layout();
-    return _cachedCharWidth = painter.width;
+    final w = painter.width;
+    painter.dispose();
+    return _cachedCharWidth = w;
   }
 
   void _paintMeltTrails({
@@ -5487,6 +5496,9 @@ class _DiffMeltTextPainter extends CustomPainter {
       maxLines: 1,
     )..layout();
     painter.paint(canvas, offset);
+    // Fresh, uncached, allocated every animation frame — release its
+    // native layout now or leak one painter per painted glyph-run per frame.
+    painter.dispose();
   }
 
   TextStyle _style(Color color) {
@@ -6288,7 +6300,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           maxLines: 1,
           ellipsis: '…',
         )..layout(maxWidth: maxWidth);
-        if (!painter.didExceedMaxLines) {
+        final exceeded = painter.didExceedMaxLines;
+        painter.dispose();
+        if (!exceeded) {
           return child;
         }
         return Tooltip(message: text, child: child);

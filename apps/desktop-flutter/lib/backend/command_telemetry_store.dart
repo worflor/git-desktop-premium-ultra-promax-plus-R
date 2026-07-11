@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:meta/meta.dart';
+
+import 'clock.dart';
 import 'settings_store.dart';
 import 'storage_paths.dart';
 
@@ -116,6 +119,13 @@ class CommandTelemetryStore {
   static const int _defaultRecentLimit = 200;
   static const int _maxRecentLimit = 1000;
   static Future<void> _io = Future<void>.value();
+
+  /// Wall-clock source for the retention age cutoff. Defaults to the real
+  /// clock so production behaviour is identical to the old `DateTime.now()`
+  /// path; a test sets a `FakeClock` to pin the `maxAgeDays` boundary
+  /// without sleeping in real time. Reset it in `tearDown`.
+  @visibleForTesting
+  static Clock clock = const SystemClock();
 
   static Future<void> recordSample({
     required String scope,
@@ -294,7 +304,7 @@ class CommandTelemetryStore {
     _RetentionPolicy policy,
   ) {
     final cutoff =
-        DateTime.now().toUtc().subtract(Duration(days: policy.maxAgeDays));
+        clock.now().toUtc().subtract(Duration(days: policy.maxAgeDays));
     samples.removeWhere((sample) {
       final createdAt = DateTime.tryParse(sample.createdAt)?.toUtc();
       return createdAt == null || createdAt.isBefore(cutoff);
@@ -343,9 +353,15 @@ class CommandTelemetryStore {
       return <_StoredCommandTelemetrySample>[];
     }
 
-    final lines = await file.readAsLines();
+    // Read bytes + lenient UTF-8 decode rather than strict `readAsLines`: a
+    // crash tearing a write mid-multibyte-codepoint leaves an invalid UTF-8
+    // tail that `readAsLines` would THROW on, bricking every future read AND
+    // write. `allowMalformed` degrades the torn bytes to U+FFFD so only the
+    // torn line fails its per-line jsonDecode and is skipped.
+    final bytes = await file.readAsBytes();
+    final content = utf8.decode(bytes, allowMalformed: true);
     final samples = <_StoredCommandTelemetrySample>[];
-    for (final line in lines) {
+    for (final line in content.split('\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) {
         continue;

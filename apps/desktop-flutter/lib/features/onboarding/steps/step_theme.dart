@@ -67,6 +67,7 @@ double _computeMaxThemeLabelWidth() {
       textDirection: TextDirection.ltr,
     )..layout();
     if (painter.width > widest) widest = painter.width;
+    painter.dispose(); // native (dart:ui) resources — release each iteration
   }
   // Small safety cushion so that fonts which render slightly wider than
   // TextPainter's advance width (kerning, hinting) don't clip.

@@ -25,14 +25,28 @@ Future<String?> _resolveCodex() async {
         .where((l) => l.isNotEmpty)
         .toList();
     if (lines.isEmpty) return null;
-    if (!Platform.isWindows) return lines.first;
-    // `where` lists the extensionless npm shell shim first; only
-    // .cmd/.exe/.bat are launchable via Process.start on Windows.
-    for (final ext in ['.cmd', '.exe', '.bat']) {
-      final hit = lines.where((l) => l.toLowerCase().endsWith(ext));
-      if (hit.isNotEmpty) return hit.first;
+    String? candidate;
+    if (!Platform.isWindows) {
+      candidate = lines.first;
+    } else {
+      // `where` lists the extensionless npm shell shim first; only
+      // .cmd/.exe/.bat are launchable via Process.start on Windows.
+      for (final ext in ['.cmd', '.exe', '.bat']) {
+        final hit = lines.where((l) => l.toLowerCase().endsWith(ext));
+        if (hit.isNotEmpty) {
+          candidate = hit.first;
+          break;
+        }
+      }
     }
-    return null;
+    if (candidate == null) return null;
+    // Presence is not runnability: under WSL, Windows PATH interop exposes
+    // the WINDOWS npm `codex` shim, which `which` finds but whose `exec node`
+    // dies with exit 126 (Permission denied). Gate on an actual run.
+    final version = await Process.run(candidate, ['--version'])
+        .timeout(const Duration(seconds: 20));
+    if (version.exitCode != 0) return null;
+    return candidate;
   } catch (_) {
     return null;
   }

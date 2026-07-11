@@ -9,31 +9,31 @@
 
 import 'dart:async';
 
+import 'package:meta/meta.dart';
+
 import 'desk_issue.dart';
 import 'git_result.dart';
 import 'manifold_refs.dart';
 
 class DeskIssueStore {
-  static const String refPrefix = 'refs/manifold/issues/';
+  static const String refPrefix = ManifoldNs.issuesPrefix;
   static const String _issueFilename = 'issue.json';
-  // Shared counter ref with DeskPrStore so PR/issue numbers don't
-  // collide. Same allocation logic, same ref name.
-  static const String _idCounterRef = 'refs/manifold/_id-counter';
   static const String _counterFilename = 'counter.txt';
 
   final ManifoldRefs refs;
 
   DeskIssueStore(this.refs);
 
-  static String refFor(int id) => '$refPrefix$id';
+  static LiveManifoldRef refFor(int id) => LiveManifoldRef.issue(id);
 
   /// List every desk issue under the prefix, newest-updated first.
+  @useResult
   Future<GitResult<List<DeskIssue>>> listAll() async {
     final r = await refs.listRefs(refPrefix);
     if (!r.ok) return GitResult.err(r.error ?? 'listRefs failed');
     final out = <DeskIssue>[];
-    for (final ref in r.data!.keys) {
-      final blob = await refs.readRefBlob(ref, _issueFilename);
+    for (final sha in r.data!.values) {
+      final blob = await refs.readRefBlob(sha, _issueFilename);
       if (!blob.ok || blob.data == null) continue;
       try {
         out.add(DeskIssue.fromBlob(blob.data!));
@@ -45,6 +45,7 @@ class DeskIssueStore {
     return GitResult.ok(out);
   }
 
+  @useResult
   Future<GitResult<DeskIssue?>> read(int id) async {
     final ref = refFor(id);
     final blob = await refs.readRefBlob(ref, _issueFilename);
@@ -68,21 +69,19 @@ class DeskIssueStore {
     if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
     final treeR = await refs.mkTree({_issueFilename: blobR.data!});
     if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
-    final cur = await refs.resolveRef(ref);
-    if (!cur.ok) return GitResult.err(cur.error ?? 'resolveRef failed');
+    // First commit on a fresh orphan history — no parent.
     final commitR = await refs.commitTree(
       treeSha: treeR.data!,
-      parentSha: cur.data,
       message: message,
     );
     if (!commitR.ok) {
       return GitResult.err(commitR.error ?? 'commitTree failed');
     }
-    final updR = await refs.updateRef(
-      ref: ref,
-      newSha: commitR.data!,
-      oldSha: cur.data,
-    );
+    // CAS on non-existence (zero-OID) — the same fix as DeskPrStore._commit.
+    // Resolving the absent ref to null and passing it to updateRef was an
+    // unconditional write that let a raced-in create be silently clobbered
+    // with both reporting ok; createRef rejects the late writer instead.
+    final updR = await refs.createRef(ref: ref, newSha: commitR.data!);
     if (!updR.ok) return GitResult.err(updR.error ?? 'updateRef failed');
     return const GitResult.ok(null);
   }
@@ -149,22 +148,26 @@ class DeskIssueStore {
         lastError ?? 'updateRef failed after $maxAttempts attempts');
   }
 
-  /// Allocate the next sequential id from the shared [_idCounterRef]
-  /// counter. See [DeskPrStore._allocId] — both stores delegate to the
-  /// same plumbing and share the counter so ids never collide.
+  /// Allocate the next sequential id from the shared
+  /// [ManifoldNs.idCounter] counter. See [DeskPrStore._allocId] — both
+  /// stores delegate to the same plumbing and share the counter so ids
+  /// never collide.
   ///
   /// [remote] is threaded in by the caller rather than resolved here: an
   /// operation that also calls [ManifoldRefs.ensureFetchRefspec] (like
   /// [create]) must use the SAME resolved remote for both, or a rename
   /// racing between the two resolutions could point the reservation and
   /// the refspec at different remotes.
-  Future<GitResult<int>> _allocId({required String remote}) =>
+  Future<GitResult<int>> _allocId({required MetadataRemote remote}) =>
       refs.allocSequentialId(
-        ref: _idCounterRef,
+        // Shared counter ref with DeskPrStore so PR/issue numbers don't
+        // collide. Same allocation logic, same ref.
+        ref: ManifoldNs.idCounter,
         filename: _counterFilename,
         remote: remote,
       );
 
+  @useResult
   Future<GitResult<DeskIssue>> create({
     required String title,
     required String body,
@@ -205,12 +208,14 @@ class DeskIssueStore {
     // an issues-only user (who never opens a desk PR) never auto-pulls
     // Manifold metadata on `git fetch` — a silent no-sync trap. No-op
     // when there's no remote configured. The user can also configure it
-    // manually:
-    //   git config --add remote.origin.fetch +refs/manifold/*:refs/manifold/*
+    // manually (the STAGING form — never the legacy live-ref refspec,
+    // which lets a plain fetch force-rewind live refs):
+    //   git config --add remote.origin.fetch '+refs/manifold/*:refs/manifold-remote/origin/*'
     await refs.ensureFetchRefspec(remote: remote);
     return GitResult.ok(issue);
   }
 
+  @useResult
   Future<GitResult<DeskIssue>> addComment({
     required int id,
     required String author,
@@ -232,6 +237,7 @@ class DeskIssueStore {
     );
   }
 
+  @useResult
   Future<GitResult<DeskIssue>> setState({
     required int id,
     required String state,
@@ -246,6 +252,7 @@ class DeskIssueStore {
     );
   }
 
+  @useResult
   Future<GitResult<DeskIssue>> editMeta({
     required int id,
     String? title,
@@ -267,6 +274,7 @@ class DeskIssueStore {
   /// Toggle a desk-PR branch in this issue's `addressedBy` list.
   /// Used to maintain the symmetric cross-reference with desk PRs'
   /// `linkedIssues` field.
+  @useResult
   Future<GitResult<DeskIssue>> toggleAddressedBy({
     required int id,
     required String branch,
@@ -292,12 +300,14 @@ class DeskIssueStore {
     );
   }
 
+  @useResult
   Future<GitResult<void>> abandon(int id) async {
     return refs.deleteRef(refFor(id));
   }
 
   /// Set (or clear) the remote issue number this local issue is linked to.
   /// Calling with null unlinks the remote association.
+  @useResult
   Future<GitResult<DeskIssue>> setRemoteNumber(
     int id,
     int? remoteNumber,
@@ -321,6 +331,7 @@ class DeskIssueStore {
   /// was last touched, which is what `listAll()` uses for sort order.
   /// Using the remote's timestamp would make recently-synced issues sort
   /// to the bottom whenever the remote was older than local activity.
+  @useResult
   Future<GitResult<DeskIssue>> applyRemoteSnapshot({
     required int id,
     required String title,
@@ -358,7 +369,8 @@ class DeskIssueStore {
   /// [ManifoldRefs.syncWithRemote] each resolve it independently) so both
   /// calls in this one operation agree even if a remote rename races
   /// between them.
-  Future<GitResult<void>> syncWithRemote({String? remote}) async {
+  @useResult
+  Future<GitResult<void>> syncWithRemote({MetadataRemote? remote}) async {
     final resolvedRemote = remote ?? await refs.resolveMetadataRemote();
     await refs.ensureFetchRefspec(remote: resolvedRemote);
     return refs.syncWithRemote(remote: resolvedRemote);

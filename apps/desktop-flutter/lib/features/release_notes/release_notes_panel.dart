@@ -437,8 +437,8 @@ const _changelog = <_ReleaseNote>[
       'The branches and PR page got its first real love since launch: a full backend overhaul of how branches are processed and understood, so absorbed vs squashed vs merged finally get told apart. And the page itself looks far better for it.',
       'API models (OpenRouter, OpenAI, xAI) can piggyback the Codex CLI now for full read-only agentic capability. Basically codex, but with your API models slotted in automatically.',
       'One new equation entered the chat: a participation ratio for diffs, N_eff = (Σφ)² / Σφ². the engine keeps eating math.',
-      'The test suite got a serious upgrade. it asserts laws and invariants, and fuzzes them until something gives.',
-      'Sooo it found a lot of bugs... and they\'re all fixed ;p',
+      'The test suite got a serious upgrade. it asserts laws and invariants, and fuzzes them until something gives. Plus a WSL2 harness.',
+      'Sooo it found a lot of bugs... aaand they\'re all fixed ;p',
     ],
   ),
   _ReleaseNote(

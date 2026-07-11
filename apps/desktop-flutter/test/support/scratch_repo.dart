@@ -56,7 +56,13 @@ class ScratchRepo {
   /// pinned to `main`, sets deterministic local identity + non-interactive
   /// config, and creates an initial empty commit so `HEAD` always resolves
   /// from the moment [create] returns.
-  static Future<ScratchRepo> create({String? name, bool autocrlf = false}) async {
+  /// [objectFormat] pins `git init --object-format=<fmt>` (e.g. `'sha256'`)
+  /// so a test can exercise a SHA-256 repository — 64-hex OIDs and a 64-zero
+  /// null-object — through the exact isolated env every other op uses. Null
+  /// (the default) leaves git's default format (SHA-1) untouched, so existing
+  /// callers are byte-for-byte unaffected.
+  static Future<ScratchRepo> create(
+      {String? name, bool autocrlf = false, String? objectFormat}) async {
     final prefix = 'scratch_repo_${name == null ? '' : '${name}_'}';
     // The worktree lives one level DOWN, inside its own private sandbox,
     // rather than directly in the shared system temp dir. Two reasons, both
@@ -72,12 +78,19 @@ class ScratchRepo {
     final dir = Directory(p.join(sandbox.path, 'repo'));
     await dir.create();
     final repo = ScratchRepo._(dir, sandbox);
-    await repo._initialize(autocrlf: autocrlf);
+    await repo._initialize(autocrlf: autocrlf, objectFormat: objectFormat);
     return repo;
   }
 
-  Future<void> _initialize({required bool autocrlf}) async {
-    final initResult = await git(['init', '-q', '-b', 'main']);
+  Future<void> _initialize(
+      {required bool autocrlf, String? objectFormat}) async {
+    final initResult = await git([
+      'init',
+      '-q',
+      '-b',
+      'main',
+      if (objectFormat != null) '--object-format=$objectFormat',
+    ]);
     if (initResult.exitCode != 0) {
       throw StateError('git init failed: ${initResult.stderr}');
     }

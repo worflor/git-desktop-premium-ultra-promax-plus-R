@@ -10,6 +10,7 @@ import 'correlatedness_hunk_sort.dart'
     show CorrelatednessContext, seriateByHunkFiedler;
 import 'engram_fit.dart';
 import 'git.dart';
+import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
 import 'logos_core.dart' show CsrGraph;
 import 'logos_git.dart' show LogosGit;
@@ -984,6 +985,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
 }) async {
   final logProbe = await runGit(repo, [
     'log',
+    '--no-show-signature',
     '-n', '$commitLimit',
     '--no-merges',
     '--raw', '--numstat', '-M',
@@ -1063,10 +1065,15 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       final newBlob = header[3];
       final status = header[4];
       final String path;
+      // Un-C-quote FIRST (core.quotePath=true is the git default), THEN
+      // normalize separators — doing replaceAll('\\','/') on a raw C-quoted
+      // path like "caf\303\251.txt" would shred the octal escapes into the
+      // phantom path caf/303/251.txt and poison the coupling graph.
       if (status.startsWith('R') || status.startsWith('C')) {
-        path = (parts.length >= 3 ? parts[2] : parts[1]).replaceAll('\\', '/');
+        path = unCQuoteGitPath(parts.length >= 3 ? parts[2] : parts[1])
+            .replaceAll('\\', '/');
       } else {
-        path = parts[1].replaceAll('\\', '/');
+        path = unCQuoteGitPath(parts[1]).replaceAll('\\', '/');
       }
       currentRaw.add((path: path, oldBlob: oldBlob, newBlob: newBlob));
     } else if (inNumstat) {
@@ -1075,7 +1082,10 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
         final added = int.tryParse(parts[0]) ?? 0;
         final deleted = int.tryParse(parts[1]) ?? 0;
         final rawPath = parts.sublist(2).join('\t');
-        final path = _extractNewPath(rawPath).replaceAll('\\', '/');
+        // Un-C-quote before resolving the `old => new` rename form and
+        // normalizing separators (same class as the raw-path fix above).
+        final path =
+            _extractNewPath(unCQuoteGitPath(rawPath)).replaceAll('\\', '/');
         currentNumstat.add((path, added + deleted));
       }
     }

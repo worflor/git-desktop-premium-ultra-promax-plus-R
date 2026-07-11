@@ -505,8 +505,13 @@ void main() {
     await git(work, ['add', 'other.txt']); // unrelated staged
 
     // A pre-commit hook that always rejects, to force the commit step to fail.
-    await File('$work$sep.git${sep}hooks${sep}pre-commit')
-        .writeAsString('#!/bin/sh\nexit 1\n');
+    // POSIX git skips non-executable hooks (git-for-Windows execs via sh
+    // regardless), so the chmod is what makes this test real on Linux.
+    final rejectHook = File('$work$sep.git${sep}hooks${sep}pre-commit');
+    await rejectHook.writeAsString('#!/bin/sh\nexit 1\n');
+    if (!Platform.isWindows) {
+      await Process.run('chmod', ['+x', rejectHook.path]);
+    }
 
     final prep = await prepareMergePull(work);
     expect(prep.topology, MergeTopology.mergeCommit);

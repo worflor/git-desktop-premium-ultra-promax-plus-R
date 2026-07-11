@@ -261,8 +261,8 @@ class _ManifoldPaneState extends State<ManifoldPane>
     }
     final focusRingDesired = derived(ManifoldTuning.focusRingDurationMult);
     if (reduce) {
-      _chartFocusRing.value = _chartFocusRing.value;
-      _tangentFocusRing.value = _tangentFocusRing.value;
+      if (_chartFocusRing.isAnimating) _chartFocusRing.stop();
+      if (_tangentFocusRing.isAnimating) _tangentFocusRing.stop();
     } else {
       if (_chartFocusRing.duration != focusRingDesired) {
         _chartFocusRing.duration = focusRingDesired;

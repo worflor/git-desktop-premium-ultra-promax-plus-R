@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:meta/meta.dart';
 
 import '../app/build_info.dart';
+import 'atomic_write.dart';
 import 'external_tools.dart';
 import 'storage_paths.dart';
 
@@ -689,10 +690,11 @@ class SettingsStore {
       return;
     }
     final file = await _settingsFile();
-    await file.parent.create(recursive: true);
-    await file.writeAsString(
+    // Atomic temp-then-rename: a process death mid-write can never leave a
+    // torn settings.json that load() would fall back to defaults over (B20).
+    await writeFileAtomicString(
+      file,
       const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
-      flush: true,
     );
     // Keep the memoised snapshot coherent with what's on disk.
     _cached = snapshot;

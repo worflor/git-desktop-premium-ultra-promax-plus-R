@@ -59,6 +59,9 @@ class CommitLede extends StatelessWidget {
         maxLines: 3,
       )..layout(maxWidth: avail);
       final subjectW = math.min(tp.width, avail);
+      tp.dispose(); // native (dart:ui) resources — release each build
+
+
 
       return Semantics(
         label: _semanticDescription(signals),

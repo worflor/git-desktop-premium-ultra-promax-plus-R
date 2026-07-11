@@ -24,6 +24,14 @@ class LogosGitState extends ChangeNotifier {
 
   LogosGit? engineFor(String repoPath) => _engineByRepo[repoPath];
 
+  /// Test-only seam: when set, [loadForRepo] resolves the engine through
+  /// this instead of the real git-driven [resolver.resolveLogosGit], so
+  /// the per-repo cache/eviction contract can be exercised headless with
+  /// no subprocess. Mirrors [RepositoryState]'s injectable-loader pattern.
+  @visibleForTesting
+  Future<LogosGit?> Function(String repoPath, {FileCouplingMatrix? coupling})?
+      resolveOverride;
+
   bool isLoading(String repoPath) => _loading.contains(repoPath);
 
   String? errorFor(String repoPath) => _errors[repoPath];
@@ -67,8 +75,10 @@ class LogosGitState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final engine =
-          await resolver.resolveLogosGit(repoPath, coupling: coupling);
+      final resolve = resolveOverride;
+      final engine = resolve != null
+          ? await resolve(repoPath, coupling: coupling)
+          : await resolver.resolveLogosGit(repoPath, coupling: coupling);
       if (engine == null) {
         _errors[repoPath] = 'engine resolution failed';
       } else {

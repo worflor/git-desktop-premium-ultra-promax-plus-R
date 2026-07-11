@@ -558,8 +558,10 @@ void main() {
           final hooks = Directory(
               '$repo${Platform.pathSeparator}.githooks');
           await hooks.create(recursive: true);
-          await File('${hooks.path}${Platform.pathSeparator}pre-commit')
-              .writeAsString('#!/bin/sh\nexit 1\n');
+          final hookFile =
+              File('${hooks.path}${Platform.pathSeparator}pre-commit');
+          await hookFile.writeAsString('#!/bin/sh\nexit 1\n');
+          await _markHookExecutable(hookFile);
           await _rg(repo, ['config', 'core.hooksPath', hooks.path]);
           included = specs
               .where((s) => s.kind == _K.staged || s.kind == _K.partial)
@@ -825,8 +827,9 @@ void main() {
   Future<void> installHook(String repo, String script) async {
     final hooks = Directory('$repo${Platform.pathSeparator}.githooks');
     await hooks.create(recursive: true);
-    await File('${hooks.path}${Platform.pathSeparator}pre-commit')
-        .writeAsString(script);
+    final hookFile = File('${hooks.path}${Platform.pathSeparator}pre-commit');
+    await hookFile.writeAsString(script);
+    await _markHookExecutable(hookFile);
     await _rg(repo, ['config', 'core.hooksPath', hooks.path]);
   }
 
@@ -1465,6 +1468,14 @@ Future<ProcessResult> _rg(String repo, List<String> args) => Process.run(
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
+
+/// POSIX git silently SKIPS a hook without the executable bit (git-for-Windows
+/// execs hooks via sh regardless), so every test-written hook must be chmod'd
+/// or the whole hook scenario is vacuously green on Windows and red on Linux.
+Future<void> _markHookExecutable(File hook) async {
+  if (Platform.isWindows) return;
+  await Process.run('chmod', ['+x', hook.path]);
+}
 
 Future<ProcessResult> _rgBytes(String repo, List<String> args) => Process.run(
       'git',

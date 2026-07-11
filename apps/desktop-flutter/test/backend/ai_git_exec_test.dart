@@ -104,14 +104,17 @@ void main() {
       final repo = await _newRepo();
       try {
         expect(gitSubprocessActiveForTesting(), 0);
-        // A 1µs budget can't outrun even the fastest process spawn, so the
-        // observed run hits its timeout branch (kill tree, return null →
-        // GitResult.err). The load-bearing check is that the permit comes
-        // back regardless of which branch won.
+        // The deadline is enforced by awaiting exitCode with a timeout, so a
+        // command that FINISHES before that await begins returns ok even with
+        // a 1µs budget — `rev-parse HEAD` did exactly that on Linux tmpfs and
+        // the timeout branch never ran. `git daemon --port=0` blocks in the
+        // foreground indefinitely on every OS, so the timeout branch (kill
+        // tree, return null → GitResult.err) fires deterministically. The
+        // load-bearing check is that the permit comes back.
         final res = await runGitCommandForTesting(
           repo.path,
-          const ['rev-parse', 'HEAD'],
-          timeout: const Duration(microseconds: 1),
+          const ['daemon', '--port=0', '--base-path=.'],
+          timeout: const Duration(milliseconds: 300),
         );
         expect(res.ok, isFalse);
         expect(res.error, contains('timed out'));

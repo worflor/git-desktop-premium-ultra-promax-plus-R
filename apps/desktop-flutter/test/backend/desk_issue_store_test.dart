@@ -9,6 +9,7 @@ import 'package:git_desktop/backend/desk_issue.dart';
 import 'package:git_desktop/backend/desk_issue_store.dart';
 import 'package:git_desktop/backend/git_result.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
+import '../support/must.dart';
 
 Future<Directory> _newRepo() async {
   final dir = await Directory.systemTemp.createTemp('manifold_issue_test_');
@@ -59,9 +60,9 @@ class _RaceRefs extends ManifoldRefs {
 
   @override
   Future<GitResult<void>> updateRef({
-    required String ref,
-    required String newSha,
-    String? oldSha,
+    required LiveManifoldRef ref,
+    required CommitOid newSha,
+    Oid? oldSha,
   }) async {
     if (!_fired && onFirstUpdate != null) {
       _fired = true;
@@ -80,10 +81,12 @@ Future<void> _forceCounter(ManifoldRefs refs, int value) async {
     treeSha: tree.data!,
     message: 'regress counter to $value',
   );
-  await refs.updateRef(
-    ref: 'refs/manifold/_id-counter',
+  final upd = await refs.updateRef(
+    ref: ManifoldNs.idCounter,
     newSha: commit.data!,
   );
+  expect(upd.ok, isTrue,
+      reason: 'counter-regression setup must actually land: ${upd.error}');
 }
 
 Future<Directory> _bareRemote() async {
@@ -142,9 +145,9 @@ void main() {
         final issue = (await store.create(
                 title: 't', body: '', authorIdentity: 'tester'))
             .data!;
-        await store.addComment(
-            id: issue.issueId, author: 'tester', body: 'hello');
-        await store.setState(id: issue.issueId, state: 'CLOSED');
+        await expectOk(store.addComment(
+            id: issue.issueId, author: 'tester', body: 'hello'));
+        await expectOk(store.setState(id: issue.issueId, state: 'CLOSED'));
         final log = await Process.run(
           'git',
           ['log', '--format=%s', 'refs/manifold/issues/${issue.issueId}'],
@@ -170,12 +173,12 @@ void main() {
         final issue = (await store.create(
                 title: 't', body: '', authorIdentity: 'tester'))
             .data!;
-        await store.toggleAddressedBy(
-            id: issue.issueId, branch: 'feat/x');
+        await expectOk(store.toggleAddressedBy(
+            id: issue.issueId, branch: 'feat/x'));
         var read = (await store.read(issue.issueId)).data!;
         expect(read.addressedBy, ['feat/x']);
-        await store.toggleAddressedBy(
-            id: issue.issueId, branch: 'feat/x');
+        await expectOk(store.toggleAddressedBy(
+            id: issue.issueId, branch: 'feat/x'));
         read = (await store.read(issue.issueId)).data!;
         expect(read.addressedBy, isEmpty);
       } finally {
@@ -189,11 +192,11 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskIssueStore(_refs(repo));
-        await store.create(title: 'a', body: '', authorIdentity: 'tester');
-        await store.create(title: 'b', body: '', authorIdentity: 'tester');
+        await expectOk(store.create(title: 'a', body: '', authorIdentity: 'tester'));
+        await expectOk(store.create(title: 'b', body: '', authorIdentity: 'tester'));
         var all = await store.listAll();
         expect(all.data!.length, 2);
-        await store.abandon(all.data!.first.issueId);
+        await expectOk(store.abandon(all.data!.first.issueId));
         all = await store.listAll();
         expect(all.data!.length, 1);
       } finally {
@@ -343,11 +346,11 @@ void main() {
       try {
         final good = _refs(repo);
         // Missing ref in a valid repo → ok(null), not an error.
-        final rMissing = await good.resolveRef('refs/manifold/issues/999');
+        final rMissing = await good.resolveRef(LiveManifoldRef.issue(999));
         expect(rMissing.ok, isTrue);
         expect(rMissing.data, isNull);
         final bMissing =
-            await good.readRefBlob('refs/manifold/issues/999', 'issue.json');
+            await good.readRefBlob(LiveManifoldRef.issue(999), 'issue.json');
         expect(bMissing.ok, isTrue);
         expect(bMissing.data, isNull);
 
@@ -359,10 +362,10 @@ void main() {
           authorName: 'tester',
           authorEmail: 'tester@manifold.local',
         );
-        final rBroken = await broken.resolveRef('refs/manifold/issues/1');
+        final rBroken = await broken.resolveRef(LiveManifoldRef.issue(1));
         expect(rBroken.ok, isFalse);
         final bBroken =
-            await broken.readRefBlob('refs/manifold/issues/1', 'issue.json');
+            await broken.readRefBlob(LiveManifoldRef.issue(1), 'issue.json');
         expect(bBroken.ok, isFalse);
       } finally {
         await _safeCleanup(repo);
@@ -379,7 +382,7 @@ void main() {
       final clone = await _cloneOf(remote, 'refspec');
       try {
         final store = DeskIssueStore(_refs(clone));
-        await store.create(title: 'x', body: '', authorIdentity: 'tester');
+        await expectOk(store.create(title: 'x', body: '', authorIdentity: 'tester'));
         final cfg = await Process.run(
           'git',
           ['config', '--get-all', 'remote.origin.fetch'],
@@ -468,10 +471,10 @@ void main() {
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A comments locally (UNPUSHED). B comments and syncs (remote moves).
-        await storeA.addComment(
-            id: issue.issueId, author: 'A', body: 'from A');
-        await storeB.addComment(
-            id: issue.issueId, author: 'B', body: 'from B');
+        await expectOk(storeA.addComment(
+            id: issue.issueId, author: 'A', body: 'from A'));
+        await expectOk(storeB.addComment(
+            id: issue.issueId, author: 'B', body: 'from B'));
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A syncs into the divergence — must UNION, not rewind.
@@ -527,8 +530,8 @@ void main() {
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // B moves its local ref AHEAD of the remote, and does NOT push.
-        await storeB.addComment(
-            id: issue.issueId, author: 'B', body: 'unpushed-local');
+        await expectOk(storeB.addComment(
+            id: issue.issueId, author: 'B', body: 'unpushed-local'));
         final ref = DeskIssueStore.refFor(issue.issueId);
         final before = await tipOf(cloneB, ref);
 
@@ -553,8 +556,8 @@ void main() {
 
   group('counter reconcile by MAX', () {
     Future<int> counterOf(DeskIssueStore store) async {
-      final b = await store.refs
-          .readRefBlob('refs/manifold/_id-counter', 'counter.txt');
+      final b =
+          await store.refs.readRefBlob(ManifoldNs.idCounter, 'counter.txt');
       return int.tryParse((b.data ?? '').trim()) ?? 0;
     }
 
@@ -570,7 +573,7 @@ void main() {
         final refsB = _refs(cloneB);
         final storeA = DeskIssueStore(refsA);
         final storeB = DeskIssueStore(refsB);
-        await storeA.create(title: 'x', body: '', authorIdentity: 'A');
+        await expectOk(storeA.create(title: 'x', body: '', authorIdentity: 'A'));
         expect((await storeA.syncWithRemote()).ok, isTrue); // remote counter=1
         expect((await storeB.syncWithRemote()).ok, isTrue); // B counter=1
 

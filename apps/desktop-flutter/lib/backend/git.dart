@@ -7,6 +7,7 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
 import 'dtos.dart';
+import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
 import 'merge_session.dart';
 import 'process_utils.dart';
@@ -347,6 +348,31 @@ const Set<String> _kDedupableSubcommands = {
   'describe',
   'for-each-ref',
 };
+
+/// Config-immunity pins for any `git diff`/`git show` whose stdout is parsed
+/// as a unified-diff body. Each of `color.diff` (ANSI escapes on +/- lines),
+/// `diff.external` (body replaced wholesale by an ext-diff tool), and
+/// `diff.mnemonicPrefix`/`diff.noprefix`/`diff.srcPrefix` (header prefixes
+/// rewritten to `i/`w/`c/` or dropped) can reshape that body out from under
+/// the parser. These force the canonical, machine-stable form regardless of
+/// the repo's / user's config, making the whole reshape class unrepresentable.
+const List<String> _kDiffContentPins = [
+  '--no-color',
+  '--no-ext-diff',
+  '--src-prefix=a/',
+  '--dst-prefix=b/',
+];
+
+/// Pins for every `git log` invocation whose stdout feeds a fixed-layout
+/// parser (`_parseCommitLogLines`' 8-line records, `bulkGetCommitDetails`'
+/// `>>>`-delimited records, `listCommitsAhead`, `listFileHistoryWithPaths`).
+/// `log.showSignature=true` injects `gpg:` lines that shift those records;
+/// `--no-show-signature` forces the canonical form regardless of the user's
+/// config. Centralized here (matching [_kDiffContentPins]) so a new commit-log
+/// call site spreads one source of truth instead of re-typing the literal —
+/// the argv-lint law in hostile_gitconfig_differential_test still fails any
+/// site that omits it.
+const List<String> _kCommitLogPins = ['--no-show-signature'];
 
 /// Request-coalescing cache for concurrent identical git reads.
 /// Keyed by a **length-prefixed** encoding of workingDir and every
@@ -888,8 +914,53 @@ void _bumpGitMutations(int delta) {
 }
 
 Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
-    {Map<String, String>? env}) async {
+    {Map<String, String>? env}) {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
+  // Classify by subcommand for strict-decode selection. stderr is always
+  // lenient — it carries human messages that may be localized to a non-UTF-8
+  // locale on exotic setups. Use `_gitSubcommandToken` so global options
+  // before the subcommand (`-C`, `--git-dir`, etc.) don't silently downgrade
+  // a strict-eligible command to lenient mode. The mutation gate + index.lock
+  // retry classification live inside [_runGitChoreographed].
+  final subcommand = _gitSubcommandToken(args);
+  final strictStdout =
+      subcommand != null && _kStrictDecodeSubcommands.contains(subcommand);
+  return _runGitChoreographed(
+    commandLabel,
+    args,
+    strictStdout: strictStdout,
+    spawnAttempt: () => _spawnRunRaw(
+      args,
+      workingDirectory: workingDir,
+      // Merge order is deliberate: caller-supplied [env] (GIT_INDEX_FILE for a
+      // snapshot commit; GIT_AUTHOR_*/GIT_COMMITTER_* identity overrides from
+      // callers like ManifoldRefs) is spread FIRST, then the non-interactive
+      // safety base is spread AFTER — so a caller can add whatever keys it
+      // needs, but can never shadow GIT_TERMINAL_PROMPT / GIT_OPTIONAL_LOCKS /
+      // LC_ALL by supplying same-named keys of its own. Base-after-caller.
+      environment: env == null
+          ? _kNonInteractiveGitEnv
+          : {...env, ..._kNonInteractiveGitEnv},
+    ),
+  );
+}
+
+/// Shared exec choreography for every git subprocess: the start/finish
+/// lifecycle events, the [_gitSubprocessSemaphore] permit, the
+/// [gitMutationsInFlight] bump for mutating calls (so [GitDirWatcher] pauses
+/// external-change watching while we mutate), the transient index.lock retry
+/// with jittered backoff, and latency recording. The single [spawnAttempt]
+/// closure is the ONLY thing that varies between the plain path ([_gitRaw] →
+/// [_spawnRunRaw]) and the stdin-piping path ([_gitRawStdin] →
+/// [_spawnAndPipeStdin]); it is re-invoked from scratch on each retry, so a
+/// stdin payload is re-sent per attempt. It must return a raw (undecoded)
+/// [ProcessResult] whose stdout/stderr are byte lists.
+Future<ProcessResult> _runGitChoreographed(
+  String commandLabel,
+  List<String> args, {
+  required Future<ProcessResult> Function() spawnAttempt,
+  bool strictStdout = false,
+}) async {
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
     type: 'start',
@@ -898,11 +969,6 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
   await _gitSubprocessSemaphore.acquire();
   var countedMutation = false;
   try {
-    // Classify by subcommand once for both strict-decode selection and the
-    // mutation gate on the index.lock retry below.
-    final subcommand = _gitSubcommandToken(args);
-    final strictStdout =
-        subcommand != null && _kStrictDecodeSubcommands.contains(subcommand);
     final mutating = _isMutatingGitCall(args);
     if (mutating) {
       countedMutation = true;
@@ -920,25 +986,7 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
     ProcessResult result;
     var attempt = 0;
     while (true) {
-      final raw = await _spawnRunRaw(
-        args,
-        workingDirectory: workingDir,
-        // Merge order is deliberate: caller-supplied [env] (GIT_INDEX_FILE
-        // for a snapshot commit; GIT_AUTHOR_*/GIT_COMMITTER_* identity
-        // overrides from callers like ManifoldRefs) is spread FIRST, then
-        // the non-interactive safety base is spread AFTER — so a caller
-        // can add whatever keys it needs, but can never shadow
-        // GIT_TERMINAL_PROMPT / GIT_OPTIONAL_LOCKS / LC_ALL by supplying
-        // same-named keys of its own. Base-after-caller, not caller-wins.
-        environment:
-            env == null ? _kNonInteractiveGitEnv : {...env, ..._kNonInteractiveGitEnv},
-      );
-      // Classify by subcommand. stderr is always lenient — it carries
-      // human messages that may be localized to a non-UTF-8 locale on
-      // exotic setups, and a lenient parse is fine for surfacing the
-      // text to a user. Use `_gitSubcommandToken` so global options
-      // before the subcommand (`-C`, `--git-dir`, etc.) don't silently
-      // downgrade a strict-eligible command to lenient mode.
+      final raw = await spawnAttempt();
       final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
       final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
       result = _finalizeGitResult(commandLabel, raw, stdoutOut, stderrOut);
@@ -1004,6 +1052,75 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
     if (countedMutation) _bumpGitMutations(-1);
     _gitSubprocessSemaphore.release();
   }
+}
+
+/// Streamed-spawn sibling of [_spawnRunRaw] that pipes [stdinPayload] to the
+/// subprocess and collects both output streams as raw bytes. Both streams are
+/// drained concurrently with the exit code to avoid a pipe-buffer deadlock on
+/// large output. Used by [_gitRawStdin].
+Future<ProcessResult> _spawnAndPipeStdin(
+  List<String> args, {
+  required String workingDir,
+  required List<int> stdinPayload,
+  Map<String, String>? env,
+}) async {
+  final process = await _spawnStart(
+    args,
+    workingDirectory: workingDir,
+    environment: env == null
+        ? _kNonInteractiveGitEnv
+        : {...env, ..._kNonInteractiveGitEnv},
+  );
+  // Raw bytes, never IOSink.write: process stdin defaults to the SYSTEM
+  // encoding (cp1252 on Windows), which lossily mangles any non-ASCII payload
+  // and makes git reject or corrupt the hunk.
+  process.stdin.add(stdinPayload);
+  await process.stdin.flush();
+  await process.stdin.close();
+  final stdoutFuture = _collectStreamBytes(process.stdout);
+  final stderrFuture = _collectStreamBytes(process.stderr);
+  final exit = await process.exitCode;
+  final out = await stdoutFuture;
+  final err = await stderrFuture;
+  return ProcessResult(process.pid, exit, out, err);
+}
+
+/// Drains a byte stream into one contiguous list.
+Future<List<int>> _collectStreamBytes(Stream<List<int>> stream) async {
+  final builder = BytesBuilder(copy: false);
+  await for (final chunk in stream) {
+    builder.add(chunk);
+  }
+  return builder.takeBytes();
+}
+
+/// stdin-piping sibling of [_gitRaw]: runs `git [args]` feeding [stdinPayload]
+/// to its stdin through the shared [_runGitChoreographed] choreography — so,
+/// unlike a bare [_spawnStart], the call takes a semaphore permit, bumps
+/// [gitMutationsInFlight] when mutating (pausing [GitDirWatcher]), and RETRIES
+/// a transient index.lock, re-sending the payload on each attempt. Pass
+/// [commandLabel] to override the telemetry label (e.g. a caller's `git.apply`
+/// variant); the stdout of a stdin-piped mutation is never parsed as text, so
+/// decode stays lenient.
+Future<ProcessResult> _gitRawStdin(
+  String workingDir,
+  List<String> args, {
+  required List<int> stdinPayload,
+  String? commandLabel,
+  Map<String, String>? env,
+}) {
+  final label = commandLabel ?? (args.isEmpty ? 'git' : 'git.${args.first}');
+  return _runGitChoreographed(
+    label,
+    args,
+    strictStdout: false,
+    spawnAttempt: () => _spawnAndPipeStdin(
+      args,
+      workingDir: workingDir,
+      stdinPayload: stdinPayload,
+      env: env,
+    ),
+  );
 }
 
 /// THE public entry point for running a git subprocess from outside this
@@ -1143,6 +1260,9 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         // path for RepositoryStatusFile.
         final tab = path.indexOf('\t');
         if (tab >= 0) path = path.substring(0, tab);
+        // core.quotePath=true (the git default) C-quotes any non-ASCII path
+        // (`"caf\303\251.txt"`); recover the real bytes via the shared decoder.
+        path = unCQuoteGitPath(path);
         if (path.isEmpty) continue;
         files.add(RepositoryStatusFile(
           path: path,
@@ -1158,7 +1278,7 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         final unstaged = rawLine[3];
         final pathStart = _nthSpace(rawLine, 10) + 1;
         if (pathStart <= 0 || pathStart >= rawLine.length) continue;
-        final path = rawLine.substring(pathStart);
+        final path = unCQuoteGitPath(rawLine.substring(pathStart));
         if (path.isEmpty) continue;
         files.add(RepositoryStatusFile(
           path: path,
@@ -1169,7 +1289,7 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
       }
       if (first == 0x3f /* '?' */ || first == 0x21 /* '!' */) {
         // Untracked / ignored: `? <path>` or `! <path>`.
-        final path = rawLine.substring(2);
+        final path = unCQuoteGitPath(rawLine.substring(2));
         if (path.isEmpty) continue;
         files.add(RepositoryStatusFile(
           path: path,
@@ -1220,7 +1340,13 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
   int i = 0;
   while (i + 7 < lines.length) {
     final hash = lines[i].trim();
-    if (hash.isEmpty) {
+    // Skip blank separators AND any `gpg:` verification lines that
+    // log.showSignature=true interleaves ahead of each commit's format output.
+    // The call sites pin --no-show-signature so these never reach production;
+    // screening them here too keeps the fixed-8-line window aligned if they
+    // ever do. Only the record-START line is screened — a commit whose SUBJECT
+    // legitimately begins "gpg:" is read positionally at i+4 and left intact.
+    if (hash.isEmpty || hash.startsWith('gpg:')) {
       i++;
       continue;
     }
@@ -1252,7 +1378,9 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
 
 Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
     {int limit = 200, String? branch}) async {
-  final args = ['log', _kCommitLogFormat, '-n', '$limit'];
+  // --no-show-signature: log.showSignature=true injects `gpg:` lines that
+  // shift _parseCommitLogLines' fixed-8-line commit windows; pin it off.
+  final args = ['log', ..._kCommitLogPins, _kCommitLogFormat, '-n', '$limit'];
   if (branch != null) args.add(branch);
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -1272,6 +1400,7 @@ Future<GitResult<List<CommitHistoryEntry>>> listCommitsAhead(
 }) async {
   final args = [
     'log',
+    ..._kCommitLogPins,
     _kCommitLogFormat,
     '-n',
     '$limit',
@@ -1296,7 +1425,7 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
 }) async {
   if (commits.isEmpty) return const GitResult.ok({});
 
-  final args = ['log', '--format=>>>%H', '-n', '$limit'];
+  final args = ['log', ..._kCommitLogPins, '--format=>>>%H', '-n', '$limit'];
   if (branch != null) args.add(branch);
   // `--raw` (status letters) + `--numstat` (additions/deletions) coexist
   // in a single `git log` pass; `--name-status` and `--numstat` do NOT —
@@ -1356,7 +1485,9 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
       if (status == null || status.isEmpty) continue;
       // Rename/copy: `STATUS<score>\told\tnew` — destination wins.
       final path = rest.contains('\t') ? rest.split('\t').last : rest;
-      final pathTrim = path.trim();
+      // Un-C-quote so this key matches the numstat key below under
+      // core.quotePath=true (git default) — both must decode identically.
+      final pathTrim = unCQuoteGitPath(path.trim());
       if (pathTrim.isEmpty) continue;
       changeTypesByHash[cur]![pathTrim] = status.substring(0, 1);
       continue;
@@ -1369,7 +1500,7 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
       if (parts.length >= 3) {
         final adds = int.tryParse(parts[0]) ?? 0;
         final dels = int.tryParse(parts[1]) ?? 0;
-        final path = parts[2].trim();
+        final path = unCQuoteGitPath(parts[2].trim());
         if (path.isNotEmpty) {
           numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
         }
@@ -1440,6 +1571,7 @@ Future<GitResult<List<FileHistoryEntry>>> listFileHistoryWithPaths(
   // old\tnew. We use these to resolve the name at each historical commit.
   final r = await _git(repo, [
     'log',
+    ..._kCommitLogPins,
     '--follow',
     _kCommitLogFormat,
     '--name-status',
@@ -1528,6 +1660,7 @@ Future<GitResult<String>> getFileDiffAtRevision(
   if (stub != null) return GitResult.ok(stub);
   final r = await _git(repo, [
     'diff',
+    ..._kDiffContentPins,
     '--full-index',
     '$commitHash~1..$commitHash',
     '--',
@@ -1546,7 +1679,8 @@ Future<GitResult<String>> getFileDiffAtRevision(
   if (!looksLikeRootCommit) {
     return GitResult.err(primaryErr.trim());
   }
-  final r2 = await _git(repo, ['show', '--full-index', commitHash, '--', filePath]);
+  final r2 = await _git(
+      repo, ['show', ..._kDiffContentPins, '--full-index', commitHash, '--', filePath]);
   if (r2.exitCode != 0) {
     // Preserve the original diff error context alongside the fallback's.
     return GitResult.err(
@@ -1998,7 +2132,8 @@ Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
     'commit $commitHash',
   );
   if (stub != null) return GitResult.ok(stub);
-  final r = await _git(repo, ['diff', '--full-index', '$commitHash~1..$commitHash']);
+  final r = await _git(repo,
+      ['diff', ..._kDiffContentPins, '--full-index', '$commitHash~1..$commitHash']);
   if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
   final primaryErr = r.stderr.toString();
   final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
@@ -2007,7 +2142,7 @@ Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
   if (!looksLikeRootCommit) {
     return GitResult.err(primaryErr.trim());
   }
-  final r2 = await _git(repo, ['show', '--full-index', commitHash]);
+  final r2 = await _git(repo, ['show', ..._kDiffContentPins, '--full-index', commitHash]);
   if (r2.exitCode != 0) {
     return GitResult.err(
       '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
@@ -2117,7 +2252,7 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
 Future<GitResult<Map<String, List<CommitHunk>>>> getCommitHunks(
     String repo, String hash) async {
   final r = await _git(repo, [
-    'show', '--unified=0', '--no-color', '--format=', '-M', hash,
+    'show', '--unified=0', '--no-color', '--no-ext-diff', '--format=', '-M', hash,
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
@@ -2211,8 +2346,8 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
   );
   if (stub != null) return GitResult.ok(stub);
   final args = staged
-      ? ['diff', '--full-index', '--cached', '-U$contextLines', '--', path]
-      : ['diff', '--full-index', '-U$contextLines', '--', path];
+      ? ['diff', ..._kDiffContentPins, '--full-index', '--cached', '-U$contextLines', '--', path]
+      : ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', '--', path];
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
@@ -2317,7 +2452,7 @@ Future<GitResult<String>> getDeskDumpDiff(
   // Tracked changes since divergence (committed + WIP modifications).
   final tracked = await _git(
     deskPath,
-    ['diff', '--full-index', '-U$contextLines', mergeBase],
+    ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', mergeBase],
   );
   if (tracked.exitCode != 0) {
     return GitResult.err(tracked.stderr.toString().trim());
@@ -2374,7 +2509,7 @@ Future<GitResult<String>> getSelectionDiff(
   if (trackedPaths.isNotEmpty && hasTrackedStaged) {
     futures.add(_git(
       repo,
-      ['diff', '--full-index', '--cached', '-U$contextLines', '--', ...trackedPaths],
+      ['diff', ..._kDiffContentPins, '--full-index', '--cached', '-U$contextLines', '--', ...trackedPaths],
     ).then((r) => r.exitCode != 0
         ? GitResult.err(r.stderr.toString().trim())
         : GitResult.ok(r.stdout.toString().trim())));
@@ -2383,7 +2518,7 @@ Future<GitResult<String>> getSelectionDiff(
   if (trackedPaths.isNotEmpty && hasTrackedUnstaged) {
     futures.add(_git(
       repo,
-      ['diff', '--full-index', '-U$contextLines', '--', ...trackedPaths],
+      ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', '--', ...trackedPaths],
     ).then((r) => r.exitCode != 0
         ? GitResult.err(r.stderr.toString().trim())
         : GitResult.ok(r.stdout.toString().trim())));
@@ -3194,7 +3329,8 @@ Future<BranchAbsorption?> branchAbsorption(
     String? branchDiffText;
     Future<String> branchDiff() async {
       return branchDiffText ??=
-          (await _git(repo, ['diff', '--no-renames', fork, branch]))
+          (await _git(repo,
+                  ['diff', ..._kDiffContentPins, '--no-renames', fork, branch]))
               .stdout
               .toString();
     }
@@ -3936,8 +4072,11 @@ Future<GitResult<void>> deleteTag(String repo, String name) async {
 
 Future<GitResult<List<ReflogEntryData>>> listReflog(String repo,
     {int limit = 100}) async {
+  // %x09 (a literal tab), NOT %09: git's commit/reflog pretty-format has no
+  // `%09` escape — it emits the 3 chars `%09` verbatim, leaving every line
+  // tab-less so `split('\t')` yields <6 parts and the whole reflog is dropped.
   final r = await _git(repo,
-      ['reflog', '--format=%H%09%h%09%gd%09%gs%09%aN%09%aI', '-n', '$limit']);
+      ['reflog', '--format=%H%x09%h%x09%gd%x09%gs%x09%aN%x09%aI', '-n', '$limit']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
   final entries = <ReflogEntryData>[];
@@ -3976,7 +4115,11 @@ Future<GitResult<List<BlameLineData>>> getFileBlame(String repo, String path,
 
   for (final line in r.stdout.toString().split('\n')) {
     if (line.isEmpty) continue;
-    final hashMatch = RegExp(r'^([0-9a-f]{40}) \d+ (\d+)').firstMatch(line);
+    // {40,64}: SHA-1 object names are 40 hex, SHA-256 repos' are 64. The
+    // trailing space delimits the run, so the greedy quantifier can't
+    // over-match into the line numbers. Hardcoding {40} silently returned an
+    // empty blame in every sha256 repo.
+    final hashMatch = RegExp(r'^([0-9a-f]{40,64}) \d+ (\d+)').firstMatch(line);
     if (hashMatch != null) {
       currentHash = hashMatch.group(1)!;
       lineNumber = int.tryParse(hashMatch.group(2)!) ?? 0;
@@ -4015,7 +4158,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
         'log',
         '-S',
         query,
-        '--format=%H%09%h%09%s%09%aN%09%aI',
+        '--format=%H%x09%h%x09%s%x09%aN%x09%aI',
         '-n',
         '$limit'
       ];
@@ -4023,7 +4166,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
     case 'files':
       args = [
         'log',
-        '--format=%H%09%h%09%s%09%aN%09%aI',
+        '--format=%H%x09%h%x09%s%x09%aN%x09%aI',
         '-n',
         '$limit',
         '--',
@@ -4035,7 +4178,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
         'log',
         '--grep=$query',
         '-i',
-        '--format=%H%09%h%09%s%09%aN%09%aI',
+        '--format=%H%x09%h%x09%s%x09%aN%x09%aI',
         '-n',
         '$limit'
       ];
@@ -4775,55 +4918,33 @@ Future<GitResult<void>> applyPatch(
   String? telemetryLabel,
 }) async {
   if (patch.trim().isEmpty) return const GitResult.ok(null);
-  final commandLabel = telemetryLabel ?? 'git.apply';
-  final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(
-    type: 'start',
-    command: commandLabel,
-  );
+  final args = <String>['apply'];
+  if (cached) args.add('--cached');
+  if (reverse) args.add('-R');
+  if (dryRun) args.add('--check');
+  if (threeWay) args.add('--3way');
+  args.addAll(['--whitespace=nowarn', '-']);
+  // Route through the shared stdin-capable exec path so `git apply` is
+  // classified MUTATING: it now takes a semaphore permit, bumps
+  // gitMutationsInFlight (so GitDirWatcher pauses instead of racing the
+  // staging write), and retries a transient index.lock — the same
+  // choreography every other index mutation gets. The former bare _spawnStart
+  // had none of that. Payload is raw UTF-8 bytes with a guaranteed trailing
+  // newline; the runner re-sends it on each retry attempt.
+  final payload = <int>[
+    ...utf8.encode(patch),
+    if (!patch.endsWith('\n')) 0x0A,
+  ];
   try {
-    final args = <String>['apply'];
-    if (cached) args.add('--cached');
-    if (reverse) args.add('-R');
-    if (dryRun) args.add('--check');
-    if (threeWay) args.add('--3way');
-    args.addAll(['--whitespace=nowarn', '-']);
-    final process = await _spawnStart(args,
-        workingDirectory: repo, environment: _kNonInteractiveGitEnv);
-    // Raw UTF-8 bytes, never IOSink.write: process stdin defaults to the
-    // SYSTEM encoding (cp1252 on Windows), which lossily mangles any
-    // non-ASCII patch content and makes git reject or corrupt the hunk.
-    process.stdin.add(utf8.encode(patch));
-    if (!patch.endsWith('\n')) process.stdin.add(const [0x0A]);
-    await process.stdin.flush();
-    await process.stdin.close();
-    final stderrFuture = process.stderr.transform(utf8.decoder).join();
-    final exit = await process.exitCode;
-    final stderrText = (await stderrFuture).trim();
-    stopwatch.stop();
-    final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
-    final ok = exit == 0;
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: ok ? 'success' : 'failure',
-      command: commandLabel,
-      durationMs: elapsedMs,
-      errorCode: ok ? null : 'git.exit_$exit',
-      message: ok ? null : stderrText,
-    );
-    if (!ok) {
+    final r = await _gitRawStdin(repo, args,
+        stdinPayload: payload, commandLabel: telemetryLabel ?? 'git.apply');
+    if (r.exitCode != 0) {
+      final stderrText = r.stderr.toString().trim();
       return GitResult.err(
-          stderrText.isEmpty ? 'git apply exit $exit' : stderrText);
+          stderrText.isEmpty ? 'git apply exit ${r.exitCode}' : stderrText);
     }
     return const GitResult.ok(null);
   } catch (e) {
-    stopwatch.stop();
-    DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'failure',
-      command: commandLabel,
-      durationMs: stopwatch.elapsedMicroseconds / 1000,
-      errorCode: 'git.invoke_failed',
-      message: e.toString(),
-    );
     return GitResult.err(e.toString());
   }
 }
@@ -5425,8 +5546,11 @@ Future<({Set<String> all, Set<String> tracked})> _modifiedPaths(
     final xy = line.substring(0, 2);
     var path = line.substring(3).trim();
     // Renames render as "old -> new"; the working-tree path is the new one.
+    // Each side is C-quoted independently under core.quotePath=true (git
+    // default), so split on the arrow FIRST, then un-C-quote the new side.
     final arrow = path.indexOf(' -> ');
     if (arrow >= 0) path = path.substring(arrow + 4);
+    path = unCQuoteGitPath(path);
     if (path.isEmpty) continue;
     all.add(path);
     if (xy != '??') tracked.add(path);
@@ -5543,6 +5667,10 @@ Future<bool> hasUnmergedPaths(String repo) async =>
 /// Raw bytes of `rev:path`, bypassing `_git`'s String decode (which would
 /// lossily map binary to U+FFFD). Null when the path doesn't exist there.
 Future<List<int>?> _blobBytes(String repo, String rev, String path) async {
+  // A read (no mutation bump), but it still spawns a git subprocess — take a
+  // permit so it counts against the app-wide concurrency budget instead of
+  // escaping the semaphore the way the bare _spawnRunRaw call used to.
+  await _gitSubprocessSemaphore.acquire();
   try {
     final r = await _spawnRunRaw(['show', '$rev:$path'],
         workingDirectory: repo,
@@ -5551,6 +5679,8 @@ Future<List<int>?> _blobBytes(String repo, String rev, String path) async {
     return r.stdout as List<int>;
   } catch (_) {
     return null;
+  } finally {
+    _gitSubprocessSemaphore.release();
   }
 }
 
@@ -6017,12 +6147,19 @@ Future<String?> inProgressOperation(String repo) async {
 }
 
 /// Continues a paused rebase after the editor staged the resolution. Our
-/// rebase is always NON-interactive (`git rebase <ref>`), and a non-interactive
-/// `--continue` replays each commit with its original message WITHOUT opening
-/// an editor — so no `core.editor` override is needed (and we avoid depending
-/// on a `true` binary that may not be on PATH on some Windows installs).
+/// rebase is always NON-interactive (`git rebase <ref>`), but whether
+/// `--continue` opens an editor for a conflicted pick's carried message is
+/// GIT-VERSION-DEPENDENT: git 2.43 (Ubuntu LTS) does (empirically verified —
+/// headless it dies with "Standard input is not a terminal" at the CURRENT
+/// step instead of halting at the next conflict), while newer git replays the
+/// message silently. `GIT_EDITOR=true` accepts the carried message on every
+/// platform — git launches editors through its own bundled `sh`, where `true`
+/// always resolves, so this does not depend on the user's PATH (the concern
+/// that ruled out a `core.editor` override for cherry-pick/revert, which have
+/// the `git commit --no-edit` alternative this multi-step flow lacks).
 Future<GitResult<void>> continueRebase(String repo) async {
-  final r = await _git(repo, ['rebase', '--continue']);
+  final r = await _git(repo, ['rebase', '--continue'],
+      extraEnv: const {'GIT_EDITOR': 'true'});
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
@@ -6483,7 +6620,12 @@ Future<GitResult<List<StashFileStat>>> stashFiles(
   String repo, {
   int index = 0,
 }) async {
-  final r = await _git(repo, ['stash', 'show', '--numstat', 'stash@{$index}']);
+  // `--no-renames` is load-bearing, not hygiene: diff.renames is ON by default
+  // for `stash show`, which renders a renamed entry as the single bogus path
+  // `old => new`. Pinning no-renames makes that shape unrepresentable — a
+  // rename splits into a clean delete+add pair instead.
+  final r = await _git(
+      repo, ['stash', 'show', '--numstat', '--no-renames', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   final out = <StashFileStat>[];
   for (final raw in r.stdout.toString().split('\n')) {

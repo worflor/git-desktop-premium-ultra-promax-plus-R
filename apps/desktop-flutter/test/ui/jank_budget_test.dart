@@ -24,6 +24,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:leak_tracker_flutter_testing/leak_tracker_flutter_testing.dart';
 import 'package:provider/provider.dart';
 
 import 'package:git_desktop/app/app_identity.dart';
@@ -62,6 +63,12 @@ int budgetMs(int baseMs) {
 }
 
 void main() {
+  // Measurement purity: this file gates WALL-CLOCK pump times, and
+  // leak_tracker's per-object bookkeeping (enabled globally in
+  // flutter_test_config.dart) inflates exactly what is being measured —
+  // its overhead blew the 250ms budgets when tracking first landed.
+  // Timing gates exclude instrumentation; every functional suite keeps it.
+  LeakTesting.settings = LeakTesting.settings.withIgnoredAll();
   setUpAll(() async {
     installSharedPreferencesMock();
     await loadTestFonts();
@@ -177,8 +184,8 @@ void main() {
             child: app,
           );
 
-      // FINDING, left failing (not skipped, not band-aided): mounting
-      // CommandPalette throws
+      // ARMED REGRESSION GUARD (was: a finding left failing on purpose).
+      // Mounting CommandPalette used to throw
       //   "setState() or markNeedsBuild() called during build"
       // every time, regardless of mounting strategy. `PaletteState.open()`
       // — called synchronously from `CommandPalette.initState()` — calls
@@ -186,22 +193,26 @@ void main() {
       // ancestor of CommandPalette, way up in main.dart's root
       // MultiProvider) dirty. `initState()` always runs inside
       // `Element.mount()`, which always runs inside an active
-      // `BuildOwner.buildScope()` — so this notifyListeners call is
-      // ALWAYS made "during build," by construction, no matter which
-      // frame/setState triggers CommandPalette's mount. Tried and ruled
-      // out as test artifacts: (1) a second top-level `pumpWidget()` call
-      // (rebuilds the whole tree, same conflict), (2) a
-      // `ValueListenableBuilder` swap that dirties only its own subtree,
-      // matching how `workspace_shell.dart`'s `AnimatedSwitcher` mounts it
-      // in production (still throws — kept below as the faithful
-      // reproduction). This is a real Flutter build-phase-safety
-      // violation in `palette_state.dart`/`command_palette.dart`, not a
-      // harness bug; `assert()`-gated, so it is silent in release builds
-      // but fires in any debug-mode build (including `flutter_test`, which
-      // always runs checked). Root fix (defer `PaletteState.open()`'s
-      // `notifyListeners()` past the current build, e.g. via
-      // `SchedulerBinding.addPostFrameCallback`) belongs in lib/, out of
-      // scope here — never edited to make this test pass.
+      // `BuildOwner.buildScope()` — so that notify was ALWAYS raised
+      // "during build," by construction, no matter which frame/setState
+      // triggered the mount (a second top-level `pumpWidget()` and a
+      // subtree-only `ValueListenableBuilder` swap both reproduced it — the
+      // latter, matching how `workspace_shell.dart`'s `AnimatedSwitcher`
+      // mounts the palette in production, is the faithful reproduction kept
+      // below). It was a real Flutter build-phase-safety violation, `assert()`
+      // -gated (silent in release, fatal in any debug build including
+      // `flutter_test`), NOT a harness artifact.
+      //
+      // ROOT-FIXED in lib/: `PaletteState.notifyListeners()` now detects the
+      // build/layout/paint phase (`SchedulerPhase.persistentCallbacks`) and
+      // defers ONLY the wake to a post-frame callback; outside a build (every
+      // keystroke, every async result) it stays a plain synchronous notify
+      // with no added latency. So `open()` is safe to call from anywhere —
+      // including initState — and this test mounts the palette the production
+      // way and asserts it pumps cleanly. If the deferral is ever removed the
+      // `takeException()` check below goes red again. Behavior-level coverage
+      // of the fix lives in
+      // test/features/palette/palette_state_behavior_test.dart.
       final showPalette = ValueNotifier<bool>(false);
       addTearDown(showPalette.dispose);
       await pumpHarness(

@@ -7426,6 +7426,7 @@ class _LogosPadPainter extends CustomPainter {
       if (rotate != 0) canvas.rotate(rotate);
       tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
       canvas.restore();
+      tp.dispose();
     }
 
     word('FOLDER', Offset(w * 0.25, h - 10));
@@ -7533,6 +7534,7 @@ class _LogosPadPainter extends CustomPainter {
         ..color = tokens.surface0.withValues(alpha: alpha * 0.7),
     );
     tp.paint(canvas, Offset(lx, ly));
+    tp.dispose();
   }
 
   // Render trail as a thin polyline with age-based alpha.
@@ -7651,6 +7653,7 @@ class _LogosPadPainter extends CustomPainter {
     if (tx < 10) tx = 10;
     if (tx + tp.width > w - 10) tx = w - 10 - tp.width;
     tp.paint(canvas, Offset(tx, ty));
+    tp.dispose();
   }
 
   @override
