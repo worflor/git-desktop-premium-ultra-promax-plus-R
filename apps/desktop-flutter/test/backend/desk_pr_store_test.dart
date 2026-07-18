@@ -17,10 +17,28 @@ import '../support/must.dart';
 
 Future<Directory> _newRepo() async {
   final dir = await Directory.systemTemp.createTemp('manifold_test_');
-  await Process.run('git', ['init', '-q', '-b', 'main'], workingDirectory: dir.path);
-  await Process.run('git', ['config', 'user.name', 'test'], workingDirectory: dir.path);
-  await Process.run('git', ['config', 'user.email', 'test@local'], workingDirectory: dir.path);
-  await Process.run('git', ['commit', '--allow-empty', '-m', 'root'], workingDirectory: dir.path);
+  await Process.run('git', [
+    'init',
+    '-q',
+    '-b',
+    'main',
+  ], workingDirectory: dir.path);
+  await Process.run('git', [
+    'config',
+    'user.name',
+    'test',
+  ], workingDirectory: dir.path);
+  await Process.run('git', [
+    'config',
+    'user.email',
+    'test@local',
+  ], workingDirectory: dir.path);
+  await Process.run('git', [
+    'commit',
+    '--allow-empty',
+    '-m',
+    'root',
+  ], workingDirectory: dir.path);
   return dir;
 }
 
@@ -38,10 +56,10 @@ Future<void> _safeCleanup(Directory dir) async {
 }
 
 ManifoldRefs _refs(Directory repo) => ManifoldRefs(
-      repoPath: repo.path,
-      authorName: 'tester',
-      authorEmail: 'tester@manifold.local',
-    );
+  repoPath: repo.path,
+  authorName: 'tester',
+  authorEmail: 'tester@manifold.local',
+);
 
 /// A ManifoldRefs that lands ONE interfering commit just before the
 /// store's first CAS update-ref, forcing the read-transform-commit retry
@@ -102,14 +120,21 @@ Future<Directory> _bareRemote() async {
 }
 
 Future<Directory> _cloneOf(Directory remote, String label) async {
-  final parent =
-      await Directory.systemTemp.createTemp('manifold_pr_clone_${label}_');
+  final parent = await Directory.systemTemp.createTemp(
+    'manifold_pr_clone_${label}_',
+  );
   final dst = Directory('${parent.path}/repo');
   await Process.run('git', ['clone', '-q', remote.path, dst.path]);
-  await Process.run('git', ['config', 'user.name', 'test'],
-      workingDirectory: dst.path);
-  await Process.run('git', ['config', 'user.email', 'test@local'],
-      workingDirectory: dst.path);
+  await Process.run('git', [
+    'config',
+    'user.name',
+    'test',
+  ], workingDirectory: dst.path);
+  await Process.run('git', [
+    'config',
+    'user.email',
+    'test@local',
+  ], workingDirectory: dst.path);
   return dst;
 }
 
@@ -130,18 +155,18 @@ void main() {
         );
         expect(r.ok, isTrue, reason: r.error);
         // Ref exists.
-        final refRes = await Process.run(
-          'git',
-          ['rev-parse', '--verify', 'refs/manifold/desks/feat/x'],
-          workingDirectory: repo.path,
-        );
+        final refRes = await Process.run('git', [
+          'rev-parse',
+          '--verify',
+          'refs/manifold/desks/feat/x',
+        ], workingDirectory: repo.path);
         expect(refRes.exitCode, 0);
         // meta.json blob is reachable from that ref's tree.
-        final blobRes = await Process.run(
-          'git',
-          ['cat-file', 'blob', 'refs/manifold/desks/feat/x:meta.json'],
-          workingDirectory: repo.path,
-        );
+        final blobRes = await Process.run('git', [
+          'cat-file',
+          'blob',
+          'refs/manifold/desks/feat/x:meta.json',
+        ], workingDirectory: repo.path);
         expect(blobRes.exitCode, 0);
         expect(blobRes.stdout.toString(), contains('"title": "Feature X"'));
       } finally {
@@ -153,13 +178,15 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/dup',
-          title: 'first',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat/dup',
+            title: 'first',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         final second = await store.create(
           branch: 'feat/dup',
           title: 'second',
@@ -179,32 +206,38 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/audit',
-          title: 'audit',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
-        await expectOk(store.addComment(
-          branch: 'feat/audit',
-          author: 'tester',
-          body: 'first comment',
-        ));
-        await expectOk(store.addReview(
-          branch: 'feat/audit',
-          author: 'tester',
-          verdict: 'APPROVED',
-          body: 'lgtm',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat/audit',
+            title: 'audit',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
+        await expectOk(
+          store.addComment(
+            branch: 'feat/audit',
+            author: 'tester',
+            body: 'first comment',
+          ),
+        );
+        await expectOk(
+          store.addReview(
+            branch: 'feat/audit',
+            author: 'tester',
+            verdict: 'APPROVED',
+            body: 'lgtm',
+          ),
+        );
         await expectOk(store.setState(branch: 'feat/audit', state: 'MERGED'));
         // git log on the metadata ref should show 4 commits with the
         // expected subjects.
-        final log = await Process.run(
-          'git',
-          ['log', '--format=%s', 'refs/manifold/desks/feat/audit'],
-          workingDirectory: repo.path,
-        );
+        final log = await Process.run('git', [
+          'log',
+          '--format=%s',
+          'refs/manifold/desks/feat/audit',
+        ], workingDirectory: repo.path);
         final subjects = (log.stdout as String)
             .split('\n')
             .where((s) => s.isNotEmpty)
@@ -226,20 +259,24 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'a',
-          title: 'A',
-          body: 'aaa',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
-        await expectOk(store.create(
-          branch: 'b',
-          title: 'B',
-          body: 'bbb',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'a',
+            title: 'A',
+            body: 'aaa',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
+        await expectOk(
+          store.create(
+            branch: 'b',
+            title: 'B',
+            body: 'bbb',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         final all = await store.listAll();
         expect(all.ok, isTrue);
         expect(all.data!.length, 2);
@@ -268,38 +305,46 @@ void main() {
   });
 
   group('thread mutations', () {
-    test('addComment appends a non-review entry; addReview a verdict entry',
-        () async {
-      final repo = await _newRepo();
-      try {
-        final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/thread',
-          title: 't',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
-        await expectOk(store.addComment(
-          branch: 'feat/thread',
-          author: 'tester',
-          body: 'looking now',
-        ));
-        await expectOk(store.addReview(
-          branch: 'feat/thread',
-          author: 'tester',
-          verdict: 'APPROVED',
-          body: 'looks good',
-        ));
-        final pr = (await store.read('feat/thread')).data!;
-        expect(pr.thread.length, 2);
-        expect(pr.thread[0].verdict, '');
-        expect(pr.thread[0].body, 'looking now');
-        expect(pr.thread[1].verdict, 'APPROVED');
-      } finally {
-        await _safeCleanup(repo);
-      }
-    });
+    test(
+      'addComment appends a non-review entry; addReview a verdict entry',
+      () async {
+        final repo = await _newRepo();
+        try {
+          final store = DeskPrStore(_refs(repo));
+          await expectOk(
+            store.create(
+              branch: 'feat/thread',
+              title: 't',
+              body: '',
+              baseRef: 'main',
+              authorIdentity: 'tester',
+            ),
+          );
+          await expectOk(
+            store.addComment(
+              branch: 'feat/thread',
+              author: 'tester',
+              body: 'looking now',
+            ),
+          );
+          await expectOk(
+            store.addReview(
+              branch: 'feat/thread',
+              author: 'tester',
+              verdict: 'APPROVED',
+              body: 'looks good',
+            ),
+          );
+          final pr = (await store.read('feat/thread')).data!;
+          expect(pr.thread.length, 2);
+          expect(pr.thread[0].verdict, '');
+          expect(pr.thread[0].body, 'looking now');
+          expect(pr.thread[1].verdict, 'APPROVED');
+        } finally {
+          await _safeCleanup(repo);
+        }
+      },
+    );
   });
 
   group('abandon', () {
@@ -307,23 +352,26 @@ void main() {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/abandon',
-          title: 'a',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat/abandon',
+            title: 'a',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         final beforeAll = await store.listAll();
         expect(beforeAll.data!.length, 1);
         await expectOk(store.abandon('feat/abandon'));
         final afterAll = await store.listAll();
         expect(afterAll.data!.length, 0);
-        final ref = await Process.run(
-          'git',
-          ['rev-parse', '--verify', '--quiet', 'refs/manifold/desks/feat/abandon'],
-          workingDirectory: repo.path,
-        );
+        final ref = await Process.run('git', [
+          'rev-parse',
+          '--verify',
+          '--quiet',
+          'refs/manifold/desks/feat/abandon',
+        ], workingDirectory: repo.path);
         expect(ref.exitCode, isNot(0)); // ref no longer resolves
       } finally {
         await _safeCleanup(repo);
@@ -337,26 +385,26 @@ void main() {
       try {
         final store = DeskPrStore(_refs(repo));
         final a = (await store.create(
-                branch: 'a',
-                title: 'a',
-                body: '',
-                baseRef: 'main',
-                authorIdentity: 'tester'))
-            .data!;
+          branch: 'a',
+          title: 'a',
+          body: '',
+          baseRef: 'main',
+          authorIdentity: 'tester',
+        )).data!;
         final b = (await store.create(
-                branch: 'b',
-                title: 'b',
-                body: '',
-                baseRef: 'main',
-                authorIdentity: 'tester'))
-            .data!;
+          branch: 'b',
+          title: 'b',
+          body: '',
+          baseRef: 'main',
+          authorIdentity: 'tester',
+        )).data!;
         final c = (await store.create(
-                branch: 'c',
-                title: 'c',
-                body: '',
-                baseRef: 'main',
-                authorIdentity: 'tester'))
-            .data!;
+          branch: 'c',
+          title: 'c',
+          body: '',
+          baseRef: 'main',
+          authorIdentity: 'tester',
+        )).data!;
         expect(a.deskId, 1);
         expect(b.deskId, 2);
         expect(c.deskId, 3);
@@ -409,13 +457,15 @@ void main() {
       try {
         final store = DeskPrStore(_refs(repo));
         // Create on `feat-x`.
-        await expectOk(store.create(
-          branch: 'feat-x',
-          title: 'first',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat-x',
+            title: 'first',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         // Try to create on `feat/~x`. Under the OLD lossy encoder,
         // both branches mapped to `feat-x` and the second create()
         // would silently overwrite. With bijective encoding they
@@ -482,68 +532,84 @@ void main() {
   });
 
   group('CAS retry', () {
-    test('a losing writer re-applies onto the winner — both entries survive',
-        () async {
-      final repo = await _newRepo();
-      try {
-        final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/race',
-          title: 't',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+    test(
+      'a losing writer re-applies onto the winner — both entries survive',
+      () async {
+        final repo = await _newRepo();
+        try {
+          final store = DeskPrStore(_refs(repo));
+          await expectOk(
+            store.create(
+              branch: 'feat/race',
+              title: 't',
+              body: '',
+              baseRef: 'main',
+              authorIdentity: 'tester',
+            ),
+          );
 
-        final raceRefs = _RaceRefs(
-          repoPath: repo.path,
-          authorName: 'tester',
-          authorEmail: 'tester@manifold.local',
-        );
-        final raceStore = DeskPrStore(raceRefs);
-        raceRefs.onFirstUpdate = () async {
-          final interferer = DeskPrStore(_refs(repo));
-          final r = await interferer.addComment(
-              branch: 'feat/race', author: 'interferer', body: 'landed first');
+          final raceRefs = _RaceRefs(
+            repoPath: repo.path,
+            authorName: 'tester',
+            authorEmail: 'tester@manifold.local',
+          );
+          final raceStore = DeskPrStore(raceRefs);
+          raceRefs.onFirstUpdate = () async {
+            final interferer = DeskPrStore(_refs(repo));
+            final r = await interferer.addComment(
+              branch: 'feat/race',
+              author: 'interferer',
+              body: 'landed first',
+            );
+            expect(r.ok, isTrue, reason: r.error);
+          };
+
+          final r = await raceStore.addComment(
+            branch: 'feat/race',
+            author: 'racer',
+            body: 'landed after retry',
+          );
           expect(r.ok, isTrue, reason: r.error);
-        };
 
-        final r = await raceStore.addComment(
-            branch: 'feat/race', author: 'racer', body: 'landed after retry');
-        expect(r.ok, isTrue, reason: r.error);
-
-        final pr = (await store.read('feat/race')).data!;
-        final bodies = pr.thread.map((t) => t.body).toList();
-        expect(bodies,
-            containsAll(<String>['landed first', 'landed after retry']));
-        expect(pr.thread.length, 2);
-      } finally {
-        await _safeCleanup(repo);
-      }
-    });
+          final pr = (await store.read('feat/race')).data!;
+          final bodies = pr.thread.map((t) => t.body).toList();
+          expect(
+            bodies,
+            containsAll(<String>['landed first', 'landed after retry']),
+          );
+          expect(pr.thread.length, 2);
+        } finally {
+          await _safeCleanup(repo);
+        }
+      },
+    );
 
     test('two concurrently-fired comments both survive', () async {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/concurrent',
-          title: 't',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat/concurrent',
+            title: 't',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         await Future.wait([
           for (var i = 0; i < 5; i++)
             store.addComment(
-                branch: 'feat/concurrent', author: 'w$i', body: 'comment $i'),
+              branch: 'feat/concurrent',
+              author: 'w$i',
+              body: 'comment $i',
+            ),
         ]);
         final pr = (await store.read('feat/concurrent')).data!;
         expect(pr.thread.length, 5);
-        expect(
-          pr.thread.map((t) => t.body).toSet(),
-          {for (var i = 0; i < 5; i++) 'comment $i'},
-        );
+        expect(pr.thread.map((t) => t.body).toSet(), {
+          for (var i = 0; i < 5; i++) 'comment $i',
+        });
       } finally {
         await _safeCleanup(repo);
       }
@@ -551,13 +617,16 @@ void main() {
   });
 
   group('push/fetch round-trip', () {
-    test('a desk PR created in clone A lists identically in clone B',
-        () async {
+    test('a desk PR created in clone A lists identically in clone B', () async {
       final remote = await _bareRemote();
       final cloneA = await _cloneOf(remote, 'A');
       try {
-        await Process.run('git', ['commit', '--allow-empty', '-m', 'root'],
-            workingDirectory: cloneA.path);
+        await Process.run('git', [
+          'commit',
+          '--allow-empty',
+          '-m',
+          'root',
+        ], workingDirectory: cloneA.path);
         final storeA = DeskPrStore(_refs(cloneA));
         final created = (await storeA.create(
           branch: 'feat/shared',
@@ -565,8 +634,7 @@ void main() {
           body: 'crosses the wire',
           baseRef: 'main',
           authorIdentity: 'tester',
-        ))
-            .data!;
+        )).data!;
         final syncA = await storeA.syncWithRemote();
         expect(syncA.ok, isTrue, reason: syncA.error);
 
@@ -595,86 +663,113 @@ void main() {
 
   group('sync reconcile (data-loss fix)', () {
     Future<String> tipOf(Directory repo, String ref) async {
-      final r = await Process.run('git', ['rev-parse', ref],
-          workingDirectory: repo.path);
+      final r = await Process.run('git', [
+        'rev-parse',
+        ref,
+      ], workingDirectory: repo.path);
       return (r.stdout as String).trim();
     }
 
-    test('diverged unpushed thread entries both survive and converge',
-        () async {
-      final remote = await _bareRemote();
-      final cloneA = await _cloneOf(remote, 'recA');
-      final cloneB = await _cloneOf(remote, 'recB');
-      try {
-        await Process.run('git', ['commit', '--allow-empty', '-m', 'root'],
-            workingDirectory: cloneA.path);
-        final storeA = DeskPrStore(_refs(cloneA));
-        final storeB = DeskPrStore(_refs(cloneB));
-        await expectOk(storeA.create(
-            branch: 'feat/x',
-            title: 't',
-            body: '',
-            baseRef: 'main',
-            authorIdentity: 'A'));
-        expect((await storeA.syncWithRemote()).ok, isTrue);
-        expect((await storeB.syncWithRemote()).ok, isTrue);
-
-        // A comments locally (unpushed); B comments and pushes.
-        await expectOk(storeA.addComment(
-            branch: 'feat/x', author: 'A', body: 'from A'));
-        await expectOk(storeB.addComment(
-            branch: 'feat/x', author: 'B', body: 'from B'));
-        expect((await storeB.syncWithRemote()).ok, isTrue);
-
-        // A reconciles the divergence — union, not rewind.
-        final syncA = await storeA.syncWithRemote();
-        expect(syncA.ok, isTrue, reason: syncA.error);
-        expect(
-            (await storeA.read('feat/x')).data!.thread.map((t) => t.body).toSet(),
-            {'from A', 'from B'});
-
-        // B fast-forwards onto A's merge.
-        expect((await storeB.syncWithRemote()).ok, isTrue);
-        expect(
-            (await storeB.read('feat/x')).data!.thread.map((t) => t.body).toSet(),
-            {'from A', 'from B'});
-
-        final ref = DeskPrStore.refFor('feat/x');
-        expect(await tipOf(cloneA, ref), await tipOf(cloneB, ref));
-        // No further movement.
-        final settled = await tipOf(cloneA, ref);
-        expect((await storeA.syncWithRemote()).ok, isTrue);
-        expect(await tipOf(cloneA, ref), settled);
-      } finally {
-        await _safeCleanup(cloneA);
-        await _safeCleanup(cloneB);
-        await _safeCleanup(remote);
-      }
-    });
-
     test(
-        'a stale force-with-lease refuses (retryable) instead of clobbering '
+      'diverged unpushed thread entries both survive and converge',
+      () async {
+        final remote = await _bareRemote();
+        final cloneA = await _cloneOf(remote, 'recA');
+        final cloneB = await _cloneOf(remote, 'recB');
+        try {
+          await Process.run('git', [
+            'commit',
+            '--allow-empty',
+            '-m',
+            'root',
+          ], workingDirectory: cloneA.path);
+          final storeA = DeskPrStore(_refs(cloneA));
+          final storeB = DeskPrStore(_refs(cloneB));
+          await expectOk(
+            storeA.create(
+              branch: 'feat/x',
+              title: 't',
+              body: '',
+              baseRef: 'main',
+              authorIdentity: 'A',
+            ),
+          );
+          expect((await storeA.syncWithRemote()).ok, isTrue);
+          expect((await storeB.syncWithRemote()).ok, isTrue);
+
+          // A comments locally (unpushed); B comments and pushes.
+          await expectOk(
+            storeA.addComment(branch: 'feat/x', author: 'A', body: 'from A'),
+          );
+          await expectOk(
+            storeB.addComment(branch: 'feat/x', author: 'B', body: 'from B'),
+          );
+          expect((await storeB.syncWithRemote()).ok, isTrue);
+
+          // A reconciles the divergence — union, not rewind.
+          final syncA = await storeA.syncWithRemote();
+          expect(syncA.ok, isTrue, reason: syncA.error);
+          expect(
+            (await storeA.read(
+              'feat/x',
+            )).data!.thread.map((t) => t.body).toSet(),
+            {'from A', 'from B'},
+          );
+
+          // B fast-forwards onto A's merge.
+          expect((await storeB.syncWithRemote()).ok, isTrue);
+          expect(
+            (await storeB.read(
+              'feat/x',
+            )).data!.thread.map((t) => t.body).toSet(),
+            {'from A', 'from B'},
+          );
+
+          final ref = DeskPrStore.refFor('feat/x');
+          expect(await tipOf(cloneA, ref), await tipOf(cloneB, ref));
+          // No further movement.
+          final settled = await tipOf(cloneA, ref);
+          expect((await storeA.syncWithRemote()).ok, isTrue);
+          expect(await tipOf(cloneA, ref), settled);
+        } finally {
+          await _safeCleanup(cloneA);
+          await _safeCleanup(cloneB);
+          await _safeCleanup(remote);
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+
+    test('a stale force-with-lease refuses (retryable) instead of clobbering '
         'a peer push that landed in the race window', () async {
       final remote = await _bareRemote();
       final cloneA = await _cloneOf(remote, 'leaseA');
       final cloneB = await _cloneOf(remote, 'leaseB');
       try {
-        await Process.run('git', ['commit', '--allow-empty', '-m', 'root'],
-            workingDirectory: cloneA.path);
+        await Process.run('git', [
+          'commit',
+          '--allow-empty',
+          '-m',
+          'root',
+        ], workingDirectory: cloneA.path);
         final storeA = DeskPrStore(_refs(cloneA));
         final storeB = DeskPrStore(_refs(cloneB));
-        await expectOk(storeA.create(
+        await expectOk(
+          storeA.create(
             branch: 'feat/x',
             title: 't',
             body: '',
             baseRef: 'main',
-            authorIdentity: 'A'));
+            authorIdentity: 'A',
+          ),
+        );
         expect((await storeA.syncWithRemote()).ok, isTrue);
         expect((await storeB.syncWithRemote()).ok, isTrue);
 
         // A has a local-ahead change to push.
-        await expectOk(storeA.addComment(
-            branch: 'feat/x', author: 'A', body: 'from A'));
+        await expectOk(
+          storeA.addComment(branch: 'feat/x', author: 'A', body: 'from A'),
+        );
 
         // Wire A's sync so a peer (B) pushes in the window after A fetched
         // staging but before A pushes — invalidating A's lease.
@@ -685,17 +780,20 @@ void main() {
         );
         final raceStore = DeskPrStore(raceRefs);
         raceRefs.afterFetch = () async {
-          await expectOk(storeB.addComment(
-              branch: 'feat/x', author: 'B', body: 'from B'));
+          await expectOk(
+            storeB.addComment(branch: 'feat/x', author: 'B', body: 'from B'),
+          );
           final s = await storeB.syncWithRemote();
           expect(s.ok, isTrue, reason: s.error);
         };
 
         final ref = DeskPrStore.refFor('feat/x');
         Future<String> remoteTipOf() async {
-          final ls = await Process.run(
-              'git', ['ls-remote', 'origin', ref],
-              workingDirectory: cloneB.path);
+          final ls = await Process.run('git', [
+            'ls-remote',
+            'origin',
+            ref,
+          ], workingDirectory: cloneB.path);
           return (ls.stdout as String).split('\t').first.trim();
         }
 
@@ -716,19 +814,20 @@ void main() {
   });
 
   group('updateFull race (Defect 2)', () {
-    test(
-        'a comment landing mid-updateFull survives; the remote-derived '
+    test('a comment landing mid-updateFull survives; the remote-derived '
         'fields still apply', () async {
       final repo = await _newRepo();
       try {
         final store = DeskPrStore(_refs(repo));
-        await expectOk(store.create(
-          branch: 'feat/x',
-          title: 't',
-          body: '',
-          baseRef: 'main',
-          authorIdentity: 'tester',
-        ));
+        await expectOk(
+          store.create(
+            branch: 'feat/x',
+            title: 't',
+            body: '',
+            baseRef: 'main',
+            authorIdentity: 'tester',
+          ),
+        );
         final snapshot = (await store.read('feat/x')).data!;
 
         // The race store applies a remote-derived full update; an
@@ -744,14 +843,18 @@ void main() {
         raceRefs.onFirstUpdate = () async {
           final interferer = DeskPrStore(_refs(repo));
           final r = await interferer.addComment(
-              branch: 'feat/x', author: 'interferer', body: 'landed first');
+            branch: 'feat/x',
+            author: 'interferer',
+            body: 'landed first',
+          );
           expect(r.ok, isTrue, reason: r.error);
         };
 
         // Remote says the PR is now MERGED (a scalar field update).
         final r = await raceStore.updateFull(
-            snapshot.copyWith(state: 'MERGED'),
-            message: 'reconcile');
+          snapshot.copyWith(state: 'MERGED'),
+          message: 'reconcile',
+        );
         expect(r.ok, isTrue, reason: r.error);
 
         final pr = (await store.read('feat/x')).data!;

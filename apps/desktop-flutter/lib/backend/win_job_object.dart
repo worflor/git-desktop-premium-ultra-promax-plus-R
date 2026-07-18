@@ -32,6 +32,10 @@ class WinJobObject {
       Int32 Function(IntPtr),
       int Function(int)>('CloseHandle');
 
+  static final _terminateJob = _kernel32?.lookupFunction<
+      Int32 Function(IntPtr, Uint32),
+      int Function(int, int)>('TerminateJobObject');
+
   static void assignProcess(int pid) {
     try {
       if (_openProcess == null || _assignToJob == null || _closeHandle == null) {
@@ -44,6 +48,21 @@ class WinJobObject {
       if (hProcess == 0) return;
       _assignToJob!(_jobHandle!, hProcess);
       _closeHandle!(hProcess);
+    } catch (_) {}
+  }
+
+  /// Terminate every process currently assigned to the shared job — the whole
+  /// subprocess tree of every in-flight CLI, in one syscall. The handle is
+  /// closed and nulled so the next [assignProcess] lazily creates a fresh job;
+  /// without that, all future spawns would land in a job that's already been
+  /// terminated. No-op on non-Windows and when no job has been created yet.
+  static void killAll() {
+    try {
+      final handle = _jobHandle;
+      if (handle == null || handle == 0) return;
+      _terminateJob?.call(handle, 1);
+      _closeHandle?.call(handle);
+      _jobHandle = null;
     } catch (_) {}
   }
 

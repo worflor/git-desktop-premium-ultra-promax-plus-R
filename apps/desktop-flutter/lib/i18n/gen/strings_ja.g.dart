@@ -5813,6 +5813,10 @@ class _Translations$settings$errors$ja extends Translations$settings$errors$en {
   @override
   String get saveApiPiggybackCli => 'API ピギーバック CLI の保存に失敗しました。';
   @override
+  String get saveCliTimeout => 'CLI タイムアウトの保存に失敗しました。';
+  @override
+  String get stopAllCli => '実行中の CLI セッションを停止できませんでした。';
+  @override
   String clearLocalData({required Object error}) =>
       'ローカルデータを消去できませんでした：${error}';
 }
@@ -6765,6 +6769,12 @@ class _Translations$settings$wick$ja extends Translations$settings$wick$en {
   String get connected => 'wick · 接続済み';
   @override
   String get pathToExecutable => 'wick · 実行ファイルへのパス';
+  @override
+  String get off => 'オフ';
+  @override
+  String get disableHint => 'wick 連携をオフにする';
+  @override
+  String get enableHint => 'wick 連携をオンにする';
 }
 
 // Path: settings.integrations
@@ -7053,6 +7063,27 @@ class _Translations$settings$cliPiggyback$ja
   String get refreshTooltip => '今すぐすべてのプロバイダーを再探査します。';
   @override
   String get body => 'インターフェースのメッセージをローカルのプロバイダーバイナリへ直接パイプします。';
+  @override
+  String get cliTimeoutLabel => '実行ごとのタイムアウト';
+  @override
+  String get cliTimeoutUnitMinutes => '分';
+  @override
+  String get cliTimeoutUnitMinute => '分';
+  @override
+  String get forceStopLabel => 'すべてのセッションを停止';
+  @override
+  String get forceStopTooltip => '実行中の CLI をすべて強制終了します。';
+  @override
+  String get forceStopConfirmTitle => '実行中の CLI セッションを停止しますか？';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      '実行中の CLI ${count} 件を強制終了します。出力は失われます。';
+  @override
+  String get forceStopConfirmAction => 'すべて停止';
+  @override
+  String get forceStopNoneRunning => '実行中の CLI セッションはありません';
+  @override
+  String get forceStopRecordError => '停止： CLI セッションを強制終了しました。';
 }
 
 // Path: settings.header

@@ -18,8 +18,13 @@
 import 'dart:async';
 
 import 'package:leak_tracker_flutter_testing/leak_tracker_flutter_testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  // Diagnostics writes telemetry in the background from backend tests too.
+  // Install the in-memory platform before test code can schedule that work;
+  // otherwise MissingPluginExceptions flood the runner and distort timing.
+  SharedPreferences.setMockInitialValues(const <String, Object>{});
   LeakTesting.enable();
   LeakTesting.settings = LeakTesting.settings.withIgnored(
     classes: [

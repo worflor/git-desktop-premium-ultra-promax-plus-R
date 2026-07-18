@@ -48,13 +48,6 @@ class EditUnit {
   /// isn't present in any constituent line, it isn't in the unit.
   final int bigramBits;
 
-  /// First constituent line's [ParsedLine.simHash], carried for the
-  /// fuzzy move-detection pass. Single-line units use that line directly;
-  /// multi-line blocks (replaces) use the delete side as the reference
-  /// since that's what move-from lookups key against. Zero for units
-  /// with no applicable source (hunk/meta headers).
-  final int simHash;
-
   /// Pre-computed intra-line word diff for [EditKind.replace] pairs — the
   /// combined old→new token sequence with each run tagged
   /// common / removed / added (see [computeInlineWordDiff]). Null for every
@@ -74,7 +67,6 @@ class EditUnit {
     this.moveTargetId = 0,
     this.charBits = 0,
     this.bigramBits = 0,
-    this.simHash = 0,
     this.wordDiff,
   });
 
@@ -208,9 +200,6 @@ List<EditUnit> buildEditUnits(
     final l = lines[i];
     switch (l.kind) {
       case LineKind.hunk:
-        // Hunk/meta/context units never reach _detectFuzzyMoves (guarded
-        // at the delete/insert kind filter), so simHash on them is dead
-        // data. Kept default (0) to keep the constructor lean.
         units.add(EditUnit(
           id: _idForSingleLine(_tagHunk, l),
           kind: EditKind.hunk,
@@ -244,8 +233,6 @@ List<EditUnit> buildEditUnits(
           filePath: l.filePath,
           charBits: l.charBits,
           bigramBits: l.bigramBits,
-          // simHash not carried — context units never participate in
-          // fuzzy move detection (only delete/insert do).
         ));
         i++;
         break;
@@ -287,10 +274,6 @@ List<EditUnit> buildEditUnits(
             // Pair union — polyphonic search must see both sides' chars.
             charBits: l.charBits | a.charBits,
             bigramBits: l.bigramBits | a.bigramBits,
-            // SimHash of the delete side — fuzzy move matcher keys by the
-            // "from" fingerprint so a replace-in-place and a relocated
-            // rename land comparably.
-            simHash: l.simHash,
             // Intra-line word diff, computed once above (guarded for long /
             // pathological lines) so the fused row highlights just the tokens
             // that actually changed instead of tinting the whole line.
@@ -319,7 +302,6 @@ List<EditUnit> buildEditUnits(
           filePath: l.filePath,
           charBits: l.charBits,
           bigramBits: l.bigramBits,
-          simHash: l.simHash,
         ));
         i++;
         break;
@@ -365,12 +347,20 @@ List<EditUnit> buildEditUnits(
 ///     the one that extends furthest. This avoids the first-match-wins
 ///     pathology where a trivial 1-line coincidence sunk a genuine 10-line
 ///     block move.
-/// Complexity: O(N) expected. The hash index is O(N) to build; each unit
-/// contributes at most O(|candidate list|) work during extension, and
-/// because each unit is visited at most once (via the `claimed` bitmap)
-/// the total extension work is bounded by O(N). Worst case with heavy
-/// content collisions degrades toward O(N · c) where c is the hash
-/// collision rate — negligible for the 64-bit FNV+splitmix hash.
+/// Complexity: O(N · [_kMoveCandidateScanCap]). The hash index is O(N) to
+/// build. The trap is a line whose content is REPEATED many times (blank
+/// lines, boilerplate, a relocated block of identical rows): every instance
+/// lands in one hash bucket, so a single delete would otherwise scan O(N)
+/// candidates and extend O(N) each — O(N²), a multi-second freeze at ~80k
+/// identical relocated lines (measured), reachable well below the lean gate.
+/// This is NOT a hash-collision effect (the 64-bit hash is fine); it is real
+/// content multiplicity. The scan cap bounds candidates examined per starting
+/// delete to a constant, which — since each extend is bounded by the block it
+/// then claims — makes the whole pass linear. The cost is only that among
+/// MANY identical candidates we may not pick the single longest run, which is
+/// meaningless anyway (which of 50k identical lines "moved" is undefined).
+const int _kMoveCandidateScanCap = 64;
+
 void _detectMoves(List<EditUnit> units) {
   final n = units.length;
   // Per-unit content hash (0 = skip: not a pure delete/insert, or content
@@ -414,7 +404,13 @@ void _detectMoves(List<EditUnit> units) {
     int bestInsStart = -1;
     int bestLen = 0;
 
+    // Bound candidates examined per starting delete. Without this a bucket of
+    // K identical lines is O(K) candidates × O(K) extend = O(K²); K can be the
+    // whole diff. See the complexity note above for why capping is correct.
+    var scanned = 0;
     for (final insStart in candidates) {
+      if (scanned >= _kMoveCandidateScanCap) break;
+      scanned++;
       if (claimed[insStart]) continue;
       final delU = units[delStart];
       final insU = units[insStart];
@@ -473,7 +469,6 @@ void _detectMoves(List<EditUnit> units) {
         moveTargetId: insU.id,
         charBits: delU.charBits,
         bigramBits: delU.bigramBits,
-        simHash: delU.simHash,
       );
       units[ii] = EditUnit(
         id: insU.id,
@@ -485,7 +480,6 @@ void _detectMoves(List<EditUnit> units) {
         moveTargetId: delU.id,
         charBits: insU.charBits,
         bigramBits: insU.bigramBits,
-        simHash: insU.simHash,
       );
     }
   }
@@ -516,32 +510,78 @@ const int _kFuzzyMoveHammingLimit = 8;
 /// pathologically empty hashes should still be skipped.
 bool _simHashIsInformative(int h) => h != 0;
 
+/// Above this many surviving delete OR insert units, the fuzzy pass is
+/// skipped. Its job is spotting a line that was relocated AND lightly renamed
+/// — a per-line, human-scale signal. Past a few thousand unmatched changes it
+/// is meaningless (nobody tracks renames across a machine-scale rewrite) and
+/// the greedy O(deletes×inserts) SimHash comparison — plus the O(len·64)
+/// SimHash it forces on every survivor — would dominate the whole unit build.
+/// The cheap exact block-move pass above still runs at any size.
+const int _kFuzzyMoveMaxUnits = 2000;
+
+/// The SimHash the fuzzy matcher keys a unit by: the delete side's for a
+/// deletion, the insert side's for an insertion. Read from the underlying
+/// line ON DEMAND — [ParsedLine.simHash] is lazy and O(len·64), the single
+/// most expensive per-line signature — so it is computed only for the handful
+/// of units that actually reach the pairing loop, never eagerly at unit-build
+/// time for every changed line.
+int _unitSimHash(EditUnit u) {
+  if (u.kind == EditKind.delete && u.oldLines.isNotEmpty) {
+    return u.oldLines.first.simHash;
+  }
+  if (u.kind == EditKind.insert && u.newLines.isNotEmpty) {
+    return u.newLines.first.simHash;
+  }
+  return 0;
+}
+
 void _detectFuzzyMoves(List<EditUnit> units, List<bool> claimed) {
   final n = units.length;
 
-  // Collect surviving deletes and inserts alongside their indices.
+  // Cheap pre-count (kind only, NO SimHash) so a large unmatched change set
+  // bails before forcing a single SimHash. This closes a latent waste: delete
+  // units never carried a SimHash, so the delete candidate list was ALWAYS
+  // empty (the pass never paired anything) — yet the old path still forced the
+  // O(len·64) SimHash on every insert to build a list it then discarded, ~330ms
+  // on a large diff for a feature that produced nothing.
+  var delCount = 0, insCount = 0;
+  for (int i = 0; i < n; i++) {
+    if (claimed[i]) continue;
+    final k = units[i].kind;
+    if (k == EditKind.delete) {
+      delCount++;
+    } else if (k == EditKind.insert) {
+      insCount++;
+    }
+  }
+  if (delCount == 0 || insCount == 0) return;
+  if (delCount > _kFuzzyMoveMaxUnits || insCount > _kFuzzyMoveMaxUnits) return;
+
+  // Materialize the informative candidates, reading each survivor's SimHash
+  // from its line on demand (bounded by the cap above). Deletes now supply a
+  // real SimHash via [_unitSimHash], so the pass can finally pair.
   final delIdx = <int>[];
   final insIdx = <int>[];
   for (int i = 0; i < n; i++) {
     if (claimed[i]) continue;
     final u = units[i];
-    if (u.kind == EditKind.delete && _simHashIsInformative(u.simHash)) {
+    if (u.kind == EditKind.delete && _simHashIsInformative(_unitSimHash(u))) {
       delIdx.add(i);
     } else if (u.kind == EditKind.insert &&
-        _simHashIsInformative(u.simHash)) {
+        _simHashIsInformative(_unitSimHash(u))) {
       insIdx.add(i);
     }
   }
   if (delIdx.isEmpty || insIdx.isEmpty) return;
 
-  // Greedy best-match pairing. For each delete, scan all unclaimed
-  // candidate inserts and pick the lowest-Hamming same-file candidate
-  // under threshold. Claim both sides on success so later iterations
-  // don't re-pair.
+  // Greedy best-match pairing. For each delete, scan all unclaimed candidate
+  // inserts and pick the lowest-Hamming same-file candidate under threshold.
+  // Claim both sides on success so later iterations don't re-pair.
   final insClaimed = List<bool>.filled(insIdx.length, false);
   for (final di in delIdx) {
     if (claimed[di]) continue;
     final delU = units[di];
+    final delHash = _unitSimHash(delU);
     int bestK = -1;
     int bestDist = _kFuzzyMoveHammingLimit + 1;
     for (int k = 0; k < insIdx.length; k++) {
@@ -552,7 +592,7 @@ void _detectFuzzyMoves(List<EditUnit> units, List<bool> claimed) {
       if (delU.filePath != insU.filePath) continue;
       // Block adjacent pairs — those are plain replace, not moves.
       if ((di - ii).abs() <= 1) continue;
-      final d = ParsedLine.hamming64(delU.simHash, insU.simHash);
+      final d = ParsedLine.hamming64(delHash, _unitSimHash(insU));
       if (d < bestDist) {
         bestDist = d;
         bestK = k;
@@ -574,7 +614,6 @@ void _detectFuzzyMoves(List<EditUnit> units, List<bool> claimed) {
       moveTargetId: insU2.id,
       charBits: delU2.charBits,
       bigramBits: delU2.bigramBits,
-      simHash: delU2.simHash,
     );
     units[ii] = EditUnit(
       id: insU2.id,
@@ -586,7 +625,6 @@ void _detectFuzzyMoves(List<EditUnit> units, List<bool> claimed) {
       moveTargetId: delU2.id,
       charBits: insU2.charBits,
       bigramBits: insU2.bigramBits,
-      simHash: insU2.simHash,
     );
   }
 }

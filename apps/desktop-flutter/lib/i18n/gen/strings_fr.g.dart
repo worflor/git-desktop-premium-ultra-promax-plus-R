@@ -6031,6 +6031,10 @@ class _Translations$settings$errors$fr extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'Échec de l\'enregistrement du CLI de relais API.';
   @override
+  String get saveCliTimeout => 'Échec de l\'enregistrement du délai de la CLI.';
+  @override
+  String get stopAllCli => 'Impossible d\'arrêter les sessions CLI en cours.';
+  @override
   String clearLocalData({required Object error}) =>
       'Impossible d\'effacer les données locales : ${error}';
 }
@@ -7026,6 +7030,12 @@ class _Translations$settings$wick$fr extends Translations$settings$wick$en {
   String get connected => 'wick · connecté';
   @override
   String get pathToExecutable => 'wick · chemin de l\'exécutable';
+  @override
+  String get off => 'off';
+  @override
+  String get disableHint => 'Désactiver l\'intégration wick';
+  @override
+  String get enableHint => 'Activer l\'intégration wick';
 }
 
 // Path: settings.integrations
@@ -7325,6 +7335,29 @@ class _Translations$settings$cliPiggyback$fr
   @override
   String get body =>
       'Redirige directement les messages de l\'interface vers les binaires des fournisseurs locaux.';
+  @override
+  String get cliTimeoutLabel => 'Délai par exécution';
+  @override
+  String get cliTimeoutUnitMinutes => 'minutes';
+  @override
+  String get cliTimeoutUnitMinute => 'minute';
+  @override
+  String get forceStopLabel => 'Arrêter toutes les sessions';
+  @override
+  String get forceStopTooltip =>
+      'Forcer l\'arrêt de chaque exécution CLI en cours.';
+  @override
+  String get forceStopConfirmTitle => 'Arrêter les sessions CLI en cours ?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Cela force l\'arrêt de ${count} exécutions CLI en cours. Leur sortie sera perdue.';
+  @override
+  String get forceStopConfirmAction => 'Tout arrêter';
+  @override
+  String get forceStopNoneRunning => 'Aucune session CLI en cours';
+  @override
+  String get forceStopRecordError =>
+      'Arrêté — les sessions CLI ont été fermées de force.';
 }
 
 // Path: settings.header

@@ -32,10 +32,13 @@
 //       other fully created the ref. The late writer's zero-oid CAS on the
 //       now-existing ref is rejected: it errs cleanly, the first survives.
 //       Was finding C1/D2, fixed 2026-07-10 (ARMED).
-//   D3. staging commutativity — all ≤6 spawn interleavings of two
-//       applyFileStaging ops, each realized to completion with zero child
-//       overlap. Under EVERY schedule both files stage correctly and the repo
-//       is sane (ARMED commutativity oracle).
+//   D3. index-write serialization — while one applyFileStaging child is in
+//       flight, the second op cannot even spawn (git.dart's per-repo
+//       index-write lock); both stage correctly once released. Replaces the
+//       original 6-schedule commutativity enumeration: serial schedules all
+//       commuted, but git's index.lock never made the whole RMW atomic, so
+//       OVERLAP lost updates (chaos law 5) — overlap is now unrepresentable
+//       in-process, and that is the armed law.
 //   D4. cross-process CAS — two Isolate.run batches of allocSequentialId
 //       against one .git (each isolate = its own git.dart statics = a faithful
 //       second app process). The fresh-ref allocation now CAS-es on
@@ -70,8 +73,10 @@ import '../support/scratch_repo.dart';
 // at root 2026-07-10 (dossier docs/architecture/test-hardening-crash-chaos-
 // config.md) and now armed. Kept (false) so the fix history stays greppable and
 // a regression is a one-line flip from reproduction.
-const bool _knownFindingApplyNoRetrySkip = false; // D1 (C2) — applyPatch now retries
-const bool _knownFindingCreateCasSkip = false; // D2 (C1) — zero-oid CAS on create
+const bool _knownFindingApplyNoRetrySkip =
+    false; // D1 (C2) — applyPatch now retries
+const bool _knownFindingCreateCasSkip =
+    false; // D2 (C1) — zero-oid CAS on create
 const bool _knownFindingAllocCasSkip = false; // D4 (C1) — zero-oid CAS on alloc
 
 const Timeout _timeout = Timeout(Duration(minutes: 2));
@@ -87,7 +92,8 @@ String _replaceLineDiff(String path, String from, String to) =>
     '+$to\n';
 
 /// A traditional unified diff that adds [path] as a brand-new one-line file.
-String _newFileDiff(String path, String line) => '--- /dev/null\n'
+String _newFileDiff(String path, String line) =>
+    '--- /dev/null\n'
     '+++ b/$path\n'
     '@@ -0,0 +1,1 @@\n'
     '+$line\n';
@@ -98,10 +104,8 @@ void main() {
   // -------------------------------------------------------------------------
   // LAW D1 — index.lock retry: the gated path retries, applyPatch does not.
   // -------------------------------------------------------------------------
-  group('law D1 — index.lock retry symmetry (gated + applyPatch both retry)',
-      () {
-    test(
-        'CONTROL (armed): a gated `git add` retries a one-shot index.lock and '
+  group('law D1 — index.lock retry symmetry (gated + applyPatch both retry)', () {
+    test('CONTROL (armed): a gated `git add` retries a one-shot index.lock and '
         'succeeds', () async {
       final repo = await ScratchRepo.create(name: 'd1_control');
       try {
@@ -118,9 +122,13 @@ void main() {
           ),
           () => repo.git(['add', '--', 'gated.txt']),
         );
-        expect(r.exitCode, 0,
-            reason: 'the gated path must retry a transient index.lock and '
-                'succeed (control proving the retry exists)');
+        expect(
+          r.exitCode,
+          0,
+          reason:
+              'the gated path must retry a transient index.lock and '
+              'succeed (control proving the retry exists)',
+        );
         // The blob really staged.
         final staged = await repo.git(['diff', '--cached', '--name-only']);
         expect(staged.stdout.toString().trim(), 'gated.txt');
@@ -130,211 +138,257 @@ void main() {
     }, timeout: _timeout);
 
     test(
-        'ARMED: applyPatch retries a one-shot index.lock and succeeds '
-        '(symmetric with the gated control)', () async {
-      final repo = await ScratchRepo.create(name: 'd1_apply');
-      final fault = GitStartFault.install(
-        predicate: (args) => args.isNotEmpty && args.first == 'apply',
-        result: indexLockContention,
-        times: 1,
-      );
-      try {
-        final patch = _newFileDiff('applied.txt', 'via apply');
-        final r = await applyPatch(repo.dir.path, patch, cached: true);
+      'ARMED: applyPatch retries a one-shot index.lock and succeeds '
+      '(symmetric with the gated control)',
+      () async {
+        final repo = await ScratchRepo.create(name: 'd1_apply');
+        final fault = GitStartFault.install(
+          predicate: (args) => args.isNotEmpty && args.first == 'apply',
+          result: indexLockContention,
+          times: 1,
+        );
+        try {
+          final patch = _newFileDiff('applied.txt', 'via apply');
+          final r = await applyPatch(repo.dir.path, patch, cached: true);
 
-        // The one-shot fault is served exactly once (times: 1), then applyPatch
-        // RETRIES — a second `apply` spawn, delegated to real git — exactly
-        // like the gated `git add` control above. matchCount counts only the
-        // faults served, so it stays 1 while the underlying spawn happened
-        // twice (first faulted, then real).
-        expect(fault.matchCount, 1,
-            reason: 'the one-shot index.lock fault must be served exactly once');
+          // The one-shot fault is served exactly once (times: 1), then applyPatch
+          // RETRIES — a second `apply` spawn, delegated to real git — exactly
+          // like the gated `git add` control above. matchCount counts only the
+          // faults served, so it stays 1 while the underlying spawn happened
+          // twice (first faulted, then real).
+          expect(
+            fault.matchCount,
+            1,
+            reason: 'the one-shot index.lock fault must be served exactly once',
+          );
 
-        // THE CONTRACT: applyPatch now routes through the gated retrying path
-        // (_gitRawStdin), so a transient index.lock is retried away instead of
-        // leaking raw. A red here means the retry regressed.
-        expect(r.ok, isTrue,
-            reason: 'applyPatch must retry the transient index.lock and '
-                'succeed like the gated control: ${r.error}');
+          // THE CONTRACT: applyPatch now routes through the gated retrying path
+          // (_gitRawStdin), so a transient index.lock is retried away instead of
+          // leaking raw. A red here means the retry regressed.
+          expect(
+            r.ok,
+            isTrue,
+            reason:
+                'applyPatch must retry the transient index.lock and '
+                'succeed like the gated control: ${r.error}',
+          );
 
-        // The retry landed the real staged blob.
-        final staged = await repo.git(['show', ':applied.txt']);
-        expect(staged.exitCode, 0);
-        expect(staged.stdout.toString(), 'via apply\n');
-      } finally {
-        fault.dispose();
-        await repo.dispose();
-      }
-    },
-        timeout: _timeout,
-        skip: _knownFindingApplyNoRetrySkip
-            ? 'was finding D1 (applyPatch had no index.lock retry); fixed '
+          // The retry landed the real staged blob.
+          final staged = await repo.git(['show', ':applied.txt']);
+          expect(staged.exitCode, 0);
+          expect(staged.stdout.toString(), 'via apply\n');
+        } finally {
+          fault.dispose();
+          await repo.dispose();
+        }
+      },
+      timeout: _timeout,
+      skip: _knownFindingApplyNoRetrySkip
+          ? 'was finding D1 (applyPatch had no index.lock retry); fixed '
                 '2026-07-10 — now armed'
-            : false);
+          : false,
+    );
   });
 
   // -------------------------------------------------------------------------
   // LAW D2 — create-CAS clobber (deterministic no-CAS repro).
   // -------------------------------------------------------------------------
-  group('law D2 — two create() for one branch: the late writer is rejected',
-      () {
+  group('law D2 — two create() for one branch: the late writer is rejected', () {
     test(
-        'ARMED: held creator A is rejected by the zero-oid CAS on the '
-        'now-existing ref; B survives', () async {
-      final repo = await ScratchRepo.create(name: 'd2_create');
-      final barrier = GitBarrier.install();
-      try {
-        final refs = ManifoldRefs(
-          repoPath: repo.dir.path,
-          authorName: 'd2-bot',
-          authorEmail: 'd2@manifold.local',
-        );
-        final store = DeskPrStore(refs);
-        const branch = 'feature/d2';
+      'ARMED: held creator A is rejected by the zero-oid CAS on the '
+      'now-existing ref; B survives',
+      () async {
+        final repo = await ScratchRepo.create(name: 'd2_create');
+        final barrier = GitBarrier.install();
+        try {
+          final refs = ManifoldRefs(
+            repoPath: repo.dir.path,
+            authorName: 'd2-bot',
+            authorEmail: 'd2@manifold.local',
+          );
+          final store = DeskPrStore(refs);
+          const branch = 'feature/d2';
 
-        // Hold the NEXT `update-ref` that targets the desk PR ref (NOT the
-        // id-counter ref — that one carries `refs/manifold/_id-counter`). This
-        // is A's FINAL step; by the time it parks, A has already resolved the
-        // ref as absent (oldSha == null) and minted its commit.
-        final gate = barrier.holdWhere((inv) =>
-            !inv.isStart &&
-            inv.args.isNotEmpty &&
-            inv.args.first == 'update-ref' &&
-            inv.args.any((a) => a.startsWith('refs/manifold/desks/')));
+          // Hold the NEXT `update-ref` that targets the desk PR ref (NOT the
+          // id-counter ref — that one carries `refs/manifold/_id-counter`). This
+          // is A's FINAL step; by the time it parks, A has already resolved the
+          // ref as absent (oldSha == null) and minted its commit.
+          final gate = barrier.holdWhere(
+            (inv) =>
+                !inv.isStart &&
+                inv.args.isNotEmpty &&
+                inv.args.first == 'update-ref' &&
+                inv.args.any((a) => a.startsWith('refs/manifold/desks/')),
+          );
 
-        // Start A and freeze it at that update-ref.
-        final heldA = await barrier.runToHold<GitResult<DeskPr>>(
-          () => store.create(
+          // Start A and freeze it at that update-ref.
+          final heldA = await barrier.runToHold<GitResult<DeskPr>>(
+            () => store.create(
+              branch: branch,
+              title: 'A',
+              body: 'creator A',
+              baseRef: 'main',
+              authorIdentity: 'creator-A',
+            ),
+            gate,
+          );
+
+          // B runs to completion while A is parked. B's read()-precheck sees no
+          // ref (A hasn't written it), so B allocs its own id and creates the
+          // ref unconditionally too.
+          final bRes = await store.create(
             branch: branch,
-            title: 'A',
-            body: 'creator A',
+            title: 'B',
+            body: 'creator B',
             baseRef: 'main',
-            authorIdentity: 'creator-A',
-          ),
-          gate,
-        );
+            authorIdentity: 'creator-B',
+          );
+          expect(
+            bRes.ok,
+            isTrue,
+            reason: 'B must complete fully: ${bRes.error}',
+          );
 
-        // B runs to completion while A is parked. B's read()-precheck sees no
-        // ref (A hasn't written it), so B allocs its own id and creates the
-        // ref unconditionally too.
-        final bRes = await store.create(
-          branch: branch,
-          title: 'B',
-          body: 'creator B',
-          baseRef: 'main',
-          authorIdentity: 'creator-B',
-        );
-        expect(bRes.ok, isTrue, reason: 'B must complete fully: ${bRes.error}');
+          // Release A: its `update-ref <desk-ref> <sha>` now carries the zero-oid
+          // as old-oid (CAS on non-existence). The ref already exists (B created
+          // it), so the CAS is rejected and A errs cleanly.
+          gate.release();
+          final aRes = await heldA.future;
 
-        // Release A: its `update-ref <desk-ref> <sha>` now carries the zero-oid
-        // as old-oid (CAS on non-existence). The ref already exists (B created
-        // it), so the CAS is rejected and A errs cleanly.
-        gate.release();
-        final aRes = await heldA.future;
+          // THE CONTRACT: the late writer A must FAIL — the zero-oid CAS rejects
+          // the second create. B, which created the ref first, survives intact.
+          // A green aRes.ok would mean create regressed to an unconditional
+          // update-ref (oldSha:null).
+          expect(
+            aRes.ok,
+            isFalse,
+            reason: "A's zero-oid CAS on the now-existing ref must be rejected",
+          );
+          expect(
+            aRes.error,
+            isNotNull,
+            reason: 'the rejected create must surface a clean error, not throw',
+          );
 
-        // THE CONTRACT: the late writer A must FAIL — the zero-oid CAS rejects
-        // the second create. B, which created the ref first, survives intact.
-        // A green aRes.ok would mean create regressed to an unconditional
-        // update-ref (oldSha:null).
-        expect(aRes.ok, isFalse,
-            reason: "A's zero-oid CAS on the now-existing ref must be rejected");
-        expect(aRes.error, isNotNull,
-            reason: 'the rejected create must surface a clean error, not throw');
-
-        // The stored PR is B (the surviving first writer), not A.
-        final stored = await store.read(branch);
-        expect(stored.ok, isTrue, reason: stored.error);
-        expect(stored.data, isNotNull);
-        expect(stored.data!.authorIdentity, 'creator-B',
-            reason: 'B created the ref first; A was rejected, not merged');
-        expect(bRes.data!.deskId, isPositive,
-            reason: "B's allocated id must be a real positive desk id");
-      } finally {
-        barrier.dispose();
-        await repo.dispose();
-      }
-    },
-        timeout: _timeout,
-        skip: _knownFindingCreateCasSkip
-            ? 'was finding D2 (create used oldSha:null, no CAS); fixed '
+          // The stored PR is B (the surviving first writer), not A.
+          final stored = await store.read(branch);
+          expect(stored.ok, isTrue, reason: stored.error);
+          expect(stored.data, isNotNull);
+          expect(
+            stored.data!.authorIdentity,
+            'creator-B',
+            reason: 'B created the ref first; A was rejected, not merged',
+          );
+          expect(
+            bRes.data!.deskId,
+            isPositive,
+            reason: "B's allocated id must be a real positive desk id",
+          );
+        } finally {
+          barrier.dispose();
+          await repo.dispose();
+        }
+      },
+      timeout: _timeout,
+      skip: _knownFindingCreateCasSkip
+          ? 'was finding D2 (create used oldSha:null, no CAS); fixed '
                 '2026-07-10 — now armed'
-            : false);
+          : false,
+    );
   });
 
   // -------------------------------------------------------------------------
-  // LAW D3 — staging commutativity across every spawn interleaving (ARMED).
+  // LAW D3 — same-repo index writers serialize in-process (ARMED).
+  //
+  // HISTORY: this law originally enumerated all 6 spawn interleavings of two
+  // applyFileStaging ops and proved every SERIAL schedule commutes — which
+  // held. What it could not make safe is genuine child OVERLAP: git's own
+  // index.lock only makes the index WRITE exclusive, not the whole
+  // read-modify-write, so two overlapping index writers can commit an index
+  // built from a stale snapshot and silently revert each other (chaos law 5
+  // caught this live). The root fix is the per-repo index-write lock in
+  // git.dart (_withRepoIndexWriteLock): overlap is now unrepresentable
+  // in-process, and THAT is the law this test arms. The serial-commutativity
+  // oracle (both files stage exactly, repo sane) is retained.
   // -------------------------------------------------------------------------
-  group('law D3 — every applyFileStaging interleaving is serialization-safe',
-      () {
-    test('all ≤6 spawn schedules stage both files; the repo stays sane',
-        () async {
+  group('law D3 — same-repo index writers serialize in-process', () {
+    test('while one applyFileStaging child is in flight, the second op cannot '
+        'even spawn; both stage once released', () async {
       final repo = await ScratchRepo.create(name: 'd3_staging');
-      // The 6 interleavings of two ordered 2-spawn sequences ([reset, apply]
-      // for op A and for op B): each is a string over {A,B} with two of each,
-      // A's k-th char = release A's next parked spawn. Order within an op is
-      // guaranteed by the op itself (its apply cannot spawn until its reset is
-      // released and returns), so these are exactly the realizable schedules.
-      const schedules = <String>['AABB', 'ABAB', 'ABBA', 'BABA', 'BAAB', 'BBAA'];
-
-      // One committed base file pair per schedule (distinct paths so schedules
-      // never interfere). applyFileStaging resets each to HEAD before applying.
-      for (var k = 0; k < schedules.length; k++) {
-        await repo.writeFile('fileA_$k.txt', 'baseA\n');
-        await repo.writeFile('fileB_$k.txt', 'baseB\n');
-      }
+      await repo.writeFile('fileA.txt', 'baseA\n');
+      await repo.writeFile('fileB.txt', 'baseB\n');
       await repo.commitAll('d3 base');
 
       final barrier = GitBarrier.install();
       try {
-        // One step gate for the whole test: each schedule fully drains its 4
-        // parks before the next begins, so a single tag-scoped hold is safe.
-        final step = barrier.holdAll(
-            (inv) => inv.tag == 'A' || inv.tag == 'B');
+        // Park op A's FIRST index-writing child (its `reset`) at the spawn
+        // seam — the repo's index-write lock is held while it is parked.
+        final gate = barrier.holdWhere((inv) => inv.tag == 'A');
 
-        for (var k = 0; k < schedules.length; k++) {
-          final schedule = schedules[k];
-          final fileA = 'fileA_$k.txt';
-          final fileB = 'fileB_$k.txt';
-          final stagedA = 'stagedA_$k';
-          final stagedB = 'stagedB_$k';
+        final aFut = runTagged<Future<GitResult<void>>>(
+          'A',
+          () => applyFileStaging(
+            repo.dir.path,
+            'fileA.txt',
+            _replaceLineDiff('fileA.txt', 'baseA', 'stagedA'),
+          ),
+        );
+        await gate.held;
 
-          final aFut = runTagged<Future<GitResult<void>>>(
-              'A',
-              () => applyFileStaging(repo.dir.path, fileA,
-                  _replaceLineDiff(fileA, 'baseA', stagedA)));
-          final bFut = runTagged<Future<GitResult<void>>>(
-              'B',
-              () => applyFileStaging(repo.dir.path, fileB,
-                  _replaceLineDiff(fileB, 'baseB', stagedB)));
+        // Start op B while A is parked. THE LAW: B's children must not
+        // arrive at the spawn seam while A holds the repo's write lock —
+        // arrival would mean two index writers can overlap, which is the
+        // exact lost-update mechanism chaos law 5 observed.
+        final bFut = runTagged<Future<GitResult<void>>>(
+          'B',
+          () => applyFileStaging(
+            repo.dir.path,
+            'fileB.txt',
+            _replaceLineDiff('fileB.txt', 'baseB', 'stagedB'),
+          ),
+        );
+        // Give B every chance to (wrongly) spawn: real wall-clock, not just
+        // a microtask turn, since spawning is async I/O.
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        expect(
+          barrier.invocations.where((inv) => inv.tag == 'B'),
+          isEmpty,
+          reason:
+              'op B spawned a git child while op A held the repo '
+              'index-write lock — index writers are overlapping again',
+        );
 
-          // Realize the schedule: release each op's next spawn in turn and
-          // wait for that subprocess to FINISH before the next release — a
-          // strictly serial execution with zero child-process overlap, so the
-          // index.lock collision the chaos suite's law 5 hits cannot occur.
-          for (final token in schedule.split('')) {
-            await step.awaitParked(token);
-            await step.releaseNext(token);
-          }
+        // Release A; both ops must now drain to success, in lock order.
+        gate.release();
+        final aRes = await aFut;
+        final bRes = await bFut;
+        expect(aRes.ok, isTrue, reason: 'fileA staging failed: ${aRes.error}');
+        expect(bRes.ok, isTrue, reason: 'fileB staging failed: ${bRes.error}');
 
-          final aRes = await aFut;
-          final bRes = await bFut;
-          expect(aRes.ok, isTrue,
-              reason: 'schedule $schedule: fileA staging failed: ${aRes.error}');
-          expect(bRes.ok, isTrue,
-              reason: 'schedule $schedule: fileB staging failed: ${bRes.error}');
+        // Serial-commutativity oracle (retained from the original law): both
+        // files staged with the exact expected bytes, repo sane.
+        final showA = await repo.git(['show', ':fileA.txt']);
+        final showB = await repo.git(['show', ':fileB.txt']);
+        expect(showA.exitCode, 0, reason: 'fileA absent from index');
+        expect(showB.exitCode, 0, reason: 'fileB absent from index');
+        expect(
+          showA.stdout.toString(),
+          'stagedA\n',
+          reason: 'fileA content wrong',
+        );
+        expect(
+          showB.stdout.toString(),
+          'stagedB\n',
+          reason: 'fileB content wrong',
+        );
+        await assertRepoSane(repo, because: 'D3 serialized staging');
 
-          // Commutativity oracle: any serialization of the steps yields both
-          // files staged with the exact expected bytes.
-          final showA = await repo.git(['show', ':$fileA']);
-          final showB = await repo.git(['show', ':$fileB']);
-          expect(showA.exitCode, 0, reason: 'schedule $schedule: fileA absent');
-          expect(showB.exitCode, 0, reason: 'schedule $schedule: fileB absent');
-          expect(showA.stdout.toString(), '$stagedA\n',
-              reason: 'schedule $schedule: fileA content wrong');
-          expect(showB.stdout.toString(), '$stagedB\n',
-              reason: 'schedule $schedule: fileB content wrong');
-          await assertRepoSane(repo, because: 'D3 schedule $schedule');
-        }
+        // NOTE deliberately NOT asserted: "every A child before any B child".
+        // The lock is per CALL, so B's reset legally enters the FIFO chain
+        // (queued while A was parked) ahead of A's apply — [A,B,A,B] is a
+        // correct serial schedule, and serial schedules commute (the original
+        // D3 enumeration proved all 6). Only OVERLAP is illegal, and the
+        // parked-B probe above is the direct test of that.
       } finally {
         barrier.dispose();
         await repo.dispose();
@@ -345,58 +399,82 @@ void main() {
   // -------------------------------------------------------------------------
   // LAW D4 — cross-"process" CAS via isolates (ARMED).
   // -------------------------------------------------------------------------
-  group('law D4 — concurrent alloc across two isolates never duplicates an id',
-      () {
-    test('ARMED: two Isolate.run batches of allocSequentialId → distinct, '
-        'gap-free 1..N ids', () async {
-      final repo = await ScratchRepo.create(name: 'd4_alloc');
-      try {
-        final ref = LiveManifoldRef.parse('refs/manifold/_d4-counter');
-        const n = 3;
-        // Capture a plain String, never the ScratchRepo — an Isolate.run
-        // closure must be sendable.
-        final repoPath = repo.dir.path;
-        // Two isolates = two independent copies of git.dart/manifold_refs
-        // statics (own semaphore, own _allocChains) against ONE .git — a
-        // faithful two-app-process race. The git ref CAS is the only net.
-        final results = await Future.wait(<Future<_AllocBatch>>[
-          Isolate.run(() => _isoAllocBatch(repoPath, ref, n)),
-          Isolate.run(() => _isoAllocBatch(repoPath, ref, n)),
-        ]);
+  group('law D4 — concurrent alloc across two isolates never duplicates an id', () {
+    test(
+      'ARMED: two Isolate.run batches of allocSequentialId → distinct, '
+      'gap-free 1..N ids',
+      () async {
+        final repo = await ScratchRepo.create(name: 'd4_alloc');
+        try {
+          final ref = LiveManifoldRef.parse('refs/manifold/_d4-counter');
+          const n = 3;
+          // Capture a plain String, never the ScratchRepo — an Isolate.run
+          // closure must be sendable.
+          final repoPath = repo.dir.path;
+          // Two isolates = two independent copies of git.dart/manifold_refs
+          // statics (own semaphore, own _allocChains) against ONE .git — a
+          // faithful two-app-process race. The git ref CAS is the only net.
+          final results = await Future.wait(<Future<_AllocBatch>>[
+            Isolate.run(() => _isoAllocBatch(repoPath, ref, n)),
+            Isolate.run(() => _isoAllocBatch(repoPath, ref, n)),
+          ]);
 
-        final allIds = <int>[...results[0].ids, ...results[1].ids];
-        // Every allocation across both processes succeeds — a lost CAS retries
-        // onto next+1 rather than erroring out.
-        expect(results[0].errors, 0,
-            reason: 'isolate 0 lost an allocation (${results[0].errors} errors)');
-        expect(results[1].errors, 0,
-            reason: 'isolate 1 lost an allocation (${results[1].errors} errors)');
-        expect(allIds.length, 2 * n,
-            reason: 'every allocation across both processes must succeed');
-        expect(allIds.every((id) => id > 0), isTrue,
-            reason: 'every allocated id is a positive integer');
+          final allIds = <int>[...results[0].ids, ...results[1].ids];
+          // Every allocation across both processes succeeds — a lost CAS retries
+          // onto next+1 rather than erroring out.
+          expect(
+            results[0].errors,
+            0,
+            reason:
+                'isolate 0 lost an allocation (${results[0].errors} errors)',
+          );
+          expect(
+            results[1].errors,
+            0,
+            reason:
+                'isolate 1 lost an allocation (${results[1].errors} errors)',
+          );
+          expect(
+            allIds.length,
+            2 * n,
+            reason: 'every allocation across both processes must succeed',
+          );
+          expect(
+            allIds.every((id) => id > 0),
+            isTrue,
+            reason: 'every allocated id is a positive integer',
+          );
 
-        // THE CONTRACT: the shared counter serializes all 2*n allocations into
-        // the clean, gap-free range 1..2n. The fresh-ref create CAS-es on
-        // non-existence (zero-oid via createRef, manifold_refs.dart:613); on a
-        // lost CAS the alloc re-reads the winner's value and retries onto
-        // next+1, so two processes never win the same id (the old bug produced
-        // e.g. [1,2,4,1,3,5]).
-        expect(allIds.toSet().length, allIds.length,
-            reason: 'duplicate id across isolates — the fresh-ref CAS or its '
-                'lost-CAS retry regressed. ids=$allIds');
-        expect(allIds..sort(), equals(List<int>.generate(2 * n, (i) => i + 1)),
-            reason: 'the two processes must allocate exactly 1..${2 * n} with '
-                'no gaps or duplicates. ids=$allIds');
-      } finally {
-        await repo.dispose();
-      }
-    },
-        timeout: _timeout,
-        skip: _knownFindingAllocCasSkip
-            ? 'was finding D4 (fresh-ref alloc used oldSha:null, no CAS); '
+          // THE CONTRACT: the shared counter serializes all 2*n allocations into
+          // the clean, gap-free range 1..2n. The fresh-ref create CAS-es on
+          // non-existence (zero-oid via createRef, manifold_refs.dart:613); on a
+          // lost CAS the alloc re-reads the winner's value and retries onto
+          // next+1, so two processes never win the same id (the old bug produced
+          // e.g. [1,2,4,1,3,5]).
+          expect(
+            allIds.toSet().length,
+            allIds.length,
+            reason:
+                'duplicate id across isolates — the fresh-ref CAS or its '
+                'lost-CAS retry regressed. ids=$allIds',
+          );
+          expect(
+            allIds..sort(),
+            equals(List<int>.generate(2 * n, (i) => i + 1)),
+            reason:
+                'the two processes must allocate exactly 1..${2 * n} with '
+                'no gaps or duplicates. ids=$allIds',
+          );
+        } finally {
+          await repo.dispose();
+        }
+      },
+      timeout: _timeout,
+      skip: _knownFindingAllocCasSkip
+          ? 'was finding D4 (fresh-ref alloc used oldSha:null, no CAS); '
                 'fixed 2026-07-10 — now armed'
-            : false);
+          : false,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -412,8 +490,10 @@ void main() {
         // Park a main-isolate mutating spawn. The semaphore is acquired in
         // _gitRaw BEFORE the spawn, so while parked this call occupies a slot
         // of THIS process's throttle.
-        final gate = barrier.holdWhere((inv) =>
-            !inv.isStart && inv.args.isNotEmpty && inv.args.first == 'commit');
+        final gate = barrier.holdWhere(
+          (inv) =>
+              !inv.isStart && inv.args.isNotEmpty && inv.args.first == 'commit',
+        );
         final heldMain = await barrier.runToHold<ProcessResult>(
           () => repo.git(['commit', '--allow-empty', '-m', 'held-main']),
           gate,
@@ -424,17 +504,24 @@ void main() {
         // statics (own semaphore), entirely outside this process's throttle.
         final repoPath = repo.dir.path;
         final isoHead = await Isolate.run(() => _isoReadHead(repoPath));
-        expect(isoHead, isNotNull,
-            reason: 'the isolate read must complete despite the main-isolate '
-                'hold — isolate spawns are not subject to this process\'s '
-                'semaphore (documented class, like chaos law 1)');
+        expect(
+          isoHead,
+          isNotNull,
+          reason:
+              'the isolate read must complete despite the main-isolate '
+              'hold — isolate spawns are not subject to this process\'s '
+              'semaphore (documented class, like chaos law 1)',
+        );
         expect(isoHead, isNotEmpty);
 
         // Release the held main mutation and confirm it lands cleanly.
         gate.release();
         final mainRes = await heldMain.future;
-        expect(mainRes.exitCode, 0,
-            reason: 'the released main commit must succeed: ${mainRes.stderr}');
+        expect(
+          mainRes.exitCode,
+          0,
+          reason: 'the released main commit must succeed: ${mainRes.stderr}',
+        );
       } finally {
         barrier.dispose();
         await repo.dispose();
@@ -455,48 +542,56 @@ typedef _AllocBatch = ({List<int> ids, int errors});
 
 Future<_AllocBatch> _isoAllocBatch(String repoPath, String ref, int n) {
   final completer = Completer<_AllocBatch>();
-  runZonedGuarded(() async {
-    final refs = ManifoldRefs(
-      repoPath: repoPath,
-      authorName: 'd4-bot',
-      authorEmail: 'd4@manifold.local',
-    );
-    final ids = <int>[];
-    var errors = 0;
-    // [ref] crossed the isolate boundary as a plain sendable String;
-    // parse it back into the typed ref at this trust boundary.
-    final counterRef = LiveManifoldRef.parse(ref);
-    for (var i = 0; i < n; i++) {
-      final r = await refs.allocSequentialId(
-        ref: counterRef,
-        filename: 'counter.txt',
-        commitLabel: 'd4',
+  runZonedGuarded(
+    () async {
+      final refs = ManifoldRefs(
+        repoPath: repoPath,
+        authorName: 'd4-bot',
+        authorEmail: 'd4@manifold.local',
       );
-      if (r.ok) {
-        ids.add(r.data!);
-      } else {
-        errors++;
+      final ids = <int>[];
+      var errors = 0;
+      // [ref] crossed the isolate boundary as a plain sendable String;
+      // parse it back into the typed ref at this trust boundary.
+      final counterRef = LiveManifoldRef.parse(ref);
+      for (var i = 0; i < n; i++) {
+        final r = await refs.allocSequentialId(
+          ref: counterRef,
+          filename: 'counter.txt',
+          commitLabel: 'd4',
+        );
+        if (r.ok) {
+          ids.add(r.data!);
+        } else {
+          errors++;
+        }
       }
-    }
-    if (!completer.isCompleted) completer.complete((ids: ids, errors: errors));
-  }, (error, stack) {
-    // Swallow detached telemetry errors; complete with what we have only if
-    // the batch itself never finished (a genuine failure).
-    if (!completer.isCompleted) completer.completeError(error, stack);
-  });
+      if (!completer.isCompleted) {
+        completer.complete((ids: ids, errors: errors));
+      }
+    },
+    (error, stack) {
+      // Swallow detached telemetry errors; complete with what we have only if
+      // the batch itself never finished (a genuine failure).
+      if (!completer.isCompleted) completer.completeError(error, stack);
+    },
+  );
   return completer.future;
 }
 
 Future<String?> _isoReadHead(String repoPath) {
   final completer = Completer<String?>();
-  runZonedGuarded(() async {
-    final r = await runGit(repoPath, ['rev-parse', 'HEAD']);
-    final sha = r.stdout.toString().trim();
-    if (!completer.isCompleted) {
-      completer.complete(r.exitCode == 0 && sha.isNotEmpty ? sha : null);
-    }
-  }, (error, stack) {
-    if (!completer.isCompleted) completer.completeError(error, stack);
-  });
+  runZonedGuarded(
+    () async {
+      final r = await runGit(repoPath, ['rev-parse', 'HEAD']);
+      final sha = r.stdout.toString().trim();
+      if (!completer.isCompleted) {
+        completer.complete(r.exitCode == 0 && sha.isNotEmpty ? sha : null);
+      }
+    },
+    (error, stack) {
+      if (!completer.isCompleted) completer.completeError(error, stack);
+    },
+  );
   return completer.future;
 }

@@ -23,63 +23,92 @@ void main() {
   tearDown(GitSpawn.reset);
 
   group('index.lock retry loop', () {
-    test('actually retries: two contended attempts then a real success',
-        () async {
-      final repo = await ScratchRepo.create(name: 'lock_retry_succeeds');
-      addTearDown(repo.dispose);
-      await repo.writeFile('a.txt', 'hello\n');
-      await repo.stageAll();
+    test(
+      'actually retries: two contended attempts then a real success',
+      () async {
+        final repo = await ScratchRepo.create(name: 'lock_retry_succeeds');
+        addTearDown(repo.dispose);
+        await repo.writeFile('a.txt', 'hello\n');
+        await repo.stageAll();
 
-      final script = GitFaultScript.failWhile(
-        (args) => args.isNotEmpty && args.first == 'commit',
-        times: 2,
-        result: indexLockContention,
-      );
+        final script = GitFaultScript.failWhile(
+          (args) => args.isNotEmpty && args.first == 'commit',
+          times: 2,
+          result: indexLockContention,
+        );
 
-      // `create()` + `stageAll()` above already spawned real git processes
-      // (init, the root commit, add) — reset so only the commit under test
-      // is counted, matching the pattern in git_spawn_seam_test.dart.
-      GitSpawn.reset();
+        // `create()` + `stageAll()` above already spawned real git processes
+        // (init, the root commit, add) — reset so only the commit under test
+        // is counted, matching the pattern in git_spawn_seam_test.dart.
+        GitSpawn.reset();
 
-      late ProcessResult result;
-      var spawnCount = -1;
-      await withGitFaults(script, () async {
-        result = await repo
-            .git(['commit', '-m', 'retried through fault injection']);
-        spawnCount = GitSpawn.runCount;
-      });
+        late ProcessResult result;
+        var spawnCount = -1;
+        await withGitFaults(script, () async {
+          result = await repo.git([
+            'commit',
+            '-m',
+            'retried through fault injection',
+          ]);
+          spawnCount = GitSpawn.runCount;
+        });
 
-      expect(result.exitCode, 0,
-          reason: 'the commit should succeed once the 3rd attempt reaches '
+        expect(
+          result.exitCode,
+          0,
+          reason:
+              'the commit should succeed once the 3rd attempt reaches '
               'the real git binary — the first two were scripted '
-              'index.lock failures');
-      expect(spawnCount, 3,
-          reason: '2 injected index.lock failures + 1 real success = 3 '
+              'index.lock failures',
+        );
+        expect(
+          spawnCount,
+          3,
+          reason:
+              '2 injected index.lock failures + 1 real success = 3 '
               'spawns for one logical runGit call — this is the first test '
               'in the repo\'s history to exercise the retry loop actually '
-              'retrying');
-      expect(script.invocations.length, 3);
-      expect(script.invocations.every((inv) => inv.args.first == 'commit'),
-          isTrue);
-    });
+              'retrying',
+        );
+        expect(script.invocations.length, 3);
+        expect(
+          script.invocations.every((inv) => inv.args.first == 'commit'),
+          isTrue,
+        );
+      },
+    );
 
-    test('gives up after maxLockRetries = 3', () async {
+    test('gives up after maxLockRetries = 5', () async {
       final script = GitFaultScript.always((_) => indexLockContention());
 
       late ProcessResult result;
       var spawnCount = -1;
       await withGitFaults(script, () async {
-        result =
-            await runGit(_kFakeRepoDir, ['commit', '-m', 'always contended']);
+        result = await runGit(_kFakeRepoDir, [
+          'commit',
+          '-m',
+          'always contended',
+        ]);
         spawnCount = GitSpawn.runCount;
       });
 
-      expect(result.exitCode, isNot(0),
-          reason: 'every attempt was scripted to fail, so the call must '
-              'ultimately surface a failure once retries are exhausted');
-      expect(spawnCount, 4,
-          reason: 'pins maxLockRetries = 3 as a contract: 1 initial attempt '
-              '+ 3 retries = 4 spawns, then give up');
+      expect(
+        result.exitCode,
+        isNot(0),
+        reason:
+            'every attempt was scripted to fail, so the call must '
+            'ultimately surface a failure once retries are exhausted',
+      );
+      expect(
+        spawnCount,
+        6,
+        reason:
+            'pins maxLockRetries = 5 as a contract: 1 initial attempt '
+            '+ 5 exponentially backed-off retries = 6 spawns, then give '
+            'up. The lock is held for the duration of the competing git '
+            'process — which stretches with system load — so the window '
+            'must escalate rather than exhaust at a fixed ~450ms.',
+      );
     });
 
     test('a non-mutating command never retries', () async {
@@ -92,17 +121,25 @@ void main() {
         spawnCount = GitSpawn.runCount;
       });
 
-      expect(result.exitCode, isNot(0),
-          reason: 'the scripted failure must surface immediately');
-      expect(spawnCount, 1,
-          reason: '`status` is in _kDedupableSubcommands, so '
-              '_isMutatingGitCall is false and the index.lock retry loop '
-              'must never fire even though the stderr shape matches');
+      expect(
+        result.exitCode,
+        isNot(0),
+        reason: 'the scripted failure must surface immediately',
+      );
+      expect(
+        spawnCount,
+        1,
+        reason:
+            '`status` is in _kDedupableSubcommands, so '
+            '_isMutatingGitCall is false and the index.lock retry loop '
+            'must never fire even though the stderr shape matches',
+      );
     });
 
     test('a non-lock failure never retries', () async {
       final script = GitFaultScript.always(
-          (_) => gitFail(128, 'fatal: not a git repository'));
+        (_) => gitFail(128, 'fatal: not a git repository'),
+      );
 
       late ProcessResult result;
       var spawnCount = -1;
@@ -112,10 +149,14 @@ void main() {
       });
 
       expect(result.exitCode, 128);
-      expect(spawnCount, 1,
-          reason: 'a mutating command CAN retry, but only on the '
-              'documented index.lock stderr shape — an unrelated failure '
-              'must return on the first attempt');
+      expect(
+        spawnCount,
+        1,
+        reason:
+            'a mutating command CAN retry, but only on the '
+            'documented index.lock stderr shape — an unrelated failure '
+            'must return on the first attempt',
+      );
     });
 
     // Parameterized over the documented stderr shapes _isIndexLockContention
@@ -133,12 +174,9 @@ void main() {
     for (final entry in retryCases.entries) {
       final stderrText = entry.key;
       final shouldRetry = entry.value;
-      test(
-          'retry only fires on the documented stderr shape: '
-          '"$stderrText" -> ${shouldRetry ? "retries" : "no retry"}',
-          () async {
-        final script =
-            GitFaultScript.always((_) => gitFail(128, stderrText));
+      test('retry only fires on the documented stderr shape: '
+          '"$stderrText" -> ${shouldRetry ? "retries" : "no retry"}', () async {
+        final script = GitFaultScript.always((_) => gitFail(128, stderrText));
 
         var spawnCount = -1;
         await withGitFaults(script, () async {
@@ -146,13 +184,16 @@ void main() {
           spawnCount = GitSpawn.runCount;
         });
 
-        expect(spawnCount, shouldRetry ? 4 : 1,
-            reason: shouldRetry
-                ? 'stderr "$stderrText" contains "index.lock" AND one of '
+        expect(
+          spawnCount,
+          shouldRetry ? 6 : 1,
+          reason: shouldRetry
+              ? 'stderr "$stderrText" contains "index.lock" AND one of '
                     'the required companion fragments — must retry to '
-                    'exhaustion (4 spawns)'
-                : 'stderr "$stderrText" is missing a required fragment — '
-                    'must never retry (1 spawn)');
+                    'exhaustion (6 spawns)'
+              : 'stderr "$stderrText" is missing a required fragment — '
+                    'must never retry (1 spawn)',
+        );
       });
     }
   });
@@ -171,56 +212,84 @@ void main() {
       final f2 = runGit(repo.dir.path, ['status', '--porcelain']);
       final results = await Future.wait([f1, f2]);
 
-      expect(GitSpawn.runCount, 1,
-          reason: 'two IDENTICAL concurrent reads fired without awaiting '
-              'the first must coalesce into exactly one subprocess spawn');
+      expect(
+        GitSpawn.runCount,
+        1,
+        reason:
+            'two IDENTICAL concurrent reads fired without awaiting '
+            'the first must coalesce into exactly one subprocess spawn',
+      );
       expect(results[0].exitCode, results[1].exitCode);
-      expect(results[0].stdout.toString(), results[1].stdout.toString(),
-          reason: 'both callers must observe the same bytes — the shared '
-              'in-flight future');
+      expect(
+        results[0].stdout.toString(),
+        results[1].stdout.toString(),
+        reason:
+            'both callers must observe the same bytes — the shared '
+            'in-flight future',
+      );
 
       GitSpawn.reset();
       final r1 = await runGit(repo.dir.path, ['status', '--porcelain']);
       final r2 = await runGit(repo.dir.path, ['rev-parse', 'HEAD']);
       expect(r1.exitCode, 0);
       expect(r2.exitCode, 0);
-      expect(GitSpawn.runCount, 2,
-          reason: 'two DIFFERENT read commands must never coalesce');
+      expect(
+        GitSpawn.runCount,
+        2,
+        reason: 'two DIFFERENT read commands must never coalesce',
+      );
 
       GitSpawn.reset();
       await repo.git(['commit', '--allow-empty', '-m', 'dup a']);
       await repo.git(['commit', '--allow-empty', '-m', 'dup a']);
-      expect(GitSpawn.runCount, 2,
-          reason: 'two IDENTICAL mutating commands (commit) must never be '
-              'coalesced — each one always spawns fresh');
+      expect(
+        GitSpawn.runCount,
+        2,
+        reason:
+            'two IDENTICAL mutating commands (commit) must never be '
+            'coalesced — each one always spawns fresh',
+      );
     });
   });
 
   group('decode leniency', () {
     test('garbage on stdout never throws', () async {
-      final script = GitFaultScript.always((_) => ProcessResult(
-          0, 0, const <int>[0xFF, 0xFE, 0x00, 0x80], const <int>[]));
+      final script = GitFaultScript.always(
+        (_) => ProcessResult(0, 0, const <int>[
+          0xFF,
+          0xFE,
+          0x00,
+          0x80,
+        ], const <int>[]),
+      );
 
       ProcessResult? result;
       await withGitFaults(script, () async {
         result = await runGit(_kFakeRepoDir, ['log']);
       });
 
-      expect(result, isNotNull,
-          reason: 'runGit must return normally, not throw, when stdout is '
-              'invalid UTF-8 — `log` is not in _kStrictDecodeSubcommands so '
-              'the lenient (U+FFFD substitution) decode path applies');
+      expect(
+        result,
+        isNotNull,
+        reason:
+            'runGit must return normally, not throw, when stdout is '
+            'invalid UTF-8 — `log` is not in _kStrictDecodeSubcommands so '
+            'the lenient (U+FFFD substitution) decode path applies',
+      );
       expect(result!.exitCode, 0);
-      expect(result!.stdout, isA<String>(),
-          reason: 'the malformed bytes must have been leniently decoded '
-              'into a String, not left as raw bytes or thrown as a '
-              'FormatException');
+      expect(
+        result!.stdout,
+        isA<String>(),
+        reason:
+            'the malformed bytes must have been leniently decoded '
+            'into a String, not left as raw bytes or thrown as a '
+            'FormatException',
+      );
     });
   });
 
   group('spawn-level failure', () {
-    test('a thrown ProcessException propagates cleanly, not hangs',
-        () async {
+    test('a thrown ProcessException propagates cleanly, not hangs', () async {
       GitSpawn.runOverride = (args, {workingDirectory, environment}) async {
         throw ProcessException('git', args);
       };
@@ -228,10 +297,14 @@ void main() {
       final future = runGit(_kFakeRepoDir, ['status']);
       await expectLater(future, throwsA(isA<ProcessException>()));
 
-      expect(GitSpawn.runCount, 1,
-          reason: '_spawnRunRaw increments the counter before invoking the '
-              'override, so even a throwing override still counts as one '
-              'spawn attempt');
+      expect(
+        GitSpawn.runCount,
+        1,
+        reason:
+            '_spawnRunRaw increments the counter before invoking the '
+            'override, so even a throwing override still counts as one '
+            'spawn attempt',
+      );
     });
   });
 
@@ -252,17 +325,25 @@ void main() {
         addResult = await repo.git(['add', '-A']);
       });
 
-      expect(addResult.exitCode, isNot(0),
-          reason: 'the injected `git add` failure must surface to the '
-              'caller, not be silently swallowed or retried (add is '
-              'mutating but the stderr shape is not an index.lock '
-              'contention, so no retry is expected either)');
+      expect(
+        addResult.exitCode,
+        isNot(0),
+        reason:
+            'the injected `git add` failure must surface to the '
+            'caller, not be silently swallowed or retried (add is '
+            'mutating but the stderr shape is not an index.lock '
+            'contention, so no retry is expected either)',
+      );
 
       final fsck = await repo.git(['fsck', '--full', '--no-dangling']);
-      expect(fsck.exitCode, 0,
-          reason: 'a failed git operation must never corrupt the repo — '
-              'fsck must still pass cleanly afterward, using the real git '
-              'binary (the fault script has been uninstalled by now)');
+      expect(
+        fsck.exitCode,
+        0,
+        reason:
+            'a failed git operation must never corrupt the repo — '
+            'fsck must still pass cleanly afterward, using the real git '
+            'binary (the fault script has been uninstalled by now)',
+      );
     });
   });
 }

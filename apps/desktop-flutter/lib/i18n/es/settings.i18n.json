@@ -36,6 +36,8 @@
     "saveMuseNotes": "No se pudieron guardar las notas de la muse.",
     "saveReviewDoubleCheck": "No se pudo guardar el modo de doble verificación de la revisión.",
     "saveApiPiggybackCli": "No se pudo guardar la CLI de piggyback de API.",
+    "saveCliTimeout": "No se pudo guardar el tiempo límite de la CLI.",
+    "stopAllCli": "No se pudieron detener las sesiones de CLI en curso.",
     "clearLocalData": "No se pudieron limpiar los datos locales: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "¿Borrar todos los datos locales de la app —incluida la lista de repos recientes— y salir? Tus repos de git reales en disco no se tocan.",
     "confirmReset": "¿Restablecer los datos locales de la app y salir?\n\nSe limpian los ajustes, el tema, el onboarding, las preferencias de IA, la telemetría y las cachés de engram. Tu lista de repos recientes se conserva."
   },
-  "guardrailStageLabels": ["Relajado", "Equilibrado", "Estricto", "Paranoico"],
+  "guardrailStageLabels": [
+    "Relajado",
+    "Equilibrado",
+    "Estricto",
+    "Paranoico"
+  ],
   "guardrailMacro": {
     "loose": "relajado",
     "balanced": "equilibrado",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "Selecciona el ejecutable de wick",
     "connected": "wick · conectado",
-    "pathToExecutable": "wick · ruta al ejecutable"
+    "pathToExecutable": "wick · ruta al ejecutable",
+    "off": "off",
+    "disableHint": "Desactivar la integración de wick",
+    "enableHint": "Activar la integración de wick"
   },
   "integrations": {
     "title": "e integraciones",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | jank {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["comando", "p50", "fiabilidad", "rango"],
-    "headersBackend": ["alcance", "p50", "p95", "fallos"],
-    "headersDiff": ["renderizador", "primer pintado", "frame p95", "raster p95", "jank"],
-    "headersUi": ["evento", "p50", "fallos", "rango"]
+    "headersCommand": [
+      "comando",
+      "p50",
+      "fiabilidad",
+      "rango"
+    ],
+    "headersBackend": [
+      "alcance",
+      "p50",
+      "p95",
+      "fallos"
+    ],
+    "headersDiff": [
+      "renderizador",
+      "primer pintado",
+      "frame p95",
+      "raster p95",
+      "jank"
+    ],
+    "headersUi": [
+      "evento",
+      "p50",
+      "fallos",
+      "rango"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Borra los modelos en caché y vuelve a sondear. Limpia los que un proveedor dejó caer.",
     "refreshLabel": "Actualizar proveedores",
     "refreshTooltip": "Vuelve a sondear cada proveedor ahora.",
-    "body": "Canaliza directamente los mensajes de la interfaz a los binarios de proveedores locales."
+    "body": "Canaliza directamente los mensajes de la interfaz a los binarios de proveedores locales.",
+    "cliTimeoutLabel": "Tiempo límite por ejecución",
+    "cliTimeoutUnitMinutes": "minutos",
+    "cliTimeoutUnitMinute": "minuto",
+    "forceStopLabel": "Detener todas las sesiones",
+    "forceStopTooltip": "Forzar el cierre de cada ejecución de CLI en curso.",
+    "forceStopConfirmTitle": "¿Detener las sesiones de CLI en curso?",
+    "forceStopConfirmBody": "Esto fuerza el cierre de {count} ejecuciones de CLI en curso. Se perderá su salida.",
+    "forceStopConfirmAction": "Detener todas",
+    "forceStopNoneRunning": "No hay sesiones de CLI en curso",
+    "forceStopRecordError": "Detenido — las sesiones de CLI se cerraron a la fuerza."
   },
   "header": {
     "title": "Preferencias del espacio de trabajo",

@@ -28,6 +28,84 @@ import '../support/law_corpus.dart';
 // Regenerate any of these by running the suite: the failure message prints
 // the exact literal to paste.
 
+/// Git calls that materialize unbounded output (diff/show/blame with no
+/// bounding flag) as a String, per file — the ingestion vector
+/// [_contentReadBaseline] cannot see (no file is read; the patch arrives on
+/// stdout). Like L6's spawn ratchet this enumerates the SURFACE: it cannot
+/// prove a site is admission-gated, it forces a new one to be argued for.
+///
+/// KNOWN REACH, so nobody over-trusts this: argv is read through file-local
+/// const spreads (`[..._kDiffCmd, hash]`) — its first version missed those
+/// and undercounted git.dart 7→1. Argv it still cannot resolve (a variable, a
+/// computed list, a const imported from another file) is invisible, and only
+/// String-capturing runners count: the spool transports stream via
+/// `Process.start` and are correctly absent.
+///
+/// Status of the recorded sites, so the argument starts from fact:
+///   • branches_page (2) — the branch-name dream; GATED via admitGitDiffText
+///     (the calls still name `diff`, so they still count here).
+///   • changes_page — absent: its dream + correlatedness probes are gated,
+///     and its multi-diff transport spools above 64MB.
+///   • ai.dart (4) — commit-message / review context gather. GATED via
+///     admitGitDiffText; sized from the porcelain status, NOT the caller's
+///     scope list (an empty scope means "whole tree", which would have
+///     declared zero bytes for the largest possible diff).
+///   • diff_logos_facade (1) — `show rev:path` per visible file in a
+///     historical diff, fired by background analysis. GATED via
+///     admitFileText at the blob's MEASURED size (`cat-file -s`).
+///   • ipc/pipe_commands (4) — the CLI/git-hook bridge's diff probes
+///     (`diff`/`dream`). GATED via admitGitDiffText, scoped to the repo's
+///     dirty set from `getRepositoryStatus` (the count doesn't move: this
+///     law reads argv literals, not the wrapper around them).
+///   • workspace_shell (2) — plumbing/legacy.
+///   • git.dart (7) — the String-returning transport helpers
+///     (getFileDiff/getFileDiffAtRevision/getSelectionDiff/getRangeDiff/
+///     getDeskDumpDiff/stashShow/_selectionDiffBase). This is the raw API,
+///     not a policy layer: its CALLERS gate (changes_page spools above 64MB;
+///     the AI/dream paths admit). A new caller of these owes the same.
+const _unboundedGitBaseline = <String, int>{
+  'lib/app/workspace_shell.dart': 2,
+  'lib/backend/ai.dart': 4,
+  'lib/backend/diff_logos_facade.dart': 1,
+  'lib/backend/git.dart': 7,
+  'lib/backend/ipc/pipe_commands.dart': 4,
+  'lib/features/branches/branches_page.dart': 2,
+};
+
+/// Whole-content read sites (readAsString/readAsBytes, sync variants) per
+/// file — the unbudgeted-ingestion surface (the marble repo-switch system
+/// OOM's bug class). Sites here predate the ratchet; each NEW site must be
+/// admission-routed, worker-isolated, or bounded before joining. Config /
+/// telemetry stores read app-owned small files and are inherently bounded;
+/// the repo-content readers are the ones the admission contract governs.
+const _contentReadBaseline = <String, int>{
+  'lib/backend/ai.dart': 12,
+  'lib/backend/ai_api_keys_store.dart': 1,
+  'lib/backend/ai_audit_store.dart': 1,
+  'lib/backend/ai_settings_store.dart': 5,
+  'lib/backend/blob_loader.dart': 1,
+  'lib/backend/command_telemetry_store.dart': 1,
+  'lib/backend/diff_logos_facade.dart': 1,
+  'lib/backend/engram_file_index_cache.dart': 1,
+  'lib/backend/file_coupling.dart': 1,
+  'lib/backend/git.dart': 5,
+  'lib/backend/ipc/pipe_commands.dart': 3,
+  'lib/backend/ipc/pipe_server.dart': 1,
+  'lib/backend/local_telemetry_store.dart': 1,
+  'lib/backend/logos_flow.dart': 1,
+  'lib/backend/logos_git_calibration.dart': 1,
+  'lib/backend/repo_blob_walk.dart': 2,
+  'lib/backend/review_ratchet_store.dart': 1,
+  'lib/backend/settings_store.dart': 1,
+  'lib/backend/shadow_coupling_cache.dart': 1,
+  'lib/backend/spectral_persistence.dart': 2,
+  'lib/features/branches/branches_page.dart': 3,
+  'lib/features/changes/changes_page.dart': 3,
+  'lib/features/changes/conflict_resolution.dart': 1,
+  'lib/features/changes/merge_conflict_flow.dart': 4,
+  'lib/features/palette/palette_state.dart': 1,
+};
+
 /// Process.run/start/runSync call sites per file. New spawn sites belong
 /// behind the existing seams (backend/git.dart's runner, process_utils) so
 /// they inherit fault injection, chaos scheduling, and telemetry for free.
@@ -37,8 +115,15 @@ const _processSpawnBaseline = <String, int>{
   'lib/backend/ai.dart': 4,
   'lib/backend/ai_api_keys_store.dart': 2,
   'lib/backend/aperture_sweep.dart': 4,
-  'lib/backend/desk_pr_diff.dart': 3,
-  'lib/backend/gh.dart': 4,
+  // desk_pr_diff.dart ratcheted 3 -> 0 (2026-07-13): its raw Process.run
+  // sites moved behind git.dart's gated runner, gaining the diff-family
+  // config pins, index.lock retry, and the per-repo index-write lock.
+  // gh.dart 4 -> 5 (2026-07-14): spoolForgeCliStdout adds a Process.start
+  // that STREAMS `gh pr diff`/`glab mr diff` stdout to a disk spool — the
+  // machine-scale transport fix. It cannot ride git.dart's runner (that seam
+  // is for git argv/pins/index-lock semantics); runForgeCli IS the forge
+  // seam, and the streaming variant lives beside it in the same file.
+  'lib/backend/gh.dart': 5,
   'lib/backend/git.dart': 2,
   'lib/backend/glab.dart': 3,
   'lib/backend/history_surgery.dart': 25,
@@ -110,6 +195,15 @@ const _tornWriteExemptions = <String, String>{
   'lib/backend/git.dart':
       'writes are working-tree / patch / index plumbing inside the USER repo '
       '(git\'s own crash domain), not app-data snapshots',
+  'lib/backend/gh.dart':
+      'spoolForgeCliStdout streams CLI stdout into a fresh systemTemp spool '
+      '— a disposable transport cache, never state anything loads back. A '
+      'torn stream is discarded by the nonzero-exit/error cleanup, and a '
+      'crash mid-write leaves only an orphaned temp file',
+  'lib/backend/gitea_api.dart':
+      '_getRawToSpool streams an HTTP `.diff` response into a fresh '
+      'systemTemp spool — same disposable-transport-cache shape as '
+      'gh.dart\'s spoolForgeCliStdout, with non-200/exception cleanup',
   'lib/backend/ai.dart':
       'ephemeral per-invocation artifacts (codex piggyback proxy config, '
       'prompt temp files) in temp dirs; the model disk cache rides '
@@ -277,6 +371,30 @@ void main() {
     );
   });
 
+  test('L15: spool-document ownership is always named', () {
+    // DiffDocument.lazyFromSpool is the raw-path engine entry whose optional
+    // ownedTempDir made split spool/doc lifecycles expressible — the temp-dir
+    // leak / premature-delete bug class. Feature code must name the mode
+    // instead: adoptSpool (doc is sole owner, deletes on dispose AND on a
+    // failed build) or viewSpool (caller-owned spool with other readers).
+    // Only diff_document.dart itself — where the wrappers delegate — may
+    // invoke the raw entry inside lib/. Tests keep direct engine access.
+    final offenders = [
+      for (final f in corpus.files)
+        if (f.path != 'lib/features/diff/diff_document.dart' &&
+            f.facts.lazyFromSpoolCalls > 0)
+          '${f.path}: ${f.facts.lazyFromSpoolCalls}',
+    ];
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Build spool docs via DiffDocument.adoptSpool or '
+          'DiffDocument.viewSpool — never the raw lazyFromSpool entry: '
+          '$offenders',
+    );
+  });
+
   test('L12: the zero oid is spelled once', () {
     // The 40-zero CAS sentinel lives as Oid.zero; a re-spelled literal is
     // one typo away from a 39-zero string that git rejects at runtime.
@@ -421,6 +539,55 @@ void main() {
           'engine breaks replayability and the differential oracles — inject '
           'a clock/seed from the caller instead (timestamps at store/telemetry '
           'seams are fine; they live outside these files).',
+    );
+  });
+
+  test('L12 (ratchet): whole-content file reads only shrink', () {
+    // The unbudgeted-ingestion surface (the marble repo-switch system OOM):
+    // every readAsString/readAsBytes over repo content is a site that can be
+    // handed a multi-hundred-MB working-tree file. Each existing site either
+    // carries a bound, runs inside a worker isolate, or routes through
+    // AnalysisAdmission — a NEW site must too, and this ratchet is what asks.
+    _expectRatchet(
+      law: 'L12 content-read',
+      constName: '_contentReadBaseline',
+      baseline: _contentReadBaseline,
+      actual: {
+        for (final f in corpus.files)
+          if (f.facts.contentReads > 0) f.path: f.facts.contentReads,
+      },
+      onNewSite:
+          'A whole-content read over repo/working-tree files is the '
+          'repo-switch OOM bug class. Route it through '
+          'AnalysisAdmission.instance.run with a stat-declared size and a '
+          'declined-path degradation (backend/analysis_admission.dart), read '
+          'inside the worker isolate, or bound the read — then update the '
+          'baseline.',
+    );
+  });
+
+  test('L13 (ratchet): unbounded git-stdout reads only shrink', () {
+    // The ingestion vector L12 cannot see: no file is read, yet
+    // `runGit(repo, ['diff', ...])` returns a whole working tree's patch as
+    // a String. Hand-gating call sites is what let this class survive — the
+    // commit-composer dream was gated while its unscoped twin in the branch
+    // composer was not, and stayed a live OOM path. New sites belong behind
+    // `admitGitDiffText` (backend/admitted_git.dart) or a spool transport.
+    _expectRatchet(
+      law: 'L13 unbounded-git',
+      constName: '_unboundedGitBaseline',
+      baseline: _unboundedGitBaseline,
+      actual: {
+        for (final f in corpus.files)
+          if (f.facts.unboundedGitReads > 0) f.path: f.facts.unboundedGitReads,
+      },
+      onNewSite:
+          'A git diff/show/blame whose output scales with repo CONTENT must '
+          'not become a String unbudgeted. Route it through '
+          'admitGitDiffText (backend/admitted_git.dart) with the paths being '
+          'diffed and a declined-path degradation, or stream it to a spool '
+          '(spoolSelectionDiff / spoolCommitDiff / spoolForgeCliStdout). '
+          'Bounded summaries (--name-only/--numstat/--stat) are free.',
     );
   });
 

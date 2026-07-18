@@ -30,6 +30,38 @@ const _okStatus = GitResult<RepositoryStatus>.ok(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('statusRevision advances on every status refresh — the epoch diff '
+      'caches key on', () async {
+    final state = RepositoryState(
+      switchDebounce: Duration.zero,
+      openRepositoryFn: (path) async => GitResult.ok(path),
+      statusLoader: (path) async => _okStatus,
+      gitWatcherFactory: (path, onChanged) =>
+          _FakeGitDirWatcher(path, onChanged),
+    );
+    addTearDown(state.dispose);
+
+    final r0 = state.statusRevision;
+    await state.setActivePath('repo-a');
+    expect(
+      state.statusRevision,
+      greaterThan(r0),
+      reason: 'opening a repo publishes a status snapshot',
+    );
+
+    final r1 = state.statusRevision;
+    await state.refreshStatus();
+    expect(
+      state.statusRevision,
+      greaterThan(r1),
+      reason:
+          'a refresh publishes a NEW snapshot even when file status '
+          'codes are identical — content may have changed while the '
+          'status shape (path|M) did not, and diff caches keyed on the '
+          'shape alone would serve the previous edit\'s parse',
+    );
+  });
+
   test('superseded repo switch does not publish stale active path', () async {
     final firstOpenStarted = Completer<void>();
     final allowFirstOpen = Completer<void>();
@@ -49,12 +81,7 @@ void main() {
       statusLoader: (path) async {
         statusPaths.add(path);
         return const GitResult.ok(
-          RepositoryStatus(
-            branch: 'main',
-            ahead: 0,
-            behind: 0,
-            files: [],
-          ),
+          RepositoryStatus(branch: 'main', ahead: 0, behind: 0, files: []),
         );
       },
     );
@@ -91,10 +118,7 @@ void main() {
     final pending = state.setActivePath('repo-a', addToRecents: false);
     state.dispose();
 
-    expect(
-      await pending.timeout(const Duration(seconds: 1)),
-      isNull,
-    );
+    expect(await pending.timeout(const Duration(seconds: 1)), isNull);
   });
 
   test('dispose suppresses an in-flight repo switch result', () async {
@@ -144,40 +168,48 @@ void main() {
     expect(await pending, isNull);
   });
 
-  test('a coalesced git-dir change refreshes status without a user epoch',
-      () async {
-    var statusLoads = 0;
-    void Function()? onRepoChanged;
-    final state = RepositoryState(
-      switchDebounce: Duration.zero,
-      externalRefreshThrottle: const Duration(milliseconds: 20),
-      openRepositoryFn: (path) async => GitResult.ok(path),
-      statusLoader: (path) async {
-        statusLoads++;
-        return _okStatus;
-      },
-      gitWatcherFactory: (path, cb) {
-        onRepoChanged = cb;
-        return _FakeGitDirWatcher(path, cb);
-      },
-    );
-    addTearDown(state.dispose);
+  test(
+    'a coalesced git-dir change refreshes status without a user epoch',
+    () async {
+      var statusLoads = 0;
+      void Function()? onRepoChanged;
+      final state = RepositoryState(
+        switchDebounce: Duration.zero,
+        externalRefreshThrottle: const Duration(milliseconds: 20),
+        openRepositoryFn: (path) async => GitResult.ok(path),
+        statusLoader: (path) async {
+          statusLoads++;
+          return _okStatus;
+        },
+        gitWatcherFactory: (path, cb) {
+          onRepoChanged = cb;
+          return _FakeGitDirWatcher(path, cb);
+        },
+      );
+      addTearDown(state.dispose);
 
-    await state.setActivePath('repo-a', addToRecents: false);
-    await Future<void>.delayed(Duration.zero);
-    final loadsAfterOpen = statusLoads;
-    expect(loadsAfterOpen, greaterThanOrEqualTo(1));
-    expect(onRepoChanged, isNotNull);
-    final epochBefore = state.userRefreshEpoch;
+      await state.setActivePath('repo-a', addToRecents: false);
+      await Future<void>.delayed(Duration.zero);
+      final loadsAfterOpen = statusLoads;
+      expect(loadsAfterOpen, greaterThanOrEqualTo(1));
+      expect(onRepoChanged, isNotNull);
+      final epochBefore = state.userRefreshEpoch;
 
-    // Simulate the watcher's coalesced "repo changed" signal.
-    onRepoChanged!();
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    expect(statusLoads, greaterThan(loadsAfterOpen),
-        reason: 'external change runs the status refresh path');
-    expect(state.userRefreshEpoch, epochBefore,
-        reason: 'external churn is not a user-attention event');
-  });
+      // Simulate the watcher's coalesced "repo changed" signal.
+      onRepoChanged!();
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      expect(
+        statusLoads,
+        greaterThan(loadsAfterOpen),
+        reason: 'external change runs the status refresh path',
+      );
+      expect(
+        state.userRefreshEpoch,
+        epochBefore,
+        reason: 'external churn is not a user-attention event',
+      );
+    },
+  );
 
   test('external-change refreshes are throttled', () async {
     var statusLoads = 0;
@@ -207,13 +239,15 @@ void main() {
       onRepoChanged!();
     }
     await Future<void>.delayed(const Duration(milliseconds: 350));
-    expect(statusLoads - baseline, lessThanOrEqualTo(2),
-        reason: 'a burst of signals must not spam the refresh path');
+    expect(
+      statusLoads - baseline,
+      lessThanOrEqualTo(2),
+      reason: 'a burst of signals must not spam the refresh path',
+    );
     expect(statusLoads - baseline, greaterThanOrEqualTo(1));
   });
 
-  test('a repo switch disposes the old watcher and builds a new one',
-      () async {
+  test('a repo switch disposes the old watcher and builds a new one', () async {
     final built = <String>[];
     final watchers = <_FakeGitDirWatcher>[];
     final state = RepositoryState(
@@ -232,12 +266,18 @@ void main() {
     await state.setActivePath('repo-b', addToRecents: false);
 
     expect(built, ['repo-a', 'repo-b']);
-    expect(watchers[0].disposed, isTrue,
-        reason: 'the previous repo\'s watcher is torn down on switch');
+    expect(
+      watchers[0].disposed,
+      isTrue,
+      reason: 'the previous repo\'s watcher is torn down on switch',
+    );
     expect(watchers[1].disposed, isFalse);
 
     state.dispose();
-    expect(watchers[1].disposed, isTrue,
-        reason: 'dispose tears down the active watcher');
+    expect(
+      watchers[1].disposed,
+      isTrue,
+      reason: 'dispose tears down the active watcher',
+    );
   });
 }

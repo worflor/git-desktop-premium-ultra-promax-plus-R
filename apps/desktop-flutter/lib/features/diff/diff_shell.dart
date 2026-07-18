@@ -6,7 +6,8 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
-import 'package:flutter/foundation.dart' show listEquals, mapEquals, setEquals;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, listEquals, mapEquals, setEquals, visibleForTesting;
 import 'package:flutter/gestures.dart' show kPrimaryButton, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -28,6 +29,7 @@ import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart' show FileCouplingMatrix;
 import '../../backend/gyat.dart' show GyatLattice, gyatForRepo;
 import '../../backend/logos_flow.dart' show analyzeFlowCached, FlowFinding;
+import '../../backend/logos_hunks.dart' as logos_hunks show DiffHunk;
 import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -35,6 +37,7 @@ import 'binary_diff_view.dart';
 import 'diff_collapse_policy.dart';
 import 'diff_document.dart';
 import 'diff_models.dart';
+import 'predictive_diff_index.dart' show LazyDiffLines;
 import 'edit_units.dart';
 import 'manifold/manifold_pane.dart';
 import 'motion_policy.dart';
@@ -56,6 +59,20 @@ const double _kStageCellWidth = 16.0;
 const double _kLeftReserveWidth = _kRibbonWidth + _kStageCellWidth;
 const double _kLineItemExtent = 18.0;
 
+// X-axis virtualization. The vertical axis renders only the viewport's rows;
+// these give the horizontal axis the same law for very long lines. A row
+// whose text exceeds [_kMaxDirectRenderChars] renders a [_kLineSliceLength]-
+// char slice positioned at its absolute column (monospace cell math — the
+// same assumption the gutter, row extent, and paint-drag hit-testing already
+// build on), re-sliced when horizontal scroll crosses a
+// [_kLineSliceQuantum]-column boundary. Full text shaping — and the 12000px
+// scroll-extent clamp that used to make long tails UNREACHABLE — both die
+// with this: any line of any length is scrollable end to end at
+// O(slice) cost.
+const int _kMaxDirectRenderChars = 4096;
+const int _kLineSliceLength = 4096;
+const int _kLineSliceQuantum = 1024;
+
 class _DiffSegment {
   final int startDisplayIndex;
   final int lineCount;
@@ -68,9 +85,8 @@ class _DiffSegment {
     required this.isBinary,
     this.binaryFile,
   });
-  double get height => isBinary
-      ? (renderedHeight ?? 400.0)
-      : lineCount * _kLineItemExtent;
+  double get height =>
+      isBinary ? (renderedHeight ?? 400.0) : lineCount * _kLineItemExtent;
 }
 
 class _AgeRange {
@@ -118,6 +134,12 @@ class _HunkHeader {
 
 class _TrailViewState {
   final String diffContent;
+
+  /// Keep the document itself so disk-backed lazy views retain their byte
+  /// store and predictive index while the trail temporarily shows another
+  /// revision. Their [DiffDocument.rawContent] is intentionally empty, so a
+  /// string snapshot cannot restore them.
+  final DiffDocument? document;
   final List<ParsedLine> lines;
   final List<_HunkHeader> hunks;
   final Set<int> pairedAddFastKeys;
@@ -126,6 +148,7 @@ class _TrailViewState {
 
   const _TrailViewState({
     required this.diffContent,
+    required this.document,
     required this.lines,
     required this.hunks,
     required this.pairedAddFastKeys,
@@ -161,6 +184,55 @@ String? _diffDisplayDirectory(String filePath) {
   return parts.sublist(0, parts.length - 1).join('/');
 }
 
+@visibleForTesting
+String buildFileBackedLogosStructuralDiff(DiffDocument document) {
+  if (!document.isFileBacked) return '';
+  final out = StringBuffer()
+    ..writeln('# logos-document ${document.documentId}');
+  for (final section in document.sections) {
+    final path = section.path;
+    if (path.isEmpty) continue;
+    out
+      ..writeln('diff --git a/$path b/$path')
+      ..writeln('--- a/$path')
+      ..writeln('+++ b/$path');
+    for (final hunk in document.hunks.where((h) => h.filePath == path)) {
+      out.writeln(hunk.rawHeader);
+    }
+  }
+  return out.toString();
+}
+
+/// Maps each hunk to the display-list row of its header line, or -1 when that
+/// line was filtered out of [displayLines] (collapsed or searched away).
+///
+/// Extracted and [visibleForTesting] because it is the one non-trivial change
+/// in [_setDisplayLines]: it deliberately does NOT build a full per-display-row
+/// index (that map is O(rows) and is now lazy — see [_displayLineIndex]),
+/// keying only the handful of hunk-header fastKeys and filling rows in a single
+/// pass. The result is identical to the old `fullIndex[hunkLine.fastKey]`
+/// lookup; the unit test pins that equivalence on generated inputs.
+@visibleForTesting
+List<int> computeHunkDisplayRows(
+  List<ParsedLine> sourceLines,
+  List<int> hunkLineIndices,
+  List<ParsedLine> displayLines,
+) {
+  final rows = List<int>.filled(hunkLineIndices.length, -1);
+  final hunkPosByFastKey = <int, int>{};
+  for (var i = 0; i < hunkLineIndices.length; i++) {
+    final hi = hunkLineIndices[i];
+    if (hi < 0 || hi >= sourceLines.length) continue;
+    hunkPosByFastKey[sourceLines[hi].fastKey] = i;
+  }
+  if (hunkPosByFastKey.isEmpty) return rows;
+  for (var i = 0; i < displayLines.length; i++) {
+    final pos = hunkPosByFastKey[displayLines[i].fastKey];
+    if (pos != null) rows[pos] = i;
+  }
+  return rows;
+}
+
 class DiffShell extends StatefulWidget {
   final String filePath;
   final String? diffContent;
@@ -192,11 +264,13 @@ class DiffShell extends StatefulWidget {
   final String? revisionRef;
   final DiffLogosSession? logosSession;
   final ValueChanged<String>? onOpenRelatedPath;
+
   /// Fires with the file path of a newly-pinned line. Parents that
   /// host a side-list of files wire this to keep their selection
   /// scrolled alongside the user's focus — pinning a line is an
   /// explicit "this is what I'm looking at" signal.
   final ValueChanged<String>? onPinnedFileFocused;
+
   /// When non-null, renders a `<` back button in the toolbar's
   /// leading slot (before the search toggle). Wired by parents that
   /// maintain a navigation stack — clicking it pops one layer. Null
@@ -243,19 +317,36 @@ class DiffShell extends StatefulWidget {
 class _DiffShellState extends State<DiffShell> {
   static const int _kAnimatedDiffMaxChangedLines = 24;
   static const int _kAnimatedDiffMaxPayloadBytes = 4 * 1024;
-  static const Duration _kInitialFrameCaptureWindow =
-      Duration(milliseconds: 1500);
+  static const Duration _kInitialFrameCaptureWindow = Duration(
+    milliseconds: 1500,
+  );
   static const Duration _kBlameHoverDelay = Duration(milliseconds: 180);
   static const int _kModeAMaxChangedLines = 15000;
   static const int _kModeAMaxPayloadBytes = 3 * 1024 * 1024;
-  static const Duration _kScrollFrameCaptureQuietWindow =
-      Duration(milliseconds: 280);
+  static const Duration _kScrollFrameCaptureQuietWindow = Duration(
+    milliseconds: 280,
+  );
 
   final _searchCtrl = TextEditingController();
   String _searchTerm = '';
   bool _searchVisible = false;
   final _scrollCtrl = ScrollController();
   final _hScrollCtrl = ScrollController();
+
+  /// Current horizontal slice quantum (column ÷ [_kLineSliceQuantum]).
+  /// Long-line rows listen and re-slice only when this crosses a boundary —
+  /// the X-axis analogue of the vertical list's row recycling.
+  final ValueNotifier<int> _hSliceQuantum = ValueNotifier<int>(0);
+
+  /// Measured monospace cell width, refreshed by [_measureMaxLineWidth].
+  double _monoCharWidth = 7.5;
+
+  void _updateHSliceQuantum() {
+    if (!_hScrollCtrl.hasClients) return;
+    final chars = (_hScrollCtrl.offset - 72.0) / _monoCharWidth;
+    final q = chars <= 0 ? 0 : chars ~/ _kLineSliceQuantum;
+    if (q != _hSliceQuantum.value) _hSliceQuantum.value = q;
+  }
   double _maxLineWidth = 800.0;
   final Stopwatch _sessionStopwatch = Stopwatch();
   final List<double> _scrollFpsSamples = [];
@@ -276,6 +367,7 @@ class _DiffShellState extends State<DiffShell> {
   final Set<String> _blameFetchingFiles = {};
   final Set<String> _blamePrewarmingFiles = {};
   final Set<String> _blameUnavailableFiles = {};
+
   /// Shared per-key in-flight futures so concurrent `_loadBlame`
   /// callers join one fetch. Without this the pinned-context
   /// refresh could resolve against an empty cache mid-fetch and
@@ -312,16 +404,38 @@ class _DiffShellState extends State<DiffShell> {
   // Reset when a new document loads (different diff = fresh slate).
   bool _collapseUserDirtied = false;
 
-  /// Index map for O(1) fastKey → display index lookup. Rebuilt
-  /// whenever [_displayLines] changes. Keyed on `fastKey` (integer
-  /// content hash) rather than object identity because `ParsedLine`
-  /// instances can be reconstructed from the same underlying bytes
-  /// during a refresh (stage toggle, search edit, replacement-pair
-  /// recompute) — an identity-keyed map would silently miss those
-  /// reconstructed lines and the scroll-gravity snap would degrade
-  /// to a no-op without throwing. Matches the same migration the
-  /// rest of the shell made from stagingKey strings to fastKey ints.
-  Map<int, int> _displayLineIndex = const {};
+  /// Backing cache for [_displayLineIndex]. Null means "invalidated — rebuild
+  /// on next read". LAZY on purpose: this map is O(display-line-count) in both
+  /// build time and memory, but only navigation/pinning ever reads it (plain
+  /// scroll and search never do). On a machine-scale diff (millions of rows) an
+  /// eager rebuild on every `_setDisplayLines` — i.e. every search keystroke —
+  /// allocated a mult-hundred-MB map per keystroke for a lookup nobody made.
+  /// Deferring it means a diff that is only scrolled or searched never pays for
+  /// it at all. Invalidated (set null) in [_setDisplayLines]; [_hunkDisplayRows]
+  /// no longer depends on it (built by a cheap O(hunks)-memory pass instead).
+  Map<int, int>? _displayLineIndexCache;
+
+  /// O(1) fastKey → display index lookup, built on first read after a display
+  /// refresh and cached until the next one. Keyed on `fastKey` (integer content
+  /// hash) rather than object identity because `ParsedLine` instances can be
+  /// reconstructed from the same underlying bytes during a refresh (stage
+  /// toggle, search edit, replacement-pair recompute) — an identity-keyed map
+  /// would silently miss those reconstructed lines and the scroll-gravity snap
+  /// would degrade to a no-op without throwing.
+  Map<int, int> get _displayLineIndex {
+    // A truly windowed diff cannot afford this full-row map. A predictive
+    // document that fits the resident budget can: representation alone must
+    // not silently remove navigation and pinning behavior.
+    if (_windowedLazyDoc) return const {};
+    final cached = _displayLineIndexCache;
+    if (cached != null) return cached;
+    final dl = _displayLines;
+    final idx = <int, int>{};
+    for (var i = 0; i < dl.length; i++) {
+      idx[dl[i].fastKey] = i;
+    }
+    return _displayLineIndexCache = idx;
+  }
 
   /// Per-hunk display-row index — parallel to [_hunks], with the same
   /// length. Entry `i` is the index of `_hunks[i]`'s header line in
@@ -375,6 +489,7 @@ class _DiffShellState extends State<DiffShell> {
     _trailSelectedHashValue = v;
     _loadFlowFindings();
   }
+
   String? _originalDiffContent;
   _TrailViewState? _trailNowView;
   // Resolved file path AT the currently-selected trail commit. Tracks the
@@ -391,6 +506,28 @@ class _DiffShellState extends State<DiffShell> {
   List<_HunkHeader> _hunks = [];
   Map<int, _HunkHeader> _hunkHeaderByFastKey = const {};
   List<ParsedLine> _lines = [];
+
+  /// True when [_lines] is a [LazyDiffLines] — a machine-scale diff whose rows
+  /// hydrate on demand. In this mode the shell NEVER iterates [_lines] (that
+  /// would hydrate all of it, reviving the freeze): display = source (no
+  /// filter), hunk rows come straight from source indices, and the interactive
+  /// extras that need a full scan are index-backed or disabled only when the
+  /// document exceeds the resident-row budget. Predictive documents that fit
+  /// that budget retain the ordinary staging/analysis behavior.
+  bool _lazyDoc = false;
+
+  /// Predictive storage is not itself a reason to remove behavior. Documents
+  /// below the resident-row budget safely support the normal staging pipeline;
+  /// only truly windowed documents must avoid whole-list operations.
+  bool get _windowedLazyDoc =>
+      _lines is LazyDiffLines && !(_lines as LazyDiffLines).isFullyResident;
+
+  /// True while a large direct-`diffContent` diff (PR / stash / history) is
+  /// being indexed off the synchronous lifecycle path via [DiffDocument.lazyAsync]
+  /// — the view shows a loading state instead of freezing. [_asyncBuildSeq]
+  /// invalidates a stale in-flight build when the input changes underneath it.
+  bool _asyncBuilding = false;
+  int _asyncBuildSeq = 0;
 
   // Preference snapshots, refreshed every build so async callbacks
   // (blame hover timer) can read them without a BuildContext.
@@ -422,6 +559,7 @@ class _DiffShellState extends State<DiffShell> {
   // guard prevents the snap animation from re-triggering itself.
   static const double _kGravityLineRadius = 3.0;
   bool _gravitySnapping = false;
+
   /// True between a programmatic `_jumpToDisplayIndex` call and the
   /// ScrollEndNotification that fires when its animation finishes.
   /// Gravity-snap is user-intent-only; the jump already landed where
@@ -504,6 +642,13 @@ class _DiffShellState extends State<DiffShell> {
   int? _hotHunkIdx;
   double _hotHunkStrength = 0.0;
   DateTime? _hotHunkSeenAt;
+  // The one outstanding decay callback from [_clearHotHunk]'s 900ms window.
+  // A fast scroll re-enters that method many times per second while the hot
+  // hunk sits inside the window; without tracking (and cancelling) the prior
+  // timer, every re-entry stacked a NEW delayed callback — harmless
+  // individually (each just re-invokes _clearHotHunk, idempotent), but a
+  // real fling could pile up dozens of live Timers for one decay.
+  Timer? _hotHunkDecayTimer;
 
   // Pinned-line context (right-click any diff row to pin it). The
   // panel at the bottom of the shell shows logos-powered context for
@@ -548,8 +693,18 @@ class _DiffShellState extends State<DiffShell> {
   int _appliedLogosSnapshotVersion = 0;
   int _appliedLogosContextRevision = 0;
 
-  String? get _effectiveDiffContent =>
-      _currentDiffContent ?? _currentDocument?.rawContent ?? widget.diffContent;
+  String? get _effectiveDiffContent {
+    final current = _currentDiffContent;
+    if (current != null && current.isNotEmpty) return current;
+    final document = _currentDocument;
+    if (document != null) {
+      // An absent aggregate String is a capability boundary, not an empty
+      // diff. Never fall through to a stale widget value for a file-backed
+      // document that has already replaced it.
+      return document.isFileBacked ? null : document.rawContent;
+    }
+    return widget.diffContent;
+  }
 
   String? get _effectiveDocumentId =>
       _currentDocument?.documentId ??
@@ -566,6 +721,7 @@ class _DiffShellState extends State<DiffShell> {
     _scrollCtrl.addListener(_syncLogosSubscriptions);
     _scrollCtrl.addListener(_recordTemporalMark);
     _scrollCtrl.addListener(_markScrollActive);
+    _hScrollCtrl.addListener(_updateHSliceQuantum);
     _rebuild();
     _scheduleTemporalRestore();
     _loadFlowFindings();
@@ -576,12 +732,14 @@ class _DiffShellState extends State<DiffShell> {
     super.didUpdateWidget(old);
     final oldDocumentId = old.document?.documentId;
     final newDocumentId = widget.document?.documentId;
-    final diffOrPathChanged = old.diffContent != widget.diffContent ||
+    final diffOrPathChanged =
+        old.diffContent != widget.diffContent ||
         oldDocumentId != newDocumentId ||
         old.filePath != widget.filePath;
     final repositoryChanged = old.repositoryPath != widget.repositoryPath;
     final diffScopeChanged = diffOrPathChanged || repositoryChanged;
-    final logosInputsChanged = diffScopeChanged ||
+    final logosInputsChanged =
+        diffScopeChanged ||
         old.revisionRef != widget.revisionRef ||
         !mapEquals(old.spectralCoupling, widget.spectralCoupling);
     if (diffScopeChanged) {
@@ -614,6 +772,18 @@ class _DiffShellState extends State<DiffShell> {
         _scheduleTemporalRestore();
       }
       _loadFlowFindings();
+    } else if (widget.document != null &&
+        !identical(old.document, widget.document)) {
+      // Same documentId, NEW instance: the parent installs a replacement
+      // document and disposes the previous one afterwards, so keeping the
+      // old reference would render a CLOSED FileByteStore. Adopt the fresh
+      // instance while preserving view state (same id ⇒ presumed same
+      // content). This is also the correctness backstop for identity
+      // heuristics: if a working-file fingerprint ever misses a real
+      // same-size edit (sampled windows, same mtime second), the fresh
+      // store's bytes still render — staleness is unrepresentable at the
+      // shell regardless of how the id was minted.
+      _adoptDocumentInstance(widget.document!);
     }
     if (old.jumpToLineRequestId != widget.jumpToLineRequestId &&
         widget.jumpToLineIndex != null) {
@@ -632,104 +802,238 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _rebuild() {
-    _profileUiSync(
-      'diff.shell.rebuild',
-      () {
-        final document = widget.document ??
-            ((widget.diffContent != null && widget.diffContent!.isNotEmpty)
-                ? DiffDocument.fromRawContent(
-                    rawContent: widget.diffContent!,
-                    pathHint: widget.filePath,
-                    trimLeadingMeta: widget.showFileHeader,
-                  )
-                : null);
-        if (document != null && !document.isEmpty) {
-          final stagedKeys = <int>{
+    final provided = widget.document;
+    if (provided != null) {
+      _asyncBuildSeq++; // a real document supersedes any in-flight async build
+      _asyncBuilding = false;
+      _profileUiSync(
+        'diff.shell.rebuild',
+        () => _applyRebuiltDocument(provided),
+        errorCode: 'diff.shell.rebuild_failed',
+      );
+      return;
+    }
+    final raw = widget.diffContent;
+    if (raw != null && raw.length > kLazyDiffLengthThreshold) {
+      // Large direct content (a PR / stash / history diff of a giant file):
+      // index it cooperatively off the synchronous lifecycle path so the widget
+      // rebuild never freezes for seconds. changes_page pre-builds a lazy
+      // document, so this fires for the direct-`diffContent` hosts.
+      _startAsyncBuild(raw);
+      return;
+    }
+    _asyncBuildSeq++;
+    _asyncBuilding = false;
+    _profileUiSync('diff.shell.rebuild', () {
+      final document = (raw != null && raw.isNotEmpty)
+          ? DiffDocument.fromRawContent(
+              rawContent: raw,
+              pathHint: widget.filePath,
+              trimLeadingMeta: widget.showFileHeader,
+            )
+          : null;
+      _applyRebuiltDocument(document);
+    }, errorCode: 'diff.shell.rebuild_failed');
+  }
+
+  void _applyRebuiltDocument(DiffDocument? document) {
+    if (document != null && !document.isEmpty) {
+      // A lazy list can't be iterated for staged keys (would hydrate all);
+      // per-line staging is inert for machine-scale diffs anyway.
+      final stagedKeys = _windowedLazyDoc
+          ? const <int>{}
+          : <int>{
+              for (final line in _lines)
+                if (line.isStaged) line.fastKey,
+            };
+      _applyDocument(document, stagedKeys: stagedKeys);
+      _beginTelemetrySession();
+      _syncLogosRuntime(forceRefresh: true);
+    } else {
+      _flushRenderMetrics();
+      _lazyDoc = false;
+      _lines = [];
+      _hunks = [];
+      _hunkHeaderByFastKey = const {};
+      _maxHunkChurn = 0;
+      _pairedAddFastKeys = const {};
+      _unitByFastKey = const {};
+      _hunkDisplayRows = const [];
+      _setDisplayLines(const []);
+      _keyboardLineIndex = null;
+      _lastToggledLineIndex = null;
+      _useAnimatedTextMode = false;
+      _sessionChangedLines = 0;
+      _sessionPayloadBytes = 0;
+      _currentDiffContent = widget.diffContent;
+      _currentDocument = null;
+      _maxLineWidth = 800.0;
+      _logosLoading = false;
+      _bindLogosSession(null, disposeOldOwned: true);
+    }
+  }
+
+  /// Build a lazy document for large direct content off the sync path. Shows a
+  /// loading state, yields cooperatively during the index scan, then applies —
+  /// unless a newer build/input has superseded this one ([_asyncBuildSeq]).
+  Future<void> _startAsyncBuild(String raw) async {
+    final seq = ++_asyncBuildSeq;
+    if (!_asyncBuilding && mounted) {
+      setState(() => _asyncBuilding = true);
+    }
+    DiffDocument doc;
+    try {
+      doc = await DiffDocument.lazyAsync(
+        rawContent: raw,
+        pathHint: widget.filePath,
+        trimLeadingMeta: widget.showFileHeader,
+      );
+    } catch (_) {
+      if (mounted && seq == _asyncBuildSeq) {
+        setState(() => _asyncBuilding = false);
+      }
+      return;
+    }
+    if (!mounted || seq != _asyncBuildSeq) return;
+    setState(() {
+      _asyncBuilding = false;
+      _profileUiSync(
+        'diff.shell.rebuild',
+        () => _applyRebuiltDocument(doc),
+        errorCode: 'diff.shell.rebuild_failed',
+      );
+    });
+  }
+
+  /// Swap in a NEW document instance whose documentId matches the rendered
+  /// one (see didUpdateWidget). Content is presumed identical, so the view
+  /// state a full [_applyDocument] resets — collapse choices, the pinned
+  /// line, per-line staged marks — is carried across the swap. The point of
+  /// adopting at all is that the old instance's backing store is about to
+  /// be disposed by the parent, and, as a backstop, that any identity-
+  /// heuristic miss still renders the newest bytes.
+  void _adoptDocumentInstance(DiffDocument document) {
+    final collapseDirtied = _collapseUserDirtied;
+    final collapsed = _collapsedHunks;
+    final pinned = _pinnedFastKey;
+    final stagedKeys = _windowedLazyDoc
+        ? const <int>{}
+        : <int>{
             for (final line in _lines)
               if (line.isStaged) line.fastKey,
           };
-          _applyDocument(document, stagedKeys: stagedKeys);
-          _beginTelemetrySession();
-          _syncLogosRuntime(forceRefresh: true);
-        } else {
-          _flushRenderMetrics();
-          _lines = [];
-          _hunks = [];
-          _hunkHeaderByFastKey = const {};
-          _maxHunkChurn = 0;
-          _pairedAddFastKeys = const {};
-          _unitByFastKey = const {};
-          _hunkDisplayRows = const [];
-          _setDisplayLines(const []);
-          _keyboardLineIndex = null;
-          _lastToggledLineIndex = null;
-          _useAnimatedTextMode = false;
-          _sessionChangedLines = 0;
-          _sessionPayloadBytes = 0;
-          _currentDiffContent = widget.diffContent;
-          _currentDocument = null;
-          _maxLineWidth = 800.0;
-          _logosLoading = false;
-          _bindLogosSession(null, disposeOldOwned: true);
-        }
-      },
-      errorCode: 'diff.shell.rebuild_failed',
-    );
+    setState(() {
+      _applyDocument(document, stagedKeys: stagedKeys);
+      _collapseUserDirtied = collapseDirtied;
+      _collapsedHunks = collapsed;
+      _pinnedFastKey = pinned;
+      _refreshDisplayLines();
+      _reconcilePinnedLine();
+      // A captured "now" trail snapshot holds the PREVIOUS document by
+      // reference — which the parent disposes after this adoption. Recapture
+      // it from the freshly adopted state so leaving the Paper Trail never
+      // restores a document whose backing store is closed.
+      if (_trailNowView != null) {
+        _trailNowView = _captureTrailView();
+      }
+    });
+  }
+
+  /// Real [logos_hunks.DiffHunk]s for a file-backed document, built from the
+  /// resident rows instead of re-parsing text the shell doesn't hold. Only
+  /// reached below [kLeanDiffLineThreshold] (the Logos lean gate runs
+  /// first), so iterating the lazy rows here is bounded — the same cost the
+  /// eager path already pays by handing the facade the full diff text.
+  List<logos_hunks.DiffHunk> _buildParsedHunksFromRows() {
+    final result = <logos_hunks.DiffHunk>[];
+    final oldStartRe = RegExp(r'@@ -(\d+)');
+    for (final hunk in _hunks) {
+      if (hunk.lineIndex < 0 || hunk.lineIndex >= _lines.length) continue;
+      final body = StringBuffer(_lines[hunk.lineIndex].text);
+      for (var i = hunk.lineIndex + 1; i < _lines.length; i++) {
+        final kind = _lines[i].kind;
+        if (kind == LineKind.hunk || kind == LineKind.meta) break;
+        body
+          ..write('\n')
+          ..write(_lines[i].text);
+      }
+      result.add(
+        logos_hunks.DiffHunk(
+          filePath: hunk.filePath,
+          hunkIndex: hunk.fileHunkIndex,
+          header: hunk.rawHeader.trim(),
+          body: body.toString(),
+          oldStart:
+              int.tryParse(
+                oldStartRe.firstMatch(hunk.rawHeader)?.group(1) ?? '',
+              ) ??
+              0,
+          newStart: hunk.startLine,
+          additions: hunk.additions,
+          deletions: hunk.deletions,
+        ),
+      );
+    }
+    return result;
   }
 
   void _applyDocument(
     DiffDocument document, {
     Set<int> stagedKeys = const <int>{},
   }) {
-    _profileUiSync(
-      'diff.shell.apply-document',
-      () {
-        // Fresh document = fresh collapse slate. The user's choices
-        // on the previous diff don't translate (hunk indices mean
-        // different hunks now); the auto-policy gets to re-decide
-        // on the new document's φ distribution.
-        _collapseUserDirtied = false;
-        _collapsedHunks = <String>{};
-        _currentDocument = document;
-        _currentDiffContent = document.rawContent;
-        _lines = stagedKeys.isEmpty
-            ? List<ParsedLine>.of(document.lines)
-            : document.lines.map((line) {
-                if (stagedKeys.contains(line.fastKey)) {
-                  return line.copyWith(isStaged: true);
-                }
-                return line;
-              }).toList(growable: false);
-        _hunks = [
-          for (final hunk in document.hunks)
-            _HunkHeader(
-              hunk.lineIndex,
-              hunk.filePath,
-              hunk.fileHunkIndex,
-              hunk.label,
-              hunk.additions,
-              hunk.deletions,
-              scope: hunk.scope,
-              rawHeader: hunk.rawHeader,
-              startLine: hunk.startLine,
-            ),
-        ];
-        _rebuildHunkHeaderLookup();
-        _pairedAddFastKeys = document.pairedAddFastKeys;
-        _unitByFastKey = document.unitByFastKey;
-        _maxLineWidth = _measureMaxLineWidth(document.maxLineLength);
-        _maxHunkChurn =
-            _hunks.fold<int>(0, (m, h) => h.churn > m ? h.churn : m);
-        _hotHunkIdx = null;
-        _hotHunkStrength = 0.0;
-        _hotHunkSeenAt = null;
-        _clearPinnedLine();
-        _seenUnitIds.clear();
-        _refreshDisplayLines();
-        _revalidateKeyboardCursor();
-      },
-      errorCode: 'diff.shell.apply-document_failed',
-    );
+    _profileUiSync('diff.shell.apply-document', () {
+      // Fresh document = fresh collapse slate. The user's choices
+      // on the previous diff don't translate (hunk indices mean
+      // different hunks now); the auto-policy gets to re-decide
+      // on the new document's φ distribution.
+      _collapseUserDirtied = false;
+      _collapsedHunks = <String>{};
+      _currentDocument = document;
+      _currentDiffContent = document.isFileBacked ? null : document.rawContent;
+      _lazyDoc = document.lines is LazyDiffLines;
+      _lines = _lazyDoc
+          // Hold the lazy list DIRECTLY — copying it (List.of / .map) would
+          // iterate → hydrate all 15M rows → the freeze we're eliminating.
+          ? document.lines
+          : (stagedKeys.isEmpty
+                ? List<ParsedLine>.of(document.lines)
+                : document.lines
+                      .map((line) {
+                        if (stagedKeys.contains(line.fastKey)) {
+                          return line.copyWith(isStaged: true);
+                        }
+                        return line;
+                      })
+                      .toList(growable: false));
+      _hunks = [
+        for (final hunk in document.hunks)
+          _HunkHeader(
+            hunk.lineIndex,
+            hunk.filePath,
+            hunk.fileHunkIndex,
+            hunk.label,
+            hunk.additions,
+            hunk.deletions,
+            scope: hunk.scope,
+            rawHeader: hunk.rawHeader,
+            startLine: hunk.startLine,
+          ),
+      ];
+      _rebuildHunkHeaderLookup();
+      _pairedAddFastKeys = document.pairedAddFastKeys;
+      _unitByFastKey = document.unitByFastKey;
+      _maxLineWidth = _measureMaxLineWidth(document.maxLineLength);
+      _maxHunkChurn = _hunks.fold<int>(0, (m, h) => h.churn > m ? h.churn : m);
+      _hotHunkDecayTimer?.cancel();
+      _hotHunkDecayTimer = null;
+      _hotHunkIdx = null;
+      _hotHunkStrength = 0.0;
+      _hotHunkSeenAt = null;
+      _clearPinnedLine();
+      _seenUnitIds.clear();
+      _refreshDisplayLines();
+      _revalidateKeyboardCursor();
+    }, errorCode: 'diff.shell.apply-document_failed');
   }
 
   void _beginTelemetrySession() {
@@ -745,24 +1049,26 @@ class _DiffShellState extends State<DiffShell> {
     _lastScrollEventAt = null;
     _sessionFlushed = false;
     _sessionSearchActivated = _searchTerm.isNotEmpty;
-    _sessionPayloadBytes = _currentDocument?.payloadBytes ??
+    _sessionPayloadBytes =
+        _currentDocument?.payloadBytes ??
         (_effectiveDiffContent == null
             ? 0
             : utf8.encode(_effectiveDiffContent!).length);
-    _sessionChangedLines = _currentDocument?.changedLines ??
+    _sessionChangedLines =
+        _currentDocument?.changedLines ??
         _lines
-            .where((line) =>
-                line.kind == LineKind.added || line.kind == LineKind.deleted)
+            .where(
+              (line) =>
+                  line.kind == LineKind.added || line.kind == LineKind.deleted,
+            )
             .length;
-    _useAnimatedTextMode = !_sessionSearchActivated &&
+    _useAnimatedTextMode =
+        !_sessionSearchActivated &&
         _sessionChangedLines <= _kAnimatedDiffMaxChangedLines &&
         _sessionPayloadBytes <= _kAnimatedDiffMaxPayloadBytes;
     _armRenderMetricsFlush(_kInitialFrameCaptureWindow);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          _effectiveDiffContent == null ||
-          _effectiveDiffContent!.isEmpty ||
-          _sessionFirstPaintMs != null) {
+      if (!mounted || _sessionDiffId == null || _sessionFirstPaintMs != null) {
         return;
       }
       _sessionFirstPaintMs = _sessionStopwatch.elapsedMicroseconds / 1000;
@@ -816,10 +1122,7 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _flushRenderMetrics() {
-    if (_sessionFlushed ||
-        _sessionDiffId == null ||
-        _effectiveDiffContent == null ||
-        _effectiveDiffContent!.isEmpty) {
+    if (_sessionFlushed || _sessionDiffId == null) {
       return;
     }
     _sessionFlushTimer?.cancel();
@@ -830,17 +1133,18 @@ class _DiffShellState extends State<DiffShell> {
     final rendererMode = _useAnimatedTextMode
         ? 'dom-animated'
         : (_sessionSearchActivated
-            ? 'dom-search'
-            : _selectRendererMode(
-                _sessionChangedLines,
-                _sessionPayloadBytes,
-                false,
-              ));
+              ? 'dom-search'
+              : _selectRendererMode(
+                  _sessionChangedLines,
+                  _sessionPayloadBytes,
+                  false,
+                ));
     final frameTimeP95Ms = _sessionPercentile(_frameTotalSamples, 95);
     final buildTimeP95Ms = _sessionPercentile(_frameBuildSamples, 95);
     final rasterTimeP95Ms = _sessionPercentile(_frameRasterSamples, 95);
-    final jankyFrameCount =
-        _frameTotalSamples.where((value) => value > 16.7).length;
+    final jankyFrameCount = _frameTotalSamples
+        .where((value) => value > 16.7)
+        .length;
 
     _sessionFlushed = true;
     _sessionStopwatch.stop();
@@ -960,13 +1264,14 @@ class _DiffShellState extends State<DiffShell> {
     _trailScrubDebounce?.cancel();
     _restoredPulseTimer?.cancel();
     _scrollIdleTimer?.cancel();
+    _hotHunkDecayTimer?.cancel();
     // Capture the final position so closing without scrolling still records
     // a mark. Read BEFORE disposing the scroll controller.
     _recordTemporalMark();
-    _logosSession?.snapshotListenable
-        .removeListener(_handleLogosSnapshotChanged);
-    _logosSession?.contextListenable
-        .removeListener(_handleLogosContextChanged);
+    _logosSession?.snapshotListenable.removeListener(
+      _handleLogosSnapshotChanged,
+    );
+    _logosSession?.contextListenable.removeListener(_handleLogosContextChanged);
     if (_ownedLogosSession != null &&
         identical(_ownedLogosSession, _logosSession)) {
       _ownedLogosSession!.dispose();
@@ -977,6 +1282,7 @@ class _DiffShellState extends State<DiffShell> {
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
     _hScrollCtrl.dispose();
+    _hSliceQuantum.dispose();
     super.dispose();
   }
 
@@ -1016,6 +1322,15 @@ class _DiffShellState extends State<DiffShell> {
 
   bool _isBlameEligiblePath(String filePath) {
     final normalizedPath = _normalizedDiffPath(filePath);
+    // Fresh files and synthetic untracked patches have no committed ancestor
+    // in HEAD, so `git blame` is guaranteed to fail for this session. The
+    // document computes this structurally for EVERY backing (eager, lazy,
+    // spooled, working-file) — file-backed documents carry no raw slices, so
+    // sniffing raw text alone would silently pass their fresh files through
+    // to a guaranteed-failing blame.
+    if (_currentDocument?.newFilePaths.contains(normalizedPath) ?? false) {
+      return false;
+    }
     final raw = _currentDocument?.rawDiffByPath[normalizedPath];
     if (raw == null || raw.isEmpty) {
       final diffPaths = _uniqueFilePathsInDiff();
@@ -1024,9 +1339,9 @@ class _DiffShellState extends State<DiffShell> {
       }
       return normalizedPath.isNotEmpty;
     }
-    // Fresh files and synthetic untracked patches have no committed ancestor
-    // in HEAD, so `git blame` is guaranteed to fail for this session.
-    if (raw.contains('\nnew file mode ') || raw.contains('--- /dev/null')) {
+    // Header-bounded, never a whole-text contains: hunk content can forge
+    // the new-file markers byte-identically (see the helper's doc).
+    if (unifiedDiffHeaderDeclaresNewFile(raw)) {
       return false;
     }
     return true;
@@ -1139,6 +1454,26 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   Set<String> _uniqueFilePathsInDiff() {
+    // A lazy document already carries file topology in its sparse index
+    // metadata. Never discover it by walking `lines`: indexed access hydrates
+    // rows, so a traversal would materialize a machine-scale diff merely to
+    // decide which toolbar controls to show.
+    if (_lazyDoc) {
+      final document = _currentDocument;
+      if (document != null) {
+        final paths = document.sections
+            .map((section) => section.path)
+            .where((path) => path.isNotEmpty)
+            .toSet();
+        if (paths.isEmpty) {
+          paths.addAll(document.filesByPath.keys.where((p) => p.isNotEmpty));
+        }
+        if (paths.isNotEmpty) {
+          return paths;
+        }
+      }
+      return <String>{widget.filePath};
+    }
     final paths = <String>{};
     for (final line in _lines) {
       final p = line.filePath;
@@ -1188,55 +1523,89 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _syncLogosRuntime({required bool forceRefresh}) {
-    _profileUiSync(
-      'diff.shell.logos-sync',
-      () {
-        final externalSession = widget.logosSession;
-        if (externalSession != null) {
-          _bindLogosSession(externalSession, disposeOldOwned: true);
-          _applyLatestLogosState();
-          _syncLogosSubscriptions();
-          return;
-        }
-
-        final repoPath = widget.repositoryPath;
-        final diffText = _effectiveDiffContent;
-        if (repoPath == null || diffText == null || diffText.isEmpty) {
-          _bindLogosSession(null, disposeOldOwned: true);
-          if (mounted) {
-            setState(() {
-              _logosLoading = false;
-              _refreshDisplayLines();
-            });
-          }
-          return;
-        }
-
-        final request = DiffLogosRequest(
-          repositoryPath: repoPath,
-          diffText: diffText,
-          parsedLines: _lines,
-          parsedMetadata: DiffLogosParsedMetadata(
-            touchedPaths: _uniqueFilePathsInDiff(),
-            hunkCount: _hunks.length,
-          ),
-          spectralCoupling: widget.spectralCoupling,
-          revisionRef: _activeRevisionRef,
-          couplingMatrix: widget.couplingMatrix,
-          warmEngine: _logosSession?.logos?.engine,
-        );
-        final session = _ownedLogosSession ??=
-            DiffLogosFacade.instance.createSession(request);
-        _bindLogosSession(session, disposeOldOwned: false);
+    _profileUiSync('diff.shell.logos-sync', () {
+      final externalSession = widget.logosSession;
+      if (externalSession != null) {
+        _bindLogosSession(externalSession, disposeOldOwned: true);
         _applyLatestLogosState();
-        if (_logosSession == session &&
-            (forceRefresh || session.cacheKey.isEmpty)) {
-          unawaited(session.refresh(request).catchError((_) => null));
-        }
         _syncLogosSubscriptions();
-      },
-      errorCode: 'diff.shell.logos-sync_failed',
-    );
+        return;
+      }
+
+      final repoPath = widget.repositoryPath;
+      if (repoPath == null) {
+        _bindLogosSession(null, disposeOldOwned: true);
+        if (mounted) {
+          setState(() {
+            _logosLoading = false;
+            _refreshDisplayLines();
+          });
+        }
+        return;
+      }
+
+      // Lean gate (see [kLeanDiffLineThreshold]): the spectral runtime
+      // hashes every parsed line to key its cache and builds a per-file
+      // engine over the whole diff. On a multi-million-line machine diff
+      // that is both unaffordable and meaningless (no human is reading
+      // structure into a regenerated dataset). Skip it entirely; the diff
+      // still renders and scrolls.
+      if (_lines.length > kLeanDiffLineThreshold) {
+        _bindLogosSession(null, disposeOldOwned: true);
+        if (mounted) {
+          setState(() {
+            _logosLoading = false;
+            _refreshDisplayLines();
+          });
+        }
+        return;
+      }
+
+      // Logos' entropy input is the parsed document. Some older probes still
+      // accept unified-diff text, so file-backed documents provide a compact
+      // structural envelope instead of materializing the entire spool. This
+      // preserves paths, hunk coordinates and a document-specific cache key;
+      // the actual changed-row signal continues through `parsedLines`, and
+      // REAL hunk bodies through `parsedHunks` below — without them the
+      // facade's parseDiffHunks(diffText) fallback would analyze the
+      // header-only envelope and every per-hunk tag/importance signal
+      // would be empty on exactly the machine-scale diffs this path serves.
+      final fileBacked = _effectiveDiffContent == null;
+      final diffText = fileBacked
+          ? buildFileBackedLogosStructuralDiff(_currentDocument!)
+          : _effectiveDiffContent!;
+      if (diffText.isEmpty) {
+        _bindLogosSession(null, disposeOldOwned: true);
+        return;
+      }
+
+      final request = DiffLogosRequest(
+        repositoryPath: repoPath,
+        diffText: diffText,
+        parsedLines: _lines,
+        parsedMetadata: DiffLogosParsedMetadata(
+          touchedPaths: _uniqueFilePathsInDiff(),
+          hunkCount: _hunks.length,
+          // Only needed when diffText is the envelope: String-backed
+          // requests carry the full raw diff, which the facade parses
+          // itself.
+          parsedHunks: fileBacked ? _buildParsedHunksFromRows() : null,
+        ),
+        spectralCoupling: widget.spectralCoupling,
+        revisionRef: _activeRevisionRef,
+        couplingMatrix: widget.couplingMatrix,
+        warmEngine: _logosSession?.logos?.engine,
+      );
+      final session = _ownedLogosSession ??= DiffLogosFacade.instance
+          .createSession(request);
+      _bindLogosSession(session, disposeOldOwned: false);
+      _applyLatestLogosState();
+      if (_logosSession == session &&
+          (forceRefresh || session.cacheKey.isEmpty)) {
+        unawaited(session.refresh(request).catchError((_) => null));
+      }
+      _syncLogosSubscriptions();
+    }, errorCode: 'diff.shell.logos-sync_failed');
   }
 
   void _applyLatestLogosState() {
@@ -1270,14 +1639,16 @@ class _DiffShellState extends State<DiffShell> {
       return _uniqueFilePathsInDiff();
     }
     final desired = <String>{};
-    final viewport =
-        _scrollCtrl.hasClients ? _scrollCtrl.position.viewportDimension : 0.0;
+    final viewport = _scrollCtrl.hasClients
+        ? _scrollCtrl.position.viewportDimension
+        : 0.0;
     final scrollOff = _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
-    final start = _displayIndexForOffset(scrollOff)
-        .clamp(0, _displayLines.length - 1);
+    final start = _displayIndexForOffset(
+      scrollOff,
+    ).clamp(0, _displayLines.length - 1);
     final end = _displayIndexForOffset(
-            scrollOff + math.max(viewport, _kLineItemExtent * 24))
-        .clamp(0, _displayLines.length);
+      scrollOff + math.max(viewport, _kLineItemExtent * 24),
+    ).clamp(0, _displayLines.length);
     for (var i = start; i < end; i++) {
       final path = _displayLines[i].filePath ?? widget.filePath;
       if (path.isNotEmpty) {
@@ -1328,7 +1699,6 @@ class _DiffShellState extends State<DiffShell> {
     final text = '... $hiddenCount unchanged lines$range ...';
     return ParsedLine(
       text: text,
-      lowerText: text.toLowerCase(),
       kind: LineKind.meta,
       filePath: filePath,
       hunkIndex: hunkIndex,
@@ -1377,7 +1747,8 @@ class _DiffShellState extends State<DiffShell> {
               currentPlan = _logosSession?.contextPlanFor(filePath);
               return currentPlan;
             })();
-      final hideContext = line.kind == LineKind.context &&
+      final hideContext =
+          line.kind == LineKind.context &&
           plan != null &&
           !plan.visibleFastKeys.contains(line.fastKey);
       if (!hideContext) {
@@ -1431,17 +1802,16 @@ class _DiffShellState extends State<DiffShell> {
     double transportedSupport = 0.0,
     double innovationResidual = 0.0,
     double witnessResidual = 0.0,
-  }) =>
-      math
-          .max(
-            importance,
-            math.max(
-              math.max(transportPull, transportedSupport),
-              math.max(innovationResidual, witnessResidual),
-            ),
-          )
-          .clamp(0.0, 1.0)
-          .toDouble();
+  }) => math
+      .max(
+        importance,
+        math.max(
+          math.max(transportPull, transportedSupport),
+          math.max(innovationResidual, witnessResidual),
+        ),
+      )
+      .clamp(0.0, 1.0)
+      .toDouble();
 
   double _importanceForHunkIndex(int hunkIdx) {
     if (hunkIdx < 0 || hunkIdx >= _hunks.length) return 0.0;
@@ -1495,10 +1865,12 @@ class _DiffShellState extends State<DiffShell> {
     final visible = <String>{};
     if (_scrollCtrl.hasClients && _displayLines.isNotEmpty) {
       final viewport = _scrollCtrl.position.viewportDimension;
-      final top = _displayIndexForOffset(_scrollCtrl.offset)
-          .clamp(0, _displayLines.length - 1);
-      final bottom = _displayIndexForOffset(_scrollCtrl.offset + viewport)
-          .clamp(0, _displayLines.length - 1);
+      final top = _displayIndexForOffset(
+        _scrollCtrl.offset,
+      ).clamp(0, _displayLines.length - 1);
+      final bottom = _displayIndexForOffset(
+        _scrollCtrl.offset + viewport,
+      ).clamp(0, _displayLines.length - 1);
       for (var i = top; i <= bottom; i++) {
         final p = _displayLines[i].filePath ?? widget.filePath;
         visible.add(p);
@@ -1537,7 +1909,8 @@ class _DiffShellState extends State<DiffShell> {
 
   Map<String, _AgeRange> _ageRangesByFile() {
     // Invalidate when the blame cache shape changes.
-    final key = _blameByFile.length * 10000 +
+    final key =
+        _blameByFile.length * 10000 +
         _blameByFile.values.fold<int>(0, (acc, m) => acc + m.length);
     if (_ageRangesCache != null && _ageRangesCacheKey == key) {
       return _ageRangesCache!;
@@ -1598,24 +1971,28 @@ class _DiffShellState extends State<DiffShell> {
 
     // Shared GYAT lattice — one instance per repo across all consumers.
     if (_gyat == null || _gyat!.repoPath != repoPath) {
-      gyatForRepo(repoPath).then((g) {
-        if (mounted) setState(() => _gyat = g);
-      }).catchError((_) {});
+      gyatForRepo(repoPath)
+          .then((g) {
+            if (mounted) setState(() => _gyat = g);
+          })
+          .catchError((_) {});
     }
 
-    analyzeFlowCached(absPath).then((result) {
-      if (!mounted || _flowAnalysisPath != absPath) return;
-      if (result == null || result.findings.isEmpty) return;
-      final map = <int, FlowFinding>{};
-      for (final f in result.findings) {
-        final lineNum = f.sourceLine + 1;
-        final existing = map[lineNum];
-        if (existing == null || f.certainty < existing.certainty) {
-          map[lineNum] = f;
-        }
-      }
-      if (map.isNotEmpty) setState(() => _flowFindingsByLine = map);
-    }).catchError((_) {});
+    analyzeFlowCached(absPath)
+        .then((result) {
+          if (!mounted || _flowAnalysisPath != absPath) return;
+          if (result == null || result.findings.isEmpty) return;
+          final map = <int, FlowFinding>{};
+          for (final f in result.findings) {
+            final lineNum = f.sourceLine + 1;
+            final existing = map[lineNum];
+            if (existing == null || f.certainty < existing.certainty) {
+              map[lineNum] = f;
+            }
+          }
+          if (map.isNotEmpty) setState(() => _flowFindingsByLine = map);
+        })
+        .catchError((_) {});
   }
 
   _PinnedPastContext? _buildPinnedPastContext(DiffPinnedContextModel? context) {
@@ -1706,8 +2083,9 @@ class _DiffShellState extends State<DiffShell> {
         return a.key.compareTo(b.key);
       });
     final topShare = authors.isEmpty ? 0.0 : authors.first.value / total;
-    final newestAgeDays =
-        newest == null ? 9999 : DateTime.now().difference(newest).inDays;
+    final newestAgeDays = newest == null
+        ? 9999
+        : DateTime.now().difference(newest).inDays;
     final ageSpreadDays = newest == null || oldest == null
         ? 0
         : newest.difference(oldest).inDays.abs();
@@ -1717,10 +2095,10 @@ class _DiffShellState extends State<DiffShell> {
     final tempoLabel = newestAgeDays <= 21
         ? (topShare >= 0.65 ? 'hot owner lane' : 'active seam')
         : (topShare >= 0.65
-            ? 'stable owner lane'
-            : ageSpreadDays >= 120
-                ? 'shared long-lived seam'
-                : 'shared lane');
+              ? 'stable owner lane'
+              : ageSpreadDays >= 120
+              ? 'shared long-lived seam'
+              : 'shared lane');
     final lineHeatSamples = <double>[];
     for (var candidate = lineNum - 8; candidate <= lineNum + 8; candidate++) {
       final blame = blameMap[candidate];
@@ -1734,7 +2112,8 @@ class _DiffShellState extends State<DiffShell> {
           lineHeatSamples.add(0.65);
           continue;
         }
-        final heat = authored.difference(oldest).inSeconds /
+        final heat =
+            authored.difference(oldest).inSeconds /
             spanSeconds.clamp(1, 1 << 30);
         lineHeatSamples.add((0.18 + 0.82 * heat).clamp(0.0, 1.0));
       } catch (_) {
@@ -1750,10 +2129,7 @@ class _DiffShellState extends State<DiffShell> {
         lastTouchLabel: lastTouchLabel,
         nearbyAuthors: [
           for (final author in authors.take(2))
-            _PinnedAuthorShare(
-              name: author.key,
-              share: author.value / total,
-            ),
+            _PinnedAuthorShare(name: author.key, share: author.value / total),
         ],
         lineHeatSamples: lineHeatSamples,
       ),
@@ -1817,9 +2193,7 @@ class _DiffShellState extends State<DiffShell> {
         if (seg.isBinary) return offset;
         return offset + (idx - seg.startDisplayIndex) * _lineItemExtent;
       }
-      offset += seg.isBinary
-          ? seg.height
-          : seg.lineCount * _lineItemExtent;
+      offset += seg.isBinary ? seg.height : seg.lineCount * _lineItemExtent;
     }
     return offset;
   }
@@ -1828,9 +2202,7 @@ class _DiffShellState extends State<DiffShell> {
     if (offset <= 0 || _segments.isEmpty) return 0;
     double cum = 0;
     for (final seg in _segments) {
-      final segH = seg.isBinary
-          ? seg.height
-          : seg.lineCount * _lineItemExtent;
+      final segH = seg.isBinary ? seg.height : seg.lineCount * _lineItemExtent;
       if (offset < cum + segH) {
         if (seg.isBinary) return seg.startDisplayIndex;
         return seg.startDisplayIndex +
@@ -1846,6 +2218,7 @@ class _DiffShellState extends State<DiffShell> {
   /// replacement, the partner is toggled coherently to the same target
   /// state. Does NOT apply on its own — callers should schedule apply.
   void _setLineStaged(int index, bool staged, {bool autoPair = true}) {
+    if (_windowedLazyDoc) return;
     if (index < 0 || index >= _lines.length) return;
     final line = _lines[index];
     if (line.kind != LineKind.added && line.kind != LineKind.deleted) return;
@@ -1866,6 +2239,7 @@ class _DiffShellState extends State<DiffShell> {
     required bool shift,
     required bool alt,
   }) {
+    if (_windowedLazyDoc) return;
     final idx = _lines.indexWhere((l) => identical(l, line));
     if (idx < 0) return;
     final target = !_lines[idx].isStaged;
@@ -1891,6 +2265,7 @@ class _DiffShellState extends State<DiffShell> {
   /// Double-click on a hunk header toggles every +/- line in that hunk.
   /// Target state = "stage all if any are unstaged, otherwise unstage all."
   void _handleHunkDoubleTap(int hunkIndex) {
+    if (_windowedLazyDoc) return;
     final inHunk = <int>[];
     for (int i = 0; i < _lines.length; i++) {
       final l = _lines[i];
@@ -1912,6 +2287,7 @@ class _DiffShellState extends State<DiffShell> {
 
   /// Toggle every +/- line across the diff. Bound to F key.
   void _handleFileStageToggle() {
+    if (_windowedLazyDoc) return;
     final targetables = <int>[];
     for (int i = 0; i < _lines.length; i++) {
       final k = _lines[i].kind;
@@ -1929,6 +2305,7 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _beginPaint(ParsedLine line) {
+    if (_windowedLazyDoc) return;
     final idx = _lines.indexWhere((l) => identical(l, line));
     if (idx < 0) return;
     _paintActive = true;
@@ -1984,10 +2361,13 @@ class _DiffShellState extends State<DiffShell> {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
-    final isShift = HardwareKeyboard.instance
-            .isLogicalKeyPressed(LogicalKeyboardKey.shiftLeft) ||
-        HardwareKeyboard.instance
-            .isLogicalKeyPressed(LogicalKeyboardKey.shiftRight);
+    final isShift =
+        HardwareKeyboard.instance.isLogicalKeyPressed(
+          LogicalKeyboardKey.shiftLeft,
+        ) ||
+        HardwareKeyboard.instance.isLogicalKeyPressed(
+          LogicalKeyboardKey.shiftRight,
+        );
 
     if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyJ) {
       _moveKeyboardCursor(1);
@@ -1998,8 +2378,14 @@ class _DiffShellState extends State<DiffShell> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyP && _keyboardLineIndex != null) {
-      final displayIdx = _displayLineIndex[_lines[_keyboardLineIndex!].fastKey];
-      if (displayIdx != null) {
+      // Windowed docs: display index == source index (unfiltered), and their
+      // _displayLineIndex map is deliberately empty — index directly instead.
+      final displayIdx = _windowedLazyDoc
+          ? _keyboardLineIndex
+          : _displayLineIndex[_lines[_keyboardLineIndex!].fastKey];
+      if (displayIdx != null &&
+          displayIdx >= 0 &&
+          displayIdx < _displayLines.length) {
         _togglePinLine(displayIdx);
         return KeyEventResult.handled;
       }
@@ -2032,6 +2418,26 @@ class _DiffShellState extends State<DiffShell> {
 
   void _moveKeyboardCursor(int delta) {
     if (_lines.isEmpty) return;
+    // Residency, not representation, decides the nav strategy: a fully-
+    // resident lazy document iterates as cheaply as an eager one and keeps
+    // the normal skip-the-paired-add walk below.
+    if (_windowedLazyDoc && _searchTerm.isEmpty) {
+      // Machine-scale diff: find the next changed row via the index scanner
+      // (no full-list iteration), then jump there. Display index == source
+      // index in the unfiltered lazy view.
+      final lazy = _lines as LazyDiffLines;
+      final from = _keyboardLineIndex == null
+          ? (delta > 0 ? 0 : lazy.length - 1)
+          : _keyboardLineIndex! + delta;
+      final next = lazy.nextChangedLine(from, delta > 0 ? 1 : -1);
+      if (next < 0) return;
+      setState(() => _keyboardLineIndex = next);
+      _jumpToDisplayIndex(next);
+      return;
+    }
+    if (_windowedLazyDoc) {
+      return; // (windowed filtered search view: nav handled by results list)
+    }
     int start = _keyboardLineIndex ?? -1;
     int cur = start;
     for (int step = 0; step < _lines.length; step++) {
@@ -2190,7 +2596,13 @@ class _DiffShellState extends State<DiffShell> {
     required double a,
     required double currentOffset,
   }) {
-    if (_hunks.isEmpty) {
+    // Same rationale as the gravity guard in [_onScrollEnd]: the hot-hunk
+    // settle prediction now reads `_hunkDisplayRows` (populated on windowed
+    // docs) instead of the empty-on-windowed `_displayLineIndex`, so it began
+    // firing on machine-scale multi-file diffs where it was previously inert.
+    // Keep it off there — windowed docs opt out of whole-document coordinate
+    // features by design.
+    if (_windowedLazyDoc || _hunks.isEmpty) {
       _clearHotHunk();
       return;
     }
@@ -2200,19 +2612,17 @@ class _DiffShellState extends State<DiffShell> {
       return;
     }
 
-    // Translate each hunk's source-index (into `_lines`) into a
-    // display-line index via the existing O(1) fastKey map so the
-    // distance comparison happens in the same coordinate system as
-    // the prediction. Hunk headers are never filtered out, so every
-    // lookup resolves — no null checks past the bounds.
+    // Compare in display coordinates via _hunkDisplayRows — the per-hunk
+    // display index every refresh path maintains. This runs mid-scroll, so
+    // it must never touch _displayLineIndex: that map's lazy build is an
+    // O(document) pass (plus spool hydration on lazy docs), and windowed
+    // documents keep it deliberately empty.
     const windowLines = 6;
     int? bestHunk;
     var bestDistance = windowLines + 1;
-    for (var i = 0; i < _hunks.length; i++) {
-      final h = _hunks[i];
-      if (h.lineIndex < 0 || h.lineIndex >= _lines.length) continue;
-      final displayIdx = _displayLineIndex[_lines[h.lineIndex].fastKey];
-      if (displayIdx == null) continue;
+    for (var i = 0; i < _hunks.length && i < _hunkDisplayRows.length; i++) {
+      final displayIdx = _hunkDisplayRows[i];
+      if (displayIdx < 0 || displayIdx >= _displayLines.length) continue;
       final d = (displayIdx - settleLineIdx).abs();
       if (d < bestDistance) {
         bestDistance = d;
@@ -2252,13 +2662,19 @@ class _DiffShellState extends State<DiffShell> {
     if (seen != null) {
       final ageMs = DateTime.now().difference(seen).inMilliseconds;
       if (ageMs < 900) {
-        Future.delayed(Duration(milliseconds: 900 - ageMs), () {
+        // Re-entrant during the same decay window (a fast scroll calls this
+        // many times a second) — replace, never stack, the pending callback.
+        _hotHunkDecayTimer?.cancel();
+        _hotHunkDecayTimer = Timer(Duration(milliseconds: 900 - ageMs), () {
+          _hotHunkDecayTimer = null;
           if (!mounted) return;
           _clearHotHunk();
         });
         return;
       }
     }
+    _hotHunkDecayTimer?.cancel();
+    _hotHunkDecayTimer = null;
     _hotHunkIdx = null;
     _hotHunkStrength = 0.0;
     _hotHunkSeenAt = null;
@@ -2291,7 +2707,7 @@ class _DiffShellState extends State<DiffShell> {
     if (!mounted || seq != _pinSeq) return;
     setState(() {
       _pinnedFastKey = fastKey;
-      _pinnedDisplayIdx = _displayLineIndex[fastKey];
+      _pinnedDisplayIdx = _resolvePinnedDisplayIdx(fastKey);
       _pinnedCtx = ctx;
     });
   }
@@ -2317,8 +2733,8 @@ class _DiffShellState extends State<DiffShell> {
         revisionRef: _activeRevisionRef,
         queryPathOverride:
             (_activeRevisionRef != null && _trailSelectedPath != null)
-                ? _trailSelectedPath
-                : (line.filePath ?? widget.filePath),
+            ? _trailSelectedPath
+            : (line.filePath ?? widget.filePath),
         warmEngine: _logosSession?.logos?.engine,
         session: _logosSession,
         blame: blame,
@@ -2333,8 +2749,28 @@ class _DiffShellState extends State<DiffShell> {
     _pinSeq++;
   }
 
-  bool _sourceContainsFastKey(int fastKey) =>
-      _lines.any((line) => line.fastKey == fastKey);
+  bool _sourceContainsFastKey(int fastKey) {
+    // Windowed documents: `.any` would hydrate every row from the spool — an
+    // O(document) disk pass. There display index == source index (nothing is
+    // filtered), so "absent from display" already means "absent from source";
+    // [_resolvePinnedDisplayIdx] answered that with a single-row hydration.
+    if (_windowedLazyDoc) return false;
+    return _lines.any((line) => line.fastKey == fastKey);
+  }
+
+  /// Resolve the pinned fastKey to its display index without whole-list work.
+  /// Resident docs use the cached [_displayLineIndex] map. Windowed docs keep
+  /// that map deliberately empty, but their display order is the unfiltered
+  /// source order — the stored [_pinnedDisplayIdx] stays authoritative and is
+  /// verified by hydrating exactly one row.
+  int? _resolvePinnedDisplayIdx(int fastKey) {
+    if (_windowedLazyDoc) {
+      final idx = _pinnedDisplayIdx;
+      if (idx == null || idx < 0 || idx >= _displayLines.length) return null;
+      return _displayLines[idx].fastKey == fastKey ? idx : null;
+    }
+    return _displayLineIndex[fastKey];
+  }
 
   void _reconcilePinnedLine() {
     final fastKey = _pinnedFastKey;
@@ -2343,7 +2779,7 @@ class _DiffShellState extends State<DiffShell> {
       return;
     }
     final previousDisplayIdx = _pinnedDisplayIdx;
-    _pinnedDisplayIdx = _displayLineIndex[fastKey];
+    _pinnedDisplayIdx = _resolvePinnedDisplayIdx(fastKey);
     if (_pinnedDisplayIdx != null || _sourceContainsFastKey(fastKey)) {
       if (_pinnedDisplayIdx != null &&
           previousDisplayIdx != _pinnedDisplayIdx) {
@@ -2357,7 +2793,7 @@ class _DiffShellState extends State<DiffShell> {
   void _schedulePinnedContextRefresh() {
     final fastKey = _pinnedFastKey;
     if (fastKey == null) return;
-    final displayIdx = _displayLineIndex[fastKey];
+    final displayIdx = _resolvePinnedDisplayIdx(fastKey);
     if (displayIdx == null) {
       if (!_sourceContainsFastKey(fastKey) && mounted) {
         setState(_clearPinnedLine);
@@ -2367,7 +2803,7 @@ class _DiffShellState extends State<DiffShell> {
     final seq = ++_pinSeq;
     _computePinContext(displayIdx).then((ctx) {
       if (!mounted || seq != _pinSeq) return;
-      final resolvedIdx = _displayLineIndex[fastKey];
+      final resolvedIdx = _resolvePinnedDisplayIdx(fastKey);
       if (resolvedIdx == null && !_sourceContainsFastKey(fastKey)) {
         setState(_clearPinnedLine);
         return;
@@ -2395,8 +2831,9 @@ class _DiffShellState extends State<DiffShell> {
     }
 
     if (_scrollCtrl.hasClients) {
-      final topIndex = _displayIndexForOffset(_scrollCtrl.offset)
-          .clamp(0, _displayLines.length - 1);
+      final topIndex = _displayIndexForOffset(
+        _scrollCtrl.offset,
+      ).clamp(0, _displayLines.length - 1);
       addCandidate(_displayLines[topIndex].filePath ?? widget.filePath);
     }
 
@@ -2436,8 +2873,9 @@ class _DiffShellState extends State<DiffShell> {
     final filePath = widget.filePath;
     if (filePath.isEmpty) return;
     final scopeKey = _temporalMarkScopeKey(filePath);
-    final topIdx = _displayIndexForOffset(_scrollCtrl.offset)
-        .clamp(0, _displayLines.length - 1);
+    final topIdx = _displayIndexForOffset(
+      _scrollCtrl.offset,
+    ).clamp(0, _displayLines.length - 1);
     final line = _displayLines[topIdx];
     final unit = _unitByFastKey[line.fastKey];
     if (unit == null) return;
@@ -2466,6 +2904,12 @@ class _DiffShellState extends State<DiffShell> {
       _scrollCtrl.jumpTo(0);
       return;
     }
+    // No units → nothing can match; skip instead of hydrating every row of a
+    // windowed machine-scale document just to conclude "not found".
+    if (_unitByFastKey.isEmpty) {
+      _scrollCtrl.jumpTo(0);
+      return;
+    }
     int? targetIdx;
     for (int i = 0; i < _displayLines.length; i++) {
       final unit = _unitByFastKey[_displayLines[i].fastKey];
@@ -2489,7 +2933,9 @@ class _DiffShellState extends State<DiffShell> {
     final viewH = _scrollCtrl.position.viewportDimension;
     final raw = _offsetForDisplayIndex(targetIdx) - viewH * 0.25;
     final maxExt = math.max(
-      _scrollCtrl.position.maxScrollExtent, _totalEstimatedExtent);
+      _scrollCtrl.position.maxScrollExtent,
+      _totalEstimatedExtent,
+    );
     final target = raw.clamp(0.0, maxExt);
     _scrollCtrl.jumpTo(target);
 
@@ -2510,6 +2956,17 @@ class _DiffShellState extends State<DiffShell> {
 
   bool _onScrollEnd(ScrollEndNotification n) {
     if (_gravitySnapping) return false;
+    // Windowed (machine-scale / spool-backed) documents skip gravity, exactly
+    // as they did before hunk-nav was moved off the (deliberately-empty on
+    // windowed docs) `_displayLineIndex` map onto `_hunkDisplayRows`. That
+    // move made gravity/hot-hunk fire on windowed docs for the first time —
+    // an unintended behavior change: a post-frame `motionAnimateTo` yanking
+    // the viewport toward the nearest hunk on every scroll-end of a giant
+    // multi-file diff. Windowed docs deliberately opt out of whole-document
+    // coordinate features (staging, edit-units, the index map); gravity
+    // belongs in that same set. Resident docs keep it (via `_hunkDisplayRows`,
+    // which is the point of the map-free path).
+    if (_windowedLazyDoc) return false;
     // Skip hunk-gravity snap when we just landed from a programmatic
     // jump — the jump target was explicit, snapping would yank it
     // back. Consume the flag so subsequent user scrolls snap normally.
@@ -2530,13 +2987,15 @@ class _DiffShellState extends State<DiffShell> {
     const threshold = _kGravityLineRadius * _lineItemExtent;
     double? best;
     double bestDist = double.infinity;
-    for (final h in _hunks) {
-      // h.lineIndex indexes into _lines; find the same ParsedLine in
-      // _displayLines (hunk rows are never filtered out by pair collapse or
-      // search) so the offset matches what the user actually sees.
-      if (h.lineIndex < 0 || h.lineIndex >= _lines.length) continue;
-      final idx = _displayLineIndex[_lines[h.lineIndex].fastKey];
-      if (idx == null) continue;
+    for (var i = 0; i < _hunks.length && i < _hunkDisplayRows.length; i++) {
+      // _hunkDisplayRows is the per-hunk display index, maintained by every
+      // display-refresh path (including the windowed fast path where display
+      // index == source index). Using it here — instead of resolving through
+      // _displayLineIndex — keeps the scroll-end path free of that map's
+      // lazy O(document) build+hydration, and makes gravity work on windowed
+      // documents where the map is deliberately empty.
+      final idx = _hunkDisplayRows[i];
+      if (idx < 0 || idx >= _displayLines.length) continue;
       final hOffset = _offsetForDisplayIndex(idx);
       final d = (hOffset - offset).abs();
       if (d < bestDist) {
@@ -2570,23 +3029,25 @@ class _DiffShellState extends State<DiffShell> {
     // Integer equality on fastKey — avoids string compare per candidate,
     // and hot on keyboard j/k navigation across large diffs.
     final targetKey = line.fastKey;
-    final displayIdx = _displayLines.indexWhere(
-      (l) => l.fastKey == targetKey,
-    );
+    final displayIdx = _displayLines.indexWhere((l) => l.fastKey == targetKey);
     if (displayIdx < 0) return;
     final targetY = _offsetForDisplayIndex(displayIdx);
     final viewH = _scrollCtrl.position.viewportDimension;
     final offset = _scrollCtrl.offset;
     if (targetY < offset) {
-      _scrollCtrl.motionAnimateTo(targetY,
-          context: context,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut);
+      _scrollCtrl.motionAnimateTo(
+        targetY,
+        context: context,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
     } else if (targetY > offset + viewH - _lineItemExtent) {
-      _scrollCtrl.motionAnimateTo(targetY - viewH + _lineItemExtent * 2,
-          context: context,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut);
+      _scrollCtrl.motionAnimateTo(
+        targetY - viewH + _lineItemExtent * 2,
+        context: context,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -2597,7 +3058,7 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   Future<void> _runApply() async {
-    if (!_stagingEnabled || _applying) {
+    if (!_stagingEnabled || _windowedLazyDoc || _applying) {
       if (_applying) _scheduleApply();
       return;
     }
@@ -2671,12 +3132,33 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _refreshDisplayLines() {
+    // Machine-scale (windowed) diff: collapse/logos are inert, but SEARCH
+    // still works — via the index's raw scanner instead of iterating
+    // (hydrating) every row. A fully-RESIDENT lazy document takes the normal
+    // eager display pipeline below instead: its rows are all materialized,
+    // so auto-collapse, binary-media detection, segments, and search-with-
+    // context cost the same as eager — storage representation alone must
+    // not downgrade the review surface. (Edit-unit features stay inert on
+    // any lazy doc: units are never built there by design.)
+    if (_windowedLazyDoc) {
+      final term = _searchTerm.toLowerCase();
+      if (term.isEmpty) {
+        _setDisplayLines(_lines); // unfiltered fast path
+        return;
+      }
+      final lazy = _lines as LazyDiffLines;
+      final matchIdx = lazy.findMatchingLines(term);
+      _setLazySearchDisplayLines(<ParsedLine>[
+        for (final i in matchIdx) lazy[i],
+      ]);
+      return;
+    }
     final stopwatch = Stopwatch()..start();
     final filtered = _pairedAddFastKeys.isEmpty
         ? _lines
         : _lines
-            .where((line) => !_pairedAddFastKeys.contains(line.fastKey))
-            .toList(growable: false);
+              .where((line) => !_pairedAddFastKeys.contains(line.fastKey))
+              .toList(growable: false);
     final unitMap = _unitByFastKey;
 
     // Un-staged lines are no longer filtered out completely. They remain in the UI
@@ -2707,17 +3189,19 @@ class _DiffShellState extends State<DiffShell> {
     // See ParsedLine.charBits / ParsedLine.bigramBits for the schemes.
     final termBits = ParsedLine.queryCharBits(term);
     final termBi = ParsedLine.queryBigramBits(term);
-    _setDisplayLines(filtered.where((line) {
-      if ((line.charBits & termBits) == termBits &&
-          (line.bigramBits & termBi) == termBi) {
-        if (line.lowerText.contains(term)) return true;
-      }
-      final unit = unitMap[line.fastKey];
-      if (unit == null) return false;
-      if ((unit.charBits & termBits) != termBits) return false;
-      if ((unit.bigramBits & termBi) != termBi) return false;
-      return unit.searchText.contains(term);
-    }).toList());
+    _setDisplayLines(
+      filtered.where((line) {
+        if ((line.charBits & termBits) == termBits &&
+            (line.bigramBits & termBi) == termBi) {
+          if (line.lowerText.contains(term)) return true;
+        }
+        final unit = unitMap[line.fastKey];
+        if (unit == null) return false;
+        if ((unit.charBits & termBits) != termBits) return false;
+        if ((unit.bigramBits & termBi) != termBi) return false;
+        return unit.searchText.contains(term);
+      }).toList(),
+    );
     _recordUiTimingIfSlow(
       event: 'diff.shell.refresh-display',
       stopwatch: stopwatch,
@@ -2729,7 +3213,8 @@ class _DiffShellState extends State<DiffShell> {
   /// can reorder across a same-document refresh). The (filePath,
   /// fileHunkIndex) coordinate is the same one `_filterCollapsedHunkBodies`
   /// and the ParsedLine body rows key against.
-  static String _hunkKey(_HunkHeader h) => '${h.filePath}\u0000${h.fileHunkIndex}';
+  static String _hunkKey(_HunkHeader h) =>
+      '${h.filePath}\u0000${h.fileHunkIndex}';
 
   /// Strip body rows for hunks the user has collapsed (or that the
   /// adaptive default collapsed on our behalf). Hunk-header rows are
@@ -2800,9 +3285,7 @@ class _DiffShellState extends State<DiffShell> {
       for (final h in _hunks) _logosSignalForHeader(h)?.importance ?? 0.0,
     ];
     final foldIdx = autoCollapseFoldIndices(importances);
-    _collapsedHunks = <String>{
-      for (final i in foldIdx) _hunkKey(_hunks[i]),
-    };
+    _collapsedHunks = <String>{for (final i in foldIdx) _hunkKey(_hunks[i])};
   }
 
   /// Toggle the collapse state of a single hunk. Called when the user
@@ -2843,7 +3326,56 @@ class _DiffShellState extends State<DiffShell> {
   /// lookup in one shot. Every caller that used to write
   /// `_displayLines = x` should go through here so the index never
   /// goes stale.
+  /// Display a search result over a lazy diff: [matches] are the (already
+  /// materialized) rows that contain the term. Single text segment; hunk rows
+  /// map into the filtered view via the shared helper.
+  void _setLazySearchDisplayLines(List<ParsedLine> matches) {
+    _displayLines = matches;
+    _binaryMediaIndices = const {};
+    _binaryMediaFiles = const {};
+    _displayLineIndexCache = null;
+    _segments = matches.isEmpty
+        ? const []
+        : [
+            _DiffSegment(
+              startDisplayIndex: 0,
+              lineCount: matches.length,
+              isBinary: false,
+            ),
+          ];
+    _hunkDisplayRows = _hunks.isEmpty
+        ? const []
+        : computeHunkDisplayRows(_lines, [
+            for (final h in _hunks) h.lineIndex,
+          ], matches);
+    _reconcilePinnedLine();
+    _syncLogosSubscriptions();
+  }
+
   void _setDisplayLines(List<ParsedLine> lines) {
+    if (_windowedLazyDoc) {
+      // Fast path: unfiltered, single text segment, hunk rows straight from
+      // source indices (display index == source index when nothing is
+      // filtered). Zero iteration of the lazy row list. Fully-resident lazy
+      // docs take the eager pipeline below (see _refreshDisplayLines).
+      _displayLines = lines;
+      _binaryMediaIndices = const {};
+      _binaryMediaFiles = const {};
+      _displayLineIndexCache = null;
+      _segments = lines.isEmpty
+          ? const []
+          : [
+              _DiffSegment(
+                startDisplayIndex: 0,
+                lineCount: lines.length,
+                isBinary: false,
+              ),
+            ];
+      _hunkDisplayRows = [for (final h in _hunks) h.lineIndex];
+      _reconcilePinnedLine();
+      _syncLogosSubscriptions();
+      return;
+    }
     _recomputeAutoCollapseIfNeeded();
     // Search bypasses the collapse filter — a matching line hidden
     // inside a collapsed hunk needs to surface when the user types
@@ -2893,7 +3425,9 @@ class _DiffShellState extends State<DiffShell> {
 
     final prevHeights = <String, double>{
       for (final seg in _segments)
-        if (seg.isBinary && seg.binaryFile != null && seg.renderedHeight != null)
+        if (seg.isBinary &&
+            seg.binaryFile != null &&
+            seg.renderedHeight != null)
           seg.binaryFile!.path: seg.renderedHeight!,
     };
 
@@ -2913,11 +3447,13 @@ class _DiffShellState extends State<DiffShell> {
       for (var i = 0; i < _displayLines.length; i++) {
         if (_binaryMediaIndices.contains(i)) {
           if (i > textStart) {
-            segs.add(_DiffSegment(
-              startDisplayIndex: textStart,
-              lineCount: i - textStart,
-              isBinary: false,
-            ));
+            segs.add(
+              _DiffSegment(
+                startDisplayIndex: textStart,
+                lineCount: i - textStart,
+                isBinary: false,
+              ),
+            );
           }
           final file = _binaryMediaFiles[i];
           final seg = _DiffSegment(
@@ -2934,38 +3470,37 @@ class _DiffShellState extends State<DiffShell> {
         }
       }
       if (textStart < _displayLines.length) {
-        segs.add(_DiffSegment(
-          startDisplayIndex: textStart,
-          lineCount: _displayLines.length - textStart,
-          isBinary: false,
-        ));
+        segs.add(
+          _DiffSegment(
+            startDisplayIndex: textStart,
+            lineCount: _displayLines.length - textStart,
+            isBinary: false,
+          ),
+        );
       }
       _segments = segs;
     }
 
+    // Invalidate the per-line lookup map; it rebuilds lazily only if a
+    // navigation/pin lookup actually happens (see [_displayLineIndex]).
+    _displayLineIndexCache = null;
+
     if (_displayLines.isEmpty) {
-      _displayLineIndex = const {};
       _hunkDisplayRows = const [];
       _reconcilePinnedLine();
       _syncLogosSubscriptions();
       return;
     }
-    final idx = <int, int>{};
-    for (var i = 0; i < _displayLines.length; i++) {
-      idx[_displayLines[i].fastKey] = i;
-    }
-    _displayLineIndex = idx;
     if (_hunks.isEmpty) {
       _hunkDisplayRows = const [];
       return;
     }
-    final rows = List<int>.filled(_hunks.length, -1);
-    for (var i = 0; i < _hunks.length; i++) {
-      final hi = _hunks[i].lineIndex;
-      if (hi < 0 || hi >= _lines.length) continue;
-      rows[i] = idx[_lines[hi].fastKey] ?? -1;
-    }
-    _hunkDisplayRows = rows;
+    // Build hunk → display-row WITHOUT materialising the full per-line map
+    // (that map is now lazy — see [_displayLineIndex]). Extracted + tested for
+    // equivalence to the old full-map lookup; see [computeHunkDisplayRows].
+    _hunkDisplayRows = computeHunkDisplayRows(_lines, [
+      for (final h in _hunks) h.lineIndex,
+    ], _displayLines);
     _reconcilePinnedLine();
     _syncLogosSubscriptions();
   }
@@ -3009,14 +3544,11 @@ class _DiffShellState extends State<DiffShell> {
           else
             SliverFixedExtentList(
               itemExtent: _lineItemExtent,
-              delegate: SliverChildBuilderDelegate(
-                (ctx, localIdx) {
-                  final i = seg.startDisplayIndex + localIdx;
-                  if (i >= displayLines.length) return null;
-                  return textRowBuilder(ctx, i);
-                },
-                childCount: seg.lineCount,
-              ),
+              delegate: SliverChildBuilderDelegate((ctx, localIdx) {
+                final i = seg.startDisplayIndex + localIdx;
+                if (i >= displayLines.length) return null;
+                return textRowBuilder(ctx, i);
+              }, childCount: seg.lineCount),
             ),
         const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
       ],
@@ -3027,24 +3559,33 @@ class _DiffShellState extends State<DiffShell> {
     final painter = TextPainter(
       text: const TextSpan(
         text: 'M',
-        style: TextStyle(fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback, fontSize: 12),
+        style: TextStyle(
+          fontFamily: AppFonts.mono,
+          fontFamilyFallback: AppFonts.monoFallback,
+          fontSize: 12,
+        ),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
     )..layout();
     final charWidth = painter.width > 0 ? painter.width : 7.5;
     painter.dispose();
+    _monoCharWidth = charWidth;
     const gutterW = 56.0;
     const sidePad = 16.0;
     const minW = 400.0;
-    const maxW = 12000.0;
-    return (gutterW + sidePad + maxChars * charWidth).clamp(minW, maxW);
+    // Unclamped above the minimum: rows past _kMaxDirectRenderChars render
+    // positioned slices (X virtualization), so a wide extent costs nothing —
+    // and every column of every line is reachable.
+    final w = gutterW + sidePad + maxChars * charWidth;
+    return w < minW ? minW : w;
   }
 
   void _jumpToHunkIndex(int hunkIdx) {
     if (hunkIdx < 0 || hunkIdx >= _hunks.length) return;
-    final displayIdx =
-        hunkIdx < _hunkDisplayRows.length ? _hunkDisplayRows[hunkIdx] : -1;
+    final displayIdx = hunkIdx < _hunkDisplayRows.length
+        ? _hunkDisplayRows[hunkIdx]
+        : -1;
     if (displayIdx >= 0) {
       _jumpToDisplayIndex(displayIdx);
       return;
@@ -3106,9 +3647,7 @@ class _DiffShellState extends State<DiffShell> {
   double get _totalEstimatedExtent {
     double total = 0;
     for (final seg in _segments) {
-      total += seg.isBinary
-          ? seg.height
-          : seg.lineCount * _lineItemExtent;
+      total += seg.isBinary ? seg.height : seg.lineCount * _lineItemExtent;
     }
     return total;
   }
@@ -3121,12 +3660,17 @@ class _DiffShellState extends State<DiffShell> {
     return false;
   }
 
-  void _jumpToDisplayIndex(int displayIdx,
-      [int retries = 2, int measureWaits = 30]) {
+  void _jumpToDisplayIndex(
+    int displayIdx, [
+    int retries = 2,
+    int measureWaits = 30,
+  ]) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_scrollCtrl.hasClients) {
-        if (retries > 0) _jumpToDisplayIndex(displayIdx, retries - 1, measureWaits);
+        if (retries > 0) {
+          _jumpToDisplayIndex(displayIdx, retries - 1, measureWaits);
+        }
         return;
       }
       if (_hasUnmeasuredBinaryBefore(displayIdx) && measureWaits > 0) {
@@ -3137,10 +3681,9 @@ class _DiffShellState extends State<DiffShell> {
         _scrollCtrl.position.maxScrollExtent,
         _totalEstimatedExtent,
       );
-      final targetOffset = _offsetForDisplayIndex(displayIdx).clamp(
-        0.0,
-        maxExtent,
-      );
+      final targetOffset = _offsetForDisplayIndex(
+        displayIdx,
+      ).clamp(0.0, maxExtent);
       _programmaticScrollInFlight = true;
       _scrollCtrl.motionAnimateTo(
         targetOffset,
@@ -3175,7 +3718,11 @@ class _DiffShellState extends State<DiffShell> {
   _TrailViewState _captureTrailView() {
     return _TrailViewState(
       diffContent: _effectiveDiffContent ?? '',
-      lines: List<ParsedLine>.of(_lines),
+      document: _currentDocument,
+      // Retain the lazy list by reference. Copying it would hydrate every row;
+      // replacing it with an empty list would make file-backed views
+      // impossible to restore because they deliberately have no raw string.
+      lines: _lazyDoc ? _lines : List<ParsedLine>.of(_lines),
       hunks: List<_HunkHeader>.of(_hunks),
       pairedAddFastKeys: Set<int>.of(_pairedAddFastKeys),
       unitByFastKey: Map<int, EditUnit>.of(_unitByFastKey),
@@ -3185,8 +3732,10 @@ class _DiffShellState extends State<DiffShell> {
 
   void _restoreTrailView(_TrailViewState view) {
     _currentDiffContent = view.diffContent;
-    _currentDocument = null;
+    _currentDocument = view.document;
     _lines = view.lines;
+    _lazyDoc =
+        view.document?.lines is LazyDiffLines || view.lines is LazyDiffLines;
     _hunks = view.hunks;
     _rebuildHunkHeaderLookup();
     _pairedAddFastKeys = view.pairedAddFastKeys;
@@ -3414,6 +3963,13 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _reparse(String content) {
+    if (content.length > kLazyDiffLengthThreshold) {
+      // Trail-scrub onto a giant historical file: index async, don't freeze.
+      _startAsyncBuild(content);
+      return;
+    }
+    _asyncBuildSeq++;
+    _asyncBuilding = false;
     _applyDocument(
       DiffDocument.fromRawContent(
         rawContent: content,
@@ -3434,23 +3990,25 @@ class _DiffShellState extends State<DiffShell> {
     // commit voice, update channel, …) don't invalidate the entire
     // diff body. Dart records use structural equality, so the rebuild
     // fires only on a genuine value change.
-    final motionPrefs = context.select<
-        PreferencesState,
-        ({
-          bool reduceMotion,
-          double motionRate,
-          bool instantBlameHover,
-          bool diffMediaEnabled,
-          bool diffBinaryEnabled,
-        })>(
-      (s) => (
-        reduceMotion: s.reduceMotion,
-        motionRate: s.motionRate,
-        instantBlameHover: s.instantBlameHover,
-        diffMediaEnabled: s.diffMediaEnabled,
-        diffBinaryEnabled: s.diffBinaryEnabled,
-      ),
-    );
+    final motionPrefs = context
+        .select<
+          PreferencesState,
+          ({
+            bool reduceMotion,
+            double motionRate,
+            bool instantBlameHover,
+            bool diffMediaEnabled,
+            bool diffBinaryEnabled,
+          })
+        >(
+          (s) => (
+            reduceMotion: s.reduceMotion,
+            motionRate: s.motionRate,
+            instantBlameHover: s.instantBlameHover,
+            diffMediaEnabled: s.diffMediaEnabled,
+            diffBinaryEnabled: s.diffBinaryEnabled,
+          ),
+        );
     _reduceMotion = motionPrefs.reduceMotion;
     _motionRate = motionPrefs.motionRate;
     _instantBlameHover = motionPrefs.instantBlameHover;
@@ -3458,15 +4016,16 @@ class _DiffShellState extends State<DiffShell> {
     _diffBinaryEnabled = motionPrefs.diffBinaryEnabled;
     final hasContent =
         (_effectiveDiffContent != null && _effectiveDiffContent!.isNotEmpty) ||
-            _lines.isNotEmpty;
+        _lines.isNotEmpty;
     final toolbarFilePath = widget.toolbarFilePath ?? widget.filePath;
-    final toolbarOnTap = widget.toolbarOnTap ??
+    final toolbarOnTap =
+        widget.toolbarOnTap ??
         ((widget.repositoryPath != null && _resolvedTrailFilePath() != null)
             ? _toggleTrail
             : null);
     final toolbarActive = widget.toolbarActive ?? _trailVisible;
 
-    if (widget.loading && !hasContent) {
+    if (_asyncBuilding || (widget.loading && !hasContent)) {
       return AppStatusView.loading(
         title: context.t.diff.status.loadingTitle,
         message: context.t.diff.status.loadingMessage,
@@ -3490,591 +4049,676 @@ class _DiffShellState extends State<DiffShell> {
 
     final displayLines = _displayLines;
 
-    return Stack(children: [
-      Column(children: [
-        if (_trailVisible)
-          _TrailStrip(
-            tokens: t,
-            history: _trailHistory,
-            loading: _trailLoading,
-            selectedHash: _trailSelectedHash,
-            onSelectStop: _selectTrailStop,
-            onSelectNow: _selectTrailNow,
-          ),
-        MaterialSurface(
-          tone: AppMaterialTone.surface1,
-          radius: 0,
-          border: Border(
-            bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
-          ),
-          elevated: false,
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(children: [
-            // Back button — visible only when the parent has a nav
-            // history to pop. Sits before the search toggle so the
-            // leading cluster reads as "navigation, then find".
-            if (widget.onNavigateBack != null) ...[
-              _ToolbarBtn(
-                icon: 'chevron-left',
-                active: false,
-                t: t,
-                onTap: widget.onNavigateBack!,
+    return Stack(
+      children: [
+        Column(
+          children: [
+            if (_trailVisible)
+              _TrailStrip(
+                tokens: t,
+                history: _trailHistory,
+                loading: _trailLoading,
+                selectedHash: _trailSelectedHash,
+                onSelectStop: _selectTrailStop,
+                onSelectNow: _selectTrailNow,
               ),
-              const SizedBox(width: 4),
-            ],
-            // Search toggle. Tinted with the same accent the file-status
-            // dot uses so the icon visually pairs with the dot beside it
-            // — the search becomes part of "this file's chrome" instead
-            // of reading as a generic, muted toolbar action.
-            _ToolbarBtn(
-              icon: 'search',
-              active: _searchVisible,
-              t: t,
-              iconColorOverride: t.accentBright,
-              onTap: () => setState(() {
-                _searchVisible = !_searchVisible;
-                _sessionSearchActivated =
-                    _sessionSearchActivated || _searchVisible;
-                if (!_searchVisible) {
-                  _searchTerm = '';
-                  _searchCtrl.clear();
-                  _refreshDisplayLines();
-                }
-              }),
-            ),
-            // Search input (takes over the filename slot when open)
-            if (_searchVisible) ...[
-              const SizedBox(width: 6),
-              Expanded(
-                child: AppTextField(
-                  controller: _searchCtrl,
-                  autofocus: true,
-                  height: 24,
-                  fontSize: 12,
-                  hintText: context.t.diff.toolbar.searchHint,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  onChanged: (v) => setState(() {
-                    _searchTerm = v;
-                    _sessionSearchActivated =
-                        _sessionSearchActivated || v.isNotEmpty;
-                    _refreshDisplayLines();
-                  }),
+            MaterialSurface(
+              tone: AppMaterialTone.surface1,
+              radius: 0,
+              border: Border(
+                bottom: BorderSide(
+                  color: t.chromeBorder.withValues(alpha: 0.12),
                 ),
               ),
-              if (_searchTerm.isNotEmpty) ...[
-                const SizedBox(width: 4),
-                Text(
-                  context.t.diff.toolbar.lineCount(n: displayLines.length),
-                  style: TextStyle(color: t.textMuted, fontSize: 10),
-                ),
-              ],
-            ] else ...[
-              // Compact filename beside the search icon — the filename
-              // that used to sit in the big file header row. Click
-              // toggles the paper trail (same behavior as before).
-              // Takes the toolbar's left region; Spacer after pushes
-              // hunk nav + blame chip to the right. Hides entirely
-              // when search opens so the input has the full width.
-              const SizedBox(width: 10),
-              Expanded(
-                child: _ToolbarFileNameChip(
-                  tokens: t,
-                  filePath: toolbarFilePath,
-                  label: widget.toolbarLabel,
-                  tooltip: widget.toolbarTooltip,
-                  onTap: toolbarOnTap,
-                  trailActive: toolbarActive,
-                ),
-              ),
-            ],
-
-            // Hunk navigation
-            if (_hunks.isNotEmpty && !_searchVisible) ...[
-              const SizedBox(width: 6),
-              _HunkDropdown(hunks: _hunks, t: t, onJump: _jumpToHunkIndex),
-            ],
-
-            // Blame / wear map indicator (click toggles wear map)
-            if (_blameFetchingFiles.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  context.t.diff.toolbar.blameLoading,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
+              elevated: false,
+              height: 34,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  // Back button — visible only when the parent has a nav
+                  // history to pop. Sits before the search toggle so the
+                  // leading cluster reads as "navigation, then find".
+                  if (widget.onNavigateBack != null) ...[
+                    _ToolbarBtn(
+                      icon: 'chevron-left',
+                      active: false,
+                      t: t,
+                      onTap: widget.onNavigateBack!,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  // Search toggle. Tinted with the same accent the file-status
+                  // dot uses so the icon visually pairs with the dot beside it
+                  // — the search becomes part of "this file's chrome" instead
+                  // of reading as a generic, muted toolbar action. Works at every
+                  // size (index scan on machine-scale diffs — see _refreshDisplayLines).
+                  _ToolbarBtn(
+                    icon: 'search',
+                    active: _searchVisible,
+                    t: t,
+                    iconColorOverride: t.accentBright,
+                    onTap: () => setState(() {
+                      _searchVisible = !_searchVisible;
+                      _sessionSearchActivated =
+                          _sessionSearchActivated || _searchVisible;
+                      if (!_searchVisible) {
+                        _searchTerm = '';
+                        _searchCtrl.clear();
+                        _refreshDisplayLines();
+                      }
+                    }),
                   ),
-                ),
-              ),
-            if (_canShowInlineBlame && _blameFetchingFiles.isEmpty)
-              Tooltip(
-                message: _wearMapVisible
-                    ? context.t.diff.toolbar.wearMapOnHint
-                    : context.t.diff.toolbar.wearMapOffHint,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: _toggleWearMap,
-                    child: Padding(
+                  // Search input (takes over the filename slot when open)
+                  if (_searchVisible) ...[
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: AppTextField(
+                        controller: _searchCtrl,
+                        autofocus: true,
+                        height: 24,
+                        fontSize: 12,
+                        hintText: context.t.diff.toolbar.searchHint,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        onChanged: (v) => setState(() {
+                          _searchTerm = v;
+                          _sessionSearchActivated =
+                              _sessionSearchActivated || v.isNotEmpty;
+                          _refreshDisplayLines();
+                        }),
+                      ),
+                    ),
+                    if (_searchTerm.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        context.t.diff.toolbar.lineCount(
+                          n: displayLines.length,
+                        ),
+                        style: TextStyle(color: t.textMuted, fontSize: 10),
+                      ),
+                    ],
+                  ] else ...[
+                    // Compact filename beside the search icon — the filename
+                    // that used to sit in the big file header row. Click
+                    // toggles the paper trail (same behavior as before).
+                    // Takes the toolbar's left region; Spacer after pushes
+                    // hunk nav + blame chip to the right. Hides entirely
+                    // when search opens so the input has the full width.
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _ToolbarFileNameChip(
+                        tokens: t,
+                        filePath: toolbarFilePath,
+                        label: widget.toolbarLabel,
+                        tooltip: widget.toolbarTooltip,
+                        onTap: toolbarOnTap,
+                        trailActive: toolbarActive,
+                      ),
+                    ),
+                  ],
+
+                  // Hunk navigation
+                  if (_hunks.isNotEmpty && !_searchVisible) ...[
+                    const SizedBox(width: 6),
+                    _HunkDropdown(
+                      hunks: _hunks,
+                      t: t,
+                      onJump: _jumpToHunkIndex,
+                    ),
+                  ],
+
+                  // Blame / wear map indicator (click toggles wear map)
+                  if (_blameFetchingFiles.isNotEmpty)
+                    Padding(
                       padding: const EdgeInsets.only(left: 8),
                       child: Text(
-                        _wearMapVisible
-                            ? context.t.diff.toolbar.wearMapOn
-                            : context.t.diff.toolbar.blame,
+                        context.t.diff.toolbar.blameLoading,
                         style: TextStyle(
-                          color: _wearMapVisible
-                              ? t.hyperChromatic1
-                              : (_blameByFile.isNotEmpty
-                                  ? t.hyperChromatic1.withValues(alpha: 0.7)
-                                  : t.textMuted),
+                          color: t.textMuted,
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ),
-          ]),
-        ),
-        Expanded(
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: Focus(
-                  focusNode: _stagingFocus,
-                  onKeyEvent: _handleKey,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTap: _stagingEnabled
-                        ? () => _stagingFocus.requestFocus()
-                        : null,
-                    child: ScrollConfiguration(
-                      behavior: ScrollConfiguration.of(context)
-                          .copyWith(scrollbars: true),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          // Content is at least as wide as the viewport so there's
-                          // no unnecessary horizontal scroll when lines are short.
-                          final contentWidth =
-                              _maxLineWidth > constraints.maxWidth
-                                  ? _maxLineWidth
-                                  : constraints.maxWidth;
-                          return SingleChildScrollView(
-                            controller: _hScrollCtrl,
-                            scrollDirection: Axis.horizontal,
-                            physics: const ClampingScrollPhysics(),
-                            child: SizedBox(
-                              width: contentWidth,
-                              child:
-                                  NotificationListener<ScrollEndNotification>(
-                                onNotification: _onScrollEnd,
-                                child: _buildSliverDiff(
-                                  displayLines: displayLines,
-                                  viewportWidth: constraints.maxWidth,
-                                  t: t,
-                                  mediaEnabled: _diffMediaEnabled,
-                                  binaryEnabled: _diffBinaryEnabled,
-                                  textRowBuilder: (ctx, i) {
-                                    final line = displayLines[i];
-                                    final lineFile =
-                                        line.filePath ?? widget.filePath;
-                                    final kbFocused = _stagingEnabled &&
-                                        _keyboardLineIndex != null &&
-                                        _keyboardLineIndex! >= 0 &&
-                                        _keyboardLineIndex! < _lines.length &&
-                                        identical(
-                                            _lines[_keyboardLineIndex!], line);
-                                    // Hot-zone bridge: the scroll engram has
-                                    // predicted we're about to land on this
-                                    // hunk AND it's a high-churn one. A thin
-                                    // accent wash + rail on the row renders
-                                    // the anticipation.
-                                    final hotHunkIdx = _hotHunkIdx;
-                                    final isHotHunkRow = hotHunkIdx != null &&
-                                        line.kind == LineKind.hunk &&
-                                        hotHunkIdx < _hunks.length &&
-                                        _hunks[hotHunkIdx].lineIndex >= 0 &&
-                                        _hunks[hotHunkIdx].lineIndex <
-                                            _lines.length &&
-                                        identical(
-                                            line,
-                                            _lines[
-                                                _hunks[hotHunkIdx].lineIndex]);
-                                    final rowFastKey = line.fastKey;
-                                    final rowUnit = _unitByFastKey[rowFastKey];
-                                    final hunkHeader =
-                                        line.kind == LineKind.hunk
-                                            ? _headerForDisplayLine(line)
-                                            : null;
-                                    final hunkSignal = hunkHeader == null
-                                        ? null
-                                        : _logosSignalForHeader(hunkHeader);
-                                    final lineResidual =
-                                        _logosResidualForLine(line);
-                                    final pulseActive =
-                                        _restoredPulseUnitId != null &&
-                                            rowUnit?.id == _restoredPulseUnitId;
-                                    final isPinnedRhyme = _pinnedCtx != null &&
-                                        _pinnedDisplayIdx != null &&
-                                        i != _pinnedDisplayIdx &&
-                                        _pinnedCtx!.rhymeDisplayIdxs
-                                            .contains(i);
-                                    // Lineage animation gate: play one-shot reveals
-                                    // ONLY the first time a given unit id appears in
-                                    // this diff session. Scroll-recycle re-mounts
-                                    // don't replay anything → the diff stays static
-                                    // during scroll instead of strobing.
-                                    final firstAppearance = rowUnit != null &&
-                                        _seenUnitIds.add(rowUnit.id);
-                                    final lineView = DiffLineView(
-                                      // Key on fastKey (integer content hash, stable
-                                      // across stage toggles). Replaces the old
-                                      // stagingKey-string key which allocated a ~40
-                                      // char String per visible row per frame. Integer
-                                      // ValueKey is zero-alloc and hashes in one cycle.
-                                      key: ValueKey<int>(rowFastKey),
-                                      line: line,
-                                      editUnit: rowUnit,
-                                      pulseActive: pulseActive,
-                                      firstAppearance: firstAppearance,
-                                      // Scroll-stress overrides the user's rate
-                                      // (rows flooding into view during fast scroll
-                                      // would otherwise fire a storm of temperature
-                                      // sweeps / melts / ghost fades). At rest, the
-                                      // user's chosen rate takes over — so a tuned
-                                      // rate of 0.5 still plays reveals, just slower.
-                                      //
-                                      // Two const instances cover the "no motion"
-                                      // (scroll or reduce) and "full" (rate=1)
-                                      // cases without allocation; intermediate rates
-                                      // allocate per-build but only when the user
-                                      // has actually tuned the slider away from 1.0.
-                                      motionPolicy: _scrolling || _reduceMotion
-                                          ? MotionPolicy.reduced
-                                          : (_motionRate == 1.0
-                                              ? MotionPolicy.full
-                                              : MotionPolicy(
-                                                  rate: _motionRate)),
-                                      tokens: t,
-                                      blameEntry: line.lineNumNew != null
-                                          ? _blameFor(
-                                              lineFile, line.lineNumNew!)
-                                          : null,
-                                      hovered:
-                                          _hoveredLine == line.lineNumNew &&
-                                              line.lineNumNew != null,
-                                      onGutterEnter: _canShowInlineBlame &&
-                                              line.lineNumNew != null
-                                          ? () {
-                                              // Suppress blame trigger while
-                                              // scrolling: with whole-row hover, a
-                                              // stationary cursor fires onEnter on
-                                              // every row that scrolls under it.
-                                              // Only a deliberate hover (viewport at
-                                              // rest + cursor on the row) should
-                                              // load blame and show the chip.
-                                              if (_scrolling) return;
-                                              setState(() => _hoveredLine =
-                                                  line.lineNumNew!);
-                                              _scheduleBlameLoad(
-                                                  lineFile, line.lineNumNew!);
-                                            }
-                                          : null,
-                                      onGutterExit: () {
-                                        _blameHoverTimer?.cancel();
-                                        setState(() => _hoveredLine = null);
-                                      },
-                                      searchTerm: _searchTerm,
-                                      useAnimatedTextMode:
-                                          _useAnimatedTextMode &&
-                                              !_reduceMotion,
-                                      contextBand: _contextBandForLine(line),
-                                      hunkImportance: math.max(
-                                        hunkSignal?.importance ?? 0.0,
-                                        lineResidual?.importance ?? 0.0,
-                                      ),
-                                      hunkTag: hunkSignal?.tag,
-                                      hunkHeaderHint: hunkSignal?.headerHint,
-                                      hunkTransportPull: math.max(
-                                        hunkSignal?.transportPull ?? 0.0,
-                                        lineResidual?.transportPull ?? 0.0,
-                                      ),
-                                      hunkTransportedSupport: math.max(
-                                        hunkSignal?.transportedSupport ?? 0.0,
-                                        lineResidual?.transportedSupport ?? 0.0,
-                                      ),
-                                      hunkInnovationResidual: math.max(
-                                        hunkSignal?.innovationResidual ?? 0.0,
-                                        lineResidual?.innovationResidual ?? 0.0,
-                                      ),
-                                      hunkWitnessResidual: math.max(
-                                        hunkSignal?.witnessResidual ?? 0.0,
-                                        lineResidual?.witnessResidual ?? 0.0,
-                                      ),
-                                      relatedRhyme: isPinnedRhyme,
-                                      flowCertainty:
-                                          _flowFindingsByLine[line.lineNumNew]
-                                              ?.certainty,
-                                      gyatSurprise: () {
-                                        final f = _flowFindingsByLine[line.lineNumNew];
-                                        if (f == null || _gyat == null) return null;
-                                        return _gyat!.surprise(f.address, f.certainty);
-                                      }(),
-                                      gyatBaseline: _gyat?.negLogPartition(),
-                                      wearIntensity: _wearMapVisible &&
-                                              line.lineNumNew != null
-                                          ? _wearIntensityFor(
-                                              lineFile, line.lineNumNew!)
-                                          : null,
-                                      stageCellWidth: _stageCellWidth,
-                                      stagingEnabled: _stagingEnabled,
-                                      keyboardFocused: kbFocused,
-                                      onSigilTap: _stagingEnabled
-                                          ? (shift, alt) {
-                                              _stagingFocus.requestFocus();
-                                              _handleSigilTap(line,
-                                                  shift: shift, alt: alt);
-                                            }
-                                          : null,
-                                      onPaintStart: _stagingEnabled
-                                          ? () {
-                                              _stagingFocus.requestFocus();
-                                              _beginPaint(line);
-                                            }
-                                          : null,
-                                      onPaintMove:
-                                          _stagingEnabled ? _paintUpdate : null,
-                                      onPaintEnd:
-                                          _stagingEnabled ? _endPaint : null,
-                                      onHunkDoubleTap: _stagingEnabled
-                                          ? () {
-                                              _stagingFocus.requestFocus();
-                                              _handleHunkDoubleTap(
-                                                  line.hunkIndex);
-                                            }
-                                          : null,
-                                    );
-                                    // Primary or secondary click any row →
-                                    // pin it for the Logos context panel.
-                                    // Listener sits at `translucent` so
-                                    // text-selection drags inside
-                                    // SelectableText still start; tap-down
-                                    // pins on the press.
-                                    final isPinned = _pinnedDisplayIdx == i;
-                                    Widget wrapped = Listener(
-                                      behavior: HitTestBehavior.translucent,
-                                      onPointerDown: (e) {
-                                        final isPrimary =
-                                            (e.buttons & kPrimaryButton) != 0;
-                                        final isSecondary =
-                                            (e.buttons & kSecondaryButton) != 0;
-                                        if (!isPrimary && !isSecondary) {
-                                          return;
-                                        }
-                                        // Ignore the sigil column (tiny ± cell
-                                        // near the left gutter) so stage
-                                        // clicks still do their job without
-                                        // stealing a pin.
-                                        if (e.localPosition.dx <
-                                            _stageCellWidth) {
-                                          return;
-                                        }
-                                        // Primary-click on a hunk header row
-                                        // toggles its collapse state (the
-                                        // adaptive-compaction affordance).
-                                        // Right-click + non-hunk rows fall
-                                        // through to pin-on-press as before.
-                                        if (isPrimary &&
-                                            line.kind == LineKind.hunk) {
-                                          final hIdx =
-                                              _hunkIndexForLine(line);
-                                          if (hIdx >= 0) {
-                                            _toggleHunkCollapsed(hIdx);
-                                            return;
-                                          }
-                                        }
-                                        _togglePinLine(i);
-                                      },
-                                      child: lineView,
-                                    );
-                                    if (isPinned) {
-                                      wrapped = DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          color: t.accentBright
-                                              .withValues(alpha: 0.08),
-                                          border: Border(
-                                            left: BorderSide(
-                                              color: t.accentBright,
-                                              width: 3,
-                                            ),
-                                          ),
-                                        ),
-                                        child: wrapped,
-                                      );
-                                    }
-                                    // Inline hunk-context hint — IDE-style
-                                    // inlay rendered at the right edge of
-                                    // every hunk header row, showing weight
-                                    // (+A −D), position in the file (3/8),
-                                    // and — when the scroll engram has
-                                    // predicted a landing here — a faint
-                                    // "approaching" marker. The prediction
-                                    // drives EMPHASIS, not a phantom halo.
-                                    if (line.kind != LineKind.hunk) {
-                                      return wrapped;
-                                    }
-                                    if (hunkHeader == null) return wrapped;
-                                    final hunkOrdinal =
-                                        _hunks.indexOf(hunkHeader) + 1;
-                                    final totalHunks = _hunks.length;
-                                    // Adaptive-compaction state: is this
-                                    // hunk's body currently hidden? If so,
-                                    // the inline hint shows a chevron + the
-                                    // line count that's folded away.
-                                    final isCollapsed = _collapsedHunks
-                                        .contains(_hunkKey(hunkHeader));
-                                    final hiddenLines = isCollapsed
-                                        ? (hunkHeader.additions +
-                                            hunkHeader.deletions)
-                                        : 0;
-                                    final hunkRow = Stack(
-                                      children: [
-                                        wrapped,
-                                        Positioned(
-                                          right: 14,
-                                          top: 0,
-                                          bottom: 0,
-                                          child: IgnorePointer(
-                                            child: Align(
-                                              alignment: Alignment.centerRight,
-                                              child: _HunkInlineHint(
-                                                additions: hunkHeader.additions,
-                                                deletions: hunkHeader.deletions,
-                                                ordinal: hunkOrdinal,
-                                                total: totalHunks,
-                                                tag: hunkSignal?.tag,
-                                                hint: hunkSignal?.headerHint,
-                                                tokens: t,
-                                                approaching: isHotHunkRow,
-                                                approachStrength:
-                                                    _hotHunkStrength,
-                                                collapsed: isCollapsed,
-                                                hiddenLineCount: hiddenLines,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                    return hunkRow;
-                                  },
-                                ),
+                  if (_canShowInlineBlame && _blameFetchingFiles.isEmpty)
+                    Tooltip(
+                      message: _wearMapVisible
+                          ? context.t.diff.toolbar.wearMapOnHint
+                          : context.t.diff.toolbar.wearMapOffHint,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: _toggleWearMap,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text(
+                              _wearMapVisible
+                                  ? context.t.diff.toolbar.wearMapOn
+                                  : context.t.diff.toolbar.blame,
+                              style: TextStyle(
+                                color: _wearMapVisible
+                                    ? t.hyperChromatic1
+                                    : (_blameByFile.isNotEmpty
+                                          ? t.hyperChromatic1.withValues(
+                                              alpha: 0.7,
+                                            )
+                                          : t.textMuted),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          );
-                        },
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: Focus(
+                      focusNode: _stagingFocus,
+                      onKeyEvent: _handleKey,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: _stagingEnabled
+                            ? () => _stagingFocus.requestFocus()
+                            : null,
+                        child: ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(
+                            context,
+                          ).copyWith(scrollbars: true),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              // Content is at least as wide as the viewport so there's
+                              // no unnecessary horizontal scroll when lines are short.
+                              final contentWidth =
+                                  _maxLineWidth > constraints.maxWidth
+                                  ? _maxLineWidth
+                                  : constraints.maxWidth;
+                              return SingleChildScrollView(
+                                controller: _hScrollCtrl,
+                                scrollDirection: Axis.horizontal,
+                                physics: const ClampingScrollPhysics(),
+                                child: SizedBox(
+                                  width: contentWidth,
+                                  child: NotificationListener<ScrollEndNotification>(
+                                    onNotification: _onScrollEnd,
+                                    child: _buildSliverDiff(
+                                      displayLines: displayLines,
+                                      viewportWidth: constraints.maxWidth,
+                                      t: t,
+                                      mediaEnabled: _diffMediaEnabled,
+                                      binaryEnabled: _diffBinaryEnabled,
+                                      textRowBuilder: (ctx, i) {
+                                        final line = displayLines[i];
+                                        final lineFile =
+                                            line.filePath ?? widget.filePath;
+                                        final kbFocused =
+                                            _stagingEnabled &&
+                                            _keyboardLineIndex != null &&
+                                            _keyboardLineIndex! >= 0 &&
+                                            _keyboardLineIndex! <
+                                                _lines.length &&
+                                            identical(
+                                              _lines[_keyboardLineIndex!],
+                                              line,
+                                            );
+                                        // Hot-zone bridge: the scroll engram has
+                                        // predicted we're about to land on this
+                                        // hunk AND it's a high-churn one. A thin
+                                        // accent wash + rail on the row renders
+                                        // the anticipation.
+                                        final hotHunkIdx = _hotHunkIdx;
+                                        final isHotHunkRow =
+                                            hotHunkIdx != null &&
+                                            line.kind == LineKind.hunk &&
+                                            hotHunkIdx < _hunks.length &&
+                                            _hunks[hotHunkIdx].lineIndex >= 0 &&
+                                            _hunks[hotHunkIdx].lineIndex <
+                                                _lines.length &&
+                                            identical(
+                                              line,
+                                              _lines[_hunks[hotHunkIdx]
+                                                  .lineIndex],
+                                            );
+                                        final rowFastKey = line.fastKey;
+                                        final rowUnit =
+                                            _unitByFastKey[rowFastKey];
+                                        final hunkHeader =
+                                            line.kind == LineKind.hunk
+                                            ? _headerForDisplayLine(line)
+                                            : null;
+                                        final hunkSignal = hunkHeader == null
+                                            ? null
+                                            : _logosSignalForHeader(hunkHeader);
+                                        final lineResidual =
+                                            _logosResidualForLine(line);
+                                        final pulseActive =
+                                            _restoredPulseUnitId != null &&
+                                            rowUnit?.id == _restoredPulseUnitId;
+                                        final isPinnedRhyme =
+                                            _pinnedCtx != null &&
+                                            _pinnedDisplayIdx != null &&
+                                            i != _pinnedDisplayIdx &&
+                                            _pinnedCtx!.rhymeDisplayIdxs
+                                                .contains(i);
+                                        // Lineage animation gate: play one-shot reveals
+                                        // ONLY the first time a given unit id appears in
+                                        // this diff session. Scroll-recycle re-mounts
+                                        // don't replay anything → the diff stays static
+                                        // during scroll instead of strobing.
+                                        final firstAppearance =
+                                            rowUnit != null &&
+                                            _seenUnitIds.add(rowUnit.id);
+                                        final lineView = DiffLineView(
+                                          // Key on fastKey (integer content hash, stable
+                                          // across stage toggles). Replaces the old
+                                          // stagingKey-string key which allocated a ~40
+                                          // char String per visible row per frame. Integer
+                                          // ValueKey is zero-alloc and hashes in one cycle.
+                                          key: ValueKey<int>(rowFastKey),
+                                          hSliceQuantum: _hSliceQuantum,
+                                          monoCharWidth: _monoCharWidth,
+                                          line: line,
+                                          editUnit: rowUnit,
+                                          pulseActive: pulseActive,
+                                          firstAppearance: firstAppearance,
+                                          // Scroll-stress overrides the user's rate
+                                          // (rows flooding into view during fast scroll
+                                          // would otherwise fire a storm of temperature
+                                          // sweeps / melts / ghost fades). At rest, the
+                                          // user's chosen rate takes over — so a tuned
+                                          // rate of 0.5 still plays reveals, just slower.
+                                          //
+                                          // Two const instances cover the "no motion"
+                                          // (scroll or reduce) and "full" (rate=1)
+                                          // cases without allocation; intermediate rates
+                                          // allocate per-build but only when the user
+                                          // has actually tuned the slider away from 1.0.
+                                          motionPolicy:
+                                              _scrolling || _reduceMotion
+                                              ? MotionPolicy.reduced
+                                              : (_motionRate == 1.0
+                                                    ? MotionPolicy.full
+                                                    : MotionPolicy(
+                                                        rate: _motionRate,
+                                                      )),
+                                          tokens: t,
+                                          blameEntry: line.lineNumNew != null
+                                              ? _blameFor(
+                                                  lineFile,
+                                                  line.lineNumNew!,
+                                                )
+                                              : null,
+                                          hovered:
+                                              _hoveredLine == line.lineNumNew &&
+                                              line.lineNumNew != null,
+                                          onGutterEnter:
+                                              _canShowInlineBlame &&
+                                                  line.lineNumNew != null
+                                              ? () {
+                                                  // Suppress blame trigger while
+                                                  // scrolling: with whole-row hover, a
+                                                  // stationary cursor fires onEnter on
+                                                  // every row that scrolls under it.
+                                                  // Only a deliberate hover (viewport at
+                                                  // rest + cursor on the row) should
+                                                  // load blame and show the chip.
+                                                  if (_scrolling) return;
+                                                  setState(
+                                                    () => _hoveredLine =
+                                                        line.lineNumNew!,
+                                                  );
+                                                  _scheduleBlameLoad(
+                                                    lineFile,
+                                                    line.lineNumNew!,
+                                                  );
+                                                }
+                                              : null,
+                                          onGutterExit: () {
+                                            _blameHoverTimer?.cancel();
+                                            setState(() => _hoveredLine = null);
+                                          },
+                                          searchTerm: _searchTerm,
+                                          useAnimatedTextMode:
+                                              _useAnimatedTextMode &&
+                                              !_reduceMotion,
+                                          contextBand: _contextBandForLine(
+                                            line,
+                                          ),
+                                          hunkImportance: math.max(
+                                            hunkSignal?.importance ?? 0.0,
+                                            lineResidual?.importance ?? 0.0,
+                                          ),
+                                          hunkTag: hunkSignal?.tag,
+                                          hunkHeaderHint:
+                                              hunkSignal?.headerHint,
+                                          hunkTransportPull: math.max(
+                                            hunkSignal?.transportPull ?? 0.0,
+                                            lineResidual?.transportPull ?? 0.0,
+                                          ),
+                                          hunkTransportedSupport: math.max(
+                                            hunkSignal?.transportedSupport ??
+                                                0.0,
+                                            lineResidual?.transportedSupport ??
+                                                0.0,
+                                          ),
+                                          hunkInnovationResidual: math.max(
+                                            hunkSignal?.innovationResidual ??
+                                                0.0,
+                                            lineResidual?.innovationResidual ??
+                                                0.0,
+                                          ),
+                                          hunkWitnessResidual: math.max(
+                                            hunkSignal?.witnessResidual ?? 0.0,
+                                            lineResidual?.witnessResidual ??
+                                                0.0,
+                                          ),
+                                          relatedRhyme: isPinnedRhyme,
+                                          flowCertainty:
+                                              _flowFindingsByLine[line
+                                                      .lineNumNew]
+                                                  ?.certainty,
+                                          gyatSurprise: () {
+                                            final f =
+                                                _flowFindingsByLine[line
+                                                    .lineNumNew];
+                                            if (f == null || _gyat == null) {
+                                              return null;
+                                            }
+                                            return _gyat!.surprise(
+                                              f.address,
+                                              f.certainty,
+                                            );
+                                          }(),
+                                          gyatBaseline: _gyat
+                                              ?.negLogPartition(),
+                                          wearIntensity:
+                                              _wearMapVisible &&
+                                                  line.lineNumNew != null
+                                              ? _wearIntensityFor(
+                                                  lineFile,
+                                                  line.lineNumNew!,
+                                                )
+                                              : null,
+                                          stageCellWidth: _stageCellWidth,
+                                          stagingEnabled: _stagingEnabled,
+                                          keyboardFocused: kbFocused,
+                                          onSigilTap: _stagingEnabled
+                                              ? (shift, alt) {
+                                                  _stagingFocus.requestFocus();
+                                                  _handleSigilTap(
+                                                    line,
+                                                    shift: shift,
+                                                    alt: alt,
+                                                  );
+                                                }
+                                              : null,
+                                          onPaintStart: _stagingEnabled
+                                              ? () {
+                                                  _stagingFocus.requestFocus();
+                                                  _beginPaint(line);
+                                                }
+                                              : null,
+                                          onPaintMove: _stagingEnabled
+                                              ? _paintUpdate
+                                              : null,
+                                          onPaintEnd: _stagingEnabled
+                                              ? _endPaint
+                                              : null,
+                                          onHunkDoubleTap: _stagingEnabled
+                                              ? () {
+                                                  _stagingFocus.requestFocus();
+                                                  _handleHunkDoubleTap(
+                                                    line.hunkIndex,
+                                                  );
+                                                }
+                                              : null,
+                                        );
+                                        // Primary or secondary click any row →
+                                        // pin it for the Logos context panel.
+                                        // Listener sits at `translucent` so
+                                        // text-selection drags inside
+                                        // SelectableText still start; tap-down
+                                        // pins on the press.
+                                        final isPinned = _pinnedDisplayIdx == i;
+                                        Widget wrapped = Listener(
+                                          behavior: HitTestBehavior.translucent,
+                                          onPointerDown: (e) {
+                                            final isPrimary =
+                                                (e.buttons & kPrimaryButton) !=
+                                                0;
+                                            final isSecondary =
+                                                (e.buttons &
+                                                    kSecondaryButton) !=
+                                                0;
+                                            if (!isPrimary && !isSecondary) {
+                                              return;
+                                            }
+                                            // Ignore the sigil column (tiny ± cell
+                                            // near the left gutter) so stage
+                                            // clicks still do their job without
+                                            // stealing a pin.
+                                            if (e.localPosition.dx <
+                                                _stageCellWidth) {
+                                              return;
+                                            }
+                                            // Primary-click on a hunk header row
+                                            // toggles its collapse state (the
+                                            // adaptive-compaction affordance).
+                                            // Right-click + non-hunk rows fall
+                                            // through to pin-on-press as before.
+                                            if (isPrimary &&
+                                                line.kind == LineKind.hunk) {
+                                              final hIdx = _hunkIndexForLine(
+                                                line,
+                                              );
+                                              if (hIdx >= 0) {
+                                                _toggleHunkCollapsed(hIdx);
+                                                return;
+                                              }
+                                            }
+                                            _togglePinLine(i);
+                                          },
+                                          child: lineView,
+                                        );
+                                        if (isPinned) {
+                                          wrapped = DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              color: t.accentBright.withValues(
+                                                alpha: 0.08,
+                                              ),
+                                              border: Border(
+                                                left: BorderSide(
+                                                  color: t.accentBright,
+                                                  width: 3,
+                                                ),
+                                              ),
+                                            ),
+                                            child: wrapped,
+                                          );
+                                        }
+                                        // Inline hunk-context hint — IDE-style
+                                        // inlay rendered at the right edge of
+                                        // every hunk header row, showing weight
+                                        // (+A −D), position in the file (3/8),
+                                        // and — when the scroll engram has
+                                        // predicted a landing here — a faint
+                                        // "approaching" marker. The prediction
+                                        // drives EMPHASIS, not a phantom halo.
+                                        if (line.kind != LineKind.hunk) {
+                                          return wrapped;
+                                        }
+                                        if (hunkHeader == null) return wrapped;
+                                        final hunkOrdinal =
+                                            _hunks.indexOf(hunkHeader) + 1;
+                                        final totalHunks = _hunks.length;
+                                        // Adaptive-compaction state: is this
+                                        // hunk's body currently hidden? If so,
+                                        // the inline hint shows a chevron + the
+                                        // line count that's folded away.
+                                        final isCollapsed = _collapsedHunks
+                                            .contains(_hunkKey(hunkHeader));
+                                        final hiddenLines = isCollapsed
+                                            ? (hunkHeader.additions +
+                                                  hunkHeader.deletions)
+                                            : 0;
+                                        final hunkRow = Stack(
+                                          children: [
+                                            wrapped,
+                                            Positioned(
+                                              right: 14,
+                                              top: 0,
+                                              bottom: 0,
+                                              child: IgnorePointer(
+                                                child: Align(
+                                                  alignment:
+                                                      Alignment.centerRight,
+                                                  child: _HunkInlineHint(
+                                                    additions:
+                                                        hunkHeader.additions,
+                                                    deletions:
+                                                        hunkHeader.deletions,
+                                                    ordinal: hunkOrdinal,
+                                                    total: totalHunks,
+                                                    tag: hunkSignal?.tag,
+                                                    hint:
+                                                        hunkSignal?.headerHint,
+                                                    tokens: t,
+                                                    approaching: isHotHunkRow,
+                                                    approachStrength:
+                                                        _hotHunkStrength,
+                                                    collapsed: isCollapsed,
+                                                    hiddenLineCount:
+                                                        hiddenLines,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                        return hunkRow;
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              // Sticky hunk header — pins the current @@ label at the top
-              // when you're scrolled deep inside a hunk. Suppressed during
-              // search (results are flat; hunks aren't meaningful).
-              if (_hunks.isNotEmpty && !_searchVisible && _searchTerm.isEmpty)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _StickyHunkHeader(
-                    tokens: t,
-                    hunks: _hunks,
-                    // Parallel to [_hunks], but in DISPLAY coordinate
-                    // space (paired-add filtering collapsed). The sticky
-                    // header compares against scroll offset, which is in
-                    // display space too, so these must match.
-                    hunkDisplayRows: _hunkDisplayRows,
-                    scrollCtrl: _scrollCtrl,
-                    lineExtent: _lineItemExtent,
-                    displayIndexForOffset: _displayIndexForOffset,
-                    offsetForDisplayIndex: _offsetForDisplayIndex,
-                    onJump: _jumpToHunkIndex,
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (_stagingError != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            color: t.stateDeleted.withValues(alpha: 0.12),
-            child: Text(
-              context.t.diff.stagingFailed(error: _stagingError!),
-              style: TextStyle(
-                color: t.stateDeleted,
-                fontSize: 10.5,
-                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                  // Sticky hunk header — pins the current @@ label at the top
+                  // when you're scrolled deep inside a hunk. Suppressed during
+                  // search (results are flat; hunks aren't meaningful).
+                  if (_hunks.isNotEmpty &&
+                      !_searchVisible &&
+                      _searchTerm.isEmpty)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _StickyHunkHeader(
+                        tokens: t,
+                        hunks: _hunks,
+                        // Parallel to [_hunks], but in DISPLAY coordinate
+                        // space (paired-add filtering collapsed). The sticky
+                        // header compares against scroll offset, which is in
+                        // display space too, so these must match.
+                        hunkDisplayRows: _hunkDisplayRows,
+                        scrollCtrl: _scrollCtrl,
+                        lineExtent: _lineItemExtent,
+                        displayIndexForOffset: _displayIndexForOffset,
+                        offsetForDisplayIndex: _offsetForDisplayIndex,
+                        onJump: _jumpToHunkIndex,
+                      ),
+                    ),
+                ],
               ),
             ),
-          ),
-        // Pinned-line context panel. Docks at the bottom when a row
-        // has been right-clicked; collapses cleanly when the pin is
-        // cleared so the diff list reclaims its space.
-        if (_pinnedFastKey != null && _pinnedDisplayIdx != null)
-          _PinnedContextPanel(
-            tokens: t,
-            context: _pinnedCtx,
-            past: _buildPinnedPastContext(_pinnedCtx),
-            loading: _pinnedDisplayIdx != null && _pinnedCtx == null,
-            onOpenRelatedPath: widget.onOpenRelatedPath,
-            onClose: () {
-              setState(() {
-                _clearPinnedLine();
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  _stagingFocus.requestFocus();
-                }
-              });
-            },
-            onRhymeTap: (targetIdx) {
-              if (!_scrollCtrl.hasClients) return;
-              if (_hasUnmeasuredBinaryBefore(targetIdx)) {
-                _jumpToDisplayIndex(targetIdx);
-                return;
-              }
-              final offset = _offsetForDisplayIndex(targetIdx);
-              _scrollCtrl.motionAnimateTo(
-                offset.clamp(0.0, math.max(
-                    _scrollCtrl.position.maxScrollExtent,
-                    _totalEstimatedExtent)),
-                context: context,
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-              );
-            },
-          ),
-      ]),
-      Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: AnimatedOpacity(
-          opacity: widget.loading ? 1 : 0,
-          duration: context.motion(const Duration(milliseconds: 80)),
-          child: LinearProgressIndicator(
-            minHeight: 2,
-            color: t.accentBright.withValues(alpha: 0.7),
-            backgroundColor: Colors.transparent,
+            if (_stagingError != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                color: t.stateDeleted.withValues(alpha: 0.12),
+                child: Text(
+                  context.t.diff.stagingFailed(error: _stagingError!),
+                  style: TextStyle(
+                    color: t.stateDeleted,
+                    fontSize: 10.5,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                ),
+              ),
+            // Pinned-line context panel. Docks at the bottom when a row
+            // has been right-clicked; collapses cleanly when the pin is
+            // cleared so the diff list reclaims its space.
+            if (_pinnedFastKey != null && _pinnedDisplayIdx != null)
+              _PinnedContextPanel(
+                tokens: t,
+                context: _pinnedCtx,
+                past: _buildPinnedPastContext(_pinnedCtx),
+                loading: _pinnedDisplayIdx != null && _pinnedCtx == null,
+                onOpenRelatedPath: widget.onOpenRelatedPath,
+                onClose: () {
+                  setState(() {
+                    _clearPinnedLine();
+                  });
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      _stagingFocus.requestFocus();
+                    }
+                  });
+                },
+                onRhymeTap: (targetIdx) {
+                  if (!_scrollCtrl.hasClients) return;
+                  if (_hasUnmeasuredBinaryBefore(targetIdx)) {
+                    _jumpToDisplayIndex(targetIdx);
+                    return;
+                  }
+                  final offset = _offsetForDisplayIndex(targetIdx);
+                  _scrollCtrl.motionAnimateTo(
+                    offset.clamp(
+                      0.0,
+                      math.max(
+                        _scrollCtrl.position.maxScrollExtent,
+                        _totalEstimatedExtent,
+                      ),
+                    ),
+                    context: context,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                  );
+                },
+              ),
+          ],
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: AnimatedOpacity(
+            opacity: widget.loading ? 1 : 0,
+            duration: context.motion(const Duration(milliseconds: 80)),
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              color: t.accentBright.withValues(alpha: 0.7),
+              backgroundColor: Colors.transparent,
+            ),
           ),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 }
 
@@ -4142,6 +4786,13 @@ class DiffLineView extends StatefulWidget {
   /// Double-click on the hunk header row — toggles the whole hunk.
   final VoidCallback? onHunkDoubleTap;
 
+  /// X virtualization inputs (see the _kLineSlice* constants): the current
+  /// horizontal slice quantum and the monospace cell width used to position
+  /// slices at their absolute column. Null listenable → no slicing (rows
+  /// hosted outside the shell's horizontal scroller render whole).
+  final ValueListenable<int>? hSliceQuantum;
+  final double monoCharWidth;
+
   const DiffLineView({
     super.key,
     required this.line,
@@ -4177,6 +4828,8 @@ class DiffLineView extends StatefulWidget {
     this.onPaintMove,
     this.onPaintEnd,
     this.onHunkDoubleTap,
+    this.hSliceQuantum,
+    this.monoCharWidth = 7.5,
   });
 
   @override
@@ -4189,6 +4842,54 @@ class _DiffLineState extends State<DiffLineView> {
   /// whole left margin doesn't look clickable when only the sigil is.
   bool _lineHover = false;
 
+  /// Plain line text, X-virtualized: short lines render whole (identical to
+  /// the pre-slicing behavior); lines past [_kMaxDirectRenderChars] render a
+  /// slice positioned at its absolute column and re-slice as the horizontal
+  /// quantum moves. Only the text subtree rebuilds on a quantum crossing.
+  Widget _plainTextFor(
+    String text,
+    Color color,
+    AppTokens t, {
+    Color? semanticTint,
+    double semanticSignal = 0.0,
+    double fontSize = 12,
+    double height = 1.5,
+  }) {
+    final quantum = widget.hSliceQuantum;
+    if (quantum == null || text.length <= _kMaxDirectRenderChars) {
+      return _buildPlainDiffText(
+        text.isEmpty ? ' ' : text,
+        color,
+        t,
+        widget.searchTerm,
+        semanticTint: semanticTint,
+        semanticSignal: semanticSignal,
+        fontSize: fontSize,
+        height: height,
+      );
+    }
+    return ValueListenableBuilder<int>(
+      valueListenable: quantum,
+      builder: (_, q, _) {
+        final start = q <= 0 ? 0 : (q - 1) * _kLineSliceQuantum;
+        final end = math.min(text.length, start + _kLineSliceLength);
+        return Padding(
+          padding: EdgeInsets.only(left: start * widget.monoCharWidth),
+          child: _buildPlainDiffText(
+            start >= end ? ' ' : text.substring(start, end),
+            color,
+            t,
+            widget.searchTerm,
+            semanticTint: semanticTint,
+            semanticSignal: semanticSignal,
+            fontSize: fontSize,
+            height: height,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
@@ -4197,7 +4898,8 @@ class _DiffLineState extends State<DiffLineView> {
     final isAdded = l.kind == LineKind.added;
     final isDeleted = l.kind == LineKind.deleted;
     final isHunk = l.kind == LineKind.hunk;
-    final isFoldMarker = isMeta &&
+    final isFoldMarker =
+        isMeta &&
         l.text.startsWith('... ') &&
         l.text.contains('unchanged lines');
     final isStageable = isAdded || isDeleted;
@@ -4210,7 +4912,8 @@ class _DiffLineState extends State<DiffLineView> {
     // `unit.newLines.first`. Row renders as a single fused transition
     // instead of two stacked ±rows. Derived from the unit directly so no
     // separate `pairedAdd` widget prop needs to be plumbed through.
-    final bool isPair = isDeleted &&
+    final bool isPair =
+        isDeleted &&
         unit?.kind == EditKind.replace &&
         (unit?.newLines.isNotEmpty ?? false);
     final ParsedLine? addPart = isPair ? unit!.newLines.first : null;
@@ -4224,16 +4927,10 @@ class _DiffLineState extends State<DiffLineView> {
     final bool isMoveFrom = isMove && (unit?.oldLines.isNotEmpty ?? false);
     final bool isMoveTo = isMove && (unit?.newLines.isNotEmpty ?? false);
     final transportSignal = math
-        .max(
-          widget.hunkTransportPull,
-          widget.hunkTransportedSupport,
-        )
+        .max(widget.hunkTransportPull, widget.hunkTransportedSupport)
         .clamp(0.0, 1.0);
     final residualSignal = math
-        .max(
-          widget.hunkInnovationResidual,
-          widget.hunkWitnessResidual,
-        )
+        .max(widget.hunkInnovationResidual, widget.hunkWitnessResidual)
         .clamp(0.0, 1.0);
     final semanticSignal = math
         .max(
@@ -4241,12 +4938,13 @@ class _DiffLineState extends State<DiffLineView> {
           math.max(transportSignal, residualSignal),
         )
         .clamp(0.0, 1.0);
-    final Color semanticColor = widget.hunkWitnessResidual >=
+    final Color semanticColor =
+        widget.hunkWitnessResidual >=
             math.max(widget.hunkInnovationResidual, transportSignal)
         ? t.stateConflicted
         : widget.hunkInnovationResidual >= transportSignal
-            ? t.accentBright
-            : t.chromeAccent;
+        ? t.accentBright
+        : t.chromeAccent;
 
     // Tint strength: staged lines get a slightly stronger wash so their
     // membership is unmistakable without dimming text contrast.
@@ -4277,14 +4975,16 @@ class _DiffLineState extends State<DiffLineView> {
         // than accent-based, and background picks up only a whisper
         // of the accent tint.
         final importance = widget.hunkImportance.clamp(0.0, 1.0);
-        final semanticMix =
-            math.max(importance, 0.35 * semanticSignal).clamp(0.0, 1.0);
+        final semanticMix = math
+            .max(importance, 0.35 * semanticSignal)
+            .clamp(0.0, 1.0);
         lineBg = Color.lerp(
           t.chromeAccent.withValues(alpha: 0.06),
           semanticColor.withValues(alpha: 0.04 + 0.04 * semanticSignal),
           semanticMix,
         );
-        textColor = Color.lerp(
+        textColor =
+            Color.lerp(
               t.textMuted.withValues(alpha: 0.70),
               semanticColor.withValues(alpha: 0.70),
               (0.10 + 0.15 * semanticSignal).clamp(0.0, 1.0),
@@ -4339,7 +5039,8 @@ class _DiffLineState extends State<DiffLineView> {
       textColor = t.textNormal;
       sigilColor = t.hyperChromatic1;
     } else if (!isMeta && semanticSignal > 0) {
-      sigilColor = Color.lerp(
+      sigilColor =
+          Color.lerp(
             sigilColor,
             semanticColor,
             (0.12 + 0.28 * semanticSignal).clamp(0.0, 1.0),
@@ -4395,10 +5096,10 @@ class _DiffLineState extends State<DiffLineView> {
     final Color gutterBg = widget.hovered
         ? t.accentBright.withValues(alpha: 0.06)
         : isMeta
-            ? Colors.transparent
-            : (wearBg ??
-                (lineBg?.withValues(alpha: 0.6) ??
-                    t.surface1.withValues(alpha: 0.5)));
+        ? Colors.transparent
+        : (wearBg ??
+              (lineBg?.withValues(alpha: 0.6) ??
+                  t.surface1.withValues(alpha: 0.5)));
 
     final flowC = widget.flowCertainty;
     final flowAlpha = flowC != null && !isMeta
@@ -4411,8 +5112,8 @@ class _DiffLineState extends State<DiffLineView> {
     // to the repo's personality — no fixed threshold.
     final gyatS = widget.gyatSurprise;
     final gyatBase = widget.gyatBaseline;
-    final gyatAlpha = gyatS != null && gyatBase != null &&
-            gyatBase > 0.01 && !isMeta
+    final gyatAlpha =
+        gyatS != null && gyatBase != null && gyatBase > 0.01 && !isMeta
         ? ((gyatS / gyatBase) * 0.08).clamp(0.0, 0.15)
         : 0.0;
 
@@ -4436,11 +5137,12 @@ class _DiffLineState extends State<DiffLineView> {
         style: TextStyle(
           color: widget.hovered
               ? (widget.blameEntry != null
-                  ? t.hyperChromatic1.withValues(alpha: 0.9)
-                  : t.textMuted)
+                    ? t.hyperChromatic1.withValues(alpha: 0.9)
+                    : t.textMuted)
               : AppTokens.contrastGlyph(gutterBg).withValues(alpha: 0.5),
           fontSize: 10,
-          fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+          fontFamily: AppFonts.mono,
+          fontFamilyFallback: AppFonts.monoFallback,
         ),
       ),
     );
@@ -4462,11 +5164,13 @@ class _DiffLineState extends State<DiffLineView> {
     // keeps the raw form for the patch engine / staging key. Uses the
     // shared [stripDiffLineSign] helper so renderer and unit-detection
     // layers cannot drift on what "pure content" means.
-    final String displayText =
-        (isAdded || isDeleted) ? stripDiffLineSign(l.text) : l.text;
+    final String displayText = (isAdded || isDeleted)
+        ? stripDiffLineSign(l.text)
+        : l.text;
     final String? pairToText = isPair ? stripDiffLineSign(addPart!.text) : null;
 
-    final useAnimatedText = widget.useAnimatedTextMode &&
+    final useAnimatedText =
+        widget.useAnimatedTextMode &&
         widget.searchTerm.isEmpty &&
         displayText.length <= 160 &&
         (isAdded || isDeleted || isHunk);
@@ -4490,28 +5194,21 @@ class _DiffLineState extends State<DiffLineView> {
           height: 1.5,
         );
       } else {
-        textChild = _buildPlainDiffText(
-          pairToText!.isEmpty ? ' ' : pairToText,
+        textChild = _plainTextFor(
+          pairToText!,
           t.stateAdded,
           t,
-          widget.searchTerm,
           semanticTint: semanticColor,
           semanticSignal: semanticSignal,
-          fontSize: 12,
-          height: 1.5,
         );
       }
     } else if (useAnimatedText) {
-      textChild = _DiffMeltText(
-        text: displayText,
-        color: textColor,
-      );
+      textChild = _DiffMeltText(text: displayText, color: textColor);
     } else {
-      textChild = _buildPlainDiffText(
-        displayText.isEmpty ? ' ' : displayText,
+      textChild = _plainTextFor(
+        displayText,
         textColor,
         t,
-        widget.searchTerm,
         semanticTint: semanticColor,
         semanticSignal: semanticSignal,
         fontSize: isMeta ? 11 : 12,
@@ -4547,16 +5244,20 @@ class _DiffLineState extends State<DiffLineView> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onTapUp: (_) {
-                        final isShift = HardwareKeyboard.instance
-                                .isLogicalKeyPressed(
-                                    LogicalKeyboardKey.shiftLeft) ||
+                        final isShift =
                             HardwareKeyboard.instance.isLogicalKeyPressed(
-                                LogicalKeyboardKey.shiftRight);
-                        final isAlt = HardwareKeyboard.instance
-                                .isLogicalKeyPressed(
-                                    LogicalKeyboardKey.altLeft) ||
+                              LogicalKeyboardKey.shiftLeft,
+                            ) ||
                             HardwareKeyboard.instance.isLogicalKeyPressed(
-                                LogicalKeyboardKey.altRight);
+                              LogicalKeyboardKey.shiftRight,
+                            );
+                        final isAlt =
+                            HardwareKeyboard.instance.isLogicalKeyPressed(
+                              LogicalKeyboardKey.altLeft,
+                            ) ||
+                            HardwareKeyboard.instance.isLogicalKeyPressed(
+                              LogicalKeyboardKey.altRight,
+                            );
                         widget.onSigilTap!(isShift, isAlt);
                       },
                       child: rawSigil,
@@ -4573,7 +5274,8 @@ class _DiffLineState extends State<DiffLineView> {
     // "lighting" during scroll. Scroll should be static. The pair-melt
     // transition is preserved as the only lineage animation and is gated
     // by firstAppearance + MotionPolicy so it also never replays on recycle.
-    final showSemanticBorder = semanticSignal > 0 &&
+    final showSemanticBorder =
+        semanticSignal > 0 &&
         (isHunk ||
             isAdded ||
             isDeleted ||
@@ -4588,17 +5290,17 @@ class _DiffLineState extends State<DiffLineView> {
             ),
           )
         : widget.relatedRhyme
-            ? Border(
-                left: BorderSide(
-                  color: t.accentBright.withValues(alpha: 0.32),
-                  width: 1.5,
-                ),
-                right: BorderSide(
-                  color: t.accentBright.withValues(alpha: 0.10),
-                  width: 1,
-                ),
-              )
-            : null;
+        ? Border(
+            left: BorderSide(
+              color: t.accentBright.withValues(alpha: 0.32),
+              width: 1.5,
+            ),
+            right: BorderSide(
+              color: t.accentBright.withValues(alpha: 0.10),
+              width: 1,
+            ),
+          )
+        : null;
     if (widget.relatedRhyme && !showSemanticBorder) {
       lineBg = Color.alphaBlend(
         t.accentBright.withValues(alpha: 0.05),
@@ -4613,10 +5315,7 @@ class _DiffLineState extends State<DiffLineView> {
     }
     Widget lineContent = Expanded(
       child: Container(
-        decoration: BoxDecoration(
-          color: lineBg,
-          border: semanticBorder,
-        ),
+        decoration: BoxDecoration(color: lineBg, border: semanticBorder),
         padding: EdgeInsets.symmetric(horizontal: isMeta ? 12 : 8),
         alignment: Alignment.centerLeft,
         child: textChild,
@@ -4632,19 +5331,19 @@ class _DiffLineState extends State<DiffLineView> {
         : Colors.transparent;
     final Widget ribbon = showStageChrome
         ? (widget.keyboardFocused
-            ? Container(
-                width: _kRibbonWidth,
-                decoration: BoxDecoration(
-                  color: t.accentBright,
-                  boxShadow: [
-                    BoxShadow(
-                      color: t.accentBright.withValues(alpha: 0.45),
-                      blurRadius: 6,
-                    ),
-                  ],
-                ),
-              )
-            : Container(width: _kRibbonWidth, color: ribbonColor))
+              ? Container(
+                  width: _kRibbonWidth,
+                  decoration: BoxDecoration(
+                    color: t.accentBright,
+                    boxShadow: [
+                      BoxShadow(
+                        color: t.accentBright.withValues(alpha: 0.45),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                )
+              : Container(width: _kRibbonWidth, color: ribbonColor))
         : const SizedBox.shrink();
 
     // Left margin: ribbon + sigil + line number. Layout only — taps are
@@ -4678,8 +5377,9 @@ class _DiffLineState extends State<DiffLineView> {
     // anything. Pushing the trigger to the whole row makes blame ambient.
     // The inner gutter MouseRegion still fires (no-op on duplicate enter).
     final Widget interactiveRow = MouseRegion(
-      onEnter:
-          widget.onGutterEnter != null ? (_) => widget.onGutterEnter!() : null,
+      onEnter: widget.onGutterEnter != null
+          ? (_) => widget.onGutterEnter!()
+          : null,
       onExit: (_) => widget.onGutterExit(),
       child: interactiveRowBase,
     );
@@ -4695,8 +5395,9 @@ class _DiffLineState extends State<DiffLineView> {
     if (widget.blameEntry == null) return _wrapWithPulse(interactiveRow, t);
 
     final b = widget.blameEntry!;
-    final initial =
-        b.authorName.isNotEmpty ? b.authorName[0].toUpperCase() : '?';
+    final initial = b.authorName.isNotEmpty
+        ? b.authorName[0].toUpperCase()
+        : '?';
     final timeStr = _formatBlameTime(b.authoredAt);
 
     // wearIntensity: 0 = newest in file, 1 = oldest in file. Bucketed into
@@ -4715,7 +5416,9 @@ class _DiffLineState extends State<DiffLineView> {
     }
 
     return _wrapWithPulse(
-        Stack(clipBehavior: Clip.none, children: [
+      Stack(
+        clipBehavior: Clip.none,
+        children: [
           interactiveRow,
           // (Parallax ghost plane removed — a 44pt letter clipped to an 18px
           // row rendered letters like `W` as three stroke-fragments, reading as
@@ -4758,39 +5461,48 @@ class _DiffLineState extends State<DiffLineView> {
                           bottom: BorderSide(color: t.chromeBorder, width: 1),
                         ),
                       ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        // Metabolism stripe IS the chip's leading edge — a
-                        // semantic seam between gutter and chip, not a
-                        // floating dot inside it.
-                        Container(width: 2, color: metaColor),
-                        const SizedBox(width: 8),
-                        Text(initial,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Metabolism stripe IS the chip's leading edge — a
+                          // semantic seam between gutter and chip, not a
+                          // floating dot inside it.
+                          Container(width: 2, color: metaColor),
+                          const SizedBox(width: 8),
+                          Text(
+                            initial,
                             style: TextStyle(
-                                color: t.textNormal,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600)),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            '${b.shortHash}  $timeStr',
-                            style: TextStyle(
-                              color: t.hyperChromatic1,
-                              fontSize: 9,
-                              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                              color: t.textNormal,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                      ]),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              '${b.shortHash}  $timeStr',
+                              style: TextStyle(
+                                color: t.hyperChromatic1,
+                                fontSize: 9,
+                                fontFamily: AppFonts.mono,
+                                fontFamilyFallback: AppFonts.monoFallback,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ]),
-        t);
+        ],
+      ),
+      t,
+    );
   }
 
   /// One-shot accent-colour wash on a row, signalling "the shell just
@@ -4804,8 +5516,9 @@ class _DiffLineState extends State<DiffLineView> {
   /// duration is scaled so the signal reads as feedback, not ornament.
   Widget _wrapWithPulse(Widget child, AppTokens t) {
     if (!widget.pulseActive) return child;
-    final duration =
-        widget.motionPolicy.scale(const Duration(milliseconds: 900));
+    final duration = widget.motionPolicy.scale(
+      const Duration(milliseconds: 900),
+    );
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -4816,9 +5529,8 @@ class _DiffLineState extends State<DiffLineView> {
               tween: Tween<double>(begin: 0.32, end: 0.0),
               duration: duration,
               curve: Curves.easeOutCubic,
-              builder: (_, v, __) => Container(
-                color: t.accentBright.withValues(alpha: v),
-              ),
+              builder: (_, v, __) =>
+                  Container(color: t.accentBright.withValues(alpha: v)),
             ),
           ),
         ),
@@ -4857,8 +5569,9 @@ class _StageSigil extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final glyph = kind == LineKind.added ? '+' : '−';
-    final Color effective =
-        hovered || staged ? color : color.withValues(alpha: 0.55);
+    final Color effective = hovered || staged
+        ? color
+        : color.withValues(alpha: 0.55);
 
     // Hover border — crisp 1px ring around the sigil glyph that says
     // "this is a button." Only when the left zone is hovered AND the line
@@ -4881,7 +5594,8 @@ class _StageSigil extends StatelessWidget {
             color: staged ? color.withValues(alpha: 0.10) : Colors.transparent,
             border: hoverBorder,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
+              context.surfaceShader.geometry.badgeRadius,
+            ),
           ),
           child: staged
               // Filled dot: unmistakable "this is in."
@@ -4899,7 +5613,8 @@ class _StageSigil extends StatelessWidget {
                     color: effective,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
                     height: 1.0,
                   ),
                 ),
@@ -4913,10 +5628,7 @@ class _DiffMeltText extends StatefulWidget {
   final String text;
   final Color color;
 
-  const _DiffMeltText({
-    required this.text,
-    required this.color,
-  });
+  const _DiffMeltText({required this.text, required this.color});
 
   @override
   State<_DiffMeltText> createState() => _DiffMeltTextState();
@@ -5032,9 +5744,11 @@ Widget _buildPlainDiffText(
       backgroundColor: semanticTint == null || semanticSignal < 0.14
           ? null
           : semanticTint.withValues(
-              alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06)),
+              alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06),
+            ),
       fontSize: fontSize,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
       height: height,
       fontWeight: fontWeight,
       fontStyle: fontStyle,
@@ -5063,7 +5777,8 @@ Widget _buildSearchText(
   final effectiveBackground = semanticTint == null || semanticSignal < 0.14
       ? null
       : semanticTint.withValues(
-          alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06));
+          alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06),
+        );
   final lower = displayText.toLowerCase();
   final termLower = searchTerm.toLowerCase();
   final spans = <TextSpan>[];
@@ -5071,51 +5786,62 @@ Widget _buildSearchText(
   int idx = lower.indexOf(termLower);
   while (idx != -1) {
     if (idx > start) {
-      spans.add(TextSpan(
+      spans.add(
+        TextSpan(
           text: displayText.substring(start, idx),
           style: TextStyle(
             color: effectiveBaseColor,
             backgroundColor: effectiveBackground,
             fontWeight: fontWeight,
             fontStyle: fontStyle,
-          )));
+          ),
+        ),
+      );
     }
-    spans.add(TextSpan(
-      text: displayText.substring(idx, idx + termLower.length),
-      style: TextStyle(
-        color: semanticTint == null
-            ? t.bg0
-            : (Color.lerp(t.bg0, semanticTint, 0.12 * semanticSignal) ?? t.bg0),
-        backgroundColor: (Color.lerp(
-                  t.accentBright.withValues(alpha: 0.8),
-                  semanticTint,
-                  0.12 * semanticSignal,
-                ) ??
-                t.accentBright)
-            .withValues(alpha: 0.8),
-        fontWeight: fontWeight,
-        fontStyle: fontStyle,
+    spans.add(
+      TextSpan(
+        text: displayText.substring(idx, idx + termLower.length),
+        style: TextStyle(
+          color: semanticTint == null
+              ? t.bg0
+              : (Color.lerp(t.bg0, semanticTint, 0.12 * semanticSignal) ??
+                    t.bg0),
+          backgroundColor:
+              (Color.lerp(
+                        t.accentBright.withValues(alpha: 0.8),
+                        semanticTint,
+                        0.12 * semanticSignal,
+                      ) ??
+                      t.accentBright)
+                  .withValues(alpha: 0.8),
+          fontWeight: fontWeight,
+          fontStyle: fontStyle,
+        ),
       ),
-    ));
+    );
     start = idx + termLower.length;
     idx = lower.indexOf(termLower, start);
   }
   if (start < displayText.length) {
-    spans.add(TextSpan(
+    spans.add(
+      TextSpan(
         text: displayText.substring(start),
         style: TextStyle(
           color: effectiveBaseColor,
           backgroundColor: effectiveBackground,
           fontWeight: fontWeight,
           fontStyle: fontStyle,
-        )));
+        ),
+      ),
+    );
   }
 
   return RichText(
     text: TextSpan(
       style: TextStyle(
         fontSize: fontSize,
-        fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+        fontFamily: AppFonts.mono,
+        fontFamilyFallback: AppFonts.monoFallback,
         height: height,
         fontWeight: fontWeight,
         fontStyle: fontStyle,
@@ -5195,13 +5921,15 @@ Widget _buildInlineWordDiffText(
       if (idx > start) {
         spans.add(TextSpan(text: seg.text.substring(start, idx), style: base));
       }
-      spans.add(TextSpan(
-        text: seg.text.substring(idx, idx + termLower.length),
-        style: base.copyWith(
-          color: t.bg0,
-          backgroundColor: t.accentBright.withValues(alpha: 0.8),
+      spans.add(
+        TextSpan(
+          text: seg.text.substring(idx, idx + termLower.length),
+          style: base.copyWith(
+            color: t.bg0,
+            backgroundColor: t.accentBright.withValues(alpha: 0.8),
+          ),
         ),
-      ));
+      );
       start = idx + termLower.length;
       idx = lower.indexOf(termLower, start);
     }
@@ -5243,12 +5971,12 @@ Widget _buildInlineWordDiffText(
 /// allocate fresh `TextPainter`s instead (see `_paintRun`).
 final LruCache<int, TextPainter> _diffTextPainterCache =
     LruCache<int, TextPainter>(
-  maxSize: 384,
-  // An evicted painter is never handed out again (callers re-fetch, missing
-  // → rebuild), so releasing its native (dart:ui) layout here is safe and
-  // stops the cache from leaking one painter per unique scrolled-past row.
-  onEvict: (tp) => tp.dispose(),
-);
+      maxSize: 384,
+      // An evicted painter is never handed out again (callers re-fetch, missing
+      // → rebuild), so releasing its native (dart:ui) layout here is safe and
+      // stops the cache from leaking one painter per unique scrolled-past row.
+      onEvict: (tp) => tp.dispose(),
+    );
 
 TextPainter _cachedDiffLineTextPainter({
   required String text,
@@ -5323,7 +6051,8 @@ class _DiffMeltTextPainter extends CustomPainter {
     final newArrived = _smoothStep(0.08, 0.62, t);
     final relatedRows = _rowAffinity(fromText, toText) >= 0.52;
     final newAlphaFloor = relatedRows ? 0.55 : 0.78;
-    final newAlpha = newAlphaFloor +
+    final newAlpha =
+        newAlphaFloor +
         Curves.easeOutCubic.transform(newArrived) * (1 - newAlphaFloor);
     final maxByWidth = math.max(1, (size.width / charWidth).ceil() + 2);
     final meltLimit = math.min(
@@ -5455,7 +6184,8 @@ class _DiffMeltTextPainter extends CustomPainter {
     }
     if (comparable == 0) return 0;
 
-    final lengthPenalty = math.min(aTrim.length, bTrim.length) /
+    final lengthPenalty =
+        math.min(aTrim.length, bTrim.length) /
         math.max(aTrim.length, bTrim.length);
     return (matches / comparable) * lengthPenalty;
   }
@@ -5484,8 +6214,10 @@ class _DiffMeltTextPainter extends CustomPainter {
   /// frame. Used exclusively by the rest path above.
   void _paintRunCached(Canvas canvas, String text, Color color, Offset offset) {
     if (text.isEmpty || color.a <= 0) return;
-    final painter =
-        _cachedDiffLineTextPainter(text: text, style: _style(color));
+    final painter = _cachedDiffLineTextPainter(
+      text: text,
+      style: _style(color),
+    );
     painter.paint(canvas, offset);
   }
 
@@ -5713,13 +6445,14 @@ class _TrailRailPainter extends CustomPainter {
     final sampleCount = total < 2
         ? 1
         : total > 44
-            ? 44
-            : total;
+        ? 44
+        : total;
 
     for (var i = 0; i < sampleCount; i++) {
       final ratio = sampleCount == 1 ? 0.0 : i / (sampleCount - 1);
-      final representedIndex =
-          sampleCount == 1 ? currentIndex : (ratio * (total - 1)).round();
+      final representedIndex = sampleCount == 1
+          ? currentIndex
+          : (ratio * (total - 1)).round();
       final x = left + usableWidth * ratio;
       final isCurrent = representedIndex == currentIndex;
       // "now" (index 0) gets a slightly brighter base color to distinguish it.
@@ -5729,8 +6462,8 @@ class _TrailRailPainter extends CustomPainter {
         ..color = isCurrent
             ? tokens.accentBright
             : (isNow
-                ? tokens.accentBright.withValues(alpha: 0.55)
-                : tokens.textMuted.withValues(alpha: 0.24));
+                  ? tokens.accentBright.withValues(alpha: 0.55)
+                  : tokens.textMuted.withValues(alpha: 0.24));
       canvas.drawCircle(Offset(x, centerY), radius, fill);
     }
 
@@ -5795,16 +6528,21 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
                 ? t.itemActiveBg
                 : (_hov ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0)),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
-            border:
-                widget.active ? Border.all(color: t.itemActiveBorder) : null,
+              context.surfaceShader.geometry.badgeRadius,
+            ),
+            border: widget.active
+                ? Border.all(color: t.itemActiveBorder)
+                : null,
           ),
           child: Center(
-              child: AppIcon(
-                  name: widget.icon,
-                  size: 13,
-                  color: widget.iconColorOverride ??
-                      (widget.active ? t.accentBright : t.textMuted))),
+            child: AppIcon(
+              name: widget.icon,
+              size: 13,
+              color:
+                  widget.iconColorOverride ??
+                  (widget.active ? t.accentBright : t.textMuted),
+            ),
+          ),
         ),
       ),
     );
@@ -5900,8 +6638,11 @@ class _HunkDropdown extends StatelessWidget {
   final List<_HunkHeader> hunks;
   final AppTokens t;
   final ValueChanged<int> onJump;
-  const _HunkDropdown(
-      {required this.hunks, required this.t, required this.onJump});
+  const _HunkDropdown({
+    required this.hunks,
+    required this.t,
+    required this.onJump,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -5916,23 +6657,30 @@ class _HunkDropdown extends StatelessWidget {
       itemBuilder: (_) => hunks
           .asMap()
           .entries
-          .map((e) => PopupMenuItem<int>(
-                value: e.key,
-                height: 28,
-                child: _HunkDropdownRow(hunk: e.value, t: t),
-              ))
+          .map(
+            (e) => PopupMenuItem<int>(
+              value: e.key,
+              height: 28,
+              child: _HunkDropdownRow(hunk: e.value, t: t),
+            ),
+          )
           .toList(),
       child: AppInputShell(
         height: 24,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         fillColor: t.itemHoverBg,
         borderColor: t.secondaryBtnBorder,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(context.t.diff.hunkDropdown.changeCount(n: hunks.length),
-              style: TextStyle(color: t.textMuted, fontSize: 10)),
-          const SizedBox(width: 4),
-          AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
-        ]),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.t.diff.hunkDropdown.changeCount(n: hunks.length),
+              style: TextStyle(color: t.textMuted, fontSize: 10),
+            ),
+            const SizedBox(width: 4),
+            AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
+          ],
+        ),
       ),
     );
   }
@@ -5953,28 +6701,33 @@ class _HunkDropdownRow extends StatelessWidget {
     final scopeStyle = TextStyle(
       color: t.accentBright,
       fontSize: 11,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
     );
     final mutedStyle = TextStyle(
       color: t.textMuted,
       fontSize: 11,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
     );
     final fadedStyle = TextStyle(
       color: t.textMuted.withValues(alpha: 0.55),
       fontSize: 11,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
     );
     final addStyle = TextStyle(
       color: t.stateAdded,
       fontSize: 10,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
       fontWeight: FontWeight.w600,
     );
     final delStyle = TextStyle(
       color: t.stateDeleted,
       fontSize: 10,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
       fontWeight: FontWeight.w600,
     );
     final hasScope = hunk.scope.isNotEmpty;
@@ -6019,10 +6772,7 @@ class _PinnedAuthorShare {
   final String name;
   final double share;
 
-  const _PinnedAuthorShare({
-    required this.name,
-    required this.share,
-  });
+  const _PinnedAuthorShare({required this.name, required this.share});
 }
 
 class _PinnedPastContext {
@@ -6132,8 +6882,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final t = widget.tokens;
     final c = widget.context;
     final tone = c == null ? _PinnedPanelTone.stable : _toneFor(c, widget.past);
-    final future =
-        c == null ? const <(String, String)>[] : _futureDestinations(c);
+    final future = c == null
+        ? const <(String, String)>[]
+        : _futureDestinations(c);
     return MaterialSurface(
       tone: AppMaterialTone.surface1,
       // Docked, bottom-anchored panel: keep it flush + square + flat like the
@@ -6174,8 +6925,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                         child: c != null
                             ? _pinnedLinePreview(t, c)
                             : widget.loading
-                                ? _loadingRow(t)
-                                : const SizedBox.shrink(),
+                            ? _loadingRow(t)
+                            : const SizedBox.shrink(),
                       ),
                       if (c != null) ...[
                         const SizedBox(width: 10),
@@ -6347,22 +7098,22 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       builder: (context, constraints) {
         final Widget content = switch (_page) {
           0 => ManifoldPane(
-              context: c,
-              tokens: t,
-              onOpenRelatedPath: widget.onOpenRelatedPath,
-              onRhymeTap: widget.onRhymeTap,
-            ),
+            context: c,
+            tokens: t,
+            onOpenRelatedPath: widget.onOpenRelatedPath,
+            onRhymeTap: widget.onRhymeTap,
+          ),
           _ => SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _overviewPage(t, c, accent, constraints.maxWidth),
-                  const SizedBox(height: 12),
-                  _evidencePage(t, c, future, accent, constraints.maxWidth),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _overviewPage(t, c, accent, constraints.maxWidth),
+                const SizedBox(height: 12),
+                _evidencePage(t, c, future, accent, constraints.maxWidth),
+              ],
             ),
+          ),
         };
         return Align(
           alignment: Alignment.topLeft,
@@ -6379,10 +7130,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
               ).animate(animation);
               return FadeTransition(
                 opacity: animation,
-                child: SlideTransition(
-                  position: offset,
-                  child: child,
-                ),
+                child: SlideTransition(position: offset, child: child),
               );
             },
             child: KeyedSubtree(
@@ -6412,7 +7160,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
       ),
       child: Row(
@@ -6426,17 +7175,14 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     );
   }
 
-  Widget _pageChip(
-    AppTokens t, {
-    required int page,
-    required String label,
-  }) {
+  Widget _pageChip(AppTokens t, {required int page, required String label}) {
     final active = _page == page;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+          context.surfaceShader.geometry.pillRadius,
+        ),
         onTap: () => _setPage(page),
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -6445,7 +7191,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                 ? t.accentBright.withValues(alpha: 0.24)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(
               color: active
                   ? t.accentBright.withValues(alpha: 0.4)
@@ -6488,14 +7235,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         key: const ValueKey('context-page-solo'),
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _mapHeroPane(
-            t,
-            c,
-            accent,
-            compact: compact,
-          ),
-        ],
+        children: [_mapHeroPane(t, c, accent, compact: compact)],
       );
     }
     return Column(
@@ -6525,8 +7265,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   ) {
     final stories = _presentStories(c);
     final dense = width < 760;
-    final maxLinked =
-        dense ? (stories.length >= 2 ? 2 : 3) : (stories.length >= 2 ? 3 : 4);
+    final maxLinked = dense
+        ? (stories.length >= 2 ? 2 : 3)
+        : (stories.length >= 2 ? 3 : 4);
     final linked = future.take(maxLinked).toList();
     final remainingLinked = math.max(0, future.length - linked.length);
     final hasStories = stories.isNotEmpty;
@@ -6543,8 +7284,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           ),
           ...stories.map(
             (s) => Padding(
-              padding:
-                  EdgeInsets.fromLTRB(14, dense ? 3 : 4, 10, dense ? 3 : 4),
+              padding: EdgeInsets.fromLTRB(
+                14,
+                dense ? 3 : 4,
+                10,
+                dense ? 3 : 4,
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -6589,8 +7334,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           _moduleShell(
             t,
             accent: accent,
-            padding:
-                EdgeInsets.fromLTRB(14, dense ? 8 : 10, 10, dense ? 10 : 14),
+            padding: EdgeInsets.fromLTRB(
+              14,
+              dense ? 8 : 10,
+              10,
+              dense ? 10 : 14,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -6682,10 +7431,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     );
   }
 
-  Widget _historyRibbon(
-    AppTokens t,
-    Color accent,
-  ) {
+  Widget _historyRibbon(AppTokens t, Color accent) {
     final past = widget.past;
     final owner = (past?.nearbyAuthors.isNotEmpty ?? false)
         ? past!.nearbyAuthors.first.name
@@ -6773,8 +7519,10 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           ),
           const SizedBox(height: 10),
           if (visibleEchoes.isEmpty)
-            Text(context.t.diff.pinned.noEchoes,
-                style: TextStyle(color: t.textFaint, fontSize: 10.0))
+            Text(
+              context.t.diff.pinned.noEchoes,
+              style: TextStyle(color: t.textFaint, fontSize: 10.0),
+            )
           else
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -6812,53 +7560,59 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-      borderRadius: BorderRadius.circular(
-          context.surfaceShader.geometry.badgeRadius),
-      onTap: () => widget.onRhymeTap(preview.displayIndex),
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: t.surface0.withValues(alpha: prominent ? 0.22 : 0.12),
-          borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
-          border: Border.all(
-            color: accent.withValues(alpha: prominent ? 0.14 : 0.08),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.badgeRadius,
+        ),
+        onTap: () => widget.onRhymeTap(preview.displayIndex),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: t.surface0.withValues(alpha: prominent ? 0.22 : 0.12),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.badgeRadius,
+            ),
+            border: Border.all(
+              color: accent.withValues(alpha: prominent ? 0.14 : 0.08),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textStrong.withValues(alpha: prominent ? 0.96 : 0.8),
+                  fontSize: 9.5,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                preview.text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 9.0,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.textStrong.withValues(alpha: prominent ? 0.96 : 0.8),
-                fontSize: 9.5,
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              preview.text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 9.0,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ],
-        ),
-      ),
       ),
     );
   }
 
-  Widget _signalMeterRow(AppTokens t, DiffPinnedContextModel c, Color accent,
-      {double? width}) {
+  Widget _signalMeterRow(
+    AppTokens t,
+    DiffPinnedContextModel c,
+    Color accent, {
+    double? width,
+  }) {
     final history = _historyStrength(widget.past);
     final novelty = _noveltyStrength(c);
     final reach = _reachStrength(c);
@@ -6874,12 +7628,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     return width == null ? row : SizedBox(width: width, child: row);
   }
 
-  Widget _signalMeter(
-    AppTokens t,
-    String label,
-    double value,
-    Color accent,
-  ) {
+  Widget _signalMeter(AppTokens t, String label, double value, Color accent) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6938,8 +7687,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   }
 
   double _noveltyStrength(DiffPinnedContextModel c) {
-    if (c.witnesses
-        .any((w) => _normalizedSignal(w).contains('high-frequency'))) {
+    if (c.witnesses.any(
+      (w) => _normalizedSignal(w).contains('high-frequency'),
+    )) {
       return 0.92;
     }
     if (c.witnesses.any((w) => _normalizedSignal(w).contains('residual'))) {
@@ -7013,7 +7763,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
           alpha: onTap != null ? 0.14 : (accent == null ? 0.06 : 0.09),
         ),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+          context.surfaceShader.geometry.badgeRadius,
+        ),
         border: Border.all(
           color: badgeColor.withValues(alpha: onTap != null ? 0.2 : 0.12),
         ),
@@ -7035,7 +7786,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+          context.surfaceShader.geometry.badgeRadius,
+        ),
         onTap: onTap,
         child: child,
       ),
@@ -7045,8 +7797,13 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         : Tooltip(message: tooltip, child: wrapped);
   }
 
-  Widget _linkedPathChip(AppTokens t, String path, String reason, Color accent,
-      {bool compact = false}) {
+  Widget _linkedPathChip(
+    AppTokens t,
+    String path,
+    String reason,
+    Color accent, {
+    bool compact = false,
+  }) {
     final basename = _diffDisplayName(path);
     final child = Container(
       constraints: BoxConstraints(
@@ -7057,7 +7814,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.22),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+          context.surfaceShader.geometry.badgeRadius,
+        ),
         border: Border.all(color: accent.withValues(alpha: 0.12)),
       ),
       child: Column(
@@ -7101,7 +7859,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+            context.surfaceShader.geometry.badgeRadius,
+          ),
           onTap: () => widget.onOpenRelatedPath?.call(path),
           child: child,
         ),
@@ -7140,8 +7899,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     List<(String, String)> future,
   ) {
     final nextPath = future.isEmpty ? null : future.first.$1;
-    final firstEcho =
-        c.rhymePreviews.isEmpty ? null : c.rhymePreviews.first.displayIndex;
+    final firstEcho = c.rhymePreviews.isEmpty
+        ? null
+        : c.rhymePreviews.first.displayIndex;
     return Wrap(
       spacing: 6,
       runSpacing: 6,
@@ -7185,7 +7945,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       decoration: BoxDecoration(
         color: t.surface0.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
       ),
       child: Row(
@@ -7208,7 +7969,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+          context.surfaceShader.geometry.pillRadius,
+        ),
         onTap: onTap,
         child: child,
       ),
@@ -7222,7 +7984,8 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border.all(color: color.withValues(alpha: 0.14)),
       ),
       child: Row(
@@ -7327,18 +8090,16 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     }
   }
 
-  String _summarySentence(
-    DiffPinnedContextModel c,
-    _PinnedPastContext? past,
-  ) {
+  String _summarySentence(DiffPinnedContextModel c, _PinnedPastContext? past) {
     final concept = _conceptLabel(c);
     final owner = past != null && past.nearbyAuthors.isNotEmpty
         ? past.nearbyAuthors.first.name
         : null;
     final echoes = c.rhymePreviews.length;
     final future = _futureDestinations(c);
-    final nextPath =
-        future.isNotEmpty ? _diffDisplayName(future.first.$1) : null;
+    final nextPath = future.isNotEmpty
+        ? _diffDisplayName(future.first.$1)
+        : null;
     final nextReason = future.isNotEmpty ? future.first.$2 : null;
     final fragments = <String>[];
     if (concept != null) {
@@ -7359,7 +8120,10 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
               reason: nextReason.toLowerCase(),
             );
       fragments.add(
-        context.t.diff.pinned.summary.inspectNext(path: nextPath, detail: detail),
+        context.t.diff.pinned.summary.inspectNext(
+          path: nextPath,
+          detail: detail,
+        ),
       );
     }
     return '${fragments.join(', ')}.';
@@ -7425,8 +8189,9 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final destinations = <(String, String)>[];
     final seen = <String>{};
     for (final edge in c.transportEdges) {
-      final candidate =
-          edge.targetPath == currentPath ? edge.sourcePath : edge.targetPath;
+      final candidate = edge.targetPath == currentPath
+          ? edge.sourcePath
+          : edge.targetPath;
       if (candidate.isEmpty ||
           candidate == currentPath ||
           !seen.add(candidate)) {
@@ -7520,10 +8285,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   bool _looksLikeTestPair(String a, String b) {
     final left = a.replaceAll('\\', '/').toLowerCase();
     final right = b.replaceAll('\\', '/').toLowerCase();
-    final leftStem =
-        left.replaceAll('_test.dart', '.dart').replaceAll('/test/', '/lib/');
-    final rightStem =
-        right.replaceAll('_test.dart', '.dart').replaceAll('/test/', '/lib/');
+    final leftStem = left
+        .replaceAll('_test.dart', '.dart')
+        .replaceAll('/test/', '/lib/');
+    final rightStem = right
+        .replaceAll('_test.dart', '.dart')
+        .replaceAll('/test/', '/lib/');
     return leftStem == rightStem ||
         (left.contains('/test/') &&
             right.contains('/lib/') &&
@@ -7603,15 +8370,13 @@ class _PinnedHistorySeismographPainter extends CustomPainter {
       Offset.zero & size,
       const Radius.circular(10),
     );
-    canvas.drawRRect(
-      track,
-      Paint()..color = chrome.withValues(alpha: 0.08),
-    );
+    canvas.drawRRect(track, Paint()..color = chrome.withValues(alpha: 0.08));
 
     final count = samples.length;
     final gap = count <= 12 ? 2.0 : 1.0;
-    final barWidth =
-        ((size.width - gap * (count - 1)) / count).clamp(1.0, 10.0).toDouble();
+    final barWidth = ((size.width - gap * (count - 1)) / count)
+        .clamp(1.0, 10.0)
+        .toDouble();
     final baseY = size.height - 8;
     final points = <Offset>[];
 
@@ -7763,22 +8528,34 @@ class _HunkInlineHint extends StatelessWidget {
     // weight increases; the "landing here" marker appears.
     final baseAlpha = approaching ? 0.65 + 0.3 * strength : 0.52;
     final baseColor = approaching
-        ? Color.lerp(t.textFaint, t.accentBright, 0.4 + 0.4 * strength)!
-            .withValues(alpha: baseAlpha)
-        : Color.lerp(t.textFaint, t.textMuted, 0.2)!
-            .withValues(alpha: baseAlpha);
+        ? Color.lerp(
+            t.textFaint,
+            t.accentBright,
+            0.4 + 0.4 * strength,
+          )!.withValues(alpha: baseAlpha)
+        : Color.lerp(
+            t.textFaint,
+            t.textMuted,
+            0.2,
+          )!.withValues(alpha: baseAlpha);
     // Lerp toward the active theme's add/delete state colors instead of
     // the stock Material Colors.greenAccent/redAccent so the highlight
     // belongs to the theme. Petrichor/blackboard get muted hues that
     // suit the surface; vivid themes still read green/red because their
     // own state tokens are vivid.
     final addColor = approaching
-        ? Color.lerp(t.accentBright, t.stateAdded, 0.55)!
-            .withValues(alpha: baseAlpha)
+        ? Color.lerp(
+            t.accentBright,
+            t.stateAdded,
+            0.55,
+          )!.withValues(alpha: baseAlpha)
         : t.textFaint.withValues(alpha: baseAlpha * 0.9);
     final delColor = approaching
-        ? Color.lerp(t.accentBright, t.stateDeleted, 0.55)!
-            .withValues(alpha: baseAlpha)
+        ? Color.lerp(
+            t.accentBright,
+            t.stateDeleted,
+            0.55,
+          )!.withValues(alpha: baseAlpha)
         : t.textFaint.withValues(alpha: baseAlpha * 0.9);
     final textStyle = TextStyle(
       color: baseColor,
@@ -7799,7 +8576,8 @@ class _HunkInlineHint extends StatelessWidget {
           style: textStyle.copyWith(
             fontSize: 11,
             color: baseColor.withValues(
-                alpha: collapsed ? baseAlpha * 1.2 : baseAlpha * 0.6),
+              alpha: collapsed ? baseAlpha * 1.2 : baseAlpha * 0.6,
+            ),
           ),
         ),
         const SizedBox(width: 6),
@@ -7835,10 +8613,9 @@ class _HunkInlineHint extends StatelessWidget {
             decoration: BoxDecoration(
               color: t.surface1.withValues(alpha: 0.55),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.pillRadius),
-              border: Border.all(
-                color: t.chromeBorder.withValues(alpha: 0.22),
+                context.surfaceShader.geometry.pillRadius,
               ),
+              border: Border.all(color: t.chromeBorder.withValues(alpha: 0.22)),
             ),
             child: Text(
               hint ?? tag!,
@@ -7906,16 +8683,13 @@ class _StickyHunkHeader extends StatelessWidget {
     final runtime = MaterialRuntimeCache.of(tokens, shader);
     final bg = BoxDecoration(
       color: tokens.surface2,
-      border: Border(
-        bottom: BorderSide(
-          color: tokens.chromeBorderSubtle,
-        ),
-      ),
+      border: Border(bottom: BorderSide(color: tokens.chromeBorderSubtle)),
     );
     final labelStyle = TextStyle(
       color: tokens.accentBright,
       fontSize: 11,
-      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+      fontFamily: AppFonts.mono,
+      fontFamilyFallback: AppFonts.monoFallback,
       height: 1.3,
     );
     final leftStrip = IgnorePointer(
@@ -8011,7 +8785,8 @@ class _StickyHunkHeader extends StatelessWidget {
           opacity: opacity,
           child: runtime.filter != null
               ? ClipRect(
-                  child: BackdropFilter(filter: runtime.filter!, child: body))
+                  child: BackdropFilter(filter: runtime.filter!, child: body),
+                )
               : body,
         );
       },

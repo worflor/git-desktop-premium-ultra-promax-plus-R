@@ -5803,6 +5803,10 @@ class _Translations$settings$errors$ko extends Translations$settings$errors$en {
   @override
   String get saveApiPiggybackCli => 'API 피기백 CLI 저장에 실패했습니다.';
   @override
+  String get saveCliTimeout => 'CLI 타임아웃 저장에 실패했습니다.';
+  @override
+  String get stopAllCli => '실행 중인 CLI 세션을 중지할 수 없습니다.';
+  @override
   String clearLocalData({required Object error}) => '로컬 데이터를 지울 수 없음: ${error}';
 }
 
@@ -6755,6 +6759,12 @@ class _Translations$settings$wick$ko extends Translations$settings$wick$en {
   String get connected => 'wick · 연결됨';
   @override
   String get pathToExecutable => 'wick · 실행 파일 경로';
+  @override
+  String get off => '끔';
+  @override
+  String get disableHint => 'wick 통합 끄기';
+  @override
+  String get enableHint => 'wick 통합 켜기';
 }
 
 // Path: settings.integrations
@@ -7037,6 +7047,27 @@ class _Translations$settings$cliPiggyback$ko
   String get refreshTooltip => '지금 모든 제공자를 다시 탐지합니다.';
   @override
   String get body => '인터페이스 메시지를 로컬 제공자 바이너리로 직접 연결합니다.';
+  @override
+  String get cliTimeoutLabel => '실행당 타임아웃';
+  @override
+  String get cliTimeoutUnitMinutes => '분';
+  @override
+  String get cliTimeoutUnitMinute => '분';
+  @override
+  String get forceStopLabel => '모든 세션 중지';
+  @override
+  String get forceStopTooltip => '진행 중인 모든 CLI 실행을 강제 종료합니다.';
+  @override
+  String get forceStopConfirmTitle => '실행 중인 CLI 세션을 중지할까요?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      '진행 중인 CLI 실행 ${count}개를 강제 종료합니다. 출력이 사라집니다.';
+  @override
+  String get forceStopConfirmAction => '모두 중지';
+  @override
+  String get forceStopNoneRunning => '실행 중인 CLI 세션 없음';
+  @override
+  String get forceStopRecordError => '중지됨 — CLI 세션이 강제 종료되었습니다.';
 }
 
 // Path: settings.header

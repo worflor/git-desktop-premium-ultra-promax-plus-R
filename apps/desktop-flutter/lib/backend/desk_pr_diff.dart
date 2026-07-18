@@ -8,16 +8,11 @@
 // pills, magnetic field, etc. all light up identically for local PRs.
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:flutter/foundation.dart' show compute;
 
 import 'desk_pr.dart';
+import 'git.dart' as git;
 import 'remote_types.dart';
 import 'git_result.dart';
-import 'git.dart' show kMaxRenderableDiffLines;
-import '../features/diff/diff_models.dart';
 
 /// Build a [PullRequestDetail] for a local desk PR by diffing the base
 /// against the head in [repoPath] (which should be the main repo or any
@@ -29,7 +24,7 @@ import '../features/diff/diff_models.dart';
 /// base ref advances past the fork point (upstream gains commits the
 /// branch hasn't picked up), a two-dot diff renders reversals of every
 /// unrelated upstream commit as part of the PR — the same failure the
-/// git.dart desk-patch path documents at `_oversizedDiffStub`/merge-base
+/// git.dart desk-patch path documents at its merge-base
 /// scoping. Three-dot restricts the diff to what the branch itself
 /// contributed, symmetric across ahead / behind / diverged states.
 ///
@@ -42,6 +37,13 @@ import '../features/diff/diff_models.dart';
 Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
   required String repoPath,
   required DeskPr pr,
+  int spoolBytesThreshold = git.kDetailDiffSpillBytes,
+  // Mirrors the remote providers' includeDiff: stats-only callers (e.g.
+  // DeskPrState.recomputeDiffStats) get the numstat-derived file list
+  // without the patch body ever being fetched — a spooled body handed to a
+  // caller that only wanted counts would orphan its temp dir, and even the
+  // String form is pure waste there.
+  bool includeDiff = true,
 }) async {
   final threeDot = '${pr.baseRef}...${pr.headRef}';
   final twoDot = '${pr.baseRef}..${pr.headRef}';
@@ -50,8 +52,13 @@ Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
     // share no common ancestor, git refuses three-dot with a message
     // mentioning "no merge base"; there is genuinely no fork point to
     // scope against, so we degrade to the two-dot tree diff rather than
-    // showing the user nothing. Both git passes (numstat + raw) must use
+    // showing the user nothing. Both git passes (numstat + body) must use
     // the *same* spec, so we resolve it once off the numstat probe.
+    //
+    // Both passes route through git.dart's gated exec layer with the
+    // diff-family pins — raw `Process.run` here used to re-open the hostile
+    // gitconfig class (`color.diff=always`, `diff.binary=true`, external
+    // diff) that the pins made unrepresentable everywhere else.
     var spec = threeDot;
     // `-z` NUL-terminates every field, which is the only format that
     // parses renames and unusual filenames byte-exactly. Verified empirically
@@ -61,78 +68,71 @@ Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
     // files still report `-` for both counts. Splitting the whole stream on
     // NUL and walking records keeps non-ASCII paths intact where the old
     // whitespace-`trim()` + TAB-`split` parser would have mangled them.
-    var numstatRes = await Process.run(
-      'git',
-      ['diff', '--numstat', '-z', '--find-renames', spec],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+    var numstatRes = await git.getRangeNumstatZ(
+      repoPath,
+      spec,
+      findRenames: true,
     );
-    if (numstatRes.exitCode != 0) {
-      final err = (numstatRes.stderr as String);
-      if (err.contains('no merge base')) {
-        spec = twoDot;
-        numstatRes = await Process.run(
-          'git',
-          ['diff', '--numstat', '-z', '--find-renames', spec],
-          workingDirectory: repoPath,
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
-        );
-      }
-      if (numstatRes.exitCode != 0) {
-        return GitResult.err((numstatRes.stderr as String).trim());
+    if (!numstatRes.ok) {
+      final err = numstatRes.error ?? '';
+      if (!err.contains('no merge base')) return GitResult.err(err);
+      spec = twoDot;
+      numstatRes = await git.getRangeNumstatZ(
+        repoPath,
+        spec,
+        findRenames: true,
+      );
+      if (!numstatRes.ok) {
+        return GitResult.err(numstatRes.error ?? 'numstat failed');
       }
     }
 
-    final files = _parseNumstatZ(numstatRes.stdout as String);
+    final files = _parseNumstatZ(numstatRes.data ?? '');
 
-    // Oversized-diff guard, mirroring git.dart's `_oversizedDiffStub`
-    // philosophy: sum the changed-line count from the (cheap, content-free)
-    // numstat we already have, and if it exceeds the same
-    // `kMaxRenderableDiffLines` ceiling the rest of the app honours, skip
-    // materialising the multi-MB unified diff entirely. The file list stays
-    // fully populated from numstat; only the inline patch body becomes a
-    // one-block summary stub. The change itself is intact and commits whole.
-    var totalLines = 0;
-    for (final f in files) {
-      totalLines += f.additions + f.deletions;
-    }
-    if (totalLines > kMaxRenderableDiffLines) {
-      final thousands = (totalLines / 1000).round();
-      final label = pr.headRef;
-      final stub = 'diff --git a/$label b/$label\n'
-          '--- a/$label\n'
-          '+++ b/$label\n'
-          ' Diff too large to render: ~${thousands}k changed lines. '
-          'The change itself is intact and stages/commits normally.\n';
-      return GitResult.ok(pr.toDetail(
-        files: files,
-        diff: stub,
-        diffByFile: _indexByFile(parseUnifiedDiff(stub)),
-      ));
+    if (!includeDiff) {
+      return GitResult.ok(pr.toDetail(files: files, diff: ''));
     }
 
-    final diffRes = await Process.run(
-      'git',
-      ['diff', '--find-renames', spec],
-      workingDirectory: repoPath,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    final rawDiff =
-        diffRes.exitCode == 0 ? (diffRes.stdout as String) : '';
-    // Mirror gh.dart's isolate-hop heuristic so big diffs don't block
-    // the UI thread.
-    final parsedLines = rawDiff.length < 32 * 1024
-        ? parseUnifiedDiff(rawDiff)
-        : await compute(parseUnifiedDiff, rawDiff);
-
-    return GitResult.ok(pr.toDetail(
-      files: files,
-      diff: rawDiff,
-      diffByFile: _indexByFile(parsedLines),
-    ));
+    // The patch body ALWAYS streams to a disk spool first, then the ACTUAL
+    // byte length decides the representation. Line churn was tried as the
+    // gate and rejected: a diff with a few extremely long changed lines
+    // reports tiny churn while weighing tens of MB, so any line-count
+    // heuristic reopens the OOM class this path exists to close. Counting
+    // bytes after streaming cannot be wrong, and the round trip for a small
+    // diff (write + read a few KB of temp file) is noise next to the git
+    // spawn itself. A machine-scale diff never exists as a Dart String.
+    final spooled = await git.spoolRangeDiff(repoPath, spec, findRenames: true);
+    if (!spooled.ok || spooled.data == null) {
+      // The numstat probe succeeded but the patch body didn't — that is an
+      // infrastructure failure, not "this PR has no diff". Returning ok with
+      // an empty diff would render a valid-looking detail whose changes have
+      // silently vanished, which is the one thing a review surface must
+      // never do.
+      return GitResult.err(spooled.error ?? 'diff fetch failed');
+    }
+    final spool = spooled.data!;
+    if (spool.byteLength > spoolBytesThreshold) {
+      return GitResult.ok(
+        pr.toDetail(files: files, diff: '', diffSpool: spool, diffLoaded: true),
+      );
+    }
+    // Small diff: materialize the String (cheap; keeps the per-file eager
+    // slices) and release the spool.
+    // NOTE: we deliberately DON'T parse the diff into ParsedLines here. The
+    // only field that needed them (`diffByFile`) was never read, and parsing a
+    // multi-GB PR into one object per row was the machine-scale OOM. The diff
+    // is rendered lazily downstream (the shell indexes `rawDiff`/
+    // `rawDiffByFile` on demand).
+    try {
+      final rawDiff = spool.byteLength == 0
+          ? ''
+          : await git.readSpoolStringLenient(spool.path);
+      return GitResult.ok(
+        pr.toDetail(files: files, diff: rawDiff, diffLoaded: true),
+      );
+    } finally {
+      await spool.dispose();
+    }
   } catch (e) {
     return GitResult.err('local diff failed: $e');
   }
@@ -191,16 +191,4 @@ List<PrFile> _parseNumstatZ(String stdout) {
     files.add(PrFile(path: path, additions: adds, deletions: dels));
   }
   return files;
-}
-
-/// Group parsed diff lines by their owning file path — the key the diff
-/// renderer looks a file's hunks up under.
-Map<String, List<ParsedLine>> _indexByFile(List<ParsedLine> lines) {
-  final byFile = <String, List<ParsedLine>>{};
-  for (final l in lines) {
-    final key = l.filePath;
-    if (key == null) continue;
-    (byFile[key] ??= <ParsedLine>[]).add(l);
-  }
-  return byFile;
 }

@@ -6129,6 +6129,10 @@ class _Translations$settings$errors$pl extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'Nie udało się zapisać CLI dla piggybacku API.';
   @override
+  String get saveCliTimeout => 'Nie udało się zapisać limitu czasu CLI.';
+  @override
+  String get stopAllCli => 'Nie udało się zatrzymać działających sesji CLI.';
+  @override
   String clearLocalData({required Object error}) =>
       'Nie udało się wyczyścić lokalnych danych: ${error}';
 }
@@ -7116,6 +7120,12 @@ class _Translations$settings$wick$pl extends Translations$settings$wick$en {
   String get connected => 'wick · połączony';
   @override
   String get pathToExecutable => 'wick · ścieżka do pliku wykonywalnego';
+  @override
+  String get off => 'wył.';
+  @override
+  String get disableHint => 'Wyłącz integrację wick';
+  @override
+  String get enableHint => 'Włącz integrację wick';
 }
 
 // Path: settings.integrations
@@ -7435,6 +7445,29 @@ class _Translations$settings$cliPiggyback$pl
   @override
   String get body =>
       'Bezpośrednio przekazuj wiadomości interfejsu do lokalnych binariów dostawców.';
+  @override
+  String get cliTimeoutLabel => 'Limit czasu na uruchomienie';
+  @override
+  String get cliTimeoutUnitMinutes => 'minuty';
+  @override
+  String get cliTimeoutUnitMinute => 'minuta';
+  @override
+  String get forceStopLabel => 'Zatrzymaj wszystkie sesje';
+  @override
+  String get forceStopTooltip =>
+      'Wymuś zakończenie każdego trwającego uruchomienia CLI.';
+  @override
+  String get forceStopConfirmTitle => 'Zatrzymać działające sesje CLI?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'To wymusi zakończenie trwających uruchomień CLI (${count}). Ich wynik zostanie utracony.';
+  @override
+  String get forceStopConfirmAction => 'Zatrzymaj wszystkie';
+  @override
+  String get forceStopNoneRunning => 'Brak działających sesji CLI';
+  @override
+  String get forceStopRecordError =>
+      'Zatrzymano — sesje CLI zostały przymusowo zakończone.';
 }
 
 // Path: settings.header

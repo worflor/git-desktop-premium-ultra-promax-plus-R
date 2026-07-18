@@ -100,16 +100,18 @@ Future<Object?> _historyProjection(ScratchRepo repo) async {
   expect(hist.ok, isTrue, reason: 'listCommitHistory failed: ${hist.error}');
   final commits = hist.data ?? const <CommitHistoryEntry>[];
   final meta = commits
-      .map((c) => [
-            c.commitHash,
-            c.parentHashes,
-            c.refNames,
-            c.subject,
-            c.authorName,
-            c.authorEmail,
-            c.authoredAt,
-            c.isMerge,
-          ])
+      .map(
+        (c) => [
+          c.commitHash,
+          c.parentHashes,
+          c.refNames,
+          c.subject,
+          c.authorName,
+          c.authorEmail,
+          c.authoredAt,
+          c.isMerge,
+        ],
+      )
       .toList();
 
   final bulk = await bulkGetCommitDetails(repo.dir.path, commits, limit: 50);
@@ -118,10 +120,11 @@ Future<Object?> _historyProjection(ScratchRepo repo) async {
   final details = <Object?>[];
   for (final hash in byHash.keys.toList()..sort()) {
     final d = byHash[hash]!;
-    final files = d.files
-        .map((f) => [f.path, f.additions, f.deletions, f.changeType])
-        .toList()
-      ..sort((a, b) => (a[0] as String).compareTo(b[0] as String));
+    final files =
+        d.files
+            .map((f) => [f.path, f.additions, f.deletions, f.changeType])
+            .toList()
+          ..sort((a, b) => (a[0] as String).compareTo(b[0] as String));
     details.add([hash, d.filesChanged, d.additions, d.deletions, files]);
   }
   return {'meta': meta, 'bulk': details};
@@ -158,8 +161,15 @@ Future<Object?> _blameProjection(ScratchRepo repo) async {
   final r = await getFileBlame(repo.dir.path, 'blamefile.txt');
   expect(r.ok, isTrue, reason: 'getFileBlame failed: ${r.error}');
   return (r.data ?? const <BlameLineData>[])
-      .map((b) =>
-          [b.lineNumber, b.commitHash, b.authorName, b.authoredAt, b.lineContent])
+      .map(
+        (b) => [
+          b.lineNumber,
+          b.commitHash,
+          b.authorName,
+          b.authoredAt,
+          b.lineContent,
+        ],
+      )
       .toList();
 }
 
@@ -167,15 +177,17 @@ Future<Object?> _branchesProjection(ScratchRepo repo) async {
   final r = await listBranches(repo.dir.path);
   expect(r.ok, isTrue, reason: 'listBranches failed: ${r.error}');
   return (r.data ?? const <BranchInfo>[])
-      .map((b) => [
-            b.name,
-            b.current,
-            b.upstream,
-            b.ahead,
-            b.behind,
-            b.gone,
-            b.lastCommitAt?.toIso8601String(),
-          ])
+      .map(
+        (b) => [
+          b.name,
+          b.current,
+          b.upstream,
+          b.ahead,
+          b.behind,
+          b.gone,
+          b.lastCommitAt?.toIso8601String(),
+        ],
+      )
       .toList()
     ..sort((a, b) => '${a[0]}'.compareTo('${b[0]}'));
 }
@@ -184,8 +196,15 @@ Future<Object?> _reflogProjection(ScratchRepo repo) async {
   final r = await listReflog(repo.dir.path, limit: 50);
   expect(r.ok, isTrue, reason: 'listReflog failed: ${r.error}');
   return (r.data ?? const <ReflogEntryData>[])
-      .map((e) =>
-          [e.commitHash, e.refSelector, e.actionSummary, e.authorName, e.authoredAt])
+      .map(
+        (e) => [
+          e.commitHash,
+          e.refSelector,
+          e.actionSummary,
+          e.authorName,
+          e.authoredAt,
+        ],
+      )
       .toList();
 }
 
@@ -207,7 +226,8 @@ void _differentialGroup(
       expect(
         canonicalJson(hostile),
         canonicalJson(baseline),
-        reason: 'OUTPUT-INVARIANCE VIOLATED: $surface changed under '
+        reason:
+            'OUTPUT-INVARIANCE VIOLATED: $surface changed under '
             'hostile config axis "${axis.name}" (${axis.settings}).\n'
             'baseline: ${canonicalJson(baseline)}\n'
             'hostile:  ${canonicalJson(hostile)}',
@@ -224,14 +244,26 @@ void _differentialGroup(
 /// delegating each to the REAL git binary. Reuses GitFaultScript's recorder
 /// (a never-matching predicate ⇒ every call is delegated AND recorded).
 Future<List<List<String>>> _recordArgv(Future<void> Function() body) async {
-  final script =
-      GitFaultScript.failWhile((_) => false, times: 0, result: gitOk);
+  final script = GitFaultScript.failWhile(
+    (_) => false,
+    times: 0,
+    result: gitOk,
+  );
   await withGitFaults(script, body);
   return script.invocations.map((i) => i.args).toList();
 }
 
-String _sub(List<String> args) =>
-    args.firstWhere((a) => !a.startsWith('-'), orElse: () => '');
+String _sub(List<String> args) {
+  // Mirror _gitSubcommandToken: `-c <key=val>` is a value-taking GLOBAL flag
+  // that precedes the subcommand (the diff family pins `diff.binary=false`
+  // this way), so its value must not be mistaken for the subcommand token.
+  for (var i = 0; i < args.length; i++) {
+    final a = args[i];
+    if (!a.startsWith('-')) return a;
+    if (a == '-c' || a == '-C') i++;
+  }
+  return '';
+}
 
 /// A `diff` invocation whose stdout is a unified-diff BODY fed to
 /// parseUnifiedDiff (has `-U<n>`, is not the numstat size probe).
@@ -264,7 +296,9 @@ bool _isColorImmune(List<String> args) =>
 // ---------------------------------------------------------------------------
 
 Future<List<CommitHistoryEntry>> _historyFromStdout(
-    String repoPath, List<int> stdoutBytes) async {
+  String repoPath,
+  List<int> stdoutBytes,
+) async {
   late final List<CommitHistoryEntry> entries;
   await withGitFaults(
     GitFaultScript.always((_) => rawStdoutResult(stdoutBytes)),
@@ -327,7 +361,7 @@ Future<void> _anchorStatus() async {
   expect(s.ahead, 0);
   expect(s.behind, 0);
   final byPath = {
-    for (final f in s.files) f.path: [f.staged, f.unstaged]
+    for (final f in s.files) f.path: [f.staged, f.unstaged],
   };
   expect(byPath, {
     'a.txt': ['M', ''], // staged modify
@@ -336,9 +370,13 @@ Future<void> _anchorStatus() async {
     'untracked.txt': ['', '?'],
   });
   // The non-ASCII path arrives decoded, never as the C-quoted octal literal.
-  expect(byPath.keys.any((k) => k.contains('\\303')), isFalse,
-      reason: 'a C-quoted path leaked into the status file list: '
-          '${byPath.keys.toList()}');
+  expect(
+    byPath.keys.any((k) => k.contains('\\303')),
+    isFalse,
+    reason:
+        'a C-quoted path leaked into the status file list: '
+        '${byPath.keys.toList()}',
+  );
 }
 
 Future<void> _anchorDiff() async {
@@ -359,7 +397,8 @@ Future<void> _anchorDiff() async {
         .where((l) => l.kind != LineKind.meta)
         .every((l) => l.filePath == nonAsciiFileName),
     isTrue,
-    reason: 'café diff filePath not the real name: '
+    reason:
+        'café diff filePath not the real name: '
         '${cafe.map((l) => l.filePath).toSet()}',
   );
 
@@ -380,7 +419,8 @@ Future<void> _anchorDiff() async {
         .where((l) => l.kind != LineKind.meta)
         .every((l) => l.filePath == spaceFileName),
     isTrue,
-    reason: 'space diff filePath not the real name: '
+    reason:
+        'space diff filePath not the real name: '
         '${space.map((l) => l.filePath).toSet()}',
   );
 }
@@ -389,20 +429,26 @@ Future<void> _anchorHistory() async {
   final hist = await listCommitHistory(_repo.dir.path, limit: 50);
   expect(hist.ok, isTrue, reason: 'history failed: ${hist.error}');
   final commits = hist.data!;
-  expect(commits.map((c) => c.subject).toList(), ['seed two', 'seed one', 'root']);
+  expect(commits.map((c) => c.subject).toList(), [
+    'seed two',
+    'seed one',
+    'root',
+  ]);
   expect(commits.every((c) => c.authorName == 'Scratch Repo'), isTrue);
   expect(
-      commits.every((c) => c.authorEmail == 'scratch@example.invalid'), isTrue);
+    commits.every((c) => c.authorEmail == 'scratch@example.invalid'),
+    isTrue,
+  );
   expect(commits.first.refNames, contains('HEAD -> main'));
 
   final bulk = await bulkGetCommitDetails(_repo.dir.path, commits, limit: 50);
   expect(bulk.ok, isTrue, reason: 'bulk failed: ${bulk.error}');
   final bySubject = {
-    for (final c in commits) c.subject: bulk.data![c.commitHash]!
+    for (final c in commits) c.subject: bulk.data![c.commitHash]!,
   };
   final seedTwo = {
     for (final f in bySubject['seed two']!.files)
-      f.path: [f.changeType, f.additions, f.deletions]
+      f.path: [f.changeType, f.additions, f.deletions],
   };
   expect(seedTwo, {
     'a.txt': ['M', 1, 1],
@@ -410,7 +456,7 @@ Future<void> _anchorHistory() async {
   });
   final seedOne = {
     for (final f in bySubject['seed one']!.files)
-      f.path: [f.changeType, f.additions, f.deletions]
+      f.path: [f.changeType, f.additions, f.deletions],
   };
   expect(seedOne, {
     'a.txt': ['A', 3, 0],
@@ -426,23 +472,29 @@ Future<void> _anchorCoupling() async {
   final r = await computeFileCoupling(_repo.dir.path, halfLifeCommits: 0);
   expect(r.ok, isTrue, reason: 'coupling failed: ${r.error}');
   final paths = List<String>.of(r.data!.paths)..sort();
-  expect(paths, [
-    'a.txt',
-    'blamefile.txt',
-    nonAsciiFileName, // café.txt — a real node, NOT `"caf/303/251.txt"`
-    spaceFileName,
-    'stashme.txt',
-  ]..sort());
+  expect(
+    paths,
+    [
+      'a.txt',
+      'blamefile.txt',
+      nonAsciiFileName, // café.txt — a real node, NOT `"caf/303/251.txt"`
+      spaceFileName,
+      'stashme.txt',
+    ]..sort(),
+  );
   // No phantom node from an un-decoded C-quoted raw path.
-  expect(paths.any((pth) => pth.contains('303') || pth.contains('\\')), isFalse,
-      reason: 'phantom coupling node from a C-quoted path: $paths');
+  expect(
+    paths.any((pth) => pth.contains('303') || pth.contains('\\')),
+    isFalse,
+    reason: 'phantom coupling node from a C-quoted path: $paths',
+  );
 }
 
 Future<void> _anchorStash() async {
   final r = await stashFiles(_repo.dir.path);
   expect(r.ok, isTrue, reason: 'stash failed: ${r.error}');
   final byPath = {
-    for (final s in r.data!) s.path: [s.adds, s.dels, s.binary]
+    for (final s in r.data!) s.path: [s.adds, s.dels, s.binary],
   };
   // Under pinned no-renames the rename+edit shows as a delete of the old path
   // and an add of the new — two clean rows, no `{old => new}` arrow smuggled
@@ -483,8 +535,11 @@ Future<void> _anchorReflog() async {
   // Newest reflog entry resolves to the current HEAD commit.
   expect(entries.first.commitHash, head);
   expect(entries.every((e) => e.authorName == 'Scratch Repo'), isTrue);
-  expect(entries.any((e) => e.actionSummary.contains('seed two')), isTrue,
-      reason: 'no reflog entry recorded the "seed two" commit');
+  expect(
+    entries.any((e) => e.actionSummary.contains('seed two')),
+    isTrue,
+    reason: 'no reflog entry recorded the "seed two" commit',
+  );
 }
 
 Future<void> _anchorSearch() async {
@@ -494,14 +549,23 @@ Future<void> _anchorSearch() async {
   final r = await searchCommits(_repo.dir.path, 'seed');
   expect(r.ok, isTrue, reason: 'searchCommits failed: ${r.error}');
   final results = r.data!;
-  expect(results, isNotEmpty,
-      reason: 'searchCommits returned nothing for a seeded subject word — the '
-          'pretty-format %x09 field split has regressed to %09');
-  expect(results.map((c) => c.subject).toSet(),
-      containsAll(<String>['seed one', 'seed two']),
-      reason: 'searchCommits must return correctly-parsed subjects');
-  expect(results.every((c) => c.authorName == 'Scratch Repo'), isTrue,
-      reason: 'author field mis-split (tab separator wrong)');
+  expect(
+    results,
+    isNotEmpty,
+    reason:
+        'searchCommits returned nothing for a seeded subject word — the '
+        'pretty-format %x09 field split has regressed to %09',
+  );
+  expect(
+    results.map((c) => c.subject).toSet(),
+    containsAll(<String>['seed one', 'seed two']),
+    reason: 'searchCommits must return correctly-parsed subjects',
+  );
+  expect(
+    results.every((c) => c.authorName == 'Scratch Repo'),
+    isTrue,
+    reason: 'author field mis-split (tab separator wrong)',
+  );
 }
 
 void main() {
@@ -525,8 +589,11 @@ void main() {
       // C-quote / prefix shapes were validated against git 2.52. A wildly
       // older git could shift a sample; the differential still holds because
       // both arms run the same binary.
-      expect(_gitVersion, contains('git version'),
-          reason: 'could not resolve git --version: "$_gitVersion"');
+      expect(
+        _gitVersion,
+        contains('git version'),
+        reason: 'could not resolve git --version: "$_gitVersion"',
+      );
     });
   });
 
@@ -603,12 +670,14 @@ void main() {
   });
 
   // --------------------------------------------------------------------- A6
-  group('law A6 — safe controls (armed under EVERY axis; harness validity)',
-      () {
-    _differentialGroup('blame', _blameProjection);
-    _differentialGroup('branches', _branchesProjection);
-    _differentialGroup('reflog', _reflogProjection);
-  });
+  group(
+    'law A6 — safe controls (armed under EVERY axis; harness validity)',
+    () {
+      _differentialGroup('blame', _blameProjection);
+      _differentialGroup('branches', _branchesProjection);
+      _differentialGroup('reflog', _reflogProjection);
+    },
+  );
 
   // ---------------------------------------------------------------------- B
   group('law B — argv-pinning lint', () {
@@ -617,12 +686,16 @@ void main() {
     test('argv-color: getFileBlame is color-immune (--porcelain)', () async {
       await _fixture.restoreBase();
       final argv = await _recordArgv(
-          () => getFileBlame(_repo.dir.path, 'blamefile.txt'));
+        () => getFileBlame(_repo.dir.path, 'blamefile.txt'),
+      );
       final blame = argv.where((a) => _sub(a) == 'blame').toList();
       expect(blame, isNotEmpty, reason: 'no blame invocation recorded: $argv');
       for (final a in blame) {
-        expect(_isColorImmune(a), isTrue,
-            reason: 'blame invocation not color-immune: $a');
+        expect(
+          _isColorImmune(a),
+          isTrue,
+          reason: 'blame invocation not color-immune: $a',
+        );
       }
     });
 
@@ -632,8 +705,11 @@ void main() {
       final branch = argv.where((a) => _sub(a) == 'branch').toList();
       expect(branch, isNotEmpty, reason: 'no branch invocation: $argv');
       for (final a in branch) {
-        expect(_isColorImmune(a), isTrue,
-            reason: 'branch invocation not color-immune: $a');
+        expect(
+          _isColorImmune(a),
+          isTrue,
+          reason: 'branch invocation not color-immune: $a',
+        );
       }
     });
 
@@ -643,37 +719,49 @@ void main() {
     // fails it.
     test('argv-color: content diff carries --no-color', () async {
       await _fixture.restoreBase();
-      final argv =
-          await _recordArgv(() => getFileDiff(_repo.dir.path, nonAsciiFileName));
+      final argv = await _recordArgv(
+        () => getFileDiff(_repo.dir.path, nonAsciiFileName),
+      );
       final content = argv.where(_isDiffContent).toList();
       expect(content, isNotEmpty, reason: 'no content-diff invocation: $argv');
       for (final a in content) {
-        expect(_hasNoColor(a), isTrue,
-            reason: 'content diff lacks --no-color: $a');
+        expect(
+          _hasNoColor(a),
+          isTrue,
+          reason: 'content diff lacks --no-color: $a',
+        );
       }
     });
 
     test('argv-extdiff: content diff carries --no-ext-diff', () async {
       await _fixture.restoreBase();
-      final argv =
-          await _recordArgv(() => getFileDiff(_repo.dir.path, nonAsciiFileName));
+      final argv = await _recordArgv(
+        () => getFileDiff(_repo.dir.path, nonAsciiFileName),
+      );
       final content = argv.where(_isDiffContent).toList();
       expect(content, isNotEmpty, reason: 'no content-diff invocation: $argv');
       for (final a in content) {
-        expect(_hasNoExtDiff(a), isTrue,
-            reason: 'content diff lacks --no-ext-diff: $a');
+        expect(
+          _hasNoExtDiff(a),
+          isTrue,
+          reason: 'content diff lacks --no-ext-diff: $a',
+        );
       }
     });
 
     test('argv-signature: commit log carries --no-show-signature', () async {
       await _fixture.restoreBase();
-      final argv =
-          await _recordArgv(() => listCommitHistory(_repo.dir.path, limit: 5));
+      final argv = await _recordArgv(
+        () => listCommitHistory(_repo.dir.path, limit: 5),
+      );
       final logs = argv.where(_isCommitLogFormat).toList();
       expect(logs, isNotEmpty, reason: 'no commit-log invocation: $argv');
       for (final a in logs) {
-        expect(_hasNoShowSignature(a), isTrue,
-            reason: 'commit log lacks --no-show-signature: $a');
+        expect(
+          _hasNoShowSignature(a),
+          isTrue,
+          reason: 'commit log lacks --no-show-signature: $a',
+        );
       }
     });
   });
@@ -703,48 +791,63 @@ void main() {
     test('parser survives log.showSignature gpg-line injection', () async {
       // Sanity: without signature lines the parser recovers the commits, so a
       // failure below is attributable to the injected gpg lines, not the fixture.
-      final clean =
-          await _historyFromStdout(_repo.dir.path, syntheticCommitLog(commits));
-      expect(clean.map((c) => c.commitHash).toList(),
-          equals([commits[0].hash, commits[1].hash]));
+      final clean = await _historyFromStdout(
+        _repo.dir.path,
+        syntheticCommitLog(commits),
+      );
+      expect(
+        clean.map((c) => c.commitHash).toList(),
+        equals([commits[0].hash, commits[1].hash]),
+      );
 
       final injected = await _historyFromStdout(
-          _repo.dir.path, syntheticCommitLog(commits, signature: true));
-      expect(injected.map((c) => c.commitHash).toList(),
-          equals([commits[0].hash, commits[1].hash]),
-          reason: 'gpg: signature lines shifted the fixed-8-line windows');
+        _repo.dir.path,
+        syntheticCommitLog(commits, signature: true),
+      );
+      expect(
+        injected.map((c) => c.commitHash).toList(),
+        equals([commits[0].hash, commits[1].hash]),
+        reason: 'gpg: signature lines shifted the fixed-8-line windows',
+      );
       // Was finding G10; fixed 2026-07-10 — _parseCommitLogLines screens
       // record-start `gpg:` lines, so an interleaved signature no longer
       // shifts the window. Armed.
     });
 
-    test('parser degrades (no throw) on non-UTF-8 author/subject fields',
-        () async {
-      // A mismatched i18n.logOutputEncoding yields raw Latin-1 / invalid UTF-8
-      // bytes in text fields. `log` decodes leniently (git.dart:718), so the
-      // parser must return entries rather than throw. ARMED.
-      final hostile = <SyntheticCommit>[
-        SyntheticCommit(
-          hash: commits[0].hash,
-          shortHash: commits[0].shortHash,
-          // 0xE9 = Latin-1 'é', an invalid standalone UTF-8 lead byte; 0xC3
-          // with no continuation is a truncated sequence.
-          authorNameRawBytes: const [0x41, 0xE9, 0x6C, 0x69, 0x65],
-          subjectRawBytes: const [0x66, 0x69, 0x78, 0x20, 0xC3, 0x28],
-          authoredAt: commits[0].authoredAt,
-        ),
-        commits[1],
-      ];
-      final bytes = syntheticCommitLog(hostile);
+    test(
+      'parser degrades (no throw) on non-UTF-8 author/subject fields',
+      () async {
+        // A mismatched i18n.logOutputEncoding yields raw Latin-1 / invalid UTF-8
+        // bytes in text fields. `log` decodes leniently (git.dart:718), so the
+        // parser must return entries rather than throw. ARMED.
+        final hostile = <SyntheticCommit>[
+          SyntheticCommit(
+            hash: commits[0].hash,
+            shortHash: commits[0].shortHash,
+            // 0xE9 = Latin-1 'é', an invalid standalone UTF-8 lead byte; 0xC3
+            // with no continuation is a truncated sequence.
+            authorNameRawBytes: const [0x41, 0xE9, 0x6C, 0x69, 0x65],
+            subjectRawBytes: const [0x66, 0x69, 0x78, 0x20, 0xC3, 0x28],
+            authoredAt: commits[0].authoredAt,
+          ),
+          commits[1],
+        ];
+        final bytes = syntheticCommitLog(hostile);
 
-      // Must COMPLETE (not throw) — lenient decode substitutes U+FFFD.
-      final future = _historyFromStdout(_repo.dir.path, bytes);
-      await expectLater(future, completes);
-      final entries = await future;
-      expect(entries.length, 2,
-          reason: 'non-UTF-8 fields must degrade to U+FFFD, not drop commits');
-      expect(entries.map((c) => c.commitHash).toList(),
-          equals([hostile[0].hash, hostile[1].hash]));
-    });
+        // Must COMPLETE (not throw) — lenient decode substitutes U+FFFD.
+        final future = _historyFromStdout(_repo.dir.path, bytes);
+        await expectLater(future, completes);
+        final entries = await future;
+        expect(
+          entries.length,
+          2,
+          reason: 'non-UTF-8 fields must degrade to U+FFFD, not drop commits',
+        );
+        expect(
+          entries.map((c) => c.commitHash).toList(),
+          equals([hostile[0].hash, hostile[1].hash]),
+        );
+      },
+    );
   });
 }

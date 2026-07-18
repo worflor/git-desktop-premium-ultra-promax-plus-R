@@ -36,6 +36,8 @@
     "saveMuseNotes": "Nie udało się zapisać notatek muzy.",
     "saveReviewDoubleCheck": "Nie udało się zapisać trybu podwójnej weryfikacji przeglądu.",
     "saveApiPiggybackCli": "Nie udało się zapisać CLI dla piggybacku API.",
+    "saveCliTimeout": "Nie udało się zapisać limitu czasu CLI.",
+    "stopAllCli": "Nie udało się zatrzymać działających sesji CLI.",
     "clearLocalData": "Nie udało się wyczyścić lokalnych danych: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Wymazać wszystkie lokalne dane aplikacji — w tym listę ostatnich repozytoriów — i wyjść? Twoje rzeczywiste repozytoria git na dysku nie zostaną naruszone.",
     "confirmReset": "Zresetować lokalne dane aplikacji i wyjść?\n\nUstawienia, motyw, onboarding, preferencje AI, telemetria i cache engramów zostaną wyczyszczone. Lista ostatnich repozytoriów przetrwa."
   },
-  "guardrailStageLabels": ["Luźno", "Zrównoważone", "Ściśle", "Paranoicznie"],
+  "guardrailStageLabels": [
+    "Luźno",
+    "Zrównoważone",
+    "Ściśle",
+    "Paranoicznie"
+  ],
   "guardrailMacro": {
     "loose": "luźno",
     "balanced": "zrównoważone",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "Wybierz plik wykonywalny wick",
     "connected": "wick · połączony",
-    "pathToExecutable": "wick · ścieżka do pliku wykonywalnego"
+    "pathToExecutable": "wick · ścieżka do pliku wykonywalnego",
+    "off": "wył.",
+    "disableHint": "Wyłącz integrację wick",
+    "enableHint": "Włącz integrację wick"
   },
   "integrations": {
     "title": "i integracje",
@@ -481,10 +491,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | jank {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["polecenie", "p50", "niezawodność", "zakres"],
-    "headersBackend": ["zakres", "p50", "p95", "awarie"],
-    "headersDiff": ["renderer", "pierwsze malowanie", "klatka p95", "raster p95", "jank"],
-    "headersUi": ["zdarzenie", "p50", "awarie", "zakres"]
+    "headersCommand": [
+      "polecenie",
+      "p50",
+      "niezawodność",
+      "zakres"
+    ],
+    "headersBackend": [
+      "zakres",
+      "p50",
+      "p95",
+      "awarie"
+    ],
+    "headersDiff": [
+      "renderer",
+      "pierwsze malowanie",
+      "klatka p95",
+      "raster p95",
+      "jank"
+    ],
+    "headersUi": [
+      "zdarzenie",
+      "p50",
+      "awarie",
+      "zakres"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -548,7 +579,17 @@
     "clearCacheTooltip": "Wymaż zbuforowane modele i ponów sondowanie. Usuwa te, które dostawca porzucił.",
     "refreshLabel": "Odśwież dostawców",
     "refreshTooltip": "Ponów sondowanie każdego dostawcy teraz.",
-    "body": "Bezpośrednio przekazuj wiadomości interfejsu do lokalnych binariów dostawców."
+    "body": "Bezpośrednio przekazuj wiadomości interfejsu do lokalnych binariów dostawców.",
+    "cliTimeoutLabel": "Limit czasu na uruchomienie",
+    "cliTimeoutUnitMinutes": "minuty",
+    "cliTimeoutUnitMinute": "minuta",
+    "forceStopLabel": "Zatrzymaj wszystkie sesje",
+    "forceStopTooltip": "Wymuś zakończenie każdego trwającego uruchomienia CLI.",
+    "forceStopConfirmTitle": "Zatrzymać działające sesje CLI?",
+    "forceStopConfirmBody": "To wymusi zakończenie trwających uruchomień CLI ({count}). Ich wynik zostanie utracony.",
+    "forceStopConfirmAction": "Zatrzymaj wszystkie",
+    "forceStopNoneRunning": "Brak działających sesji CLI",
+    "forceStopRecordError": "Zatrzymano — sesje CLI zostały przymusowo zakończone."
   },
   "header": {
     "title": "Preferencje przestrzeni roboczej",

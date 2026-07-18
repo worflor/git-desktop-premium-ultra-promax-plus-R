@@ -20,7 +20,6 @@ int _splitmix64(int z) {
 
 class ParsedLine {
   final String text;
-  final String lowerText;
   final LineKind kind;
   final int? lineNumOld;
   final int? lineNumNew;
@@ -46,7 +45,22 @@ class ParsedLine {
   /// 64 bits is ~$2^{-64}$, so the fast path is effectively exact for
   /// any realistic diff size (birthday bound ≈ 4 billion entries before
   /// a 50% chance of collision — Principia Circle XLV).
-  final int fastKey;
+  ///
+  /// Lazy: `text.hashCode` is O(line length). Rendering a row never needs
+  /// the key (only `ValueKey`s of *visible* rows do), so on a 15M-line
+  /// diff we compute it ~100 times (the viewport) instead of 15M times at
+  /// parse. See the class-level note on why every derived field is lazy.
+  late final int fastKey = _computeFastKey(
+    hunkIndex,
+    lineNumOld,
+    lineNumNew,
+    text,
+  );
+
+  /// Case-folded copy of [text], derived lazily. Only the search filter
+  /// (`substring` match) and the signature builders below consume it, so a
+  /// rendered-but-unsearched line never allocates a second string.
+  late final String lowerText = text.toLowerCase();
 
   /// SWAR presence bitmap — a 64-bit signature of which characters appear
   /// anywhere in [lowerText]. For each code-unit `c` the bit at
@@ -61,7 +75,7 @@ class ParsedLine {
   /// counters (logos.wat circa `f0C / o2C / abC`) — precompute a dense
   /// bit-level summary once, then use bitwise ops at query time.
   /// Principia Circle II (SWAR — SIMD within a register).
-  final int charBits;
+  late final int charBits = _computeCharBits(lowerText);
 
   /// Bigram SWAR bitmap — a SECOND-STAGE filter that catches cases the
   /// single-character [charBits] can't. For queries like "function" where
@@ -83,7 +97,7 @@ class ParsedLine {
   /// presence filter, though we stop short of full Bitap NFA since
   /// Dart's native `String.contains` is already SIMD-accelerated and
   /// pays for itself once we've reached the shrinking pass-through set.
-  final int bigramBits;
+  late final int bigramBits = _computeBigramBits(lowerText);
 
   /// SimHash locality-sensitive 64-bit signature. For each character
   /// trigram in [lowerText], compute a 64-bit hash; bit `k` of the
@@ -101,11 +115,20 @@ class ParsedLine {
   /// Principia Circle XVII (SplitMix64 avalanche per trigram) combined
   /// with a bit-counting projection — sign-of-weighted-sum per output
   /// bit. Zero for lines shorter than 3 characters (no trigrams).
-  final int simHash;
+  ///
+  /// Lazy, and the reason the whole family is lazy: [_computeSimHash] is
+  /// O(len·64) — by far the heaviest per-line cost. Computed eagerly for
+  /// every line it turned a giant machine-generated diff (a 15M-line
+  /// DIMACS road-graph rewrite) into a minutes-long parse-time freeze on
+  /// the UI isolate, for a fuzzy-move signal only move detection ever
+  /// reads. Deferring it means a plain render pays nothing; only the
+  /// move-detection pass (skipped above [kLeanDiffLineThreshold]) and
+  /// fuzzy search touch it, and then only for the lines they actually
+  /// compare.
+  late final int simHash = _computeSimHash(lowerText);
 
   ParsedLine({
     required this.text,
-    required this.lowerText,
     required this.kind,
     this.lineNumOld,
     this.lineNumNew,
@@ -113,18 +136,20 @@ class ParsedLine {
     this.filePath,
     this.isStaged = false,
     this.noNewlineAtEof = false,
-  })  : fastKey = _computeFastKey(hunkIndex, lineNumOld, lineNumNew, text),
-        charBits = _computeCharBits(lowerText),
-        bigramBits = _computeBigramBits(lowerText),
-        simHash = _computeSimHash(lowerText);
+  });
 
   static int _computeFastKey(
-      int hunkIndex, int? lnOld, int? lnNew, String text) {
+    int hunkIndex,
+    int? lnOld,
+    int? lnNew,
+    String text,
+  ) {
     // Pack structural position into high/mid/low bit slots first so each
     // field contributes independent entropy before the avalanche runs.
     // lnOld/lnNew default to -1 so the key is stable even for context-only
     // lines where only one side has a number.
-    final pos = (hunkIndex << 48) ^
+    final pos =
+        (hunkIndex << 48) ^
         (((lnOld ?? -1) & 0xFFFFFF) << 24) ^
         ((lnNew ?? -1) & 0xFFFFFF);
     // text.hashCode is cached by the Dart VM after first call, so the
@@ -191,7 +216,8 @@ class ParsedLine {
     final weights = Int32List(64);
     for (int i = 0; i <= n - 3; i++) {
       // Pack trigram into 24 bits, then avalanche to 64.
-      final tri = (lowerText.codeUnitAt(i) & 0xFF) |
+      final tri =
+          (lowerText.codeUnitAt(i) & 0xFF) |
           ((lowerText.codeUnitAt(i + 1) & 0xFF) << 8) |
           ((lowerText.codeUnitAt(i + 2) & 0xFF) << 16);
       final h = _splitmix64(tri);
@@ -233,7 +259,6 @@ class ParsedLine {
   }) {
     return ParsedLine(
       text: text,
-      lowerText: lowerText,
       kind: kind,
       lineNumOld: lineNumOld,
       lineNumNew: lineNumNew,
@@ -267,8 +292,9 @@ class ParsedLine {
 /// end of file` markers by attaching them to the previous line via
 /// [ParsedLine.noNewlineAtEof] without consuming a counter slot.
 /// This is the canonical parser for the app — used by the changes-panel
-final RegExp _kHunkHeader =
-    RegExp(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@');
+final RegExp _kHunkHeader = RegExp(
+  r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@',
+);
 
 /// Tracks where a hunk body begins and ends while walking a raw unified
 /// diff line by line.
@@ -366,6 +392,22 @@ class _HunkCursor {
   }
 }
 
+/// Above this many parsed lines a diff is treated as **lean**: the
+/// human-scale analyses that are super-linear or allocate a per-line
+/// index — fuzzy move detection ([buildEditUnits]'s O(deletes·inserts)
+/// SimHash pass), the `fastKey → EditUnit` map, and the Logos spectral
+/// runtime — are skipped. They exist to help a person read a change;
+/// a machine-generated N-million-line diff (a regenerated dataset, a
+/// road-graph rewrite) neither benefits from them nor can afford them,
+/// and move detection in particular never returns on a full-file
+/// rewrite. The diff still parses, renders (the viewer is virtualized —
+/// line count is not a rendering cost), scrolls, searches, and stages in
+/// full; only move highlighting and rename fusion degrade. The bound is on
+/// total parsed lines — far above any human-reviewed change (even a
+/// regenerated lockfile is ~tens of thousands), so ordinary diffs keep
+/// full fidelity and only machine-scale ones go lean.
+const int kLeanDiffLineThreshold = 200000;
+
 /// diff shell, the patch engine, and the PR detail surface so every
 /// place that reads a diff sees the exact same model.
 List<ParsedLine> parseUnifiedDiff(String diff) {
@@ -403,12 +445,14 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
         oldLine = cursor.oldStart;
         newLine = cursor.newStart;
         hunkIdx++;
-        result.add(ParsedLine(
+        result.add(
+          ParsedLine(
             text: line,
-            lowerText: line.toLowerCase(),
             kind: LineKind.hunk,
             hunkIndex: hunkIdx,
-            filePath: currentFile));
+            filePath: currentFile,
+          ),
+        );
         continue;
       }
     }
@@ -424,57 +468,65 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
 
     if (inHunk) {
       if (line.startsWith('+')) {
-        result.add(ParsedLine(
+        result.add(
+          ParsedLine(
             text: line,
-            lowerText: line.toLowerCase(),
             kind: LineKind.added,
             lineNumNew: newLine++,
             hunkIndex: hunkIdx,
-            filePath: currentFile));
+            filePath: currentFile,
+          ),
+        );
       } else if (line.startsWith('-')) {
-        result.add(ParsedLine(
+        result.add(
+          ParsedLine(
             text: line,
-            lowerText: line.toLowerCase(),
             kind: LineKind.deleted,
             lineNumOld: oldLine++,
             hunkIndex: hunkIdx,
-            filePath: currentFile));
+            filePath: currentFile,
+          ),
+        );
       } else if (line.isEmpty) {
         // A truly empty line can never be hunk body — even blank context
         // carries its ' ' marker — so it claims no hunk membership. See the
         // blank-row branch below.
-        result.add(ParsedLine(
-            text: line, lowerText: '', kind: LineKind.context, hunkIndex: -1));
+        result.add(
+          ParsedLine(text: line, kind: LineKind.context, hunkIndex: -1),
+        );
       } else {
-        result.add(ParsedLine(
+        result.add(
+          ParsedLine(
             text: line,
-            lowerText: line.toLowerCase(),
             kind: LineKind.context,
             lineNumOld: oldLine++,
             lineNumNew: newLine++,
             hunkIndex: hunkIdx,
-            filePath: currentFile));
+            filePath: currentFile,
+          ),
+        );
       }
       continue;
     }
 
     if (line.startsWith('--- ')) {
       pendingOldFile = patchSidePath(line, preferredPrefix: 'a');
-      result.add(ParsedLine(
+      result.add(
+        ParsedLine(
           text: line,
-          lowerText: line.toLowerCase(),
           kind: LineKind.meta,
-          filePath: currentFile ?? pendingOldFile));
+          filePath: currentFile ?? pendingOldFile,
+        ),
+      );
     } else if (line.startsWith('+++ ')) {
-      currentFile = patchSidePath(line, preferredPrefix: 'b') ??
+      currentFile =
+          patchSidePath(line, preferredPrefix: 'b') ??
           pendingOldFile ??
           currentFile;
       pendingOldFile = null;
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.meta,
-          filePath: currentFile));
+      result.add(
+        ParsedLine(text: line, kind: LineKind.meta, filePath: currentFile),
+      );
     } else if (line.startsWith('new file mode ') ||
         line.startsWith('deleted file mode ') ||
         line.startsWith('old mode ') ||
@@ -484,20 +536,20 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
         line.startsWith('rename to ') ||
         line.startsWith('Binary files ') ||
         line.startsWith('GIT binary patch')) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.meta,
-          filePath: currentFile));
+      result.add(
+        ParsedLine(text: line, kind: LineKind.meta, filePath: currentFile),
+      );
     } else if (line.isNotEmpty) {
-      result.add(ParsedLine(
+      result.add(
+        ParsedLine(
           text: line,
-          lowerText: line.toLowerCase(),
           kind: LineKind.context,
           lineNumOld: oldLine++,
           lineNumNew: newLine++,
           hunkIndex: hunkIdx,
-          filePath: currentFile));
+          filePath: currentFile,
+        ),
+      );
     } else {
       // Display-only blank row (commit-message preambles in `git show` /
       // `log -p` payloads). A truly empty line can NEVER be hunk body —
@@ -506,11 +558,7 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
       // structural: every hunk consumer (PatchEngine grouping, edit
       // units) skips negative indices, so a stray blank can't inflate a
       // hunk's line accounting no matter which payload it arrived in.
-      result.add(ParsedLine(
-          text: line,
-          lowerText: '',
-          kind: LineKind.context,
-          hunkIndex: -1));
+      result.add(ParsedLine(text: line, kind: LineKind.context, hunkIndex: -1));
     }
   }
 
@@ -529,34 +577,96 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
 /// the parser).
 /// Used by surfaces that want to hand a RAW diff string to [DiffShell]
 /// for a single file out of a multi-file PR payload, without forcing
-/// the Shell to re-scan the full patch for every rebuild. Pair with
-/// [diffByFile] (parsed form) on the same detail object so callers can
-/// pick whichever representation they need.
+/// the Shell to re-scan the full patch for every rebuild. The parsed
+/// counterpart this once paired with is gone: eager per-file parsing
+/// multiplied a large remote patch by its file count, so details now
+/// carry a spool the Shell reads lazily.
+/// Per-file copies are useful for small PRs, but multiplying a large remote
+/// patch by its file count defeats lazy rendering. Providers use this bounded
+/// variant for their retained detail maps; the active file is sliced on demand
+/// with [sliceSingleDiffByFile].
+const int kEagerDiffSliceThreshold = 4 * 1024 * 1024;
+
+/// True when [rawSlice]'s HEADER declares a brand-new file — a
+/// `new file mode` or `--- /dev/null` line BEFORE the first hunk.
+///
+/// Deliberately bounded to the pre-`@@` header region: hunk CONTENT can
+/// forge both shapes byte-identically. A deleted line whose text is
+/// `-- /dev/null` renders as `--- /dev/null` (the `-` prefix plus content),
+/// indistinguishable from the real header by any substring or line-anchored
+/// check — so a whole-text `contains` falsely marks ordinary edited files
+/// as ancestor-less and turns their blame off. Inside the header region no
+/// content lines exist, so the line-start checks below are exact.
+bool unifiedDiffHeaderDeclaresNewFile(String rawSlice) {
+  var pos = 0;
+  while (pos < rawSlice.length) {
+    if (rawSlice.startsWith('@@', pos)) return false; // hunks begin: stop
+    if (rawSlice.startsWith('new file mode ', pos) ||
+        rawSlice.startsWith('--- /dev/null', pos)) {
+      return true;
+    }
+    final nl = rawSlice.indexOf('\n', pos);
+    if (nl < 0) return false;
+    pos = nl + 1;
+  }
+  return false;
+}
+
+Map<String, String> sliceDiffByFileForDetail(String raw) =>
+    raw.length > kEagerDiffSliceThreshold ? const {} : sliceDiffByFile(raw);
+
 Map<String, String> sliceDiffByFile(String raw) {
   if (raw.isEmpty) return const {};
   if (!raw.contains('diff --git ')) {
     return _sliceBareUnifiedDiffByFile(raw);
   }
 
-  final lines = raw.split('\n');
   final result = <String, String>{};
-  var sectionStart = -1;
-  String? currentPath;
-  void flush(int endExclusive) {
-    if (sectionStart < 0 || currentPath == null) return;
-    result[currentPath] = lines.sublist(sectionStart, endExclusive).join('\n');
-  }
-
-  for (var i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    if (line.startsWith('diff --git')) {
-      flush(i);
-      sectionStart = i;
-      currentPath = pathFromDiffGitHeader(line);
+  var sectionStart = _nextDiffHeader(raw, 0);
+  while (sectionStart >= 0) {
+    final lineEnd = raw.indexOf('\n', sectionStart);
+    final headerEnd = lineEnd < 0 ? raw.length : lineEnd;
+    final path = pathFromDiffGitHeader(raw.substring(sectionStart, headerEnd));
+    final next = _nextDiffHeader(raw, headerEnd);
+    final sectionEnd = next < 0 ? raw.length : next;
+    if (path != null && path.isNotEmpty) {
+      result[path] = raw.substring(sectionStart, sectionEnd);
     }
+    sectionStart = next;
   }
-  flush(lines.length);
   return result;
+}
+
+/// Extract only [path]'s section without allocating a `split` line list or
+/// copies for every other file in a multi-file patch.
+String? sliceSingleDiffByFile(String raw, String path) {
+  if (raw.isEmpty || path.isEmpty) return null;
+  if (!raw.contains('diff --git ')) {
+    return sliceDiffByFile(raw)[path];
+  }
+  var sectionStart = _nextDiffHeader(raw, 0);
+  while (sectionStart >= 0) {
+    final lineEnd = raw.indexOf('\n', sectionStart);
+    final headerEnd = lineEnd < 0 ? raw.length : lineEnd;
+    final sectionPath = pathFromDiffGitHeader(
+      raw.substring(sectionStart, headerEnd),
+    );
+    final next = _nextDiffHeader(raw, headerEnd);
+    if (sectionPath == path) {
+      final sectionEnd = next < 0 ? raw.length : next;
+      return raw.substring(sectionStart, sectionEnd);
+    }
+    sectionStart = next;
+  }
+  return null;
+}
+
+int _nextDiffHeader(String raw, int from) {
+  var index = raw.indexOf('diff --git ', from);
+  while (index >= 0 && index > 0 && raw.codeUnitAt(index - 1) != 0x0A) {
+    index = raw.indexOf('diff --git ', index + 1);
+  }
+  return index;
 }
 
 Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
@@ -591,7 +701,8 @@ Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
 
     flush(i);
     sectionStart = i;
-    currentPath = patchSidePath(plus, preferredPrefix: 'b') ??
+    currentPath =
+        patchSidePath(plus, preferredPrefix: 'b') ??
         patchSidePath(minus, preferredPrefix: 'a');
     i++;
   }

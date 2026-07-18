@@ -49,8 +49,10 @@ void main() {
     if (path.endsWith('.@@locale')) return;
 
     if (isPluralMap(base)) {
-      if (loc is! Map || !isPluralMap(loc)) {
-        problems.add('$path: base is a plural map, locale is ${loc.runtimeType}');
+      if (base is! Map || loc is! Map || !isPluralMap(loc)) {
+        problems.add(
+          '$path: base is a plural map, locale is ${loc.runtimeType}',
+        );
         return;
       }
       // A plural category may use any SUBSET of the base's parameters — the
@@ -59,14 +61,16 @@ void main() {
       // a placeholder the base doesn't provide (the `{nom}`-for-`{name}` typo),
       // which would render literally. So flag only invented placeholders.
       final avail = <String>{};
-      for (final v in (base as Map).values) {
+      for (final v in base.values) {
         avail.addAll(placeholders(v.toString()));
       }
       for (final entry in loc.entries) {
         final invented = placeholders(entry.value.toString()).difference(avail);
         if (invented.isNotEmpty) {
-          problems.add('$path.${entry.key}: invented placeholder(s) '
-              '$invented not in base $avail');
+          problems.add(
+            '$path.${entry.key}: invented placeholder(s) '
+            '$invented not in base $avail',
+          );
         }
       }
       return;
@@ -111,19 +115,24 @@ void main() {
     }
   }
 
-  final localeNames = i18nDir
-      .listSync()
-      .whereType<Directory>()
-      .map((d) => d.uri.pathSegments.where((s) => s.isNotEmpty).last)
-      .where((n) => n != 'en' && n != 'gen')
-      .toList()
-    ..sort();
+  final localeNames =
+      i18nDir
+          .listSync()
+          .whereType<Directory>()
+          .map((d) => d.uri.pathSegments.where((s) => s.isNotEmpty).last)
+          .where((n) => n != 'en' && n != 'gen')
+          .toList()
+        ..sort();
 
   test('every locale carries the same namespaces as en', () {
     for (final loc in localeNames) {
       final have = loadLocale(loc).keys.toSet();
       final missing = en.keys.toSet().difference(have);
-      expect(missing, isEmpty, reason: '$loc is missing namespace files: $missing');
+      expect(
+        missing,
+        isEmpty,
+        reason: '$loc is missing namespace files: $missing',
+      );
     }
   });
 
@@ -135,9 +144,13 @@ void main() {
         if (!locale.containsKey(ns)) continue; // reported by the namespace test
         walk(en[ns], locale[ns], ns, problems);
       }
-      expect(problems, isEmpty,
-          reason: '$loc has ${problems.length} parity problem(s):\n'
-              '${problems.take(40).join('\n')}');
+      expect(
+        problems,
+        isEmpty,
+        reason:
+            '$loc has ${problems.length} parity problem(s):\n'
+            '${problems.take(40).join('\n')}',
+      );
     });
   }
 }

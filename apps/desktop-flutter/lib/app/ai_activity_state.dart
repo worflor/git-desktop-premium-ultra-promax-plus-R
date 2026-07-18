@@ -370,6 +370,32 @@ class AiActivityState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Force every in-flight run across all repos into the error state. Called
+  /// after "Force stop all CLI sessions" has killed the backend processes, so
+  /// the UI stops spinning on runs whose CLI is already gone. Returns how many
+  /// records were transitioned. Unlike [fail], this is scope-blind on purpose:
+  /// the processes are dead regardless of which scope owned them.
+  int failAllRunning(String error) {
+    var changed = 0;
+    for (final slot in _records.values) {
+      for (final kind in slot.keys.toList()) {
+        final r = slot[kind]!;
+        if (!r.isRunning) continue;
+        slot[kind] = r.copyWith(
+          status: AiActivityStatus.error,
+          error: error,
+          endedAt: DateTime.now(),
+        );
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      _activeCache.clear();
+      notifyListeners();
+    }
+    return changed;
+  }
+
   /// Stamp attention: the user opened the drawer / read the result.
   /// The timestamp gates unread state — if a new result lands after
   /// this stamp, the record becomes unread again automatically.

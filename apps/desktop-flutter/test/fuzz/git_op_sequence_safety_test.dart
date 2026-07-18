@@ -34,6 +34,7 @@ import 'package:git_desktop/backend/desk_issue_store.dart';
 import 'package:git_desktop/backend/desk_pr_store.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
 
+import '../support/prop.dart' show fuzzTimeout;
 import '../support/scratch_repo.dart';
 import '../support/must.dart';
 
@@ -54,8 +55,11 @@ final RegExp _shaPattern = RegExp(r'^[0-9a-f]{40}$');
 /// `refs/remotes/*` is likewise only expected where a test deliberately
 /// seeds remote-tracking refs (the base fuzz sequence and the adversarial-
 /// name group never create any) — kept opt-in for the same reason.
-bool _isExpectedRef(String ref,
-    {required bool allowManifold, bool allowRemotes = false}) {
+bool _isExpectedRef(
+  String ref, {
+  required bool allowManifold,
+  bool allowRemotes = false,
+}) {
   if (ref.startsWith('refs/heads/')) return true;
   if (ref.startsWith('refs/tags/')) return true;
   if (ref == 'refs/stash') return true;
@@ -89,16 +93,23 @@ Future<void> _assertCoreInvariants(
 }) async {
   // Law 1 + 6: the object database and `.git` itself are never corrupted.
   final fsck = await repo.git(['fsck', '--full', '--no-dangling']);
-  expect(fsck.exitCode, 0,
-      reason: 'git fsck --full reported corruption.\n${reason()}\n'
-          'stdout: ${fsck.stdout}\nstderr: ${fsck.stderr}');
+  expect(
+    fsck.exitCode,
+    0,
+    reason:
+        'git fsck --full reported corruption.\n${reason()}\n'
+        'stdout: ${fsck.stdout}\nstderr: ${fsck.stderr}',
+  );
 
   // Law 2: HEAD always resolves to a real commit (ScratchRepo.create seeds
   // a root commit before any fuzzed op runs, so history always exists).
   final head = await repo.head();
   expect(head, isNotNull, reason: 'HEAD did not resolve.\n${reason()}');
-  expect(_shaPattern.hasMatch(head!), isTrue,
-      reason: 'HEAD is not a 40-hex sha: $head\n${reason()}');
+  expect(
+    _shaPattern.hasMatch(head!),
+    isTrue,
+    reason: 'HEAD is not a 40-hex sha: $head\n${reason()}',
+  );
 
   // Law 4: current branch (if any) points at a real commit; detached HEAD
   // still resolves (already proven by the head() check above).
@@ -106,18 +117,25 @@ Future<void> _assertCoreInvariants(
   if (symbolic.exitCode == 0) {
     final branchRef = symbolic.stdout.toString().trim();
     final resolved = await repo.git(['rev-parse', '--verify', branchRef]);
-    expect(resolved.exitCode, 0,
-        reason: 'current branch $branchRef does not resolve.\n${reason()}');
+    expect(
+      resolved.exitCode,
+      0,
+      reason: 'current branch $branchRef does not resolve.\n${reason()}',
+    );
   }
 
   // Law 3: no stray refs outside the expected namespaces.
   final refs = await repo.allRefs();
   for (final ref in refs) {
     expect(
-        _isExpectedRef(ref,
-            allowManifold: allowManifold, allowRemotes: allowRemotes),
-        isTrue,
-        reason: 'stray ref outside expected namespaces: $ref\n${reason()}');
+      _isExpectedRef(
+        ref,
+        allowManifold: allowManifold,
+        allowRemotes: allowRemotes,
+      ),
+      isTrue,
+      reason: 'stray ref outside expected namespaces: $ref\n${reason()}',
+    );
   }
 }
 
@@ -149,19 +167,19 @@ void main() {
   group('generator determinism (law 5)', () {
     test('genRepoOpSequence(seed) returns identical ops across calls', () {
       for (final seed in [0, 1, 2, 7, 42, 12345, 999999, -99, 1 << 40]) {
-        final a =
-            genRepoOpSequence(seed, maxOps: 40).map((o) => o.toString());
-        final b =
-            genRepoOpSequence(seed, maxOps: 40).map((o) => o.toString());
-        expect(a.toList(), equals(b.toList()),
-            reason: 'seed $seed was non-deterministic across two calls');
+        final a = genRepoOpSequence(seed, maxOps: 40).map((o) => o.toString());
+        final b = genRepoOpSequence(seed, maxOps: 40).map((o) => o.toString());
+        expect(
+          a.toList(),
+          equals(b.toList()),
+          reason: 'seed $seed was non-deterministic across two calls',
+        );
       }
     });
   });
 
   group('manifold ref isolation (law 7)', () {
-    test(
-        'DeskPrStore/DeskIssueStore writes never mutate a real refs/heads or '
+    test('DeskPrStore/DeskIssueStore writes never mutate a real refs/heads or '
         'refs/remotes sha', () async {
       final repo = await ScratchRepo.create(name: 'manifold_isolation');
       try {
@@ -174,7 +192,7 @@ void main() {
           'feature/alpha',
           'feature/beta',
           'release-1.0',
-          'hotfix_x'
+          'hotfix_x',
         ]) {
           await repo.gitOk(['branch', name]);
         }
@@ -184,12 +202,15 @@ void main() {
         await repo.gitOk(['checkout', 'main']);
         // Simulate a remote-tracking namespace too — `refs/remotes/*` is
         // just as untouchable as `refs/heads/*`.
-        await repo.gitOk(
-            ['update-ref', 'refs/remotes/origin/main', (await repo.head())!]);
+        await repo.gitOk([
+          'update-ref',
+          'refs/remotes/origin/main',
+          (await repo.head())!,
+        ]);
         await repo.gitOk([
           'update-ref',
           'refs/remotes/origin/feature/alpha',
-          (await repo.gitOk(['rev-parse', 'feature/alpha']))
+          (await repo.gitOk(['rev-parse', 'feature/alpha'])),
         ]);
 
         // Snapshot every refs/heads/* and refs/remotes/* sha BEFORE any
@@ -201,8 +222,11 @@ void main() {
             before[ref] = await repo.gitOk(['rev-parse', ref]);
           }
         }
-        expect(before.length, greaterThanOrEqualTo(6),
-            reason: 'snapshot setup did not create the expected real refs');
+        expect(
+          before.length,
+          greaterThanOrEqualTo(6),
+          reason: 'snapshot setup did not create the expected real refs',
+        );
 
         // Drive REAL app code (not a hand-rolled `update-ref`): DeskPrStore
         // backs onto ManifoldRefs exactly as the app's DeskPrState does,
@@ -226,8 +250,13 @@ void main() {
             authorIdentity: 'fuzz-bot',
           );
           expect(created.ok, isTrue, reason: created.error);
-          await expectOk(prStore.addComment(
-              branch: branch, author: 'fuzz-bot', body: 'a comment'));
+          await expectOk(
+            prStore.addComment(
+              branch: branch,
+              author: 'fuzz-bot',
+              body: 'a comment',
+            ),
+          );
           await expectOk(prStore.setState(branch: branch, state: 'MERGED'));
         }
         for (var i = 0; i < 3; i++) {
@@ -242,29 +271,43 @@ void main() {
         // Sanity: the Manifold writes actually landed under their own
         // namespace (otherwise "real refs untouched" would be vacuous).
         final refsAfter = await repo.allRefs();
-        expect(refsAfter.any((r) => r.startsWith('refs/manifold/desks/')),
-            isTrue,
-            reason: 'DeskPrStore.create did not land a desks/ ref');
-        expect(refsAfter.any((r) => r.startsWith('refs/manifold/issues/')),
-            isTrue,
-            reason: 'DeskIssueStore.create did not land an issues/ ref');
+        expect(
+          refsAfter.any((r) => r.startsWith('refs/manifold/desks/')),
+          isTrue,
+          reason: 'DeskPrStore.create did not land a desks/ ref',
+        );
+        expect(
+          refsAfter.any((r) => r.startsWith('refs/manifold/issues/')),
+          isTrue,
+          reason: 'DeskIssueStore.create did not land an issues/ ref',
+        );
 
         // LAW 7: every real ref's sha is byte-identical to the snapshot —
         // the Manifold writes touched refs/manifold/* only.
         for (final entry in before.entries) {
           final now = await repo.gitOk(['rev-parse', entry.key]);
-          expect(now, equals(entry.value),
-              reason: 'Manifold write mutated real ref ${entry.key} '
-                  '(was ${entry.value}, now $now)');
+          expect(
+            now,
+            equals(entry.value),
+            reason:
+                'Manifold write mutated real ref ${entry.key} '
+                '(was ${entry.value}, now $now)',
+          );
         }
         // And no real ref was deleted or a new one of that kind added.
         final realRefsAfter = refsAfter
-            .where((r) =>
-                r.startsWith('refs/heads/') || r.startsWith('refs/remotes/'))
+            .where(
+              (r) =>
+                  r.startsWith('refs/heads/') || r.startsWith('refs/remotes/'),
+            )
             .toSet();
-        expect(realRefsAfter, equals(before.keys.toSet()),
-            reason: 'the set of real refs changed shape after Manifold '
-                'writes');
+        expect(
+          realRefsAfter,
+          equals(before.keys.toSet()),
+          reason:
+              'the set of real refs changed shape after Manifold '
+              'writes',
+        );
 
         await _assertCoreInvariants(
           repo,
@@ -275,7 +318,10 @@ void main() {
       } finally {
         await repo.dispose();
       }
-    });
+      // Dozens of real CAS-retrying git chains; sibling deep suites in a
+      // MANIFOLD_FUZZ run multiply the machine-wide contention, so the
+      // deadline scales with the run depth rather than fixing at 30s.
+    }, timeout: fuzzTimeout());
   });
 
   group('adversarial branch names (law 8)', () {
@@ -315,8 +361,7 @@ void main() {
         // Escape check: nothing outside the repo's own temp dir should ever
         // be created or modified by a hostile ref name.
         final parent = Directory(repo.dir.parent.path);
-        final siblingsBefore =
-            parent.listSync().map((e) => e.path).toSet();
+        final siblingsBefore = parent.listSync().map((e) => e.path).toSet();
 
         final log = StringBuffer();
         for (final name in names) {
@@ -327,10 +372,15 @@ void main() {
             // resolve through git's OWN ref lookup (not a hand-rolled path
             // check) to a real commit — i.e. created safely, no namespace
             // escape.
-            final resolved =
-                await repo.git(['rev-parse', '--verify', 'refs/heads/$name']);
-            log.writeln('  rev-parse refs/heads/$name -> '
-                'exit=${resolved.exitCode} out=${resolved.stdout}');
+            final resolved = await repo.git([
+              'rev-parse',
+              '--verify',
+              'refs/heads/$name',
+            ]);
+            log.writeln(
+              '  rev-parse refs/heads/$name -> '
+              'exit=${resolved.exitCode} out=${resolved.stdout}',
+            );
             final checkoutResult = await applyOp(repo, CheckoutOp(name));
             log.writeln('  checkout($name) -> $checkoutResult');
             if (checkoutResult.ok) {
@@ -341,9 +391,10 @@ void main() {
 
         // Deeply nested MAX_PATH-busting name, generated separately since
         // it's algorithmic rather than a fixed literal.
-        final deepName =
-            List.generate(40, (i) => 'segment$i-of-a-very-long-branch-path')
-                .join('/');
+        final deepName = List.generate(
+          40,
+          (i) => 'segment$i-of-a-very-long-branch-path',
+        ).join('/');
         final deepCreate = await applyOp(repo, CreateBranchOp(deepName));
         log.writeln('create(<deep $deepName>) -> $deepCreate');
 
@@ -358,12 +409,18 @@ void main() {
         // No file/directory appeared next to the repo's own temp dir — a
         // hostile name never escapes the repository it was created in.
         final siblingsAfter = parent.listSync().map((e) => e.path).toSet();
-        expect(siblingsAfter, equals(siblingsBefore),
-            reason: 'a hostile branch name left evidence outside the repo '
-                'directory.\n${log.toString()}');
+        expect(
+          siblingsAfter,
+          equals(siblingsBefore),
+          reason:
+              'a hostile branch name left evidence outside the repo '
+              'directory.\n${log.toString()}',
+        );
       } finally {
         await repo.dispose();
       }
-    });
+      // Same class as law 7: ~20 create/checkout chains against real git,
+      // under whatever machine-wide load the fuzz depth implies.
+    }, timeout: fuzzTimeout());
   });
 }

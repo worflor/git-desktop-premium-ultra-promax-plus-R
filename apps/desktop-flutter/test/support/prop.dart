@@ -79,6 +79,8 @@
 
 import 'dart:io';
 
+import 'package:flutter_test/flutter_test.dart' show Timeout;
+
 /// A generator: given a random source, produces one value of type [T].
 ///
 /// Generators are plain functions so they compose with ordinary function
@@ -868,11 +870,11 @@ void _report({
   final shrinkLine = budget.disabled
       ? '[prop] shrink: disabled (MANIFOLD_SHRINK=0)\n'
       : '[prop] shrink: $originalDraws draws -> ${tape.length} draws '
-          '(${budget.evaluations} evaluations, ${budget.elapsedMs}ms)\n';
+            '(${budget.evaluations} evaluations, ${budget.elapsedMs}ms)\n';
   final corpusLine = corpusLabel == null
       ? ''
       : '\n[prop] saved to test/corpus/${_slug(corpusLabel)}.tape — '
-          'this case now replays on every future run';
+            'this case now replays on every future run';
 
   // ignore: avoid_print
   print(
@@ -944,8 +946,10 @@ class _Stats {
       for (final e in sorted) {
         final pct = (e.value / cases * 100).toStringAsFixed(1);
         // ignore: avoid_print
-        print('[prop]   ${e.key.padRight(28)} '
-            '${e.value.toString().padLeft(5)}  $pct%');
+        print(
+          '[prop]   ${e.key.padRight(28)} '
+          '${e.value.toString().padLeft(5)}  $pct%',
+        );
       }
     }
 
@@ -1067,3 +1071,13 @@ int fuzzScale() {
   if (parsed == null || parsed < 1) return 1;
   return parsed;
 }
+
+/// A per-test deadline that grows with [fuzzScale], for tests whose workload
+/// does. A deep `MANIFOLD_FUZZ` run multiplies the generated cases (and the
+/// machine-wide git/CPU contention of sibling deep suites), so a fixed
+/// wall-clock deadline is exactly what an honest deep run exhausts — and a
+/// framework timeout mid-run tears live scratch repos out from under git,
+/// cascading corruption into sibling tests. The default run's deadline is
+/// unchanged (scale 1 ⇒ [base]).
+Timeout fuzzTimeout([Duration base = const Duration(minutes: 2)]) =>
+    Timeout(base * fuzzScale());

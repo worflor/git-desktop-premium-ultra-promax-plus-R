@@ -119,8 +119,11 @@ Future<void> _writeAndCommit(
   final commitResult = await repo.git(['commit', '-m', message]);
   if (commitResult.exitCode != 0) {
     final combined = '${commitResult.stdout}${commitResult.stderr}';
-    expect(_isBenignNoCommitMessage(combined), isTrue,
-        reason: 'unexpected `git commit` failure for "$path":\n$combined');
+    expect(
+      _isBenignNoCommitMessage(combined),
+      isTrue,
+      reason: 'unexpected `git commit` failure for "$path":\n$combined',
+    );
   }
 }
 
@@ -137,11 +140,11 @@ File _repoFile(ScratchRepo repo, String relPath) =>
 /// line" — context/meta/hunk lines pass through untouched, exactly as
 /// PatchEngine expects).
 List<ParsedLine> _stageAll(List<ParsedLine> lines) => [
-      for (final l in lines)
-        (l.kind == LineKind.deleted || l.kind == LineKind.added)
-            ? l.copyWith(isStaged: true)
-            : l,
-    ];
+  for (final l in lines)
+    (l.kind == LineKind.deleted || l.kind == LineKind.added)
+        ? l.copyWith(isStaged: true)
+        : l,
+];
 
 // ---------------------------------------------------------------------------
 // LAW 1 + 2 — diff -> parse -> rebuild roundtrip, incl. no-final-newline
@@ -180,8 +183,7 @@ void main() {
       await _writeAndCommit(repo, path, a, message: 'base $id');
       await repo.writeFile(path, b);
       final diffRes = await repo.git(['diff', '--', path]);
-      expect(diffRes.exitCode, 0,
-          reason: 'git diff failed: ${diffRes.stderr}');
+      expect(diffRes.exitCode, 0, reason: 'git diff failed: ${diffRes.stderr}');
       final diffText = diffRes.stdout as String;
       if (diffText.isEmpty) {
         return; // A == B — a benign generator collision, nothing to test.
@@ -190,46 +192,67 @@ void main() {
       final lines = parseUnifiedDiff(diffText);
       final staged = _stageAll(lines);
       final rebuilt = PatchEngine.buildStagedPatch(path, staged);
-      expect(rebuilt, isNotEmpty,
-          reason: 'buildStagedPatch produced an empty patch for a '
-              'non-empty diff.\n--- diff ---\n$diffText');
+      expect(
+        rebuilt,
+        isNotEmpty,
+        reason:
+            'buildStagedPatch produced an empty patch for a '
+            'non-empty diff.\n--- diff ---\n$diffText',
+      );
 
       // Restore A in the working tree, then apply the REBUILT patch (never
       // the app's own applyPatch — real `git apply` is the oracle here).
       await repo.gitOk(['checkout', '--', path]);
-      final patchFile =
-          await _writePatchFile(patchDir, 'case_$id.patch', rebuilt);
-      final applyRes =
-          await repo.git(['apply', '--whitespace=nowarn', patchFile.path]);
-      expect(applyRes.exitCode, 0,
-          reason: 'git apply rejected the rebuilt patch.\n'
-              'STDERR: ${applyRes.stderr}\n'
-              '--- original diff ---\n$diffText\n'
-              '--- rebuilt patch ---\n$rebuilt');
+      final patchFile = await _writePatchFile(
+        patchDir,
+        'case_$id.patch',
+        rebuilt,
+      );
+      final applyRes = await repo.git([
+        'apply',
+        '--whitespace=nowarn',
+        patchFile.path,
+      ]);
+      expect(
+        applyRes.exitCode,
+        0,
+        reason:
+            'git apply rejected the rebuilt patch.\n'
+            'STDERR: ${applyRes.stderr}\n'
+            '--- original diff ---\n$diffText\n'
+            '--- rebuilt patch ---\n$rebuilt',
+      );
 
       final resultBytes = await _repoFile(repo, path).readAsBytes();
-      expect(resultBytes, equals(utf8.encode(b)),
-          reason: 'byte mismatch after apply.\n'
-              '--- original diff ---\n$diffText\n'
-              '--- rebuilt patch ---\n$rebuilt\n'
-              '--- expected B ---\n$b');
+      expect(
+        resultBytes,
+        equals(utf8.encode(b)),
+        reason:
+            'byte mismatch after apply.\n'
+            '--- original diff ---\n$diffText\n'
+            '--- rebuilt patch ---\n$rebuilt\n'
+            '--- expected B ---\n$b',
+      );
     }
 
-    test('fuzz: many independent A/B pairs round-trip byte-exact', () async {
-      await forAllAsync(
-        _genABPair(maxLines: 10),
-        count: 30 * scale,
-        seed: 0x1A11,
-        describe: 'A/B pair',
-        check: (pair) async {
-          final (a, b) = pair;
-          await roundtripCase(a, b);
-        },
-      );
-    });
-
     test(
-        'deterministic: no trailing newline on A only — marker survives '
+      'fuzz: many independent A/B pairs round-trip byte-exact',
+      () async {
+        await forAllAsync(
+          _genABPair(maxLines: 10),
+          count: 30 * scale,
+          seed: 0x1A11,
+          describe: 'A/B pair',
+          check: (pair) async {
+            final (a, b) = pair;
+            await roundtripCase(a, b);
+          },
+        );
+      },
+      timeout: fuzzTimeout(),
+    );
+
+    test('deterministic: no trailing newline on A only — marker survives '
         'and no newline is silently added', () async {
       const a = 'one\ntwo\nthree';
       const b = 'one\ntwo\nthree EDITED';
@@ -239,28 +262,40 @@ void main() {
       expect(diffText, contains(r'\ No newline at end of file'));
 
       final lines = parseUnifiedDiff(diffText);
-      expect(lines.any((l) => l.noNewlineAtEof), isTrue,
-          reason: 'noNewlineAtEof flag never got attached\n$diffText');
+      expect(
+        lines.any((l) => l.noNewlineAtEof),
+        isTrue,
+        reason: 'noNewlineAtEof flag never got attached\n$diffText',
+      );
 
       final rebuilt = PatchEngine.buildStagedPatch(path, _stageAll(lines));
-      expect(rebuilt, contains(r'\ No newline at end of file'),
-          reason: 'rebuilt patch dropped the no-newline marker\n$rebuilt');
+      expect(
+        rebuilt,
+        contains(r'\ No newline at end of file'),
+        reason: 'rebuilt patch dropped the no-newline marker\n$rebuilt',
+      );
 
       await repo.gitOk(['checkout', '--', path]);
       final patchFile = await _writePatchFile(patchDir, 'nf.patch', rebuilt);
-      final applyRes =
-          await repo.git(['apply', '--whitespace=nowarn', patchFile.path]);
+      final applyRes = await repo.git([
+        'apply',
+        '--whitespace=nowarn',
+        patchFile.path,
+      ]);
       expect(applyRes.exitCode, 0, reason: applyRes.stderr.toString());
 
       final resultBytes = await _repoFile(repo, path).readAsBytes();
       expect(resultBytes, equals(utf8.encode(b)));
-      expect(utf8.decode(resultBytes).endsWith('\n'), isFalse,
-          reason: 'a trailing newline was silently added to a file that '
-              'never had one');
+      expect(
+        utf8.decode(resultBytes).endsWith('\n'),
+        isFalse,
+        reason:
+            'a trailing newline was silently added to a file that '
+            'never had one',
+      );
     });
 
-    test(
-        'deterministic: A has no trailing newline, B gains one — the '
+    test('deterministic: A has no trailing newline, B gains one — the '
         'newline is correctly added, not dropped', () async {
       const a = 'one\ntwo\nthree';
       const b = 'one\ntwo\nthree EDITED\n';
@@ -274,59 +309,82 @@ void main() {
 
       await repo.gitOk(['checkout', '--', path]);
       final patchFile = await _writePatchFile(patchDir, 'nf2.patch', rebuilt);
-      final applyRes =
-          await repo.git(['apply', '--whitespace=nowarn', patchFile.path]);
+      final applyRes = await repo.git([
+        'apply',
+        '--whitespace=nowarn',
+        patchFile.path,
+      ]);
       expect(applyRes.exitCode, 0, reason: applyRes.stderr.toString());
 
       final resultBytes = await _repoFile(repo, path).readAsBytes();
       expect(resultBytes, equals(utf8.encode(b)));
-      expect(utf8.decode(resultBytes).endsWith('\n'), isTrue,
-          reason: 'B\'s trailing newline got dropped by the round trip');
+      expect(
+        utf8.decode(resultBytes).endsWith('\n'),
+        isTrue,
+        reason: 'B\'s trailing newline got dropped by the round trip',
+      );
     });
 
     test(
-        // GENUINE BUG (FIXED): PatchEngine.buildStagedPatch's `isNewFile`
-        // heuristic used to be "no line in the diff has an old-side line
-        // number" — but an already-tracked empty file gaining its first
-        // line(s) produces exactly that same shape (zero old-side lines)
-        // as a genuinely brand-new file, so it wrongly emitted
-        // `--- /dev/null`, which real git rejects because the target file
-        // already exists. Fixed by deriving new/deleted status from the
-        // diff's OWN `--- `/`+++ `/`new file mode` meta lines (which
-        // parseUnifiedDiff already preserves per-line) instead of from
-        // line-number absence. Not a CRLF issue: reproduces identically
-        // with plain LF.
-        'an existing (tracked, empty) file gaining its first line is '
-        'staged as an edit to an existing file, not a brand-new file',
-        () async {
-      const emptyPath = 'was_empty.txt';
-      await _writeAndCommit(repo, emptyPath, '', message: 'empty base');
-      await repo.writeFile(emptyPath, 'first line\n');
-      final diffText =
-          (await repo.git(['diff', '--', emptyPath])).stdout as String;
-      expect(diffText, isNotEmpty);
+      // GENUINE BUG (FIXED): PatchEngine.buildStagedPatch's `isNewFile`
+      // heuristic used to be "no line in the diff has an old-side line
+      // number" — but an already-tracked empty file gaining its first
+      // line(s) produces exactly that same shape (zero old-side lines)
+      // as a genuinely brand-new file, so it wrongly emitted
+      // `--- /dev/null`, which real git rejects because the target file
+      // already exists. Fixed by deriving new/deleted status from the
+      // diff's OWN `--- `/`+++ `/`new file mode` meta lines (which
+      // parseUnifiedDiff already preserves per-line) instead of from
+      // line-number absence. Not a CRLF issue: reproduces identically
+      // with plain LF.
+      'an existing (tracked, empty) file gaining its first line is '
+      'staged as an edit to an existing file, not a brand-new file',
+      () async {
+        const emptyPath = 'was_empty.txt';
+        await _writeAndCommit(repo, emptyPath, '', message: 'empty base');
+        await repo.writeFile(emptyPath, 'first line\n');
+        final diffText =
+            (await repo.git(['diff', '--', emptyPath])).stdout as String;
+        expect(diffText, isNotEmpty);
 
-      final lines = parseUnifiedDiff(diffText);
-      final rebuilt =
-          PatchEngine.buildStagedPatch(emptyPath, _stageAll(lines));
-      expect(rebuilt, isNot(contains('/dev/null')),
-          reason: 'the file already exists — the rebuilt patch must not '
-              'claim it is new.\n--- rebuilt ---\n$rebuilt');
-      expect(rebuilt, contains('--- a/$emptyPath'));
-      expect(rebuilt, contains('+++ b/$emptyPath'));
+        final lines = parseUnifiedDiff(diffText);
+        final rebuilt = PatchEngine.buildStagedPatch(
+          emptyPath,
+          _stageAll(lines),
+        );
+        expect(
+          rebuilt,
+          isNot(contains('/dev/null')),
+          reason:
+              'the file already exists — the rebuilt patch must not '
+              'claim it is new.\n--- rebuilt ---\n$rebuilt',
+        );
+        expect(rebuilt, contains('--- a/$emptyPath'));
+        expect(rebuilt, contains('+++ b/$emptyPath'));
 
-      await repo.gitOk(['checkout', '--', emptyPath]);
-      final patchFile =
-          await _writePatchFile(patchDir, 'was_empty.patch', rebuilt);
-      final applyRes =
-          await repo.git(['apply', '--whitespace=nowarn', patchFile.path]);
-      expect(applyRes.exitCode, 0,
-          reason: 'git apply rejected the rebuilt patch.\n'
-              'STDERR: ${applyRes.stderr}\n--- rebuilt ---\n$rebuilt');
+        await repo.gitOk(['checkout', '--', emptyPath]);
+        final patchFile = await _writePatchFile(
+          patchDir,
+          'was_empty.patch',
+          rebuilt,
+        );
+        final applyRes = await repo.git([
+          'apply',
+          '--whitespace=nowarn',
+          patchFile.path,
+        ]);
+        expect(
+          applyRes.exitCode,
+          0,
+          reason:
+              'git apply rejected the rebuilt patch.\n'
+              'STDERR: ${applyRes.stderr}\n--- rebuilt ---\n$rebuilt',
+        );
 
-      final resultBytes = await _repoFile(repo, emptyPath).readAsBytes();
-      expect(resultBytes, equals(utf8.encode('first line\n')));
-    });
+        final resultBytes = await _repoFile(repo, emptyPath).readAsBytes();
+        expect(resultBytes, equals(utf8.encode('first line\n')));
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -349,8 +407,7 @@ void main() {
       } catch (_) {}
     });
 
-    test(
-        'deterministic: CRLF body lines through '
+    test('deterministic: CRLF body lines through '
         'parse -> rebuild -> git apply', () async {
       const path = 'crlf.txt';
       const a = 'alpha\r\nbeta\r\ngamma\r\ndelta\r\n';
@@ -361,8 +418,11 @@ void main() {
       final diffRes = await repo.git(['diff', '--', path]);
       expect(diffRes.exitCode, 0);
       final diffText = diffRes.stdout as String;
-      expect(diffText, isNotEmpty,
-          reason: 'expected a real diff for the CRLF edit');
+      expect(
+        diffText,
+        isNotEmpty,
+        reason: 'expected a real diff for the CRLF edit',
+      );
 
       // Sanity FIRST: confirm real git accepts its OWN raw diff output,
       // so any later failure is provably the app's parser/rebuild, not a
@@ -371,39 +431,60 @@ void main() {
       // applying an A->B patch on top of an already-B tree would fail for
       // a totally mundane reason (context mismatch), not a CRLF issue.
       await repo.gitOk(['checkout', '--', path]);
-      final rawPatchFile =
-          await _writePatchFile(patchDir, 'raw.patch', diffText);
-      final rawApply =
-          await repo.git(['apply', '--whitespace=nowarn', rawPatchFile.path]);
-      expect(rawApply.exitCode, 0,
-          reason: 'sanity check failed: real git rejected its OWN diff '
-              'output — the test fixture is broken, not the app.\n'
-              'STDERR: ${rawApply.stderr}\n$diffText');
+      final rawPatchFile = await _writePatchFile(
+        patchDir,
+        'raw.patch',
+        diffText,
+      );
+      final rawApply = await repo.git([
+        'apply',
+        '--whitespace=nowarn',
+        rawPatchFile.path,
+      ]);
+      expect(
+        rawApply.exitCode,
+        0,
+        reason:
+            'sanity check failed: real git rejected its OWN diff '
+            'output — the test fixture is broken, not the app.\n'
+            'STDERR: ${rawApply.stderr}\n$diffText',
+      );
       final rawResult = await _repoFile(repo, path).readAsBytes();
-      expect(rawResult, equals(utf8.encode(b)),
-          reason: 'sanity check failed: git apply of the RAW diff did not '
-              'reproduce B');
+      expect(
+        rawResult,
+        equals(utf8.encode(b)),
+        reason:
+            'sanity check failed: git apply of the RAW diff did not '
+            'reproduce B',
+      );
       await repo.gitOk(['checkout', '--', path]); // back to A for real probe
 
       // Probe: does a body line carry a literal trailing '\r' in .text?
       final lines = parseUnifiedDiff(diffText);
       final bodyLines = lines
-          .where((l) =>
-              l.kind == LineKind.added ||
-              l.kind == LineKind.deleted ||
-              (l.kind == LineKind.context && l.lineNumOld != null))
+          .where(
+            (l) =>
+                l.kind == LineKind.added ||
+                l.kind == LineKind.deleted ||
+                (l.kind == LineKind.context && l.lineNumOld != null),
+          )
           .toList();
       expect(bodyLines, isNotEmpty);
       final leaked = bodyLines.where((l) => l.text.endsWith('\r')).toList();
       // ignore: avoid_print
       print(
-          '[crlf-hunt] ${leaked.length}/${bodyLines.length} body lines carry '
-          'a literal trailing \\r in ParsedLine.text (diff_models.dart\'s '
-          'own header comment documents this: it splits on \'\\n\' only and '
-          'does NOT strip \'\\r\').');
-      expect(leaked, isNotEmpty,
-          reason: 'expected the documented CRLF leak to be present for '
-              'this probe to mean anything');
+        '[crlf-hunt] ${leaked.length}/${bodyLines.length} body lines carry '
+        'a literal trailing \\r in ParsedLine.text (diff_models.dart\'s '
+        'own header comment documents this: it splits on \'\\n\' only and '
+        'does NOT strip \'\\r\').',
+      );
+      expect(
+        leaked,
+        isNotEmpty,
+        reason:
+            'expected the documented CRLF leak to be present for '
+            'this probe to mean anything',
+      );
 
       // Does the leak corrupt buildStagedPatch's output?
       final rebuilt = PatchEngine.buildStagedPatch(path, _stageAll(lines));
@@ -411,79 +492,117 @@ void main() {
       // ignore: avoid_print
       print('[crlf-hunt] rebuilt patch:\n$rebuilt');
 
-      final rebuiltFile =
-          await _writePatchFile(patchDir, 'rebuilt.patch', rebuilt);
-      final applyResult =
-          await repo.git(['apply', '--whitespace=nowarn', rebuiltFile.path]);
+      final rebuiltFile = await _writePatchFile(
+        patchDir,
+        'rebuilt.patch',
+        rebuilt,
+      );
+      final applyResult = await repo.git([
+        'apply',
+        '--whitespace=nowarn',
+        rebuiltFile.path,
+      ]);
 
       if (applyResult.exitCode != 0) {
         // The rebuilt patch, corrupted by the leaked '\r', was rejected by
         // real git.
-        fail('PatchEngine.buildStagedPatch produced a '
-            'patch real git rejected after a CRLF round trip.\n'
-            'STDERR: ${applyResult.stderr}\n'
-            '--- original diff ---\n$diffText\n'
-            '--- rebuilt patch ---\n$rebuilt');
+        fail(
+          'PatchEngine.buildStagedPatch produced a '
+          'patch real git rejected after a CRLF round trip.\n'
+          'STDERR: ${applyResult.stderr}\n'
+          '--- original diff ---\n$diffText\n'
+          '--- rebuilt patch ---\n$rebuilt',
+        );
       }
 
       final resultBytes = await _repoFile(repo, path).readAsBytes();
-      final verdict = resultBytes.length == utf8.encode(b).length &&
+      final verdict =
+          resultBytes.length == utf8.encode(b).length &&
           _bytesEqual(resultBytes, utf8.encode(b));
       // ignore: avoid_print
-      print('[crlf-hunt] VERDICT: CRLF round trip ${verdict ? 'PRESERVED byte-exact' : 'CORRUPTED'} the content.');
+      print(
+        '[crlf-hunt] VERDICT: CRLF round trip ${verdict ? 'PRESERVED byte-exact' : 'CORRUPTED'} the content.',
+      );
       if (!verdict) {
-        fail('git apply accepted the rebuilt patch but '
-            'the resulting content diverged from B.\n'
-            '--- original diff ---\n$diffText\n'
-            '--- rebuilt patch ---\n$rebuilt\n'
-            '--- expected B (${utf8.encode(b).length} bytes) ---\n$b\n'
-            '--- got (${resultBytes.length} bytes) ---\n'
-            '${utf8.decode(resultBytes, allowMalformed: true)}');
+        fail(
+          'git apply accepted the rebuilt patch but '
+          'the resulting content diverged from B.\n'
+          '--- original diff ---\n$diffText\n'
+          '--- rebuilt patch ---\n$rebuilt\n'
+          '--- expected B (${utf8.encode(b).length} bytes) ---\n$b\n'
+          '--- got (${resultBytes.length} bytes) ---\n'
+          '${utf8.decode(resultBytes, allowMalformed: true)}',
+        );
       }
     });
 
-    test('fuzz: CRLF-only content (guaranteed, single-line edits)', () async {
-      var caseId = 0;
-      await forAllAsync(
-        _genCrlfPair(maxLines: 8),
-        count: 20 * scale,
-        seed: 0xCE1F,
-        describe: 'CRLF pair',
-        check: (pair) async {
-          final (a, b) = pair;
-          final id = caseId++;
-          const path = 'crlf_fuzz.txt';
-          await _writeAndCommit(repo, path, a, message: 'crlf-fuzz base $id');
-          await repo.writeFile(path, b);
-          final diffRes = await repo.git(['diff', '--', path]);
-          expect(diffRes.exitCode, 0);
-          final diffText = diffRes.stdout as String;
-          if (diffText.isEmpty) return;
+    test(
+      'fuzz: CRLF-only content (guaranteed, single-line edits)',
+      () async {
+        var caseId = 0;
+        await forAllAsync(
+          _genCrlfPair(maxLines: 8),
+          count: 20 * scale,
+          seed: 0xCE1F,
+          describe: 'CRLF pair',
+          check: (pair) async {
+            final (a, b) = pair;
+            final id = caseId++;
+            const path = 'crlf_fuzz.txt';
+            await _writeAndCommit(repo, path, a, message: 'crlf-fuzz base $id');
+            await repo.writeFile(path, b);
+            final diffRes = await repo.git(['diff', '--', path]);
+            expect(diffRes.exitCode, 0);
+            final diffText = diffRes.stdout as String;
+            if (diffText.isEmpty) return;
 
-          final lines = parseUnifiedDiff(diffText);
-          final rebuilt = PatchEngine.buildStagedPatch(path, _stageAll(lines));
-          expect(rebuilt, isNotEmpty,
-              reason: 'empty rebuilt patch for a non-empty CRLF diff\n$diffText');
+            final lines = parseUnifiedDiff(diffText);
+            final rebuilt = PatchEngine.buildStagedPatch(
+              path,
+              _stageAll(lines),
+            );
+            expect(
+              rebuilt,
+              isNotEmpty,
+              reason:
+                  'empty rebuilt patch for a non-empty CRLF diff\n$diffText',
+            );
 
-          await repo.gitOk(['checkout', '--', path]);
-          final patchFile =
-              await _writePatchFile(patchDir, 'crlf_fuzz_$id.patch', rebuilt);
-          final applyRes = await repo
-              .git(['apply', '--whitespace=nowarn', patchFile.path]);
-          expect(applyRes.exitCode, 0,
-              reason: 'git apply rejected the '
+            await repo.gitOk(['checkout', '--', path]);
+            final patchFile = await _writePatchFile(
+              patchDir,
+              'crlf_fuzz_$id.patch',
+              rebuilt,
+            );
+            final applyRes = await repo.git([
+              'apply',
+              '--whitespace=nowarn',
+              patchFile.path,
+            ]);
+            expect(
+              applyRes.exitCode,
+              0,
+              reason:
+                  'git apply rejected the '
                   'rebuilt patch.\nSTDERR: ${applyRes.stderr}\n'
                   '--- original diff ---\n$diffText\n'
-                  '--- rebuilt patch ---\n$rebuilt');
+                  '--- rebuilt patch ---\n$rebuilt',
+            );
 
-          final resultBytes = await _repoFile(repo, path).readAsBytes();
-          expect(resultBytes, equals(utf8.encode(b)),
-              reason: 'byte mismatch after '
+            final resultBytes = await _repoFile(repo, path).readAsBytes();
+            expect(
+              resultBytes,
+              equals(utf8.encode(b)),
+              reason:
+                  'byte mismatch after '
                   'apply.\n--- original diff ---\n$diffText\n'
-                  '--- rebuilt patch ---\n$rebuilt');
-        },
-      );
-    });
+                  '--- rebuilt patch ---\n$rebuilt',
+            );
+          },
+        );
+      },
+      timeout: fuzzTimeout(),
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -491,8 +610,7 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('LAW 4 — conflict roundtrip (pure)', () {
-    test(
-        'fuzz: parse -> resolve every block -> buildResult is marker-free '
+    test('fuzz: parse -> resolve every block -> buildResult is marker-free '
         'and matches the chosen sides', () {
       forAll(
         _genConflictScenario(),
@@ -501,36 +619,51 @@ void main() {
         describe: 'conflict scenario',
         check: (s) {
           final cf = parseConflictFile('f.dart', s.doc);
-          expect(cf.blocks.length, s.oursTexts.length,
-              reason: 'block count mismatch.\n--- doc ---\n${s.doc}');
+          expect(
+            cf.blocks.length,
+            s.oursTexts.length,
+            reason: 'block count mismatch.\n--- doc ---\n${s.doc}',
+          );
           for (var i = 0; i < cf.blocks.length; i++) {
-            expect(cf.blocks[i].oursText, s.oursTexts[i],
-                reason: 'ours mismatch at block $i\n--- doc ---\n${s.doc}');
-            expect(cf.blocks[i].theirsText, s.theirsTexts[i],
-                reason: 'theirs mismatch at block $i\n--- doc ---\n${s.doc}');
-            cf.blocks[i].resolution =
-                s.resolveOurs[i] ? ConflictSide.ours : ConflictSide.theirs;
+            expect(
+              cf.blocks[i].oursText,
+              s.oursTexts[i],
+              reason: 'ours mismatch at block $i\n--- doc ---\n${s.doc}',
+            );
+            expect(
+              cf.blocks[i].theirsText,
+              s.theirsTexts[i],
+              reason: 'theirs mismatch at block $i\n--- doc ---\n${s.doc}',
+            );
+            cf.blocks[i].resolution = s.resolveOurs[i]
+                ? ConflictSide.ours
+                : ConflictSide.theirs;
           }
 
           final result = cf.buildResult();
           for (final line in result.split('\n')) {
             expect(
-                line.startsWith('<<<<<<<') ||
-                    line.startsWith('=======') ||
-                    line.startsWith('>>>>>>>') ||
-                    line.startsWith('|||||||'),
-                isFalse,
-                reason:
-                    'a conflict marker survived resolution: "$line"\n--- result ---\n$result');
+              line.startsWith('<<<<<<<') ||
+                  line.startsWith('=======') ||
+                  line.startsWith('>>>>>>>') ||
+                  line.startsWith('|||||||'),
+              isFalse,
+              reason:
+                  'a conflict marker survived resolution: "$line"\n--- result ---\n$result',
+            );
           }
 
           for (var i = 0; i < cf.blocks.length; i++) {
             final chosen = s.resolveOurs[i] ? s.oursTexts[i] : s.theirsTexts[i];
             final other = s.resolveOurs[i] ? s.theirsTexts[i] : s.oursTexts[i];
             if (chosen.isNotEmpty) {
-              expect(result, contains(chosen),
-                  reason: 'block $i resolved text missing from result\n'
-                      '--- result ---\n$result');
+              expect(
+                result,
+                contains(chosen),
+                reason:
+                    'block $i resolved text missing from result\n'
+                    '--- result ---\n$result',
+              );
             }
             // Only probe "the rejected side is truly absent" when `other`
             // is distinctive enough that an incidental substring match
@@ -542,22 +675,29 @@ void main() {
             if (other.length >= 8 &&
                 other != chosen &&
                 !chosen.contains(other)) {
-              expect(result, isNot(contains(other)),
-                  reason: 'block $i: the REJECTED side leaked into the '
-                      'result\n--- result ---\n$result');
+              expect(
+                result,
+                isNot(contains(other)),
+                reason:
+                    'block $i: the REJECTED side leaked into the '
+                    'result\n--- result ---\n$result',
+              );
             }
           }
 
           final reparsed = parseConflictFile('f.dart', result);
-          expect(reparsed.blocks, isEmpty,
-              reason: 'resolved output still parses as containing '
-                  'conflicts\n--- result ---\n$result');
+          expect(
+            reparsed.blocks,
+            isEmpty,
+            reason:
+                'resolved output still parses as containing '
+                'conflicts\n--- result ---\n$result',
+          );
         },
       );
-    });
+    }, timeout: fuzzTimeout());
 
-    test(
-        'fuzz: clean (no-marker) text always yields zero blocks and is '
+    test('fuzz: clean (no-marker) text always yields zero blocks and is '
         'preserved verbatim', () {
       forAll(
         genMultilineText(maxLines: 15),
@@ -577,7 +717,7 @@ void main() {
           expect(cf.fullText, text);
         },
       );
-    });
+    }, timeout: fuzzTimeout());
 
     test('fuzz: truncated/mid-conflict input never throws', () {
       forAll(
@@ -594,7 +734,7 @@ void main() {
           expect(() => cf.buildResult(), returnsNormally);
         },
       );
-    });
+    }, timeout: fuzzTimeout());
   });
 
   // ---------------------------------------------------------------------------
@@ -616,8 +756,7 @@ void main() {
       await repo.dispose();
     });
 
-    test(
-        'fuzz: correct ours reproduces theirs (accept-all) and ours '
+    test('fuzz: correct ours reproduces theirs (accept-all) and ours '
         '(reject-all)', () async {
       await forAllAsync(
         _genABPair(maxLines: 10),
@@ -640,76 +779,103 @@ void main() {
           if (diffText.isEmpty) return;
 
           final result = reviewMergeFromPatch(diffText, {path: a});
-          expect(result, isNotNull,
-              reason: 'returned null for a self-consistent ours/theirs '
-                  'pair.\n--- a (ours) ---\n$a\n--- t (theirs) ---\n$t\n'
-                  '--- diff ---\n$diffText');
+          expect(
+            result,
+            isNotNull,
+            reason:
+                'returned null for a self-consistent ours/theirs '
+                'pair.\n--- a (ours) ---\n$a\n--- t (theirs) ---\n$t\n'
+                '--- diff ---\n$diffText',
+          );
           final resolved = result!;
-          expect(resolved.length, 1,
-              reason: 'expected exactly one ConflictFile for a single '
-                  'touched path');
+          expect(
+            resolved.length,
+            1,
+            reason:
+                'expected exactly one ConflictFile for a single '
+                'touched path',
+          );
 
           for (final block in resolved.single.blocks) {
             block.resolution = ConflictSide.theirs;
           }
           final acceptAll = resolved.single.buildResult();
-          expect(acceptAll, t,
-              reason: 'accept-all did not reproduce theirs exactly.\n'
-                  '--- diff ---\n$diffText\n--- got ---\n$acceptAll');
+          expect(
+            acceptAll,
+            t,
+            reason:
+                'accept-all did not reproduce theirs exactly.\n'
+                '--- diff ---\n$diffText\n--- got ---\n$acceptAll',
+          );
 
           for (final block in resolved.single.blocks) {
             block.resolution = ConflictSide.ours;
           }
           final rejectAll = resolved.single.buildResult();
-          expect(rejectAll, a,
-              reason: 'reject-all did not reproduce ours exactly.\n'
-                  '--- diff ---\n$diffText\n--- got ---\n$rejectAll');
+          expect(
+            rejectAll,
+            a,
+            reason:
+                'reject-all did not reproduce ours exactly.\n'
+                '--- diff ---\n$diffText\n--- got ---\n$rejectAll',
+          );
         },
       );
-    });
+    }, timeout: fuzzTimeout());
 
     test(
-        // GENUINE BUG (FIXED): _spliceConflictMarkers (patch_as_merge.dart)
-        // used to build the marker-spliced text purely from
-        // ParsedLine.text substrings and never consulted
-        // ParsedLine.noNewlineAtEof — unlike PatchEngine.buildStagedPatch,
-        // which explicitly re-emits the `\ No newline at end of file`
-        // marker. The marker-embedded document is invariant to trailing-
-        // newline status (round-trips identically either way), so the
-        // fix threads the real noNewlineAtEof flags through explicitly:
-        // _spliceConflictMarkers now returns them alongside the text,
-        // reviewMergeFromPatch stamps them onto whichever ConflictBlock
-        // ends up last, and ConflictFile.buildResult() (merge_conflict_
-        // editor.dart) suppresses its unconditional rejoin-newline for
-        // that block when the resolved side is flagged. Plain LF content,
-        // no CRLF involved.
-        'reviewMergeFromPatch preserves the file\'s no-trailing-newline '
-        'status on accept-all and reject-all', () async {
-      const a = 'one\ntwo\nthree';
-      const t = 'one\ntwo\nthree EDITED'; // theirs — no trailing newline
-      await _writeAndCommit(repo, path, a, message: 'no-newline base');
-      await repo.writeFile(path, t);
-      final diffText = (await repo.git(['diff', '--', path])).stdout as String;
-      expect(diffText, contains(r'\ No newline at end of file'));
+      // GENUINE BUG (FIXED): _spliceConflictMarkers (patch_as_merge.dart)
+      // used to build the marker-spliced text purely from
+      // ParsedLine.text substrings and never consulted
+      // ParsedLine.noNewlineAtEof — unlike PatchEngine.buildStagedPatch,
+      // which explicitly re-emits the `\ No newline at end of file`
+      // marker. The marker-embedded document is invariant to trailing-
+      // newline status (round-trips identically either way), so the
+      // fix threads the real noNewlineAtEof flags through explicitly:
+      // _spliceConflictMarkers now returns them alongside the text,
+      // reviewMergeFromPatch stamps them onto whichever ConflictBlock
+      // ends up last, and ConflictFile.buildResult() (merge_conflict_
+      // editor.dart) suppresses its unconditional rejoin-newline for
+      // that block when the resolved side is flagged. Plain LF content,
+      // no CRLF involved.
+      'reviewMergeFromPatch preserves the file\'s no-trailing-newline '
+      'status on accept-all and reject-all',
+      () async {
+        const a = 'one\ntwo\nthree';
+        const t = 'one\ntwo\nthree EDITED'; // theirs — no trailing newline
+        await _writeAndCommit(repo, path, a, message: 'no-newline base');
+        await repo.writeFile(path, t);
+        final diffText =
+            (await repo.git(['diff', '--', path])).stdout as String;
+        expect(diffText, contains(r'\ No newline at end of file'));
 
-      final result = reviewMergeFromPatch(diffText, {path: a});
-      expect(result, isNotNull);
-      for (final block in result!.single.blocks) {
-        block.resolution = ConflictSide.theirs;
-      }
-      final acceptAll = result.single.buildResult();
-      expect(acceptAll, t,
-          reason: 'accept-all must reproduce theirs exactly, including no '
-              'trailing newline.\ngot: ${acceptAll.toString()}');
+        final result = reviewMergeFromPatch(diffText, {path: a});
+        expect(result, isNotNull);
+        for (final block in result!.single.blocks) {
+          block.resolution = ConflictSide.theirs;
+        }
+        final acceptAll = result.single.buildResult();
+        expect(
+          acceptAll,
+          t,
+          reason:
+              'accept-all must reproduce theirs exactly, including no '
+              'trailing newline.\ngot: ${acceptAll.toString()}',
+        );
 
-      for (final block in result.single.blocks) {
-        block.resolution = ConflictSide.ours;
-      }
-      final rejectAll = result.single.buildResult();
-      expect(rejectAll, a,
-          reason: 'reject-all must reproduce ours exactly, including no '
-              'trailing newline.\ngot: ${rejectAll.toString()}');
-    });
+        for (final block in result.single.blocks) {
+          block.resolution = ConflictSide.ours;
+        }
+        final rejectAll = result.single.buildResult();
+        expect(
+          rejectAll,
+          a,
+          reason:
+              'reject-all must reproduce ours exactly, including no '
+              'trailing newline.\ngot: ${rejectAll.toString()}',
+        );
+      },
+    );
 
     test('fuzz: mismatched ours (unrelated content) returns null, never '
         'throws', () async {
@@ -732,9 +898,11 @@ void main() {
           // misalign against a DIFFERENT "ours" — a pure-addition diff
           // (e.g. from an empty `a`) never checks `c` at all, so "returns
           // null" would be vacuous there, not a real assertion.
-          final touched = parseUnifiedDiff(diffText).where((l) =>
-              l.kind == LineKind.deleted ||
-              (l.kind == LineKind.context && l.lineNumOld != null));
+          final touched = parseUnifiedDiff(diffText).where(
+            (l) =>
+                l.kind == LineKind.deleted ||
+                (l.kind == LineKind.context && l.lineNumOld != null),
+          );
           if (touched.isEmpty) return;
           // Also require every touched line to be non-trivial (non-empty)
           // content — an empty-vs-empty accidental match between two
@@ -747,13 +915,17 @@ void main() {
           expect(() {
             result = reviewMergeFromPatch(diffText, {path: c});
           }, returnsNormally);
-          expect(result, isNull,
-              reason: 'expected null for unrelated "ours" content, got a '
-                  'non-null result.\n--- a ---\n$a\n'
-                  '--- c (supplied as ours) ---\n$c\n--- diff ---\n$diffText');
+          expect(
+            result,
+            isNull,
+            reason:
+                'expected null for unrelated "ours" content, got a '
+                'non-null result.\n--- a ---\n$a\n'
+                '--- c (supplied as ours) ---\n$c\n--- diff ---\n$diffText',
+          );
         },
       );
-    });
+    }, timeout: fuzzTimeout());
   });
 
   // ---------------------------------------------------------------------------
@@ -772,71 +944,91 @@ void main() {
     });
 
     test(
-        'fuzz: every hunk from a multi-file diff appears in exactly one '
-        'per-file slice', () async {
-      await forAllAsync(
-        _genMultiFileChangeset(),
-        count: 15 * scale,
-        seed: 0x51CE,
-        describe: 'multi-file changeset',
-        check: (files) async {
-          for (final entry in files) {
-            await _writeAndCommit(repo, entry.$1, entry.$2, message: 'base');
-          }
-          for (final entry in files) {
-            await repo.writeFile(entry.$1, entry.$3);
-          }
-          final diffRes = await repo.git(['diff']);
-          expect(diffRes.exitCode, 0, reason: diffRes.stderr.toString());
-          final diffText = diffRes.stdout as String;
-          if (diffText.isEmpty) {
-            return; // every file collided A==B this round.
-          }
-          try {
-            final nameOnlyRaw = await repo.gitOk(['diff', '--name-only']);
-            final nameOnly =
-                nameOnlyRaw.split('\n').where((s) => s.isNotEmpty).toSet();
-            final slices = sliceDiffByFile(diffText);
-            expect(slices.keys.toSet(), equals(nameOnly),
-                reason: 'sliceDiffByFile keys did not match the '
-                    'changed-file set.\n--- diff ---\n$diffText');
-
-            final fullHunks = parseDiffHunks(diffText);
-            expect(fullHunks, isNotEmpty);
-            for (final h in fullHunks) {
-              final slice = slices[h.filePath];
-              expect(slice, isNotNull,
-                  reason: 'hunk for "${h.filePath}" missing from '
-                      'sliceDiffByFile output.\n--- diff ---\n$diffText');
-              expect(slice, contains(h.header),
-                  reason: 'slice for "${h.filePath}" does not contain its '
-                      'own hunk header.\n--- diff ---\n$diffText');
+      'fuzz: every hunk from a multi-file diff appears in exactly one '
+      'per-file slice',
+      () async {
+        await forAllAsync(
+          _genMultiFileChangeset(),
+          count: 15 * scale,
+          seed: 0x51CE,
+          describe: 'multi-file changeset',
+          check: (files) async {
+            for (final entry in files) {
+              await _writeAndCommit(repo, entry.$1, entry.$2, message: 'base');
             }
-
-            var sumPerSlice = 0;
-            for (final path in slices.keys) {
-              sumPerSlice += parseDiffHunksForFile(diffText, path).length;
+            for (final entry in files) {
+              await repo.writeFile(entry.$1, entry.$3);
             }
-            expect(sumPerSlice, fullHunks.length,
-                reason: 'hunk partition/coverage mismatch: '
+            final diffRes = await repo.git(['diff']);
+            expect(diffRes.exitCode, 0, reason: diffRes.stderr.toString());
+            final diffText = diffRes.stdout as String;
+            if (diffText.isEmpty) {
+              return; // every file collided A==B this round.
+            }
+            try {
+              final nameOnlyRaw = await repo.gitOk(['diff', '--name-only']);
+              final nameOnly = nameOnlyRaw
+                  .split('\n')
+                  .where((s) => s.isNotEmpty)
+                  .toSet();
+              final slices = sliceDiffByFile(diffText);
+              expect(
+                slices.keys.toSet(),
+                equals(nameOnly),
+                reason:
+                    'sliceDiffByFile keys did not match the '
+                    'changed-file set.\n--- diff ---\n$diffText',
+              );
+
+              final fullHunks = parseDiffHunks(diffText);
+              expect(fullHunks, isNotEmpty);
+              for (final h in fullHunks) {
+                final slice = slices[h.filePath];
+                expect(
+                  slice,
+                  isNotNull,
+                  reason:
+                      'hunk for "${h.filePath}" missing from '
+                      'sliceDiffByFile output.\n--- diff ---\n$diffText',
+                );
+                expect(
+                  slice,
+                  contains(h.header),
+                  reason:
+                      'slice for "${h.filePath}" does not contain its '
+                      'own hunk header.\n--- diff ---\n$diffText',
+                );
+              }
+
+              var sumPerSlice = 0;
+              for (final path in slices.keys) {
+                sumPerSlice += parseDiffHunksForFile(diffText, path).length;
+              }
+              expect(
+                sumPerSlice,
+                fullHunks.length,
+                reason:
+                    'hunk partition/coverage mismatch: '
                     'sum-of-slices=$sumPerSlice, full=${fullHunks.length}.\n'
-                    '--- diff ---\n$diffText');
-          } finally {
-            // Settle the dirty tree — otherwise this case's uncommitted
-            // files leak into the NEXT case's whole-repo `git diff` and
-            // corrupt its partition/coverage assertions.
-            await repo.gitOk(['add', '-A']);
-            await repo.git(['commit', '-m', 'settle']);
-          }
-        },
-      );
-    },
-        // Each case shells out to real git several times (write+add+commit
-        // per file, plus diff/name-only/commit) across up to 4 files; at
-        // MANIFOLD_FUZZ scales ≥5 (75+ cases) that reliably exceeds the
-        // default 30s test timeout well before any assertion fails —
-        // pre-existing IO cost, unrelated to B22-B25.
-        timeout: const Timeout(Duration(minutes: 5)));
+                    '--- diff ---\n$diffText',
+              );
+            } finally {
+              // Settle the dirty tree — otherwise this case's uncommitted
+              // files leak into the NEXT case's whole-repo `git diff` and
+              // corrupt its partition/coverage assertions.
+              await repo.gitOk(['add', '-A']);
+              await repo.git(['commit', '-m', 'settle']);
+            }
+          },
+        );
+      },
+      // Each case shells out to real git several times (write+add+commit
+      // per file, plus diff/name-only/commit) across up to 4 files; at
+      // MANIFOLD_FUZZ scales ≥5 (75+ cases) that reliably exceeds the
+      // default 30s test timeout well before any assertion fails —
+      // pre-existing IO cost, unrelated to B22-B25.
+      timeout: fuzzTimeout(const Duration(minutes: 5)),
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -873,24 +1065,33 @@ void main() {
         await _writeAndCommit(repo, name, 'v1\n', message: 'add $name');
         await repo.writeFile(name, 'v1\nv2 added\n');
         final diffRes = await repo.git(['diff', '--', name]);
-        expect(diffRes.exitCode, 0,
-            reason: 'git diff failed for hostile name "$name": '
-                '${diffRes.stderr}');
+        expect(
+          diffRes.exitCode,
+          0,
+          reason:
+              'git diff failed for hostile name "$name": '
+              '${diffRes.stderr}',
+        );
         final diffText = diffRes.stdout as String;
-        expect(diffText, isNotEmpty,
-            reason: 'expected a real diff for "$name"');
+        expect(
+          diffText,
+          isNotEmpty,
+          reason: 'expected a real diff for "$name"',
+        );
 
         final hunksForFile = parseDiffHunksForFile(diffText, name);
         final allHunks = parseDiffHunks(diffText);
-        final recoveredEverywhere = hunksForFile.isNotEmpty &&
-            allHunks.any((h) => h.filePath == name);
+        final recoveredEverywhere =
+            hunksForFile.isNotEmpty && allHunks.any((h) => h.filePath == name);
         if (!recoveredEverywhere) {
-          fail('failed to recover path "$name" '
-              'from its diff header via un-C-quoting.\n'
-              'parseDiffHunksForFile: ${hunksForFile.length} hunks, '
-              'parseDiffHunks paths: '
-              '${allHunks.map((h) => h.filePath).toSet()}\n'
-              '--- diff ---\n$diffText');
+          fail(
+            'failed to recover path "$name" '
+            'from its diff header via un-C-quoting.\n'
+            'parseDiffHunksForFile: ${hunksForFile.length} hunks, '
+            'parseDiffHunks paths: '
+            '${allHunks.map((h) => h.filePath).toSet()}\n'
+            '--- diff ---\n$diffText',
+          );
         }
         expect(hunksForFile.length, greaterThanOrEqualTo(1));
 
@@ -902,18 +1103,28 @@ void main() {
         // independent (and differently buggy) header-decoding logic; this
         // is the regression guard that they can no longer drift.
         final parsedLines = parseUnifiedDiff(diffText);
-        final decodedFilePaths =
-            parsedLines.map((l) => l.filePath).whereType<String>().toSet();
-        expect(decodedFilePaths, contains(name),
-            reason: 'parseUnifiedDiff failed to decode path "$name" from '
-                'its diff header.\ndecoded paths: $decodedFilePaths\n'
-                '--- diff ---\n$diffText');
+        final decodedFilePaths = parsedLines
+            .map((l) => l.filePath)
+            .whereType<String>()
+            .toSet();
+        expect(
+          decodedFilePaths,
+          contains(name),
+          reason:
+              'parseUnifiedDiff failed to decode path "$name" from '
+              'its diff header.\ndecoded paths: $decodedFilePaths\n'
+              '--- diff ---\n$diffText',
+        );
 
         final slices = sliceDiffByFile(diffText);
-        expect(slices.keys, contains(name),
-            reason: 'sliceDiffByFile failed to decode path "$name" from '
-                'its diff header.\ndecoded keys: ${slices.keys}\n'
-                '--- diff ---\n$diffText');
+        expect(
+          slices.keys,
+          contains(name),
+          reason:
+              'sliceDiffByFile failed to decode path "$name" from '
+              'its diff header.\ndecoded keys: ${slices.keys}\n'
+              '--- diff ---\n$diffText',
+        );
       } finally {
         // Settle this case's dirty file before the NEXT fuzz case (which
         // reuses the SAME repo/working tree) runs — otherwise a later
@@ -925,60 +1136,72 @@ void main() {
           final settle = await repo.git(['commit', '-m', 'settle $name']);
           if (settle.exitCode != 0) {
             final combined = '${settle.stdout}${settle.stderr}';
-            expect(_isBenignNoCommitMessage(combined), isTrue,
-                reason: combined);
+            expect(
+              _isBenignNoCommitMessage(combined),
+              isTrue,
+              reason: combined,
+            );
           }
         }
       }
     }
 
     test(
-        // GENUINE BUG (FIXED): git C-quotes non-ASCII paths as per-byte
-        // octal escapes; _unCQuoteGitPath (lib/backend/logos_hunks.dart)
-        // used to decode each escaped byte as its own UTF-16 code unit
-        // instead of recombining the bytes and UTF-8-decoding, recovering
-        // mojibake ("cafeÃ©-file.txt") instead of the real name
-        // ("café-file.txt"). Fixed by accumulating consecutive escape
-        // bytes into a byte buffer and running ONE utf8DecodeExact per
-        // contiguous escape run.
-        'unicode filename (built via fromCharCode — no raw non-ASCII '
-        'literals in source)', () async {
-      final cafe = 'cafe${String.fromCharCode(0xE9)}-file.txt'; // "café-file.txt"
-      await caseFor(cafe);
-    });
+      // GENUINE BUG (FIXED): git C-quotes non-ASCII paths as per-byte
+      // octal escapes; _unCQuoteGitPath (lib/backend/logos_hunks.dart)
+      // used to decode each escaped byte as its own UTF-16 code unit
+      // instead of recombining the bytes and UTF-8-decoding, recovering
+      // mojibake ("cafeÃ©-file.txt") instead of the real name
+      // ("café-file.txt"). Fixed by accumulating consecutive escape
+      // bytes into a byte buffer and running ONE utf8DecodeExact per
+      // contiguous escape run.
+      'unicode filename (built via fromCharCode — no raw non-ASCII '
+      'literals in source)',
+      () async {
+        final cafe =
+            'cafe${String.fromCharCode(0xE9)}-file.txt'; // "café-file.txt"
+        await caseFor(cafe);
+      },
+    );
 
     test(
-        // GENUINE BUG (FIXED): same root cause as the café case — see
-        // above.
-        'CJK filename', () async {
-      final cjk = '${String.fromCharCodes([0x6587, 0x4EF6])}.txt'; // "文件.txt"
-      await caseFor(cjk);
-    });
+      // GENUINE BUG (FIXED): same root cause as the café case — see
+      // above.
+      'CJK filename',
+      () async {
+        final cjk = '${String.fromCharCodes([0x6587, 0x4EF6])}.txt'; // "文件.txt"
+        await caseFor(cjk);
+      },
+    );
 
     test(
-        // GENUINE BUG (FIXED): git does not quote a plain space, so the
-        // header is un-quoted — but _pathFromDiffHeader (logos_hunks.dart)
-        // used to recover the path via line.split(' ')[3], which shatters
-        // on the filename's own internal spaces, recovering just "space"
-        // instead of "has space in it.txt". Fixed by exploiting that
-        // non-rename headers repeat the identical path on both sides:
-        // find the space that splits the remainder into `a/P` and `b/P`
-        // for the same P.
-        'filename with a space', () async {
-      await caseFor('has space in it.txt');
-    });
+      // GENUINE BUG (FIXED): git does not quote a plain space, so the
+      // header is un-quoted — but _pathFromDiffHeader (logos_hunks.dart)
+      // used to recover the path via line.split(' ')[3], which shatters
+      // on the filename's own internal spaces, recovering just "space"
+      // instead of "has space in it.txt". Fixed by exploiting that
+      // non-rename headers repeat the identical path on both sides:
+      // find the space that splits the remainder into `a/P` and `b/P`
+      // for the same P.
+      'filename with a space',
+      () async {
+        await caseFor('has space in it.txt');
+      },
+    );
 
     test(
-        'fuzz: filesystem-legal hostile filenames recover their path',
-        () async {
-      await forAllAsync(
-        _genHostileFileName(),
-        count: 15 * scale,
-        seed: 0x9A73,
-        describe: 'hostile filename',
-        check: (name) => caseFor(name),
-      );
-    });
+      'fuzz: filesystem-legal hostile filenames recover their path',
+      () async {
+        await forAllAsync(
+          _genHostileFileName(),
+          count: 15 * scale,
+          seed: 0x9A73,
+          describe: 'hostile filename',
+          check: (name) => caseFor(name),
+        );
+      },
+      timeout: fuzzTimeout(),
+    );
   });
 }
 
@@ -1027,7 +1250,8 @@ Gen<(String, String)> _genCrlfPair({int maxLines = 8}) {
 /// since a trailing `'\r'` is content (see genMultilineText's own doc
 /// comment) and must survive. See [_genConflictScenario] for why this
 /// normalization is needed.
-String _dropTrailingLf(String s) => s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
+String _dropTrailingLf(String s) =>
+    s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
 
 /// A three-way conflict document: `n` blocks, each with independently
 /// fuzzed ours/theirs (and sometimes base) text separated by simple,
@@ -1145,8 +1369,10 @@ Gen<String> _genHostileFileName() {
   return (rng) {
     for (var attempt = 0; attempt < 20; attempt++) {
       final raw = base(rng);
-      final parts =
-          raw.split(RegExp(r'[\\/]+')).where((s) => s.isNotEmpty).toList();
+      final parts = raw
+          .split(RegExp(r'[\\/]+'))
+          .where((s) => s.isNotEmpty)
+          .toList();
       if (parts.isEmpty) continue;
       final name = parts.last;
       if (_isSafeAsSingleFileName(name)) return name;

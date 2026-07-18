@@ -36,6 +36,8 @@
     "saveMuseNotes": "Gagal menyimpan catatan muse.",
     "saveReviewDoubleCheck": "Gagal menyimpan mode cek-ganda review.",
     "saveApiPiggybackCli": "Gagal menyimpan CLI piggyback API.",
+    "saveCliTimeout": "Gagal menyimpan batas waktu CLI.",
+    "stopAllCli": "Tidak bisa menghentikan sesi CLI yang berjalan.",
     "clearLocalData": "Tidak bisa membersihkan data lokal: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Hapus semua data aplikasi lokal — termasuk daftar repo terkini — dan keluar? Repo git-mu yang sebenarnya di disk tidak disentuh.",
     "confirmReset": "Reset data aplikasi lokal dan keluar?\n\nPengaturan, tema, onboarding, preferensi AI, telemetri, dan cache engram dibersihkan. Daftar repo terkinimu tetap ada."
   },
-  "guardrailStageLabels": ["Longgar", "Seimbang", "Ketat", "Paranoid"],
+  "guardrailStageLabels": [
+    "Longgar",
+    "Seimbang",
+    "Ketat",
+    "Paranoid"
+  ],
   "guardrailMacro": {
     "loose": "longgar",
     "balanced": "seimbang",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "Pilih executable wick",
     "connected": "wick · terhubung",
-    "pathToExecutable": "wick · path ke executable"
+    "pathToExecutable": "wick · path ke executable",
+    "off": "mati",
+    "disableHint": "Matikan integrasi wick",
+    "enableHint": "Aktifkan integrasi wick"
   },
   "integrations": {
     "title": "& Integrasi",
@@ -472,10 +482,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | jank {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["command", "p50", "keandalan", "rentang"],
-    "headersBackend": ["cakupan", "p50", "p95", "kegagalan"],
-    "headersDiff": ["renderer", "paint pertama", "frame p95", "raster p95", "jank"],
-    "headersUi": ["peristiwa", "p50", "kegagalan", "rentang"]
+    "headersCommand": [
+      "command",
+      "p50",
+      "keandalan",
+      "rentang"
+    ],
+    "headersBackend": [
+      "cakupan",
+      "p50",
+      "p95",
+      "kegagalan"
+    ],
+    "headersDiff": [
+      "renderer",
+      "paint pertama",
+      "frame p95",
+      "raster p95",
+      "jank"
+    ],
+    "headersUi": [
+      "peristiwa",
+      "p50",
+      "kegagalan",
+      "rentang"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -527,7 +558,17 @@
     "clearCacheTooltip": "Hapus model yang di-cache dan periksa ulang. Membersihkan yang sudah dijatuhkan provider.",
     "refreshLabel": "Segarkan provider",
     "refreshTooltip": "Periksa ulang setiap provider sekarang.",
-    "body": "Pipa langsung pesan antarmuka ke biner provider lokal."
+    "body": "Pipa langsung pesan antarmuka ke biner provider lokal.",
+    "cliTimeoutLabel": "Batas waktu per eksekusi",
+    "cliTimeoutUnitMinutes": "menit",
+    "cliTimeoutUnitMinute": "menit",
+    "forceStopLabel": "Hentikan semua sesi",
+    "forceStopTooltip": "Paksa berhenti setiap eksekusi CLI yang sedang berjalan.",
+    "forceStopConfirmTitle": "Hentikan sesi CLI yang berjalan?",
+    "forceStopConfirmBody": "Ini memaksa berhenti {count} eksekusi CLI yang sedang berjalan. Outputnya akan hilang.",
+    "forceStopConfirmAction": "Hentikan semua",
+    "forceStopNoneRunning": "Tidak ada sesi CLI yang berjalan",
+    "forceStopRecordError": "Dihentikan — sesi CLI dipaksa berhenti."
   },
   "header": {
     "title": "Preferensi Workspace",

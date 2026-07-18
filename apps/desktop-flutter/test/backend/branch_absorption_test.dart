@@ -68,7 +68,10 @@ void main() {
 
   /// Write [files], stage everything, commit, return the new HEAD hash.
   Future<String> commit(
-      Directory repo, String message, Map<String, String> files) async {
+    Directory repo,
+    String message,
+    Map<String, String> files,
+  ) async {
     for (final e in files.entries) {
       final f = File('${repo.path}${Platform.pathSeparator}${e.key}');
       await f.parent.create(recursive: true);
@@ -123,8 +126,11 @@ void main() {
       final r = await branchAbsorption(repo.path, 'feature', 'main');
       expect(r, isNotNull);
       expect(r!.absorbed, isTrue);
-      expect(r.via, AbsorptionWitnessVia.tip,
-          reason: 'nothing landed after the squash → tip is the witness');
+      expect(
+        r.via,
+        AbsorptionWitnessVia.tip,
+        reason: 'nothing landed after the squash → tip is the witness',
+      );
       expect(r.witness, await gitOut(repo, ['rev-parse', 'main']));
       expect(r.conflicted, isFalse);
       expect(r.outstandingFiles, isEmpty);
@@ -133,65 +139,84 @@ void main() {
     }
   });
 
-  test('(b) transplant (identical content, unrelated commit) → absorbed',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+  test(
+    '(b) transplant (identical content, unrelated commit) → absorbed',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\ntwo\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature adds three', {
+          'a.txt': 'one\ntwo\nthree\n',
+        });
+        // TRANSPLANT: main independently reaches the SAME content via its own
+        // unrelated commit (no cherry-pick, no shared commit — Manifold's
+        // move-changes flow). Ancestry will report 1-ahead / 1-behind ghosts.
+        await git(repo, ['checkout', '-q', 'main']);
+        await commit(repo, 'transplant three onto main', {
+          'a.txt': 'one\ntwo\nthree\n',
+        });
+
+        // Ancestry lies: the branch reads ahead of a ghost.
+        final counts = await gitOut(repo, [
+          'rev-list',
+          '--left-right',
+          '--count',
+          'main...feature',
+        ]);
+        expect(
+          counts.split(RegExp(r'\s+')).map(int.parse).toList(),
+          [1, 1],
+          reason: 'transplant must look 1-ahead/1-behind by ancestry',
+        );
+
+        // The law judges by content: absorbed.
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(
+          r!.absorbed,
+          isTrue,
+          reason: 'identical content already in main → merging is a no-op',
+        );
+        expect(r.conflicted, isFalse);
+        expect(r.outstandingFiles, isEmpty);
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\ntwo\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature adds three', {'a.txt': 'one\ntwo\nthree\n'});
-      // TRANSPLANT: main independently reaches the SAME content via its own
-      // unrelated commit (no cherry-pick, no shared commit — Manifold's
-      // move-changes flow). Ancestry will report 1-ahead / 1-behind ghosts.
-      await git(repo, ['checkout', '-q', 'main']);
-      await commit(repo, 'transplant three onto main', {
-        'a.txt': 'one\ntwo\nthree\n',
-      });
+    },
+  );
 
-      // Ancestry lies: the branch reads ahead of a ghost.
-      final counts =
-          await gitOut(repo, ['rev-list', '--left-right', '--count', 'main...feature']);
-      expect(counts.split(RegExp(r'\s+')).map(int.parse).toList(), [1, 1],
-          reason: 'transplant must look 1-ahead/1-behind by ancestry');
+  test(
+    '(c) genuinely diverged → not absorbed, names the outstanding file',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'unique work', {'unique.txt': 'only on feature\n'});
 
-      // The law judges by content: absorbed.
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.absorbed, isTrue,
-          reason: 'identical content already in main → merging is a no-op');
-      expect(r.conflicted, isFalse);
-      expect(r.outstandingFiles, isEmpty);
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
-
-  test('(c) genuinely diverged → not absorbed, names the outstanding file',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(r!.absorbed, isFalse);
+        expect(r.conflicted, isFalse);
+        expect(
+          r.outstandingFiles,
+          ['unique.txt'],
+          reason: 'the exact file the branch still uniquely holds',
+        );
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'unique work', {'unique.txt': 'only on feature\n'});
-
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.absorbed, isFalse);
-      expect(r.conflicted, isFalse);
-      expect(r.outstandingFiles, ['unique.txt'],
-          reason: 'the exact file the branch still uniquely holds');
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
+    },
+  );
 
   test('(d) overlapping edits → conflicted, not absorbed', () async {
     final repo = await makeRepo();
@@ -213,186 +238,229 @@ void main() {
       final r = await branchAbsorption(repo.path, 'feature', 'main');
       expect(r, isNotNull);
       expect(r!.conflicted, isTrue);
-      expect(r.absorbed, isFalse,
-          reason: 'a conflicted merge is never a no-op');
-      expect(r.outstandingFiles, contains('a.txt'),
-          reason: 'the contended file is surfaced');
+      expect(
+        r.absorbed,
+        isFalse,
+        reason: 'a conflicted merge is never a no-op',
+      );
+      expect(
+        r.outstandingFiles,
+        contains('a.txt'),
+        reason: 'the contended file is surfaced',
+      );
     } finally {
       await deleteRepo(repo);
     }
   });
 
-  test('(f) THE ORRERY CASE: squash then base rewrites the same files',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+  test(
+    '(f) THE ORRERY CASE: squash then base rewrites the same files',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature work', {'a.txt': 'one\ntwo\nthree\n'});
+        await git(repo, ['checkout', '-q', 'main']);
+        await git(repo, ['merge', '--squash', 'feature']);
+        await git(repo, ['commit', '-q', '-m', 'squash feature']);
+        final squash = await gitOut(repo, ['rev-parse', 'HEAD']);
+        // Base MOVES ON, rewriting the very file the branch delivered — the
+        // tip merge-tree now conflicts. History cannot be revoked: at the
+        // squash commit, merging was a no-op. Absorbed, permanently.
+        await commit(repo, 'main rewrites the file', {
+          'a.txt': 'REWRITTEN\nENTIRELY\n',
+        });
+
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(
+          r!.conflicted,
+          isTrue,
+          reason: 'tip merge-tree must conflict (precondition of the case)',
+        );
+        expect(
+          r.absorbed,
+          isTrue,
+          reason: 'delivery happened at the squash; evolution cannot revoke',
+        );
+        expect(r.witness, squash, reason: 'the squash commit is the exhibit');
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature work', {'a.txt': 'one\ntwo\nthree\n'});
-      await git(repo, ['checkout', '-q', 'main']);
-      await git(repo, ['merge', '--squash', 'feature']);
-      await git(repo, ['commit', '-q', '-m', 'squash feature']);
-      final squash = await gitOut(repo, ['rev-parse', 'HEAD']);
-      // Base MOVES ON, rewriting the very file the branch delivered — the
-      // tip merge-tree now conflicts. History cannot be revoked: at the
-      // squash commit, merging was a no-op. Absorbed, permanently.
-      await commit(repo, 'main rewrites the file', {
-        'a.txt': 'REWRITTEN\nENTIRELY\n',
-      });
+    },
+  );
 
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.conflicted, isTrue,
-          reason: 'tip merge-tree must conflict (precondition of the case)');
-      expect(r.absorbed, isTrue,
-          reason: 'delivery happened at the squash; evolution cannot revoke');
-      expect(r.witness, squash,
-          reason: 'the squash commit is the exhibit');
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
+  test(
+    '(g) transplant + later base evolution → absorbed via patch-id',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\ntwo\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature adds three', {
+          'a.txt': 'one\ntwo\nthree\n',
+        });
+        // Transplant onto main (identical content, unrelated commit), then
+        // main rewrites the file so the tip check fails.
+        await git(repo, ['checkout', '-q', 'main']);
+        await commit(repo, 'transplant', {'a.txt': 'one\ntwo\nthree\n'});
+        final transplant = await gitOut(repo, ['rev-parse', 'HEAD']);
+        await commit(repo, 'main rewrites', {'a.txt': 'DIFFERENT\n'});
 
-  test('(g) transplant + later base evolution → absorbed via patch-id',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(r!.absorbed, isTrue);
+        expect(
+          r.via,
+          AbsorptionWitnessVia.patchId,
+          reason: 'cumulative branch patch == transplant commit patch',
+        );
+        expect(r.witness, transplant);
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\ntwo\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature adds three', {'a.txt': 'one\ntwo\nthree\n'});
-      // Transplant onto main (identical content, unrelated commit), then
-      // main rewrites the file so the tip check fails.
-      await git(repo, ['checkout', '-q', 'main']);
-      await commit(repo, 'transplant', {'a.txt': 'one\ntwo\nthree\n'});
-      final transplant = await gitOut(repo, ['rev-parse', 'HEAD']);
-      await commit(repo, 'main rewrites', {'a.txt': 'DIFFERENT\n'});
+    },
+  );
 
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.absorbed, isTrue);
-      expect(r.via, AbsorptionWitnessVia.patchId,
-          reason: 'cumulative branch patch == transplant commit patch');
-      expect(r.witness, transplant);
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
+  test(
+    '(h) split transplant → absorbed via linear scan at second commit',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\n', 'b.txt': 'x\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature edits both', {
+          'a.txt': 'one\ntwo\n',
+          'b.txt': 'x\ny\n',
+        });
+        // Main applies the SAME content as TWO separate commits (no single
+        // commit's patch matches the branch's cumulative patch), then rewrites
+        // a.txt to defeat the tip check.
+        await git(repo, ['checkout', '-q', 'main']);
+        await commit(repo, 'split part 1', {'a.txt': 'one\ntwo\n'});
+        await commit(repo, 'split part 2', {'b.txt': 'x\ny\n'});
+        final part2 = await gitOut(repo, ['rev-parse', 'HEAD']);
+        await commit(repo, 'main rewrites a', {'a.txt': 'CHANGED\n'});
 
-  test('(h) split transplant → absorbed via linear scan at second commit',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(
+          r!.absorbed,
+          isTrue,
+          reason: 'at split part 2 all branch content is in → merge no-op',
+        );
+        expect(
+          r.via,
+          AbsorptionWitnessVia.scan,
+          reason: 'patch-id misses split applications; the walk finds it',
+        );
+        expect(
+          r.witness,
+          part2,
+          reason: 'the second application commit is the first witness',
+        );
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\n', 'b.txt': 'x\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature edits both', {
-        'a.txt': 'one\ntwo\n',
-        'b.txt': 'x\ny\n',
-      });
-      // Main applies the SAME content as TWO separate commits (no single
-      // commit's patch matches the branch's cumulative patch), then rewrites
-      // a.txt to defeat the tip check.
-      await git(repo, ['checkout', '-q', 'main']);
-      await commit(repo, 'split part 1', {'a.txt': 'one\ntwo\n'});
-      await commit(repo, 'split part 2', {'b.txt': 'x\ny\n'});
-      final part2 = await gitOut(repo, ['rev-parse', 'HEAD']);
-      await commit(repo, 'main rewrites a', {'a.txt': 'CHANGED\n'});
+    },
+  );
 
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.absorbed, isTrue,
-          reason: 'at split part 2 all branch content is in → merge no-op');
-      expect(r.via, AbsorptionWitnessVia.scan,
-          reason: 'patch-id misses split applications; the walk finds it');
-      expect(r.witness, part2,
-          reason: 'the second application commit is the first witness');
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
+  test(
+    '(i) deep fork → uncapped scan still proves the verdict',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\n', 'b.txt': 'x\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature edits both', {
+          'a.txt': 'one\ntwo\n',
+          'b.txt': 'x\ny\n',
+        });
+        // A LONG stretch of unrelated main history between the fork and the
+        // delivery — the scan has no cap, so the witness deep in the range
+        // must still be found (and the unrelated commits must all be pruned
+        // in memory, never merge-tree'd).
+        await git(repo, ['checkout', '-q', 'main']);
+        for (var i = 0; i < 40; i++) {
+          await commit(repo, 'noise $i', {'noise.txt': 'tick $i\n'});
+        }
+        // Split transplant at the far end (defeats patch-id), then a rewrite
+        // (defeats tip).
+        await commit(repo, 'split part 1', {'a.txt': 'one\ntwo\n'});
+        await commit(repo, 'split part 2', {'b.txt': 'x\ny\n'});
+        final part2 = await gitOut(repo, ['rev-parse', 'HEAD']);
+        await commit(repo, 'main rewrites a', {'a.txt': 'CHANGED\n'});
 
-  test('(i) deep fork → uncapped scan still proves the verdict', () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
+        final r = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(r, isNotNull);
+        expect(
+          r!.absorbed,
+          isTrue,
+          reason: 'no cap: the deep witness must be found',
+        );
+        expect(r.witness, part2);
+        expect(r.via, AbsorptionWitnessVia.scan);
+      } finally {
+        await deleteRepo(repo);
       }
-      await commit(repo, 'base', {'a.txt': 'one\n', 'b.txt': 'x\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature edits both', {
-        'a.txt': 'one\ntwo\n',
-        'b.txt': 'x\ny\n',
-      });
-      // A LONG stretch of unrelated main history between the fork and the
-      // delivery — the scan has no cap, so the witness deep in the range
-      // must still be found (and the unrelated commits must all be pruned
-      // in memory, never merge-tree'd).
-      await git(repo, ['checkout', '-q', 'main']);
-      for (var i = 0; i < 40; i++) {
-        await commit(repo, 'noise $i', {'noise.txt': 'tick $i\n'});
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+
+  test(
+    '(j) permanence cache: witnessed verdict never re-probes a fixed tip',
+    () async {
+      final repo = await makeRepo();
+      try {
+        if (!await lawSupported(repo)) {
+          markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
+          return;
+        }
+        await commit(repo, 'base', {'a.txt': 'one\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'feature work', {'a.txt': 'one\ntwo\n'});
+        await git(repo, ['checkout', '-q', 'main']);
+        await git(repo, ['merge', '--squash', 'feature']);
+        await git(repo, ['commit', '-q', '-m', 'squash feature']);
+
+        final cold = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(cold, isNotNull);
+        expect(cold!.absorbed, isTrue);
+
+        // Force the support gate OFF. A recomputation is now impossible —
+        // so a second identical answer PROVES the permanence cache served it.
+        resetMergeTreeAbsorptionSupportCache(false);
+        final warm = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(
+          warm,
+          isNotNull,
+          reason: 'cache hit precedes the support gate: no git needed',
+        );
+        expect(warm!.absorbed, isTrue);
+        expect(warm.witness, cold.witness);
+        expect(warm.via, cold.via);
+      } finally {
+        await deleteRepo(repo);
       }
-      // Split transplant at the far end (defeats patch-id), then a rewrite
-      // (defeats tip).
-      await commit(repo, 'split part 1', {'a.txt': 'one\ntwo\n'});
-      await commit(repo, 'split part 2', {'b.txt': 'x\ny\n'});
-      final part2 = await gitOut(repo, ['rev-parse', 'HEAD']);
-      await commit(repo, 'main rewrites a', {'a.txt': 'CHANGED\n'});
-
-      final r = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(r, isNotNull);
-      expect(r!.absorbed, isTrue,
-          reason: 'no cap: the deep witness must be found');
-      expect(r.witness, part2);
-      expect(r.via, AbsorptionWitnessVia.scan);
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
-
-  test('(j) permanence cache: witnessed verdict never re-probes a fixed tip',
-      () async {
-    final repo = await makeRepo();
-    try {
-      if (!await lawSupported(repo)) {
-        markTestSkipped('git < 2.38: merge-tree --write-tree unavailable');
-        return;
-      }
-      await commit(repo, 'base', {'a.txt': 'one\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'feature work', {'a.txt': 'one\ntwo\n'});
-      await git(repo, ['checkout', '-q', 'main']);
-      await git(repo, ['merge', '--squash', 'feature']);
-      await git(repo, ['commit', '-q', '-m', 'squash feature']);
-
-      final cold = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(cold, isNotNull);
-      expect(cold!.absorbed, isTrue);
-
-      // Force the support gate OFF. A recomputation is now impossible —
-      // so a second identical answer PROVES the permanence cache served it.
-      resetMergeTreeAbsorptionSupportCache(false);
-      final warm = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(warm, isNotNull,
-          reason: 'cache hit precedes the support gate: no git needed');
-      expect(warm!.absorbed, isTrue);
-      expect(warm.witness, cold.witness);
-      expect(warm.via, cold.via);
-    } finally {
-      await deleteRepo(repo);
-    }
-  });
+    },
+  );
 
   test('(k) frontier: proven-no re-probe is incremental and flips on a '
       'late transplant', () async {
@@ -424,54 +492,65 @@ void main() {
       final transplant = await gitOut(repo, ['rev-parse', 'HEAD']);
       final flipped = await branchAbsorption(repo.path, 'feature', 'main');
       expect(flipped, isNotNull);
-      expect(flipped!.absorbed, isTrue,
-          reason: 'the new commit is examined and witnesses absorption');
+      expect(
+        flipped!.absorbed,
+        isTrue,
+        reason: 'the new commit is examined and witnesses absorption',
+      );
       expect(flipped.witness, transplant);
     } finally {
       await deleteRepo(repo);
     }
   });
 
-  test('(e) unsupported git → branchAbsorption unknown; batch falls back',
-      () async {
-    final repo = await makeRepo();
-    try {
-      await commit(repo, 'base', {'a.txt': 'one\n'});
-      await git(repo, ['checkout', '-q', '-b', 'feature']);
-      await commit(repo, 'step', {'a.txt': 'one\ntwo\n'});
-      // Squash-merge so the LEGACY fallback (git cherry) has something to find.
-      await git(repo, ['checkout', '-q', 'main']);
-      await git(repo, ['merge', '--squash', 'feature']);
-      await git(repo, ['commit', '-q', '-m', 'squash feature']);
+  test(
+    '(e) unsupported git → branchAbsorption unknown; batch falls back',
+    () async {
+      final repo = await makeRepo();
+      try {
+        await commit(repo, 'base', {'a.txt': 'one\n'});
+        await git(repo, ['checkout', '-q', '-b', 'feature']);
+        await commit(repo, 'step', {'a.txt': 'one\ntwo\n'});
+        // Squash-merge so the LEGACY fallback (git cherry) has something to find.
+        await git(repo, ['checkout', '-q', 'main']);
+        await git(repo, ['merge', '--squash', 'feature']);
+        await git(repo, ['commit', '-q', '-m', 'squash feature']);
 
-      // Force the support gate OFF to simulate git < 2.38 without needing an
-      // ancient binary on the host.
-      resetMergeTreeAbsorptionSupportCache(false);
+        // Force the support gate OFF to simulate git < 2.38 without needing an
+        // ancient binary on the host.
+        resetMergeTreeAbsorptionSupportCache(false);
 
-      // The single-branch primitive reports null (unknown) — everything the
-      // caller does downstream then falls back to legacy behaviour.
-      final unknown = await branchAbsorption(repo.path, 'feature', 'main');
-      expect(unknown, isNull, reason: 'no verdict on unsupported git');
+        // The single-branch primitive reports null (unknown) — everything the
+        // caller does downstream then falls back to legacy behaviour.
+        final unknown = await branchAbsorption(repo.path, 'feature', 'main');
+        expect(unknown, isNull, reason: 'no verdict on unsupported git');
 
-      // The batch pass folds cleanly to the legacy squash check: absorbed
-      // stays null, squashMerged carries the (fallback) truth.
-      const seed = [
-        BranchInfo(name: 'main', current: true, ahead: 0, behind: 0),
-        BranchInfo(name: 'feature', current: false, ahead: 0, behind: 0),
-      ];
-      final batched = await detectAbsorbedBranches(
-        repo.path,
-        seed,
-        baseRef: 'main',
-      );
-      final feature = batched.firstWhere((b) => b.name == 'feature');
-      expect(feature.absorbed, isNull,
-          reason: 'absorption law not consulted on unsupported git');
-      expect(feature.squashMerged, isTrue,
-          reason: 'legacy git cherry fallback still detects the squash');
-    } finally {
-      resetMergeTreeAbsorptionSupportCache();
-      await deleteRepo(repo);
-    }
-  });
+        // The batch pass folds cleanly to the legacy squash check: absorbed
+        // stays null, squashMerged carries the (fallback) truth.
+        const seed = [
+          BranchInfo(name: 'main', current: true, ahead: 0, behind: 0),
+          BranchInfo(name: 'feature', current: false, ahead: 0, behind: 0),
+        ];
+        final batched = await detectAbsorbedBranches(
+          repo.path,
+          seed,
+          baseRef: 'main',
+        );
+        final feature = batched.firstWhere((b) => b.name == 'feature');
+        expect(
+          feature.absorbed,
+          isNull,
+          reason: 'absorption law not consulted on unsupported git',
+        );
+        expect(
+          feature.squashMerged,
+          isTrue,
+          reason: 'legacy git cherry fallback still detects the squash',
+        );
+      } finally {
+        resetMergeTreeAbsorptionSupportCache();
+        await deleteRepo(repo);
+      }
+    },
+  );
 }

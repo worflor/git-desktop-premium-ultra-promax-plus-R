@@ -5789,6 +5789,10 @@ class _Translations$settings$errors$zh_Hans
   @override
   String get saveApiPiggybackCli => '保存 API 搭载 CLI 失败。';
   @override
+  String get saveCliTimeout => '保存 CLI 超时时长失败。';
+  @override
+  String get stopAllCli => '无法停止正在运行的 CLI 会话。';
+  @override
   String clearLocalData({required Object error}) => '无法清除本地数据：${error}';
 }
 
@@ -6733,6 +6737,12 @@ class _Translations$settings$wick$zh_Hans
   String get connected => 'wick · 已连接';
   @override
   String get pathToExecutable => 'wick · 可执行文件路径';
+  @override
+  String get off => '关';
+  @override
+  String get disableHint => '关闭 wick 集成';
+  @override
+  String get enableHint => '开启 wick 集成';
 }
 
 // Path: settings.integrations
@@ -7012,6 +7022,27 @@ class _Translations$settings$cliPiggyback$zh_Hans
   String get refreshTooltip => '立即重新探测每个提供方。';
   @override
   String get body => '把界面消息直接管道给本地提供方二进制文件。';
+  @override
+  String get cliTimeoutLabel => '单次运行超时';
+  @override
+  String get cliTimeoutUnitMinutes => '分钟';
+  @override
+  String get cliTimeoutUnitMinute => '分钟';
+  @override
+  String get forceStopLabel => '停止所有会话';
+  @override
+  String get forceStopTooltip => '强制终止所有正在进行的 CLI 运行。';
+  @override
+  String get forceStopConfirmTitle => '停止正在运行的 CLI 会话？';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      '这将强制终止 ${count} 个正在进行的 CLI 运行。其输出将丢失。';
+  @override
+  String get forceStopConfirmAction => '全部停止';
+  @override
+  String get forceStopNoneRunning => '没有正在运行的 CLI 会话';
+  @override
+  String get forceStopRecordError => '已停止：CLI 会话已被强制终止。';
 }
 
 // Path: settings.header

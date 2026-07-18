@@ -1,8 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show compute;
-
+import 'gh.dart' show resolveDetailDiffSpool;
 import 'git.dart' as git;
 import 'git_result.dart';
 import 'remote_types.dart';
@@ -132,8 +131,7 @@ String canonicalGiteaHostKey(String input) {
     final tail = rest.substring(colon + 1);
     if (!_validHost(host)) return '';
     // Digits only — `tryParse` alone would admit signed forms like `+3000`.
-    final port =
-        RegExp(r'^\d+$').hasMatch(tail) ? int.parse(tail) : null;
+    final port = RegExp(r'^\d+$').hasMatch(tail) ? int.parse(tail) : null;
     return _hostKey(host, port);
   }
   return _validHost(rest) ? _hostKey(rest, null) : '';
@@ -149,6 +147,7 @@ class GiteaApiStatus {
   final bool authenticated;
   final String? version;
   final String? reason;
+
   /// Login of the validated token holder, when [authenticated]. Empty
   /// otherwise.
   final String login;
@@ -201,10 +200,11 @@ Future<GiteaApiStatus> giteaApiStatus(String baseUrl, {String? token}) async {
     if (who.statusCode == 200) {
       String login = '';
       try {
-        login = ((jsonDecode(who.body)
-                as Map<String, dynamic>)['login'] as String? ??
-            '')
-            .trim();
+        login =
+            ((jsonDecode(who.body) as Map<String, dynamic>)['login']
+                        as String? ??
+                    '')
+                .trim();
       } catch (_) {}
       return GiteaApiStatus(
         reachable: true,
@@ -299,7 +299,9 @@ class GiteaRepoCoords {
     final segments = path.split('/').where((s) => s.isNotEmpty).toList();
     if (segments.length < 2) return null;
     final defaultPort = scheme == 'http' ? 80 : 443;
-    final authority = (port != null && port != defaultPort) ? '$host:$port' : host;
+    final authority = (port != null && port != defaultPort)
+        ? '$host:$port'
+        : host;
     return GiteaRepoCoords(
       apiBase: '$scheme://$authority/api/v1',
       owner: segments[segments.length - 2],
@@ -309,7 +311,6 @@ class GiteaRepoCoords {
 
   String get repoPath => 'repos/$owner/$repo';
 }
-
 
 // ---------------------------------------------------------------------------
 // Pull Requests
@@ -322,7 +323,9 @@ Future<GitResult<List<PullRequestSummary>>> listGiteaPulls(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final all = <PullRequestSummary>[];
   var page = 1;
@@ -367,7 +370,9 @@ Future<GitResult<int>> createGiteaPull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
@@ -379,21 +384,18 @@ Future<GitResult<int>> createGiteaPull(
       }
     }
   }
-  final r = await _post(
-    coords.apiBase,
-    '/${coords.repoPath}/pulls',
-    {
-      'title': title,
-      if (body.isNotEmpty) 'body': body,
-      'head': headRef,
-      'base': baseRef,
-      if (draft) 'draft': true,
-      if (assignees.isNotEmpty) 'assignees': assignees,
-      if (labelIds.isNotEmpty) 'labels': labelIds,
-    },
-    token: token,
-  );
-  if (r.statusCode != 201) return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  final r = await _post(coords.apiBase, '/${coords.repoPath}/pulls', {
+    'title': title,
+    if (body.isNotEmpty) 'body': body,
+    'head': headRef,
+    'base': baseRef,
+    if (draft) 'draft': true,
+    if (assignees.isNotEmpty) 'assignees': assignees,
+    if (labelIds.isNotEmpty) 'labels': labelIds,
+  }, token: token);
+  if (r.statusCode != 201) {
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  }
   try {
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     final number = (j['number'] as num).toInt();
@@ -406,8 +408,9 @@ Future<GitResult<int>> createGiteaPull(
       );
       if (rv.statusCode != 201 && rv.statusCode != 200) {
         return GitResult.err(
-            'PR #$number created but reviewer assignment failed: '
-            'Gitea ${rv.statusCode}: ${_sanitizeBody(rv.body)}');
+          'PR #$number created but reviewer assignment failed: '
+          'Gitea ${rv.statusCode}: ${_sanitizeBody(rv.body)}',
+        );
       }
     }
     return GitResult.ok(number);
@@ -422,7 +425,9 @@ Future<GitResult<PullRequestSummary>> getGiteaPull(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await giteaGet(
     coords.apiBase,
@@ -445,30 +450,65 @@ Future<GitResult<PullRequestDetail>> giteaPullDetail(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
-  final viewFut = giteaGet(coords.apiBase, '/${coords.repoPath}/pulls/$number', token: token);
-  final commentsFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number/comments', token: token);
-  final reviewsFut = giteaGet(coords.apiBase, '/${coords.repoPath}/pulls/$number/reviews', token: token);
-  final filesFut = giteaGet(coords.apiBase, '/${coords.repoPath}/pulls/$number/files?limit=300', token: token);
+  final viewFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/pulls/$number',
+    token: token,
+  );
+  final commentsFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/issues/$number/comments',
+    token: token,
+  );
+  final reviewsFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/pulls/$number/reviews',
+    token: token,
+  );
+  final filesFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/pulls/$number/files?limit=300',
+    token: token,
+  );
+  // The `.diff` STREAMS to a spool during transport — self-hosted Gitea
+  // serves it uncapped, so buffering it into a String first meant peak
+  // memory hit the OOM class before any spill decision could run.
   final diffFut = includeDiff
-      ? _getRaw(coords.apiBase, '/${coords.repoPath}/pulls/$number.diff', token: token)
-      : Future.value('');
+      ? getRawDiffToSpool(
+          coords.apiBase,
+          '/${coords.repoPath}/pulls/$number.diff',
+          token: token,
+        )
+      : Future<git.SpooledDiff?>.value(null);
 
   final view = await viewFut;
   final commentsRes = await commentsFut;
   final reviewsRes = await reviewsFut;
   final filesRes = await filesFut;
-  final rawDiff = await diffFut;
+  final diffSpoolRes = await diffFut;
 
-  if (view.statusCode != 200) return GitResult.err('API ${view.statusCode}');
+  if (view.statusCode != 200) {
+    await diffSpoolRes?.dispose(); // don't leak the parallel fetch's spool
+    return GitResult.err('API ${view.statusCode}');
+  }
+  // Same contract as gh/glab: a requested-but-failed `.diff` fetch is an
+  // error, never a silently empty (or error-page-shaped) diff.
+  if (includeDiff && diffSpoolRes == null) {
+    return GitResult.err('failed to fetch PR #$number .diff');
+  }
   try {
     final j = jsonDecode(view.body) as Map<String, dynamic>;
 
     final comments = <RemoteComment>[];
     if (commentsRes.statusCode == 200) {
       final parsed = jsonDecode(commentsRes.body) as List;
-      comments.addAll(parsed.whereType<Map<String, dynamic>>().map(_commentFromGitea));
+      comments.addAll(
+        parsed.whereType<Map<String, dynamic>>().map(_commentFromGitea),
+      );
     }
     if (reviewsRes.statusCode == 200) {
       final parsed = jsonDecode(reviewsRes.body) as List;
@@ -483,11 +523,13 @@ Future<GitResult<PullRequestDetail>> giteaPullDetail(
           _ => '',
         };
         final user = r['user'] as Map<String, dynamic>?;
-        comments.add(RemoteComment(
-          authorLogin: user?['login'] as String? ?? '',
-          body: tag.isEmpty ? body : '$tag\n\n$body',
-          createdAt: parseRemoteDate(r['submitted_at']),
-        ));
+        comments.add(
+          RemoteComment(
+            authorLogin: user?['login'] as String? ?? '',
+            body: tag.isEmpty ? body : '$tag\n\n$body',
+            createdAt: parseRemoteDate(r['submitted_at']),
+          ),
+        );
       }
     }
     comments.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -497,48 +539,59 @@ Future<GitResult<PullRequestDetail>> giteaPullDetail(
     if (filesRes.statusCode == 200) {
       final parsed = jsonDecode(filesRes.body) as List;
       for (final f in parsed.whereType<Map<String, dynamic>>()) {
-        files.add(PrFile(
-          path: (f['filename'] as String? ?? '').trim(),
-          additions: (f['additions'] as num? ?? 0).toInt(),
-          deletions: (f['deletions'] as num? ?? 0).toInt(),
-        ));
+        files.add(
+          PrFile(
+            path: (f['filename'] as String? ?? '').trim(),
+            additions: (f['additions'] as num? ?? 0).toInt(),
+            deletions: (f['deletions'] as num? ?? 0).toInt(),
+          ),
+        );
       }
     }
 
-    final parsedLines = rawDiff.length < 32 * 1024
-        ? parseUnifiedDiff(rawDiff)
-        : await compute(parseUnifiedDiff, rawDiff);
-    final byFile = <String, List<ParsedLine>>{};
-    for (final l in parsedLines) {
-      final key = l.filePath;
-      if (key == null) continue;
-      (byFile[key] ??= <ParsedLine>[]).add(l);
-    }
-
-    return GitResult.ok(PullRequestDetail(
-      body: (j['body'] as String? ?? '').trim(),
-      files: files,
-      comments: comments,
-      diff: rawDiff,
-      diffByFile: byFile,
-      rawDiffByFile: sliceDiffByFile(rawDiff),
-    ));
+    // No eager ParsedLine parse (the `diffByFile` field it fed was never read
+    // and a large PR would OOM); the diff renders lazily downstream. Small
+    // spools materialize into the String form; large ones stay on disk.
+    final resolved = diffSpoolRes == null
+        ? (rawDiff: '', spill: null as git.SpooledDiff?)
+        : await resolveDetailDiffSpool(diffSpoolRes);
+    return GitResult.ok(
+      PullRequestDetail(
+        body: (j['body'] as String? ?? '').trim(),
+        files: files,
+        comments: comments,
+        diff: resolved.rawDiff,
+        rawDiffByFile: resolved.spill == null
+            ? sliceDiffByFileForDetail(resolved.rawDiff)
+            : const {},
+        diffSpool: resolved.spill,
+        diffLoaded: includeDiff,
+      ),
+    );
   } catch (e) {
+    // Parse failure after a successful diff fetch: release the spool the
+    // detail object never got to own.
+    await diffSpoolRes?.dispose();
     return GitResult.err('Failed to parse pull detail: $e');
   }
 }
 
 Future<GitResult<void>> giteaApprovePull(
-  String repoPath, int number, {
+  String repoPath,
+  int number, {
   required String event,
   String body = '',
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final reviewBody = {
-    'event': event == 'approve' ? 'APPROVED' : (event == 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT'),
+    'event': event == 'approve'
+        ? 'APPROVED'
+        : (event == 'request-changes' ? 'REQUEST_CHANGES' : 'COMMENT'),
     if (body.isNotEmpty) 'body': body,
   };
   final r = await _post(
@@ -554,13 +607,16 @@ Future<GitResult<void>> giteaApprovePull(
 }
 
 Future<GitResult<void>> giteaMergePull(
-  String repoPath, int number, {
+  String repoPath,
+  int number, {
   required String method,
   bool deleteBranch = false,
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final doMethod = switch (method) {
     'squash' => 'squash',
@@ -570,10 +626,7 @@ Future<GitResult<void>> giteaMergePull(
   final r = await _post(
     coords.apiBase,
     '/${coords.repoPath}/pulls/$number/merge',
-    {
-      'Do': doMethod,
-      'delete_branch_after_merge': deleteBranch,
-    },
+    {'Do': doMethod, 'delete_branch_after_merge': deleteBranch},
     token: token,
   );
   if (r.statusCode != 200) {
@@ -583,12 +636,16 @@ Future<GitResult<void>> giteaMergePull(
 }
 
 Future<GitResult<void>> giteaCommentOnIssue(
-  String repoPath, int number, String body, {
+  String repoPath,
+  int number,
+  String body, {
   String? token,
 }) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await _post(
     coords.apiBase,
@@ -602,7 +659,6 @@ Future<GitResult<void>> giteaCommentOnIssue(
   return const GitResult.ok(null);
 }
 
-
 // ---------------------------------------------------------------------------
 // Issues
 // ---------------------------------------------------------------------------
@@ -614,7 +670,9 @@ Future<GitResult<List<IssueSummary>>> listGiteaIssues(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final all = <IssueSummary>[];
   var page = 1;
@@ -647,11 +705,14 @@ Future<GitResult<List<IssueSummary>>> listGiteaIssues(
 }
 
 Future<GitResult<IssueSummary>> getGiteaIssue(
-  String repoPath, int number, {
+  String repoPath,
+  int number, {
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final r = await giteaGet(
     coords.apiBase,
@@ -668,14 +729,25 @@ Future<GitResult<IssueSummary>> getGiteaIssue(
 }
 
 Future<GitResult<IssueDetail>> giteaIssueDetail(
-  String repoPath, int number, {
+  String repoPath,
+  int number, {
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
-  final issueFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number', token: token);
-  final commentsFut = giteaGet(coords.apiBase, '/${coords.repoPath}/issues/$number/comments', token: token);
+  final issueFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/issues/$number',
+    token: token,
+  );
+  final commentsFut = giteaGet(
+    coords.apiBase,
+    '/${coords.repoPath}/issues/$number/comments',
+    token: token,
+  );
   final issue = await issueFut;
   final commentsRes = await commentsFut;
   if (issue.statusCode != 200) return GitResult.err('API ${issue.statusCode}');
@@ -684,16 +756,18 @@ Future<GitResult<IssueDetail>> giteaIssueDetail(
     final comments = <RemoteComment>[];
     if (commentsRes.statusCode == 200) {
       final parsed = jsonDecode(commentsRes.body) as List;
-      comments.addAll(parsed
-          .whereType<Map<String, dynamic>>()
-          .map(_commentFromGitea));
+      comments.addAll(
+        parsed.whereType<Map<String, dynamic>>().map(_commentFromGitea),
+      );
     }
-    return GitResult.ok(IssueDetail(
-      body: (j['body'] as String? ?? '').trim(),
-      comments: comments,
-      assignees: _loginList(j['assignees']),
-      labels: _labelNames(j['labels']),
-    ));
+    return GitResult.ok(
+      IssueDetail(
+        body: (j['body'] as String? ?? '').trim(),
+        comments: comments,
+        assignees: _loginList(j['assignees']),
+        labels: _labelNames(j['labels']),
+      ),
+    );
   } catch (e) {
     return GitResult.err('Failed to parse issue detail: $e');
   }
@@ -708,7 +782,9 @@ Future<GitResult<int>> createGiteaIssue(
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final labelIds = <int>[];
   if (labels.isNotEmpty) {
@@ -720,18 +796,15 @@ Future<GitResult<int>> createGiteaIssue(
       }
     }
   }
-  final r = await _post(
-    coords.apiBase,
-    '/${coords.repoPath}/issues',
-    {
-      'title': title,
-      if (body.isNotEmpty) 'body': body,
-      if (assignees.isNotEmpty) 'assignees': assignees,
-      if (labelIds.isNotEmpty) 'labels': labelIds,
-    },
-    token: token,
-  );
-  if (r.statusCode != 201) return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  final r = await _post(coords.apiBase, '/${coords.repoPath}/issues', {
+    'title': title,
+    if (body.isNotEmpty) 'body': body,
+    if (assignees.isNotEmpty) 'assignees': assignees,
+    if (labelIds.isNotEmpty) 'labels': labelIds,
+  }, token: token);
+  if (r.statusCode != 201) {
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  }
   try {
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     return GitResult.ok((j['number'] as num).toInt());
@@ -741,13 +814,16 @@ Future<GitResult<int>> createGiteaIssue(
 }
 
 Future<GitResult<void>> editGiteaIssue(
-  String repoPath, int number, {
+  String repoPath,
+  int number, {
   String? title,
   String? body,
   String? token,
 }) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final patch = <String, dynamic>{};
   if (title != null) patch['title'] = title;
@@ -766,16 +842,18 @@ Future<GitResult<void>> editGiteaIssue(
 }
 
 Future<GitResult<void>> closeGiteaIssue(
-  String repoPath, int number, {String? token}) async {
+  String repoPath,
+  int number, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
-  final r = await _patch(
-    coords.apiBase,
-    '/${coords.repoPath}/issues/$number',
-    {'state': 'closed'},
-    token: token,
-  );
+  final r = await _patch(coords.apiBase, '/${coords.repoPath}/issues/$number', {
+    'state': 'closed',
+  }, token: token);
   if (r.statusCode != 201 && r.statusCode != 200) {
     return GitResult.err('API ${r.statusCode}');
   }
@@ -783,16 +861,18 @@ Future<GitResult<void>> closeGiteaIssue(
 }
 
 Future<GitResult<void>> reopenGiteaIssue(
-  String repoPath, int number, {String? token}) async {
+  String repoPath,
+  int number, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
-  final r = await _patch(
-    coords.apiBase,
-    '/${coords.repoPath}/issues/$number',
-    {'state': 'open'},
-    token: token,
-  );
+  final r = await _patch(coords.apiBase, '/${coords.repoPath}/issues/$number', {
+    'state': 'open',
+  }, token: token);
   if (r.statusCode != 201 && r.statusCode != 200) {
     return GitResult.err('API ${r.statusCode}');
   }
@@ -822,7 +902,9 @@ void clearGiteaLabelCache() => _labelIdCacheByRepo.clear();
 /// Resolve the repo's label name→id map, using the memo when it's still
 /// warm. Returns null only when the `/labels` fetch itself fails.
 Future<Map<String, int>?> _resolveLabelIds(
-    GiteaRepoCoords coords, String? token) async {
+  GiteaRepoCoords coords,
+  String? token,
+) async {
   final key = '${coords.apiBase}/${coords.owner}/${coords.repo}';
   final cached = _labelIdCacheByRepo[key];
   if (cached != null &&
@@ -830,7 +912,10 @@ Future<Map<String, int>?> _resolveLabelIds(
     return cached.byName;
   }
   final res = await giteaGet(
-    coords.apiBase, '/${coords.repoPath}/labels?limit=100', token: token);
+    coords.apiBase,
+    '/${coords.repoPath}/labels?limit=100',
+    token: token,
+  );
   if (res.statusCode != 200) return null;
   final map = <String, int>{};
   try {
@@ -853,9 +938,15 @@ Future<Map<String, int>?> _resolveLabelIds(
 }
 
 Future<GitResult<void>> addGiteaIssueLabel(
-  String repoPath, int number, String label, {String? token}) async {
+  String repoPath,
+  int number,
+  String label, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final ids = await _resolveLabelIds(coords, token);
   if (ids == null) return const GitResult.err('Could not fetch labels');
@@ -864,7 +955,9 @@ Future<GitResult<void>> addGiteaIssueLabel(
   final r = await _post(
     coords.apiBase,
     '/${coords.repoPath}/issues/$number/labels',
-    {'labels': [labelId]},
+    {
+      'labels': [labelId],
+    },
     token: token,
   );
   if (r.statusCode != 200) return GitResult.err('API ${r.statusCode}');
@@ -872,9 +965,15 @@ Future<GitResult<void>> addGiteaIssueLabel(
 }
 
 Future<GitResult<void>> removeGiteaIssueLabel(
-  String repoPath, int number, String label, {String? token}) async {
+  String repoPath,
+  int number,
+  String label, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final ids = await _resolveLabelIds(coords, token);
   if (ids == null) return const GitResult.err('Could not fetch labels');
@@ -895,7 +994,6 @@ Future<GitResult<void>> removeGiteaIssueLabel(
   return const GitResult.ok(null);
 }
 
-
 // ---------------------------------------------------------------------------
 // Auth / identity
 // ---------------------------------------------------------------------------
@@ -915,16 +1013,19 @@ Future<String> giteaWhoami(String repoPath) async {
   }
 }
 
-
 // ---------------------------------------------------------------------------
 // CI / commit statuses
 // ---------------------------------------------------------------------------
 
 Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
-  String repoPath, int prNumber, {String? token,}
-) async {
+  String repoPath,
+  int prNumber, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final prRes = await giteaGet(
     coords.apiBase,
@@ -964,8 +1065,9 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
   try {
     if (statuses.statusCode == 200) {
       final j = jsonDecode(statuses.body) as Map<String, dynamic>;
-      for (final s in (j['statuses'] as List? ?? const [])
-          .whereType<Map<String, dynamic>>()) {
+      for (final s
+          in (j['statuses'] as List? ?? const [])
+              .whereType<Map<String, dynamic>>()) {
         final c = _checkFromGiteaStatus(s);
         if (c.name.isEmpty || !seen.add(c.name)) continue;
         checks.add(c);
@@ -977,8 +1079,9 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
         token: token,
       );
       if (statuses.statusCode == 200) {
-        for (final s in (jsonDecode(statuses.body) as List)
-            .whereType<Map<String, dynamic>>()) {
+        for (final s
+            in (jsonDecode(statuses.body) as List)
+                .whereType<Map<String, dynamic>>()) {
           final c = _checkFromGiteaStatus(s);
           if (c.name.isEmpty || !seen.add(c.name)) continue;
           checks.add(c);
@@ -1001,8 +1104,9 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
   if (tasks.statusCode == 200) {
     try {
       final tj = jsonDecode(tasks.body) as Map<String, dynamic>;
-      for (final run in (tj['workflow_runs'] as List? ?? const [])
-          .whereType<Map<String, dynamic>>()) {
+      for (final run
+          in (tj['workflow_runs'] as List? ?? const [])
+              .whereType<Map<String, dynamic>>()) {
         if ((run['head_sha'] as String? ?? '') != sha) continue;
         final c = _checkFromGiteaTask(run);
         if (c.name.isEmpty || !seen.add(c.name)) continue;
@@ -1017,23 +1121,23 @@ Future<GitResult<List<CheckSummary>>> listGiteaCommitStatuses(
   return GitResult.ok(checks);
 }
 
-
 // ---------------------------------------------------------------------------
 // PR close / PR files
 // ---------------------------------------------------------------------------
 
 Future<GitResult<void>> closeGiteaPull(
-  String repoPath, int number, {String? token,}
-) async {
+  String repoPath,
+  int number, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
-  final r = await _patch(
-    coords.apiBase,
-    '/${coords.repoPath}/pulls/$number',
-    {'state': 'closed'},
-    token: token,
-  );
+  final r = await _patch(coords.apiBase, '/${coords.repoPath}/pulls/$number', {
+    'state': 'closed',
+  }, token: token);
   if (r.statusCode != 200 && r.statusCode != 201) {
     return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
@@ -1041,25 +1145,25 @@ Future<GitResult<void>> closeGiteaPull(
 }
 
 Future<GitResult<void>> assignSelfToGiteaIssue(
-  String repoPath, int number, {String? token,}
-) async {
+  String repoPath,
+  int number, {
+  String? token,
+}) async {
   final coords = await resolveGiteaCoords(repoPath);
-  if (coords == null) return const GitResult.err('Could not resolve Gitea remote');
+  if (coords == null) {
+    return const GitResult.err('Could not resolve Gitea remote');
+  }
   token ??= resolveGiteaToken(coords.apiBase);
   final login = await giteaWhoami(repoPath);
   if (login.isEmpty) return const GitResult.err('not authenticated');
-  final r = await _patch(
-    coords.apiBase,
-    '/${coords.repoPath}/issues/$number',
-    {'assignees': [login]},
-    token: token,
-  );
+  final r = await _patch(coords.apiBase, '/${coords.repoPath}/issues/$number', {
+    'assignees': [login],
+  }, token: token);
   if (r.statusCode != 200 && r.statusCode != 201) {
     return GitResult.err('API ${r.statusCode}');
   }
   return const GitResult.ok(null);
 }
-
 
 // ---------------------------------------------------------------------------
 // JSON → DTO mappers
@@ -1127,8 +1231,12 @@ RemoteComment _commentFromGitea(Map<String, dynamic> j) {
 
 CheckSummary _checkFromGiteaStatus(Map<String, dynamic> j) {
   final status = (j['status'] as String? ?? '').toLowerCase();
-  final isCompleted = const {'success', 'failure', 'error', 'warning'}
-      .contains(status);
+  final isCompleted = const {
+    'success',
+    'failure',
+    'error',
+    'warning',
+  }.contains(status);
   final conclusion = switch (status) {
     'success' => 'success',
     'failure' || 'error' => 'failure',
@@ -1137,7 +1245,9 @@ CheckSummary _checkFromGiteaStatus(Map<String, dynamic> j) {
   };
   return CheckSummary(
     name: (j['context'] as String? ?? '').trim(),
-    status: isCompleted ? 'completed' : (status == 'pending' ? 'queued' : 'in_progress'),
+    status: isCompleted
+        ? 'completed'
+        : (status == 'pending' ? 'queued' : 'in_progress'),
     conclusion: conclusion,
     duration: null,
   );
@@ -1184,7 +1294,6 @@ List<String> _loginList(dynamic value) {
       .where((s) => s.isNotEmpty)
       .toList();
 }
-
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
@@ -1233,7 +1342,7 @@ Future<GiteaHttpResult> _giteaSend(
 }) async {
   final client = HttpClient();
   try {
-    for (var attempt = 0;; attempt++) {
+    for (var attempt = 0; ; attempt++) {
       final request = await client.openUrl(method, Uri.parse(url));
       request.headers.set('Accept', 'application/json');
       List<int>? payload;
@@ -1256,7 +1365,9 @@ Future<GiteaHttpResult> _giteaSend(
       final text = await response.transform(utf8.decoder).join();
       if (response.statusCode == 429 && attempt == 0 && method == 'GET') {
         await Future<void>.delayed(
-          _retryAfterDelay(response.headers.value(HttpHeaders.retryAfterHeader)),
+          _retryAfterDelay(
+            response.headers.value(HttpHeaders.retryAfterHeader),
+          ),
         );
         continue;
       }
@@ -1279,12 +1390,16 @@ Future<GiteaHttpResult> _giteaRequest(
 }) async {
   final label = 'gitea.$verb $path';
   final stopwatch = Stopwatch()..start();
-  DiagnosticsState.instance.recordCommandLifecycleEvent(type: 'start', command: label);
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'start',
+    command: label,
+  );
   try {
     final r = await _giteaSend(verb, '$baseUrl$path', token: token, body: body);
     stopwatch.stop();
     DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end', command: label,
+      type: 'end',
+      command: label,
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: r.statusCode >= 400 ? 'http.${r.statusCode}' : null,
     );
@@ -1292,7 +1407,8 @@ Future<GiteaHttpResult> _giteaRequest(
   } catch (e) {
     stopwatch.stop();
     DiagnosticsState.instance.recordCommandLifecycleEvent(
-      type: 'end', command: label,
+      type: 'end',
+      command: label,
       durationMs: stopwatch.elapsedMicroseconds / 1000,
       errorCode: 'http.exception',
     );
@@ -1306,7 +1422,11 @@ Future<GiteaHttpResult> _giteaRequest(
 /// retries once anonymously, and a 2xx retry wins. Anything else keeps
 /// the original 401 — the clearer diagnosis for genuinely private
 /// content. Writes never fall back; they need the token to mean it.
-Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) async {
+Future<GiteaHttpResult> giteaGet(
+  String baseUrl,
+  String path, {
+  String? token,
+}) async {
   final r = await _giteaRequest('GET', baseUrl, path, token: token);
   if (r.statusCode == 401 && token != null && token.isNotEmpty) {
     final anon = await _giteaRequest('GET', baseUrl, path);
@@ -1316,17 +1436,127 @@ Future<GiteaHttpResult> giteaGet(String baseUrl, String path, {String? token}) a
 }
 
 Future<GiteaHttpResult> _post(
-        String baseUrl, String path, Map<String, dynamic> body, {String? token}) =>
-    _giteaRequest('POST', baseUrl, path, token: token, body: body);
+  String baseUrl,
+  String path,
+  Map<String, dynamic> body, {
+  String? token,
+}) => _giteaRequest('POST', baseUrl, path, token: token, body: body);
 
 Future<GiteaHttpResult> _patch(
-        String baseUrl, String path, Map<String, dynamic> body, {String? token}) =>
-    _giteaRequest('PATCH', baseUrl, path, token: token, body: body);
+  String baseUrl,
+  String path,
+  Map<String, dynamic> body, {
+  String? token,
+}) => _giteaRequest('PATCH', baseUrl, path, token: token, body: body);
 
 Future<GiteaHttpResult> _delete(String baseUrl, String path, {String? token}) =>
     _giteaRequest('DELETE', baseUrl, path, token: token);
 
-Future<String> _getRaw(String baseUrl, String path, {String? token}) async {
-  final r = await _giteaRequest('GET', baseUrl, path, token: token);
-  return r.statusCode == 0 ? '' : r.body;
+/// GET a raw (non-JSON) endpoint, STREAMING the response body to a temp
+/// spool file — self-hosted Gitea serves `.diff` uncapped, and buffering it
+/// into a String first meant peak memory hit the OOM class before any spill
+/// decision could run. Honors the SAME public-read contract as [giteaGet]:
+/// a 401 carrying a token retries once anonymously (a stale or wrongly-
+/// scoped token must not break a public repo the status layer already
+/// promised is browseable), and a 200 retry wins. Null on any other non-200
+/// (a 404/500 body is an error page, and handing it onward once let a
+/// failed `.diff` fetch masquerade as a garbage patch) and on transport
+/// failure; a partial spool is always cleaned up.
+Future<git.SpooledDiff?> getRawDiffToSpool(
+  String baseUrl,
+  String path, {
+  String? token,
+}) async {
+  final first = await getRawDiffToSpoolAttempt(baseUrl, path, token: token);
+  if (first.spool != null) return first.spool;
+  if (first.status == 401 && token != null && token.isNotEmpty) {
+    final anon = await getRawDiffToSpoolAttempt(baseUrl, path);
+    if (anon.spool != null) return anon.spool;
+  }
+  return null;
+}
+
+/// One streaming GET attempt for [getRawDiffToSpool]. Returns the HTTP status
+/// (0 on transport failure) plus the spool on a 200. Mirrors [_giteaSend]'s
+/// rate-limit contract: a transient 429 retries once, honoring Retry-After —
+/// a loaded self-hosted instance must degrade to a short wait on the hot
+/// review path, never a hard PR-detail failure.
+Future<({int status, git.SpooledDiff? spool})> getRawDiffToSpoolAttempt(
+  String baseUrl,
+  String path, {
+  String? token,
+}) async {
+  final label = 'gitea.GET $path';
+  final stopwatch = Stopwatch()..start();
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'start',
+    command: label,
+  );
+  Directory? dir;
+  final client = HttpClient();
+  try {
+    HttpClientResponse response;
+    for (var attempt = 0; ; attempt++) {
+      final request = await client.openUrl('GET', Uri.parse('$baseUrl$path'));
+      if (token != null && token.isNotEmpty) {
+        request.headers.set('Authorization', 'token $token');
+      }
+      response = await request.close();
+      if (response.statusCode == 429 && attempt == 0) {
+        final retryAfter = response.headers.value(HttpHeaders.retryAfterHeader);
+        await response.drain<void>();
+        await Future<void>.delayed(_retryAfterDelay(retryAfter));
+        continue;
+      }
+      break;
+    }
+    if (response.statusCode != 200) {
+      await response.drain<void>();
+      stopwatch.stop();
+      DiagnosticsState.instance.recordCommandLifecycleEvent(
+        type: 'end',
+        command: label,
+        durationMs: stopwatch.elapsedMicroseconds / 1000,
+        errorCode: 'http.${response.statusCode}',
+      );
+      return (status: response.statusCode, spool: null);
+    }
+    dir = await Directory.systemTemp.createTemp('manifold_diff');
+    final spool = File('${dir.path}${Platform.pathSeparator}gitea.diff');
+    final sink = spool.openWrite();
+    try {
+      await response.pipe(sink); // pipe closes the sink on completion
+    } catch (_) {
+      try {
+        await sink.close();
+      } catch (_) {}
+      rethrow;
+    }
+    final len = await spool.length();
+    stopwatch.stop();
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'end',
+      command: label,
+      durationMs: stopwatch.elapsedMicroseconds / 1000,
+    );
+    return (status: 200, spool: git.SpooledDiff(spool.path, dir.path, len));
+  } catch (_) {
+    stopwatch.stop();
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'end',
+      command: label,
+      durationMs: stopwatch.elapsedMicroseconds / 1000,
+      errorCode: 'http.exception',
+    );
+    if (dir != null) {
+      try {
+        await dir.delete(recursive: true);
+      } catch (_) {}
+    }
+    return (status: 0, spool: null);
+  } finally {
+    // force: a mid-pipe failure leaves the response half-consumed; a
+    // graceful close would wait on (or strand) that connection.
+    client.close(force: true);
+  }
 }

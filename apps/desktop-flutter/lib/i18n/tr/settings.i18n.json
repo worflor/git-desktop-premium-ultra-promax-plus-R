@@ -36,6 +36,8 @@
     "saveMuseNotes": "Muse notları kaydedilemedi.",
     "saveReviewDoubleCheck": "İnceleme çift kontrol modu kaydedilemedi.",
     "saveApiPiggybackCli": "API sırtlama CLI'ı kaydedilemedi.",
+    "saveCliTimeout": "CLI zaman aşımı kaydedilemedi.",
+    "stopAllCli": "Çalışan CLI oturumları durdurulamadı.",
     "clearLocalData": "Yerel veri temizlenemedi: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Son depolar listesi dahil tüm yerel uygulama verisi silinip çıkılsın mı? Diskteki gerçek git depolarına dokunulmaz.",
     "confirmReset": "Yerel uygulama verisi sıfırlanıp çıkılsın mı?\n\nAyarlar, tema, ilk kullanım, AI tercihleri, telemetri ve engram önbellekleri temizlenir. Son depolar listesi korunur."
   },
-  "guardrailStageLabels": ["Gevşek", "Dengeli", "Katı", "Paranoyak"],
+  "guardrailStageLabels": [
+    "Gevşek",
+    "Dengeli",
+    "Katı",
+    "Paranoyak"
+  ],
   "guardrailMacro": {
     "loose": "gevşek",
     "balanced": "dengeli",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "wick yürütülebilir dosyasını seç",
     "connected": "wick · bağlı",
-    "pathToExecutable": "wick · yürütülebilir dosya yolu"
+    "pathToExecutable": "wick · yürütülebilir dosya yolu",
+    "off": "kapalı",
+    "disableHint": "wick entegrasyonunu kapat",
+    "enableHint": "wick entegrasyonunu aç"
   },
   "integrations": {
     "title": "& Entegrasyonlar",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | takılma %{jank}",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["komut", "p50", "güvenilirlik", "aralık"],
-    "headersBackend": ["kapsam", "p50", "p95", "hatalar"],
-    "headersDiff": ["oluşturucu", "ilk çizim", "kare p95", "raster p95", "takılma"],
-    "headersUi": ["olay", "p50", "hatalar", "aralık"]
+    "headersCommand": [
+      "komut",
+      "p50",
+      "güvenilirlik",
+      "aralık"
+    ],
+    "headersBackend": [
+      "kapsam",
+      "p50",
+      "p95",
+      "hatalar"
+    ],
+    "headersDiff": [
+      "oluşturucu",
+      "ilk çizim",
+      "kare p95",
+      "raster p95",
+      "takılma"
+    ],
+    "headersUi": [
+      "olay",
+      "p50",
+      "hatalar",
+      "aralık"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Önbelleğe alınmış modelleri sil ve yeniden sonda gönder. Bir sağlayıcının bıraktıklarını temizler.",
     "refreshLabel": "Sağlayıcıları yenile",
     "refreshTooltip": "Her sağlayıcıyı şimdi yeniden sonda gönder.",
-    "body": "Arayüz mesajlarını doğrudan yerel sağlayıcı ikili dosyalarına aktar."
+    "body": "Arayüz mesajlarını doğrudan yerel sağlayıcı ikili dosyalarına aktar.",
+    "cliTimeoutLabel": "Çalıştırma başına zaman aşımı",
+    "cliTimeoutUnitMinutes": "dakika",
+    "cliTimeoutUnitMinute": "dakika",
+    "forceStopLabel": "Tüm oturumları durdur",
+    "forceStopTooltip": "Devam eden her CLI çalıştırmasını zorla kapat.",
+    "forceStopConfirmTitle": "Çalışan CLI oturumları durdurulsun mu?",
+    "forceStopConfirmBody": "Bu, devam eden {count} CLI çalıştırmasını zorla kapatır. Çıktıları kaybolur.",
+    "forceStopConfirmAction": "Tümünü durdur",
+    "forceStopNoneRunning": "Çalışan CLI oturumu yok",
+    "forceStopRecordError": "Durduruldu — CLI oturumları zorla kapatıldı."
   },
   "header": {
     "title": "Çalışma Alanı Tercihleri",

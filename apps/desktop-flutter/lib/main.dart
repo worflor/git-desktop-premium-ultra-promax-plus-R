@@ -209,12 +209,8 @@ void main() async {
   unawaited(
     toolDetectionState.detect(ExternalToolPresets.detectableExecutables),
   );
-  final wickState = WickState();
-  if (settings.wickExePath.isNotEmpty) {
-    wickState.setCustomPath(settings.wickExePath);
-  } else {
-    unawaited(wickState.detectWick());
-  }
+  final wickState = WickState()
+    ..restore(path: settings.wickExePath, enabled: settings.wickEnabled);
   // alpha-math: settings scaffold only — the engine isn't built yet, so we
   // just restore the configured path. No auto-detect (nothing to probe).
   final alphaMathState = AlphaMathState();

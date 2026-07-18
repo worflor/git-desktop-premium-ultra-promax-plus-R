@@ -31,6 +31,10 @@ class AiSettingsSnapshot {
   /// `''` = direct HTTP; `'codex'` = ride through the codex CLI. More
   /// providers may join this dropdown later; today codex is the only option.
   final String apiPiggybackCli;
+  /// Per-attempt wall-clock cap (in seconds) for the long-running AI CLIs
+  /// (codex/claude/cursor/opencode/API-provider). Pushed into the backend via
+  /// `configureCliTimeout`. The tight antigravity/copilot caps are independent.
+  final int cliTimeoutSeconds;
   final String museBrainstormModelCategoryId;
   final String museSynthesisModelCategoryId;
   final String presentModelCategoryId;
@@ -54,6 +58,7 @@ class AiSettingsSnapshot {
     required this.reviewCommitModelCategoryId,
     required this.reviewCommitDoubleCheckEnabled,
     this.apiPiggybackCli = 'codex',
+    this.cliTimeoutSeconds = 1200,
     required this.museBrainstormModelCategoryId,
     required this.museSynthesisModelCategoryId,
     required this.presentModelCategoryId,
@@ -71,6 +76,7 @@ class AiSettingsSnapshot {
         reviewCommitModelCategoryId: 'quality',
         reviewCommitDoubleCheckEnabled: false,
         apiPiggybackCli: 'codex',
+        cliTimeoutSeconds: 1200,
         museBrainstormModelCategoryId: 'fast',
         museSynthesisModelCategoryId: 'quality',
         presentModelCategoryId: 'quality',
@@ -86,6 +92,7 @@ class AiSettingsSnapshot {
         'reviewCommitModelCategoryId': reviewCommitModelCategoryId,
         'reviewCommitDoubleCheckEnabled': reviewCommitDoubleCheckEnabled,
         'apiPiggybackCli': apiPiggybackCli,
+        'cliTimeoutSeconds': cliTimeoutSeconds,
         'museBrainstormModelCategoryId': museBrainstormModelCategoryId,
         'museSynthesisModelCategoryId': museSynthesisModelCategoryId,
         'presentModelCategoryId': presentModelCategoryId,
@@ -118,6 +125,10 @@ class AiSettingsSnapshot {
         json['apiPiggybackCli'],
         defaults.apiPiggybackCli,
       ),
+      cliTimeoutSeconds: _intOr(
+        json['cliTimeoutSeconds'],
+        defaults.cliTimeoutSeconds,
+      ).clamp(30, 7200),
       museBrainstormModelCategoryId: _stringOr(
         json['museBrainstormModelCategoryId'],
         defaults.museBrainstormModelCategoryId,
@@ -209,6 +220,13 @@ class AiSettingsSnapshot {
     return value is bool ? value : fallback;
   }
 
+  static int _intOr(dynamic value, int fallback) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim()) ?? fallback;
+    return fallback;
+  }
+
   AiSettingsSnapshot copyWith({
     Map<String, String>? modelSelections,
     Map<String, String>? modelCategoryLabels,
@@ -217,6 +235,7 @@ class AiSettingsSnapshot {
     String? reviewCommitModelCategoryId,
     bool? reviewCommitDoubleCheckEnabled,
     String? apiPiggybackCli,
+    int? cliTimeoutSeconds,
     String? museBrainstormModelCategoryId,
     String? museSynthesisModelCategoryId,
     String? presentModelCategoryId,
@@ -234,6 +253,7 @@ class AiSettingsSnapshot {
       reviewCommitDoubleCheckEnabled:
           reviewCommitDoubleCheckEnabled ?? this.reviewCommitDoubleCheckEnabled,
       apiPiggybackCli: apiPiggybackCli ?? this.apiPiggybackCli,
+      cliTimeoutSeconds: cliTimeoutSeconds ?? this.cliTimeoutSeconds,
       museBrainstormModelCategoryId:
           museBrainstormModelCategoryId ?? this.museBrainstormModelCategoryId,
       museSynthesisModelCategoryId:

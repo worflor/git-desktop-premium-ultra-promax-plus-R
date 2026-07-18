@@ -5,7 +5,9 @@ import 'dart:isolate';
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:path/path.dart' as p;
 
+import '../admitted_git.dart';
 import '../ai.dart';
+import '../analysis_admission.dart';
 import '../dead_code_strainer.dart';
 import '../dtos.dart';
 import '../file_coupling.dart';
@@ -437,10 +439,42 @@ Future<Map<String, dynamic>> _diff(
     if (!r.ok) return {'error': r.error};
     return {'file': file, 'diff': r.data};
   }
-  final unstaged = await runGit(
-      repo, ['diff', '--no-color', '--patience', '--ignore-cr-at-eol']);
-  final staged = await runGit(repo,
-      ['diff', '--cached', '--no-color', '--patience', '--ignore-cr-at-eol']);
+  // Unscoped whole-tree diff: the paths it can ever print are exactly the
+  // repo's dirty set, so that set (not a guess) is what gets admitted.
+  final statusResult = await getRepositoryStatus(repo);
+  final statusFiles = statusResult.data?.files ?? const <RepositoryStatusFile>[];
+  final unstagedPaths = [
+    for (final f in statusFiles) if (f.hasUnstagedChange) f.path,
+  ];
+  final stagedPaths = [
+    for (final f in statusFiles) if (f.hasStagedChange) f.path,
+  ];
+
+  final unstagedAdmitted = await admitGitDiffText(
+    repo,
+    unstagedPaths,
+    () => runGit(
+        repo, ['diff', '--no-color', '--patience', '--ignore-cr-at-eol']),
+  );
+  final stagedAdmitted = await admitGitDiffText(
+    repo,
+    stagedPaths,
+    () => runGit(repo, [
+      'diff',
+      '--cached',
+      '--no-color',
+      '--patience',
+      '--ignore-cr-at-eol',
+    ]),
+  );
+  if (unstagedAdmitted.decision != AdmissionDecision.ran ||
+      stagedAdmitted.decision != AdmissionDecision.ran) {
+    return {
+      'error': 'Change-set too large to diff. Narrow with --file <path>.',
+    };
+  }
+  final unstaged = unstagedAdmitted.value!;
+  final staged = stagedAdmitted.value!;
   return {
     'unstaged': unstaged.exitCode == 0 ? unstaged.stdout.toString() : '',
     'staged': staged.exitCode == 0 ? staged.stdout.toString() : '',
@@ -883,10 +917,34 @@ Future<Map<String, dynamic>> _dream(
           .toList()
       : <String>[];
 
-  final unstaged = await runGit(
-      repo, ['diff', '--no-color', '--patience', '-U3']);
-  final staged = await runGit(
-      repo, ['diff', '--cached', '--no-color', '--patience', '-U3']);
+  // Unscoped whole-tree diff, same as `_diff`: admit against the repo's
+  // actual dirty set rather than an unbounded guess.
+  final statusResult = await getRepositoryStatus(repo);
+  final statusFiles = statusResult.data?.files ?? const <RepositoryStatusFile>[];
+  final unstagedPaths = [
+    for (final f in statusFiles) if (f.hasUnstagedChange) f.path,
+  ];
+  final stagedPaths = [
+    for (final f in statusFiles) if (f.hasStagedChange) f.path,
+  ];
+
+  final unstagedAdmitted = await admitGitDiffText(
+    repo,
+    unstagedPaths,
+    () => runGit(repo, ['diff', '--no-color', '--patience', '-U3']),
+  );
+  final stagedAdmitted = await admitGitDiffText(
+    repo,
+    stagedPaths,
+    () => runGit(
+        repo, ['diff', '--cached', '--no-color', '--patience', '-U3']),
+  );
+  if (unstagedAdmitted.decision != AdmissionDecision.ran ||
+      stagedAdmitted.decision != AdmissionDecision.ran) {
+    return {'phrase': null, 'reason': 'change-set too large to analyze'};
+  }
+  final unstaged = unstagedAdmitted.value!;
+  final staged = stagedAdmitted.value!;
   final diffText = [
     if (staged.exitCode == 0) staged.stdout.toString(),
     if (unstaged.exitCode == 0) unstaged.stdout.toString(),

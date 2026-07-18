@@ -128,6 +128,10 @@ class AppSettingsSnapshot {
   final List<ExternalTool> externalTools;
   final int changesPanelWidthPx;
   final String wickExePath;
+
+  /// Hard on/off for the wick integration. Off = the binary is never
+  /// invoked even when installed and detected. Defaults on.
+  final bool wickEnabled;
   final String alphaMathPath;
   /// UI language override as a raw locale tag (e.g. 'de', 'zh-Hans',
   /// 'pt-BR'). Empty string = follow the OS locale (the default). Only
@@ -187,6 +191,7 @@ class AppSettingsSnapshot {
     required this.externalTools,
     required this.changesPanelWidthPx,
     this.wickExePath = '',
+    this.wickEnabled = true,
     this.alphaMathPath = '',
     this.localeOverride = '',
     this.giteaTokens = const {},
@@ -236,6 +241,7 @@ class AppSettingsSnapshot {
         'externalTools': [for (final t in externalTools) t.toJson()],
         'changesPanelWidthPx': changesPanelWidthPx,
         'wickExePath': wickExePath,
+        'wickEnabled': wickEnabled,
         'alphaMathPath': alphaMathPath,
         'localeOverride': localeOverride,
         'giteaTokens': giteaTokens,
@@ -485,6 +491,9 @@ class AppSettingsSnapshot {
       wickExePath: json['wickExePath'] is String
           ? json['wickExePath'] as String
           : '',
+      wickEnabled: json['wickEnabled'] is bool
+          ? json['wickEnabled'] as bool
+          : true,
       alphaMathPath: json['alphaMathPath'] is String
           ? json['alphaMathPath'] as String
           : '',
@@ -539,6 +548,7 @@ class AppSettingsSnapshot {
     List<ExternalTool>? externalTools,
     int? changesPanelWidthPx,
     String? wickExePath,
+    bool? wickEnabled,
     String? alphaMathPath,
     String? localeOverride,
     Map<String, String>? giteaTokens,
@@ -600,6 +610,7 @@ class AppSettingsSnapshot {
       externalTools: externalTools ?? this.externalTools,
       changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
       wickExePath: wickExePath ?? this.wickExePath,
+      wickEnabled: wickEnabled ?? this.wickEnabled,
       alphaMathPath: alphaMathPath ?? this.alphaMathPath,
       localeOverride: localeOverride ?? this.localeOverride,
       giteaTokens: giteaTokens ?? this.giteaTokens,

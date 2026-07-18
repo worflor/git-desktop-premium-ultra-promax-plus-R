@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -37,6 +36,10 @@ import 'conflict_resolution.dart' show resolveConflictsWithAi;
 import '../../backend/merge_session.dart';
 import '../../ui/merge_outcome_text.dart';
 import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
+import '../../backend/admitted_git.dart';
+import '../../backend/analysis_admission.dart';
+import '../../backend/budgeted_lru_cache.dart';
+import '../../backend/disposable_slot.dart';
 import '../../backend/git.dart';
 import '../../backend/git_result.dart';
 import '../../backend/commit_review_report.dart';
@@ -49,8 +52,7 @@ import '../../backend/file_layout.dart';
 import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
 import '../../backend/logos_core.dart' show filamentSat;
-import '../../backend/gyat.dart'
-    show warmGyatForRepo;
+import '../../backend/gyat.dart' show warmGyatForRepo;
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/review_logos.dart' show ClaimShape;
@@ -115,13 +117,15 @@ class _CommitOutcome {
   });
 
   factory _CommitOutcome.ok(
-          CommitData committed, String successMessage, String? syncError) =>
-      _CommitOutcome._(
-        ok: true,
-        committed: committed,
-        successMessage: successMessage,
-        syncError: syncError,
-      );
+    CommitData committed,
+    String successMessage,
+    String? syncError,
+  ) => _CommitOutcome._(
+    ok: true,
+    committed: committed,
+    successMessage: successMessage,
+    syncError: syncError,
+  );
 
   factory _CommitOutcome.err(String error) =>
       _CommitOutcome._(ok: false, error: error);
@@ -132,10 +136,7 @@ class _CommitOutcome {
 /// Paired in a single record so one DreamHintController<_CommitDream>
 /// drives both slots (placeholder text + chrome accent) with one
 /// debounce + one cancellation id.
-typedef _CommitDream = ({
-  String? phrase,
-  LogosFieldCharacter? character,
-});
+typedef _CommitDream = ({String? phrase, LogosFieldCharacter? character});
 
 class _PrimaryCommitAction {
   final String label;
@@ -186,10 +187,15 @@ String? _usageCaption(AiUsage u) {
     final fresh = u.inputTokens - cr;
     final freshLabel = fresh == 0 ? '0' : _realTokens(fresh);
     return t.changes.usage.captionCached(
-        fresh: freshLabel, cached: _realTokens(cr), out: _realTokens(u.outputTokens));
+      fresh: freshLabel,
+      cached: _realTokens(cr),
+      out: _realTokens(u.outputTokens),
+    );
   }
   return t.changes.usage.caption(
-      input: _realTokens(u.inputTokens), output: _realTokens(u.outputTokens));
+    input: _realTokens(u.inputTokens),
+    output: _realTokens(u.outputTokens),
+  );
 }
 
 // A multi-line usage breakdown for hover — ONLY what the provider reported
@@ -206,8 +212,9 @@ String? _usageTooltip(AiUsage u) {
   if (u.resolvedModel != null) lines.add(u.resolvedModel!);
   final cr = u.cacheReadTokens ?? 0;
   final cw = u.cacheWriteTokens ?? 0;
-  final fresh =
-      (cr > 0 && cr <= u.inputTokens) ? u.inputTokens - cr : u.inputTokens;
+  final fresh = (cr > 0 && cr <= u.inputTokens)
+      ? u.inputTokens - cr
+      : u.inputTokens;
   lines.add(t.changes.usage.tipIn(value: _realTokens(fresh)));
   if (cr > 0) lines.add(t.changes.usage.tipCacheRead(value: _realTokens(cr)));
   if (cw > 0) lines.add(t.changes.usage.tipCacheWrite(value: _realTokens(cw)));
@@ -216,8 +223,11 @@ String? _usageTooltip(AiUsage u) {
   if (rt > 0) lines.add(t.changes.usage.tipReasoning(value: _realTokens(rt)));
   final d = u.duration;
   if (d != null) {
-    lines.add(t.changes.usage
-        .tipWallClock(value: (d.inMilliseconds / 1000).toStringAsFixed(1)));
+    lines.add(
+      t.changes.usage.tipWallClock(
+        value: (d.inMilliseconds / 1000).toStringAsFixed(1),
+      ),
+    );
   }
   return lines.join('\n');
 }
@@ -242,11 +252,7 @@ Text _usageCaptionRich(
   AiUsage? usage,
   required String fallback,
 }) {
-  final style = TextStyle(
-    fontFamily: AppFonts.mono,
-    fontSize: 9,
-    color: base,
-  );
+  final style = TextStyle(fontFamily: AppFonts.mono, fontSize: 9, color: base);
   final u = usage;
   if (u == null || !u.hasTokens) {
     return Text(fallback, style: style);
@@ -257,29 +263,41 @@ Text _usageCaptionRich(
   final spans = <TextSpan>[];
   if (cr > 0 && cr <= u.inputTokens) {
     final fresh = u.inputTokens - cr;
-    spans.add(TextSpan(
-        text: '${fresh == 0 ? '0' : _realTokens(fresh)} ${t.changes.usage.inWord}'));
-    spans.add(TextSpan(
+    spans.add(
+      TextSpan(
+        text:
+            '${fresh == 0 ? '0' : _realTokens(fresh)} ${t.changes.usage.inWord}',
+      ),
+    );
+    spans.add(
+      TextSpan(
         text: ' · ${_realTokens(cr)} ${t.changes.usage.cachedWord}',
-        style: style.copyWith(color: faint)));
+        style: style.copyWith(color: faint),
+      ),
+    );
   } else {
-    spans.add(TextSpan(text: '${_realTokens(u.inputTokens)} ${t.changes.usage.inWord}'));
+    spans.add(
+      TextSpan(text: '${_realTokens(u.inputTokens)} ${t.changes.usage.inWord}'),
+    );
   }
-  spans.add(TextSpan(
+  spans.add(
+    TextSpan(
       text: ' · ${_realTokens(u.outputTokens)} ${t.changes.usage.outWord}',
-      style: style.copyWith(color: out, fontWeight: FontWeight.w600)));
+      style: style.copyWith(color: out, fontWeight: FontWeight.w600),
+    ),
+  );
   return Text.rich(TextSpan(children: spans, style: style));
 }
 
 /// Severity → accent color, shared by the finding cards and the
 /// findings-header tally so the two can never disagree.
 Color _severityAccent(String severity) => switch (severity) {
-      'block' => AppSeverityPalette.critical,
-      'risk' => AppSeverityPalette.risk,
-      'warn' => AppSeverityPalette.caution,
-      'note' => AppSeverityPalette.info,
-      _ => AppSeverityPalette.neutral,
-    };
+  'block' => AppSeverityPalette.critical,
+  'risk' => AppSeverityPalette.risk,
+  'warn' => AppSeverityPalette.caution,
+  'note' => AppSeverityPalette.info,
+  _ => AppSeverityPalette.neutral,
+};
 
 class ChangesPage extends StatefulWidget {
   const ChangesPage({super.key});
@@ -299,10 +317,13 @@ class _ChangesPageState extends State<ChangesPage> {
   final List<_DiffTab> _tabs = [_DiffTab(label: t.changes.tabs.defaultLabel)];
   int _activeTabIndex = 0;
   _DiffTab get _activeTab {
-    assert(_activeTabIndex >= 0 && _activeTabIndex < _tabs.length,
-        '_activeTabIndex=$_activeTabIndex out of range [0, ${_tabs.length})');
+    assert(
+      _activeTabIndex >= 0 && _activeTabIndex < _tabs.length,
+      '_activeTabIndex=$_activeTabIndex out of range [0, ${_tabs.length})',
+    );
     return _tabs[_activeTabIndex.clamp(0, _tabs.length - 1)];
   }
+
   Set<String> get _includedPaths => _activeTab.includedPaths;
   bool _fileDragActive = false;
 
@@ -397,17 +418,48 @@ class _ChangesPageState extends State<ChangesPage> {
   final Map<String, GlobalKey> _fileRowKeys = {};
   List<String> _changesListPaths = const [];
   DiffDocument? _diffDocument;
+  // Disk-backed document for a single very large file opened on its own
+  // (symmetric to `_activeMultiSpoolDoc` for the combined path). The document
+  // ADOPTED its spool (DiffDocument.adoptSpool), so disposing it releases the
+  // handle AND deletes the temp dir — there is no separate spool to track.
+  // At most one; disposed when replaced or on teardown.
+  final DisposableSlot<DiffDocument> _activeSingleSpoolDoc =
+      DisposableSlot((d) => d.dispose());
   bool _diffLoading = false;
   String? _diffError;
   String? _multiDiffScopeKey;
   DiffDocument? _multiDiffDocument;
+  // The disk-backed document currently active (machine-scale combined diff
+  // streamed to a temp file, spool adopted by the doc). At most one at a time;
+  // disposed when replaced or on teardown. Kept out of the in-RAM
+  // [_multiDiffCache] LRU so its file handle has a single, clear owner.
+  final DisposableSlot<DiffDocument> _activeMultiSpoolDoc =
+      DisposableSlot((d) => d.dispose());
+  // Machine-scale gate (see [_kMachineScaleCombinedThreshold]) is computed
+  // per-selection and CACHED — never a sticky flag. A sticky flag deadlocked:
+  // once true it hid `showMultiDiff`, which hid the load that would clear it, so
+  // multi-diff stayed broken for every later repo. Recomputed on scope change.
+  String? _machineScaleScope;
+  bool _machineScaleCached = false;
   bool _multiDiffLoading = false;
   String? _multiDiffError;
   List<_CombinedDiffSection> _multiDiffSections = const [];
-  final LinkedHashMap<String, _CachedMultiDiff> _multiDiffCache =
-      LinkedHashMap();
-  final LinkedHashMap<String, DiffFileDocument> _diffFileDocumentCache =
-      LinkedHashMap();
+  // Byte-budgeted, not just count-bounded: entries retain full diff content
+  // (raw strings; eager per-file docs also their ~5.7× parsed expansion), so
+  // both caches evict on resident bytes via BudgetedLruCache — the count-only
+  // bound held "12 entries" of a heavy repo's combined diffs, i.e. gigabytes.
+  final BudgetedLruCache<String, _CachedMultiDiff> _multiDiffCache =
+      BudgetedLruCache(
+        maxEntries: _kMaxMultiDiffCacheEntries,
+        maxCostBytes: _kMultiDiffCacheBudgetBytes,
+        costOf: (entry) => entry.approxBytes,
+      );
+  final BudgetedLruCache<String, DiffFileDocument> _diffFileDocumentCache =
+      BudgetedLruCache(
+        maxEntries: _kMaxFileDiffCacheEntries,
+        maxCostBytes: _kFileDiffCacheBudgetBytes,
+        costOf: (doc) => doc.rawContent.length,
+      );
   final _multiDiffCurrentPath = ValueNotifier<String?>(null);
   int? _multiDiffJumpLineIndex;
   int _multiDiffJumpRequestId = 0;
@@ -485,6 +537,17 @@ class _ChangesPageState extends State<ChangesPage> {
   static const _maxLeftPanelWidth = 520.0;
   static const int _kMaxMultiDiffCacheEntries = 12;
   static const int _kMaxFileDiffCacheEntries = 256;
+
+  /// Resident-byte ceilings for the two diff caches, derived from the one
+  /// analysis byte budget ([AnalysisAdmission.kDefaultBudgetBytes]) so all
+  /// of Manifold's memory physics traces to a single authority. Combined
+  /// documents retain ~raw bytes; eager per-file documents expand ~5.7×
+  /// when parsed, hence the divisor. Human-scale repos never notice either
+  /// bound — their whole cache is KBs.
+  static const int _kMultiDiffCacheBudgetBytes =
+      AnalysisAdmission.kDefaultBudgetBytes;
+  static const int _kFileDiffCacheBudgetBytes =
+      AnalysisAdmission.kDefaultBudgetBytes ~/ 8;
   bool _mergeResolving = false;
   // Debug-mode state lives in the per-repo AiActivityState now.
   // See `_debugRecord` below for the read path. The shape-mode
@@ -525,14 +588,15 @@ class _ChangesPageState extends State<ChangesPage> {
   /// serves both "this repo" grading and the workspace union, and makes
   /// branch switches / repeat consultations free.
   final Map<String, ({Set<String> emails, Set<String> names})>
-      _authorSetsCache = {};
+  _authorSetsCache = {};
 
   /// How many workspace repos the cross-repo consultation may walk.
   /// Bounds first-consultation cost; each repo is cached afterward.
   static const int _kWorkspaceIdentityRepoCap = 12;
 
   Future<({Set<String> emails, Set<String> names})> _authorsFor(
-      String repo) async {
+    String repo,
+  ) async {
     final cached = _authorSetsCache[repo];
     if (cached != null) return cached;
     final sets = await getHistoricalAuthors(repo);
@@ -565,8 +629,11 @@ class _ChangesPageState extends State<ChangesPage> {
         emails.addAll(sets.emails);
         names.addAll(sets.names);
       }
-      grade = gradeIdentity(id, local,
-          workspace: (emails: emails, names: names));
+      grade = gradeIdentity(
+        id,
+        local,
+        workspace: (emails: emails, names: names),
+      );
     }
     if (!mounted) return;
     // Stale guard — same race as _loadCommitDraftForRepo: the subprocess
@@ -633,10 +700,7 @@ class _ChangesPageState extends State<ChangesPage> {
     );
   }
 
-  List<String> _deriveTagSuggestions(
-    LogosGit engine,
-    Set<String> diffPaths,
-  ) {
+  List<String> _deriveTagSuggestions(LogosGit engine, Set<String> diffPaths) {
     if (diffPaths.isEmpty) return const [];
     final seen = <String>{..._commitTags};
     final scored = <String, double>{};
@@ -697,7 +761,6 @@ class _ChangesPageState extends State<ChangesPage> {
       ..sort((a, b) => b.value.compareTo(a.value));
     return ranked.take(6).map((e) => e.key).toList();
   }
-
 
   // Memoised engine spectral-edge overlay. `withSpectralEdges` is a pure shallow
   // copy but allocates a fresh `LogosGit` each call; the correlatedness pipeline
@@ -858,7 +921,6 @@ class _ChangesPageState extends State<ChangesPage> {
   bool get _isReviewDrawerOpen => _openDrawer == AiActivityKind.review;
   bool get _isMuseDrawerOpen => _openDrawer == AiActivityKind.muse;
 
-
   /// True when the (repo, kind) record is terminal and the user
   /// hasn't acknowledged it yet — the trigger for the toolbar's
   /// "half-lit / unread" visual. Drawer-open implicitly counts as
@@ -876,8 +938,10 @@ class _ChangesPageState extends State<ChangesPage> {
   /// "I've seen this" signal), so the sidebar pill quiets and the
   /// toolbar drops out of the half-lit state on the next build.
   void _openDrawerFor(AiActivityKind kind) {
-    assert(kind != AiActivityKind.generate,
-        'generate has no drawer — its result lands in the composer.');
+    assert(
+      kind != AiActivityKind.generate,
+      'generate has no drawer — its result lands in the composer.',
+    );
     final site = _activitySite();
     if (site != null && _activityRecord(kind) != null) {
       site.state.markSeen(repoPath: site.repoPath, kind: kind);
@@ -912,14 +976,20 @@ class _ChangesPageState extends State<ChangesPage> {
     if (_openDrawer == AiActivityKind.review) {
       final site = _activitySite();
       if (site != null) {
-        final record =
-            site.state.recordFor(site.repoPath, AiActivityKind.review);
+        final record = site.state.recordFor(
+          site.repoPath,
+          AiActivityKind.review,
+        );
         if (record != null && record.isError) {
-          site.state
-              .clear(repoPath: site.repoPath, kind: AiActivityKind.review);
+          site.state.clear(
+            repoPath: site.repoPath,
+            kind: AiActivityKind.review,
+          );
         } else {
-          site.state
-              .markSeen(repoPath: site.repoPath, kind: AiActivityKind.review);
+          site.state.markSeen(
+            repoPath: site.repoPath,
+            kind: AiActivityKind.review,
+          );
         }
       }
     }
@@ -986,8 +1056,7 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
-  AiActivityRecord? get _debugRecord =>
-      _activityRecord(AiActivityKind.debug);
+  AiActivityRecord? get _debugRecord => _activityRecord(AiActivityKind.debug);
   bool get _isDebugDrawerOpen => _openDrawer == AiActivityKind.debug;
   AiDebugData? get _debugResult {
     final r = _debugRecord;
@@ -995,6 +1064,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final payload = r.result;
     return payload is AiDebugActivityResult ? payload.data : null;
   }
+
   String? get _debugError =>
       _debugRecord?.isError == true ? _debugRecord!.error : null;
 
@@ -1005,10 +1075,7 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return null;
     final repoPath = context.read<RepositoryState>().activePath;
     if (repoPath == null) return null;
-    return (
-      repoPath: repoPath,
-      state: context.read<AiActivityState>(),
-    );
+    return (repoPath: repoPath, state: context.read<AiActivityState>());
   }
 
   @override
@@ -1031,7 +1098,9 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       _lastRememberWip = prefs.rememberWorkInProgress;
       _panelWidth.value = prefs.changesPanelWidthPx.toDouble().clamp(
-            _minLeftPanelWidth, _maxLeftPanelWidth);
+        _minLeftPanelWidth,
+        _maxLeftPanelWidth,
+      );
       prefs.addListener(_onPreferencesChanged);
       _prefsSub = prefs;
     });
@@ -1120,27 +1189,36 @@ class _ChangesPageState extends State<ChangesPage> {
       ...includedPaths,
     ];
 
-    final results = await Future.wait([
-      runGit(repoPath, diffArgs),
-      runGit(repoPath, stagedArgs),
-      runGit(repoPath, ['log', '--format=%s', '-100']),
-    ]);
+    // The dream is a decorative commit phrase — it must never be the reason
+    // analysis memory blows. A selection no schedule could admit simply
+    // dreams nothing.
+    final admitted = await admitGitDiffText(repoPath, includedPaths, () {
+      return Future.wait([
+        runGit(repoPath, diffArgs),
+        runGit(repoPath, stagedArgs),
+        runGit(repoPath, ['log', '--format=%s', '-100']),
+      ]);
+    });
+    final results = admitted.ran ? admitted.value! : null;
+    if (results == null) return null;
 
-    final unstaged =
-        results[0].exitCode == 0 ? results[0].stdout.toString() : '';
+    final unstaged = results[0].exitCode == 0
+        ? results[0].stdout.toString()
+        : '';
     final staged = results[1].exitCode == 0 ? results[1].stdout.toString() : '';
-    final diffText =
-        [staged, unstaged].where((d) => d.trim().isNotEmpty).join('\n');
+    final diffText = [
+      staged,
+      unstaged,
+    ].where((d) => d.trim().isNotEmpty).join('\n');
     if (diffText.isEmpty) return null;
 
     final subjects = results[2].exitCode == 0
-        ? results[2]
-            .stdout
-            .toString()
-            .split('\n')
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .toList()
+        ? results[2].stdout
+              .toString()
+              .split('\n')
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .toList()
         : const <String>[];
 
     final result = await dreamAndCharacterizeFromDiff(
@@ -1202,11 +1280,11 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<String> _resolveSelectionStorageScopeKey(String repoPath) async {
     var mainRepoPath = repoPath;
     try {
-      final result = await Process.run(
-        'git',
-        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-        workingDirectory: repoPath,
-      );
+      final result = await Process.run('git', [
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ], workingDirectory: repoPath);
       if (result.exitCode == 0) {
         final commonDir = (result.stdout as String).trim();
         if (commonDir.isNotEmpty) {
@@ -1255,9 +1333,7 @@ class _ChangesPageState extends State<ChangesPage> {
     for (final item in raw) {
       if (item is! List || item.length < 2) continue;
       final tab = _DiffTab(label: item[0] as String?)
-        ..includedPaths.addAll(
-          (item[1] as List).whereType<String>(),
-        )
+        ..includedPaths.addAll((item[1] as List).whereType<String>())
         ..commitMessage = item.length > 2 ? (item[2] as String? ?? '') : '';
       tabs.add(tab);
     }
@@ -1286,7 +1362,7 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   ({Map<String, Set<String>> contexts, Map<String, List<_DiffTab>> tabs})
-      _decodeSelectionSnapshot(String? raw) {
+  _decodeSelectionSnapshot(String? raw) {
     if (raw == null || raw.isEmpty) {
       return (contexts: const {}, tabs: const {});
     }
@@ -1397,6 +1473,10 @@ class _ChangesPageState extends State<ChangesPage> {
     _inspectionDiffPath = null;
     _visibleDiffPath = null;
     _diffDocument = null;
+    // Both documents are cleared here → any disk-backed docs are now
+    // off-screen; free their handles + adopted temp dirs.
+    _disposeActiveSingleSpoolDoc();
+    _disposeActiveMultiSpoolDoc();
     _diffLoading = false;
     _diffError = null;
     _multiDiffScopeKey = null;
@@ -1406,6 +1486,12 @@ class _ChangesPageState extends State<ChangesPage> {
     _multiDiffSections = const [];
     _multiDiffCurrentPath.value = null;
     _multiDiffJumpLineIndex = null;
+    // The diff caches are keyed by epoch|path|status-codes with no repo
+    // component, and this page outlives every repo switch — without this
+    // clear, the previous repo's combined diffs (raw strings + parsed
+    // lines) stayed resident for the rest of the session.
+    _multiDiffCache.clear();
+    _diffFileDocumentCache.clear();
     _actionError = null;
     // Repo / context switch — drawers from the previous context no
     // longer match the user's mental scope. Close everything; the
@@ -1597,13 +1683,14 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     _correlatednessContextStatusRef = status;
     _correlatednessContextEngineRef = engine;
-    _correlatednessContextInflight = _rebuildCorrelatednessContext(
-      repoPath: repoPath,
-      status: status,
-      engine: engine,
-    ).whenComplete(() {
-      _correlatednessContextInflight = null;
-    });
+    _correlatednessContextInflight =
+        _rebuildCorrelatednessContext(
+          repoPath: repoPath,
+          status: status,
+          engine: engine,
+        ).whenComplete(() {
+          _correlatednessContextInflight = null;
+        });
     return _correlatednessContext;
   }
 
@@ -1612,8 +1699,16 @@ class _ChangesPageState extends State<ChangesPage> {
     required RepositoryStatus status,
     required LogosGit engine,
   }) async {
-    // Fetch the full change-set diff — same probes the shape-prompt
-    // pipeline already uses a few hundred lines above.
+    // This rebuild fires on every status tick, and it used to fetch the FULL
+    // change-set diff into RAM with no bound — on a working tree carrying
+    // multi-hundred-MB files that alone churned GBs per refresh. The fetch
+    // is now admitted against the process-wide analysis budget (declared at
+    // the same on-disk estimate the multi-diff transport uses). Change-sets
+    // no schedule could ever fit don't lose the spectral sort: they degrade
+    // to the bounded identifier-surface representation below — the same 16KB
+    // surface untracked files always used, which is what the embedding
+    // actually reads (identifiers, not bulk).
+    // Same probes the shape-prompt pipeline uses a few hundred lines above.
     const diffArgs = [
       'diff',
       '-U3',
@@ -1629,28 +1724,51 @@ class _ChangesPageState extends State<ChangesPage> {
       '--patience',
       '--ignore-cr-at-eol',
     ];
-    List<ProcessResult> probes;
+    Admitted<List<ProcessResult>> admitted;
     try {
-      probes = await Future.wait([
-        runGit(repoPath, diffArgs),
-        runGit(repoPath, stagedArgs),
-      ]);
+      admitted = await admitGitDiffText(
+        repoPath,
+        status.files.map((f) => f.path),
+        () => Future.wait([
+          runGit(repoPath, diffArgs),
+          runGit(repoPath, stagedArgs),
+        ]),
+      );
     } on Object {
       return; // git unavailable / repo broken — keep whatever's cached
     }
+    if (admitted.decision == AdmissionDecision.superseded) {
+      return; // repo switched while queued — this context is moot
+    }
 
-    final unstaged = probes[0].exitCode == 0 ? probes[0].stdout.toString() : '';
-    final staged = probes[1].exitCode == 0 ? probes[1].stdout.toString() : '';
+    String combined;
+    if (admitted.decision == AdmissionDecision.declined) {
+      combined = await _synthesiseSurfaceDiffs(
+        repoPath,
+        status,
+        allFiles: true,
+      );
+    } else {
+      final probes = admitted.value!;
+      final unstaged = probes[0].exitCode == 0
+          ? probes[0].stdout.toString()
+          : '';
+      final staged = probes[1].exitCode == 0
+          ? probes[1].stdout.toString()
+          : '';
 
-    // `git diff` / `git diff --cached` never emit blocks for untracked
-    // files. Those paths are visible in the panel AND we want them
-    // placed by the spectral seriator, so synthesize a unified-diff
-    // "new file" block per untracked path and append — the existing
-    // parser handles the result uniformly.
-    final synthesized = await _synthesiseUntrackedDiffs(repoPath, status);
-    final combined = [staged, unstaged, synthesized]
-        .where((d) => d.trim().isNotEmpty)
-        .join('\n');
+      // `git diff` / `git diff --cached` never emit blocks for untracked
+      // files. Those paths are visible in the panel AND we want them
+      // placed by the spectral seriator, so synthesize a unified-diff
+      // "new file" block per untracked path and append — the existing
+      // parser handles the result uniformly.
+      final synthesized = await _synthesiseSurfaceDiffs(repoPath, status);
+      combined = [
+        staged,
+        unstaged,
+        synthesized,
+      ].where((d) => d.trim().isNotEmpty).join('\n');
+    }
     if (combined.isEmpty) {
       if (!mounted) return;
       setState(() {
@@ -1783,27 +1901,32 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-  /// For each untracked file in [status], read its content and build a
+  /// For each untracked file in [status] — or EVERY changed file when
+  /// [allFiles] is set — read a bounded prefix of its content and build a
   /// valid unified-diff "new file" block. Returns the blocks joined
-  /// with newlines; empty string when the repo has no untracked
-  /// files. Used by [_rebuildCorrelatednessContext] to make sure
-  /// untracked paths participate in the hunk spectral embedding
-  /// alongside tracked files — without this, `git diff` skipped them
-  /// and they collapsed to a uniform fallback coordinate in the sort.
+  /// with newlines; empty string when nothing qualifies. Used by
+  /// [_rebuildCorrelatednessContext] to make sure untracked paths
+  /// participate in the hunk spectral embedding alongside tracked files —
+  /// without this, `git diff` skipped them and they collapsed to a uniform
+  /// fallback coordinate in the sort. [allFiles] is the degraded
+  /// representation for change-sets too large to admit whole: every path
+  /// still gets a spectral coordinate from its identifier surface, so the
+  /// sort keeps working on machine-scale working trees instead of dying.
   ///
   /// Per-file content is capped to keep pathological cases (huge
   /// generated assets committed as untracked) from inflating the
   /// hunk graph. 16 KiB matches what `engram_file_index` uses for its
   /// own cap — enough to capture a file's identifier surface,
-  /// bounded enough to stay cheap across dozens of untracked files.
-  Future<String> _synthesiseUntrackedDiffs(
+  /// bounded enough to stay cheap across dozens of files.
+  Future<String> _synthesiseSurfaceDiffs(
     String repoPath,
-    RepositoryStatus status,
-  ) async {
+    RepositoryStatus status, {
+    bool allFiles = false,
+  }) async {
     const perFileCap = 16 * 1024;
     final buf = StringBuffer();
     for (final f in status.files) {
-      if (!f.isUntracked) continue;
+      if (!allFiles && !f.isUntracked) continue;
       final absPath = p.join(repoPath, f.path);
       final file = File(absPath);
       if (!await file.exists()) continue;
@@ -1906,16 +2029,16 @@ class _ChangesPageState extends State<ChangesPage> {
     final cached = _gitDirCache[repoPath];
     if (cached != null) return cached;
     try {
-      final result = await Process.run(
-        'git',
-        ['rev-parse', '--git-dir'],
-        workingDirectory: repoPath,
-      );
+      final result = await Process.run('git', [
+        'rev-parse',
+        '--git-dir',
+      ], workingDirectory: repoPath);
       if (result.exitCode == 0) {
         final gitDir = (result.stdout as String).trim();
         // rev-parse returns relative or absolute — normalize.
-        final resolved =
-            p.isAbsolute(gitDir) ? gitDir : p.join(repoPath, gitDir);
+        final resolved = p.isAbsolute(gitDir)
+            ? gitDir
+            : p.join(repoPath, gitDir);
         _gitDirCache[repoPath] = resolved;
         return resolved;
       }
@@ -1969,8 +2092,11 @@ class _ChangesPageState extends State<ChangesPage> {
     } catch (_) {}
   }
 
-  Future<void> _loadCommitDraftForRepo(String repoPath,
-      {String? branch, bool force = false}) async {
+  Future<void> _loadCommitDraftForRepo(
+    String repoPath, {
+    String? branch,
+    bool force = false,
+  }) async {
     try {
       final gitDir = await _resolveGitDir(repoPath);
       if (gitDir == null) return;
@@ -2045,22 +2171,24 @@ class _ChangesPageState extends State<ChangesPage> {
     // Honor the "remember work in progress" pref: when off, any save
     // attempt becomes a delete so existing drafts don't linger on disk.
     final remember = context.read<PreferencesState>().rememberWorkInProgress;
-    _commitDraftSaveDebounce =
-        Timer(const Duration(milliseconds: 500), () async {
-      try {
-        final repoPath =
-            capturedRepoPath ?? context.read<RepositoryState>().activePath;
-        if (repoPath == null) return;
-        final gitDir = await _resolveGitDir(repoPath);
-        if (gitDir == null) return;
-        final file = _draftFile(gitDir, capturedBranch);
-        if (!remember || value.trim().isEmpty) {
-          if (await file.exists()) await file.delete();
-        } else {
-          await file.writeAsString(value);
-        }
-      } catch (_) {}
-    });
+    _commitDraftSaveDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () async {
+        try {
+          final repoPath =
+              capturedRepoPath ?? context.read<RepositoryState>().activePath;
+          if (repoPath == null) return;
+          final gitDir = await _resolveGitDir(repoPath);
+          if (gitDir == null) return;
+          final file = _draftFile(gitDir, capturedBranch);
+          if (!remember || value.trim().isEmpty) {
+            if (await file.exists()) await file.delete();
+          } else {
+            await file.writeAsString(value);
+          }
+        } catch (_) {}
+      },
+    );
   }
 
   Future<void> _clearCommitDraft() async {
@@ -2080,7 +2208,10 @@ class _ChangesPageState extends State<ChangesPage> {
   /// Immediately write a draft to disk — no debounce. Used on branch/repo
   /// switch and app lifecycle transitions to avoid losing in-progress text.
   Future<void> _flushDraft(
-      String repoPath, String? branch, String value) async {
+    String repoPath,
+    String? branch,
+    String value,
+  ) async {
     try {
       final gitDir = await _resolveGitDir(repoPath);
       if (gitDir == null) return;
@@ -2127,6 +2258,9 @@ class _ChangesPageState extends State<ChangesPage> {
   void dispose() {
     _changeset.removeListener(_onChangesetChanged);
     _changeset.dispose();
+    // Close + delete any disk-backed diff docs (handle + adopted temp dir).
+    _disposeActiveMultiSpoolDoc();
+    _disposeActiveSingleSpoolDoc();
     _commitDraftSaveDebounce?.cancel();
     // Cancel any in-flight flash-clear timers. Each timer's callback
     // captures `this`, so leaving them uncancelled would keep the
@@ -2164,20 +2298,17 @@ class _ChangesPageState extends State<ChangesPage> {
   /// Returns the AI categories the user has configured at least one
   /// model for. Used to drive the chevron-cycle on the shape ask
   /// button. Order is stable (insertion order from the prefs map).
-  List<String> _shapeCategories(AiSettingsState ai) =>
-      ai.modelSelections.entries
-          .where((e) => e.value.isNotEmpty)
-          .map((e) => e.key)
-          .toList(growable: false);
+  List<String> _shapeCategories(AiSettingsState ai) => ai
+      .modelSelections
+      .entries
+      .where((e) => e.value.isNotEmpty)
+      .map((e) => e.key)
+      .toList(growable: false);
 
   /// Fire a debug run and lift the result into the side panel. The
   /// drawer opens synchronously before `_runDebug` awaits anything, so
   /// the user sees a loading pane instead of a silent pause.
-  void _debugInPanel(
-    String repoPath,
-    String sentence,
-    String categoryId,
-  ) {
+  void _debugInPanel(String repoPath, String sentence, String categoryId) {
     setState(() => _openDrawer = AiActivityKind.debug);
     unawaited(_runDebug(repoPath, sentence, categoryId));
   }
@@ -2225,9 +2356,10 @@ class _ChangesPageState extends State<ChangesPage> {
       _includedByContextKey[_draftKey!] = Set<String>.from(_includedPaths);
       if (_tabs.length > 1) {
         _tabsByContextKey[_draftKey!] = [
-          for (final tab in _tabs) _DiffTab(label: tab.label)
-            ..includedPaths.addAll(tab.includedPaths)
-            ..commitMessage = tab.commitMessage,
+          for (final tab in _tabs)
+            _DiffTab(label: tab.label)
+              ..includedPaths.addAll(tab.includedPaths)
+              ..commitMessage = tab.commitMessage,
         ];
       } else {
         _tabsByContextKey.remove(_draftKey!);
@@ -2315,17 +2447,18 @@ class _ChangesPageState extends State<ChangesPage> {
   double _fileDimFor(String path) => _fileDimOpacity[path] ?? 1.0;
 
   void _sortByFragilityWithinClusters(
-      List<RepositoryStatusFile> files, FileClusters clusters) {
+    List<RepositoryStatusFile> files,
+    FileClusters clusters,
+  ) {
     final n = files.length;
     if (n < 2) return;
     var i = 0;
     while (i < n) {
-      final cid = clusters.byPath[files[i].path] ??
-          FileClusters.clusterIdIsolated;
+      final cid =
+          clusters.byPath[files[i].path] ?? FileClusters.clusterIdIsolated;
       var j = i + 1;
       while (j < n &&
-          (clusters.byPath[files[j].path] ??
-                  FileClusters.clusterIdIsolated) ==
+          (clusters.byPath[files[j].path] ?? FileClusters.clusterIdIsolated) ==
               cid) {
         j++;
       }
@@ -2436,8 +2569,35 @@ class _ChangesPageState extends State<ChangesPage> {
     );
   }
 
+  /// Guard envelope for the whole diff-load flow: it is always fired
+  /// unawaited, so an exception anywhere inside (a spool-index build, a
+  /// working-file scan, disk I/O) would otherwise become an unhandled async
+  /// error while the pane sits on its spinner forever. One envelope here
+  /// beats a local try/catch at each of the five async document builds.
   Future<void> _loadDiff(String repo, String path) async {
+    try {
+      await _loadDiffInner(repo, path);
+    } catch (e) {
+      if (!mounted || _selectedDiffPath != path) return;
+      setState(() {
+        _diffLoading = false;
+        _diffError = 'failed to load diff: $e';
+      });
+    }
+  }
+
+  Future<void> _loadDiffInner(String repo, String path) async {
     final stopwatch = Stopwatch()..start();
+    RepositoryStatusFile? statusFile;
+    final statusFiles =
+        context.read<RepositoryState>().status?.files ??
+        const <RepositoryStatusFile>[];
+    for (final file in statusFiles) {
+      if (file.path == path) {
+        statusFile = file;
+        break;
+      }
+    }
     final cachedDocument = _cachedSingleDiffDocument(path);
     if (cachedDocument != null) {
       setState(() {
@@ -2448,6 +2608,8 @@ class _ChangesPageState extends State<ChangesPage> {
         _diffError = null;
         _diffDocument = cachedDocument;
       });
+      // Switched to an in-RAM cached document; free any prior disk-backed doc.
+      _disposeActiveSingleSpoolDoc();
       await _recordUiTimingSample(
         event: 'changes.diff.cache-hit',
         stopwatch: stopwatch,
@@ -2478,6 +2640,64 @@ class _ChangesPageState extends State<ChangesPage> {
     //   4. synthesize a new-file diff from the file on disk (handles
     //      untracked / newly-added / gitignored files that the engine
     //      still knows about)
+    // Large tracked file: STREAM its diff straight to a spool so git's output
+    // never has to fit in a Dart String first. Without this, a multi-GB tracked
+    // modification would fully materialize in `getFileDiff`'s String before the
+    // disk-backed document could ever help (the OOM the reviewer flagged). We
+    // don't know tracked-vs-untracked cheaply here, so we just try streaming the
+    // tracked diff (unstaged then staged); an untracked file yields an empty
+    // spool on both and falls through to the working-file backing below.
+    final absTracked = p.isAbsolute(path) ? path : p.join(repo, path);
+    var trackedSize = 0;
+    try {
+      final st = await File(absTracked).stat();
+      if (st.type == FileSystemEntityType.file) trackedSize = st.size;
+    } catch (_) {}
+    if (!mounted || _selectedDiffPath != path) return;
+    final isTrackedDeletion =
+        statusFile != null &&
+        selectionContainsTrackedDeletion(<RepositoryStatusFile>[statusFile]);
+    if (isTrackedDeletion || trackedSize > _kSpoolContentThreshold) {
+      for (final staged in const [false, true]) {
+        final res = await spoolFileDiff(repo, path, staged: staged);
+        if (!mounted || _selectedDiffPath != path) {
+          await res.data?.dispose();
+          return;
+        }
+        final spool = res.data;
+        if (res.ok && spool != null && spool.byteLength > 0) {
+          // Identity includes the spool PATH (unique per fetch — fresh
+          // random temp dir every time): byte length alone is a
+          // coincidence-prone proxy, and a same-size edit to a large
+          // tracked file would keep the id stable while the content
+          // changed, pinning DiffShell (which rebuilds on documentId, not
+          // instance) to the stale store.
+          // The document ADOPTS the spool: from here on doc.dispose() is the
+          // whole cleanup (handle + temp dir), and a failed index build
+          // deletes the dir inside adoptSpool — no split lifecycle to pair.
+          final doc = await DiffDocument.adoptSpool(
+            spool,
+            pathHint: path,
+            documentId: 'file-spool:$path:${spool.path}:${spool.byteLength}',
+            trimLeadingMeta: true,
+          );
+          if (!mounted || _selectedDiffPath != path) {
+            doc.dispose();
+            return;
+          }
+          await _installSingleFileBackedDoc(
+            doc,
+            path,
+            event: 'changes.diff.file-spool',
+            stopwatch: stopwatch,
+          );
+          return;
+        }
+        await spool?.dispose();
+      }
+      // Both empty → untracked or no tracked change; fall through.
+    }
+
     final fetchStopwatch = Stopwatch()..start();
     var r = await getFileDiff(repo, path);
     if (!mounted || _selectedDiffPath != path) {
@@ -2515,9 +2735,48 @@ class _ChangesPageState extends State<ChangesPage> {
       }
     }
 
-    // Final fallback — if no git-visible diff exists for this path,
-    // read the file from disk and render it as a synthesized new-file
-    // diff so the user sees something real.
+    // No git-visible diff → the file is new/untracked. Back its diff DIRECTLY
+    // with the working-tree file (zero copy, ANY size): the file already on
+    // disk, held by the OS page cache, IS the backing store. This is what makes
+    // even a multi-GB untracked file open instantly and stay bounded — the old
+    // path read the whole file into a synthetic String (capped at 1 MB, so
+    // giants showed nothing). Only reached for a real on-disk file.
+    if (r.ok && (r.data ?? '').isEmpty) {
+      final absPath = p.isAbsolute(path) ? path : p.join(repo, path);
+      var isFile = false;
+      try {
+        isFile = await File(absPath).exists();
+      } catch (_) {}
+      if (!mounted || _selectedDiffPath != path) return;
+      if (isFile) {
+        // No explicit documentId: the default carries size+mtime, so an
+        // in-place edit to the untracked file (even one that keeps the same
+        // byte length) mints a new identity and the shell rebuilds onto the
+        // fresh store instead of rendering the stale one. A path-only id
+        // here once pinned the viewer to the first open's content.
+        final doc = await DiffDocument.lazyFromWorkingFile(
+          absPath,
+          path,
+          trimLeadingMeta: true,
+        );
+        if (!mounted || _selectedDiffPath != path) {
+          doc.dispose();
+          return;
+        }
+        // Working-file backing: the store points at the REAL file and owns no
+        // temp dir, so disposing only closes the handle; it never deletes the
+        // user's file.
+        await _installSingleFileBackedDoc(
+          doc,
+          path,
+          event: 'changes.diff.newfile',
+          stopwatch: stopwatch,
+        );
+        return;
+      }
+    }
+
+    // Fallback for the rare non-file case (e.g. a vanished path).
     String? syntheticDiff;
     if (r.ok && (r.data ?? '').isEmpty) {
       syntheticDiff = await _readFileAsSyntheticDiff(repo, path);
@@ -2532,22 +2791,77 @@ class _ChangesPageState extends State<ChangesPage> {
     );
 
     DiffDocument? parsedDocument;
+    var pendingSingleSpoolDoc = false;
     double? documentBuildMs;
     if (r.ok) {
       final data = syntheticDiff ?? (r.data ?? '');
       if (data.isNotEmpty) {
         final buildStopwatch = Stopwatch()..start();
-        parsedDocument = DiffDocument.fromRawContent(
-          rawContent: data,
-          pathHint: path,
-          trimLeadingMeta: true,
-          documentId: 'single:$path:${data.hashCode}',
-        );
+        if (data.length > _kSpoolContentThreshold) {
+          // A single very large file: spill it to disk and read it back
+          // file-backed so resident RAM stays bounded (~flat) instead of
+          // holding a multi-hundred-MB string. Falls back to the in-RAM lazy
+          // path if the spool can't be written.
+          final spool = await _spoolStringToFile(data, 'single:$path');
+          if (!mounted || _selectedDiffPath != path) {
+            await spool?.dispose();
+            return;
+          }
+          if (spool != null && spool.byteLength > 0) {
+            // The document ADOPTS the spool (same as the file-spool path
+            // above): its dispose is the whole cleanup, including on a
+            // failed index build inside adoptSpool.
+            parsedDocument = await DiffDocument.adoptSpool(
+              spool,
+              pathHint: path,
+              documentId: 'single-spool:$path:${data.hashCode}',
+              trimLeadingMeta: true,
+            );
+            if (!mounted || _selectedDiffPath != path) {
+              parsedDocument.dispose();
+              return;
+            }
+            pendingSingleSpoolDoc = true;
+          } else {
+            await spool?.dispose();
+            parsedDocument = await DiffDocument.lazyAsync(
+              rawContent: data,
+              pathHint: path,
+              documentId: 'single:$path:${data.hashCode}',
+              trimLeadingMeta: true,
+            );
+            if (!mounted || _selectedDiffPath != path) return;
+          }
+        } else if (data.length > kLazyDiffLengthThreshold) {
+          // Machine-scale diff: build the predictive lazy index cooperatively
+          // so the UI stays responsive (spinner keeps animating) instead of
+          // freezing for seconds while a full parse materializes 15M objects.
+          parsedDocument = await DiffDocument.lazyAsync(
+            rawContent: data,
+            pathHint: path,
+            documentId: 'single:$path:${data.hashCode}',
+            trimLeadingMeta: true,
+          );
+          // The async gap may have outrun this request; bail if so.
+          if (!mounted || _selectedDiffPath != path) return;
+        } else {
+          parsedDocument = DiffDocument.fromRawContent(
+            rawContent: data,
+            pathHint: path,
+            trimLeadingMeta: true,
+            documentId: 'single:$path:${data.hashCode}',
+          );
+        }
         buildStopwatch.stop();
         documentBuildMs = buildStopwatch.elapsedMicroseconds / 1000;
       }
     }
-    if (!mounted || _selectedDiffPath != path) return;
+    if (!mounted || _selectedDiffPath != path) {
+      // Covers the adopted-spool doc (deletes its temp dir) and is a cheap
+      // handle-free no-op for the in-RAM variants.
+      parsedDocument?.dispose();
+      return;
+    }
     setState(() {
       _diffLoading = false;
       if (r.ok) {
@@ -2566,7 +2880,12 @@ class _ChangesPageState extends State<ChangesPage> {
                 ?.files
                 .where((file) => file.path == path)
                 .firstOrNull;
-            if (statusFile != null && parsedDocument.files.isNotEmpty) {
+            if (statusFile != null &&
+                parsedDocument.files.isNotEmpty &&
+                !parsedDocument.files.first.isLazy) {
+              // Only eager per-file docs are worth caching — a lazy doc rebuilt
+              // via fromFiles would hydrate the whole file (freeze). A lazy file
+              // is re-derived cheaply from raw through the lazy path on reopen.
               _rememberDiffFileDocument(
                 _buildMultiDiffFileKey(statusFile),
                 parsedDocument.files.first,
@@ -2579,6 +2898,12 @@ class _ChangesPageState extends State<ChangesPage> {
         _diffError = r.error;
       }
     });
+    // Install/replace the single-file disk-backed document AFTER the new one
+    // is shown, then free the previous one (it is no longer displayed). If this
+    // load produced no spool doc, any prior one is off-screen now → free it too.
+    _activeSingleSpoolDoc.install(
+      pendingSingleSpoolDoc ? parsedDocument : null,
+    );
     if (documentBuildMs != null && documentBuildMs >= 8) {
       await DiagnosticsState.instance.recordUiTiming(
         event: 'changes.diff.document-build',
@@ -2660,8 +2985,10 @@ class _ChangesPageState extends State<ChangesPage> {
     // row builds and any subsequent ensureVisible call (e.g., from
     // a follow-up event) refines the position.
     final avgRowH = (pos.maxScrollExtent + pos.viewportDimension) / totalCount;
-    final target = (idx * avgRowH - pos.viewportDimension * 0.25)
-        .clamp(0.0, pos.maxScrollExtent);
+    final target = (idx * avgRowH - pos.viewportDimension * 0.25).clamp(
+      0.0,
+      pos.maxScrollExtent,
+    );
     _changesListCtrl.animateTo(target, duration: duration, curve: curve);
   }
 
@@ -2711,19 +3038,40 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
+  /// The status snapshot epoch every diff-derivation cache key embeds.
+  /// path|status alone is too coarse an identity: a file edited again stays
+  /// `M` (and re-staging keeps `MM`), so status-shaped keys would serve the
+  /// PREVIOUS edit's parse — a stale diff in a review surface — and freeze
+  /// the machine-scale byte estimate at its first answer. Every content
+  /// change arrives with a status refresh (GitDirWatcher / post-mutation
+  /// reload), which bumps this revision, so no key survives the change it
+  /// should invalidate on. Within one epoch the caches still do their job
+  /// (file switching without re-fetch).
+  int get _statusEpoch => context.read<RepositoryState>().statusRevision;
+
   String _buildMultiDiffScopeKey(List<RepositoryStatusFile> files) {
+    final epoch = _statusEpoch;
     return files
-        .map((file) => '${file.path}|${file.stagedCode}|${file.unstagedCode}')
+        .map(
+          (file) =>
+              '$epoch|${file.path}|${file.stagedCode}|${file.unstagedCode}',
+        )
         .join('||');
   }
 
   String _buildMultiDiffFileKey(RepositoryStatusFile file) =>
-      '${file.path}|${file.stagedCode}|${file.unstagedCode}';
+      '$_statusEpoch|${file.path}|${file.stagedCode}|${file.unstagedCode}';
 
   DiffDocument _singleDocumentFromFileDocument(
     DiffFileDocument fileDocument, {
     required String path,
   }) {
+    assert(
+      !fileDocument.isLazy,
+      'Refusing to materialize a lazy file document — fromFiles would hydrate '
+      'the entire diff. Rebuild the single-file view from its raw slice via the '
+      'lazy path instead.',
+    );
     return DiffDocument.fromFiles(
       files: [fileDocument],
       trimLeadingMeta: true,
@@ -2733,11 +3081,15 @@ class _ChangesPageState extends State<ChangesPage> {
 
   DiffDocument? _cachedSingleDiffDocument(String path) {
     final multiFileDocument = _multiDiffDocument?.filesByPath[path];
+    if (multiFileDocument != null && !multiFileDocument.isLazy) {
+      return _singleDocumentFromFileDocument(multiFileDocument, path: path);
+    }
+    // A lazy multi-file document's per-file entries are metadata-only (no rows).
+    // Return null so `_loadDiff` falls through to a fresh single-file fetch +
+    // build for this path alone — reopening one file must never replay the
+    // whole machine-scale combined diff.
     if (multiFileDocument != null) {
-      return _singleDocumentFromFileDocument(
-        multiFileDocument,
-        path: path,
-      );
+      return null;
     }
     final statusFile = context
         .read<RepositoryState>()
@@ -2749,22 +3101,15 @@ class _ChangesPageState extends State<ChangesPage> {
       return null;
     }
     final fileDocument =
-        _diffFileDocumentCache[_buildMultiDiffFileKey(statusFile)];
+        _diffFileDocumentCache.peek(_buildMultiDiffFileKey(statusFile));
     if (fileDocument == null) {
       return null;
     }
-    return _singleDocumentFromFileDocument(
-      fileDocument,
-      path: path,
-    );
+    return _singleDocumentFromFileDocument(fileDocument, path: path);
   }
 
   void _rememberDiffFileDocument(String fileKey, DiffFileDocument document) {
-    _diffFileDocumentCache.remove(fileKey);
-    _diffFileDocumentCache[fileKey] = document;
-    while (_diffFileDocumentCache.length > _kMaxFileDiffCacheEntries) {
-      _diffFileDocumentCache.remove(_diffFileDocumentCache.keys.first);
-    }
+    _diffFileDocumentCache.put(fileKey, document);
   }
 
   DiffDocument _documentFromFiles(
@@ -2774,7 +3119,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final documents = <DiffFileDocument>[];
     for (final file in files) {
       final fileKey = _buildMultiDiffFileKey(file);
-      final document = _diffFileDocumentCache[fileKey];
+      final document = _diffFileDocumentCache.peek(fileKey);
       if (document != null) {
         documents.add(document);
       }
@@ -2787,11 +3132,7 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   void _rememberMultiDiff(_CachedMultiDiff entry) {
-    _multiDiffCache.remove(entry.scopeKey);
-    _multiDiffCache[entry.scopeKey] = entry;
-    while (_multiDiffCache.length > _kMaxMultiDiffCacheEntries) {
-      _multiDiffCache.remove(_multiDiffCache.keys.first);
-    }
+    _multiDiffCache.put(entry.scopeKey, entry);
   }
 
   _CachedMultiDiff _cacheMultiDiffSnapshot(
@@ -2822,9 +3163,210 @@ class _ChangesPageState extends State<ChangesPage> {
       fileKeyByPath: {
         for (final file in files) file.path: _buildMultiDiffFileKey(file),
       },
+      approxBytes: content.length,
     );
     _rememberMultiDiff(entry);
     return entry;
+  }
+
+  /// Machine-scale combined diff: build ONE lazy predictive index over the whole
+  /// buffer instead of eager-parsing every file into millions of `ParsedLine`s.
+  ///
+  /// The eager path (`_cacheMultiDiffSnapshot`) mints ~5.7x the input in objects
+  /// PER FILE — a single 341 MB file peaks ~3 GB, and a working tree of several
+  /// such files sums past RAM (the marble OOM). The lazy index mints ~0 objects
+  /// beyond the resident buffer and hydrates only the viewport. Measured, not
+  /// guessed: tool/diff_load_sweep.dart. The build scan runs cooperatively
+  /// (yields to the event loop) so the UI never freezes while it runs.
+  Future<_CachedMultiDiff> _cacheLazyMultiDiffSnapshot(
+    String scopeKey,
+    List<RepositoryStatusFile> files,
+    String content,
+  ) async {
+    final document = await DiffDocument.lazyAsync(
+      rawContent: content,
+      documentId: 'multi:$scopeKey',
+    );
+    final entry = _CachedMultiDiff(
+      scopeKey: scopeKey,
+      document: document,
+      fileKeyByPath: {
+        for (final file in files) file.path: _buildMultiDiffFileKey(file),
+      },
+      approxBytes: content.length,
+    );
+    _rememberMultiDiff(entry);
+    return entry;
+  }
+
+  /// Above this estimated selection size, the combined diff is streamed to a
+  /// spool file and read through a [FileByteStore] so resident RAM stays
+  /// independent of diff size (measured flat ~340MB from 32MB to 512MB — see
+  /// tool/diff_load_sweep.dart). Below it, the in-RAM path is faster and the
+  /// bytes fit comfortably. The estimate is the sum of the changed files' sizes
+  /// on disk — a cheap upper-ish bound (a modified file's diff is ~2× its size,
+  /// a new file's ~1×), never a second git call.
+  static const int _kSpoolSelectionThreshold = 64 * 1024 * 1024;
+
+  /// Above this estimated combined size, the concatenated multi-file diff is NOT
+  /// auto-built on open — even file-backed, streaming a multi-GB spool up front
+  /// is slow and rarely what the user wants (nobody scroll-reads 50M lines).
+  /// Instead the changes list stays clickable and each file opens on demand:
+  /// untracked files zero-copy via [DiffDocument.lazyFromWorkingFile], tracked
+  /// via git. Well above any human-reviewable changeset.
+  static const int _kMachineScaleCombinedThreshold = 256 * 1024 * 1024;
+
+  /// Sum of the changed files' on-disk sizes, stopping once it passes [cap] (no
+  /// point stat-ing more). A cheap upper-ish bound on the combined diff size —
+  /// never a git call.
+  int _estimateSelectionBytes(
+    String repo,
+    List<RepositoryStatusFile> files, {
+    int cap = _kSpoolSelectionThreshold,
+  }) => _estimatePathBytes(repo, files.map((f) => f.path), cap: cap);
+
+  int _estimatePathBytes(
+    String repo,
+    Iterable<String> paths, {
+    int cap = _kSpoolSelectionThreshold,
+  }) {
+    var total = 0;
+    for (final path in paths) {
+      try {
+        final abs =
+            '$repo${Platform.pathSeparator}'
+            '${path.replaceAll('/', Platform.pathSeparator)}';
+        final stat = File(abs).statSync();
+        if (stat.type == FileSystemEntityType.file) total += stat.size;
+      } catch (_) {}
+      if (total > cap) break; // early out; no need for more
+    }
+    return total;
+  }
+
+  /// Whether this selection is too large to concatenate into one combined diff
+  /// on open. Cached per scope so the stat sweep runs once per selection change,
+  /// not once per frame, and is re-evaluated whenever the selection changes (so
+  /// switching from a giant repo back to a normal one restores the combined
+  /// view — no sticky state).
+  bool _isMachineScale(String repo, List<RepositoryStatusFile> files) {
+    final scope = _buildMultiDiffScopeKey(files);
+    if (scope != _machineScaleScope) {
+      _machineScaleScope = scope;
+      _machineScaleCached =
+          _estimateSelectionBytes(
+            repo,
+            files,
+            cap: _kMachineScaleCombinedThreshold,
+          ) >
+          _kMachineScaleCombinedThreshold;
+    }
+    return _machineScaleCached;
+  }
+
+  /// A combined diff String this large is spilled to disk and read back
+  /// file-backed rather than held resident (see the retroactive spool in
+  /// `_loadMultiDiff`). Higher than [_kSpoolSelectionThreshold] because reaching
+  /// here means the String already exists and fit — we only pay the spill when
+  /// holding it would be genuinely heavy.
+  static const int _kSpoolContentThreshold = 96 * 1024 * 1024;
+
+  /// Build a file-backed document from [spool], install it as the active
+  /// disk-backed multi-diff (disposing the previous one AFTER the new one is
+  /// shown), and record timing. Returns false if the request went stale mid-
+  /// build (in which case it disposes the fresh doc + spool itself).
+  Future<bool> _applySpooledMultiDiff(
+    SpooledDiff spool,
+    String scopeKey,
+    List<RepositoryStatusFile> requestFiles,
+    Stopwatch stopwatch,
+  ) async {
+    // Identity carries the spool PATH like every other spool-backed id
+    // (unique per fetch — fresh temp dir every time), on top of the scope
+    // key. The scope key alone is already change-complete (it embeds
+    // statusRevision, which bumps on every status snapshot), but the
+    // uniform per-fetch component keeps this path's staleness reasoning
+    // identical to the single-file and PR spool paths instead of
+    // depending on a property proven two modules away.
+    // The document ADOPTS the spool: doc.dispose() is the whole cleanup,
+    // including on a failed index build inside adoptSpool.
+    final doc = await DiffDocument.adoptSpool(
+      spool,
+      documentId: 'multi-spool:$scopeKey:${spool.path}',
+    );
+    if (!mounted || _multiDiffScopeKey != scopeKey) {
+      doc.dispose();
+      return false;
+    }
+    _applyMultiDiffSnapshot(
+      _CachedMultiDiff(
+        scopeKey: scopeKey,
+        document: doc,
+        fileKeyByPath: {
+          for (final file in requestFiles)
+            file.path: _buildMultiDiffFileKey(file),
+        },
+      ),
+      requestFiles,
+    );
+    // The new disk-backed document is now displayed; installing it frees the
+    // previous one (its adopted temp dir goes with it). Order is the
+    // invariant: never free a doc that is still the displayed document.
+    _activeMultiSpoolDoc.install(doc);
+    await _recordUiTimingSample(
+      event: 'changes.multi-diff.spool',
+      stopwatch: stopwatch,
+      phase: 'interaction',
+    );
+    return true;
+  }
+
+  /// Spill an already-built (large) diff String to a temp spool file (bounded,
+  /// surrogate-safe chunks via [spoolStringToTempFile]). Null on I/O failure so
+  /// the caller falls back to the in-RAM path.
+  Future<SpooledDiff?> _spoolStringToFile(
+    String content,
+    String scopeKey,
+  ) async {
+    try {
+      return await spoolStringToTempFile(content);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Dispose the active disk-backed multi-diff document (closing its handle
+  /// and deleting its adopted temp dir). Safe to call when none is active.
+  /// NEVER call while the doc is still the displayed `_multiDiffDocument`.
+  void _disposeActiveMultiSpoolDoc() => _activeMultiSpoolDoc.clear();
+
+  /// Single-file counterpart of [_disposeActiveMultiSpoolDoc]. Same rule:
+  /// never call while the doc is still the displayed `_diffDocument`.
+  void _disposeActiveSingleSpoolDoc() => _activeSingleSpoolDoc.clear();
+
+  /// Show [doc] as the single-file diff and track it as the active file-backed
+  /// document (an adopted spool, or a working-file handle — either way
+  /// [DiffDocument.dispose] is the whole cleanup). The previous one is
+  /// disposed AFTER the new document is on screen, never while displayed.
+  Future<void> _installSingleFileBackedDoc(
+    DiffDocument doc,
+    String path, {
+    required String event,
+    required Stopwatch stopwatch,
+  }) async {
+    setState(() {
+      _hideReviewPane();
+      _diffLoading = false;
+      _visibleDiffPath = path;
+      _diffDocument = doc;
+      _diffError = null;
+    });
+    _activeSingleSpoolDoc.install(doc);
+    await _recordUiTimingSample(
+      event: event,
+      stopwatch: stopwatch,
+      phase: 'interaction',
+    );
   }
 
   _CachedMultiDiff? _cachedMultiDiffFor(
@@ -2839,7 +3381,7 @@ class _ChangesPageState extends State<ChangesPage> {
       );
     }
     final resolvedScopeKey = scopeKey ?? _buildMultiDiffScopeKey(files);
-    final exact = _multiDiffCache[resolvedScopeKey];
+    final exact = _multiDiffCache.peek(resolvedScopeKey);
     if (exact != null) {
       _rememberMultiDiff(exact);
       return exact;
@@ -2860,7 +3402,10 @@ class _ChangesPageState extends State<ChangesPage> {
 
       for (final file in files) {
         final cachedDoc = candidate.document?.filesByPath[file.path];
-        if (cachedDoc != null) {
+        // A lazy multi-file entry holds no rows — it can't seed the single-file
+        // cache. Treat it as a miss so this candidate isn't considered to cover
+        // the file (its content is fetched fresh, per-file, on demand instead).
+        if (cachedDoc != null && !cachedDoc.isLazy) {
           _rememberDiffFileDocument(_buildMultiDiffFileKey(file), cachedDoc);
           continue;
         }
@@ -2890,23 +3435,27 @@ class _ChangesPageState extends State<ChangesPage> {
     List<RepositoryStatusFile> requestFiles,
   ) {
     final document = snapshot.document;
-    final sections = document?.sections
-            .map((section) => _CombinedDiffSection(
-                  path: section.path,
-                  displayName: section.displayName,
-                  index: section.index,
-                  startLine: section.startLine,
-                ))
+    final sections =
+        document?.sections
+            .map(
+              (section) => _CombinedDiffSection(
+                path: section.path,
+                displayName: section.displayName,
+                index: section.index,
+                startLine: section.startLine,
+              ),
+            )
             .toList(growable: false) ??
         const <_CombinedDiffSection>[];
     final currentPath = _multiDiffCurrentPath.value;
-    final hasCurrent = currentPath != null &&
+    final hasCurrent =
+        currentPath != null &&
         requestFiles.any((file) => file.path == currentPath);
     final nextPath = hasCurrent
         ? currentPath
         : (sections.isNotEmpty
-            ? sections.first.path
-            : (requestFiles.isEmpty ? null : requestFiles.first.path));
+              ? sections.first.path
+              : (requestFiles.isEmpty ? null : requestFiles.first.path));
     final nextJumpLine = nextPath == null
         ? null
         : _currentTimelineSectionForPath(sections, nextPath)?.startLine;
@@ -2922,16 +3471,55 @@ class _ChangesPageState extends State<ChangesPage> {
     _multiDiffCurrentPath.value = nextPath;
   }
 
+  /// Guard envelope — same rationale as [_loadDiff]: fired unawaited, so a
+  /// failure inside (spool build, index scan) must land in the pane's error
+  /// state, never as an unhandled async exception behind a stuck spinner.
   Future<void> _loadMultiDiff(
+    String repo,
+    List<RepositoryStatusFile> files,
+  ) async {
+    try {
+      await _loadMultiDiffInner(repo, files);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _multiDiffLoading = false;
+        _multiDiffError = 'failed to load diff: $e';
+      });
+    }
+  }
+
+  Future<void> _loadMultiDiffInner(
     String repo,
     List<RepositoryStatusFile> files,
   ) async {
     final stopwatch = Stopwatch()..start();
     final requestFiles = List<RepositoryStatusFile>.from(files);
     final scopeKey = _buildMultiDiffScopeKey(requestFiles);
+
+    // Machine-scale changeset: don't concatenate a multi-GB combined diff on
+    // open (normally `showMultiDiff` already suppresses this path, but a direct
+    // reload — e.g. after staging — can still reach here). Show per-file views
+    // instead; the changes list stays clickable and each file opens on demand
+    // (untracked = zero-copy via lazyFromWorkingFile, tracked = git).
+    if (_isMachineScale(repo, requestFiles)) {
+      if (!mounted) return;
+      setState(() {
+        _multiDiffScopeKey = scopeKey;
+        _multiDiffLoading = false;
+        _multiDiffError = null;
+        _multiDiffDocument = null;
+        _multiDiffSections = const [];
+      });
+      _disposeActiveMultiSpoolDoc();
+      return;
+    }
+
     final cached = _cachedMultiDiffFor(requestFiles, scopeKey: scopeKey);
     if (cached != null) {
       _applyMultiDiffSnapshot(cached, requestFiles);
+      // Switched to an in-RAM cached document; free any prior disk-backed doc.
+      _disposeActiveMultiSpoolDoc();
       await _recordUiTimingSample(
         event: 'changes.multi-diff.cache-hit',
         stopwatch: stopwatch,
@@ -2945,21 +3533,85 @@ class _ChangesPageState extends State<ChangesPage> {
       _multiDiffLoading = true;
       _multiDiffError = null;
       final currentPath = _multiDiffCurrentPath.value;
-      _multiDiffCurrentPath.value = currentPath != null &&
+      _multiDiffCurrentPath.value =
+          currentPath != null &&
               requestFiles.any((file) => file.path == currentPath)
           ? currentPath
           : (requestFiles.isEmpty ? null : requestFiles.first.path);
     });
+
+    // Machine-scale selection: stream the combined diff to a spool file and
+    // read it through a FileByteStore so resident RAM is independent of diff
+    // size (measured flat ~222MB on real 178MB+326MB marble files). No giant
+    // String is ever built. Below the threshold the in-RAM path stays as-is.
+    // The filesystem estimate cannot measure a tracked deletion: its source
+    // blob lives in HEAD/index, while the working-tree path is already gone.
+    // Such a deletion could be multi-GB, so choose the streaming transport
+    // conservatively before invoking the String-returning API. This is a
+    // transport choice, not a claim that every deletion is machine-scale.
+    final requiresStreaming =
+        selectionContainsTrackedDeletion(requestFiles) ||
+        _estimateSelectionBytes(repo, requestFiles) > _kSpoolSelectionThreshold;
+    if (requiresStreaming) {
+      final spoolResult = await spoolSelectionDiff(repo, requestFiles);
+      if (!mounted || _multiDiffScopeKey != scopeKey) {
+        await spoolResult.data?.dispose();
+        return;
+      }
+      final spool = spoolResult.data;
+      if (spoolResult.ok && spool != null && spool.byteLength > 0) {
+        if (await _applySpooledMultiDiff(
+          spool,
+          scopeKey,
+          requestFiles,
+          stopwatch,
+        )) {
+          return;
+        }
+      }
+      // Spool empty or failed — discard it and fall through to the in-RAM path.
+      await spool?.dispose();
+    }
 
     final result = await getSelectionDiff(repo, requestFiles);
     if (!mounted || _multiDiffScopeKey != scopeKey) {
       return;
     }
 
+    // Last-resort safety net for an estimate miss. Deletions are handled above
+    // before transport selection; this only covers unusual expansion cases.
+    if (result.ok && (result.data?.length ?? 0) > _kSpoolContentThreshold) {
+      final spool = await _spoolStringToFile(result.data!, scopeKey);
+      if (spool != null) {
+        if (!mounted || _multiDiffScopeKey != scopeKey) {
+          await spool.dispose();
+          return;
+        }
+        if (await _applySpooledMultiDiff(
+          spool,
+          scopeKey,
+          requestFiles,
+          stopwatch,
+        )) {
+          return;
+        }
+        await spool.dispose();
+      }
+    }
+
     _CachedMultiDiff? snapshot;
     if (result.ok) {
-      snapshot =
-          _cacheMultiDiffSnapshot(scopeKey, requestFiles, result.data ?? '');
+      final content = result.data ?? '';
+      if (content.length > kLazyDiffLengthThreshold) {
+        snapshot = await _cacheLazyMultiDiffSnapshot(
+          scopeKey,
+          requestFiles,
+          content,
+        );
+        if (!mounted || _multiDiffScopeKey != scopeKey) return;
+      } else {
+        snapshot = _cacheMultiDiffSnapshot(scopeKey, requestFiles, content);
+      }
     }
     if (!mounted || _multiDiffScopeKey != scopeKey) return;
 
@@ -2967,17 +3619,20 @@ class _ChangesPageState extends State<ChangesPage> {
       _multiDiffLoading = false;
       if (result.ok && snapshot != null) {
         final currentPath = _multiDiffCurrentPath.value;
-        final hasCurrent = currentPath != null &&
+        final hasCurrent =
+            currentPath != null &&
             requestFiles.any((file) => file.path == currentPath);
         final nextPath = hasCurrent
             ? currentPath
             : (snapshot.sections.isNotEmpty
-                ? snapshot.sections.first.path
-                : (requestFiles.isEmpty ? null : requestFiles.first.path));
+                  ? snapshot.sections.first.path
+                  : (requestFiles.isEmpty ? null : requestFiles.first.path));
         final nextJumpLine = nextPath == null
             ? null
-            : _currentTimelineSectionForPath(snapshot.sections, nextPath)
-                ?.startLine;
+            : _currentTimelineSectionForPath(
+                snapshot.sections,
+                nextPath,
+              )?.startLine;
         _multiDiffDocument = snapshot.document;
         _multiDiffError = null;
         _multiDiffSections = snapshot.sections;
@@ -2992,6 +3647,8 @@ class _ChangesPageState extends State<ChangesPage> {
         _multiDiffJumpLineIndex = null;
       }
     });
+    // Replaced the displayed document with an in-RAM one; free any prior spool doc.
+    _disposeActiveMultiSpoolDoc();
     await _recordUiTimingSample(
       event: 'changes.multi-diff.load',
       stopwatch: stopwatch,
@@ -3001,14 +3658,12 @@ class _ChangesPageState extends State<ChangesPage> {
     );
   }
 
-  void _primeMultiDiff(
-    String repo,
-    List<RepositoryStatusFile> files,
-  ) {
+  void _primeMultiDiff(String repo, List<RepositoryStatusFile> files) {
     final scopeKey = _buildMultiDiffScopeKey(files);
     if (_multiDiffLoading && _multiDiffScopeKey == scopeKey) {
       return;
     }
+    // Already resolved for this scope (built or errored) — don't re-fire.
     if (_multiDiffScopeKey == scopeKey &&
         (_multiDiffDocument != null || _multiDiffError != null)) {
       return;
@@ -3042,8 +3697,9 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   void _jumpToMultiDiffPath(String path, {int? fallbackStartLine}) {
-    final targetSection =
-        _multiDiffSections.where((section) => section.path == path).firstOrNull;
+    final targetSection = _multiDiffSections
+        .where((section) => section.path == path)
+        .firstOrNull;
     _multiDiffCurrentPath.value = path;
     setState(() {
       _hideReviewPane();
@@ -3207,9 +3863,11 @@ class _ChangesPageState extends State<ChangesPage> {
     RepositoryStatusFile file,
     String repoPath,
   ) {
-    final shiftHeld = HardwareKeyboard.instance.logicalKeysPressed
-        .any((k) => k == LogicalKeyboardKey.shiftLeft ||
-                     k == LogicalKeyboardKey.shiftRight);
+    final shiftHeld = HardwareKeyboard.instance.logicalKeysPressed.any(
+      (k) =>
+          k == LogicalKeyboardKey.shiftLeft ||
+          k == LogicalKeyboardKey.shiftRight,
+    );
     if (shiftHeld && _includedPaths.length > 1) {
       _showSelectionContextMenu(context, globalPos, repoPath);
       return;
@@ -3238,8 +3896,9 @@ class _ChangesPageState extends State<ChangesPage> {
         : const <RepositoryStatusFile>[];
     final t = context.tokens;
 
-    final changedPathSet =
-        status == null ? <String>{} : status.files.map((f) => f.path).toSet();
+    final changedPathSet = status == null
+        ? <String>{}
+        : status.files.map((f) => f.path).toSet();
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     final matrix = context.read<FileCouplingState>().matrixFor(repoPath);
 
@@ -3258,7 +3917,11 @@ class _ChangesPageState extends State<ChangesPage> {
 
     // Likely co-changes fold into "Include" action when present.
     final likely = _likelyCoChangesFor(
-      context, repoPath, file.path, changedPathSet, _includedPaths,
+      context,
+      repoPath,
+      file.path,
+      changedPathSet,
+      _includedPaths,
     );
     final checkedLikely = Set<String>.from(likely);
 
@@ -3273,8 +3936,7 @@ class _ChangesPageState extends State<ChangesPage> {
             data: minimap,
             tokens: t,
             onMissingTap: minimap.missingPath != null
-                ? () => setState(() =>
-                    _includedPaths.add(minimap.missingPath!))
+                ? () => setState(() => _includedPaths.add(minimap.missingPath!))
                 : null,
           ),
         ),
@@ -3353,8 +4015,16 @@ class _ChangesPageState extends State<ChangesPage> {
           label: context.t.changes.fileMenu.ignore,
           onTap: () => _ignorePattern(context, repoPath, file.path),
           submenuBuilder: () => _ignoreSubmenu(
-            context, t, file, repoPath, basename, ext,
-            status, matrix, multi, selectedFiles,
+            context,
+            t,
+            file,
+            repoPath,
+            basename,
+            ext,
+            status,
+            matrix,
+            multi,
+            selectedFiles,
           ),
         ),
       ]),
@@ -3371,24 +4041,29 @@ class _ChangesPageState extends State<ChangesPage> {
                       if (i == _activeTabIndex) continue;
                       final tab = _tabs[i];
                       final name = _tabLabel(tab);
-                      items.add(AppContextMenuItem(
-                        icon: Icons.input_outlined,
-                        label: context.t.changes.fileMenu.addSelectedToTab(name: name),
-                        trailing: Text(
-                          '${tab.includedPaths.length}',
-                          style: TextStyle(
-                            color: t.textFaint,
-                            fontSize: 10,
+                      items.add(
+                        AppContextMenuItem(
+                          icon: Icons.input_outlined,
+                          label: context.t.changes.fileMenu.addSelectedToTab(
+                            name: name,
                           ),
+                          trailing: Text(
+                            '${tab.includedPaths.length}',
+                            style: TextStyle(color: t.textFaint, fontSize: 10),
+                          ),
+                          onTap: () =>
+                              _moveToTab(i, Set<String>.from(_includedPaths)),
                         ),
-                        onTap: () => _moveToTab(i, Set<String>.from(_includedPaths)),
-                      ));
+                      );
                     }
-                    items.add(AppContextMenuItem(
-                      icon: Icons.splitscreen_outlined,
-                      label: context.t.changes.fileMenu.diffTabFromSelection,
-                      onTap: () => _splitToNewTab(Set<String>.from(_includedPaths)),
-                    ));
+                    items.add(
+                      AppContextMenuItem(
+                        icon: Icons.splitscreen_outlined,
+                        label: context.t.changes.fileMenu.diffTabFromSelection,
+                        onTap: () =>
+                            _splitToNewTab(Set<String>.from(_includedPaths)),
+                      ),
+                    );
                     return items;
                   }
                 : null,
@@ -3407,24 +4082,30 @@ class _ChangesPageState extends State<ChangesPage> {
                       if (i == _activeTabIndex) continue;
                       final tab = _tabs[i];
                       final name = _tabLabel(tab);
-                      items.add(AppContextMenuItem(
-                        icon: Icons.input_outlined,
-                        label: context.t.changes.fileMenu.addFileToTab(file: basename, tab: name),
-                        trailing: Text(
-                          '${tab.includedPaths.length}',
-                          style: TextStyle(
-                            color: t.textFaint,
-                            fontSize: 10,
+                      items.add(
+                        AppContextMenuItem(
+                          icon: Icons.input_outlined,
+                          label: context.t.changes.fileMenu.addFileToTab(
+                            file: basename,
+                            tab: name,
                           ),
+                          trailing: Text(
+                            '${tab.includedPaths.length}',
+                            style: TextStyle(color: t.textFaint, fontSize: 10),
+                          ),
+                          onTap: () => _moveToTab(i, {file.path}),
                         ),
-                        onTap: () => _moveToTab(i, {file.path}),
-                      ));
+                      );
                     }
-                    items.add(AppContextMenuItem(
-                      icon: Icons.splitscreen_outlined,
-                      label: context.t.changes.fileMenu.diffTabFromFile(name: basename),
-                      onTap: () => _splitToNewTab({file.path}),
-                    ));
+                    items.add(
+                      AppContextMenuItem(
+                        icon: Icons.splitscreen_outlined,
+                        label: context.t.changes.fileMenu.diffTabFromFile(
+                          name: basename,
+                        ),
+                        onTap: () => _splitToNewTab({file.path}),
+                      ),
+                    );
                     return items;
                   }
                 : null,
@@ -3475,8 +4156,9 @@ class _ChangesPageState extends State<ChangesPage> {
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     final matrix = context.read<FileCouplingState>().matrixFor(repoPath);
     final status = context.read<RepositoryState>().status;
-    final changedPaths =
-        status == null ? <String>{} : status.files.map((f) => f.path).toSet();
+    final changedPaths = status == null
+        ? <String>{}
+        : status.files.map((f) => f.path).toSet();
     final selected = _includedPaths.toList();
 
     // Cohesion.
@@ -3501,8 +4183,7 @@ class _ChangesPageState extends State<ChangesPage> {
         for (final fp in selected) {
           final id = engine.pathToId[fp];
           if (id != null && id < labels.length) {
-            clusterCounts[labels[id]] =
-                (clusterCounts[labels[id]] ?? 0) + 1;
+            clusterCounts[labels[id]] = (clusterCounts[labels[id]] ?? 0) + 1;
           }
         }
         if (clusterCounts.length == 1) {
@@ -3511,10 +4192,13 @@ class _ChangesPageState extends State<ChangesPage> {
           final parts = clusterCounts.values.toList()
             ..sort((a, b) => b.compareTo(a));
           clusterLine = context.t.changes.multiFileMenu.clusterSpansDetailed(
-              count: clusterCounts.length, parts: parts.join(' + '));
+            count: clusterCounts.length,
+            parts: parts.join(' + '),
+          );
         } else {
-          clusterLine = context.t.changes.multiFileMenu
-              .clusterSpans(count: clusterCounts.length);
+          clusterLine = context.t.changes.multiFileMenu.clusterSpans(
+            count: clusterCounts.length,
+          );
         }
       }
     }
@@ -3543,13 +4227,16 @@ class _ChangesPageState extends State<ChangesPage> {
       totalCommits = engine.stats.totalCommits;
       for (final fp in selected) {
         allIndices.addAll(
-            engine.stats.perFileCommitIndices[fp] ?? const <int>[]);
+          engine.stats.perFileCommitIndices[fp] ?? const <int>[],
+        );
       }
     }
 
     // Build the card.
-    final roleLine = context.t.changes.multiFileMenu
-        .roleLine(count: selected.length, cohesion: cohesionLabel);
+    final roleLine = context.t.changes.multiFileMenu.roleLine(
+      count: selected.length,
+      cohesion: cohesionLabel,
+    );
 
     final lines = <Widget>[
       Text(
@@ -3565,36 +4252,43 @@ class _ChangesPageState extends State<ChangesPage> {
 
     if (clusterLine != null) {
       lines.add(const SizedBox(height: 3));
-      lines.add(Text(
-        clusterLine,
-        style: TextStyle(
-          color: t.textFaint,
-          fontSize: 10.5,
-          letterSpacing: 0.2,
+      lines.add(
+        Text(
+          clusterLine,
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 10.5,
+            letterSpacing: 0.2,
+          ),
         ),
-      ));
+      );
     }
 
     for (final e in topMissing) {
       lines.add(const SizedBox(height: 3));
-      lines.add(_MinimapHoverLine(
-        text: context.t.changes.multiFileMenu
-            .usuallyChangesWithGroup(file: p.basename(e.key)),
-        color: t.textMuted.withValues(alpha: 0.9),
-        hoverColor: t.accentBright.withValues(alpha: 0.15),
-        onTap: () {
-          setState(() => _includedPaths.add(e.key));
-        },
-      ));
+      lines.add(
+        _MinimapHoverLine(
+          text: context.t.changes.multiFileMenu.usuallyChangesWithGroup(
+            file: p.basename(e.key),
+          ),
+          color: t.textMuted.withValues(alpha: 0.9),
+          hoverColor: t.accentBright.withValues(alpha: 0.15),
+          onTap: () {
+            setState(() => _includedPaths.add(e.key));
+          },
+        ),
+      );
     }
 
     if (totalCommits > 0 && allIndices.isNotEmpty) {
       lines.add(const SizedBox(height: 4));
-      lines.add(_RhythmSpark(
-        commitIndices: allIndices,
-        totalCommits: totalCommits,
-        tokens: t,
-      ));
+      lines.add(
+        _RhythmSpark(
+          commitIndices: allIndices,
+          totalCommits: totalCommits,
+          tokens: t,
+        ),
+      );
     }
 
     final sections = <MenuSection>[
@@ -3624,7 +4318,9 @@ class _ChangesPageState extends State<ChangesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
-          label: context.t.changes.multiFileMenu.copyPaths(count: selected.length),
+          label: context.t.changes.multiFileMenu.copyPaths(
+            count: selected.length,
+          ),
           onTap: () => _copyToClipboard(selected.join('\n')),
         ),
       ]),
@@ -3750,10 +4446,9 @@ class _ChangesPageState extends State<ChangesPage> {
     final coupled = matrix == null
         ? const <MapEntry<String, double>>[]
         : matrix
-            .topJaccardNeighbours(file.path,
-                minScore: 0.10, limit: 5)
-            .where((e) => _includedPaths.contains(e.key))
-            .toList();
+              .topJaccardNeighbours(file.path, minScore: 0.10, limit: 5)
+              .where((e) => _includedPaths.contains(e.key))
+              .toList();
 
     final patternStyle = TextStyle(
       fontFamily: AppFonts.mono,
@@ -3771,7 +4466,10 @@ class _ChangesPageState extends State<ChangesPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(label, style: TextStyle(color: t.textNormal, fontSize: 12)),
+                Text(
+                  label,
+                  style: TextStyle(color: t.textNormal, fontSize: 12),
+                ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: Text(pattern, style: patternStyle),
@@ -3801,13 +4499,19 @@ class _ChangesPageState extends State<ChangesPage> {
         AppContextMenuItem(
           icon: Icons.folder_outlined,
           label: '${p.posix.basename(dir)}/',
-          custom: twoLine(Icons.folder_outlined, '${p.posix.basename(dir)}/', '$dir/'),
+          custom: twoLine(
+            Icons.folder_outlined,
+            '${p.posix.basename(dir)}/',
+            '$dir/',
+          ),
           onTap: () => _ignorePattern(context, repoPath, '$dir/'),
         ),
       if (multi)
         AppContextMenuItem(
           icon: Icons.checklist_outlined,
-          label: context.t.changes.ignoreMenu.allSelected(count: selectedFiles.length),
+          label: context.t.changes.ignoreMenu.allSelected(
+            count: selectedFiles.length,
+          ),
           onTap: () {
             for (final f in selectedFiles) {
               _ignorePattern(context, repoPath, f.path);
@@ -3824,8 +4528,7 @@ class _ChangesPageState extends State<ChangesPage> {
           trailing: Text(
             coupled
                 .take(3)
-                .map((e) =>
-                    '${p.basename(e.key)} ${(e.value * 100).round()}%')
+                .map((e) => '${p.basename(e.key)} ${(e.value * 100).round()}%')
                 .join(', '),
             style: patternStyle.copyWith(
               color: t.stateModified.withValues(alpha: 0.7),
@@ -3860,7 +4563,8 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _revealInExplorer(String repoPath, String relPath) async {
-    final absPath = '$repoPath${Platform.pathSeparator}'
+    final absPath =
+        '$repoPath${Platform.pathSeparator}'
         '${relPath.replaceAll('/', Platform.pathSeparator)}';
     try {
       await revealInFileManager(absPath);
@@ -3884,8 +4588,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // don't have to revisit `context` after async gaps.
     final repoState = context.read<RepositoryState>();
     final coord = context.read<UndoCoordinator>();
-    final windowSec =
-        context.read<PreferencesState>().undoWindowFor(UndoActionKind.discard);
+    final windowSec = context.read<PreferencesState>().undoWindowFor(
+      UndoActionKind.discard,
+    );
     final isUntracked = file.isUntracked;
     final basename = p.basename(file.path);
     final confirmed = await showDialog<bool>(
@@ -3909,12 +4614,17 @@ class _ChangesPageState extends State<ChangesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+              child: Text(
+                ctx.t.common.cancel,
+                style: TextStyle(color: t.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
               child: Text(
-                isUntracked ? ctx.t.common.delete : ctx.t.changes.discard.discard,
+                isUntracked
+                    ? ctx.t.common.delete
+                    : ctx.t.changes.discard.discard,
                 style: TextStyle(color: t.stateDeleted),
               ),
             ),
@@ -3969,8 +4679,9 @@ class _ChangesPageState extends State<ChangesPage> {
     if (files.isEmpty) return;
     final repoState = context.read<RepositoryState>();
     final coord = context.read<UndoCoordinator>();
-    final windowSec =
-        context.read<PreferencesState>().undoWindowFor(UndoActionKind.discard);
+    final windowSec = context.read<PreferencesState>().undoWindowFor(
+      UndoActionKind.discard,
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -4003,8 +4714,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             padding: const EdgeInsets.symmetric(vertical: 2),
                             child: Text(
                               f.path,
-                              style:
-                                  TextStyle(color: t.textMuted, fontSize: 11),
+                              style: TextStyle(
+                                color: t.textMuted,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                       ],
@@ -4017,7 +4730,10 @@ class _ChangesPageState extends State<ChangesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+              child: Text(
+                ctx.t.common.cancel,
+                style: TextStyle(color: t.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
@@ -4055,8 +4771,9 @@ class _ChangesPageState extends State<ChangesPage> {
         if (!mounted) return;
         setState(() {
           _includedPaths.removeAll(discarded);
-          _actionError =
-              failed > 0 ? (firstErr ?? t.changes.discard.someFailed) : null;
+          _actionError = failed > 0
+              ? (firstErr ?? t.changes.discard.someFailed)
+              : null;
         });
         await repoState.refreshStatus();
       },
@@ -4079,9 +4796,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // Dropping a desk onto its own changes page is a no-op — nothing
     // to dump, and the UI would just spin. Soft-fail with a hint.
     if (p.equals(deskPath, repoPath)) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        SnackBar(content: Text(t.changes.snack.sameWorktree)),
-      );
+      ScaffoldMessenger.of(
+        ctx,
+      ).showSnackBar(SnackBar(content: Text(t.changes.snack.sameWorktree)));
       return;
     }
     // Capture context-dependent values before async gap.
@@ -4092,15 +4809,16 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     if (!result.ok) {
       messenger.showSnackBar(
-        SnackBar(content: Text(t.changes.snack.diffFailed(error: '${result.error}'))),
+        SnackBar(
+          content: Text(t.changes.snack.diffFailed(error: '${result.error}')),
+        ),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
       messenger.showSnackBar(
-        SnackBar(
-            content: Text(t.changes.snack.deskEmpty)),
+        SnackBar(content: Text(t.changes.snack.deskEmpty)),
       );
       return;
     }
@@ -4131,7 +4849,11 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     if (!result.ok) {
       messenger.showSnackBar(
-        SnackBar(content: Text(t.changes.snack.shelfReadFailed(error: '${result.error}'))),
+        SnackBar(
+          content: Text(
+            t.changes.snack.shelfReadFailed(error: '${result.error}'),
+          ),
+        ),
       );
       return;
     }
@@ -4204,8 +4926,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return t.changes.tooltips.commitSelectFile;
     }
     if (!_hasCommitAiSelection(aiSettings)) {
-      return _commitAiError ??
-          t.changes.tooltips.commitConfigure;
+      return _commitAiError ?? t.changes.tooltips.commitConfigure;
     }
     // The second category is "Fast" — the typical default for commit gen.
     final commitLabel = aiSettings
@@ -4221,7 +4942,9 @@ class _ChangesPageState extends State<ChangesPage> {
 
   String _museTooltip(AiSettingsState aiSettings, int includedCount) {
     if (_museRunning) {
-      return _isMuseDrawerOpen ? t.changes.tooltips.museConsulting : t.changes.tooltips.showMuse;
+      return _isMuseDrawerOpen
+          ? t.changes.tooltips.museConsulting
+          : t.changes.tooltips.showMuse;
     }
     if (includedCount == 0) return t.changes.tooltips.museSelectFile;
     if (_museResult != null) return t.changes.tooltips.showMuse;
@@ -4232,7 +4955,8 @@ class _ChangesPageState extends State<ChangesPage> {
     // hood; what we show here is the human-facing name. Fallbacks are
     // positional, not name-based, so any custom categories scale in.
     String? labelOf(String preferredId) {
-      final cat = _commitAiCategories
+      final cat =
+          _commitAiCategories
               .where((c) => c.id == preferredId && c.models.isNotEmpty)
               .firstOrNull ??
           _commitAiCategories.where((c) => c.models.isNotEmpty).firstOrNull;
@@ -4245,12 +4969,17 @@ class _ChangesPageState extends State<ChangesPage> {
     if (brainstormLabel == null || synthesisLabel == null) {
       return t.changes.tooltips.museAsk;
     }
-    return t.changes.tooltips
-        .museAskWithModels(brainstorm: brainstormLabel, synthesis: synthesisLabel);
+    return t.changes.tooltips.museAskWithModels(
+      brainstorm: brainstormLabel,
+      synthesis: synthesisLabel,
+    );
   }
 
   String _reviewAiTooltip(
-      AiSettingsState aiSettings, int includedCount, int guardrailStage) {
+    AiSettingsState aiSettings,
+    int includedCount,
+    int guardrailStage,
+  ) {
     final hasPersistentReview = _hasReviewStateForCurrentSelection();
     // The first category is "Quality" — the typical default for review.
     final reviewLabel = aiSettings
@@ -4263,7 +4992,9 @@ class _ChangesPageState extends State<ChangesPage> {
         .toLowerCase();
     final guardrail = _guardrailLabelForStage(guardrailStage).toLowerCase();
     if (_reviewRunning) {
-      return _isReviewDrawerOpen ? t.changes.tooltips.reviewing : t.changes.tooltips.showReview;
+      return _isReviewDrawerOpen
+          ? t.changes.tooltips.reviewing
+          : t.changes.tooltips.showReview;
     }
     if (_commitAiLoading) {
       return t.changes.tooltips.reviewPreparing;
@@ -4277,11 +5008,16 @@ class _ChangesPageState extends State<ChangesPage> {
     if (hasPersistentReview) {
       if (_isReviewDrawerOpen) {
         final verdict = _reviewResult?.verdict;
-        return verdict != null ? verdict.toLowerCase() : t.changes.tooltips.viewingReview;
+        return verdict != null
+            ? verdict.toLowerCase()
+            : t.changes.tooltips.viewingReview;
       }
       return t.changes.tooltips.showReview;
     }
-    return t.changes.tooltips.reviewWith(guardrail: guardrail, label: reviewLabel);
+    return t.changes.tooltips.reviewWith(
+      guardrail: guardrail,
+      label: reviewLabel,
+    );
   }
 
   bool _hasReviewStateForCurrentSelection() {
@@ -4351,7 +5087,8 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   String _reviewModelLabel(AiSettingsState aiSettings) {
-    final selectedCategory = _commitAiCategories
+    final selectedCategory =
+        _commitAiCategories
             .where(
               (category) =>
                   category.id == aiSettings.reviewCommitModelCategoryId &&
@@ -4364,7 +5101,8 @@ class _ChangesPageState extends State<ChangesPage> {
     if (selectedCategory == null) {
       return t.changes.commit.noModelLabel;
     }
-    final selectedModel = selectedCategory.models
+    final selectedModel =
+        selectedCategory.models
             .where(
               (model) =>
                   model.value ==
@@ -4423,8 +5161,9 @@ class _ChangesPageState extends State<ChangesPage> {
       return _commitAiCategories;
     }
 
-    final ok =
-        await aiSettings.refreshModelCategories(forceRefresh: forceRefresh);
+    final ok = await aiSettings.refreshModelCategories(
+      forceRefresh: forceRefresh,
+    );
     if (!mounted) {
       return null;
     }
@@ -4460,8 +5199,10 @@ class _ChangesPageState extends State<ChangesPage> {
     if (_mergeResolving) return;
     final status = context.read<RepositoryState>().status;
     if (status == null) return;
-    final conflicted =
-        status.files.where((f) => f.isConflicted).map((f) => f.path).toList();
+    final conflicted = status.files
+        .where((f) => f.isConflicted)
+        .map((f) => f.path)
+        .toList();
     if (conflicted.isEmpty) return;
     // Delegates to the shared AI resolver so the Changes-page strip and the
     // unified conflict window run identical logic (read → prompt → patch
@@ -4483,9 +5224,10 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<void> _concludePausedRebase(String repoPath) async {
     if (!await isRebaseInProgress(repoPath)) return;
     if (!mounted) return;
-    final hasUu = (context.read<RepositoryState>().status?.files ??
-            const <RepositoryStatusFile>[])
-        .any((f) => f.isConflicted);
+    final hasUu =
+        (context.read<RepositoryState>().status?.files ??
+                const <RepositoryStatusFile>[])
+            .any((f) => f.isConflicted);
     if (hasUu) return; // still conflicts; leave the rebase paused for the strip
     final r = await continueRebase(repoPath);
     if (!mounted) return;
@@ -4500,7 +5242,9 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _openManualMergeEditor(
-      String repoPath, Set<String> conflictedPaths) async {
+    String repoPath,
+    Set<String> conflictedPaths,
+  ) async {
     // Delegates to the shared conflict path (gather → enrich → editor →
     // refresh) so the Changes-page landing zone, the patch preview, and the
     // pull flow all resolve conflicts through one implementation.
@@ -4540,8 +5284,11 @@ class _ChangesPageState extends State<ChangesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(context.t.changes.snack.noModelConfigured(
-              label: aiSettings.labelForCategory(categoryId, categoryId))),
+          content: Text(
+            context.t.changes.snack.noModelConfigured(
+              label: aiSettings.labelForCategory(categoryId, categoryId),
+            ),
+          ),
         ),
       );
       return;
@@ -4736,8 +5483,7 @@ class _ChangesPageState extends State<ChangesPage> {
       );
       if (mounted) {
         setState(() {
-          _actionError =
-              _commitAiError ?? t.changes.commit.aiUnavailable;
+          _actionError = _commitAiError ?? t.changes.commit.aiUnavailable;
         });
       }
       return;
@@ -4746,7 +5492,8 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final aiSettings = context.read<AiSettingsState>();
     final preferences = context.read<PreferencesState>();
-    final selectedCategory = categories
+    final selectedCategory =
+        categories
             .where(
               (category) =>
                   category.id == aiSettings.commitMessageModelCategoryId &&
@@ -4768,7 +5515,8 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
 
-    final selectedModel = selectedCategory.models
+    final selectedModel =
+        selectedCategory.models
             .where(
               (model) =>
                   model.value ==
@@ -4789,11 +5537,14 @@ class _ChangesPageState extends State<ChangesPage> {
     // IDF-ranking and coupling sections (logos φ + engram wells still
     // emit). Read from state once so the values are stable for this
     // invocation even if state notifies mid-call.
-    final couplingMatrix =
-        context.read<FileCouplingState>().matrixFor(repoPath);
+    final couplingMatrix = context.read<FileCouplingState>().matrixFor(
+      repoPath,
+    );
 
-    final genEffort =
-        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
+    final genEffort = aiSettings.resolveEffort(
+      selectedCategory.id,
+      selectedModel.value,
+    );
     final result = await generateCommitMessage(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -4828,7 +5579,7 @@ class _ChangesPageState extends State<ChangesPage> {
       if (!mounted) return;
       final stillHere =
           context.read<RepositoryState>().activePath == repoPath &&
-              _generateRecord?.scopeKey == scopeKey;
+          _generateRecord?.scopeKey == scopeKey;
       if (stillHere) {
         _commitMsgCtrl.text = result.data!.message;
         _commitMsgCtrl.selection = TextSelection.collapsed(
@@ -4839,7 +5590,9 @@ class _ChangesPageState extends State<ChangesPage> {
           _generateFlash = true;
         });
         _scheduleFlashClear(
-            AiActivityKind.generate, () => _generateFlash = false);
+          AiActivityKind.generate,
+          () => _generateFlash = false,
+        );
       }
     } else {
       activity.fail(
@@ -4855,10 +5608,7 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-  Future<void> _reviewCommit(
-    String repoPath,
-    RepositoryStatus status,
-  ) async {
+  Future<void> _reviewCommit(String repoPath, RepositoryStatus status) async {
     // Defense-in-depth: review is AI — bail when hidden.
     if (context.read<PreferencesState>().hideAiFeatures) return;
     final included = status.files
@@ -4912,7 +5662,8 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final aiSettings = context.read<AiSettingsState>();
     final preferences = context.read<PreferencesState>();
-    final selectedCategory = categories
+    final selectedCategory =
+        categories
             .where(
               (category) =>
                   category.id == aiSettings.reviewCommitModelCategoryId &&
@@ -4931,7 +5682,8 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
 
-    final selectedModel = selectedCategory.models
+    final selectedModel =
+        selectedCategory.models
             .where(
               (model) =>
                   model.value ==
@@ -4950,11 +5702,14 @@ class _ChangesPageState extends State<ChangesPage> {
         ? 'all included files'
         : '${included.length} included file${included.length == 1 ? '' : 's'}';
 
-    final reviewCouplingMatrix =
-        context.read<FileCouplingState>().matrixFor(repoPath);
+    final reviewCouplingMatrix = context.read<FileCouplingState>().matrixFor(
+      repoPath,
+    );
 
-    final revEffort =
-        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
+    final revEffort = aiSettings.resolveEffort(
+      selectedCategory.id,
+      selectedModel.value,
+    );
     _snapshotReviewEffort[repoPath] = revEffort.effort;
     _snapshotReviewFast[repoPath] = revEffort.fast;
     final result = await reviewCommit(
@@ -5004,7 +5759,9 @@ class _ChangesPageState extends State<ChangesPage> {
             _reviewFlash = true;
           });
           _scheduleFlashClear(
-              AiActivityKind.review, () => _reviewFlash = false);
+            AiActivityKind.review,
+            () => _reviewFlash = false,
+          );
           activity.markSeen(repoPath: repoPath, kind: AiActivityKind.review);
         } else {
           setState(() {
@@ -5012,7 +5769,9 @@ class _ChangesPageState extends State<ChangesPage> {
             _reviewFlash = true;
           });
           _scheduleFlashClear(
-              AiActivityKind.review, () => _reviewFlash = false);
+            AiActivityKind.review,
+            () => _reviewFlash = false,
+          );
         }
       }
     } else {
@@ -5026,10 +5785,7 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-  Future<void> _runMuse(
-    String repoPath,
-    RepositoryStatus status,
-  ) async {
+  Future<void> _runMuse(String repoPath, RepositoryStatus status) async {
     // Defense-in-depth: muse is AI — bail when hidden.
     if (context.read<PreferencesState>().hideAiFeatures) return;
     final included = status.files
@@ -5105,11 +5861,12 @@ class _ChangesPageState extends State<ChangesPage> {
           category.models.firstOrNull;
     }
 
-    final synthesisCategory =
-        pickCategory(aiSettings.museSynthesisModelCategoryId);
+    final synthesisCategory = pickCategory(
+      aiSettings.museSynthesisModelCategoryId,
+    );
     final brainstormCategory =
         pickCategory(aiSettings.museBrainstormModelCategoryId) ??
-            synthesisCategory;
+        synthesisCategory;
 
     if (synthesisCategory == null || brainstormCategory == null) {
       activity.fail(
@@ -5138,13 +5895,18 @@ class _ChangesPageState extends State<ChangesPage> {
         ? 'all included files'
         : '${included.length} included file${included.length == 1 ? '' : 's'}';
 
-    final museCouplingMatrix =
-        context.read<FileCouplingState>().matrixFor(repoPath);
+    final museCouplingMatrix = context.read<FileCouplingState>().matrixFor(
+      repoPath,
+    );
 
     final brainEffort = aiSettings.resolveEffort(
-        brainstormCategory.id, brainstormModel.value);
+      brainstormCategory.id,
+      brainstormModel.value,
+    );
     final synthEffort = aiSettings.resolveEffort(
-        synthesisCategory.id, synthesisModel.value);
+      synthesisCategory.id,
+      synthesisModel.value,
+    );
     _snapshotMuseSynthEffort[repoPath] = synthEffort.effort;
     _snapshotMuseSynthFast[repoPath] = synthEffort.fast;
     final result = await runMuse(
@@ -5225,7 +5987,8 @@ class _ChangesPageState extends State<ChangesPage> {
 
   Future<void> _copyReviewReport(AiCommitReviewData review) async {
     await Clipboard.setData(
-        ClipboardData(text: renderCommitReviewReport(review)));
+      ClipboardData(text: renderCommitReviewReport(review)),
+    );
     if (!mounted) {
       return;
     }
@@ -5234,8 +5997,10 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
-  Future<void> _copyMuseReport(AiMuseData muse,
-      {Set<AiMuseProposal>? selection}) async {
+  Future<void> _copyMuseReport(
+    AiMuseData muse, {
+    Set<AiMuseProposal>? selection,
+  }) async {
     // Walk the same section structure the panel renders so the clipboard
     // reads top-to-bottom exactly like the output on screen. A non-null
     // selection narrows the export to the chosen proposal cards.
@@ -5281,7 +6046,9 @@ class _ChangesPageState extends State<ChangesPage> {
         if (primaryAction.syncAfterCommit)
           AppContextMenuItem(
             icon: Icons.merge_type_outlined,
-            label: context.t.changes.commit.amendAnd(action: primaryAction.label.toLowerCase()),
+            label: context.t.changes.commit.amendAnd(
+              action: primaryAction.label.toLowerCase(),
+            ),
             onTap: () => _commit(
               repoPath,
               status,
@@ -5306,8 +6073,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .toList();
 
     if (included.isEmpty) {
-      setState(
-          () => _actionError = t.changes.commit.chooseFile);
+      setState(() => _actionError = t.changes.commit.chooseFile);
       return;
     }
     // Amend allows empty message — `git commit --amend` keeps the
@@ -5336,14 +6102,22 @@ class _ChangesPageState extends State<ChangesPage> {
     final isSync = mode == _CommitRunMode.commitAndSync;
     final kind = isSync ? UndoActionKind.commitAndPush : UndoActionKind.commit;
     final windowSec = context.read<PreferencesState>().undoWindowFor(kind);
-    final label = isSync ? t.changes.commit.committingSync : t.changes.commit.committing;
+    final label = isSync
+        ? t.changes.commit.committingSync
+        : t.changes.commit.committing;
 
     final outcome = await coord.schedule<_CommitOutcome>(
       kind: kind,
       label: label,
       window: Duration(seconds: windowSec),
-      run: () => _runCommitFlow(repoPath, status, mode, included, message,
-          amend: amend),
+      run: () => _runCommitFlow(
+        repoPath,
+        status,
+        mode,
+        included,
+        message,
+        amend: amend,
+      ),
     );
 
     if (!mounted) return;
@@ -5411,7 +6185,8 @@ class _ChangesPageState extends State<ChangesPage> {
                 // the same repo+branch scope it was captured from — writing
                 // into the shared controller under another repo would plant
                 // repo A's message in repo B's composer.
-                final sameScope = mounted &&
+                final sameScope =
+                    mounted &&
                     _lastDraftRepoPath == repoPath &&
                     _lastDraftBranch == baseBranch;
                 if (sameScope) {
@@ -5429,7 +6204,11 @@ class _ChangesPageState extends State<ChangesPage> {
                 // matter where it fired.
                 if (baseMessage.trim().isEmpty) return;
                 await _parkComposerState(
-                    repoPath, baseBranch, baseMessage, baseTags);
+                  repoPath,
+                  baseBranch,
+                  baseMessage,
+                  baseTags,
+                );
               },
       );
     }
@@ -5441,10 +6220,12 @@ class _ChangesPageState extends State<ChangesPage> {
     // branch, so every commit pays the lookup but only desk-branch
     // commits pay the diff fetch.
     final branchAfterCommit = status.branch;
-    unawaited(context.read<DeskPrState>().recomputeDiffStats(
-          repoPath: repoPath,
-          branch: branchAfterCommit,
-        ));
+    unawaited(
+      context.read<DeskPrState>().recomputeDiffStats(
+        repoPath: repoPath,
+        branch: branchAfterCommit,
+      ),
+    );
   }
 
   /// The actual stage+commit+optional-push sequence. Wrapped in
@@ -5465,7 +6246,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // selections are captured and restored after the commit.
     final planResult = await prepareCommitStaging(repoPath, included);
     if (!planResult.ok) {
-      return _CommitOutcome.err(planResult.error ?? t.changes.commit.stageFailed);
+      return _CommitOutcome.err(
+        planResult.error ?? t.changes.commit.stageFailed,
+      );
     }
     final plan = planResult.data!;
 
@@ -5504,7 +6287,8 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       if (!restore.ok) {
         return _CommitOutcome.err(
-            t.changes.commit.restoreFailedRetry(err: commitErr));
+          t.changes.commit.restoreFailedRetry(err: commitErr),
+        );
       }
       return _CommitOutcome.err(commitErr);
     }
@@ -5513,8 +6297,10 @@ class _ChangesPageState extends State<ChangesPage> {
     final shortHash = committed.commitHash.length >= 8
         ? committed.commitHash.substring(0, 8)
         : committed.commitHash;
-    var successMessage =
-        t.changes.commit.committedSummary(summary: committed.summary, hash: shortHash);
+    var successMessage = t.changes.commit.committedSummary(
+      summary: committed.summary,
+      hash: shortHash,
+    );
     // Non-fatal: the commit landed either way. A reconcile warning here
     // means only the live-index tidiness step after the commit hiccuped —
     // see [CommitAttemptResult.reconcileWarning] — never that anything
@@ -5546,13 +6332,17 @@ class _ChangesPageState extends State<ChangesPage> {
       switch (outcome) {
         case MergeClean(:final data):
           successMessage = t.changes.commit.committedAndRan(
-              summary: committed.summary,
-              hash: shortHash,
-              operation: data.operation);
+            summary: committed.summary,
+            hash: shortHash,
+            operation: data.operation,
+          );
         case MergeConflicted(:final paths, :final resolved):
           if (resolved) {
             successMessage = t.changes.commit.committedResolved(
-                summary: committed.summary, hash: shortHash, n: paths.length);
+              summary: committed.summary,
+              hash: shortHash,
+              n: paths.length,
+            );
           } else {
             syncError = t.changes.commit.conflictsLeft(n: paths.length);
           }
@@ -5618,7 +6408,8 @@ class _ChangesPageState extends State<ChangesPage> {
     if (repoPath == null) return;
     final matrix = context.read<FileCouplingState>().matrixFor(repoPath);
     if (matrix == null) return;
-    final currentPaths = context
+    final currentPaths =
+        context
             .read<RepositoryState>()
             .status
             ?.files
@@ -5649,9 +6440,7 @@ class _ChangesPageState extends State<ChangesPage> {
   /// Human-readable message for a selection-scoped shelf so cabinet entries
   /// stay identifiable — basenames of the first few files, then a count.
   static String _shelfLabelFor(List<String> paths) {
-    final names = paths
-        .map((p) => p.split('/').last)
-        .toList();
+    final names = paths.map((p) => p.split('/').last).toList();
     const shown = 3;
     if (names.length <= shown) return names.join(', ');
     return '${names.take(shown).join(', ')} +${names.length - shown} more';
@@ -5692,8 +6481,11 @@ class _ChangesPageState extends State<ChangesPage> {
       // A stash pop that hits content conflicts leaves UU markers (pop keeps
       // the entry). Route them into the unified editor, then drop the entry
       // once resolved. A non-conflict failure leaves no UU → falls through.
-      final resolved =
-          await resolveSequencerConflicts(context, repo, SequencerKind.plain);
+      final resolved = await resolveSequencerConflicts(
+        context,
+        repo,
+        SequencerKind.plain,
+      );
       if (!mounted) return;
       if (resolved) {
         // Drop by identity (re-resolving the current index), not the stale
@@ -5718,12 +6510,15 @@ class _ChangesPageState extends State<ChangesPage> {
       // Distinguish them like the cherry-pick/revert handlers do, so a real
       // failure surfaces its actual reason instead of a phantom conflict.
       if (!mounted) return;
-      final stillConflicted = (context.read<RepositoryState>().status?.files ??
-              const <RepositoryStatusFile>[])
-          .any((f) => f.isConflicted);
-      setState(() => _actionError = stillConflicted
-          ? t.changes.stash.appliedWithConflicts
-          : (result.error ?? t.changes.stash.couldNotPop));
+      final stillConflicted =
+          (context.read<RepositoryState>().status?.files ??
+                  const <RepositoryStatusFile>[])
+              .any((f) => f.isConflicted);
+      setState(
+        () => _actionError = stillConflicted
+            ? t.changes.stash.appliedWithConflicts
+            : (result.error ?? t.changes.stash.couldNotPop),
+      );
       return;
     }
     setState(() {
@@ -5736,9 +6531,9 @@ class _ChangesPageState extends State<ChangesPage> {
 
   Future<void> _tossStash(String repo, int index) async {
     final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.stashDrop);
+    final windowSec = context.read<PreferencesState>().undoWindowFor(
+      UndoActionKind.stashDrop,
+    );
     // Pin identity now — the list can shift while the safety window
     // counts down, and stash@{index} must not resolve to a different
     // entry by the time the drop fires. Fail CLOSED when the pin fails:
@@ -5799,13 +6594,14 @@ class _ChangesPageState extends State<ChangesPage> {
     // adding a build-path field requires updating the class — compile
     // error, not silent stale state. Callback-only fields stay on
     // PreferencesState via context.read at the callback site.
-    final preferences =
-        context.select<PreferencesState, ChangesPagePreferences>(
-      ChangesPagePreferences.from,
-    );
+    final preferences = context
+        .select<PreferencesState, ChangesPagePreferences>(
+          ChangesPagePreferences.from,
+        );
     final repo = context.read<RepositoryState>();
-    final repoPath =
-        context.select<RepositoryState, String?>((state) => state.activePath);
+    final repoPath = context.select<RepositoryState, String?>(
+      (state) => state.activePath,
+    );
     // Rebuild signal for AI activity, narrowed to the ACTIVE repo's
     // slice. Piggybacks on AiActivityState's `_activeCache` (see the
     // doc-comment on that field): `activeFor(repoPath)` returns the
@@ -5848,8 +6644,11 @@ class _ChangesPageState extends State<ChangesPage> {
               intent.query!.isNotEmpty) {
             if (context.read<RepositoryState>().status != null) {
               final aiSettings = context.read<AiSettingsState>();
-              _debugInPanel(repoPath, intent.query!,
-                  aiSettings.commitMessageModelCategoryId);
+              _debugInPanel(
+                repoPath,
+                intent.query!,
+                aiSettings.commitMessageModelCategoryId,
+              );
               return;
             }
             if (intent.retries < 3) {
@@ -5875,9 +6674,9 @@ class _ChangesPageState extends State<ChangesPage> {
     final couplingMatrix = repoPath == null
         ? null
         : (context.select<FileCouplingState, FileCouplingMatrix?>(
-              (state) => state.matrixFor(repoPath),
-            ) ??
-            logosForDim?.stats.coupling);
+                (state) => state.matrixFor(repoPath),
+              ) ??
+              logosForDim?.stats.coupling);
     // The repo-native semantic embedding (cached per HEAD). Selecting it here
     // subscribes the page, so when the background build lands the page rebuilds
     // and re-runs the spectral pass with the embedding folded in.
@@ -5886,12 +6685,15 @@ class _ChangesPageState extends State<ChangesPage> {
         : context.select<RepoEmbeddingState, RepoNativeEmbedding?>(
             (state) => state.embeddingFor(repoPath),
           );
-    final status = context
-        .select<RepositoryState, RepositoryStatus?>((state) => state.status);
-    final statusError =
-        context.select<RepositoryState, String?>((state) => state.statusError);
-    final statusLoading =
-        context.select<RepositoryState, bool>((state) => state.statusLoading);
+    final status = context.select<RepositoryState, RepositoryStatus?>(
+      (state) => state.status,
+    );
+    final statusError = context.select<RepositoryState, String?>(
+      (state) => state.statusError,
+    );
+    final statusLoading = context.select<RepositoryState, bool>(
+      (state) => state.statusLoading,
+    );
 
     // Seed the stash drawer from the user's "default expanded" preference
     // once per session, as soon as we actually have shelves to show. After
@@ -5943,6 +6745,8 @@ class _ChangesPageState extends State<ChangesPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         final couplingState = context.read<FileCouplingState>();
+        final embeddingState = context.read<RepoEmbeddingState>();
+        final logosGitState = context.read<LogosGitState>();
         // Warm the gyat lattice for its remaining consumers (diff shell,
         // filament, AI flows) — the changes-page coupling overlay no longer
         // reads it (the eigenAddress-histogram sub-signal was retired by the
@@ -5952,7 +6756,7 @@ class _ChangesPageState extends State<ChangesPage> {
         // Repo-native embedding: fire-and-forget background build, cached per
         // HEAD. When it lands, RepoEmbeddingState notifies → the page rebuilds
         // → the spectral pass re-runs with the embedding.
-        unawaited(context.read<RepoEmbeddingState>().loadForRepo(repoPath));
+        unawaited(embeddingState.loadForRepo(repoPath));
         final couplingFuture = couplingState.loadForRepo(repoPath);
         await couplingFuture;
         if (!mounted) return;
@@ -5961,10 +6765,7 @@ class _ChangesPageState extends State<ChangesPage> {
         // reusing the cached one saves a second 1000-commit log walk.
         final matrix = couplingState.matrixFor(repoPath);
         if (matrix != null) {
-          // ignore: use_build_context_synchronously
-          unawaited(context
-              .read<LogosGitState>()
-              .loadForRepo(repoPath, coupling: matrix));
+          unawaited(logosGitState.loadForRepo(repoPath, coupling: matrix));
           // Compute shapes for any stashes whose files loaded before the matrix.
           for (final idx in _stashFiles.keys) {
             if (!_stashShapes.containsKey(idx)) {
@@ -6022,7 +6823,8 @@ class _ChangesPageState extends State<ChangesPage> {
           await _flushDraft(oldRepo, oldBranch, textToSave);
         }
         unawaited(
-            _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true));
+          _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true),
+        );
         unawaited(_loadStashes(repoPath));
         unawaited(_loadCommitIdentity(repoPath));
       });
@@ -6043,8 +6845,9 @@ class _ChangesPageState extends State<ChangesPage> {
     _syncDraftFromStatus(status);
 
     if (_selectionStorageLoaded && _selectionStorageScopeKey != null) {
-      final fingerprint =
-          _selectionPersistenceFingerprint(_selectionStorageScopeKey!);
+      final fingerprint = _selectionPersistenceFingerprint(
+        _selectionStorageScopeKey!,
+      );
       if (_selectionPersistFingerprint != fingerprint) {
         _selectionPersistFingerprint = fingerprint;
         _scheduleSelectionPersistence();
@@ -6064,7 +6867,11 @@ class _ChangesPageState extends State<ChangesPage> {
         onAcceptWithDetails: (d) {
           if (d.data.isStash) {
             _handleStashDump(
-                context, d.data.stashIndex!, d.data.label, repoPath);
+              context,
+              d.data.stashIndex!,
+              d.data.label,
+              repoPath,
+            );
           } else {
             _handleDeskDump(context, d.data.deskPath!, d.data.label, repoPath);
           }
@@ -6093,11 +6900,14 @@ class _ChangesPageState extends State<ChangesPage> {
                       alignment: Alignment.center,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: t.surface1,
                           borderRadius: BorderRadius.circular(
-                              context.surfaceShader.geometry.pillRadius),
+                            context.surfaceShader.geometry.pillRadius,
+                          ),
                           border: Border.all(color: t.accentBright, width: 1),
                         ),
                         child: Text(
@@ -6122,8 +6932,9 @@ class _ChangesPageState extends State<ChangesPage> {
       );
     }
 
-    final stagedCount =
-        status.files.where((file) => file.hasStagedChange).length;
+    final stagedCount = status.files
+        .where((file) => file.hasStagedChange)
+        .length;
     final includedCount = _includedDirtyCount(status);
     final includedFiles = status.files
         .where((file) => _includedPaths.contains(file.path))
@@ -6172,12 +6983,12 @@ class _ChangesPageState extends State<ChangesPage> {
     final logosTabActive = TickerMode.valuesOf(context).enabled;
     final logosEngineBase =
         preferences.fileSortGuide == FileSortGuide.relatedProximity
-            ? (logosTabActive
-                ? context.select<LogosGitState, LogosGit?>(
-                    (state) => state.engineFor(repoPath),
-                  )
-                : context.read<LogosGitState>().engineFor(repoPath))
-            : null;
+        ? (logosTabActive
+              ? context.select<LogosGitState, LogosGit?>(
+                  (state) => state.engineFor(repoPath),
+                )
+              : context.read<LogosGitState>().engineFor(repoPath))
+        : null;
     // Same memoization for the engine's spectral-edge overlay — withSpectralEdges
     // shares the base engine's basis/graph caches but is a fresh instance each
     // call, which would likewise churn the engine-identity-keyed work downstream
@@ -6205,7 +7016,8 @@ class _ChangesPageState extends State<ChangesPage> {
     // that runs `rankHunksByPhiAsync` and setStates when done. The
     // sort falls back to the legacy nearest-neighbour chain until
     // the first rebuild completes.
-    final correlatednessContext = (effectiveMatrix != null &&
+    final correlatednessContext =
+        (effectiveMatrix != null &&
             logosEngine != null &&
             preferences.fileSortGuide == FileSortGuide.relatedProximity)
         ? _correlatednessContextFor(
@@ -6274,17 +7086,22 @@ class _ChangesPageState extends State<ChangesPage> {
       _cancelPendingLogosRerank();
     }
 
-    final orderedPaths = logosRerankKey != null &&
+    final orderedPaths =
+        logosRerankKey != null &&
             _appliedLogosRerankKey == logosRerankKey &&
             _appliedLogosRerankPaths != null
         ? _appliedLogosRerankPaths!
         : clusters.orderedPaths;
 
     final inspectionOverridePath = _inspectionDiffPath;
-    final inspectingSingleDiff = includedFiles.length > 1 &&
+    final inspectingSingleDiff =
+        includedFiles.length > 1 &&
         inspectionOverridePath != null &&
         !_includedPaths.contains(inspectionOverridePath);
-    final showMultiDiff = includedFiles.length > 1 && !inspectingSingleDiff;
+    final showMultiDiff =
+        includedFiles.length > 1 &&
+        !inspectingSingleDiff &&
+        !_isMachineScale(repoPath, includedFiles);
     final primaryAction = _primaryActionFor(status);
     // Persisted per working-tree path, so the commit-only choice survives
     // restarts and is independent per repo/desk. `repoPath` is promoted
@@ -6310,9 +7127,9 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     final diffPaths = status.files.map((f) => f.path).toSet();
     if (engineReady && status.files.isNotEmpty) {
-      final engine =
-          context.read<LogosGitState>().engineFor(repoPath)!;
-      final sameInputs = identical(engine, _lastCouplingEngine) &&
+      final engine = context.read<LogosGitState>().engineFor(repoPath)!;
+      final sameInputs =
+          identical(engine, _lastCouplingEngine) &&
           _lastCouplingDiffPaths != null &&
           _lastCouplingDiffPaths!.length == diffPaths.length &&
           _lastCouplingDiffPaths!.containsAll(diffPaths);
@@ -6339,29 +7156,27 @@ class _ChangesPageState extends State<ChangesPage> {
     // running so the in-handler "click again to cancel" branch can fire.
     // Shared base gate: all four AI buttons check these.
     final aiBase = !_actionRunning && !_commitAiLoading;
-    final canGenerate = aiBase &&
-        engineReady &&
-        includedCount > 0 &&
-        hasCommitAiSelection;
+    final canGenerate =
+        aiBase && engineReady && includedCount > 0 && hasCommitAiSelection;
     // Review/muse: clickable when running (to re-show drawer),
     // when a persistent result exists (to re-open), or when engine
     // is ready for a fresh run. Same base gate as generate.
-    final canReview = aiBase &&
+    final canReview =
+        aiBase &&
         includedCount > 0 &&
         (hasPersistentReview ||
             _reviewRunning ||
             (engineReady && hasReviewAiSelection));
     final hasPersistentMuse = _hasMuseStateForCurrentSelection();
-    final canMuse = aiBase &&
+    final canMuse =
+        aiBase &&
         includedCount > 0 &&
         (hasPersistentMuse ||
             _museRunning ||
             (engineReady && hasCommitAiSelection));
     // No includedCount gate — debug targets the full repo via Logos,
     // not just staged files. Symptom text seeds the retrieval.
-    final canDebug = aiBase &&
-        engineReady &&
-        !_shaping;
+    final canDebug = aiBase && engineReady && !_shaping;
 
     return DragTarget<DeskDropPayload>(
       onWillAcceptWithDetails: (d) =>
@@ -6387,7 +7202,8 @@ class _ChangesPageState extends State<ChangesPage> {
                     radius: 0,
                     border: Border(
                       right: BorderSide(
-                          color: t.chromeBorder.withValues(alpha: 0.15)),
+                        color: t.chromeBorder.withValues(alpha: 0.15),
+                      ),
                     ),
                     elevated: false,
                     width: panelW,
@@ -6411,7 +7227,11 @@ class _ChangesPageState extends State<ChangesPage> {
                       ),
                       Padding(
                         padding: EdgeInsets.fromLTRB(
-                            14, _tabs.length > 1 ? 0 : 10, 10, 4),
+                          14,
+                          _tabs.length > 1 ? 0 : 10,
+                          10,
+                          4,
+                        ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -6427,39 +7247,57 @@ class _ChangesPageState extends State<ChangesPage> {
                                     fontWeight: FontWeight.w500,
                                   );
                                   if (includedCount == 0) {
-                                    return Text(context.t.changes.includeSummary.none,
-                                        style: style, maxLines: 1);
+                                    return Text(
+                                      context.t.changes.includeSummary.none,
+                                      style: style,
+                                      maxLines: 1,
+                                    );
                                   }
                                   final n = status.files.length;
                                   final staged = stagedCount > 0
                                       ? context.t.changes.includeSummary
-                                          .stagedSuffix(count: stagedCount)
+                                            .stagedSuffix(count: stagedCount)
                                       : '';
                                   final full = includedCount == n
-                                      ? context.t.changes.includeSummary
-                                          .full(n: n, staged: staged)
+                                      ? context.t.changes.includeSummary.full(
+                                          n: n,
+                                          staged: staged,
+                                        )
                                       : context.t.changes.includeSummary
-                                          .partial(count: includedCount, n: n, staged: staged);
+                                            .partial(
+                                              count: includedCount,
+                                              n: n,
+                                              staged: staged,
+                                            );
                                   final tp = TextPainter(
                                     text: TextSpan(text: full, style: style),
                                     maxLines: 1,
                                     textDirection: TextDirection.ltr,
                                   )..layout();
-                                  final fits =
-                                      tp.width <= constraints.maxWidth;
+                                  final fits = tp.width <= constraints.maxWidth;
                                   tp.dispose();
                                   if (fits) {
-                                    return Text(full, style: style,
-                                        maxLines: 1);
+                                    return Text(
+                                      full,
+                                      style: style,
+                                      maxLines: 1,
+                                    );
                                   }
                                   final short = includedCount == n
                                       ? context.t.changes.includeSummary
-                                          .shortAll(n: n, staged: staged)
+                                            .shortAll(n: n, staged: staged)
                                       : context.t.changes.includeSummary
-                                          .partial(count: includedCount, n: n, staged: staged);
-                                  return Text(short, style: style,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis);
+                                            .partial(
+                                              count: includedCount,
+                                              n: n,
+                                              staged: staged,
+                                            );
+                                  return Text(
+                                    short,
+                                    style: style,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  );
                                 },
                               ),
                             ),
@@ -6471,7 +7309,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             ),
                             const SizedBox(width: 6),
                             _SmartSelectBtn(
-                              allSelected: status.files.isNotEmpty &&
+                              allSelected:
+                                  status.files.isNotEmpty &&
                                   includedCount == status.files.length,
                               noneSelected: includedCount == 0,
                               enabled:
@@ -6496,373 +7335,499 @@ class _ChangesPageState extends State<ChangesPage> {
                                 busy: _mergeResolving,
                                 onResolve: (categoryId) =>
                                     _resolveMergeConflicts(
-                                        repoPath, categoryId),
-                                onManualResolve: () =>
-                                    _openManualMergeEditor(
-                                        repoPath, conflictedPaths),
+                                      repoPath,
+                                      categoryId,
+                                    ),
+                                onManualResolve: () => _openManualMergeEditor(
+                                  repoPath,
+                                  conflictedPaths,
+                                ),
                               ),
                             Expanded(
-                              child: Stack(children: [
-                                Positioned.fill(
-                                  child: Builder(builder: (context) {
-                                    // `clusters` hoisted at build-method scope so the
-                                    // header + list share the same clustering.
-                                    final fileByPath = {
-                                      for (final f in status.files) f.path: f
-                                    };
-                                    final ordered = <RepositoryStatusFile>[
-                                      for (final p in orderedPaths)
-                                        if (fileByPath[p] != null)
-                                          fileByPath[p]!,
-                                    ];
-                                    // Defensive: any file that didn't land in ordered.
-                                    final orderedSet = orderedPaths.toSet();
-                                    for (final f in status.files) {
-                                      if (!orderedSet.contains(f.path)) {
-                                        ordered.add(f);
-                                      }
-                                    }
-                                    if (_flowFragility.isNotEmpty) {
-                                      _sortByFragilityWithinClusters(
-                                          ordered, clusters);
-                                    }
-                                    if (_constellationOpen &&
-                                        status.files.length >= 2) {
-                                      final obsEngine = context.read<LogosGitState>().engineFor(repoPath);
-                                      final obsCounts = <String, int>{};
-                                      if (obsEngine != null) {
-                                        for (final entry in obsEngine.stats.reviewersByPath.entries) {
-                                          obsCounts[entry.key] = entry.value.length;
-                                        }
-                                      }
-                                      return FileConstellation(
-                                        files: ordered,
-                                        clusters: clusters,
-                                        matrix: couplingMatrix,
-                                        changeWeights: _changeWeights,
-                                        includedPaths: _includedPaths,
-                                        tokens: t,
-                                        observerCounts: obsCounts,
-                                        flowFragility: _flowFragility,
-                                        onToggleIncluded: (path, value) =>
-                                            _toggleIncluded(path, value),
-                                        onCarve: (paths) {
-                                          setState(() {
-                                            final allIncluded = paths.every(
-                                                _includedPaths.contains);
-                                            if (allIncluded) {
-                                              _includedPaths.removeAll(paths);
-                                            } else {
-                                              _includedPaths.addAll(paths);
-                                            }
-                                            _actionError = null;
-                                          });
-                                        },
-                                        onUntieCluster: (paths) {
-                                          setState(() {
-                                            _includedPaths.removeAll(paths);
-                                            _actionError = null;
-                                          });
-                                        },
-                                        onSelectDiff: (path) =>
-                                            _loadDiff(repoPath, path),
-                                      );
-                                    }
-                                    // Keep the path lookup used by
-                                    // `_ensureFileVisibleInChangesList` in
-                                    // sync with whatever the list is
-                                    // currently rendering. Cheap — same
-                                    // order the ListView is about to iterate.
-                                    _changesListPaths = [
-                                      for (final f in ordered) f.path,
-                                    ];
-                                    return ValueListenableBuilder<String?>(
-                                      valueListenable: _multiDiffCurrentPath,
-                                      builder: (context, currentMultiPath, _) =>
-                                      ValueListenableBuilder<String?>(
-                                      valueListenable: _railHoverPath,
-                                      builder: (context, _, __) {
-                                    // Recompute activeDiffPath inside the VLB
-                                    // so scroll-driven updates to
-                                    // _multiDiffCurrentPath rebuild the list.
-                                    final localActiveDiffPath =
-                                        inspectingSingleDiff
-                                            ? inspectionOverridePath
-                                            : showMultiDiff
-                                                ? currentMultiPath
-                                                : (_visibleDiffPath ??
-                                                    _selectedDiffPath);
-                                    return ListView.builder(
-                                      controller: _changesListCtrl,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      itemCount: ordered.length,
-                                      itemBuilder: (ctx, i) {
-                                        final file = ordered[i];
-                                        final cid =
-                                            clusters.byPath[file.path] ??
-                                                FileClusters.clusterIdIsolated;
-                                        final prevCid = i > 0
-                                            ? (clusters.byPath[
-                                                    ordered[i - 1].path] ??
-                                                FileClusters.clusterIdIsolated)
-                                            : null;
-                                        final nextCid = i < ordered.length - 1
-                                            ? (clusters.byPath[
-                                                    ordered[i + 1].path] ??
-                                                FileClusters.clusterIdIsolated)
-                                            : null;
-                                        final showGap =
-                                            prevCid != null && prevCid != cid;
-                                        final inRealCluster = cid !=
-                                            FileClusters.clusterIdIsolated;
-                                        // Stripe fuses with neighbour's stripe iff
-                                        // same real cluster AND no gap boundary.
-                                        final connectTop = inRealCluster &&
-                                            prevCid == cid &&
-                                            !showGap;
-                                        final connectBottom = inRealCluster &&
-                                            nextCid != null &&
-                                            nextCid == cid;
-                                        // Peer emphasis: when the mouse is on
-                                        // another row's stripe in the same cluster,
-                                        // look up the coupling score between this
-                                        // file and the subject. Null = not in the
-                                        // hovered cluster (leave row unchanged).
-                                        final subjectPath = _railHoverPath.value;
-                                        final subjectCid = subjectPath == null
-                                            ? null
-                                            : clusters.byPath[subjectPath];
-                                        double? peerScore;
-                                        bool isRailSubject = false;
-                                        // Charge receipts for the (this row,
-                                        // subject) pair — the shared tokens that
-                                        // made the two couple. Only populated for
-                                        // an active peer so the stripe tooltip
-                                        // explains the bulge exactly.
-                                        List<CouplingReceipt> peerReceipts =
-                                            const [];
-                                        bool peerIsLo = false;
-                                        if (subjectPath != null &&
-                                            subjectCid != null &&
-                                            subjectCid ==
-                                                FileClusters
-                                                    .clusterIdIsolated) {
-                                          // Hovered row is isolated — no peers to light up.
-                                        } else if (subjectPath != null &&
-                                            subjectCid == cid &&
-                                            inRealCluster) {
-                                          if (subjectPath == file.path) {
-                                            isRailSubject = true;
-                                            peerScore = 1.0;
-                                          } else if (couplingMatrix != null) {
-                                            peerScore = _cachedPeerScore(
-                                                subjectPath,
-                                                file.path,
-                                                couplingMatrix);
-                                            peerReceipts = _changeset
-                                                .receiptsFor(
-                                                    file.path, subjectPath);
-                                            peerIsLo = file.path
-                                                    .compareTo(subjectPath) <
-                                                0;
+                              child: Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: Builder(
+                                      builder: (context) {
+                                        // `clusters` hoisted at build-method scope so the
+                                        // header + list share the same clustering.
+                                        final fileByPath = {
+                                          for (final f in status.files)
+                                            f.path: f,
+                                        };
+                                        final ordered = <RepositoryStatusFile>[
+                                          for (final p in orderedPaths)
+                                            if (fileByPath[p] != null)
+                                              fileByPath[p]!,
+                                        ];
+                                        // Defensive: any file that didn't land in ordered.
+                                        final orderedSet = orderedPaths.toSet();
+                                        for (final f in status.files) {
+                                          if (!orderedSet.contains(f.path)) {
+                                            ordered.add(f);
                                           }
                                         }
-                                        final row = _FileRow(
-                                          file: file,
-                                          tokens: t,
-                                          clusterColor:
-                                              t.clusterStripeColor(cid),
-                                          stripeConnectTop: connectTop,
-                                          stripeConnectBottom: connectBottom,
-                                          isDiffSelected:
-                                              localActiveDiffPath == file.path,
-                                          included: _includedPaths
-                                              .contains(file.path),
-                                          inRealCluster: inRealCluster,
-                                          peerScore: peerScore,
-                                          isRailSubject: isRailSubject,
-                                          peerReceipts: peerReceipts,
-                                          peerIsLo: peerIsLo,
-                                          dimOpacity: _fileDimFor(file.path),
-                                          flowFragility:
-                                              _flowFragility[file.path] ?? 0.0,
-                                          onRailEnter: inRealCluster
-                                              ? () {
-                                                  if (_railHoverPath.value !=
-                                                      file.path) {
-                                                    _railHoverPath.value =
-                                                            file.path;
-                                                  }
-                                                }
-                                              : null,
-                                          onRailExit: () {
-                                            if (_railHoverPath.value == file.path) {
-                                              _railHoverPath.value = null;
-                                            }
-                                          },
-                                          onTap: includedFiles.length > 1
-                                              ? () {
-                                                  if (_includedPaths
-                                                      .contains(file.path)) {
-                                                    _jumpToMultiDiffPath(
-                                                        file.path);
-                                                  } else {
-                                                    _inspectSingleDiff(
-                                                        repoPath, file.path);
-                                                  }
-                                                }
-                                              : () => _loadDiff(
-                                                  repoPath, file.path),
-                                          onIncludeChanged: (value) =>
-                                              _toggleIncluded(file.path, value),
-                                          onClusterToggle: inRealCluster
-                                              ? () {
-                                                  final groupPaths = [
-                                                    for (final entry in clusters
-                                                        .byPath.entries)
-                                                      if (entry.value == cid)
-                                                        entry.key,
-                                                  ];
-                                                  _toggleGroup(groupPaths);
-                                                }
-                                              : null,
-                                          onSecondaryTap: (pos) =>
-                                              _showFileContextMenu(
-                                                  context, pos, file, repoPath),
-                                          dragPaths: _includedPaths.contains(file.path) && _includedPaths.length > 1
-                                              ? Set<String>.from(_includedPaths)
-                                              : null,
-                                          onDragStarted: () => setState(() => _fileDragActive = true),
-                                          // Drop handlers (onAcceptWithDetails)
-                                          // fire BEFORE this, while the drag
-                                          // flag still suppresses _pruneEmptyTabs.
-                                          // Re-prune here, after clearing the
-                                          // flag, so a tab emptied by drag-to-
-                                          // move/split doesn't linger as an
-                                          // empty pill until the next reconcile.
-                                          onDragEnd: () => setState(() {
-                                            _fileDragActive = false;
-                                            _pruneEmptyTabs();
-                                          }),
-                                        );
-                                        // Key the row so
-                                        // `_ensureFileVisibleInChangesList`
-                                        // can find it for ensureVisible.
-                                        // The key is keyed by file.path
-                                        // (stable across rebuilds) so the
-                                        // same GlobalKey follows the row
-                                        // as list ordering changes.
-                                        final keyed = KeyedSubtree(
-                                          key: _fileRowKeys.putIfAbsent(
-                                              file.path, () => GlobalKey()),
-                                          child: row,
-                                        );
-                                        if (showGap) {
-                                          return Column(children: [
-                                            const SizedBox(height: 4),
-                                            keyed,
-                                          ]);
+                                        if (_flowFragility.isNotEmpty) {
+                                          _sortByFragilityWithinClusters(
+                                            ordered,
+                                            clusters,
+                                          );
                                         }
-                                        return keyed;
+                                        if (_constellationOpen &&
+                                            status.files.length >= 2) {
+                                          final obsEngine = context
+                                              .read<LogosGitState>()
+                                              .engineFor(repoPath);
+                                          final obsCounts = <String, int>{};
+                                          if (obsEngine != null) {
+                                            for (final entry
+                                                in obsEngine
+                                                    .stats
+                                                    .reviewersByPath
+                                                    .entries) {
+                                              obsCounts[entry.key] =
+                                                  entry.value.length;
+                                            }
+                                          }
+                                          return FileConstellation(
+                                            files: ordered,
+                                            clusters: clusters,
+                                            matrix: couplingMatrix,
+                                            changeWeights: _changeWeights,
+                                            includedPaths: _includedPaths,
+                                            tokens: t,
+                                            observerCounts: obsCounts,
+                                            flowFragility: _flowFragility,
+                                            onToggleIncluded: (path, value) =>
+                                                _toggleIncluded(path, value),
+                                            onCarve: (paths) {
+                                              setState(() {
+                                                final allIncluded = paths.every(
+                                                  _includedPaths.contains,
+                                                );
+                                                if (allIncluded) {
+                                                  _includedPaths.removeAll(
+                                                    paths,
+                                                  );
+                                                } else {
+                                                  _includedPaths.addAll(paths);
+                                                }
+                                                _actionError = null;
+                                              });
+                                            },
+                                            onUntieCluster: (paths) {
+                                              setState(() {
+                                                _includedPaths.removeAll(paths);
+                                                _actionError = null;
+                                              });
+                                            },
+                                            onSelectDiff: (path) =>
+                                                _loadDiff(repoPath, path),
+                                          );
+                                        }
+                                        // Keep the path lookup used by
+                                        // `_ensureFileVisibleInChangesList` in
+                                        // sync with whatever the list is
+                                        // currently rendering. Cheap — same
+                                        // order the ListView is about to iterate.
+                                        _changesListPaths = [
+                                          for (final f in ordered) f.path,
+                                        ];
+                                        return ValueListenableBuilder<String?>(
+                                          valueListenable:
+                                              _multiDiffCurrentPath,
+                                          builder: (context, currentMultiPath, _) => ValueListenableBuilder<String?>(
+                                            valueListenable: _railHoverPath,
+                                            builder: (context, _, __) {
+                                              // Recompute activeDiffPath inside the VLB
+                                              // so scroll-driven updates to
+                                              // _multiDiffCurrentPath rebuild the list.
+                                              final localActiveDiffPath =
+                                                  inspectingSingleDiff
+                                                  ? inspectionOverridePath
+                                                  : showMultiDiff
+                                                  ? currentMultiPath
+                                                  : (_visibleDiffPath ??
+                                                        _selectedDiffPath);
+                                              return ListView.builder(
+                                                controller: _changesListCtrl,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                    ),
+                                                itemCount: ordered.length,
+                                                itemBuilder: (ctx, i) {
+                                                  final file = ordered[i];
+                                                  final cid =
+                                                      clusters.byPath[file
+                                                          .path] ??
+                                                      FileClusters
+                                                          .clusterIdIsolated;
+                                                  final prevCid = i > 0
+                                                      ? (clusters
+                                                                .byPath[ordered[i -
+                                                                    1]
+                                                                .path] ??
+                                                            FileClusters
+                                                                .clusterIdIsolated)
+                                                      : null;
+                                                  final nextCid =
+                                                      i < ordered.length - 1
+                                                      ? (clusters
+                                                                .byPath[ordered[i +
+                                                                    1]
+                                                                .path] ??
+                                                            FileClusters
+                                                                .clusterIdIsolated)
+                                                      : null;
+                                                  final showGap =
+                                                      prevCid != null &&
+                                                      prevCid != cid;
+                                                  final inRealCluster =
+                                                      cid !=
+                                                      FileClusters
+                                                          .clusterIdIsolated;
+                                                  // Stripe fuses with neighbour's stripe iff
+                                                  // same real cluster AND no gap boundary.
+                                                  final connectTop =
+                                                      inRealCluster &&
+                                                      prevCid == cid &&
+                                                      !showGap;
+                                                  final connectBottom =
+                                                      inRealCluster &&
+                                                      nextCid != null &&
+                                                      nextCid == cid;
+                                                  // Peer emphasis: when the mouse is on
+                                                  // another row's stripe in the same cluster,
+                                                  // look up the coupling score between this
+                                                  // file and the subject. Null = not in the
+                                                  // hovered cluster (leave row unchanged).
+                                                  final subjectPath =
+                                                      _railHoverPath.value;
+                                                  final subjectCid =
+                                                      subjectPath == null
+                                                      ? null
+                                                      : clusters
+                                                            .byPath[subjectPath];
+                                                  double? peerScore;
+                                                  bool isRailSubject = false;
+                                                  // Charge receipts for the (this row,
+                                                  // subject) pair — the shared tokens that
+                                                  // made the two couple. Only populated for
+                                                  // an active peer so the stripe tooltip
+                                                  // explains the bulge exactly.
+                                                  List<CouplingReceipt>
+                                                  peerReceipts = const [];
+                                                  bool peerIsLo = false;
+                                                  if (subjectPath != null &&
+                                                      subjectCid != null &&
+                                                      subjectCid ==
+                                                          FileClusters
+                                                              .clusterIdIsolated) {
+                                                    // Hovered row is isolated — no peers to light up.
+                                                  } else if (subjectPath !=
+                                                          null &&
+                                                      subjectCid == cid &&
+                                                      inRealCluster) {
+                                                    if (subjectPath ==
+                                                        file.path) {
+                                                      isRailSubject = true;
+                                                      peerScore = 1.0;
+                                                    } else if (couplingMatrix !=
+                                                        null) {
+                                                      peerScore =
+                                                          _cachedPeerScore(
+                                                            subjectPath,
+                                                            file.path,
+                                                            couplingMatrix,
+                                                          );
+                                                      peerReceipts = _changeset
+                                                          .receiptsFor(
+                                                            file.path,
+                                                            subjectPath,
+                                                          );
+                                                      peerIsLo =
+                                                          file.path.compareTo(
+                                                            subjectPath,
+                                                          ) <
+                                                          0;
+                                                    }
+                                                  }
+                                                  final row = _FileRow(
+                                                    file: file,
+                                                    tokens: t,
+                                                    clusterColor: t
+                                                        .clusterStripeColor(
+                                                          cid,
+                                                        ),
+                                                    stripeConnectTop:
+                                                        connectTop,
+                                                    stripeConnectBottom:
+                                                        connectBottom,
+                                                    isDiffSelected:
+                                                        localActiveDiffPath ==
+                                                        file.path,
+                                                    included: _includedPaths
+                                                        .contains(file.path),
+                                                    inRealCluster:
+                                                        inRealCluster,
+                                                    peerScore: peerScore,
+                                                    isRailSubject:
+                                                        isRailSubject,
+                                                    peerReceipts: peerReceipts,
+                                                    peerIsLo: peerIsLo,
+                                                    dimOpacity: _fileDimFor(
+                                                      file.path,
+                                                    ),
+                                                    flowFragility:
+                                                        _flowFragility[file
+                                                            .path] ??
+                                                        0.0,
+                                                    onRailEnter: inRealCluster
+                                                        ? () {
+                                                            if (_railHoverPath
+                                                                    .value !=
+                                                                file.path) {
+                                                              _railHoverPath
+                                                                      .value =
+                                                                  file.path;
+                                                            }
+                                                          }
+                                                        : null,
+                                                    onRailExit: () {
+                                                      if (_railHoverPath
+                                                              .value ==
+                                                          file.path) {
+                                                        _railHoverPath.value =
+                                                            null;
+                                                      }
+                                                    },
+                                                    onTap:
+                                                        includedFiles.length > 1
+                                                        ? () {
+                                                            if (_includedPaths
+                                                                .contains(
+                                                                  file.path,
+                                                                )) {
+                                                              _jumpToMultiDiffPath(
+                                                                file.path,
+                                                              );
+                                                            } else {
+                                                              _inspectSingleDiff(
+                                                                repoPath,
+                                                                file.path,
+                                                              );
+                                                            }
+                                                          }
+                                                        : () => _loadDiff(
+                                                            repoPath,
+                                                            file.path,
+                                                          ),
+                                                    onIncludeChanged: (value) =>
+                                                        _toggleIncluded(
+                                                          file.path,
+                                                          value,
+                                                        ),
+                                                    onClusterToggle:
+                                                        inRealCluster
+                                                        ? () {
+                                                            final groupPaths = [
+                                                              for (final entry
+                                                                  in clusters
+                                                                      .byPath
+                                                                      .entries)
+                                                                if (entry
+                                                                        .value ==
+                                                                    cid)
+                                                                  entry.key,
+                                                            ];
+                                                            _toggleGroup(
+                                                              groupPaths,
+                                                            );
+                                                          }
+                                                        : null,
+                                                    onSecondaryTap: (pos) =>
+                                                        _showFileContextMenu(
+                                                          context,
+                                                          pos,
+                                                          file,
+                                                          repoPath,
+                                                        ),
+                                                    dragPaths:
+                                                        _includedPaths.contains(
+                                                              file.path,
+                                                            ) &&
+                                                            _includedPaths
+                                                                    .length >
+                                                                1
+                                                        ? Set<String>.from(
+                                                            _includedPaths,
+                                                          )
+                                                        : null,
+                                                    onDragStarted: () =>
+                                                        setState(
+                                                          () =>
+                                                              _fileDragActive =
+                                                                  true,
+                                                        ),
+                                                    // Drop handlers (onAcceptWithDetails)
+                                                    // fire BEFORE this, while the drag
+                                                    // flag still suppresses _pruneEmptyTabs.
+                                                    // Re-prune here, after clearing the
+                                                    // flag, so a tab emptied by drag-to-
+                                                    // move/split doesn't linger as an
+                                                    // empty pill until the next reconcile.
+                                                    onDragEnd: () => setState(
+                                                      () {
+                                                        _fileDragActive = false;
+                                                        _pruneEmptyTabs();
+                                                      },
+                                                    ),
+                                                  );
+                                                  // Key the row so
+                                                  // `_ensureFileVisibleInChangesList`
+                                                  // can find it for ensureVisible.
+                                                  // The key is keyed by file.path
+                                                  // (stable across rebuilds) so the
+                                                  // same GlobalKey follows the row
+                                                  // as list ordering changes.
+                                                  final keyed = KeyedSubtree(
+                                                    key: _fileRowKeys
+                                                        .putIfAbsent(
+                                                          file.path,
+                                                          () => GlobalKey(),
+                                                        ),
+                                                    child: row,
+                                                  );
+                                                  if (showGap) {
+                                                    return Column(
+                                                      children: [
+                                                        const SizedBox(
+                                                          height: 4,
+                                                        ),
+                                                        keyed,
+                                                      ],
+                                                    );
+                                                  }
+                                                  return keyed;
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        );
                                       },
-                                    );
-                                    },
                                     ),
-                                    );
-                                  }),
-                                ),
-                                if (_dejaVuScore > 0)
+                                  ),
+                                  if (_dejaVuScore > 0)
+                                    Positioned(
+                                      right: 12,
+                                      top: 12,
+                                      child: _DejaVuGlyph(
+                                        tokens: t,
+                                        score: _dejaVuScore,
+                                        ghostCount: _dejaVuGhostCount,
+                                      ),
+                                    ),
                                   Positioned(
                                     right: 12,
-                                    top: 12,
-                                    child: _DejaVuGlyph(
-                                      tokens: t,
-                                      score: _dejaVuScore,
-                                      ghostCount: _dejaVuGhostCount,
+                                    bottom: 12,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        if (couplingMatrix != null &&
+                                            includedCount > 0)
+                                          Builder(
+                                            builder: (ctx) {
+                                              final nudges =
+                                                  suggestMissingPeers(
+                                                    selected: _includedPaths,
+                                                    allChanged: status.files
+                                                        .map((f) => f.path),
+                                                    matrix: couplingMatrix,
+                                                  );
+                                              if (nudges.isEmpty) {
+                                                return const SizedBox.shrink();
+                                              }
+                                              return Padding(
+                                                padding: const EdgeInsets.only(
+                                                  right: 8,
+                                                ),
+                                                child: _CouplingNudgeBanner(
+                                                  tokens: t,
+                                                  nudges: nudges,
+                                                  receiptsFor:
+                                                      _changeset.receiptsFor,
+                                                  ledger: _nudgeLedgerFor(
+                                                    repoPath,
+                                                  ),
+                                                  onAdd: (path) =>
+                                                      _toggleIncluded(
+                                                        path,
+                                                        true,
+                                                      ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        Builder(
+                                          builder: (ctx) {
+                                            // Shelve honors the selection: any
+                                            // checked files shelve exactly those
+                                            // (explicit pathspec, so a status
+                                            // refresh between render and click
+                                            // can't widen the scope); nothing
+                                            // checked shelves everything.
+                                            final selected = status.files
+                                                .where(
+                                                  (f) => _includedPaths
+                                                      .contains(f.path),
+                                                )
+                                                .map((f) => f.path)
+                                                .toList();
+                                            final scoped = selected.isNotEmpty;
+                                            final subset =
+                                                scoped &&
+                                                selected.length <
+                                                    status.files.length;
+                                            return _ShelfControl(
+                                              tokens: t,
+                                              count: _stashes.length,
+                                              loading: _stashesLoading,
+                                              expanded: _stashesExpanded,
+                                              canShelve:
+                                                  status.files.isNotEmpty,
+                                              selectedCount: subset
+                                                  ? selected.length
+                                                  : 0,
+                                              onShelve: status.files.isNotEmpty
+                                                  ? () => _shelve(
+                                                      repoPath,
+                                                      paths: scoped
+                                                          ? selected
+                                                          : null,
+                                                      label: scoped
+                                                          ? _shelfLabelFor(
+                                                              selected,
+                                                            )
+                                                          : null,
+                                                    )
+                                                  : null,
+                                              onToggleExpanded: _stashes.isEmpty
+                                                  ? null
+                                                  : () => setState(
+                                                      () => _stashesExpanded =
+                                                          !_stashesExpanded,
+                                                    ),
+                                            );
+                                          },
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                Positioned(
-                                  right: 12,
-                                  bottom: 12,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      if (couplingMatrix != null &&
-                                          includedCount > 0)
-                                        Builder(builder: (ctx) {
-                                          final nudges = suggestMissingPeers(
-                                            selected: _includedPaths,
-                                            allChanged:
-                                                status.files.map((f) => f.path),
-                                            matrix: couplingMatrix,
-                                          );
-                                          if (nudges.isEmpty) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          return Padding(
-                                            padding:
-                                                const EdgeInsets.only(right: 8),
-                                            child: _CouplingNudgeBanner(
-                                              tokens: t,
-                                              nudges: nudges,
-                                              receiptsFor:
-                                                  _changeset.receiptsFor,
-                                              ledger:
-                                                  _nudgeLedgerFor(repoPath),
-                                              onAdd: (path) =>
-                                                  _toggleIncluded(path, true),
-                                            ),
-                                          );
-                                        }),
-                                      Builder(builder: (ctx) {
-                                        // Shelve honors the selection: any
-                                        // checked files shelve exactly those
-                                        // (explicit pathspec, so a status
-                                        // refresh between render and click
-                                        // can't widen the scope); nothing
-                                        // checked shelves everything.
-                                        final selected = status.files
-                                            .where((f) => _includedPaths
-                                                .contains(f.path))
-                                            .map((f) => f.path)
-                                            .toList();
-                                        final scoped = selected.isNotEmpty;
-                                        final subset = scoped &&
-                                            selected.length <
-                                                status.files.length;
-                                        return _ShelfControl(
-                                          tokens: t,
-                                          count: _stashes.length,
-                                          loading: _stashesLoading,
-                                          expanded: _stashesExpanded,
-                                          canShelve: status.files.isNotEmpty,
-                                          selectedCount:
-                                              subset ? selected.length : 0,
-                                          onShelve: status.files.isNotEmpty
-                                              ? () => _shelve(
-                                                    repoPath,
-                                                    paths: scoped
-                                                        ? selected
-                                                        : null,
-                                                    label: scoped
-                                                        ? _shelfLabelFor(
-                                                            selected)
-                                                        : null,
-                                                  )
-                                              : null,
-                                          onToggleExpanded: _stashes.isEmpty
-                                              ? null
-                                              : () => setState(() =>
-                                                  _stashesExpanded =
-                                                      !_stashesExpanded),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                ),
-                              ]),
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -6888,11 +7853,14 @@ class _ChangesPageState extends State<ChangesPage> {
                             // button raises this drawer.
                             if (_stashesExpanded && _stashes.isNotEmpty)
                               Padding(
-                                padding:
-                                    const EdgeInsets.only(top: 8, bottom: 2),
+                                padding: const EdgeInsets.only(
+                                  top: 8,
+                                  bottom: 2,
+                                ),
                                 child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxHeight: 360),
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 360,
+                                  ),
                                   child: ListView.builder(
                                     shrinkWrap: true,
                                     padding: EdgeInsets.zero,
@@ -6901,15 +7869,18 @@ class _ChangesPageState extends State<ChangesPage> {
                                       final stash = _stashes[i];
                                       final isPeeking =
                                           _stashPeekIndex == stash.index;
-                                      final isOpen = _stashOpenIndices
-                                          .contains(stash.index);
+                                      final isOpen = _stashOpenIndices.contains(
+                                        stash.index,
+                                      );
                                       final files = _stashFiles[stash.index];
                                       final shape = _stashShapes[stash.index];
                                       final label =
                                           _StashDrawerCardState._displayLabel(
-                                              stash.message);
+                                            stash.message,
+                                          );
                                       return LongPressDraggable<
-                                          DeskDropPayload>(
+                                        DeskDropPayload
+                                      >(
                                         data: DeskDropPayload.stash(
                                           index: stash.index,
                                           label: label,
@@ -6934,9 +7905,13 @@ class _ChangesPageState extends State<ChangesPage> {
                                           filesLoading: _stashFilesLoading
                                               .contains(stash.index),
                                           onToggleOpen: () => _toggleStashOpen(
-                                              repoPath, stash.index),
+                                            repoPath,
+                                            stash.index,
+                                          ),
                                           onPickUp: () => _pickUpStash(
-                                              repoPath, stash.index),
+                                            repoPath,
+                                            stash.index,
+                                          ),
                                           onPeek: () =>
                                               _peekStash(repoPath, stash.index),
                                           onToss: () =>
@@ -6966,8 +7941,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                     _commitMsgCtrl.text = dreamed;
                                     _commitMsgCtrl.selection =
                                         TextSelection.collapsed(
-                                      offset: dreamed.length,
-                                    );
+                                          offset: dreamed.length,
+                                        );
                                     return KeyEventResult.handled;
                                   }
                                 }
@@ -6984,8 +7959,10 @@ class _ChangesPageState extends State<ChangesPage> {
                                     LogicalKeyboardKey.enter) {
                                   return KeyEventResult.ignored;
                                 }
-                                final ctrlOrMeta = HardwareKeyboard
-                                        .instance.isControlPressed ||
+                                final ctrlOrMeta =
+                                    HardwareKeyboard
+                                        .instance
+                                        .isControlPressed ||
                                     HardwareKeyboard.instance.isMetaPressed;
                                 if (!ctrlOrMeta) return KeyEventResult.ignored;
                                 // Ctrl/Cmd+Enter routing:
@@ -7000,8 +7977,11 @@ class _ChangesPageState extends State<ChangesPage> {
                                   if (cats.isEmpty) {
                                     return KeyEventResult.handled;
                                   }
-                                  final cat = cats[_shapeCategoryIndex.clamp(
-                                      0, cats.length - 1)];
+                                  final cat =
+                                      cats[_shapeCategoryIndex.clamp(
+                                        0,
+                                        cats.length - 1,
+                                      )];
                                   _debugInPanel(repoPath, text, cat);
                                   return KeyEventResult.handled;
                                 }
@@ -7014,152 +7994,165 @@ class _ChangesPageState extends State<ChangesPage> {
                                 );
                                 return KeyEventResult.handled;
                               },
-                              child: Builder(builder: (context) {
-                                // Reuse the outer-scope `engineReady`
-                                // (computed once per page build above
-                                // via context.select). It already
-                                // triggers the rebuild on engine-ready
-                                // flip, so re-subscribing here would
-                                // duplicate the listener for no extra
-                                // signal — the first-dream-after-cold-
-                                // start landing is preserved by the
-                                // outer subscription.
-                                if (!_shapeMode &&
-                                    _commitMsgCtrl.text.trim().isEmpty &&
-                                    status.files.isNotEmpty) {
-                                  // Intentionally doesn't encode the
-                                  // user's file selection — the phrase
-                                  // is the engine's voice, not a diff
-                                  // summary, and shouldn't re-roll on
-                                  // every include/exclude toggle. Diff
-                                  // content is still what the engine
-                                  // reads at compute time; it just
-                                  // doesn't re-trigger on selection.
-                                  final sig =
-                                      '$repoPath|${engineReady ? 'rdy' : 'wait'}';
-                                  final allPaths =
-                                      status.files.map((f) => f.path).toList();
-                                  _commitDream.schedule(
-                                    sig,
-                                    () => _computeCommitDream(
-                                      repoPath: repoPath,
-                                      includedPaths: allPaths,
+                              child: Builder(
+                                builder: (context) {
+                                  // Reuse the outer-scope `engineReady`
+                                  // (computed once per page build above
+                                  // via context.select). It already
+                                  // triggers the rebuild on engine-ready
+                                  // flip, so re-subscribing here would
+                                  // duplicate the listener for no extra
+                                  // signal — the first-dream-after-cold-
+                                  // start landing is preserved by the
+                                  // outer subscription.
+                                  if (!_shapeMode &&
+                                      _commitMsgCtrl.text.trim().isEmpty &&
+                                      status.files.isNotEmpty) {
+                                    // Intentionally doesn't encode the
+                                    // user's file selection — the phrase
+                                    // is the engine's voice, not a diff
+                                    // summary, and shouldn't re-roll on
+                                    // every include/exclude toggle. Diff
+                                    // content is still what the engine
+                                    // reads at compute time; it just
+                                    // doesn't re-trigger on selection.
+                                    final sig =
+                                        '$repoPath|${engineReady ? 'rdy' : 'wait'}';
+                                    final allPaths = status.files
+                                        .map((f) => f.path)
+                                        .toList();
+                                    _commitDream.schedule(
+                                      sig,
+                                      () => _computeCommitDream(
+                                        repoPath: repoPath,
+                                        includedPaths: allPaths,
+                                      ),
+                                    );
+                                  }
+                                  return _CommitComposerField(
+                                    tokens: t,
+                                    // Bind the active controller based on
+                                    // debug mode. Unbound controller keeps
+                                    // its text so exiting restores the
+                                    // commit draft in progress.
+                                    controller: _shapeMode
+                                        ? _shapeCtrl
+                                        : _commitMsgCtrl,
+                                    focusNode: _shapeMode
+                                        ? _shapeFocus
+                                        : _commitMsgFocusNode,
+                                    hintText: _shapeMode
+                                        ? _askHintForGuardrail(
+                                            preferences.guardrailStage,
+                                          )
+                                        : _composeHint(),
+                                    shapeMode: _shapeMode,
+                                    dreamHint: _shapeMode
+                                        ? null
+                                        : _commitDream.value?.phrase,
+                                    dreamThinking: _commitDream.thinking,
+                                    enabled: !_actionRunning,
+                                    onChanged: (value) {
+                                      if (!_shapeMode) {
+                                        _saveCommitDraft(value);
+                                      }
+                                    },
+                                    aiEnabled: canGenerate,
+                                    aiLoading:
+                                        _generateRunning || _commitAiLoading,
+                                    // success = transient celebration flash;
+                                    // unread = persistent half-lit while a
+                                    // terminal record waits with no drawer
+                                    // open. Generate has no drawer, so
+                                    // "unread" here is just "result waiting
+                                    // to be applied by a re-click" — the
+                                    // generate complete branch already
+                                    // applies the message synchronously
+                                    // when the user is on the originating
+                                    // repo, so unread fires only for the
+                                    // cross-repo "completed elsewhere" case.
+                                    aiSuccess: _generateFlash,
+                                    aiUnread: _isUnreadFor(
+                                      AiActivityKind.generate,
                                     ),
-                                  );
-                                }
-                                return _CommitComposerField(
-                                  tokens: t,
-                                  // Bind the active controller based on
-                                  // debug mode. Unbound controller keeps
-                                  // its text so exiting restores the
-                                  // commit draft in progress.
-                                  controller:
-                                      _shapeMode ? _shapeCtrl : _commitMsgCtrl,
-                                  focusNode: _shapeMode
-                                      ? _shapeFocus
-                                      : _commitMsgFocusNode,
-                                  hintText: _shapeMode
-                                      ? _askHintForGuardrail(
-                                          preferences.guardrailStage)
-                                      : _composeHint(),
-                                  shapeMode: _shapeMode,
-                                  dreamHint: _shapeMode
-                                      ? null
-                                      : _commitDream.value?.phrase,
-                                  dreamThinking: _commitDream.thinking,
-                                  enabled: !_actionRunning,
-                                  onChanged: (value) {
-                                    if (!_shapeMode) {
-                                      _saveCommitDraft(value);
-                                    }
-                                  },
-                                  aiEnabled: canGenerate,
-                                  aiLoading:
-                                      _generateRunning || _commitAiLoading,
-                                  // success = transient celebration flash;
-                                  // unread = persistent half-lit while a
-                                  // terminal record waits with no drawer
-                                  // open. Generate has no drawer, so
-                                  // "unread" here is just "result waiting
-                                  // to be applied by a re-click" — the
-                                  // generate complete branch already
-                                  // applies the message synchronously
-                                  // when the user is on the originating
-                                  // repo, so unread fires only for the
-                                  // cross-repo "completed elsewhere" case.
-                                  aiSuccess: _generateFlash,
-                                  aiUnread:
-                                      _isUnreadFor(AiActivityKind.generate),
-                                  aiTooltip: _commitAiTooltip(
-                                      aiSettings, includedCount),
-                                  reviewEnabled: canReview,
-                                  reviewLoading: _reviewRunning,
-                                  reviewSuccess: _reviewFlash,
-                                  reviewUnread:
-                                      _isUnreadFor(AiActivityKind.review),
-                                  reviewVerdict: _reviewResult?.verdict,
-                                  reviewTooltip: _reviewAiTooltip(
+                                    aiTooltip: _commitAiTooltip(
                                       aiSettings,
                                       includedCount,
-                                      preferences.guardrailStage),
-                                  onGenerate: () => _generateCommitMessage(
-                                    repoPath,
-                                    status,
-                                  ),
-                                  onReview: () {
-                                    if (hasPersistentReview) {
-                                      _showExistingReview();
-                                      return;
-                                    }
-                                    _reviewCommit(repoPath, status);
-                                  },
-                                  museEnabled: canMuse,
-                                  museLoading: _museRunning,
-                                  museSuccess: _museFlash,
-                                  museUnread:
-                                      _isUnreadFor(AiActivityKind.muse),
-                                  museTooltip:
-                                      _museTooltip(aiSettings, includedCount),
-                                  onMuse: () {
-                                    if (_museResult != null ||
-                                        _museError != null) {
-                                      _openDrawerFor(AiActivityKind.muse);
-                                      return;
-                                    }
-                                    _runMuse(repoPath, status);
-                                  },
-                                  // ◈ shape: toggles the composer between
-                                  // commit and ask modes. Pressing the ask
-                                  // submit button opens the ask drawer.
-                                  // Engine-ready gates this so the user
-                                  // can't enter shape mode before the
-                                  // LogosGit engine has resolved — ask's
-                                  // semantic-search pipeline depends on
-                                  // the engine for grounding citations,
-                                  // so a click pre-engine would either
-                                  // crash on null or produce a degraded
-                                  // result without the diff context.
-                                  // Already-in-shape-mode is exempt so a
-                                  // mid-resolve repo switch doesn't trap
-                                  // the user with no exit affordance.
-                                  shapeEnabled: canDebug || _shapeMode,
-                                  shapeLoading: _shaping,
-                                  shapeTooltip: _shapeMode
-                                      ? 'exit · restore your commit draft'
-                                      : 'debug',
-                                  onToggleShape: _toggleShapeMode,
-                                  hideAi: preferences.hideAiFeatures,
-                                  tags: _commitTags,
-                                  suggestedTags: _suggestedTags,
-                                  onTagAdded: (tag) {
-                                    if (!_commitTags.contains(tag)) {
-                                      setState(() => _commitTags.add(tag));
-                                    }
-                                  },
-                                  onTagRemoved: (tag) =>
-                                      setState(() => _commitTags.remove(tag)),
-                                );
-                              }),
+                                    ),
+                                    reviewEnabled: canReview,
+                                    reviewLoading: _reviewRunning,
+                                    reviewSuccess: _reviewFlash,
+                                    reviewUnread: _isUnreadFor(
+                                      AiActivityKind.review,
+                                    ),
+                                    reviewVerdict: _reviewResult?.verdict,
+                                    reviewTooltip: _reviewAiTooltip(
+                                      aiSettings,
+                                      includedCount,
+                                      preferences.guardrailStage,
+                                    ),
+                                    onGenerate: () => _generateCommitMessage(
+                                      repoPath,
+                                      status,
+                                    ),
+                                    onReview: () {
+                                      if (hasPersistentReview) {
+                                        _showExistingReview();
+                                        return;
+                                      }
+                                      _reviewCommit(repoPath, status);
+                                    },
+                                    museEnabled: canMuse,
+                                    museLoading: _museRunning,
+                                    museSuccess: _museFlash,
+                                    museUnread: _isUnreadFor(
+                                      AiActivityKind.muse,
+                                    ),
+                                    museTooltip: _museTooltip(
+                                      aiSettings,
+                                      includedCount,
+                                    ),
+                                    onMuse: () {
+                                      if (_museResult != null ||
+                                          _museError != null) {
+                                        _openDrawerFor(AiActivityKind.muse);
+                                        return;
+                                      }
+                                      _runMuse(repoPath, status);
+                                    },
+                                    // ◈ shape: toggles the composer between
+                                    // commit and ask modes. Pressing the ask
+                                    // submit button opens the ask drawer.
+                                    // Engine-ready gates this so the user
+                                    // can't enter shape mode before the
+                                    // LogosGit engine has resolved — ask's
+                                    // semantic-search pipeline depends on
+                                    // the engine for grounding citations,
+                                    // so a click pre-engine would either
+                                    // crash on null or produce a degraded
+                                    // result without the diff context.
+                                    // Already-in-shape-mode is exempt so a
+                                    // mid-resolve repo switch doesn't trap
+                                    // the user with no exit affordance.
+                                    shapeEnabled: canDebug || _shapeMode,
+                                    shapeLoading: _shaping,
+                                    shapeTooltip: _shapeMode
+                                        ? 'exit · restore your commit draft'
+                                        : 'debug',
+                                    onToggleShape: _toggleShapeMode,
+                                    hideAi: preferences.hideAiFeatures,
+                                    tags: _commitTags,
+                                    suggestedTags: _suggestedTags,
+                                    onTagAdded: (tag) {
+                                      if (!_commitTags.contains(tag)) {
+                                        setState(() => _commitTags.add(tag));
+                                      }
+                                    },
+                                    onTagRemoved: (tag) =>
+                                        setState(() => _commitTags.remove(tag)),
+                                  );
+                                },
+                              ),
                             ),
                             const SizedBox(height: 8),
                             if (_shapeMode && !preferences.hideAiFeatures)
@@ -7176,29 +8169,39 @@ class _ChangesPageState extends State<ChangesPage> {
                                 // (degraded). Letting the user wait at
                                 // the disabled submit until the engine
                                 // lands is honest signalling.
-                                enabled: !_actionRunning &&
+                                enabled:
+                                    !_actionRunning &&
                                     engineReady &&
                                     _shapeCtrl.text.trim().isNotEmpty,
                                 onCycle: () {
                                   final cats = _shapeCategories(aiSettings);
                                   if (cats.isEmpty) return;
-                                  setState(() => _shapeCategoryIndex =
-                                      (_shapeCategoryIndex + 1) % cats.length);
+                                  setState(
+                                    () => _shapeCategoryIndex =
+                                        (_shapeCategoryIndex + 1) % cats.length,
+                                  );
                                 },
                                 onCycleBack: () {
                                   final cats = _shapeCategories(aiSettings);
                                   if (cats.length < 2) return;
-                                  setState(() => _shapeCategoryIndex =
-                                      (_shapeCategoryIndex - 1 + cats.length) %
-                                          cats.length);
+                                  setState(
+                                    () => _shapeCategoryIndex =
+                                        (_shapeCategoryIndex -
+                                            1 +
+                                            cats.length) %
+                                        cats.length,
+                                  );
                                 },
                                 onAsk: () {
                                   final text = _shapeCtrl.text.trim();
                                   if (text.isEmpty) return;
                                   final cats = _shapeCategories(aiSettings);
                                   if (cats.isEmpty) return;
-                                  final cat = cats[_shapeCategoryIndex.clamp(
-                                      0, cats.length - 1)];
+                                  final cat =
+                                      cats[_shapeCategoryIndex.clamp(
+                                        0,
+                                        cats.length - 1,
+                                      )];
                                   _debugInPanel(repoPath, text, cat);
                                 },
                               )
@@ -7211,7 +8214,8 @@ class _ChangesPageState extends State<ChangesPage> {
                               AnimatedBuilder(
                                 animation: _commitMsgCtrl,
                                 builder: (context, child) {
-                                  final commitEnabled = !_actionRunning &&
+                                  final commitEnabled =
+                                      !_actionRunning &&
                                       !_generateRunning &&
                                       !_reviewRunning &&
                                       _commitMsgCtrl.text.trim().isNotEmpty &&
@@ -7220,17 +8224,21 @@ class _ChangesPageState extends State<ChangesPage> {
                                     behavior: HitTestBehavior.translucent,
                                     onSecondaryTapDown: (d) =>
                                         _showCommitContextMenu(
-                                      d.globalPosition,
-                                      repoPath,
-                                      status,
-                                      primaryAction,
-                                    ),
+                                          d.globalPosition,
+                                          repoPath,
+                                          status,
+                                          primaryAction,
+                                        ),
                                     child: _SplitCommitBtn(
                                       label: _actionRunning
                                           ? context.t.changes.commit.working
                                           : (commitOnlyMode
-                                              ? context.t.changes.commit.commitOnly
-                                              : primaryAction.label),
+                                                ? context
+                                                      .t
+                                                      .changes
+                                                      .commit
+                                                      .commitOnly
+                                                : primaryAction.label),
                                       alternateLabel: commitOnlyMode
                                           ? primaryAction.label
                                           : context.t.changes.commit.commitOnly,
@@ -7246,8 +8254,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                         mode: commitOnlyMode
                                             ? _CommitRunMode.commitOnly
                                             : (primaryAction.syncAfterCommit
-                                                ? _CommitRunMode.commitAndSync
-                                                : _CommitRunMode.commitOnly),
+                                                  ? _CommitRunMode.commitAndSync
+                                                  : _CommitRunMode.commitOnly),
                                       ),
                                       onToggleMode: () => context
                                           .read<CommitModeState>()
@@ -7263,8 +8271,9 @@ class _ChangesPageState extends State<ChangesPage> {
                               Padding(
                                 padding: const EdgeInsets.only(top: 6),
                                 child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxHeight: 80),
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 80,
+                                  ),
                                   child: SingleChildScrollView(
                                     child: Text(
                                       _actionError!,
@@ -7285,8 +8294,10 @@ class _ChangesPageState extends State<ChangesPage> {
                 _PanelDivider(
                   tokens: t,
                   onDrag: (dx) {
-                    _panelWidth.value = (_panelWidth.value + dx)
-                        .clamp(_minLeftPanelWidth, _maxLeftPanelWidth);
+                    _panelWidth.value = (_panelWidth.value + dx).clamp(
+                      _minLeftPanelWidth,
+                      _maxLeftPanelWidth,
+                    );
                   },
                   onDragEnd: () => context
                       .read<PreferencesState>()
@@ -7343,7 +8354,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             onFillComposer: (text) {
                               _shapeCtrl.text = text;
                               _shapeCtrl.selection = TextSelection.collapsed(
-                                  offset: text.length);
+                                offset: text.length,
+                              );
                               // Fire refinement directly — one tap
                               // closes the debug loop.
                               final rp = context
@@ -7351,17 +8363,22 @@ class _ChangesPageState extends State<ChangesPage> {
                                   .activePath;
                               if (rp != null && !_shaping) {
                                 final cats = _shapeCategories(
-                                    context.read<AiSettingsState>());
+                                  context.read<AiSettingsState>(),
+                                );
                                 if (cats.isNotEmpty) {
-                                  final catId = cats[_shapeCategoryIndex
-                                      .clamp(0, cats.length - 1)];
+                                  final catId =
+                                      cats[_shapeCategoryIndex.clamp(
+                                        0,
+                                        cats.length - 1,
+                                      )];
                                   _runDebugRefinement(rp, text, catId);
                                 }
                               }
                             },
-                            onCitationTap: (path, line) =>
-                                _jumpToMultiDiffPath(path,
-                                    fallbackStartLine: line),
+                            onCitationTap: (path, line) => _jumpToMultiDiffPath(
+                              path,
+                              fallbackStartLine: line,
+                            ),
                           ),
                         );
                       }
@@ -7377,13 +8394,12 @@ class _ChangesPageState extends State<ChangesPage> {
                             error: _museError,
                             result: _museResult,
                             staleScope: _isMuseScopeStale(),
-                            reasoningEffort:
-                                _snapshotMuseSynthEffort[repoPath],
-                            fastMode:
-                                _snapshotMuseSynthFast[repoPath] ?? false,
+                            reasoningEffort: _snapshotMuseSynthEffort[repoPath],
+                            fastMode: _snapshotMuseSynthFast[repoPath] ?? false,
                             guardrailLabel: _guardrailLabelForStage(
-                                _snapshotMuseGuardrailStage[repoPath] ??
-                                    preferences.guardrailStage),
+                              _snapshotMuseGuardrailStage[repoPath] ??
+                                  preferences.guardrailStage,
+                            ),
                             onCancel: _cancelMuseRequest,
                             onBack: _closeDrawer,
                             onRerun: () {
@@ -7391,23 +8407,25 @@ class _ChangesPageState extends State<ChangesPage> {
                               // doesn't see a same-scope match and
                               // short-circuit to "show existing."
                               context.read<AiActivityState>().clear(
-                                    repoPath: repoPath,
-                                    kind: AiActivityKind.muse,
-                                  );
+                                repoPath: repoPath,
+                                kind: AiActivityKind.muse,
+                              );
                               _runMuse(repoPath, status);
                             },
                             onCopy: _museResult == null
                                 ? null
-                                : (selection) => _copyMuseReport(_museResult!,
-                                    selection: selection),
+                                : (selection) => _copyMuseReport(
+                                    _museResult!,
+                                    selection: selection,
+                                  ),
                           ),
                         );
                       }
                       if (_isReviewDrawerOpen && !preferences.hideAiFeatures) {
                         final stats =
                             (showMultiDiff ? _multiDiffDocument : _diffDocument)
-                                    ?.stats ??
-                                const DiffStats();
+                                ?.stats ??
+                            const DiffStats();
 
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
@@ -7420,18 +8438,18 @@ class _ChangesPageState extends State<ChangesPage> {
                             diffAdds: stats.adds,
                             diffDels: stats.dels,
                             diffHunks: stats.hunks,
-                            modelLabel: _snapshotReviewModelLabel[repoPath] ??
+                            modelLabel:
+                                _snapshotReviewModelLabel[repoPath] ??
                                 _reviewModelLabel(aiSettings),
                             guardrailLabel: _guardrailLabelForStage(
-                                _snapshotReviewGuardrailStage[repoPath] ??
-                                    preferences.guardrailStage),
+                              _snapshotReviewGuardrailStage[repoPath] ??
+                                  preferences.guardrailStage,
+                            ),
                             guardrailStage:
                                 _snapshotReviewGuardrailStage[repoPath] ??
-                                    preferences.guardrailStage,
-                            reasoningEffort:
-                                _snapshotReviewEffort[repoPath],
-                            fastMode:
-                                _snapshotReviewFast[repoPath] ?? false,
+                                preferences.guardrailStage,
+                            reasoningEffort: _snapshotReviewEffort[repoPath],
+                            fastMode: _snapshotReviewFast[repoPath] ?? false,
                             loading: _reviewRunning,
                             error: _reviewError,
                             result: _reviewResult,
@@ -7458,9 +8476,9 @@ class _ChangesPageState extends State<ChangesPage> {
                               // run, because the provider record at
                               // the same scope is still terminal.
                               context.read<AiActivityState>().clear(
-                                    repoPath: repoPath,
-                                    kind: AiActivityKind.review,
-                                  );
+                                repoPath: repoPath,
+                                kind: AiActivityKind.review,
+                              );
                               _closeAndResetReviewDrawer();
                               _reviewCommit(repoPath, status);
                             },
@@ -7468,11 +8486,18 @@ class _ChangesPageState extends State<ChangesPage> {
                                 ? null
                                 : () => _copyReviewReport(_reviewResult!),
                             onOpenFinding: (path, hunkLabel) =>
-                                _openReviewFinding(repoPath, path, status,
-                                    hunkLabel: hunkLabel),
+                                _openReviewFinding(
+                                  repoPath,
+                                  path,
+                                  status,
+                                  hunkLabel: hunkLabel,
+                                ),
                             onFindingOutcome: (finding, verified) =>
                                 _recordFindingOutcome(
-                                    repoPath, finding, verified),
+                                  repoPath,
+                                  finding,
+                                  verified,
+                                ),
                             actionedFindingIds: _reviewActionedFindings,
                           ),
                         );
@@ -7480,144 +8505,155 @@ class _ChangesPageState extends State<ChangesPage> {
                       if (showMultiDiff) {
                         _primeMultiDiff(repoPath, includedFiles);
                         final timelineSections = _buildTimelineSections(
-                            includedFiles, _multiDiffSections);
+                          includedFiles,
+                          _multiDiffSections,
+                        );
                         return ValueListenableBuilder<String?>(
                           valueListenable: _multiDiffCurrentPath,
                           builder: (context, currentMultiDiffPath, _) {
-                        final currentTimelineSection =
-                            _currentTimelineSectionForPath(
-                          timelineSections,
-                          currentMultiDiffPath,
-                        );
-                        final currentTimelineIndex =
-                            currentTimelineSection == null
+                            final currentTimelineSection =
+                                _currentTimelineSectionForPath(
+                                  timelineSections,
+                                  currentMultiDiffPath,
+                                );
+                            final currentTimelineIndex =
+                                currentTimelineSection == null
                                 ? null
                                 : timelineSections.indexOf(
                                     currentTimelineSection,
                                   );
-                        final multiDiffToolbarLabel = currentTimelineSection ==
-                                null
-                            ? '${includedFiles.length} selected files'
-                            : '${currentTimelineSection.displayName} | ${currentTimelineIndex! + 1} of ${timelineSections.length}';
-                        return MaterialSurface(
-                          tone: AppMaterialTone.surface0,
-                          radius: 0,
-                          borderAlpha: 0,
-                          elevated: false,
-                          child: Column(
-                            children: [
-                              _MultiDiffTimelineStrip(
-                                tokens: t,
-                                sections: timelineSections,
-                                currentPath: currentMultiDiffPath,
-                                onSelectPath: (section) => _jumpToMultiDiffPath(
-                                  section.path,
-                                  fallbackStartLine: section.startLine,
-                                ),
-                              ),
-                              Expanded(
-                                // Track vertical scroll to sync the timeline strip.
-                                // Intentionally omits depth==0: the DiffShell's ListView
-                                // is nested inside a horizontal SingleChildScrollView,
-                                // so its events arrive at depth>0.
-                                child: NotificationListener<ScrollNotification>(
-                                  onNotification: (notification) {
-                                    if (notification.metrics.axis !=
-                                        Axis.vertical) {
-                                      return false;
-                                    }
-                                    // UserScrollNotification flags the start and
-                                    // end of user-initiated scrolling. Programmatic
-                                    // animateTo never fires it — which is exactly
-                                    // the signal we need to ignore jump-induced
-                                    // intermediate offsets.
-                                    if (notification
-                                        is UserScrollNotification) {
-                                      if (notification.direction !=
-                                          ScrollDirection.idle) {
-                                        _multiDiffUserDriving = true;
-                                      }
-                                      return false;
-                                    }
-                                    // On scroll end, only recompute currentPath
-                                    // if the scroll was user-driven. A
-                                    // programmatic jump (click in the file tree,
-                                    // tap on the timeline rail) already set the
-                                    // path explicitly — the probe-offset logic
-                                    // would otherwise flip it to the NEXT file
-                                    // when the target file is short (< viewport
-                                    // probe distance).
-                                    if (notification is ScrollEndNotification) {
-                                      if (_multiDiffUserDriving) {
-                                        _handleMultiDiffScroll(
-                                          notification.metrics,
-                                        );
-                                      }
-                                      _multiDiffUserDriving = false;
-                                      return false;
-                                    }
-                                    // Live updates only while the user is
-                                    // driving — animation frames from a jump
-                                    // are skipped, eliminating the flicker.
-                                    if (notification
-                                            is ScrollUpdateNotification &&
-                                        _multiDiffUserDriving) {
-                                      _handleMultiDiffScroll(
-                                        notification.metrics,
-                                      );
-                                    }
-                                    return false;
-                                  },
-                                  child: DiffShell(
-                                    key: const ValueKey('multi-diff-shell'),
-                                    filePath:
-                                        '${includedFiles.length} selected files',
-                                    toolbarFilePath: currentTimelineSection
-                                            ?.path ??
-                                        '${includedFiles.length} selected files',
-                                    toolbarLabel: multiDiffToolbarLabel,
-                                    toolbarTooltip:
-                                        currentTimelineSection?.path,
-                                    document: _multiDiffDocument,
-                                    loading: _multiDiffLoading,
-                                    error: _multiDiffError,
+                            final multiDiffToolbarLabel =
+                                currentTimelineSection == null
+                                ? '${includedFiles.length} selected files'
+                                : '${currentTimelineSection.displayName} | ${currentTimelineIndex! + 1} of ${timelineSections.length}';
+                            return MaterialSurface(
+                              tone: AppMaterialTone.surface0,
+                              radius: 0,
+                              borderAlpha: 0,
+                              elevated: false,
+                              child: Column(
+                                children: [
+                                  _MultiDiffTimelineStrip(
                                     tokens: t,
-                                    repositoryPath: repoPath,
-                                    jumpToLineIndex: _multiDiffJumpLineIndex,
-                                    jumpToLineRequestId:
-                                        _multiDiffJumpRequestId,
-                                    showFileHeader: false,
-                                    enableStaging: true,
-                                    couplingMatrix: context
-                                        .read<FileCouplingState>()
-                                        .matrixFor(repoPath),
-                                    spectralCoupling: _spectralCoupling,
-                                    onOpenRelatedPath: (path) {
-                                      if (includedFiles
-                                          .any((file) => file.path == path)) {
-                                        _jumpToMultiDiffPath(path);
-                                        return;
-                                      }
-                                      _pushAndInspectSingleDiff(repoPath, path);
-                                    },
-                                    onPinnedFileFocused:
-                                        _ensureFileVisibleInChangesList,
-                                    onNavigateBack: _diffNavStack.isEmpty
-                                        ? null
-                                        : () => _navigateBackDiff(repoPath),
-                                    onStagingApplied: () {
-                                      unawaited(_loadMultiDiff(
-                                        repoPath,
-                                        includedFiles,
-                                      ));
-                                      unawaited(repo.refreshStatus());
-                                    },
+                                    sections: timelineSections,
+                                    currentPath: currentMultiDiffPath,
+                                    onSelectPath: (section) =>
+                                        _jumpToMultiDiffPath(
+                                          section.path,
+                                          fallbackStartLine: section.startLine,
+                                        ),
                                   ),
-                                ),
+                                  Expanded(
+                                    // Track vertical scroll to sync the timeline strip.
+                                    // Intentionally omits depth==0: the DiffShell's ListView
+                                    // is nested inside a horizontal SingleChildScrollView,
+                                    // so its events arrive at depth>0.
+                                    child: NotificationListener<ScrollNotification>(
+                                      onNotification: (notification) {
+                                        if (notification.metrics.axis !=
+                                            Axis.vertical) {
+                                          return false;
+                                        }
+                                        // UserScrollNotification flags the start and
+                                        // end of user-initiated scrolling. Programmatic
+                                        // animateTo never fires it — which is exactly
+                                        // the signal we need to ignore jump-induced
+                                        // intermediate offsets.
+                                        if (notification
+                                            is UserScrollNotification) {
+                                          if (notification.direction !=
+                                              ScrollDirection.idle) {
+                                            _multiDiffUserDriving = true;
+                                          }
+                                          return false;
+                                        }
+                                        // On scroll end, only recompute currentPath
+                                        // if the scroll was user-driven. A
+                                        // programmatic jump (click in the file tree,
+                                        // tap on the timeline rail) already set the
+                                        // path explicitly — the probe-offset logic
+                                        // would otherwise flip it to the NEXT file
+                                        // when the target file is short (< viewport
+                                        // probe distance).
+                                        if (notification
+                                            is ScrollEndNotification) {
+                                          if (_multiDiffUserDriving) {
+                                            _handleMultiDiffScroll(
+                                              notification.metrics,
+                                            );
+                                          }
+                                          _multiDiffUserDriving = false;
+                                          return false;
+                                        }
+                                        // Live updates only while the user is
+                                        // driving — animation frames from a jump
+                                        // are skipped, eliminating the flicker.
+                                        if (notification
+                                                is ScrollUpdateNotification &&
+                                            _multiDiffUserDriving) {
+                                          _handleMultiDiffScroll(
+                                            notification.metrics,
+                                          );
+                                        }
+                                        return false;
+                                      },
+                                      child: DiffShell(
+                                        key: const ValueKey('multi-diff-shell'),
+                                        filePath:
+                                            '${includedFiles.length} selected files',
+                                        toolbarFilePath:
+                                            currentTimelineSection?.path ??
+                                            '${includedFiles.length} selected files',
+                                        toolbarLabel: multiDiffToolbarLabel,
+                                        toolbarTooltip:
+                                            currentTimelineSection?.path,
+                                        document: _multiDiffDocument,
+                                        loading: _multiDiffLoading,
+                                        error: _multiDiffError,
+                                        tokens: t,
+                                        repositoryPath: repoPath,
+                                        jumpToLineIndex:
+                                            _multiDiffJumpLineIndex,
+                                        jumpToLineRequestId:
+                                            _multiDiffJumpRequestId,
+                                        showFileHeader: false,
+                                        enableStaging: true,
+                                        couplingMatrix: context
+                                            .read<FileCouplingState>()
+                                            .matrixFor(repoPath),
+                                        spectralCoupling: _spectralCoupling,
+                                        onOpenRelatedPath: (path) {
+                                          if (includedFiles.any(
+                                            (file) => file.path == path,
+                                          )) {
+                                            _jumpToMultiDiffPath(path);
+                                            return;
+                                          }
+                                          _pushAndInspectSingleDiff(
+                                            repoPath,
+                                            path,
+                                          );
+                                        },
+                                        onPinnedFileFocused:
+                                            _ensureFileVisibleInChangesList,
+                                        onNavigateBack: _diffNavStack.isEmpty
+                                            ? null
+                                            : () => _navigateBackDiff(repoPath),
+                                        onStagingApplied: () {
+                                          unawaited(
+                                            _loadMultiDiff(
+                                              repoPath,
+                                              includedFiles,
+                                            ),
+                                          );
+                                          unawaited(repo.refreshStatus());
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        );
+                            );
                           },
                         );
                       }
@@ -7647,8 +8683,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                     .matrixFor(repoPath),
                                 spectralCoupling: _spectralCoupling,
                                 onOpenRelatedPath: (path) {
-                                  if (includedFiles
-                                      .any((file) => file.path == path)) {
+                                  if (includedFiles.any(
+                                    (file) => file.path == path,
+                                  )) {
                                     _jumpToMultiDiffPath(path);
                                     return;
                                   }
@@ -7716,11 +8753,14 @@ class _ChangesPageState extends State<ChangesPage> {
                     alignment: Alignment.center,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: t.surface1,
                         borderRadius: BorderRadius.circular(
-                            context.surfaceShader.geometry.pillRadius),
+                          context.surfaceShader.geometry.pillRadius,
+                        ),
                         border: Border.all(color: t.accentBright, width: 1),
                       ),
                       child: Text(
@@ -7762,20 +8802,29 @@ class _CachedMultiDiff {
   final DiffDocument? document;
   final Map<String, String> fileKeyByPath;
 
+  /// Resident raw-content bytes this entry retains (0 for file-backed
+  /// documents, whose content lives on disk). The cache evicts by this sum,
+  /// not by entry count — twelve slots of combined diffs from a heavy repo
+  /// held gigabytes while the count-only bound reported "12/12, all fine".
+  final int approxBytes;
+
   const _CachedMultiDiff({
     required this.scopeKey,
     required this.document,
     required this.fileKeyByPath,
+    this.approxBytes = 0,
   });
 
   List<_CombinedDiffSection> get sections =>
       document?.sections
-          .map((section) => _CombinedDiffSection(
-                path: section.path,
-                displayName: section.displayName,
-                index: section.index,
-                startLine: section.startLine,
-              ))
+          .map(
+            (section) => _CombinedDiffSection(
+              path: section.path,
+              displayName: section.displayName,
+              index: section.index,
+              startLine: section.startLine,
+            ),
+          )
           .toList(growable: false) ??
       const <_CombinedDiffSection>[];
 }
@@ -7803,9 +8852,7 @@ List<String> _logosRerankedOrder({
   if (sources.isEmpty) return clusters.orderedPaths;
   final scores = engine.diffuse(sources, t: t, coherenceGate: coherenceGate);
   if (scores.isEmpty) return clusters.orderedPaths;
-  final phiByPath = <String, double>{
-    for (final s in scores) s.path: s.phi,
-  };
+  final phiByPath = <String, double>{for (final s in scores) s.path: s.phi};
 
   // Group cluster members in one pass. Re-scanning the full ordered list
   // for every cluster turns selection churn into quadratic work in the UI
@@ -7975,22 +9022,16 @@ class _MultiDiffProgressRail extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTapDown: onSelectPath == null || sections.isEmpty
                 ? null
-                : (details) => _selectFromOffset(
-                      details.localPosition.dx,
-                      width,
-                    ),
+                : (details) =>
+                      _selectFromOffset(details.localPosition.dx, width),
             onHorizontalDragStart: onSelectPath == null || sections.isEmpty
                 ? null
-                : (details) => _selectFromOffset(
-                      details.localPosition.dx,
-                      width,
-                    ),
+                : (details) =>
+                      _selectFromOffset(details.localPosition.dx, width),
             onHorizontalDragUpdate: onSelectPath == null || sections.isEmpty
                 ? null
-                : (details) => _selectFromOffset(
-                      details.localPosition.dx,
-                      width,
-                    ),
+                : (details) =>
+                      _selectFromOffset(details.localPosition.dx, width),
             child: SizedBox(
               width: width,
               height: 28,
@@ -8018,8 +9059,9 @@ class _MultiDiffProgressRail extends StatelessWidget {
       return 0;
     }
     const horizontalInset = 6.0;
-    final clampedWidth =
-        width <= horizontalInset * 2 ? horizontalInset * 2 + 1 : width;
+    final clampedWidth = width <= horizontalInset * 2
+        ? horizontalInset * 2 + 1
+        : width;
     final usableWidth = clampedWidth - (horizontalInset * 2);
     final ratio = ((localDx - horizontalInset) / usableWidth).clamp(0.0, 1.0);
     return (ratio * (count - 1)).round();
@@ -8073,13 +9115,14 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
     final sampleCount = count < 2
         ? 1
         : count > 44
-            ? 44
-            : count;
+        ? 44
+        : count;
 
     for (var i = 0; i < sampleCount; i++) {
       final ratio = sampleCount == 1 ? 0.0 : i / (sampleCount - 1);
-      final representedIndex =
-          sampleCount == 1 ? currentIndex : (ratio * (count - 1)).round();
+      final representedIndex = sampleCount == 1
+          ? currentIndex
+          : (ratio * (count - 1)).round();
       final x = left + usableWidth * ratio;
       final isCurrent = representedIndex == currentIndex;
       final radius = isCurrent ? 4.5 : 2.4;
@@ -8153,6 +9196,7 @@ class _MusePaneState extends State<_MusePane> {
   // across rebuilds while the result reference holds.
   final Set<AiMuseProposal> _selected = <AiMuseProposal>{};
   AiMuseProposal? _hovered;
+
   /// One GlobalKey per strand section. The header's strand chips call
   /// `Scrollable.ensureVisible` on these to jump to the corresponding
   /// section. Lazily populated as sections render so unused strands
@@ -8172,7 +9216,6 @@ class _MusePaneState extends State<_MusePane> {
       alignment: 0.0,
     );
   }
-
 
   void _toggleSelection(AiMuseProposal p) {
     setState(() {
@@ -8243,9 +9286,7 @@ class _MusePaneState extends State<_MusePane> {
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       decoration: BoxDecoration(
         border: Border(
-          bottom: BorderSide(
-            color: t.chromeBorder.withValues(alpha: 0.15),
-          ),
+          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
         ),
       ),
       child: Column(
@@ -8255,45 +9296,56 @@ class _MusePaneState extends State<_MusePane> {
             children: [
               Icon(Icons.bubble_chart_outlined, size: 14, color: t.textFaint),
               const SizedBox(width: 6),
-              Text(context.t.changes.muse.title,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  )),
+              Text(
+                context.t.changes.muse.title,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               if (widget.result != null) ...[
                 const SizedBox(width: 8),
-                Builder(builder: (context) {
-                  final base = AppTokens.contrastGlyph(t.surface0)
-                      .withValues(alpha: 0.5);
-                  final style = TextStyle(
-                    fontFamily: AppFonts.mono,
-                    fontSize: 9,
-                    color: base,
-                  );
-                  final r = widget.result!;
-                  if (r.totalInputTokens <= 0) {
-                    return Text(
-                      '${_tokensLabel(r.promptCharacters)} → ${_tokensLabel(r.diffCharacters)}',
-                      style: style,
+                Builder(
+                  builder: (context) {
+                    final base = AppTokens.contrastGlyph(
+                      t.surface0,
+                    ).withValues(alpha: 0.5);
+                    final style = TextStyle(
+                      fontFamily: AppFonts.mono,
+                      fontSize: 9,
+                      color: base,
                     );
-                  }
-                  // Same tri-tone voice as the review caption: output
-                  // tokens are the expensive ones, they get the ink.
-                  return Text.rich(TextSpan(style: style, children: [
-                    TextSpan(
-                        text: '${_realTokens(r.totalInputTokens)} ${context.t.changes.usage.inWord}'),
-                    TextSpan(
-                      text:
-                          ' · ${_realTokens(r.totalOutputTokens)} ${context.t.changes.usage.outWord}',
-                      style: style.copyWith(
-                        color:
-                            t.accentBright.withValues(alpha: 0.75),
-                        fontWeight: FontWeight.w600,
+                    final r = widget.result!;
+                    if (r.totalInputTokens <= 0) {
+                      return Text(
+                        '${_tokensLabel(r.promptCharacters)} → ${_tokensLabel(r.diffCharacters)}',
+                        style: style,
+                      );
+                    }
+                    // Same tri-tone voice as the review caption: output
+                    // tokens are the expensive ones, they get the ink.
+                    return Text.rich(
+                      TextSpan(
+                        style: style,
+                        children: [
+                          TextSpan(
+                            text:
+                                '${_realTokens(r.totalInputTokens)} ${context.t.changes.usage.inWord}',
+                          ),
+                          TextSpan(
+                            text:
+                                ' · ${_realTokens(r.totalOutputTokens)} ${context.t.changes.usage.outWord}',
+                            style: style.copyWith(
+                              color: t.accentBright.withValues(alpha: 0.75),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ]));
-                }),
+                    );
+                  },
+                ),
               ],
             ],
           ),
@@ -8305,52 +9357,54 @@ class _MusePaneState extends State<_MusePane> {
             //   3. Truly cramped → FittedBox-scale the compact form.
             // Never wraps to a second line; never shrinks past the
             // size where it'd be unreadable.
-            LayoutBuilder(builder: (context, constraints) {
-              // Rough per-strand width estimates at fontSize 10 — used
-              // only to pick which form fits, never to lay out text.
-              const labeledPerStrand = 78.0;
-              const compactPerStrand = 36.0;
-              const separatorWidth = 18.0;
-              final n = strandCounts.length;
-              final separators = (n - 1) * separatorWidth;
-              final labeledWidth = n * labeledPerStrand + separators;
-              final compactWidth = n * compactPerStrand + separators;
-              final available = constraints.maxWidth;
-              final showLabels = labeledWidth <= available;
-              final row = Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < strandCounts.length; i++) ...[
-                    if (i > 0)
-                      Text(
-                        showLabels ? '  ·  ' : '  ',
-                        style: TextStyle(
-                          color: t.textFaint.withValues(alpha: 0.35),
-                          fontSize: 10,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Rough per-strand width estimates at fontSize 10 — used
+                // only to pick which form fits, never to lay out text.
+                const labeledPerStrand = 78.0;
+                const compactPerStrand = 36.0;
+                const separatorWidth = 18.0;
+                final n = strandCounts.length;
+                final separators = (n - 1) * separatorWidth;
+                final labeledWidth = n * labeledPerStrand + separators;
+                final compactWidth = n * compactPerStrand + separators;
+                final available = constraints.maxWidth;
+                final showLabels = labeledWidth <= available;
+                final row = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < strandCounts.length; i++) ...[
+                      if (i > 0)
+                        Text(
+                          showLabels ? '  ·  ' : '  ',
+                          style: TextStyle(
+                            color: t.textFaint.withValues(alpha: 0.35),
+                            fontSize: 10,
+                          ),
                         ),
+                      _MuseHeaderStrandLink(
+                        tokens: t,
+                        glyph: museStrandGlyph(strandCounts[i].$1),
+                        label: museStrandLabel(strandCounts[i].$1),
+                        count: strandCounts[i].$2,
+                        showLabel: showLabels,
+                        onTap: () => _jumpToStrand(strandCounts[i].$1),
                       ),
-                    _MuseHeaderStrandLink(
-                      tokens: t,
-                      glyph: museStrandGlyph(strandCounts[i].$1),
-                      label: museStrandLabel(strandCounts[i].$1),
-                      count: strandCounts[i].$2,
-                      showLabel: showLabels,
-                      onTap: () => _jumpToStrand(strandCounts[i].$1),
-                    ),
+                    ],
                   ],
-                ],
-              );
-              // If neither form fits, scale down the compact form
-              // rather than wrapping. Below ~36px/strand it'd be
-              // unreadable anyway; better to shrink a touch than to
-              // bury the strip in two lines.
-              if (showLabels || compactWidth <= available) return row;
-              return FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: row,
-              );
-            }),
+                );
+                // If neither form fits, scale down the compact form
+                // rather than wrapping. Below ~36px/strand it'd be
+                // unreadable anyway; better to shrink a touch than to
+                // bury the strip in two lines.
+                if (showLabels || compactWidth <= available) return row;
+                return FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: row,
+                );
+              },
+            ),
           ],
           const SizedBox(height: 4),
           Row(
@@ -8363,10 +9417,7 @@ class _MusePaneState extends State<_MusePane> {
                         widget.guardrailLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10.5,
-                        ),
+                        style: TextStyle(color: t.textMuted, fontSize: 10.5),
                       ),
                     ),
                     if (widget.reasoningEffort != null || widget.fastMode)
@@ -8386,12 +9437,17 @@ class _MusePaneState extends State<_MusePane> {
               _GhostActionBar(
                 tokens: t,
                 actions: [
-                  _GhostAction(context.t.changes.review.backToDiff, widget.onBack),
+                  _GhostAction(
+                    context.t.changes.review.backToDiff,
+                    widget.onBack,
+                  ),
                   if (widget.onCopy != null)
                     _GhostAction(
                       _selected.isEmpty
                           ? context.t.common.copy
-                          : context.t.changes.muse.copyN(count: _selected.length),
+                          : context.t.changes.muse.copyN(
+                              count: _selected.length,
+                            ),
                       () {
                         if (_selected.isEmpty) {
                           widget.onCopy!(null);
@@ -8408,7 +9464,10 @@ class _MusePaneState extends State<_MusePane> {
                       context.t.changes.muse.clear,
                       () => setState(() => _selected.clear()),
                     ),
-                  _GhostAction(context.t.changes.review.runAgain, widget.onRerun),
+                  _GhostAction(
+                    context.t.changes.review.runAgain,
+                    widget.onRerun,
+                  ),
                 ],
               ),
             ],
@@ -8444,10 +9503,7 @@ class _MusePaneState extends State<_MusePane> {
           // changed.
           Expanded(
             child: RepaintBoundary(
-              child: LogosDiffusionCanvas(
-                tokens: t,
-                onCancel: widget.onCancel,
-              ),
+              child: LogosDiffusionCanvas(tokens: t, onCancel: widget.onCancel),
             ),
           ),
         ],
@@ -8457,11 +9513,13 @@ class _MusePaneState extends State<_MusePane> {
     if (err != null) {
       return Padding(
         padding: const EdgeInsets.only(top: 24),
-        child: Text(err,
-            style: const TextStyle(
-              color: AppSeverityPalette.caution,
-              fontSize: 12,
-            )),
+        child: Text(
+          err,
+          style: const TextStyle(
+            color: AppSeverityPalette.caution,
+            fontSize: 12,
+          ),
+        ),
       );
     }
     final r = widget.result;
@@ -8522,8 +9580,11 @@ class _MusePaneState extends State<_MusePane> {
   /// read as belonging to one group. Each strand has its own glyph
   /// and weight so the register reads as different at a glance.
   Widget _strandSection(
-      AppTokens t, AiMuseData r, MuseStrandKind strand,
-      List<AiMuseProposal> group) {
+    AppTokens t,
+    AiMuseData r,
+    MuseStrandKind strand,
+    List<AiMuseProposal> group,
+  ) {
     final label = museStrandLabel(strand).toUpperCase();
     // The "loud" strands — fever and vertigo — get a brighter rail
     // and bolder label to flag that their content is high-energy
@@ -8543,16 +9604,18 @@ class _MusePaneState extends State<_MusePane> {
               Text(
                 museStrandGlyph(strand),
                 style: TextStyle(
-                  color: t.accentBright.withValues(alpha: switch (strand) {
-                    MuseStrandKind.spark => 0.30,
-                    MuseStrandKind.current => 0.55,
-                    MuseStrandKind.horizon => 0.80,
-                    MuseStrandKind.fever => 0.75,
-                    MuseStrandKind.echo => 0.55,
-                    MuseStrandKind.vertigo => 0.70,
-                    MuseStrandKind.ghost => 0.45,
-                    MuseStrandKind.mirror => 0.60,
-                  }),
+                  color: t.accentBright.withValues(
+                    alpha: switch (strand) {
+                      MuseStrandKind.spark => 0.30,
+                      MuseStrandKind.current => 0.55,
+                      MuseStrandKind.horizon => 0.80,
+                      MuseStrandKind.fever => 0.75,
+                      MuseStrandKind.echo => 0.55,
+                      MuseStrandKind.vertigo => 0.70,
+                      MuseStrandKind.ghost => 0.45,
+                      MuseStrandKind.mirror => 0.60,
+                    },
+                  ),
                   fontSize: switch (strand) {
                     MuseStrandKind.spark => 9.0,
                     MuseStrandKind.current => 11.0,
@@ -8587,9 +9650,7 @@ class _MusePaneState extends State<_MusePane> {
             padding: const EdgeInsets.only(left: 5),
             child: Container(
               decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: railColor, width: 1),
-                ),
+                border: Border(left: BorderSide(color: railColor, width: 1)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -8628,7 +9689,7 @@ class _MusePaneState extends State<_MusePane> {
         ? const <String>{}
         : {
             for (final c in p.citations)
-              if (userBoostedPaths.contains(c)) c
+              if (userBoostedPaths.contains(c)) c,
           };
     final isPulled = pulledCitations.isNotEmpty;
     final idea = p.originatingIdeaIndex == null
@@ -8658,10 +9719,10 @@ class _MusePaneState extends State<_MusePane> {
     final bgColor = selected
         ? t.accentBright.withValues(alpha: 0.06)
         : hovered
-            ? t.textStrong.withValues(alpha: 0.025)
-            : highlighted
-                ? t.textStrong.withValues(alpha: 0.04)
-                : Colors.transparent;
+        ? t.textStrong.withValues(alpha: 0.025)
+        : highlighted
+        ? t.textStrong.withValues(alpha: 0.04)
+        : Colors.transparent;
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -8697,12 +9758,14 @@ class _MusePaneState extends State<_MusePane> {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text(context.t.changes.muse.youPulledThis,
-                              style: TextStyle(
-                                color: t.accentBright.withValues(alpha: 0.9),
-                                fontSize: 10,
-                                letterSpacing: 0.8,
-                              )),
+                          Text(
+                            context.t.changes.muse.youPulledThis,
+                            style: TextStyle(
+                              color: t.accentBright.withValues(alpha: 0.9),
+                              fontSize: 10,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -8741,8 +9804,8 @@ class _MusePaneState extends State<_MusePane> {
                         onTap: () => setState(() {
                           _highlightedIdeaIndex =
                               _highlightedIdeaIndex == idea.index
-                                  ? null
-                                  : idea.index;
+                              ? null
+                              : idea.index;
                           _brainstormExpanded = true;
                         }),
                         builder: (context, hovered) => AnimatedDefaultTextStyle(
@@ -8755,7 +9818,9 @@ class _MusePaneState extends State<_MusePane> {
                             fontSize: 10.5,
                             fontStyle: FontStyle.italic,
                           ),
-                          child: Text(context.t.changes.muse.fromIdea(text: idea.text)),
+                          child: Text(
+                            context.t.changes.muse.fromIdea(text: idea.text),
+                          ),
                         ),
                       ),
                     ],
@@ -8788,7 +9853,10 @@ class _MusePaneState extends State<_MusePane> {
   }
 
   Widget _footholdRow(
-      AppTokens t, AiMuseProposal p, Set<String> pulledCitations) {
+    AppTokens t,
+    AiMuseProposal p,
+    Set<String> pulledCitations,
+  ) {
     final footholdStyle = TextStyle(
       color: t.textMuted.withValues(alpha: 0.8),
       fontSize: 11.5,
@@ -8811,9 +9879,7 @@ class _MusePaneState extends State<_MusePane> {
                 fontSize: 10.5,
               ),
             ),
-            Expanded(
-              child: SelectableText(p.foothold, style: footholdStyle),
-            ),
+            Expanded(child: SelectableText(p.foothold, style: footholdStyle)),
           ],
         ),
         if (p.citations.isNotEmpty) ...[
@@ -8945,29 +10011,39 @@ class _DebugPane extends StatelessWidget {
             children: [
               Icon(Icons.bug_report_outlined, size: 16, color: t.textFaint),
               const SizedBox(width: 8),
-              Text(context.t.changes.debug.title,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w500,
-                  )),
+              Text(
+                context.t.changes.debug.title,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
               if (result != null) ...[
                 const SizedBox(width: 6),
-                Text(context.t.changes.debug.round(n: result!.round),
-                    style: TextStyle(color: t.textFaint, fontSize: 11)),
-                if (result!.inputTokens > 0 || result!.promptCharacters > 0) ...[
+                Text(
+                  context.t.changes.debug.round(n: result!.round),
+                  style: TextStyle(color: t.textFaint, fontSize: 11),
+                ),
+                if (result!.inputTokens > 0 ||
+                    result!.promptCharacters > 0) ...[
                   const Spacer(),
                   _withUsageTip(
                     result!.usage,
                     Text(
                       _usageCaption(result!.usage) ??
                           (result!.inputTokens > 0
-                              ? context.t.changes.usage.caption(input: _realTokens(result!.inputTokens), output: _realTokens(result!.outputTokens))
+                              ? context.t.changes.usage.caption(
+                                  input: _realTokens(result!.inputTokens),
+                                  output: _realTokens(result!.outputTokens),
+                                )
                               : '${_tokensLabel(result!.promptCharacters)} →'),
                       style: TextStyle(
                         fontFamily: AppFonts.mono,
                         fontSize: 9,
-                        color: AppTokens.contrastGlyph(t.surface0).withValues(alpha: 0.6),
+                        color: AppTokens.contrastGlyph(
+                          t.surface0,
+                        ).withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -8979,24 +10055,34 @@ class _DebugPane extends StatelessWidget {
                 InkWell(
                   onTap: onDismiss,
                   borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                    context.surfaceShader.geometry.badgeRadius,
+                  ),
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Text(context.t.changes.debug.clear,
-                        style: TextStyle(color: t.textFaint, fontSize: 11)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      context.t.changes.debug.clear,
+                      style: TextStyle(color: t.textFaint, fontSize: 11),
+                    ),
                   ),
                 ),
               const SizedBox(width: 4),
               InkWell(
                 onTap: onBack,
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                  context.surfaceShader.geometry.badgeRadius,
+                ),
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Text(context.t.changes.debug.close,
-                      style: TextStyle(color: t.textMuted, fontSize: 11)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    context.t.changes.debug.close,
+                    style: TextStyle(color: t.textMuted, fontSize: 11),
+                  ),
                 ),
               ),
             ],
@@ -9013,8 +10099,9 @@ class _DebugPane extends StatelessWidget {
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(t.accentBright),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          t.accentBright,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -9034,9 +10121,11 @@ class _DebugPane extends StatelessWidget {
                   children: [
                     Icon(Icons.error_outline, size: 20, color: t.danger),
                     const SizedBox(height: 8),
-                    Text(error!,
-                        style: TextStyle(color: t.textMuted, fontSize: 11),
-                        textAlign: TextAlign.center),
+                    Text(
+                      error!,
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               ),
@@ -9054,10 +10143,7 @@ class _DebugPane extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
                           result!.parseWarnings.join(' '),
-                          style: TextStyle(
-                            color: t.stateModified,
-                            fontSize: 9,
-                          ),
+                          style: TextStyle(color: t.stateModified, fontSize: 9),
                         ),
                       ),
                     for (var i = 0; i < result!.hypotheses.length; i++) ...[
@@ -9070,7 +10156,8 @@ class _DebugPane extends StatelessWidget {
                       ),
                     ],
                     if (result!.hypotheses.any(
-                        (h) => h.pressureQuestions.isNotEmpty)) ...[
+                      (h) => h.pressureQuestions.isNotEmpty,
+                    )) ...[
                       const SizedBox(height: 16),
                       _PressureQuestionSection(
                         tokens: t,
@@ -9134,8 +10221,8 @@ class _HypothesisCard extends StatelessWidget {
     final confColor = h.confidence >= 0.6
         ? t.stateAdded
         : h.confidence >= 0.3
-            ? t.stateModified
-            : t.stateDeleted;
+        ? t.stateModified
+        : t.stateDeleted;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
@@ -9154,12 +10241,12 @@ class _HypothesisCard extends StatelessWidget {
             children: [
               Container(
                 margin: const EdgeInsets.only(top: 1),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
                   color: confColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(
-                      context.surfaceShader.geometry.badgeRadius),
+                    context.surfaceShader.geometry.badgeRadius,
+                  ),
                 ),
                 child: Text(
                   '$confPct%',
@@ -9202,9 +10289,19 @@ class _HypothesisCard extends StatelessWidget {
           if (h.evidenceFor.isNotEmpty || h.evidenceAgainst.isNotEmpty)
             const SizedBox(height: 6),
           for (final e in h.evidenceFor)
-            _buildCiteLine(t, e, t.stateAdded, context.t.changes.debug.evidenceFor),
+            _buildCiteLine(
+              t,
+              e,
+              t.stateAdded,
+              context.t.changes.debug.evidenceFor,
+            ),
           for (final e in h.evidenceAgainst)
-            _buildCiteLine(t, e, t.stateDeleted, context.t.changes.debug.evidenceAgainst),
+            _buildCiteLine(
+              t,
+              e,
+              t.stateDeleted,
+              context.t.changes.debug.evidenceAgainst,
+            ),
           // Falsifier: thin accent strip
           if (h.falsifier.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -9212,17 +10309,22 @@ class _HypothesisCard extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 border: Border.all(
-                    color: t.accentBright.withValues(alpha: 0.12)),
+                  color: t.accentBright.withValues(alpha: 0.12),
+                ),
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                  context.surfaceShader.geometry.badgeRadius,
+                ),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
                     padding: const EdgeInsets.only(top: 1),
-                    child: Icon(Icons.science_outlined,
-                        size: 10, color: t.accentBright.withValues(alpha: 0.6)),
+                    child: Icon(
+                      Icons.science_outlined,
+                      size: 10,
+                      color: t.accentBright.withValues(alpha: 0.6),
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
@@ -9245,7 +10347,11 @@ class _HypothesisCard extends StatelessWidget {
   }
 
   Widget _buildCiteLine(
-      AppTokens t, String cite, Color accentColor, String label) {
+    AppTokens t,
+    String cite,
+    Color accentColor,
+    String label,
+  ) {
     final (path, line) = _parseCite(cite);
     final fileName = path.split('/').last;
     final reason = cite.contains(' — ')
@@ -9322,12 +10428,10 @@ class _PressureQuestionSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(context.t.changes.debug.narrowDown,
-            style: TextStyle(
-              fontSize: 9,
-              color: t.textFaint,
-              letterSpacing: 0.3,
-            )),
+        Text(
+          context.t.changes.debug.narrowDown,
+          style: TextStyle(fontSize: 9, color: t.textFaint, letterSpacing: 0.3),
+        ),
         const SizedBox(height: 5),
         Wrap(
           spacing: 4,
@@ -9337,18 +10441,25 @@ class _PressureQuestionSection extends StatelessWidget {
               InkWell(
                 onTap: () => onQuestionTap(q),
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                  context.surfaceShader.geometry.badgeRadius,
+                ),
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     border: Border.all(
-                        color: t.chromeAccent.withValues(alpha: 0.15)),
+                      color: t.chromeAccent.withValues(alpha: 0.15),
+                    ),
                     borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                      context.surfaceShader.geometry.badgeRadius,
+                    ),
                   ),
-                  child: Text(q,
-                      style: TextStyle(fontSize: 9.5, color: t.textMuted)),
+                  child: Text(
+                    q,
+                    style: TextStyle(fontSize: 9.5, color: t.textMuted),
+                  ),
                 ),
               ),
           ],
@@ -9382,7 +10493,7 @@ class _CommitReviewPane extends StatelessWidget {
   final VoidCallback? onCopy;
   final void Function(String path, String? hunkLabel) onOpenFinding;
   final void Function(AiCommitReviewFindingData finding, bool verified)?
-      onFindingOutcome;
+  onFindingOutcome;
   final Set<String> actionedFindingIds;
 
   final bool staleScope;
@@ -9447,33 +10558,41 @@ class _CommitReviewPane extends StatelessWidget {
                     TextSpan(
                       children: [
                         TextSpan(
-                            text: context.t.changes.review.includedFiles(n: includedCount)),
+                          text: context.t.changes.review.includedFiles(
+                            n: includedCount,
+                          ),
+                        ),
                         if (diffAdds != null &&
                             diffDels != null &&
                             diffHunks != null) ...[
                           const TextSpan(text: ' • '),
                           TextSpan(
-                              text: '+$diffAdds',
-                              style: TextStyle(
-                                  color: tokens.stateAdded,
-                                  fontWeight: FontWeight.w600)),
+                            text: '+$diffAdds',
+                            style: TextStyle(
+                              color: tokens.stateAdded,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           TextSpan(
-                              text: ' -$diffDels',
-                              style: TextStyle(
-                                  color: tokens.stateDeleted,
-                                  fontWeight: FontWeight.w600)),
+                            text: ' -$diffDels',
+                            style: TextStyle(
+                              color: tokens.stateDeleted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           const TextSpan(text: ' • '),
                           TextSpan(
-                              text: context.t.changes.review.hunkCount(n: diffHunks!),
-                              style: TextStyle(
-                                  color: tokens.accentBright,
-                                  fontWeight: FontWeight.w600)),
+                            text: context.t.changes.review.hunkCount(
+                              n: diffHunks!,
+                            ),
+                            style: TextStyle(
+                              color: tokens.accentBright,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ],
-                      style: TextStyle(
-                        color: tokens.textMuted,
-                        fontSize: 10.5,
-                      ),
+                      style: TextStyle(color: tokens.textMuted, fontSize: 10.5),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -9481,7 +10600,10 @@ class _CommitReviewPane extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          context.t.changes.review.guardrailModel(guardrail: guardrailLabel, model: modelLabel),
+                          context.t.changes.review.guardrailModel(
+                            guardrail: guardrailLabel,
+                            model: modelLabel,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -9570,9 +10692,7 @@ class _CommitReviewPane extends StatelessWidget {
 
     final review = result;
     if (review == null) {
-      return _reviewShell(
-        child: const SizedBox.shrink(),
-      );
+      return _reviewShell(child: const SizedBox.shrink());
     }
 
     return _reviewShell(
@@ -9612,11 +10732,19 @@ class _CommitReviewPane extends StatelessWidget {
                                 review.usage,
                                 _usageCaptionRich(
                                   tokens,
-                                  AppTokens.contrastGlyph(tokens.surface0)
-                                      .withValues(alpha: 0.5),
+                                  AppTokens.contrastGlyph(
+                                    tokens.surface0,
+                                  ).withValues(alpha: 0.5),
                                   usage: review.usage,
                                   fallback: review.inputTokens > 0
-                                      ? context.t.changes.usage.caption(input: _realTokens(review.inputTokens), output: _realTokens(review.outputTokens))
+                                      ? context.t.changes.usage.caption(
+                                          input: _realTokens(
+                                            review.inputTokens,
+                                          ),
+                                          output: _realTokens(
+                                            review.outputTokens,
+                                          ),
+                                        )
                                       : '${_tokensLabel(review.promptCharacters)} → ${_tokensLabel(review.diffCharacters)}',
                                 ),
                               ),
@@ -9627,29 +10755,38 @@ class _CommitReviewPane extends StatelessWidget {
                             TextSpan(
                               children: [
                                 TextSpan(
-                                    text:
-                                        context.t.changes.review.includedFiles(n: includedCount)),
+                                  text: context.t.changes.review.includedFiles(
+                                    n: includedCount,
+                                  ),
+                                ),
                                 if (diffAdds != null &&
                                     diffDels != null &&
                                     diffHunks != null) ...[
                                   const TextSpan(text: ' • '),
                                   TextSpan(
-                                      text: '+$diffAdds',
-                                      style: TextStyle(
-                                          color: tokens.stateAdded,
-                                          fontWeight: FontWeight.w600)),
+                                    text: '+$diffAdds',
+                                    style: TextStyle(
+                                      color: tokens.stateAdded,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                   TextSpan(
-                                      text: ' -$diffDels',
-                                      style: TextStyle(
-                                          color: tokens.stateDeleted,
-                                          fontWeight: FontWeight.w600)),
+                                    text: ' -$diffDels',
+                                    style: TextStyle(
+                                      color: tokens.stateDeleted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                   const TextSpan(text: ' • '),
                                   TextSpan(
-                                      text:
-                                          context.t.changes.review.hunkCount(n: diffHunks!),
-                                      style: TextStyle(
-                                          color: tokens.accentBright,
-                                          fontWeight: FontWeight.w600)),
+                                    text: context.t.changes.review.hunkCount(
+                                      n: diffHunks!,
+                                    ),
+                                    style: TextStyle(
+                                      color: tokens.accentBright,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ],
                               ],
                               style: TextStyle(
@@ -9697,10 +10834,12 @@ class _CommitReviewPane extends StatelessWidget {
                           ),
                           children: [
                             TextSpan(
-                                text: review.guardrailStage >= 0
-                                    ? _guardrailLabelForStage(
-                                        review.guardrailStage)
-                                    : guardrailLabel),
+                              text: review.guardrailStage >= 0
+                                  ? _guardrailLabelForStage(
+                                      review.guardrailStage,
+                                    )
+                                  : guardrailLabel,
+                            ),
                             TextSpan(
                               text: '  ·  ',
                               style: TextStyle(color: tokens.textFaint),
@@ -9716,9 +10855,16 @@ class _CommitReviewPane extends StatelessWidget {
                     _GhostActionBar(
                       tokens: tokens,
                       actions: [
-                        _GhostAction(context.t.changes.review.backToDiff, onBack),
-                        if (onCopy != null) _GhostAction(context.t.common.copy, onCopy!),
-                        _GhostAction(context.t.changes.review.runAgain, onRerun),
+                        _GhostAction(
+                          context.t.changes.review.backToDiff,
+                          onBack,
+                        ),
+                        if (onCopy != null)
+                          _GhostAction(context.t.common.copy, onCopy!),
+                        _GhostAction(
+                          context.t.changes.review.runAgain,
+                          onRerun,
+                        ),
                       ],
                     ),
                   ],
@@ -9737,7 +10883,8 @@ class _CommitReviewPane extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: tokens.stateConflicted.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(
-                          context.surfaceShader.geometry.radius),
+                        context.surfaceShader.geometry.radius,
+                      ),
                       border: Border.all(
                         color: tokens.stateConflicted.withValues(alpha: 0.22),
                       ),
@@ -9747,7 +10894,9 @@ class _CommitReviewPane extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            context.t.changes.review.draftShownBelow(error: '${review.verificationError}'),
+                            context.t.changes.review.draftShownBelow(
+                              error: '${review.verificationError}',
+                            ),
                             style: TextStyle(
                               color: tokens.textStrong,
                               fontSize: 11,
@@ -9758,7 +10907,9 @@ class _CommitReviewPane extends StatelessWidget {
                         const SizedBox(width: 10),
                         _GhostActionChip(
                           tokens: tokens,
-                          label: traceExpanded ? context.t.changes.review.hideTrace : context.t.changes.review.showTrace,
+                          label: traceExpanded
+                              ? context.t.changes.review.hideTrace
+                              : context.t.changes.review.showTrace,
                           onTap: onToggleTrace,
                         ),
                       ],
@@ -9815,7 +10966,9 @@ class _CommitReviewPane extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      review.findings.isEmpty ? context.t.changes.review.noFindings : context.t.changes.review.findings,
+                      review.findings.isEmpty
+                          ? context.t.changes.review.noFindings
+                          : context.t.changes.review.findings,
                       style: TextStyle(
                         color: tokens.textStrong,
                         fontSize: 11,
@@ -9824,10 +10977,7 @@ class _CommitReviewPane extends StatelessWidget {
                     ),
                     if (review.findings.length > 1) ...[
                       const SizedBox(width: 10),
-                      _SeverityTally(
-                        tokens: tokens,
-                        findings: review.findings,
-                      ),
+                      _SeverityTally(tokens: tokens, findings: review.findings),
                     ],
                   ],
                 ),
@@ -9851,12 +11001,15 @@ class _CommitReviewPane extends StatelessWidget {
                         onOpenDiff: finding.filePath == null
                             ? null
                             : () => onOpenFinding(
-                                finding.filePath!, finding.hunkLabel),
-                        onOutcome: (onFindingOutcome == null ||
+                                finding.filePath!,
+                                finding.hunkLabel,
+                              ),
+                        onOutcome:
+                            (onFindingOutcome == null ||
                                 finding.grounding == null)
                             ? null
                             : (verified) =>
-                                onFindingOutcome!(finding, verified),
+                                  onFindingOutcome!(finding, verified),
                         actioned: actionedFindingIds.contains(finding.id),
                       ),
                     ),
@@ -9880,10 +11033,9 @@ class _CommitReviewPane extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: tokens.rowBg,
                           borderRadius: BorderRadius.circular(
-                              context.surfaceShader.geometry.radius),
-                          border: Border.all(
-                            color: tokens.chromeBorderFaint,
+                            context.surfaceShader.geometry.radius,
                           ),
+                          border: Border.all(color: tokens.chromeBorderFaint),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -9990,10 +11142,7 @@ class _StaleScopeBanner extends StatelessWidget {
           Expanded(
             child: Text(
               context.t.changes.staleScope.message,
-              style: TextStyle(
-                color: tokens.textMuted,
-                fontSize: 11,
-              ),
+              style: TextStyle(color: tokens.textMuted, fontSize: 11),
             ),
           ),
           GestureDetector(
@@ -10016,7 +11165,6 @@ class _StaleScopeBanner extends StatelessWidget {
     );
   }
 }
-
 
 class _ReviewMetaChip extends StatelessWidget {
   final AppTokens tokens;
@@ -10073,8 +11221,9 @@ class _ReviewDisclosureCard extends StatelessWidget {
       width: double.infinity,
       decoration: BoxDecoration(
         color: tokens.rowBg,
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.radius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.radius,
+        ),
         border: Border.all(color: tokens.chromeBorderSubtle),
       ),
       child: Column(
@@ -10191,9 +11340,7 @@ class _ReviewFindingCard extends StatelessWidget {
       // is the generous one. Inner links (Dismiss) win the gesture
       // arena as usual.
       onTap: onOpenDiff,
-      cursor: onOpenDiff != null
-          ? SystemMouseCursors.click
-          : MouseCursor.defer,
+      cursor: onOpenDiff != null ? SystemMouseCursors.click : MouseCursor.defer,
       // A dismissed finding recedes instead of merely captioning
       // itself — the list reads as "handled" at a glance.
       builder: (context, hovered) => AnimatedOpacity(
@@ -10201,142 +11348,145 @@ class _ReviewFindingCard extends StatelessWidget {
         duration: context.motion(AppMotion.snap),
         curve: AppMotion.snapCurve,
         child: IntrinsicHeight(
-        child: AnimatedContainer(
-          duration: context.motion(AppMotion.snap),
-          curve: AppMotion.snapCurve,
-          decoration: BoxDecoration(
-            color: tokens.rowBg,
-            borderRadius:
-                BorderRadius.circular(context.surfaceShader.geometry.radius),
-            border: Border.all(
-              // Hover answers with the finding's own severity tint —
-              // the card lights in its own color, not generic chrome.
-              color: hovered && onOpenDiff != null
-                  ? accent.withValues(alpha: 0.38)
-                  : tokens.chromeBorderSubtle,
+          child: AnimatedContainer(
+            duration: context.motion(AppMotion.snap),
+            curve: AppMotion.snapCurve,
+            decoration: BoxDecoration(
+              color: tokens.rowBg,
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius,
+              ),
+              border: Border.all(
+                // Hover answers with the finding's own severity tint —
+                // the card lights in its own color, not generic chrome.
+                color: hovered && onOpenDiff != null
+                    ? accent.withValues(alpha: 0.38)
+                    : tokens.chromeBorderSubtle,
+              ),
             ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Accent left edge — communicates severity at a glance.
-              Container(
-                width: 3,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    bottomLeft: Radius.circular(8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Accent left edge — communicates severity at a glance.
+                Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      bottomLeft: Radius.circular(8),
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              finding.title,
-                              style: TextStyle(
-                                color: tokens.textStrong,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                finding.title,
+                                style: TextStyle(
+                                  color: tokens.textStrong,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            if (onOpenDiff != null) ...[
+                              const SizedBox(width: 8),
+                              _InlineActionLink(
+                                tokens: tokens,
+                                label: context.t.changes.finding.openDiff,
+                                onTap: onOpenDiff!,
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (finding.filePath != null ||
+                            finding.hunkLabel != null) ...[
+                          const SizedBox(height: 5),
+                          _FindingLocusLine(
+                            tokens: tokens,
+                            filePath: finding.filePath,
+                            hunkLabel: finding.hunkLabel,
+                          ),
+                        ],
+                        if (finding.evidence.trim().isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          resonanceText(
+                            finding.evidence,
+                            tokens,
+                            baseStyle: TextStyle(
+                              color: tokens.textNormal,
+                              fontSize: 11.2,
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                        if (finding.whyItMatters.trim().isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.only(left: 8),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                left: BorderSide(
+                                  color: tokens.textMuted.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            child: resonanceText(
+                              finding.whyItMatters,
+                              tokens,
+                              baseStyle: TextStyle(
+                                color: tokens.textMuted,
+                                fontSize: 11,
+                                height: 1.45,
                               ),
                             ),
                           ),
-                          if (onOpenDiff != null) ...[
-                            const SizedBox(width: 8),
+                        ],
+                        if (onOutcome != null) ...[
+                          const SizedBox(height: 10),
+                          if (actioned)
+                            Text(
+                              context.t.changes.finding.recorded,
+                              style: TextStyle(
+                                color: tokens.textMuted.withValues(alpha: 0.55),
+                                fontSize: 10,
+                                letterSpacing: 0.3,
+                              ),
+                            )
+                          else
+                            // Dismiss-only. Muting a finding teaches the per-repo
+                            // ratchet that this claim-shape is noise here, so axis 5
+                            // suppresses it next time. There is deliberately no
+                            // Confirm: you fix a real finding, you don't click a
+                            // button, so an explicit confirm would only ever gather
+                            // dismissal-biased data and train the reviewer toward
+                            // silence. The "this was real" signal (onOutcome(true))
+                            // is reserved for a future implicit source — e.g. the
+                            // user editing the flagged hunk — so it stays unbiased.
                             _InlineActionLink(
                               tokens: tokens,
-                              label: context.t.changes.finding.openDiff,
-                              onTap: onOpenDiff!,
+                              label: context.t.changes.finding.dismiss,
+                              onTap: () => onOutcome!(false),
                             ),
-                          ],
                         ],
-                      ),
-                      if (finding.filePath != null ||
-                          finding.hunkLabel != null) ...[
-                        const SizedBox(height: 5),
-                        _FindingLocusLine(
-                          tokens: tokens,
-                          filePath: finding.filePath,
-                          hunkLabel: finding.hunkLabel,
-                        ),
                       ],
-                    if (finding.evidence.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      resonanceText(
-                        finding.evidence,
-                        tokens,
-                        baseStyle: TextStyle(
-                          color: tokens.textNormal,
-                          fontSize: 11.2,
-                          height: 1.45,
-                        ),
-                      ),
-                    ],
-                    if (finding.whyItMatters.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.only(left: 8),
-                        decoration: BoxDecoration(
-                          border: Border(
-                            left: BorderSide(
-                              color: tokens.textMuted.withValues(alpha: 0.2),
-                              width: 2,
-                            ),
-                          ),
-                        ),
-                        child: resonanceText(
-                          finding.whyItMatters,
-                          tokens,
-                          baseStyle: TextStyle(
-                            color: tokens.textMuted,
-                            fontSize: 11,
-                            height: 1.45,
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (onOutcome != null) ...[
-                      const SizedBox(height: 10),
-                      if (actioned)
-                        Text(
-                          context.t.changes.finding.recorded,
-                          style: TextStyle(
-                            color: tokens.textMuted.withValues(alpha: 0.55),
-                            fontSize: 10,
-                            letterSpacing: 0.3,
-                          ),
-                        )
-                      else
-                        // Dismiss-only. Muting a finding teaches the per-repo
-                        // ratchet that this claim-shape is noise here, so axis 5
-                        // suppresses it next time. There is deliberately no
-                        // Confirm: you fix a real finding, you don't click a
-                        // button, so an explicit confirm would only ever gather
-                        // dismissal-biased data and train the reviewer toward
-                        // silence. The "this was real" signal (onOutcome(true))
-                        // is reserved for a future implicit source — e.g. the
-                        // user editing the flagged hunk — so it stays unbiased.
-                        _InlineActionLink(
-                          tokens: tokens,
-                          label: context.t.changes.finding.dismiss,
-                          onTap: () => onOutcome!(false),
-                        ),
-                    ],
-                  ],
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
           ),
-        ),
         ),
       ),
     );
@@ -10368,26 +11518,30 @@ class _SeverityTally extends StatelessWidget {
       if (n == null) continue;
       final color = _severityAccent(sev);
       if (children.isNotEmpty) children.add(const SizedBox(width: 8));
-      children.add(Container(
-        width: 6,
-        height: 6,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.9),
-          shape: BoxShape.circle,
+      children.add(
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.9),
+            shape: BoxShape.circle,
+          ),
         ),
-      ));
+      );
       children.add(const SizedBox(width: 3));
-      children.add(Text(
-        '$n',
-        style: TextStyle(
-          color: color,
-          fontSize: 9.5,
-          fontWeight: FontWeight.w700,
-          fontFamily: AppFonts.mono,
-          fontFamilyFallback: AppFonts.monoFallback,
-          fontFeatures: const [FontFeature.tabularFigures()],
+      children.add(
+        Text(
+          '$n',
+          style: TextStyle(
+            color: color,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w700,
+            fontFamily: AppFonts.mono,
+            fontFamilyFallback: AppFonts.monoFallback,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
         ),
-      ));
+      );
     }
     if (children.isEmpty) return const SizedBox.shrink();
     return Row(mainAxisSize: MainAxisSize.min, children: children);
@@ -10454,15 +11608,13 @@ class _FindingLocusLine extends StatelessWidget {
             decoration: BoxDecoration(
               color: tokens.chromeAccent.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.badgeRadius),
+                context.surfaceShader.geometry.badgeRadius,
+              ),
             ),
             child: Text(
               hunkLabel!,
               maxLines: 1,
-              style: monoStyle.copyWith(
-                fontSize: 9.5,
-                color: tokens.textMuted,
-              ),
+              style: monoStyle.copyWith(fontSize: 9.5, color: tokens.textMuted),
             ),
           ),
         ],
@@ -10495,8 +11647,9 @@ class _TracePanel extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: tokens.rowBg,
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.radius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.radius,
+        ),
         border: Border.all(color: tokens.chromeBorderSubtle),
       ),
       child: Column(
@@ -10544,71 +11697,71 @@ class _TracePanel extends StatelessWidget {
             child: !expanded
                 ? const SizedBox(width: double.infinity)
                 : Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (verificationNotes != null &&
-                      verificationNotes!.trim().isNotEmpty) ...[
-                    Text(
-                      verificationNotes!,
-                      style: TextStyle(
-                        color: tokens.textNormal,
-                        fontSize: 11,
-                        height: 1.45,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  if (draftSummary != null &&
-                      draftSummary!.trim().isNotEmpty) ...[
-                    Text(
-                      context.t.changes.trace.draftReview,
-                      style: TextStyle(
-                        color: tokens.textMuted,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      draftSummary!,
-                      style: TextStyle(
-                        color: tokens.textStrong,
-                        fontSize: 11.2,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                  if (draftReasoningReport != null &&
-                      draftReasoningReport!.trim().isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      draftReasoningReport!,
-                      style: TextStyle(
-                        color: tokens.textMuted,
-                        fontSize: 11,
-                        height: 1.45,
-                      ),
-                    ),
-                  ],
-                  if (draftFindings.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    for (final finding in draftFindings.take(5))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          '• ${finding.title}',
-                          style: TextStyle(
-                            color: tokens.textMuted,
-                            fontSize: 10.8,
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (verificationNotes != null &&
+                            verificationNotes!.trim().isNotEmpty) ...[
+                          Text(
+                            verificationNotes!,
+                            style: TextStyle(
+                              color: tokens.textNormal,
+                              fontSize: 11,
+                              height: 1.45,
+                            ),
                           ),
-                        ),
-                      ),
-                  ],
-                ],
-              ),
-            ),
+                          const SizedBox(height: 10),
+                        ],
+                        if (draftSummary != null &&
+                            draftSummary!.trim().isNotEmpty) ...[
+                          Text(
+                            context.t.changes.trace.draftReview,
+                            style: TextStyle(
+                              color: tokens.textMuted,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            draftSummary!,
+                            style: TextStyle(
+                              color: tokens.textStrong,
+                              fontSize: 11.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                        if (draftReasoningReport != null &&
+                            draftReasoningReport!.trim().isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            draftReasoningReport!,
+                            style: TextStyle(
+                              color: tokens.textMuted,
+                              fontSize: 11,
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                        if (draftFindings.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          for (final finding in draftFindings.take(5))
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '• ${finding.title}',
+                                style: TextStyle(
+                                  color: tokens.textMuted,
+                                  fontSize: 10.8,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
           ),
         ],
       ),
@@ -10654,7 +11807,12 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
       final r = await fetchRemote(widget.repoPath, prune: true);
       if (mounted && !r.ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.t.changes.snack.fetchFailed(error: '${r.error}'))));
+          SnackBar(
+            content: Text(
+              context.t.changes.snack.fetchFailed(error: '${r.error}'),
+            ),
+          ),
+        );
       }
       await widget.onRefresh();
     } finally {
@@ -10670,18 +11828,26 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     if (_running) return;
     setState(() => _busy = _CleanTreeBusy.sync);
     try {
-      final outcome = await resolveSync(context, widget.repoPath, widget.status);
+      final outcome = await resolveSync(
+        context,
+        widget.repoPath,
+        widget.status,
+      );
       if (mounted) {
         // A clean sync used to be silent — confirm it too, terse and quick
         // ("Already up to date." / "Rebased and pushed."), so a no-op click
         // still reads as "done" instead of nothing.
         final clean = outcome is MergeClean;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(mergeOutcomeMessage(outcome, op: context.t.backend.ops.sync)),
-          duration: clean
-              ? const Duration(milliseconds: 1600)
-              : const Duration(seconds: 4),
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              mergeOutcomeMessage(outcome, op: context.t.backend.ops.sync),
+            ),
+            duration: clean
+                ? const Duration(milliseconds: 1600)
+                : const Duration(seconds: 4),
+          ),
+        );
       }
       await widget.onRefresh();
     } finally {
@@ -10759,9 +11925,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                     ),
                     TextSpan(text: s.upstream),
                   ] else
-                    TextSpan(
-                      text: context.t.changes.cleanTree.noUpstream,
-                    ),
+                    TextSpan(text: context.t.changes.cleanTree.noUpstream),
                 ],
               ),
             ),
@@ -10814,7 +11978,9 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
             else
               _GhostActionChip(
                 tokens: t,
-                label: _running ? context.t.changes.cleanTree.refreshing : context.t.changes.cleanTree.refresh,
+                label: _running
+                    ? context.t.changes.cleanTree.refreshing
+                    : context.t.changes.cleanTree.refresh,
                 fetching: _running,
                 onTap: _refreshOnly,
               ),
@@ -10900,9 +12066,9 @@ class _GhostActionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Measure in the ambient font (serif on some themes) so no segment clips.
-    final base = DefaultTextStyle.of(context).style.merge(
-          const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600),
-        );
+    final base = DefaultTextStyle.of(
+      context,
+    ).style.merge(const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600));
     final labelStyle = base.copyWith(color: tokens.textMuted);
     return MosaicShardBar(
       surfaceColor: tokens.surface0,
@@ -10952,12 +12118,12 @@ class _GhostActionChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       chromeBuilder: ({required hovered, required pressed}) =>
           ghostButtonChrome(
-        tokens,
-        hovered: hovered,
-        pressed: pressed,
-        enabled: true,
-        baseBorderColor: tokens.chromeBorder.withValues(alpha: 0.16),
-      ),
+            tokens,
+            hovered: hovered,
+            pressed: pressed,
+            enabled: true,
+            baseBorderColor: tokens.chromeBorder.withValues(alpha: 0.16),
+          ),
       child: Text(
         label,
         style: TextStyle(
@@ -11039,8 +12205,10 @@ class _MuseHeaderStrandLinkState extends State<_MuseHeaderStrandLink> {
       // Tooltip carries the label when it's hidden — and adds the
       // count context when it's shown — so the strand's identity is
       // always recoverable on hover, regardless of strip density.
-      message: context.t.changes.muse
-          .strandTooltip(label: widget.label, count: widget.count),
+      message: context.t.changes.muse.strandTooltip(
+        label: widget.label,
+        count: widget.count,
+      ),
       waitDuration: const Duration(milliseconds: 350),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -11160,26 +12328,38 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
     if (id == null) {
       return [
         TextSpan(
-            text: context.t.changes.identity.none,
-            style: TextStyle(
-                color: t.stateDeleted,
-                fontSize: _chevronHovered ? 10 : null)),
+          text: context.t.changes.identity.none,
+          style: TextStyle(
+            color: t.stateDeleted,
+            fontSize: _chevronHovered ? 10 : null,
+          ),
+        ),
       ];
     }
     final caution = TextStyle(
-        color: t.stateModified, fontSize: _chevronHovered ? 10 : null);
+      color: t.stateModified,
+      fontSize: _chevronHovered ? 10 : null,
+    );
     switch (widget.identityGrade) {
       case IdentityFamiliarity.resident:
         // Known-here email: the calm minimum. Name only, no email noise.
-        return [TextSpan(text: context.t.changes.identity.asName(name: id.name), style: dim)];
+        return [
+          TextSpan(
+            text: context.t.changes.identity.asName(name: id.name),
+            style: dim,
+          ),
+        ];
       case IdentityFamiliarity.knownElsewhere:
         // An author from the user's OWN workspace, first time in this
         // repo — a greeting in the normal tone, never caution.
         return [
           TextSpan(
-              text: context.t.changes.identity
-                  .asNameEmail(name: id.name, email: id.email),
-              style: dim),
+            text: context.t.changes.identity.asNameEmail(
+              name: id.name,
+              email: id.email,
+            ),
+            style: dim,
+          ),
           TextSpan(
             text: context.t.changes.identity.firstCommit,
             style: TextStyle(color: t.textMuted, fontSize: 10),
@@ -11188,28 +12368,41 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
       case IdentityFamiliarity.newEmail:
         // Familiar name, never-seen email — the email is the news.
         return [
-          TextSpan(text: context.t.changes.identity.asNameSpace(name: id.name), style: dim),
-          TextSpan(text: context.t.changes.identity.emailAngle(email: id.email), style: caution),
+          TextSpan(
+            text: context.t.changes.identity.asNameSpace(name: id.name),
+            style: dim,
+          ),
+          TextSpan(
+            text: context.t.changes.identity.emailAngle(email: id.email),
+            style: caution,
+          ),
         ];
       case IdentityFamiliarity.stranger:
         return [
           TextSpan(
-              text: context.t.changes.identity
-                  .asNameEmail(name: id.name, email: id.email),
-              style: caution),
+            text: context.t.changes.identity.asNameEmail(
+              name: id.name,
+              email: id.email,
+            ),
+            style: caution,
+          ),
           TextSpan(
             text: context.t.changes.identity.newToRepo,
             style: TextStyle(
-                color: t.stateModified.withValues(alpha: 0.75),
-                fontSize: 10),
+              color: t.stateModified.withValues(alpha: 0.75),
+              fontSize: 10,
+            ),
           ),
         ];
       case IdentityFamiliarity.unknown:
         return [
           TextSpan(
-              text: context.t.changes.identity
-                  .asNameEmail(name: id.name, email: id.email),
-              style: dim),
+            text: context.t.changes.identity.asNameEmail(
+              name: id.name,
+              email: id.email,
+            ),
+            style: dim,
+          ),
         ];
     }
   }
@@ -11267,23 +12460,26 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                 color: chrome.background,
                 gradient: chrome.gradient,
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.radius),
+                  context.surfaceShader.geometry.radius,
+                ),
                 // The button is the stage: a stranger identity (never
                 // authored in this repo) tints the edge toward the
                 // attention tone. Still, quiet, peripheral — and it
                 // animates in via the container's own motion, no loops.
                 border: Border.all(
-                    color: widget.identityGrade ==
-                            IdentityFamiliarity.stranger
-                        ? Color.lerp(
-                            chrome.borderColor, t.stateModified, 0.55)!
-                        : chrome.borderColor),
+                  color: widget.identityGrade == IdentityFamiliarity.stranger
+                      ? Color.lerp(chrome.borderColor, t.stateModified, 0.55)!
+                      : chrome.borderColor,
+                ),
                 boxShadow: chrome.shadows,
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(
-                    (context.surfaceShader.geometry.radius - 1)
-                        .clamp(0, double.infinity)),
+                  (context.surfaceShader.geometry.radius - 1).clamp(
+                    0,
+                    double.infinity,
+                  ),
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -11309,10 +12505,11 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                                   state: widget.actionRunning
                                       ? IconAnimState.loading
                                       : _mainHovered
-                                          ? IconAnimState.hovered
-                                          : IconAnimState.idle,
-                                  color:
-                                      widget.enabled ? t.btnText : t.textMuted,
+                                      ? IconAnimState.hovered
+                                      : IconAnimState.idle,
+                                  color: widget.enabled
+                                      ? t.btnText
+                                      : t.textMuted,
                                   size: 13,
                                 ),
                                 const SizedBox(width: 5),
@@ -11335,8 +12532,9 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                     Container(
                       width: 1,
                       height: 18,
-                      color: t.chromeBorder
-                          .withValues(alpha: _anyHovered ? 0.35 : 0.22),
+                      color: t.chromeBorder.withValues(
+                        alpha: _anyHovered ? 0.35 : 0.22,
+                      ),
                     ),
                     Tooltip(
                       key: _chevTipKey,
@@ -11352,8 +12550,10 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                         children: [
                           if (_chevronHovered)
                             TextSpan(
-                                text: context.t.changes.commitBtn
-                                    .switchTo(label: widget.alternateLabel)),
+                              text: context.t.changes.commitBtn.switchTo(
+                                label: widget.alternateLabel,
+                              ),
+                            ),
                           ..._identitySpans(t),
                         ],
                       ),
@@ -11371,18 +12571,22 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                           onTapUp: (_) =>
                               setState(() => _chevronPressed = false),
                           child: AnimatedContainer(
-                            duration: context.motion(const Duration(milliseconds: 80)),
+                            duration: context.motion(
+                              const Duration(milliseconds: 80),
+                            ),
                             width: 32,
                             color: widget.commitOnlyMode
                                 ? t.accentBright.withValues(
-                                    alpha: _chevronHovered ? 0.18 : 0.10)
+                                    alpha: _chevronHovered ? 0.18 : 0.10,
+                                  )
                                 : (_chevronHovered
-                                    ? t.itemHoverBg
-                                    : t.itemHoverBg.withValues(alpha: 0)),
+                                      ? t.itemHoverBg
+                                      : t.itemHoverBg.withValues(alpha: 0)),
                             child: Center(
                               child: AnimatedSwitcher(
-                                duration: context
-                                    .motion(const Duration(milliseconds: 250)),
+                                duration: context.motion(
+                                  const Duration(milliseconds: 250),
+                                ),
                                 switchInCurve: Curves.easeOutCubic,
                                 switchOutCurve: Curves.easeInCubic,
                                 transitionBuilder: (child, anim) {
@@ -11403,8 +12607,9 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                                         state: _chevronHovered
                                             ? IconAnimState.hovered
                                             : IconAnimState.idle,
-                                        color: t.accentBright
-                                            .withValues(alpha: 0.80),
+                                        color: t.accentBright.withValues(
+                                          alpha: 0.80,
+                                        ),
                                         size: 14,
                                       )
                                     : AnimatedCommitIcon(
@@ -11412,8 +12617,9 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                                         state: _chevronHovered
                                             ? IconAnimState.hovered
                                             : IconAnimState.idle,
-                                        color:
-                                            t.btnText.withValues(alpha: 0.80),
+                                        color: t.btnText.withValues(
+                                          alpha: 0.80,
+                                        ),
                                         size: 14,
                                       ),
                               ),
@@ -11484,8 +12690,10 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
     final t = widget.tokens;
     final hasCats = widget.categories.isNotEmpty;
     final activeCat = hasCats
-        ? widget.categories[
-            widget.categoryIndex.clamp(0, widget.categories.length - 1)]
+        ? widget.categories[widget.categoryIndex.clamp(
+            0,
+            widget.categories.length - 1,
+          )]
         : '';
     final chrome = primaryButtonChrome(
       t,
@@ -11513,15 +12721,19 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
             decoration: BoxDecoration(
               color: chrome.background,
               gradient: chrome.gradient,
-              borderRadius:
-                  BorderRadius.circular(context.surfaceShader.geometry.radius),
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.radius,
+              ),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(
-                  (context.surfaceShader.geometry.radius - 1)
-                      .clamp(0, double.infinity)),
+                (context.surfaceShader.geometry.radius - 1).clamp(
+                  0,
+                  double.infinity,
+                ),
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -11540,17 +12752,20 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                           ),
                           const SizedBox(width: 6),
                           AnimatedSwitcher(
-                            duration: context
-                                .motion(const Duration(milliseconds: 140)),
+                            duration: context.motion(
+                              const Duration(milliseconds: 140),
+                            ),
                             switchInCurve: Curves.easeOutCubic,
                             switchOutCurve: Curves.easeInCubic,
                             child: Text(
                               hasCats
                                   ? widget.busy
-                                      ? context.t.changes.shapeBtn
-                                          .askingWith(cat: activeCat)
-                                      : context.t.changes.shapeBtn
-                                          .askWith(cat: activeCat)
+                                        ? context.t.changes.shapeBtn.askingWith(
+                                            cat: activeCat,
+                                          )
+                                        : context.t.changes.shapeBtn.askWith(
+                                            cat: activeCat,
+                                          )
                                   : context.t.changes.shapeBtn.noModel,
                               key: ValueKey('${widget.busy}|$activeCat'),
                               style: TextStyle(
@@ -11567,13 +12782,16 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                   Container(
                     width: 1,
                     height: 18,
-                    color: t.chromeBorder
-                        .withValues(alpha: _anyHovered ? 0.35 : 0.22),
+                    color: t.chromeBorder.withValues(
+                      alpha: _anyHovered ? 0.35 : 0.22,
+                    ),
                   ),
                   SizedBox(
                     width: 32,
                     child: AnimatedContainer(
-                      duration: context.motion(const Duration(milliseconds: 80)),
+                      duration: context.motion(
+                        const Duration(milliseconds: 80),
+                      ),
                       color: _chevronHovered
                           ? t.itemHoverBg
                           : t.itemHoverBg.withValues(alpha: 0),
@@ -11624,8 +12842,10 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
         Tooltip(
           message: chevEnabled
               ? context.t.changes.shapeBtn.nextTooltip(
-                  cat: widget.categories[
-                      (widget.categoryIndex + 1) % widget.categories.length])
+                  cat:
+                      widget.categories[(widget.categoryIndex + 1) %
+                          widget.categories.length],
+                )
               : context.t.changes.shapeBtn.onlyOne,
           waitDuration: const Duration(milliseconds: 600),
           child: SizedBox(
@@ -11710,8 +12930,10 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
         duration: context.motion(const Duration(milliseconds: 150)),
         curve: Curves.easeOutCubic,
         child: Tooltip(
-          message: context.t.changes.dejaVu
-              .tooltip(pct: pct, n: widget.ghostCount),
+          message: context.t.changes.dejaVu.tooltip(
+            pct: pct,
+            n: widget.ghostCount,
+          ),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             decoration: BoxDecoration(
@@ -11719,11 +12941,11 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
                   ? t.bg1.withValues(alpha: 0.95)
                   : t.bg1.withValues(alpha: 0.0),
               border: Border.all(
-                color: t.chromeBorder
-                    .withValues(alpha: _hovered ? 0.35 : 0.15),
+                color: t.chromeBorder.withValues(alpha: _hovered ? 0.35 : 0.15),
               ),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.badgeRadius),
+                context.surfaceShader.geometry.badgeRadius,
+              ),
               boxShadow: _hovered ? AppElev.row : null,
             ),
             child: Row(
@@ -11732,15 +12954,13 @@ class _DejaVuGlyphState extends State<_DejaVuGlyph> {
                 Icon(
                   Icons.auto_awesome,
                   size: 12,
-                  color: t.textFaint.withValues(
-                      alpha: _hovered ? 0.8 : 0.5),
+                  color: t.textFaint.withValues(alpha: _hovered ? 0.8 : 0.5),
                 ),
                 const SizedBox(width: 4),
                 Text(
                   context.t.changes.dejaVu.label,
                   style: TextStyle(
-                    color: t.textMuted.withValues(
-                        alpha: _hovered ? 0.9 : 0.6),
+                    color: t.textMuted.withValues(alpha: _hovered ? 0.9 : 0.6),
                     fontSize: 9,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.3,
@@ -11838,8 +13058,7 @@ class _ModelGlyphStripState extends State<_ModelGlyphStrip>
                 ),
               ),
             ),
-          if (widget.effort != null && widget.fast)
-            const SizedBox(width: 2),
+          if (widget.effort != null && widget.fast) const SizedBox(width: 2),
           if (widget.fast)
             AnimatedBuilder(
               animation: repaint,
@@ -11862,6 +13081,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
   final Color color;
   final String effort;
   final double t;
+
   /// Hover ping progress. 0 and 1 are inactive; in between, an extra
   /// (stronger) wavefront travels the rings.
   final double ping;
@@ -11933,8 +13153,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
               color.withValues(alpha: 0.12 + 0.06 * pulse),
               color.withValues(alpha: 0.0),
             ],
-          ).createShader(
-              Rect.fromCircle(center: center, radius: haloR)),
+          ).createShader(Rect.fromCircle(center: center, radius: haloR)),
       );
     }
 
@@ -11961,8 +13180,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
             color.withValues(alpha: coreAlpha),
             color.withValues(alpha: 0.0),
           ],
-        ).createShader(
-            Rect.fromCircle(center: center, radius: coreRadius)),
+        ).createShader(Rect.fromCircle(center: center, radius: coreRadius)),
     );
 
     // Nucleus dot — scales with effort so each level has a distinct
@@ -11982,15 +13200,16 @@ class _ReasoningGlyphPainter extends CustomPainter {
     // Organic luminance: two incommensurate-feeling harmonics (integer
     // multiples of the loop so it never seams) — candle, not strobe.
     // The nucleus also flashes at the instant a wavefront is born.
-    final flick = 0.04 * math.sin(4 * math.pi * t) +
+    final flick =
+        0.04 * math.sin(4 * math.pi * t) +
         0.03 * math.sin(10 * math.pi * t + 1.3);
     canvas.drawCircle(
       center,
       nucR,
       Paint()
         ..color = color.withValues(
-            alpha: (nucAlpha + flick + frontBoost(1.0) * 0.5)
-                .clamp(0.0, 1.0)),
+          alpha: (nucAlpha + flick + frontBoost(1.0) * 0.5).clamp(0.0, 1.0),
+        ),
     );
 
     // Ripple rings — clipped to the right hemisphere.
@@ -11999,8 +13218,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
     // the wavefront passing through: each arc brightens and swells a
     // sub-pixel as the emission crosses its radius, then settles.
     canvas.save();
-    canvas.clipRect(
-        Rect.fromLTWH(cx - 1, 0, size.width - cx + 1, size.height));
+    canvas.clipRect(Rect.fromLTWH(cx - 1, 0, size.width - cx + 1, size.height));
 
     for (var i = 0; i < rings; i++) {
       final r = 3.6 + i * 2.8;
@@ -12053,6 +13271,7 @@ class _ReasoningGlyphPainter extends CustomPainter {
 class _FastGlyphPainter extends CustomPainter {
   final Color color;
   final double t;
+
   /// Hover ping progress — an immediate strike. 0 and 1 are inactive.
   final double ping;
 
@@ -12095,7 +13314,8 @@ class _FastGlyphPainter extends CustomPainter {
     }
 
     // Rest luminance breathes barely (integer harmonics — seamless).
-    final rest = 0.44 +
+    final rest =
+        0.44 +
         0.04 * math.sin(2 * math.pi * t) +
         0.02 * math.sin(6 * math.pi * t + 0.7);
 
@@ -12174,10 +13394,12 @@ class _ShelfControlState extends State<_ShelfControl> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final hasShelves = widget.count > 0;
-    final borderColor =
-        t.chromeBorder.withValues(alpha: _isHoveringWholePill ? 0.35 : 0.25);
-    final backgroundColor =
-        t.bg1.withValues(alpha: _isHoveringWholePill ? 0.95 : 0.0);
+    final borderColor = t.chromeBorder.withValues(
+      alpha: _isHoveringWholePill ? 0.35 : 0.25,
+    );
+    final backgroundColor = t.bg1.withValues(
+      alpha: _isHoveringWholePill ? 0.95 : 0.0,
+    );
 
     Widget segment({
       required String text,
@@ -12188,11 +13410,13 @@ class _ShelfControlState extends State<_ShelfControl> {
     }) {
       final hovered = _hoverSegment == id && onTap != null;
       return MouseRegion(
-        cursor:
-            onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        cursor: onTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
         onEnter: (_) => setState(() => _hoverSegment = id),
         onExit: (_) => setState(
-            () => _hoverSegment = _hoverSegment == id ? 0 : _hoverSegment),
+          () => _hoverSegment = _hoverSegment == id ? 0 : _hoverSegment,
+        ),
         child: GestureDetector(
           onTap: onTap,
           child: Container(
@@ -12229,7 +13453,8 @@ class _ShelfControlState extends State<_ShelfControl> {
             color: backgroundColor,
             border: Border.all(color: borderColor),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
+              context.surfaceShader.geometry.badgeRadius,
+            ),
             boxShadow: _isHoveringWholePill ? AppElev.row : null,
           ),
           child: child,
@@ -12242,13 +13467,16 @@ class _ShelfControlState extends State<_ShelfControl> {
       return pill(
         segment(
           text: widget.selectedCount > 0
-              ? context.t.changes.shelvePill.shelveN(count: widget.selectedCount)
+              ? context.t.changes.shelvePill.shelveN(
+                  count: widget.selectedCount,
+                )
               : context.t.changes.shelvePill.shelve,
           onTap: widget.canShelve ? widget.onShelve : null,
           id: 2,
           baseColor: t.textMuted,
           radius: BorderRadius.circular(
-              context.surfaceShader.geometry.badgeRadius),
+            context.surfaceShader.geometry.badgeRadius,
+          ),
         ),
       );
     }
@@ -12264,7 +13492,8 @@ class _ShelfControlState extends State<_ShelfControl> {
                   ? '…'
                   : context.t.changes.shelvePill.shelvedCount(
                       count: widget.count,
-                      glyph: widget.expanded ? '▾' : '▸'),
+                      glyph: widget.expanded ? '▾' : '▸',
+                    ),
               onTap: widget.onToggleExpanded,
               id: 1,
               baseColor: t.chromeAccent.withValues(alpha: 0.85),
@@ -12388,10 +13617,13 @@ class _StashDragFeedback extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: t.surface1,
-          border:
-              Border.all(color: borderColor.withValues(alpha: 0.75), width: 1),
+          border: Border.all(
+            color: borderColor.withValues(alpha: 0.75),
+            width: 1,
+          ),
           borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.cardRadius),
+            context.surfaceShader.geometry.cardRadius,
+          ),
           boxShadow: AppElev.card,
         ),
         child: Text(
@@ -12459,8 +13691,9 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
   /// are left alone.
   static String _displayLabel(String raw) {
     // Strict WIP form: branch token has no colon; hash is 7-40 hex; tail non-empty.
-    final wip =
-        RegExp(r'^WIP on ([^:\s]+): ([0-9a-f]{7,40}) (.+)$').firstMatch(raw);
+    final wip = RegExp(
+      r'^WIP on ([^:\s]+): ([0-9a-f]{7,40}) (.+)$',
+    ).firstMatch(raw);
     if (wip != null) return wip.group(3)!;
     final on = RegExp(r'^On ([^:\s]+): (.+)$').firstMatch(raw);
     if (on != null) return on.group(2)!;
@@ -12488,16 +13721,17 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
     final hasShape = shape != null;
 
     // Border and surface tint shift based on orientation.
-    final accentColor =
-        hasShape ? _orientationColor(shape.orientation, t) : t.chromeBorder;
+    final accentColor = hasShape
+        ? _orientationColor(shape.orientation, t)
+        : t.chromeBorder;
 
     final Color surfaceColor = widget.isPeeking
         ? t.itemActiveBg
         : (widget.isOpen
-            ? t.surface1.withValues(alpha: 0.6)
-            : (_hovered
-                ? t.secondaryBtnHoverBg
-                : t.secondaryBtnHoverBg.withValues(alpha: 0)));
+              ? t.surface1.withValues(alpha: 0.6)
+              : (_hovered
+                    ? t.secondaryBtnHoverBg
+                    : t.secondaryBtnHoverBg.withValues(alpha: 0)));
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -12507,16 +13741,18 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
         decoration: BoxDecoration(
           color: surfaceColor,
           borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.cardRadius),
+            context.surfaceShader.geometry.cardRadius,
+          ),
           border: widget.isPeeking
               ? Border.all(color: t.chromeAccent.withValues(alpha: 0.45))
               : (widget.isOpen || _hovered
-                  ? Border.all(color: t.chromeBorder.withValues(alpha: 0.25))
-                  : null),
+                    ? Border.all(color: t.chromeBorder.withValues(alpha: 0.25))
+                    : null),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.cardRadius),
+            context.surfaceShader.geometry.cardRadius,
+          ),
           child: Stack(
             children: [
               // Left accent strip — 3px, colored by orientation.
@@ -12545,8 +13781,9 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                           children: [
                             AnimatedRotation(
                               turns: widget.isOpen ? 0.25 : 0,
-                              duration: context
-                                  .motion(const Duration(milliseconds: 120)),
+                              duration: context.motion(
+                                const Duration(milliseconds: 120),
+                              ),
                               child: Text(
                                 '▸',
                                 style: TextStyle(
@@ -12693,7 +13930,8 @@ class _StashDrawerContents extends StatelessWidget {
         (m, f) => math.max(m, f.adds + f.dels),
       );
       // Overlap files float to the top; rest sorted by impact descending.
-      final sorted = [...files!]..sort((a, b) {
+      final sorted = [...files!]
+        ..sort((a, b) {
           final aOver = overlapPaths.contains(a.path) ? 1 : 0;
           final bOver = overlapPaths.contains(b.path) ? 1 : 0;
           if (aOver != bOver) return bOver - aOver;
@@ -12740,8 +13978,9 @@ class _StashFileRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = tokens;
     final impact = file.binary ? 0 : (file.adds + file.dels);
-    final fillFraction =
-        maxImpact > 0 ? (impact / maxImpact).clamp(0.0, 1.0) : 0.0;
+    final fillFraction = maxImpact > 0
+        ? (impact / maxImpact).clamp(0.0, 1.0)
+        : 0.0;
     final textColor = isOverlap ? t.stateDeleted : t.textNormal;
     final norm = file.path.replaceAll('\\', '/');
     final slash = norm.lastIndexOf('/');
@@ -13007,8 +14246,11 @@ class _FileRowState extends State<_FileRow> {
     // IntrinsicHeight and leaves dead space below the dir line.
     final staged = _describeGitChange(file.stagedCode, staged: true, tokens: t);
     if (staged != null) return [staged];
-    final unstaged =
-        _describeGitChange(file.unstagedCode, staged: false, tokens: t);
+    final unstaged = _describeGitChange(
+      file.unstagedCode,
+      staged: false,
+      tokens: t,
+    );
     if (unstaged != null) return [unstaged];
     return const [];
   }
@@ -13076,28 +14318,32 @@ class _FileRowState extends State<_FileRow> {
                 child: AnimatedContainer(
                   duration: context.motion(const Duration(milliseconds: 80)),
                   margin: const EdgeInsets.symmetric(vertical: 2),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: () {
                       var bg = widget.isDiffSelected
                           ? t.chromeBorder.withValues(alpha: 0.1)
                           : (widget.included
-                              ? t.stateAdded.withValues(alpha: 0.05)
-                              : (_hovered
-                                  ? t.itemHoverBg
-                                  : t.itemHoverBg.withValues(alpha: 0)));
+                                ? t.stateAdded.withValues(alpha: 0.05)
+                                : (_hovered
+                                      ? t.itemHoverBg
+                                      : t.itemHoverBg.withValues(alpha: 0)));
                       if (widget.flowFragility > 0) {
                         final f = filamentSat(widget.flowFragility);
                         bg = Color.lerp(
-                            bg,
-                            t.stateFragile.withValues(alpha: 0.09),
-                            f)!;
+                          bg,
+                          t.stateFragile.withValues(alpha: 0.09),
+                          f,
+                        )!;
                       }
                       return bg;
                     }(),
                     borderRadius: BorderRadius.circular(
-                        context.surfaceShader.geometry.radius),
+                      context.surfaceShader.geometry.radius,
+                    ),
                     border: Border.all(
                       color: widget.included
                           ? t.stateAdded.withValues(alpha: 0.18)
@@ -13135,7 +14381,9 @@ class _FileRowState extends State<_FileRow> {
                       // epoch advances don't snap.
                       Expanded(
                         child: AnimatedOpacity(
-                          duration: context.motion(const Duration(milliseconds: 140)),
+                          duration: context.motion(
+                            const Duration(milliseconds: 140),
+                          ),
                           opacity: widget.dimOpacity,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -13155,7 +14403,9 @@ class _FileRowState extends State<_FileRow> {
                                     child: Text(
                                       filename,
                                       style: TextStyle(
-                                          color: t.textNormal, fontSize: 12),
+                                        color: t.textNormal,
+                                        fontSize: 12,
+                                      ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
@@ -13168,8 +14418,9 @@ class _FileRowState extends State<_FileRow> {
                                       children: [
                                         for (final badge in badges)
                                           _StateBadge(
-                                              label: badge.label,
-                                              color: badge.color),
+                                            label: badge.label,
+                                            color: badge.color,
+                                          ),
                                       ],
                                     ),
                                   ],
@@ -13177,7 +14428,9 @@ class _FileRowState extends State<_FileRow> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                dir.isEmpty ? context.t.changes.fileRow.repoRoot : dir,
+                                dir.isEmpty
+                                    ? context.t.changes.fileRow.repoRoot
+                                    : dir,
                                 style: TextStyle(
                                   color: t.textMuted,
                                   fontSize: 10,
@@ -13214,7 +14467,8 @@ class _FileRowState extends State<_FileRow> {
               color: t.accentBright.withValues(alpha: 0.18),
               border: Border.all(color: t.accentBright, width: 1),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.pillRadius),
+                context.surfaceShader.geometry.pillRadius,
+              ),
               boxShadow: [
                 BoxShadow(
                   color: t.shadowElev.withValues(alpha: 0.35),
@@ -13306,8 +14560,8 @@ class _RailStripe extends StatelessWidget {
     final width = isRailSubject
         ? 5.0
         : peerScore == null
-            ? 3.0
-            : (2.5 + peerScore! * 2.0).clamp(2.5, 4.5);
+        ? 3.0
+        : (2.5 + peerScore! * 2.0).clamp(2.5, 4.5);
 
     // Color: subject stays full cluster color; peers fade alpha by score;
     // unsubjected rails render steady.
@@ -13341,10 +14595,12 @@ class _RailStripe extends StatelessWidget {
               borderRadius: BorderRadius.only(
                 topLeft: connectTop ? Radius.zero : const Radius.circular(1.5),
                 topRight: connectTop ? Radius.zero : const Radius.circular(1.5),
-                bottomLeft:
-                    connectBottom ? Radius.zero : const Radius.circular(1.5),
-                bottomRight:
-                    connectBottom ? Radius.zero : const Radius.circular(1.5),
+                bottomLeft: connectBottom
+                    ? Radius.zero
+                    : const Radius.circular(1.5),
+                bottomRight: connectBottom
+                    ? Radius.zero
+                    : const Radius.circular(1.5),
               ),
             ),
           ),
@@ -13413,7 +14669,9 @@ _ChangeBadgeSpec? _describeGitChange(
       );
     case 'T':
       return _ChangeBadgeSpec(
-        label: staged ? t.changes.badge.stagedTypeChange : t.changes.badge.typeChanged,
+        label: staged
+            ? t.changes.badge.stagedTypeChange
+            : t.changes.badge.typeChanged,
         color: tokens.accentBright,
       );
     case '?':
@@ -13650,13 +14908,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     final tier = charCount > 600
         ? 2
         : charCount > 300
-            ? 1
-            : 0;
+        ? 1
+        : 0;
     final tierList = tier == 2
         ? titles.long
         : tier == 1
-            ? titles.mid
-            : titles.short;
+        ? titles.mid
+        : titles.short;
     // The hat caches shuffled titles for the whole session, so it must be
     // rebuilt when the locale changes (live switch, no restart) — otherwise
     // it keeps dealing the previous language's titles until it empties.
@@ -13672,7 +14930,9 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   }
 
   Future<void> _openExpandedEditor(
-      BuildContext context, AppTokens tokens) async {
+    BuildContext context,
+    AppTokens tokens,
+  ) async {
     final controller = widget.controller;
     final onChanged = widget.onChanged;
     final focusNode = widget.focusNode;
@@ -13697,8 +14957,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         return FadeTransition(
           opacity: curved,
           child: ScaleTransition(
-            scale: Tween<double>(begin: 0.92, end: 1.0)
-                .animate(curved),
+            scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
             alignment: Alignment.center,
             child: child,
           ),
@@ -13708,10 +14967,8 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         child: Material(
           color: Colors.transparent,
           child: Container(
-            constraints: const BoxConstraints(
-                maxWidth: 600, maxHeight: 500),
-            margin: const EdgeInsets.symmetric(
-                horizontal: 60, vertical: 40),
+            constraints: const BoxConstraints(maxWidth: 600, maxHeight: 500),
+            margin: const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
             decoration: BoxDecoration(
               color: tokens.surface1,
               borderRadius: BorderRadius.circular(geo.cardRadius),
@@ -13755,15 +15012,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                     child: Container(
                       decoration: BoxDecoration(
                         color: tokens.inputBg,
-                        borderRadius: BorderRadius.circular(
-                            geo.pillRadius),
-                        border: Border.all(
-                          color: tokens.inputBorder,
-                        ),
+                        borderRadius: BorderRadius.circular(geo.pillRadius),
+                        border: Border.all(color: tokens.inputBorder),
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(
-                            math.max(0, geo.pillRadius - 1)),
+                          math.max(0, geo.pillRadius - 1),
+                        ),
                         child: TextField(
                           controller: expanded,
                           focusNode: focus,
@@ -13864,8 +15119,6 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     }
   }
 
-
-
   @override
   void dispose() {
     _tagInputFocus.removeListener(_onTagFocusChanged);
@@ -13908,9 +15161,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       child: Scrollbar(
         controller: _scrollCtrl,
         child: ScrollbarTheme(
-          data: ScrollbarThemeData(
-            thickness: WidgetStateProperty.all(0),
-          ),
+          data: ScrollbarThemeData(thickness: WidgetStateProperty.all(0)),
           child: TextField(
             controller: widget.controller,
             focusNode: widget.focusNode,
@@ -13921,10 +15172,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
             onChanged: widget.onChanged,
             cursorColor: tokens.accentBright,
             textAlignVertical: TextAlignVertical.top,
-            style: TextStyle(
-              color: tokens.textStrong,
-              fontSize: 12,
-            ),
+            style: TextStyle(color: tokens.textStrong, fontSize: 12),
             decoration: InputDecoration(
               isCollapsed: true,
               contentPadding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
@@ -13938,20 +15186,23 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               // how carefully the Positioned is tuned. Italic-when-dream
               // + alpha fade on `thinking` give the same feel.
               hintText: widget.shapeMode
-                  ? (widget.hintText ?? context.t.changes.composer.hintPlaceholder)
+                  ? (widget.hintText ??
+                        context.t.changes.composer.hintPlaceholder)
                   : (widget.dreamHint ??
-                      widget.hintText ??
-                      context.t.changes.composer.hintPlaceholder),
+                        widget.hintText ??
+                        context.t.changes.composer.hintPlaceholder),
               hintStyle: TextStyle(
                 color: tokens.textMuted.withValues(
-                  alpha: widget.dreamHint != null &&
+                  alpha:
+                      widget.dreamHint != null &&
                           !widget.shapeMode &&
                           widget.dreamThinking
                       ? 0.32
                       : 0.55,
                 ),
                 fontSize: 12,
-                fontStyle: (widget.dreamHint != null && !widget.shapeMode) ||
+                fontStyle:
+                    (widget.dreamHint != null && !widget.shapeMode) ||
                         widget.shapeMode
                     ? FontStyle.italic
                     : FontStyle.normal,
@@ -13980,16 +15231,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         if (widget.aiLoading) {
           // Pulse: width 1→1.5px + accent breathes 40%→100% alpha
           final pulse = _pulseCtrl.value;
-          borderColor =
-              tokens.accentBright.withValues(alpha: 0.40 + pulse * 0.60);
+          borderColor = tokens.accentBright.withValues(
+            alpha: 0.40 + pulse * 0.60,
+          );
           borderWidth = 1.0 + pulse * 0.5;
         } else if (_doneCtrl.value > 0) {
           // Bloom: width 1→2→1px + accent at full alpha fading out
           final t = _doneCtrl.value;
           final sine = math.sin(math.pi * t);
           borderWidth = 1.0 + sine * 1.0;
-          borderColor =
-              tokens.accentBright.withValues(alpha: 0.70 + sine * 0.30);
+          borderColor = tokens.accentBright.withValues(
+            alpha: 0.70 + sine * 0.30,
+          );
         } else {
           borderColor = baseBorder.withValues(alpha: widget.enabled ? 1 : 0.45);
           borderWidth = 1.0;
@@ -14025,7 +15278,8 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             decoration: BoxDecoration(
                               color: tokens.bg1.withValues(alpha: 0.85),
                               borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius),
+                                context.surfaceShader.geometry.badgeRadius,
+                              ),
                             ),
                             child: Icon(
                               Icons.open_in_full,
@@ -14036,8 +15290,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         ),
                       ),
                     ),
-                  if (!widget.shapeMode &&
-                      widget.suggestedTags.isNotEmpty)
+                  if (!widget.shapeMode && widget.suggestedTags.isNotEmpty)
                     Positioned(
                       left: 7,
                       right: 7,
@@ -14055,15 +15308,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             duration: context.motion(AppMotion.fade),
                             curve: shader.curve,
                             child: ConstrainedBox(
-                              constraints:
-                                  const BoxConstraints(maxHeight: 64),
+                              constraints: const BoxConstraints(maxHeight: 64),
                               child: SingleChildScrollView(
                                 child: Wrap(
                                   spacing: 4,
                                   runSpacing: 4,
                                   children: [
-                                    for (final tag
-                                        in widget.suggestedTags)
+                                    for (final tag in widget.suggestedTags)
                                       _CommitTagSuggestionChip(
                                         label: tag,
                                         tokens: tokens,
@@ -14090,18 +15341,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                       children: [
                         if (!widget.shapeMode)
                           MouseRegion(
-                            onEnter: (_) => setState(
-                                () => _tagTriggerHovered = true),
-                            onExit: (_) => setState(
-                                () => _tagTriggerHovered = false),
+                            onEnter: (_) =>
+                                setState(() => _tagTriggerHovered = true),
+                            onExit: (_) =>
+                                setState(() => _tagTriggerHovered = false),
                             cursor: SystemMouseCursors.click,
                             child: GestureDetector(
                               onTap: () {
-                                setState(() =>
-                                    _tagFieldOpen = !_tagFieldOpen);
+                                setState(() => _tagFieldOpen = !_tagFieldOpen);
                                 if (_tagFieldOpen) {
-                                  WidgetsBinding.instance
-                                      .addPostFrameCallback((_) {
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
                                     _tagInputFocus.requestFocus();
                                   });
                                 }
@@ -14109,29 +15360,30 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                               child: Padding(
                                 padding: const EdgeInsets.only(right: 4),
                                 child: AnimatedContainer(
-                                  duration: context
-                                      .motion(AppMotion.snap),
+                                  duration: context.motion(AppMotion.snap),
                                   curve: shader.safeCurve,
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 5, vertical: 2),
+                                    horizontal: 5,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: tokens.bg1.withValues(
-                                        alpha: _tagTriggerHovered ||
-                                                _tagFieldOpen
-                                            ? 0.95
-                                            : 0.0),
-                                    borderRadius:
-                                        BorderRadius.circular(
-                                            geo.pillRadius),
+                                      alpha: _tagTriggerHovered || _tagFieldOpen
+                                          ? 0.95
+                                          : 0.0,
+                                    ),
+                                    borderRadius: BorderRadius.circular(
+                                      geo.pillRadius,
+                                    ),
                                     border: Border.all(
-                                      color:
-                                          tokens.chromeBorder.withValues(
-                                              alpha: _tagTriggerHovered ||
-                                                      _tagFieldOpen
-                                                  ? 0.35
-                                                  : widget.tags.isNotEmpty
-                                                      ? 0.20
-                                                      : 0.0),
+                                      color: tokens.chromeBorder.withValues(
+                                        alpha:
+                                            _tagTriggerHovered || _tagFieldOpen
+                                            ? 0.35
+                                            : widget.tags.isNotEmpty
+                                            ? 0.20
+                                            : 0.0,
+                                      ),
                                       width: 0.8,
                                     ),
                                     boxShadow: _tagTriggerHovered
@@ -14139,13 +15391,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                         : null,
                                   ),
                                   child: AnimatedOpacity(
-                                    opacity: _tagTriggerHovered ||
+                                    opacity:
+                                        _tagTriggerHovered ||
                                             _tagFieldOpen ||
                                             widget.tags.isNotEmpty
                                         ? 1.0
                                         : 0.35,
-                                    duration: context
-                                        .motion(AppMotion.snap),
+                                    duration: context.motion(AppMotion.snap),
                                     curve: shader.safeCurve,
                                     child: Text(
                                       '#',
@@ -14167,11 +15419,11 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         if (!widget.shapeMode)
                           Expanded(
                             child: IgnorePointer(
-                              ignoring:
-                                  !_tagFieldOpen && widget.tags.isEmpty,
+                              ignoring: !_tagFieldOpen && widget.tags.isEmpty,
                               child: ConstrainedBox(
-                                constraints:
-                                    const BoxConstraints(maxHeight: 64),
+                                constraints: const BoxConstraints(
+                                  maxHeight: 64,
+                                ),
                                 child: SingleChildScrollView(
                                   controller: _tagScrollCtrl,
                                   child: Wrap(
@@ -14189,17 +15441,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                               widget.onTagRemoved(tag),
                                         ),
                                       AnimatedContainer(
-                                        duration:
-                                            context.motion(AppMotion.fade),
+                                        duration: context.motion(
+                                          AppMotion.fade,
+                                        ),
                                         curve: shader.curve,
                                         width: _tagFieldOpen ? 84 : 0,
                                         clipBehavior: Clip.hardEdge,
                                         decoration: const BoxDecoration(),
                                         child: AnimatedOpacity(
-                                          opacity:
-                                              _tagFieldOpen ? 1.0 : 0.0,
-                                          duration: context
-                                              .motion(AppMotion.snap),
+                                          opacity: _tagFieldOpen ? 1.0 : 0.0,
+                                          duration: context.motion(
+                                            AppMotion.snap,
+                                          ),
                                           curve: shader.safeCurve,
                                           child: SizedBox(
                                             width: 80,
@@ -14211,8 +15464,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                                 fontSize: 10,
                                                 fontFamily: AppFonts.mono,
                                               ),
-                                              cursorColor:
-                                                  tokens.accentBright,
+                                              cursorColor: tokens.accentBright,
                                               cursorHeight: 12,
                                               decoration: InputDecoration(
                                                 isDense: true,
@@ -14220,62 +15472,67 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                                 filled: true,
                                                 fillColor: tokens.inputBg,
                                                 contentPadding:
-                                                    const EdgeInsets
-                                                        .symmetric(
-                                                        horizontal: 4,
-                                                        vertical: 3),
-                                                hintText: context.t.changes.tagInput.hint,
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                      vertical: 3,
+                                                    ),
+                                                hintText: context
+                                                    .t
+                                                    .changes
+                                                    .tagInput
+                                                    .hint,
                                                 hintStyle: TextStyle(
                                                   color: tokens.textMuted
-                                                      .withValues(
-                                                          alpha: 0.45),
+                                                      .withValues(alpha: 0.45),
                                                   fontSize: 10,
-                                                  fontFamily:
-                                                      AppFonts.mono,
-                                                  fontStyle:
-                                                      FontStyle.italic,
+                                                  fontFamily: AppFonts.mono,
+                                                  fontStyle: FontStyle.italic,
                                                 ),
                                                 border: OutlineInputBorder(
                                                   borderRadius:
                                                       BorderRadius.circular(
-                                                          geo.badgeRadius),
+                                                        geo.badgeRadius,
+                                                      ),
                                                   borderSide: BorderSide(
-                                                    color: tokens
-                                                        .chromeBorder
+                                                    color: tokens.chromeBorder
                                                         .withValues(
-                                                            alpha: 0.30),
+                                                          alpha: 0.30,
+                                                        ),
                                                     width: 0.8,
                                                   ),
                                                 ),
                                                 enabledBorder:
                                                     OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          geo.badgeRadius),
-                                                  borderSide: BorderSide(
-                                                    color: tokens
-                                                        .chromeBorder
-                                                        .withValues(
-                                                            alpha: 0.30),
-                                                    width: 0.8,
-                                                  ),
-                                                ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            geo.badgeRadius,
+                                                          ),
+                                                      borderSide: BorderSide(
+                                                        color: tokens
+                                                            .chromeBorder
+                                                            .withValues(
+                                                              alpha: 0.30,
+                                                            ),
+                                                        width: 0.8,
+                                                      ),
+                                                    ),
                                                 focusedBorder:
                                                     OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                          geo.badgeRadius),
-                                                  borderSide: BorderSide(
-                                                    color: tokens
-                                                        .accentBright
-                                                        .withValues(
-                                                            alpha: 0.50),
-                                                    width: 0.8,
-                                                  ),
-                                                ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            geo.badgeRadius,
+                                                          ),
+                                                      borderSide: BorderSide(
+                                                        color: tokens
+                                                            .accentBright
+                                                            .withValues(
+                                                              alpha: 0.50,
+                                                            ),
+                                                        width: 0.8,
+                                                      ),
+                                                    ),
                                               ),
-                                              onSubmitted: (_) =>
-                                                  _submitTag(),
+                                              onSubmitted: (_) => _submitTag(),
                                             ),
                                           ),
                                         ),
@@ -14410,7 +15667,8 @@ class _CommitTagChipState extends State<_CommitTagChip> {
             color: _hovered
                 ? Color.alphaBlend(
                     pillColor.withValues(alpha: 0.15),
-                    t.bg1.withValues(alpha: 0.95))
+                    t.bg1.withValues(alpha: 0.95),
+                  )
                 : pillColor.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(r),
             border: Border.all(
@@ -14420,10 +15678,13 @@ class _CommitTagChipState extends State<_CommitTagChip> {
               width: 0.8,
             ),
             boxShadow: _hovered
-                ? [BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2))]
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
                 : null,
           ),
           child: Row(
@@ -14433,7 +15694,9 @@ class _CommitTagChipState extends State<_CommitTagChip> {
                 duration: context.motion(AppMotion.snap),
                 curve: s.safeCurve,
                 style: TextStyle(
-                  color: _hovered ? textColor : textColor.withValues(alpha: 0.90),
+                  color: _hovered
+                      ? textColor
+                      : textColor.withValues(alpha: 0.90),
                   fontSize: 9,
                   fontWeight: FontWeight.w600,
                   fontFamily: AppFonts.mono,
@@ -14522,7 +15785,8 @@ class _CommitTagSuggestionChipState extends State<_CommitTagSuggestionChip> {
             color: _hovered
                 ? Color.alphaBlend(
                     pillColor.withValues(alpha: 0.18),
-                    t.bg1.withValues(alpha: 0.95))
+                    t.bg1.withValues(alpha: 0.95),
+                  )
                 : pillColor.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(r),
             border: Border.all(
@@ -14532,10 +15796,13 @@ class _CommitTagSuggestionChipState extends State<_CommitTagSuggestionChip> {
               width: 0.6,
             ),
             boxShadow: _hovered
-                ? [BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2))]
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
                 : null,
           ),
           child: AnimatedDefaultTextStyle(
@@ -14632,7 +15899,8 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
     final rate = _prefs?.motionRate ?? 1.0;
     final awake = WindowActivity.instance.awake;
     final reduce = rate <= kMotionRateOff || !awake;
-    final shouldAnimate = !reduce &&
+    final shouldAnimate =
+        !reduce &&
         (widget.state == IconAnimState.success ||
             widget.state == IconAnimState.loading);
     if (shouldAnimate) {
@@ -14643,9 +15911,9 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
           : _authoredActive;
       _ctrl.duration = Duration(
         microseconds: (authored.inMicroseconds / rate).round().clamp(
-              const Duration(milliseconds: 200).inMicroseconds,
-              const Duration(seconds: 60).inMicroseconds,
-            ),
+          const Duration(milliseconds: 200).inMicroseconds,
+          const Duration(seconds: 60).inMicroseconds,
+        ),
       );
       if (!_ctrl.isAnimating) _ctrl.repeat();
     } else {
@@ -14795,8 +16063,8 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
     final iconOpacity = !widget.enabled
         ? 0.30
         : widget.hasText && !_hovered
-            ? 0.70
-            : 1.0;
+        ? 0.70
+        : 1.0;
 
     // Background: persistent half-lit wash when [unread] (no drawer
     // is open, but a terminal record waits for the user). Hover /
@@ -14805,10 +16073,10 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
     final bgAlpha = _pressed
         ? 0.16
         : _hovered
-            ? 0.10
-            : widget.unread
-                ? 0.06
-                : 0.0;
+        ? 0.10
+        : widget.unread
+        ? 0.06
+        : 0.0;
 
     final iconColor = t.accentBright.withValues(alpha: iconOpacity);
 
@@ -14826,12 +16094,15 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
         }),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapDown:
-              widget.enabled ? (_) => setState(() => _pressed = true) : null,
-          onTapCancel:
-              widget.enabled ? () => setState(() => _pressed = false) : null,
-          onTapUp:
-              widget.enabled ? (_) => setState(() => _pressed = false) : null,
+          onTapDown: widget.enabled
+              ? (_) => setState(() => _pressed = true)
+              : null,
+          onTapCancel: widget.enabled
+              ? () => setState(() => _pressed = false)
+              : null,
+          onTapUp: widget.enabled
+              ? (_) => setState(() => _pressed = false)
+              : null,
           onTap: widget.enabled ? widget.onTap : null,
           child: AnimatedContainer(
             duration: context.motion(const Duration(milliseconds: 130)),
@@ -14844,26 +16115,26 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
             child: Center(
               child: switch (widget.iconKind) {
                 _AiToolbarIconKind.search => AnimatedSearchIcon(
-                    state: _iconState,
-                    color: iconColor,
-                    size: 14,
-                    verdict: widget.verdict,
-                  ),
+                  state: _iconState,
+                  color: iconColor,
+                  size: 14,
+                  verdict: widget.verdict,
+                ),
                 _AiToolbarIconKind.sparkle => AnimatedSparkleIcon(
-                    state: _iconState,
-                    color: iconColor,
-                    size: 14,
-                  ),
+                  state: _iconState,
+                  color: iconColor,
+                  size: 14,
+                ),
                 _AiToolbarIconKind.shape => _AnimatedShapeIcon(
-                    state: _iconState,
-                    color: iconColor,
-                    size: 13,
-                  ),
+                  state: _iconState,
+                  color: iconColor,
+                  size: 13,
+                ),
                 _AiToolbarIconKind.oracle => AnimatedBubbleIcon(
-                    state: _iconState,
-                    color: iconColor,
-                    size: 14,
-                  ),
+                  state: _iconState,
+                  color: iconColor,
+                  size: 14,
+                ),
               },
             ),
           ),
@@ -15030,7 +16301,8 @@ class _DiffTabStripState extends State<_DiffTabStrip>
                 ? t.hyperChromatic1.withValues(alpha: 0.12)
                 : t.chromeBorder.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.tinyRadius),
+              context.surfaceShader.geometry.tinyRadius,
+            ),
             border: Border.all(
               color: hovering
                   ? t.hyperChromatic1.withValues(alpha: 0.3)
@@ -15080,20 +16352,22 @@ class _DiffTabStripState extends State<_DiffTabStrip>
             if (widget.dragActive) ...[
               const SizedBox(width: 4),
               DragTarget<Set<String>>(
-                onAcceptWithDetails: (details) =>
-                    widget.onSplit(details.data),
+                onAcceptWithDetails: (details) => widget.onSplit(details.data),
                 builder: (context, candidateData, _) {
                   final hovering = candidateData.isNotEmpty;
                   return AnimatedContainer(
                     duration: context.motion(AppMotion.snap),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: hovering
                           ? t.hyperChromatic1.withValues(alpha: 0.12)
                           : t.chromeBorder.withValues(alpha: 0.06),
                       borderRadius: BorderRadius.circular(
-                          context.surfaceShader.geometry.tinyRadius),
+                        context.surfaceShader.geometry.tinyRadius,
+                      ),
                       border: Border.all(
                         color: hovering
                             ? t.hyperChromatic1.withValues(alpha: 0.3)
@@ -15162,10 +16436,11 @@ class _DiffTabPillState extends State<_DiffTabPill> {
             color: widget.active
                 ? t.chromeBorder.withValues(alpha: 0.12)
                 : (_hovered
-                    ? t.chromeBorder.withValues(alpha: 0.06)
-                    : Colors.transparent),
+                      ? t.chromeBorder.withValues(alpha: 0.06)
+                      : Colors.transparent),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.tinyRadius),
+              context.surfaceShader.geometry.tinyRadius,
+            ),
             border: widget.active
                 ? Border(
                     bottom: BorderSide(
@@ -15183,8 +16458,7 @@ class _DiffTabPillState extends State<_DiffTabPill> {
                 style: TextStyle(
                   color: widget.active ? t.textNormal : t.textMuted,
                   fontSize: 10.5,
-                  fontWeight:
-                      widget.active ? FontWeight.w600 : FontWeight.w400,
+                  fontWeight: widget.active ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
               const SizedBox(width: 4),
@@ -15215,14 +16489,14 @@ class _DiffTabPillState extends State<_DiffTabPill> {
 
     if (widget.onDropPaths != null) {
       pill = DragTarget<Set<String>>(
-        onAcceptWithDetails: (details) =>
-            widget.onDropPaths!(details.data),
+        onAcceptWithDetails: (details) => widget.onDropPaths!(details.data),
         builder: (context, candidateData, _) {
           if (candidateData.isNotEmpty) {
             return DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.tinyRadius),
+                  context.surfaceShader.geometry.tinyRadius,
+                ),
                 border: Border.all(
                   color: t.hyperChromatic1.withValues(alpha: 0.4),
                 ),
@@ -15272,8 +16546,9 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final borderColor =
-        t.secondaryBtnBorder.withValues(alpha: widget.enabled ? 0.72 : 0.28);
+    final borderColor = t.secondaryBtnBorder.withValues(
+      alpha: widget.enabled ? 0.72 : 0.28,
+    );
 
     Widget child;
     if (widget.isPartial) {
@@ -15283,12 +16558,14 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
           height: 24,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(color: borderColor),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.cardRadius),
+              context.surfaceShader.geometry.cardRadius,
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -15301,10 +16578,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                   onExit: () => setState(() => _hoveredDeselect = false),
                   onTap: widget.onDeselectAll,
                 ),
-                Container(
-                  width: 1,
-                  color: borderColor,
-                ),
+                Container(width: 1, color: borderColor),
                 _splitHalf(
                   t,
                   icon: Icons.check_box_rounded,
@@ -15342,7 +16616,8 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                     ? t.secondaryBtnHoverBg
                     : t.secondaryBtnHoverBg.withValues(alpha: 0),
                 borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+                  context.surfaceShader.geometry.pillRadius,
+                ),
                 border: Border.all(color: borderColor),
               ),
               child: Row(
@@ -15359,7 +16634,9 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    isSelectAll ? context.t.changes.select.selectAll : context.t.changes.select.deselectAll,
+                    isSelectAll
+                        ? context.t.changes.select.selectAll
+                        : context.t.changes.select.deselectAll,
                     style: TextStyle(
                       color: widget.enabled ? t.textNormal : t.textMuted,
                       fontSize: 10.5,
@@ -15450,13 +16727,14 @@ class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final borderColor =
-        t.secondaryBtnBorder.withValues(alpha: widget.enabled ? 0.72 : 0.28);
+    final borderColor = t.secondaryBtnBorder.withValues(
+      alpha: widget.enabled ? 0.72 : 0.28,
+    );
     final iconColor = widget.active
         ? t.textNormal
         : (widget.enabled
-            ? t.textNormal.withValues(alpha: 0.80)
-            : t.textMuted.withValues(alpha: 0.40));
+              ? t.textNormal.withValues(alpha: 0.80)
+              : t.textMuted.withValues(alpha: 0.40));
     return Tooltip(
       message: widget.active
           ? context.t.changes.constellationToggle.backToList
@@ -15478,10 +16756,11 @@ class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
               color: widget.active
                   ? t.secondaryBtnHoverBg
                   : (_hovered && widget.enabled
-                      ? t.secondaryBtnHoverBg
-                      : t.secondaryBtnHoverBg.withValues(alpha: 0)),
+                        ? t.secondaryBtnHoverBg
+                        : t.secondaryBtnHoverBg.withValues(alpha: 0)),
               borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+                context.surfaceShader.geometry.pillRadius,
+              ),
               border: Border.all(color: borderColor),
             ),
             child: Center(
@@ -15647,10 +16926,11 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
     ].join('\n');
     return Tooltip(
       message: context.t.changes.nudgeChip.tooltip(
-          path: widget.nudge.path,
-          anchor: pathBasename(widget.nudge.anchor),
-          pct: (score * 100).round(),
-          receipts: receiptLines.isEmpty ? '' : '\n$receiptLines'),
+        path: widget.nudge.path,
+        anchor: pathBasename(widget.nudge.anchor),
+        pct: (score * 100).round(),
+        receipts: receiptLines.isEmpty ? '' : '\n$receiptLines',
+      ),
       waitDuration: const Duration(milliseconds: 400),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
@@ -15665,10 +16945,10 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
             decoration: BoxDecoration(
               color: t.bg1.withValues(alpha: _hovered ? 0.95 : 0.55),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.badgeRadius),
+                context.surfaceShader.geometry.badgeRadius,
+              ),
               border: Border.all(
-                color: t.chromeBorder.withValues(
-                    alpha: _hovered ? 0.35 : 0.25),
+                color: t.chromeBorder.withValues(alpha: _hovered ? 0.35 : 0.25),
               ),
               boxShadow: _hovered ? AppElev.row : null,
             ),
@@ -15865,15 +17145,16 @@ class _MergeResolveStrip extends StatelessWidget {
     final ai = context.watch<AiSettingsState>();
     // Prefer 'fast' for resolution — low-latency, most conflicts are
     // mechanical. Fall back to any category that has a model configured.
-    final defaultCategory = ai.modelSelections.containsKey('fast') &&
+    final defaultCategory =
+        ai.modelSelections.containsKey('fast') &&
             ai.modelSelections['fast']!.isNotEmpty
         ? 'fast'
         : (ai.modelSelections.entries
-            .firstWhere(
-              (e) => e.value.isNotEmpty,
-              orElse: () => const MapEntry('', ''),
-            )
-            .key);
+              .firstWhere(
+                (e) => e.value.isNotEmpty,
+                orElse: () => const MapEntry('', ''),
+              )
+              .key);
     final count = conflictedPaths.length;
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
@@ -15886,20 +17167,24 @@ class _MergeResolveStrip extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
       child: Row(
         children: [
-          Text('◇',
-              style: TextStyle(
-                color: t.stateConflicted,
-                fontSize: 14,
-                fontFamily: AppFonts.mono,
-                fontWeight: FontWeight.w700,
-              )),
+          Text(
+            '◇',
+            style: TextStyle(
+              color: t.stateConflicted,
+              fontSize: 14,
+              fontFamily: AppFonts.mono,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               busy
                   ? context.t.changes.resolveStrip.reading(n: count)
                   : context.t.changes.resolveStrip.conflictsAcross(
-                      n: count, files: context.t.common.fileCount(n: count)),
+                      n: count,
+                      files: context.t.common.fileCount(n: count),
+                    ),
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 12,
@@ -15912,35 +17197,37 @@ class _MergeResolveStrip extends StatelessWidget {
           if (onManualResolve != null) ...[
             ChromeButton(
               onTap: busy ? null : onManualResolve,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               borderRadius: AppRadii.smAll,
               chromeBuilder: ({required hovered, required pressed}) =>
                   ghostButtonChrome(
-                t,
-                hovered: hovered,
-                pressed: pressed,
-                enabled: !busy,
-                baseBorderColor:
-                    t.chromeBorder.withValues(alpha: 0.3),
+                    t,
+                    hovered: hovered,
+                    pressed: pressed,
+                    enabled: !busy,
+                    baseBorderColor: t.chromeBorder.withValues(alpha: 0.3),
+                  ),
+              child: Text(
+                context.t.changes.resolveStrip.resolve,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-              child: Text(context.t.changes.resolveStrip.resolve,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  )),
             ),
             const SizedBox(width: 6),
           ],
           if (defaultCategory.isEmpty)
-            Text(context.t.changes.shapeBtn.noModel,
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 10.5,
-                  fontFamily: AppFonts.mono,
-                  fontStyle: FontStyle.italic,
-                ))
+            Text(
+              context.t.changes.shapeBtn.noModel,
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10.5,
+                fontFamily: AppFonts.mono,
+                fontStyle: FontStyle.italic,
+              ),
+            )
           else
             _MergeResolveSplitButton(
               defaultCategoryId: defaultCategory,
@@ -15985,60 +17272,67 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
         .where((e) => e.value.isNotEmpty && e.key != widget.defaultCategoryId)
         .toList();
     if (alt.isEmpty) return;
-    _entry = OverlayEntry(builder: (ctx) {
-      final box = context.findRenderObject()! as RenderBox;
-      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
-          + const Offset(0, 6);
-      final menuCard = CustomSingleChildLayout(
-        delegate: ViewportClampDelegate(
-          desired: target,
-          anchor: Alignment.topRight,
-        ),
-        child: MaterialSurface(
-          tone: AppMaterialTone.surface1,
-          radius: ctx.surfaceShader.geometry.cardRadius,
-          elevated: true,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: IntrinsicWidth(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                  child: Text(context.t.changes.resolveStrip.orWith,
+    _entry = OverlayEntry(
+      builder: (ctx) {
+        final box = context.findRenderObject()! as RenderBox;
+        final target =
+            box.localToGlobal(Offset(box.size.width, box.size.height)) +
+            const Offset(0, 6);
+        final menuCard = CustomSingleChildLayout(
+          delegate: ViewportClampDelegate(
+            desired: target,
+            anchor: Alignment.topRight,
+          ),
+          child: MaterialSurface(
+            tone: AppMaterialTone.surface1,
+            radius: ctx.surfaceShader.geometry.cardRadius,
+            elevated: true,
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                    child: Text(
+                      context.t.changes.resolveStrip.orWith,
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 9,
                         letterSpacing: 1.4,
                         fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
-                      )),
-                ),
-                for (final e in alt)
-                  _ModelCategoryRow(
-                    label: ai.labelForCategory(e.key, e.key),
-                    modelValue: e.value,
-                    onTap: () {
-                      _closeMenu();
-                      widget.onResolve(e.key);
-                    },
+                      ),
+                    ),
                   ),
-              ],
+                  for (final e in alt)
+                    _ModelCategoryRow(
+                      label: ai.labelForCategory(e.key, e.key),
+                      modelValue: e.value,
+                      onTap: () {
+                        _closeMenu();
+                        widget.onResolve(e.key);
+                      },
+                    ),
+                ],
+              ),
             ),
           ),
-        ),
-      );
-      return Stack(children: [
-        Positioned.fill(
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (_) => _closeMenu(),
-          ),
-        ),
-        Positioned.fill(child: menuCard),
-      ]);
-    });
+        );
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => _closeMenu(),
+              ),
+            ),
+            Positioned.fill(child: menuCard),
+          ],
+        );
+      },
+    );
     overlay.insert(_entry!);
   }
 
@@ -16058,113 +17352,119 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
     final t = context.tokens;
     final shader = context.surfaceShader;
     final ai = context.watch<AiSettingsState>();
-    final label =
-        ai.labelForCategory(widget.defaultCategoryId, widget.defaultCategoryId);
+    final label = ai.labelForCategory(
+      widget.defaultCategoryId,
+      widget.defaultCategoryId,
+    );
     final modelValue = ai.modelSelections[widget.defaultCategoryId] ?? '';
     final modelDisplay = _modelDisplayName(modelValue);
     return MouseRegion(
       child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Main label
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              onEnter: (_) => setState(() => _hoverMain = true),
-              onExit: (_) => setState(() => _hoverMain = false),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.busy
-                    ? null
-                    : () => widget.onResolve(widget.defaultCategoryId),
-                child: Tooltip(
-                  message: modelDisplay.isEmpty
-                      ? context.t.changes.resolveStrip.resolveWith(label: label)
-                      : context.t.changes.resolveStrip.resolveWithModel(label: label, model: modelDisplay),
-                  child: AnimatedContainer(
-                    duration: context.motion(shader.duration),
-                    curve: shader.safeCurve,
-                    padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
-                    decoration: BoxDecoration(
-                      color: widget.busy
-                          ? t.accentBright.withValues(alpha: 0.08)
-                          : (_hoverMain
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Main label
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverMain = true),
+            onExit: (_) => setState(() => _hoverMain = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy
+                  ? null
+                  : () => widget.onResolve(widget.defaultCategoryId),
+              child: Tooltip(
+                message: modelDisplay.isEmpty
+                    ? context.t.changes.resolveStrip.resolveWith(label: label)
+                    : context.t.changes.resolveStrip.resolveWithModel(
+                        label: label,
+                        model: modelDisplay,
+                      ),
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                  decoration: BoxDecoration(
+                    color: widget.busy
+                        ? t.accentBright.withValues(alpha: 0.08)
+                        : (_hoverMain
                               ? t.accentBright.withValues(alpha: 0.14)
                               : t.accentBright.withValues(alpha: 0.08)),
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(shader.geometry.badgeRadius),
-                        bottomLeft:
-                            Radius.circular(shader.geometry.badgeRadius),
-                      ),
-                      border: Border.all(
-                        color: t.accentBright.withValues(alpha: 0.45),
-                      ),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(shader.geometry.badgeRadius),
+                      bottomLeft: Radius.circular(shader.geometry.badgeRadius),
                     ),
-                    child: Text(
-                      widget.busy
-                          ? context.t.changes.resolveStrip.resolving
-                          : context.t.changes.resolveStrip.resolveWithGlyph(label: label),
-                      style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 11,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
+                    border: Border.all(
+                      color: t.accentBright.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    widget.busy
+                        ? context.t.changes.resolveStrip.resolving
+                        : context.t.changes.resolveStrip.resolveWithGlyph(
+                            label: label,
+                          ),
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 11,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
                     ),
                   ),
                 ),
               ),
             ),
-            // Chevron split
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              onEnter: (_) => setState(() => _hoverChev = true),
-              onExit: (_) => setState(() => _hoverChev = false),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.busy ? null : _openMenu,
-                child: Tooltip(
-                  message: context.t.changes.resolveStrip.orWithAnother,
-                  child: AnimatedContainer(
-                    duration: context.motion(shader.duration),
-                    curve: shader.safeCurve,
-                    padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
-                    decoration: BoxDecoration(
-                      color: _hoverChev
-                          ? t.accentBright.withValues(alpha: 0.16)
-                          : t.accentBright.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.only(
-                        topRight: Radius.circular(shader.geometry.badgeRadius),
-                        bottomRight:
-                            Radius.circular(shader.geometry.badgeRadius),
-                      ),
-                      // Uniform border — Flutter's `Border.paint` asserts
-                      // on a non-uniform border combined with non-zero
-                      // borderRadius (the previous left-dim-alpha was
-                      // firing 600+ assertions per session). The seam
-                      // between this chevron and the abutting main
-                      // button now renders as a thin double-stroked
-                      // vertical line at the join, which is the
-                      // intended split-button look anyway.
-                      border: Border.all(
-                          color: t.accentBright.withValues(alpha: 0.45)),
+          ),
+          // Chevron split
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverChev = true),
+            onExit: (_) => setState(() => _hoverChev = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy ? null : _openMenu,
+              child: Tooltip(
+                message: context.t.changes.resolveStrip.orWithAnother,
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
+                  decoration: BoxDecoration(
+                    color: _hoverChev
+                        ? t.accentBright.withValues(alpha: 0.16)
+                        : t.accentBright.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.only(
+                      topRight: Radius.circular(shader.geometry.badgeRadius),
+                      bottomRight: Radius.circular(shader.geometry.badgeRadius),
                     ),
-                    child: Text(
-                      '▾',
-                      style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 10,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    // Uniform border — Flutter's `Border.paint` asserts
+                    // on a non-uniform border combined with non-zero
+                    // borderRadius (the previous left-dim-alpha was
+                    // firing 600+ assertions per session). The seam
+                    // between this chevron and the abutting main
+                    // button now renders as a thin double-stroked
+                    // vertical line at the join, which is the
+                    // intended split-button look anyway.
+                    border: Border.all(
+                      color: t.accentBright.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    '▾',
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 10,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
-      );
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -16206,20 +17506,24 @@ class _ModelCategoryRowState extends State<_ModelCategoryRow> {
           ),
           child: Row(
             children: [
-              Text(widget.label,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w600,
-                  )),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 12,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(width: 14),
-              Text(modelDisplay,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
-                  )),
+              Text(
+                modelDisplay,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
             ],
           ),
         ),
@@ -16274,8 +17578,7 @@ class _DreamingTextState extends State<_DreamingText>
     super.initState();
     _ticker = createTicker((d) {
       setState(() => _elapsedMs = d.inMicroseconds / 1000.0);
-    })
-      ..start();
+    })..start();
   }
 
   @override
@@ -16305,7 +17608,8 @@ class _DreamingTextState extends State<_DreamingText>
     final amp = 1.6 + seed * 4.2;
     final p2 = math.sin(_elapsedMs * freq + phase) * amp;
     final yOffset = p1 * (1 - phaseMix) + p2 * phaseMix;
-    final breath = 0.55 +
+    final breath =
+        0.55 +
         0.45 * (math.sin(_elapsedMs / 950 + i * 0.27 + seed * 4) * 0.5 + 0.5);
     final col = widget.style.color ?? const Color(0xFF888888);
     return Transform.translate(
@@ -16360,12 +17664,16 @@ class _PhiBarPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final trackRect = Rect.fromLTWH(0, 0, size.width, size.height);
-    final trackRR =
-        RRect.fromRectAndRadius(trackRect, Radius.circular(size.height / 2));
+    final trackRR = RRect.fromRectAndRadius(
+      trackRect,
+      Radius.circular(size.height / 2),
+    );
     canvas.drawRRect(trackRR, Paint()..color = track.withValues(alpha: 0.25));
     final fillRect = Rect.fromLTWH(0, 0, size.width * relative, size.height);
-    final fillRR =
-        RRect.fromRectAndRadius(fillRect, Radius.circular(size.height / 2));
+    final fillRR = RRect.fromRectAndRadius(
+      fillRect,
+      Radius.circular(size.height / 2),
+    );
     canvas.drawRRect(fillRR, Paint()..color = colour);
   }
 
@@ -16452,10 +17760,7 @@ class _RhythmSparkPainter extends CustomPainter {
       final recency = i / (buckets - 1);
       paint.color = colour.withValues(alpha: 0.35 + 0.6 * recency);
       final x = i * (barWidth + 1);
-      canvas.drawRect(
-        Rect.fromLTWH(x, size.height - h, barWidth, h),
-        paint,
-      );
+      canvas.drawRect(Rect.fromLTWH(x, size.height - h, barWidth, h), paint);
     }
   }
 
@@ -16551,20 +17856,27 @@ _MinimapData _computeMinimapData({
         .where((cp) => cp != filePath && p.dirname(cp) == dir)
         .length;
     if (sameDir > 1) {
-      provenance = t.changes.minimap.nearOtherChanges(count: sameDir, dir: p.basename(dir));
+      provenance = t.changes.minimap.nearOtherChanges(
+        count: sameDir,
+        dir: p.basename(dir),
+      );
     }
   }
 
   String? missing;
   String? missingPath;
   if (matrix != null && matrix.containsPath(filePath)) {
-    final absentNeighbors =
-        matrix.topJaccardNeighbours(filePath, minScore: 0.30);
+    final absentNeighbors = matrix.topJaccardNeighbours(
+      filePath,
+      minScore: 0.30,
+    );
     for (final e in absentNeighbors) {
       if (changedPaths.contains(e.key)) continue;
       if (e.key == filePath) continue;
       if (e.value >= 0.30) {
-        missing = t.changes.minimap.usuallyChangesWithFile(name: p.basename(e.key));
+        missing = t.changes.minimap.usuallyChangesWithFile(
+          name: p.basename(e.key),
+        );
         missingPath = e.key;
         break;
       }
@@ -16600,49 +17912,57 @@ class _FileMinimapCard extends StatelessWidget {
     final t = tokens;
     final lines = <Widget>[];
 
-    lines.add(Text(
-      data.role,
-      style: TextStyle(
-        color: t.textMuted,
-        fontSize: 11,
-        fontWeight: FontWeight.w500,
-        letterSpacing: 0.3,
-      ),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    ));
-
-    if (data.provenance != null) {
-      lines.add(const SizedBox(height: 3));
-      lines.add(Text(
-        data.provenance!,
+    lines.add(
+      Text(
+        data.role,
         style: TextStyle(
-          color: t.textFaint,
-          fontSize: 10.5,
-          letterSpacing: 0.2,
+          color: t.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.3,
         ),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-      ));
+      ),
+    );
+
+    if (data.provenance != null) {
+      lines.add(const SizedBox(height: 3));
+      lines.add(
+        Text(
+          data.provenance!,
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 10.5,
+            letterSpacing: 0.2,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
     }
 
     if (data.missing != null) {
       lines.add(const SizedBox(height: 3));
-      lines.add(_MinimapHoverLine(
-        text: data.missing!,
-        color: t.textMuted.withValues(alpha: 0.9),
-        hoverColor: t.accentBright.withValues(alpha: 0.12),
-        onTap: onMissingTap,
-      ));
+      lines.add(
+        _MinimapHoverLine(
+          text: data.missing!,
+          color: t.textMuted.withValues(alpha: 0.9),
+          hoverColor: t.accentBright.withValues(alpha: 0.12),
+          onTap: onMissingTap,
+        ),
+      );
     }
 
     if (data.rhythmTotal > 0 && data.rhythmIndices.isNotEmpty) {
       lines.add(const SizedBox(height: 4));
-      lines.add(_RhythmSpark(
-        commitIndices: data.rhythmIndices,
-        totalCommits: data.rhythmTotal,
-        tokens: t,
-      ));
+      lines.add(
+        _RhythmSpark(
+          commitIndices: data.rhythmIndices,
+          totalCommits: data.rhythmTotal,
+          tokens: t,
+        ),
+      );
     }
 
     return Padding(
@@ -16708,4 +18028,3 @@ class _MinimapHoverLineState extends State<_MinimapHoverLine> {
     );
   }
 }
-

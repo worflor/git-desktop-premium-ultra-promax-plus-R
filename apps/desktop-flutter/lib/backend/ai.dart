@@ -23,7 +23,10 @@ import 'engram_brain.dart' show EngramWellMatch;
 import 'engram_file_ktable.dart';
 import 'engram_text_kspace.dart';
 import 'logos_vis_events.dart';
+import 'admitted_git.dart' show admitGitDiffText;
+import 'analysis_admission.dart' show AdmissionDecision;
 import 'git.dart';
+import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
 import 'process_utils.dart';
 import 'win_job_object.dart';
@@ -122,6 +125,83 @@ String _piggybackCliSnapshot = '';
 /// never thread it.
 void configurePiggybackCli(String value) {
   _piggybackCliSnapshot = value.trim();
+}
+
+/// User override for the per-attempt wall-clock cap on the main CLI providers
+/// (codex/claude/cursor/opencode/API-provider). `null` = use the built-in
+/// [_providerRuntimeTimeout]. Pushed in from AiSettingsState like
+/// [_piggybackCliSnapshot]; the tight [_antigravityRuntimeTimeout] /
+/// [_copilotRuntimeTimeout] caps on the known-flaky CLIs are intentionally NOT
+/// affected (see [_runtimeTimeoutFor]).
+Duration? _cliTimeoutOverride;
+
+void configureCliTimeout(Duration? value) {
+  _cliTimeoutOverride = value;
+}
+
+/// PIDs of CLI processes currently in flight, registered on spawn and removed
+/// when the run finishes (see [_runObservedProcess]). This is the source of
+/// truth for how many CLI sessions are live and the cross-platform lever for
+/// [stopAllCliSessions] — on Windows every pid is also assigned to the shared
+/// [WinJobObject], which can kill the whole tree in one syscall.
+///
+/// Never mutate this set directly — go through [_registerCliPid] /
+/// [_unregisterCliPid] / [_clearCliPids] so the count stays published on
+/// [cliSessionCountStream]. That single-writer discipline is what keeps the
+/// live count reactive; a stray `.add`/`.remove` would silently desync the UI.
+final Set<int> _liveCliPids = <int>{};
+
+/// Broadcast of the live CLI session count, emitted on every change. Backend
+/// stays Flutter-free, so this is a plain [Stream] rather than a Listenable;
+/// the settings row subscribes via a StreamBuilder to reflect sessions that
+/// start or finish while the page is open. Broadcast + app-lifetime: never
+/// closed, and emits are dropped harmlessly when nothing is listening.
+final StreamController<int> _cliSessionCountController =
+    StreamController<int>.broadcast();
+
+Stream<int> get cliSessionCountStream => _cliSessionCountController.stream;
+
+/// Number of CLI sessions currently running. Drives the "Force stop all"
+/// button state and its confirmation count in Settings → AI Providers. For a
+/// live-updating value, prefer [cliSessionCountStream].
+int get liveCliSessionCount => _liveCliPids.length;
+
+void _registerCliPid(int pid) {
+  _liveCliPids.add(pid);
+  _cliSessionCountController.add(_liveCliPids.length);
+}
+
+void _unregisterCliPid(int pid) {
+  if (_liveCliPids.remove(pid)) {
+    _cliSessionCountController.add(_liveCliPids.length);
+  }
+}
+
+void _clearCliPids() {
+  if (_liveCliPids.isEmpty) return;
+  _liveCliPids.clear();
+  _cliSessionCountController.add(0);
+}
+
+/// Force-terminate every in-flight CLI process. Returns the number of sessions
+/// that were live when the stop was issued. On Windows this tears down the
+/// shared job object (killing all trees at once) and recreates it for future
+/// spawns; elsewhere it kills each tracked pid's tree directly.
+Future<int> stopAllCliSessions() async {
+  final pids = _liveCliPids.toList(growable: false);
+  if (Platform.isWindows) {
+    WinJobObject.killAll();
+  } else {
+    for (final pid in pids) {
+      // SIGKILL the whole session — negative pid targets the group when the
+      // child leads one; fall back to the bare pid otherwise.
+      try {
+        Process.killPid(pid, ProcessSignal.sigkill);
+      } catch (_) {}
+    }
+  }
+  _clearCliPids();
+  return pids.length;
 }
 
 // Disabled CLI providers (see [_isCliProviderEnabled]) are filtered out of the
@@ -5877,24 +5957,47 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       '--ignore-cr-at-eol',
     ];
 
-    final stagedDiff = includeStaged
-        ? await _runGitCommand(
-            repositoryPath,
-            ['diff', '--cached', ...diffFlags, ...scopeArgs],
-            timeout: const Duration(seconds: _diffTimeoutSeconds),
-          )
-        : const GitResult.ok('');
+    // The full-context diffs (the --stat probes above are bounded; these are
+    // not) are admitted against the process-wide analysis budget. The paths
+    // come from the porcelain status just fetched, NOT from `scopedPaths`:
+    // an empty scope means "the whole working tree", which would declare
+    // zero bytes for the largest possible diff. A change-set too large to
+    // admit fails the gather rather than the machine — the caller already
+    // surfaces this error channel to the user.
+    final admitted = await admitGitDiffText(
+      repositoryPath,
+      scopedPaths.isNotEmpty
+          ? scopedPaths
+          : _porcelainPaths(status.data ?? ''),
+      () async {
+        final staged = includeStaged
+            ? await _runGitCommand(
+                repositoryPath,
+                ['diff', '--cached', ...diffFlags, ...scopeArgs],
+                timeout: const Duration(seconds: _diffTimeoutSeconds),
+              )
+            : const GitResult.ok('');
+        final unstaged = includeUnstaged
+            ? await _runGitCommand(
+                repositoryPath,
+                ['diff', ...diffFlags, ...scopeArgs],
+                timeout: const Duration(seconds: _diffTimeoutSeconds),
+              )
+            : const GitResult.ok('');
+        return (staged, unstaged);
+      },
+    );
+    if (!admitted.ran) {
+      return _CommitDiffContextResult.err(
+        admitted.decision == AdmissionDecision.declined
+            ? 'This change-set is too large to gather diff context for.'
+            : 'Diff context gather was superseded.',
+      );
+    }
+    final (stagedDiff, unstagedDiff) = admitted.value!;
     if (!stagedDiff.ok) {
       return _CommitDiffContextResult.err(stagedDiff.error!);
     }
-
-    final unstagedDiff = includeUnstaged
-        ? await _runGitCommand(
-            repositoryPath,
-            ['diff', ...diffFlags, ...scopeArgs],
-            timeout: const Duration(seconds: _diffTimeoutSeconds),
-          )
-        : const GitResult.ok('');
     if (!unstagedDiff.ok) {
       return _CommitDiffContextResult.err(unstagedDiff.error!);
     }
@@ -11205,7 +11308,11 @@ Duration _runtimeTimeoutFor(_ProviderKind kind) {
     case _ProviderKind.cursor:
     case _ProviderKind.openCode:
     case _ProviderKind.apiProvider:
-      return _providerRuntimeTimeout;
+      // User-configurable cap (Settings → AI Providers) overrides the default
+      // for the long-running agentic CLIs only. The tight antigravity/copilot
+      // caps above stay fixed — they exist to fail fast on known-broken
+      // headless paths, not to bound normal runs.
+      return _cliTimeoutOverride ?? _providerRuntimeTimeout;
   }
 }
 
@@ -12105,6 +12212,12 @@ Future<_CommandResult?> _runObservedProcess({
   // Created INSIDE the try so a write failure lands in the same finally that
   // unlinks it — otherwise a throw here would leak the .tmp on disk.
   File? stdinTempFile;
+  // Registered in [_liveCliPids] only for actual AI CLI runs (scope 'ai') so
+  // "Force stop all CLI sessions" targets those — not the short-lived git
+  // ('git') or health-check ('test') spawns that share this runner. Removed in
+  // the finally regardless of how the run ends.
+  final trackCliSession = scope == 'ai';
+  int? trackedCliPid;
 
   try {
     if (Platform.isWindows && stdinPayload != null) {
@@ -12164,6 +12277,11 @@ Future<_CommandResult?> _runObservedProcess({
         }
         await process.stdin.close();
       } catch (_) {}
+    }
+
+    if (trackCliSession) {
+      trackedCliPid = process.pid;
+      _registerCliPid(process.pid);
     }
 
     final stdoutFuture = process.stdout
@@ -12260,6 +12378,9 @@ Future<_CommandResult?> _runObservedProcess({
     // "timed out"); conflating the two is what hid the argv-length failure.
     return _CommandResult(exitCode: -1, stdout: '', stderr: launchError);
   } finally {
+    if (trackedCliPid != null) {
+      _unregisterCliPid(trackedCliPid);
+    }
     // Clean up the stdin temp file + its .bat sibling. On Windows the
     // prompt body lives on disk briefly; shrink the exposure window by
     // overwriting with empty content before unlinking, and skip the
@@ -13119,6 +13240,25 @@ class _CommitDiffContext {
     this.engine,
     this.rawDiff = '',
   });
+}
+
+
+/// Paths named by `git status --porcelain=v1` output: two status columns, a
+/// space, then the path — or `old -> new` for a rename, where the NEW path is
+/// what a diff prints. Used to SIZE an unscoped diff before admitting it, so
+/// the whole-working-tree idiom (`git diff` with no pathspec) declares its
+/// real cost instead of zero.
+List<String> _porcelainPaths(String out) {
+  final paths = <String>[];
+  for (final line in const LineSplitter().convert(out)) {
+    if (line.length < 4) continue;
+    var path = line.substring(3);
+    final arrow = path.indexOf(' -> ');
+    if (arrow >= 0) path = path.substring(arrow + 4);
+    if (path.isEmpty) continue;
+    paths.add(unCQuoteGitPath(path));
+  }
+  return paths;
 }
 
 class _CommitDiffContextResult {

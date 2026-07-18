@@ -36,6 +36,8 @@
     "saveMuseNotes": "Échec de l'enregistrement des notes de la muse.",
     "saveReviewDoubleCheck": "Échec de l'enregistrement du mode double-vérification de revue.",
     "saveApiPiggybackCli": "Échec de l'enregistrement du CLI de relais API.",
+    "saveCliTimeout": "Échec de l'enregistrement du délai de la CLI.",
+    "stopAllCli": "Impossible d'arrêter les sessions CLI en cours.",
     "clearLocalData": "Impossible d'effacer les données locales : {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Effacer toutes les données locales de l'application — y compris la liste des dépôts récents — et quitter ? Vos dépôts git réels sur le disque ne sont pas touchés.",
     "confirmReset": "Réinitialiser les données locales de l'application et quitter ?\n\nLes paramètres, le thème, l'accueil, les préférences IA, la télémétrie et les caches d'engrammes sont effacés. Votre liste de dépôts récents est conservée."
   },
-  "guardrailStageLabels": ["Souple", "Équilibré", "Strict", "Paranoïaque"],
+  "guardrailStageLabels": [
+    "Souple",
+    "Équilibré",
+    "Strict",
+    "Paranoïaque"
+  ],
   "guardrailMacro": {
     "loose": "souple",
     "balanced": "équilibré",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "Sélectionner l'exécutable wick",
     "connected": "wick · connecté",
-    "pathToExecutable": "wick · chemin de l'exécutable"
+    "pathToExecutable": "wick · chemin de l'exécutable",
+    "off": "off",
+    "disableHint": "Désactiver l'intégration wick",
+    "enableHint": "Activer l'intégration wick"
   },
   "integrations": {
     "title": "& Intégrations",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | à-coups {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["commande", "p50", "fiabilité", "plage"],
-    "headersBackend": ["portée", "p50", "p95", "échecs"],
-    "headersDiff": ["moteur de rendu", "premier rendu", "trame p95", "raster p95", "à-coups"],
-    "headersUi": ["événement", "p50", "échecs", "plage"]
+    "headersCommand": [
+      "commande",
+      "p50",
+      "fiabilité",
+      "plage"
+    ],
+    "headersBackend": [
+      "portée",
+      "p50",
+      "p95",
+      "échecs"
+    ],
+    "headersDiff": [
+      "moteur de rendu",
+      "premier rendu",
+      "trame p95",
+      "raster p95",
+      "à-coups"
+    ],
+    "headersUi": [
+      "événement",
+      "p50",
+      "échecs",
+      "plage"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Efface les modèles en cache et re-sonde. Retire ceux qu'un fournisseur a abandonnés.",
     "refreshLabel": "Actualiser les fournisseurs",
     "refreshTooltip": "Re-sonder chaque fournisseur maintenant.",
-    "body": "Redirige directement les messages de l'interface vers les binaires des fournisseurs locaux."
+    "body": "Redirige directement les messages de l'interface vers les binaires des fournisseurs locaux.",
+    "cliTimeoutLabel": "Délai par exécution",
+    "cliTimeoutUnitMinutes": "minutes",
+    "cliTimeoutUnitMinute": "minute",
+    "forceStopLabel": "Arrêter toutes les sessions",
+    "forceStopTooltip": "Forcer l'arrêt de chaque exécution CLI en cours.",
+    "forceStopConfirmTitle": "Arrêter les sessions CLI en cours ?",
+    "forceStopConfirmBody": "Cela force l'arrêt de {count} exécutions CLI en cours. Leur sortie sera perdue.",
+    "forceStopConfirmAction": "Tout arrêter",
+    "forceStopNoneRunning": "Aucune session CLI en cours",
+    "forceStopRecordError": "Arrêté — les sessions CLI ont été fermées de force."
   },
   "header": {
     "title": "Préférences de l'espace de travail",

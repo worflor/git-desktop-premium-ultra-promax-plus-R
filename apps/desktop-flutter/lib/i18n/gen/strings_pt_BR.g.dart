@@ -6022,6 +6022,11 @@ class _Translations$settings$errors$pt_BR
   String get saveApiPiggybackCli =>
       'Falha ao salvar a CLI de piggyback da API.';
   @override
+  String get saveCliTimeout => 'Falha ao salvar o tempo limite da CLI.';
+  @override
+  String get stopAllCli =>
+      'Não foi possível parar as sessões de CLI em andamento.';
+  @override
   String clearLocalData({required Object error}) =>
       'Não foi possível limpar os dados locais: ${error}';
 }
@@ -7012,6 +7017,12 @@ class _Translations$settings$wick$pt_BR extends Translations$settings$wick$en {
   String get connected => 'wick · conectado';
   @override
   String get pathToExecutable => 'wick · caminho do executável';
+  @override
+  String get off => 'off';
+  @override
+  String get disableHint => 'Desativar a integração do wick';
+  @override
+  String get enableHint => 'Ativar a integração do wick';
 }
 
 // Path: settings.integrations
@@ -7316,6 +7327,29 @@ class _Translations$settings$cliPiggyback$pt_BR
   @override
   String get body =>
       'Encaminha mensagens da interface direto para os binários de provedor locais.';
+  @override
+  String get cliTimeoutLabel => 'Tempo limite por execução';
+  @override
+  String get cliTimeoutUnitMinutes => 'minutos';
+  @override
+  String get cliTimeoutUnitMinute => 'minuto';
+  @override
+  String get forceStopLabel => 'Parar todas as sessões';
+  @override
+  String get forceStopTooltip =>
+      'Força o encerramento de cada execução de CLI em andamento.';
+  @override
+  String get forceStopConfirmTitle => 'Parar as sessões de CLI em andamento?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Isso força o encerramento de ${count} execuções de CLI em andamento. A saída delas será perdida.';
+  @override
+  String get forceStopConfirmAction => 'Parar todas';
+  @override
+  String get forceStopNoneRunning => 'Nenhuma sessão de CLI em andamento';
+  @override
+  String get forceStopRecordError =>
+      'Interrompido — as sessões de CLI foram encerradas à força.';
 }
 
 // Path: settings.header

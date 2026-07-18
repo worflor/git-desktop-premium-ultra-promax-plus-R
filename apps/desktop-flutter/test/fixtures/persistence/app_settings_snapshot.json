@@ -53,6 +53,7 @@
   ],
   "changesPanelWidthPx": 520,
   "wickExePath": "C:\\tools\\wick ünïcode.exe",
+  "wickEnabled": true,
   "alphaMathPath": "",
   "localeOverride": "",
   "giteaTokens": {

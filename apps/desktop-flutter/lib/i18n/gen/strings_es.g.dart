@@ -6021,6 +6021,11 @@ class _Translations$settings$errors$es extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'No se pudo guardar la CLI de piggyback de API.';
   @override
+  String get saveCliTimeout => 'No se pudo guardar el tiempo límite de la CLI.';
+  @override
+  String get stopAllCli =>
+      'No se pudieron detener las sesiones de CLI en curso.';
+  @override
   String clearLocalData({required Object error}) =>
       'No se pudieron limpiar los datos locales: ${error}';
 }
@@ -7013,6 +7018,12 @@ class _Translations$settings$wick$es extends Translations$settings$wick$en {
   String get connected => 'wick · conectado';
   @override
   String get pathToExecutable => 'wick · ruta al ejecutable';
+  @override
+  String get off => 'off';
+  @override
+  String get disableHint => 'Desactivar la integración de wick';
+  @override
+  String get enableHint => 'Activar la integración de wick';
 }
 
 // Path: settings.integrations
@@ -7314,6 +7325,29 @@ class _Translations$settings$cliPiggyback$es
   @override
   String get body =>
       'Canaliza directamente los mensajes de la interfaz a los binarios de proveedores locales.';
+  @override
+  String get cliTimeoutLabel => 'Tiempo límite por ejecución';
+  @override
+  String get cliTimeoutUnitMinutes => 'minutos';
+  @override
+  String get cliTimeoutUnitMinute => 'minuto';
+  @override
+  String get forceStopLabel => 'Detener todas las sesiones';
+  @override
+  String get forceStopTooltip =>
+      'Forzar el cierre de cada ejecución de CLI en curso.';
+  @override
+  String get forceStopConfirmTitle => '¿Detener las sesiones de CLI en curso?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Esto fuerza el cierre de ${count} ejecuciones de CLI en curso. Se perderá su salida.';
+  @override
+  String get forceStopConfirmAction => 'Detener todas';
+  @override
+  String get forceStopNoneRunning => 'No hay sesiones de CLI en curso';
+  @override
+  String get forceStopRecordError =>
+      'Detenido — las sesiones de CLI se cerraron a la fuerza.';
 }
 
 // Path: settings.header

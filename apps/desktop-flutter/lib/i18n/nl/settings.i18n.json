@@ -36,6 +36,8 @@
     "saveMuseNotes": "Muse-notities konden niet worden opgeslagen.",
     "saveReviewDoubleCheck": "Review-dubbelcheckmodus kon niet worden opgeslagen.",
     "saveApiPiggybackCli": "API-piggyback-CLI kon niet worden opgeslagen.",
+    "saveCliTimeout": "CLI-time-out kon niet worden opgeslagen.",
+    "stopAllCli": "De lopende CLI-sessies konden niet worden gestopt.",
     "clearLocalData": "Lokale gegevens konden niet worden gewist: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Alle lokale app-gegevens — inclusief de lijst met recente repo's — wissen en afsluiten? Je daadwerkelijke git-repo's op schijf worden niet aangeraakt.",
     "confirmReset": "Lokale app-gegevens resetten en afsluiten?\n\nInstellingen, thema, onboarding, AI-voorkeuren, telemetrie en engram-caches worden gewist. Je lijst met recente repo's blijft behouden."
   },
-  "guardrailStageLabels": ["Los", "Gebalanceerd", "Streng", "Paranoïde"],
+  "guardrailStageLabels": [
+    "Los",
+    "Gebalanceerd",
+    "Streng",
+    "Paranoïde"
+  ],
   "guardrailMacro": {
     "loose": "los",
     "balanced": "gebalanceerd",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "wick-executable kiezen",
     "connected": "wick · verbonden",
-    "pathToExecutable": "wick · pad naar executable"
+    "pathToExecutable": "wick · pad naar executable",
+    "off": "uit",
+    "disableHint": "wick-integratie uitschakelen",
+    "enableHint": "wick-integratie inschakelen"
   },
   "integrations": {
     "title": "& Integraties",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | jank {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["opdracht", "p50", "betrouwbaarheid", "bereik"],
-    "headersBackend": ["scope", "p50", "p95", "fouten"],
-    "headersDiff": ["renderer", "eerste paint", "frame p95", "raster p95", "jank"],
-    "headersUi": ["gebeurtenis", "p50", "fouten", "bereik"]
+    "headersCommand": [
+      "opdracht",
+      "p50",
+      "betrouwbaarheid",
+      "bereik"
+    ],
+    "headersBackend": [
+      "scope",
+      "p50",
+      "p95",
+      "fouten"
+    ],
+    "headersDiff": [
+      "renderer",
+      "eerste paint",
+      "frame p95",
+      "raster p95",
+      "jank"
+    ],
+    "headersUi": [
+      "gebeurtenis",
+      "p50",
+      "fouten",
+      "bereik"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Gecachte modellen wissen en opnieuw sonderen. Ruimt die op die een provider heeft laten vallen.",
     "refreshLabel": "Providers verversen",
     "refreshTooltip": "Elke provider nu opnieuw sonderen.",
-    "body": "Leid interface-berichten direct door naar lokale provider-binaries."
+    "body": "Leid interface-berichten direct door naar lokale provider-binaries.",
+    "cliTimeoutLabel": "Time-out per run",
+    "cliTimeoutUnitMinutes": "minuten",
+    "cliTimeoutUnitMinute": "minuut",
+    "forceStopLabel": "Alle sessies stoppen",
+    "forceStopTooltip": "Elke lopende CLI-run hard afsluiten.",
+    "forceStopConfirmTitle": "Lopende CLI-sessies stoppen?",
+    "forceStopConfirmBody": "Dit sluit {count} lopende CLI-runs hard af. Hun uitvoer gaat verloren.",
+    "forceStopConfirmAction": "Alles stoppen",
+    "forceStopNoneRunning": "Geen CLI-sessies actief",
+    "forceStopRecordError": "Gestopt — CLI-sessies zijn hard afgesloten."
   },
   "header": {
     "title": "Werkruimte-voorkeuren",

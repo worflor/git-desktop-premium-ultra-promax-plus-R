@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../backend/analysis_admission.dart';
 import '../backend/git.dart';
 import '../backend/dtos.dart';
 import '../backend/git_result.dart';
@@ -13,14 +14,15 @@ class RepositoryState extends ChangeNotifier {
     Future<GitResult<RepositoryStatus>> Function(String path)? statusLoader,
     Duration switchDebounce = const Duration(milliseconds: 80),
     GitDirWatcher Function(String repoPath, void Function() onRepoChanged)?
-        gitWatcherFactory,
+    gitWatcherFactory,
     Duration externalRefreshThrottle = const Duration(milliseconds: 1500),
-  })  : _openRepository = openRepositoryFn ?? openRepository,
-        _loadRepositoryStatus = statusLoader ?? getRepositoryStatus,
-        _switchDebounceDuration = switchDebounce,
-        _gitWatcherFactory = gitWatcherFactory ??
-            ((path, onChanged) => GitDirWatcher(path, onChanged)),
-        _externalRefreshThrottle = externalRefreshThrottle {
+  }) : _openRepository = openRepositoryFn ?? openRepository,
+       _loadRepositoryStatus = statusLoader ?? getRepositoryStatus,
+       _switchDebounceDuration = switchDebounce,
+       _gitWatcherFactory =
+           gitWatcherFactory ??
+           ((path, onChanged) => GitDirWatcher(path, onChanged)),
+       _externalRefreshThrottle = externalRefreshThrottle {
     // Pause the .git watcher while the app itself is mutating the repo
     // (any in-flight mutating git subprocess via the shared exec layer).
     // Our own commit/merge/checkout ref churn then coalesces into ONE
@@ -32,14 +34,14 @@ class RepositoryState extends ChangeNotifier {
 
   final Future<GitResult<String>> Function(String path) _openRepository;
   final Future<GitResult<RepositoryStatus>> Function(String path)
-      _loadRepositoryStatus;
+  _loadRepositoryStatus;
   final Duration _switchDebounceDuration;
 
   /// Builds the `.git` watcher for the active repo. Injectable so tests
   /// can drive the coalesced-change callback without a real filesystem
   /// watch; production builds a real [GitDirWatcher].
   final GitDirWatcher Function(String repoPath, void Function() onRepoChanged)
-      _gitWatcherFactory;
+  _gitWatcherFactory;
 
   /// Minimum spacing between refreshes triggered by *external* `.git`
   /// mutations. The watcher already debounces raw events into one
@@ -90,8 +92,19 @@ class RepositoryState extends ChangeNotifier {
   /// sidebar on the already-active project) watch this counter.
   int _activationEpoch = 0;
 
+  /// Monotonic counter bumped on EVERY [_status] assignment (data, null,
+  /// clear). Status codes alone are too coarse an identity for cached
+  /// derivations: a file edited again stays `M`, so any cache keyed only on
+  /// path|status serves the previous edit's parse. Every status snapshot is
+  /// driven by a real change signal (GitDirWatcher, post-mutation reload,
+  /// explicit refresh), so folding this revision into a cache key makes
+  /// "content changed underneath the cached view" unrepresentable — the key
+  /// can't survive the refresh the change itself triggered.
+  int _statusRevision = 0;
+
   String? get activePath => _activePath;
   int get activationEpoch => _activationEpoch;
+  int get statusRevision => _statusRevision;
   RepositoryStatus? get status => _status;
   bool get statusLoading => _statusLoading;
   String? get statusError => _statusError;
@@ -101,8 +114,11 @@ class RepositoryState extends ChangeNotifier {
   String? get activeRepoName {
     final p = _activePath;
     if (p == null) return null;
-    final parts =
-        p.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).toList();
+    final parts = p
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((s) => s.isNotEmpty)
+        .toList();
     return parts.isNotEmpty ? parts.last : p;
   }
 
@@ -114,7 +130,8 @@ class RepositoryState extends ChangeNotifier {
     // distinct projects — they're desks of their parent repo.
     final cleaned = stored
         .where(
-            (p) => !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'))
+          (p) => !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'),
+        )
         .toList();
     _recentPaths = cleaned;
     if (cleaned.length != stored.length) {
@@ -149,10 +166,7 @@ class RepositoryState extends ChangeNotifier {
   /// Rapid successive calls (user spam-clicking repos) are debounced:
   /// only the last path wins. Intermediate calls resolve with null
   /// (success) without spawning any git work.
-  Future<String?> setActivePath(
-    String path, {
-    bool addToRecents = true,
-  }) {
+  Future<String?> setActivePath(String path, {bool addToRecents = true}) {
     if (_disposed) return Future.value(null);
     _switchDebounce?.cancel();
     final prev = _switchCompleter;
@@ -205,8 +219,8 @@ class RepositoryState extends ChangeNotifier {
       final resolvedPath = result.data!;
       final nextRecentPaths =
           addToRecents && !_recentPaths.contains(resolvedPath)
-              ? [resolvedPath, ..._recentPaths].take(20).toList()
-              : null;
+          ? [resolvedPath, ..._recentPaths].take(20).toList()
+          : null;
 
       if (nextRecentPaths != null) {
         await _saveRecents(nextRecentPaths);
@@ -215,9 +229,15 @@ class RepositoryState extends ChangeNotifier {
 
       _activePath = resolvedPath;
       _status = null;
+      _statusRevision++;
       _statusLoading = false;
       _statusError = null;
       _activationEpoch++;
+      // Drop analysis still QUEUED for the previous repo before it reads a
+      // byte (running work drains under the admission budget). Without this,
+      // a switch away from a heavy repo stacked its pending reads on top of
+      // the new repo's pipeline spin-up.
+      repoAnalysisScope.bump();
       if (nextRecentPaths != null) {
         _recentPaths = nextRecentPaths;
       }
@@ -370,9 +390,11 @@ class RepositoryState extends ChangeNotifier {
       _statusLoading = false;
       if (result.ok) {
         _status = result.data;
+        _statusRevision++;
         _statusError = null;
       } else {
         _status = null;
+        _statusRevision++;
         _statusError = result.error;
       }
     } catch (error) {
@@ -381,6 +403,7 @@ class RepositoryState extends ChangeNotifier {
       }
       _statusLoading = false;
       _status = null;
+      _statusRevision++;
       _statusError = error.toString();
     }
     // Cancel the pending loading-publish: if we beat the threshold

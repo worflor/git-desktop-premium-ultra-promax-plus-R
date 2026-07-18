@@ -5994,6 +5994,10 @@ class _Translations$settings$errors$tr extends Translations$settings$errors$en {
   @override
   String get saveApiPiggybackCli => 'API sırtlama CLI\'ı kaydedilemedi.';
   @override
+  String get saveCliTimeout => 'CLI zaman aşımı kaydedilemedi.';
+  @override
+  String get stopAllCli => 'Çalışan CLI oturumları durdurulamadı.';
+  @override
   String clearLocalData({required Object error}) =>
       'Yerel veri temizlenemedi: ${error}';
 }
@@ -6981,6 +6985,12 @@ class _Translations$settings$wick$tr extends Translations$settings$wick$en {
   String get connected => 'wick · bağlı';
   @override
   String get pathToExecutable => 'wick · yürütülebilir dosya yolu';
+  @override
+  String get off => 'kapalı';
+  @override
+  String get disableHint => 'wick entegrasyonunu kapat';
+  @override
+  String get enableHint => 'wick entegrasyonunu aç';
 }
 
 // Path: settings.integrations
@@ -7280,6 +7290,29 @@ class _Translations$settings$cliPiggyback$tr
   @override
   String get body =>
       'Arayüz mesajlarını doğrudan yerel sağlayıcı ikili dosyalarına aktar.';
+  @override
+  String get cliTimeoutLabel => 'Çalıştırma başına zaman aşımı';
+  @override
+  String get cliTimeoutUnitMinutes => 'dakika';
+  @override
+  String get cliTimeoutUnitMinute => 'dakika';
+  @override
+  String get forceStopLabel => 'Tüm oturumları durdur';
+  @override
+  String get forceStopTooltip =>
+      'Devam eden her CLI çalıştırmasını zorla kapat.';
+  @override
+  String get forceStopConfirmTitle => 'Çalışan CLI oturumları durdurulsun mu?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Bu, devam eden ${count} CLI çalıştırmasını zorla kapatır. Çıktıları kaybolur.';
+  @override
+  String get forceStopConfirmAction => 'Tümünü durdur';
+  @override
+  String get forceStopNoneRunning => 'Çalışan CLI oturumu yok';
+  @override
+  String get forceStopRecordError =>
+      'Durduruldu — CLI oturumları zorla kapatıldı.';
 }
 
 // Path: settings.header

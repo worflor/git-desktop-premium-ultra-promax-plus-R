@@ -130,6 +130,12 @@ class _CommitSeismographState extends State<CommitSeismograph>
       _hunkCache = LinkedHashMap();
   Map<String, List<CommitHunk>>? _hunks;
 
+  /// Total churn (adds + dels) past which the per-hunk band fetch is skipped —
+  /// a multi-million-line commit's bands are an unreadable smear and draining
+  /// its patch (even streamed) is pointless for a viz. The treemap still draws
+  /// from the commit's own totals; the diff opens normally via the lazy viewer.
+  static const int _kSeismographBandCeiling = 2000000;
+
   // Keyboard drilling: index into [_nav], the flattened traversal of the
   // currently visible segments. Rebuilt every layout in build(). Mouse
   // hover clears it so the two focus channels never fight.
@@ -185,7 +191,13 @@ class _CommitSeismographState extends State<CommitSeismograph>
     }
     _hunks = null;
     final churn = widget.detail.additions + widget.detail.deletions;
-    if (hash.isEmpty || churn <= 0 || churn > kMaxRenderableDiffLines) return;
+    // Skip the hunk fetch for zero-churn commits (nothing to place) and for
+    // pathological ones (a multi-million-line rewrite): the churn bands would be
+    // an unreadable smear, and even the now-streamed `git show` would drain a
+    // multi-GB body over the pipe just to draw them. The treemap still renders
+    // from the commit's own add/del totals; only the per-hunk band refinement
+    // is dropped — the diff itself opens normally through the lazy viewer.
+    if (hash.isEmpty || churn <= 0 || churn > _kSeismographBandCeiling) return;
     getCommitHunks(widget.repoPath, hash).then((res) {
       if (!mounted || widget.detail.commitHash != hash) return;
       final map = res.ok

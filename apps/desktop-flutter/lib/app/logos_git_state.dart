@@ -22,6 +22,13 @@ class LogosGitState extends ChangeNotifier {
   final Set<String> _loadingWithCoupling = {};
   final Map<String, String?> _errors = {};
 
+  /// Bumped (never removed) for a repo whenever it's evicted or
+  /// explicitly invalidated. [loadForRepo] captures the generation
+  /// before its awaits and only installs its result if it's unchanged
+  /// after — so a build in flight when the repo gets evicted can't
+  /// resurrect a stale engine into `_engineByRepo`.
+  final Map<String, int> _generation = {};
+
   LogosGit? engineFor(String repoPath) => _engineByRepo[repoPath];
 
   /// Test-only seam: when set, [loadForRepo] resolves the engine through
@@ -37,7 +44,11 @@ class LogosGitState extends ChangeNotifier {
   String? errorFor(String repoPath) => _errors[repoPath];
 
   void invalidateAllExcept(String? repoPath) {
+    resolver.invalidateAllLogosGitExcept(repoPath);
     if (repoPath == null) {
+      for (final key in {..._engineByRepo.keys, ..._loading, ..._errors.keys}) {
+        _generation[key] = (_generation[key] ?? 0) + 1;
+      }
       _engineByRepo.clear();
       _loading.clear();
       _loadingWithCoupling.clear();
@@ -45,8 +56,12 @@ class LogosGitState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final hadOthers = _engineByRepo.keys.any((k) => k != repoPath) ||
-        _loading.any((k) => k != repoPath);
+    final evicted = {..._engineByRepo.keys, ..._loading, ..._errors.keys}
+      ..remove(repoPath);
+    final hadOthers = evicted.isNotEmpty;
+    for (final key in evicted) {
+      _generation[key] = (_generation[key] ?? 0) + 1;
+    }
     _engineByRepo.removeWhere((k, _) => k != repoPath);
     _loading.removeWhere((k) => k != repoPath);
     _loadingWithCoupling.removeWhere((k) => k != repoPath);
@@ -67,6 +82,7 @@ class LogosGitState extends ChangeNotifier {
       return;
     }
 
+    final gen = _generation[repoPath] ?? 0;
     _loading.add(repoPath);
     if (wantsCoupling) {
       _loadingWithCoupling.add(repoPath);
@@ -79,6 +95,10 @@ class LogosGitState extends ChangeNotifier {
       final engine = resolve != null
           ? await resolve(repoPath, coupling: coupling)
           : await resolver.resolveLogosGit(repoPath, coupling: coupling);
+      // Stale if this repo was evicted or explicitly invalidated while
+      // the resolve was in flight — don't let a late result resurrect
+      // an engine for a repo the shell has already moved on from.
+      if ((_generation[repoPath] ?? 0) != gen) return;
       if (engine == null) {
         _errors[repoPath] = 'engine resolution failed';
       } else {
@@ -86,6 +106,7 @@ class LogosGitState extends ChangeNotifier {
         _errors.remove(repoPath);
       }
     } catch (e) {
+      if ((_generation[repoPath] ?? 0) != gen) return;
       _errors[repoPath] = e.toString();
     } finally {
       if (wantsCoupling) {
@@ -100,6 +121,7 @@ class LogosGitState extends ChangeNotifier {
 
   void invalidateRepo(String repoPath) {
     resolver.invalidateLogosGit(repoPath);
+    _generation[repoPath] = (_generation[repoPath] ?? 0) + 1;
     final removed = _engineByRepo.remove(repoPath) != null;
     final wasLoading = _loading.remove(repoPath);
     final hadCoupledLoading = _loadingWithCoupling.remove(repoPath);

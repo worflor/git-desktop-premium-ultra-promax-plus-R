@@ -362,6 +362,24 @@ void invalidateAllLogosGit() {
   _lastAccess.clear();
 }
 
+/// Drop every cached engine except [keepRepoPath]. Used on repo switch
+/// to evict siblings while keeping the just-loaded one warm — mirrors
+/// [invalidateAllLogosGit] but spares one entry. Pass null to clear
+/// everything (same as [invalidateAllLogosGit]).
+void invalidateAllLogosGitExcept(String? keepRepoPath) {
+  if (keepRepoPath == null) {
+    invalidateAllLogosGit();
+    return;
+  }
+  // LruCache has no removeWhere — snapshot keys first so removal
+  // doesn't mutate the map out from under the iteration.
+  for (final key in [for (final e in _engines.entries) e.key]) {
+    if (key != keepRepoPath) _engines.remove(key);
+  }
+  _headSnapshots.removeWhere((k, _) => k != keepRepoPath);
+  _lastAccess.removeWhere((k, _) => k != keepRepoPath);
+}
+
 void _pruneDecayedEngines() {
   final now = DateTime.now();
   final stale = <String>[];

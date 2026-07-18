@@ -1,3 +1,10 @@
+## Real-Git witnesses are process and filesystem heavy. Flutter's default
+## worker-per-CPU policy oversubscribes them on larger hosts; an async test can
+## then time out while Git is still alive and teardown removes its repository.
+## Two workers keeps useful parallelism without letting the CPU-budget and
+## property suites starve neighboring Git processes past their deadlines.
+concurrency: 2
+
 tags:
   manual:
     skip: "manual profiling/research; run explicitly with: flutter test --run-skipped -t manual"

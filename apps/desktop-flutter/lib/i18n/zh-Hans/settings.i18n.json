@@ -36,6 +36,8 @@
     "saveMuseNotes": "保存 muse 备注失败。",
     "saveReviewDoubleCheck": "保存审查复核模式失败。",
     "saveApiPiggybackCli": "保存 API 搭载 CLI 失败。",
+    "saveCliTimeout": "保存 CLI 超时时长失败。",
+    "stopAllCli": "无法停止正在运行的 CLI 会话。",
     "clearLocalData": "无法清除本地数据：{error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "抹除所有本地应用数据 — 包括最近仓库列表 — 并退出？磁盘上你实际的 git 仓库不会被触及。",
     "confirmReset": "重置本地应用数据并退出？\n\n设置、主题、引导、AI 偏好、遥测和 engram 缓存都会被清除。你的最近仓库列表将保留。"
   },
-  "guardrailStageLabels": ["宽松", "均衡", "严格", "偏执"],
+  "guardrailStageLabels": [
+    "宽松",
+    "均衡",
+    "严格",
+    "偏执"
+  ],
   "guardrailMacro": {
     "loose": "宽松",
     "balanced": "均衡",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "选择 wick 可执行文件",
     "connected": "wick · 已连接",
-    "pathToExecutable": "wick · 可执行文件路径"
+    "pathToExecutable": "wick · 可执行文件路径",
+    "off": "关",
+    "disableHint": "关闭 wick 集成",
+    "enableHint": "开启 wick 集成"
   },
   "integrations": {
     "title": "& 集成",
@@ -472,10 +482,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | 卡顿 {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["命令", "p50", "可靠性", "范围"],
-    "headersBackend": ["作用域", "p50", "p95", "失败"],
-    "headersDiff": ["渲染器", "首次绘制", "帧 p95", "光栅 p95", "卡顿"],
-    "headersUi": ["事件", "p50", "失败", "范围"]
+    "headersCommand": [
+      "命令",
+      "p50",
+      "可靠性",
+      "范围"
+    ],
+    "headersBackend": [
+      "作用域",
+      "p50",
+      "p95",
+      "失败"
+    ],
+    "headersDiff": [
+      "渲染器",
+      "首次绘制",
+      "帧 p95",
+      "光栅 p95",
+      "卡顿"
+    ],
+    "headersUi": [
+      "事件",
+      "p50",
+      "失败",
+      "范围"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -527,7 +558,17 @@
     "clearCacheTooltip": "抹除缓存的模型并重新探测。清掉提供方已下线的那些。",
     "refreshLabel": "刷新提供方",
     "refreshTooltip": "立即重新探测每个提供方。",
-    "body": "把界面消息直接管道给本地提供方二进制文件。"
+    "body": "把界面消息直接管道给本地提供方二进制文件。",
+    "cliTimeoutLabel": "单次运行超时",
+    "cliTimeoutUnitMinutes": "分钟",
+    "cliTimeoutUnitMinute": "分钟",
+    "forceStopLabel": "停止所有会话",
+    "forceStopTooltip": "强制终止所有正在进行的 CLI 运行。",
+    "forceStopConfirmTitle": "停止正在运行的 CLI 会话？",
+    "forceStopConfirmBody": "这将强制终止 {count} 个正在进行的 CLI 运行。其输出将丢失。",
+    "forceStopConfirmAction": "全部停止",
+    "forceStopNoneRunning": "没有正在运行的 CLI 会话",
+    "forceStopRecordError": "已停止：CLI 会话已被强制终止。"
   },
   "header": {
     "title": "工作区偏好",

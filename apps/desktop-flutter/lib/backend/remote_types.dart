@@ -20,13 +20,13 @@ import 'dart:io';
 
 import 'package:meta/meta.dart';
 
-import '../features/diff/diff_models.dart';
 import 'git.dart' as git;
 import 'json_safety.dart';
 
 /// Single reviewer-state pair on a PR.
 class PrReviewer {
   final String login;
+
   /// 'PENDING' | 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' |
   /// 'DISMISSED'.
   final String state;
@@ -38,6 +38,7 @@ class PullRequestSummary {
   final String title;
   final String headRef;
   final String baseRef;
+
   /// 'OPEN' | 'CLOSED' | 'MERGED'.
   final String state;
   final bool isDraft;
@@ -47,8 +48,10 @@ class PullRequestSummary {
   final int additions;
   final int deletions;
   final int changedFiles;
+
   /// 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'.
   final String mergeable;
+
   /// 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | empty.
   final String reviewDecision;
   final List<PrReviewer> reviewers;
@@ -169,16 +172,41 @@ class PullRequestDetail {
   final List<PrFile> files;
   final List<RemoteComment> comments;
   final String diff;
-  final Map<String, List<ParsedLine>> diffByFile;
   final Map<String, String> rawDiffByFile;
+
+  /// Non-null when the diff was too large to hold as a String: the patch
+  /// lives ONLY in this temp spool file and [diff]/[rawDiffByFile] are empty.
+  /// The consumer renders it through `DiffDocument.lazyFromSpool` (per-file
+  /// slices via `rawSliceForPath`) and owns disposal — either directly or by
+  /// handing the spool's dir to the document as `ownedTempDir`.
+  final git.SpooledDiff? diffSpool;
+
+  /// True when the patch body was REQUESTED AND FETCHED for this detail —
+  /// even when it turned out empty. This is the "is loading complete"
+  /// predicate: a legitimately empty patch (`diff: ''`, no spool) is
+  /// LOADED, and without this flag it is indistinguishable from a
+  /// metadata-only fetch, so the row re-fetches on every expand and can
+  /// never reach a stable loaded-empty state. False only for
+  /// `includeDiff: false` fetches. [hasDiff] answers the DIFFERENT
+  /// question — "is there content to act on" — for action gating.
+  final bool diffLoaded;
+
   const PullRequestDetail({
     required this.body,
     required this.files,
     required this.comments,
     required this.diff,
-    required this.diffByFile,
     required this.rawDiffByFile,
+    this.diffSpool,
+    this.diffLoaded = false,
   });
+
+  /// True when this detail carries patch CONTENT in either representation —
+  /// the in-RAM String or a disk spool. Checking `diff.isNotEmpty` alone
+  /// misclassifies a machine-scale (spooled) detail as metadata-only.
+  /// For "has loading finished" use [diffLoaded] instead: an empty patch
+  /// has `hasDiff == false` while being completely loaded.
+  bool get hasDiff => diff.isNotEmpty || diffSpool != null;
 }
 
 class IssueDetail {
@@ -197,6 +225,7 @@ class IssueDetail {
 class IssueSummary {
   final int number;
   final String title;
+
   /// 'OPEN' | 'CLOSED'.
   final String state;
   final String authorLogin;
@@ -238,8 +267,10 @@ class IssueSummary {
 
 class CheckSummary {
   final String name;
+
   /// 'queued' | 'in_progress' | 'completed' | empty.
   final String status;
+
   /// 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' |
   /// 'timed_out' | 'action_required' | null while running.
   final String? conclusion;
@@ -271,6 +302,7 @@ class TailEvent {
   final String kind;
   final String actor;
   final DateTime at;
+
   /// Optional sub-state (e.g. 'success'/'failure' for check).
   final String state;
   const TailEvent({
@@ -284,6 +316,7 @@ class TailEvent {
 /// Status of a remote provider's CLI tooling and authentication.
 class RemoteProviderStatus {
   final bool available;
+
   /// Whether write actions (create/promote/merge/comment) are expected to
   /// succeed. Defaults to [available]. A forge that serves anonymous reads
   /// but requires a token for writes (Gitea/Forgejo) reports
@@ -291,14 +324,20 @@ class RemoteProviderStatus {
   /// affordances stay hidden; [reason] then says what's missing.
   final bool canWrite;
   final String? reason;
-  const RemoteProviderStatus(
-      {required this.available, bool? canWrite, this.reason})
-      : canWrite = canWrite ?? available;
+  const RemoteProviderStatus({
+    required this.available,
+    bool? canWrite,
+    this.reason,
+  }) : canWrite = canWrite ?? available;
   static const yes = RemoteProviderStatus(available: true);
 }
 
-/// Format a PR/MR as a `git format-patch`-style `.patch` string.
-String formatPrAsPatch(PullRequestSummary pr, PullRequestDetail detail) {
+/// The `git format-patch`-style metadata header for a PR/MR, WITHOUT the
+/// diff body. The one serializer both export paths share: the String path
+/// appends [PullRequestDetail.diff] ([formatPrAsPatch]); the spooled path
+/// streams the spool's bytes after it, so a machine-scale patch never
+/// exists as a Dart String.
+String prPatchHeader(PullRequestSummary pr, PullRequestDetail detail) {
   final author = pr.authorLogin.isNotEmpty ? pr.authorLogin : 'unknown';
   final dateStr = pr.updatedAt.toUtc().toIso8601String();
   final body = detail.body.trim();
@@ -310,8 +349,24 @@ String formatPrAsPatch(PullRequestSummary pr, PullRequestDetail detail) {
     if (body.isNotEmpty) ...[body, ''],
     '---',
     '',
-    detail.diff,
+    '', // trailing '\n' after '---\n' — the diff body starts here
   ].join('\n');
+}
+
+/// Format a PR/MR as a `.patch` string. ONLY for details whose diff is the
+/// in-RAM String — a spooled detail's diff is empty here by design, and
+/// silently exporting a body-less patch would look like data loss. Spooled
+/// callers stream [prPatchHeader] + the spool bytes instead. Enforced in
+/// RELEASE mode too: this is a data-integrity contract, not a debug hint —
+/// a forgotten spool branch must fail loudly, never ship a truncated patch.
+String formatPrAsPatch(PullRequestSummary pr, PullRequestDetail detail) {
+  if (detail.diffSpool != null) {
+    throw ArgumentError(
+      'formatPrAsPatch on a spooled detail would emit a body-less patch — '
+      'stream prPatchHeader() + the spool bytes instead',
+    );
+  }
+  return '${prPatchHeader(pr, detail)}${detail.diff}';
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +383,8 @@ class ForgeTopology {
   final Map<String, RemoteForge> byRemote;
   const ForgeTopology(this.byRemote);
 
-  RemoteForge get primary => byRemote['origin'] ?? byRemote.values.firstOrNull ?? RemoteForge.unknown;
+  RemoteForge get primary =>
+      byRemote['origin'] ?? byRemote.values.firstOrNull ?? RemoteForge.unknown;
   Iterable<MapEntry<String, RemoteForge>> get known =>
       byRemote.entries.where((e) => e.value != RemoteForge.unknown);
 }
@@ -426,7 +482,9 @@ Future<RemoteForge> _probeForForge(String remoteUrl) async {
 
   final origins = <String>[];
   if (port != null && port != 443) {
-    origins..add('https://$host:$port')..add('http://$host:$port');
+    origins
+      ..add('https://$host:$port')
+      ..add('http://$host:$port');
   } else {
     origins.add('https://$host');
   }
@@ -485,8 +543,7 @@ Future<({int status, String body})?> _forgeProbeGet(String url) async {
   try {
     final request = await client.getUrl(Uri.parse(url));
     request.headers.set('Accept', 'application/json');
-    final response =
-        await request.close().timeout(const Duration(seconds: 5));
+    final response = await request.close().timeout(const Duration(seconds: 5));
     final body = await response.transform(utf8.decoder).join();
     return (status: response.statusCode, body: body);
   } catch (_) {

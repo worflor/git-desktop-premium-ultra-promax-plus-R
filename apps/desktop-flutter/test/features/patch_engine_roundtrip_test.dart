@@ -210,8 +210,7 @@ void main() {
       if (pair != null) lines[pair] = lines[pair].copyWith(isStaged: true);
       final poisoned = [
         ...lines,
-        ParsedLine(
-            text: '', lowerText: '', kind: LineKind.context, hunkIndex: 0),
+        ParsedLine(text: '', kind: LineKind.context, hunkIndex: 0),
       ];
       final patch = PatchEngine.buildStagedPatch('f', poisoned);
       expect(patch, contains('@@ -1,2 +1,2 @@'));

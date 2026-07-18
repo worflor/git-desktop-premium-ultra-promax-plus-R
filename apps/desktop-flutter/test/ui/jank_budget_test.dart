@@ -15,8 +15,9 @@
 //
 // Bound is wall-clock, deliberately, and generous. The failure mode this
 // catches is three orders of magnitude wide (a blocking engine call is
-// ~2000ms against a ~5ms healthy frame), so a 250ms bound cannot flake the
-// way a tight p95 budget would. Gate on order-of-magnitude wall clock here;
+// ~2000ms against a ~5ms healthy frame), so a 300ms bound remains far below
+// the regression while tolerating a scheduler slice stolen by a concurrent
+// real-Git property worker. Gate on order-of-magnitude wall clock here;
 // gate on exact counters in rebuild_budget_test.dart.
 
 import 'dart:io';
@@ -39,8 +40,8 @@ import '../support/widget_harness.dart';
 
 /// Wall-clock, deliberately. The failure this catches is three orders of
 /// magnitude wide (a blocking engine call is ~2000ms against ~5ms), so a
-/// 250ms bound cannot flake the way an absolute p95 budget would. Gate on
-/// order-of-magnitude wall clock; gate on exact counters everywhere else.
+/// 300ms is still a coarse sentinel, not a p95 SLA. Gate on order-of-magnitude
+/// wall clock; gate on exact counters everywhere else.
 Future<Duration> timePump(
   WidgetTester tester,
   Future<void> Function() action,
@@ -58,7 +59,8 @@ Future<Duration> timePump(
 /// same spirit as `MANIFOLD_FUZZ`. Parsed leniently: missing/garbage/≤0 → 1×.
 int budgetMs(int baseMs) {
   final scale = double.tryParse(
-      Platform.environment['MANIFOLD_TIMING_SCALE'] ?? '');
+    Platform.environment['MANIFOLD_TIMING_SCALE'] ?? '',
+  );
   return (baseMs * (scale != null && scale > 0 ? scale : 1.0)).round();
 }
 
@@ -81,85 +83,101 @@ void main() {
   // themed-scaffold test in the file measured 372-628ms (cold-start noise),
   // while every subsequent theme measured well under 100ms in the same run
   // — a real one-time cost, not steady-state jank.
-  testWidgets('warm-up: exercise the harness once before timing anything',
-      (tester) async {
+  testWidgets('warm-up: exercise the harness once before timing anything', (
+    tester,
+  ) async {
     await pumpHarness(tester, const Scaffold(body: SizedBox.shrink()));
   });
 
   group('app shell / themed scaffold', () {
     for (final theme in AppThemeId.values) {
-      testWidgets('pumps under 250ms — ${theme.name}', (tester) async {
+      testWidgets('pumps under 300ms — ${theme.name}', (tester) async {
         tester.view.physicalSize = const Size(1400, 900);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
 
         final elapsed = await timePump(tester, () async {
-          await tester.pumpWidget(harnessApp(
-            theme: theme,
-            home: Scaffold(
-              body: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Manifold'),
-                    ElevatedButton(
-                      onPressed: () {},
-                      child: const Text('action'),
-                    ),
-                  ],
+          await tester.pumpWidget(
+            harnessApp(
+              theme: theme,
+              home: Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Manifold'),
+                      ElevatedButton(
+                        onPressed: () {},
+                        child: const Text('action'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ));
+          );
           await tester.pump();
         });
 
-        expect(elapsed.inMilliseconds, lessThan(budgetMs(250)),
-            reason: 'themed shell (${theme.name}) took '
-                '${elapsed.inMilliseconds}ms to pump — order-of-magnitude '
-                'jank on a first paint means something synchronous and '
-                'heavy is running on the UI isolate');
+        expect(
+          elapsed.inMilliseconds,
+          lessThan(budgetMs(300)),
+          reason:
+              'themed shell (${theme.name}) took '
+              '${elapsed.inMilliseconds}ms to pump — order-of-magnitude '
+              'jank on a first paint means something synchronous and '
+              'heavy is running on the UI isolate',
+        );
       });
     }
   });
 
   group('filament findings panel', () {
     testWidgets(
-        'with a NULL activePath, pumps under 100ms and schedules no work',
-        (tester) async {
-      // Real-repo path is deliberately not covered here.
-      // TODO: driving FilamentFindingsPanel with a real repo path (to
-      // exercise the actual Scale-1/Scale-2 scan and its Isolate.run
-      // dispatch) requires a ScratchRepo (test/support/scratch_repo.dart)
-      // PLUS a built LogosGit engine wired through LogosGitState — that's
-      // an integration-level fixture, not something a pure widget test
-      // should stand up. Belongs in a future
-      // test/integration/filament_scan_test.dart.
-      await pumpHarness(
-        tester,
-        const Scaffold(body: FilamentFindingsPanel()),
-      );
+      'with a NULL activePath, pumps under 100ms and schedules no work',
+      (tester) async {
+        // Real-repo path is deliberately not covered here.
+        // TODO: driving FilamentFindingsPanel with a real repo path (to
+        // exercise the actual Scale-1/Scale-2 scan and its Isolate.run
+        // dispatch) requires a ScratchRepo (test/support/scratch_repo.dart)
+        // PLUS a built LogosGit engine wired through LogosGitState — that's
+        // an integration-level fixture, not something a pure widget test
+        // should stand up. Belongs in a future
+        // test/integration/filament_scan_test.dart.
+        await pumpHarness(
+          tester,
+          const Scaffold(body: FilamentFindingsPanel()),
+        );
 
-      final elapsed = await timePump(tester, () async {
-        await tester.pump();
-      });
+        final elapsed = await timePump(tester, () async {
+          await tester.pump();
+        });
 
-      expect(elapsed.inMilliseconds, lessThan(budgetMs(100)),
-          reason: 'a null-activePath mount should be a cheap "no repo '
-              'open" render, not a scan');
-      // didChangeDependencies bails out before calling _scan() when
-      // activePath is null, so no git subprocess, no Isolate.run, and no
-      // animation ticker should be pending after the first frame settles.
-      expect(SchedulerBinding.instance.transientCallbackCount, 0,
-          reason: 'no work should be scheduled for a null-repo mount');
-      expect(find.text('No repository open.'), findsOneWidget);
-    });
+        expect(
+          elapsed.inMilliseconds,
+          lessThan(budgetMs(100)),
+          reason:
+              'a null-activePath mount should be a cheap "no repo '
+              'open" render, not a scan',
+        );
+        // didChangeDependencies bails out before calling _scan() when
+        // activePath is null, so no git subprocess, no Isolate.run, and no
+        // animation ticker should be pending after the first frame settles.
+        expect(
+          SchedulerBinding.instance.transientCallbackCount,
+          0,
+          reason: 'no work should be scheduled for a null-repo mount',
+        );
+        expect(find.text('No repository open.'), findsOneWidget);
+      },
+    );
   });
 
   group('command palette', () {
-    testWidgets('opens, types a query, updates results within budget',
-        (tester) async {
+    testWidgets('opens, types a query, updates results within budget', (
+      tester,
+    ) async {
       // CommandPalette's static-entry registry (palette_registry.dart's
       // buildStaticEntries) reads WorktreeState and DeskPrState directly —
       // both excluded from harnessApp's base providers because their
@@ -171,18 +189,19 @@ void main() {
       // see a provider wrapping `home` itself (confirmed empirically: that
       // placement throws ProviderNotFoundException).
       Widget wrapPalette(BuildContext context, Widget app) => MultiProvider(
-            providers: [
-              ChangeNotifierProvider<WorktreeState>(
-                  create: (_) =>
-                      WorktreeState(context.read<RepositoryState>())),
-              ChangeNotifierProvider<DeskPrState>(
-                  create: (_) => DeskPrState(
-                        context.read<RepositoryState>(),
-                        context.read<AppIdentityState>(),
-                      )),
-            ],
-            child: app,
-          );
+        providers: [
+          ChangeNotifierProvider<WorktreeState>(
+            create: (_) => WorktreeState(context.read<RepositoryState>()),
+          ),
+          ChangeNotifierProvider<DeskPrState>(
+            create: (_) => DeskPrState(
+              context.read<RepositoryState>(),
+              context.read<AppIdentityState>(),
+            ),
+          ),
+        ],
+        child: app,
+      );
 
       // ARMED REGRESSION GUARD (was: a finding left failing on purpose).
       // Mounting CommandPalette used to throw
@@ -273,11 +292,15 @@ void main() {
       // freeze class) while staying immune to load jitter that a tight bound
       // would flake on. Gate on order-of-magnitude wall clock; gate on exact
       // counters (rebuild_budget_test.dart) for anything finer.
-      expect(elapsed.inMilliseconds, lessThan(budgetMs(1200)),
-          reason: 'typing a query took ${elapsed.inMilliseconds}ms — a '
-              'keystroke must never run the engine synchronously (that would '
-              'be seconds, not this); tens-to-low-hundreds of ms is the '
-              'expected synchronous scoring cost');
+      expect(
+        elapsed.inMilliseconds,
+        lessThan(budgetMs(1200)),
+        reason:
+            'typing a query took ${elapsed.inMilliseconds}ms — a '
+            'keystroke must never run the engine synchronously (that would '
+            'be seconds, not this); tens-to-low-hundreds of ms is the '
+            'expected synchronous scoring cost',
+      );
 
       // Let the debounced, post-frame-coalesced re-score settle, then assert
       // the palette is still a live, non-thrown tree. This is a JANK test:
@@ -290,13 +313,21 @@ void main() {
       // ranking, which is exactly the brittleness a jank test should avoid.
       await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull,
-          reason: 'typing into the palette must not throw (this is the '
-              'regression guard for the initState-during-build assert that '
-              'PaletteState.notifyListeners now defers past the frame)');
-      expect(find.byType(TextField), findsOneWidget,
-          reason: 'the palette query field is still mounted and interactive '
-              'after a re-score');
+      expect(
+        tester.takeException(),
+        isNull,
+        reason:
+            'typing into the palette must not throw (this is the '
+            'regression guard for the initState-during-build assert that '
+            'PaletteState.notifyListeners now defers past the frame)',
+      );
+      expect(
+        find.byType(TextField),
+        findsOneWidget,
+        reason:
+            'the palette query field is still mounted and interactive '
+            'after a re-score',
+      );
     });
   });
 }

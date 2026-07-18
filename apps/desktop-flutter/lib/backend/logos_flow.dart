@@ -7,6 +7,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'analysis_admission.dart';
 import 'logos_core.dart';
 import 'lru_cache.dart';
 
@@ -1367,6 +1368,15 @@ final Map<(String, int), Future<FlowAnalysisResult?>> _inFlight = {};
 const int _kDefaultMaxDepth = 30;
 const int _kLightMaxDepth = 4;
 
+/// Resident-memory expansion of flow analysis over its input: source string
+/// + extracted graph + optimizer copies + walker state. MEASURED, not
+/// chosen: tool/memory_lab.dart observed ~1GB peak for one 48MB input
+/// (~21×); 20 is the declared planning factor and the lab's lifecycle gates
+/// (test/memory/ingestion_lifecycle_test.dart) keep it honest — if the
+/// pipeline's true expansion drifts past it, the `heavy` scenario gate
+/// fails and this constant must follow the new measurement.
+const int _kFlowResidentExpansion = 20;
+
 /// Memoized flow analysis. Computation runs in a worker isolate.
 /// [logosCoupling] bypasses cache and adds structural context.
 /// [priorMeans] / [priorCounts] are an optional GYAT-derived prior:
@@ -1402,13 +1412,34 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
 
   final future = () async {
     try {
-      final source = await file.readAsString();
       final coupling = logosCoupling;
       final means = priorMeans;
       final counts = priorCounts;
       final depth = maxDepth;
-      final result = await Isolate.run(() =>
-          _analyzeSource(source, coupling, means, counts, depth));
+      // Budgeted ingestion. This analyzer runs over EVERY status path —
+      // untracked data corpora included — with the changeset pipeline
+      // fanning out several calls at once. Unbudgeted, that read the marble
+      // repo's multi-hundred-MB files whole, in parallel, and message-copied
+      // each across the isolate boundary: the repo-switch OOM. Now the read
+      // happens INSIDE the worker isolate (the main isolate never holds the
+      // source, and nothing is message-copied), and it is admitted against
+      // the process-wide analysis budget at its expected RESIDENT cost —
+      // input size × the pipeline's expansion. Declaring bare input size was
+      // measured wrong by tool/memory_lab.dart: one admitted 48MB file drove
+      // ~1GB of graph/walker allocations, so the budget must see the ~20×
+      // the analysis actually costs, not the bytes it reads. Work that fits
+      // queues fairly; work whose true cost can never fit is declined — the
+      // flow signal for files that size is noise anyway. Queued work for a
+      // repo the user has switched away from is dropped before it reads a
+      // byte.
+      final admitted = await AnalysisAdmission.instance.run(
+        stat.size * _kFlowResidentExpansion,
+        () => Isolate.run(
+          () => _analyzeFile(absolutePath, coupling, means, counts, depth),
+        ),
+        scope: repoAnalysisScope,
+      );
+      final result = admitted.ran ? admitted.value : null;
       if (result != null && !usingExtraContext) _flowCache.put(key, result);
       return result;
     } finally {
@@ -1418,6 +1449,30 @@ Future<FlowAnalysisResult?> analyzeFlowCached(
 
   if (!usingExtraContext) _inFlight[key] = future;
   return future;
+}
+
+/// Worker-isolate entry: reads the source itself so the content never
+/// exists on the UI isolate and never crosses the isolate boundary.
+FlowAnalysisResult? _analyzeFile(
+  String absolutePath,
+  double? logosCoupling,
+  Float64List? priorMeans,
+  Int32List? priorCounts,
+  int maxDepth,
+) {
+  String source;
+  try {
+    source = File(absolutePath).readAsStringSync();
+  } on Object {
+    return null; // vanished / unreadable / undecodable between stat and read
+  }
+  return _analyzeSource(
+    source,
+    logosCoupling,
+    priorMeans,
+    priorCounts,
+    maxDepth,
+  );
 }
 
 FlowAnalysisResult? _analyzeSource(

@@ -36,6 +36,8 @@
     "saveMuseNotes": "Failed to save muse notes.",
     "saveReviewDoubleCheck": "Failed to save review double-check mode.",
     "saveApiPiggybackCli": "Failed to save API piggyback CLI.",
+    "saveCliTimeout": "Failed to save CLI timeout.",
+    "stopAllCli": "Could not stop the running CLI sessions.",
     "clearLocalData": "Could not clear local data: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Wipe all local app data — including the recent repos list — and quit? Your actual git repos on disk are not touched.",
     "confirmReset": "Reset local app data and quit?\n\nSettings, theme, onboarding, AI preferences, telemetry, and engram caches are cleared. Your recent repos list survives."
   },
-  "guardrailStageLabels": ["Loose", "Balanced", "Strict", "Paranoid"],
+  "guardrailStageLabels": [
+    "Loose",
+    "Balanced",
+    "Strict",
+    "Paranoid"
+  ],
   "guardrailMacro": {
     "loose": "loose",
     "balanced": "balanced",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "Select wick executable",
     "connected": "wick · connected",
-    "pathToExecutable": "wick · path to executable"
+    "pathToExecutable": "wick · path to executable",
+    "off": "off",
+    "disableHint": "Turn the wick integration off",
+    "enableHint": "Turn the wick integration on"
   },
   "integrations": {
     "title": "& Integrations",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | jank {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["command", "p50", "reliability", "range"],
-    "headersBackend": ["scope", "p50", "p95", "failures"],
-    "headersDiff": ["renderer", "first paint", "frame p95", "raster p95", "jank"],
-    "headersUi": ["event", "p50", "failures", "range"]
+    "headersCommand": [
+      "command",
+      "p50",
+      "reliability",
+      "range"
+    ],
+    "headersBackend": [
+      "scope",
+      "p50",
+      "p95",
+      "failures"
+    ],
+    "headersDiff": [
+      "renderer",
+      "first paint",
+      "frame p95",
+      "raster p95",
+      "jank"
+    ],
+    "headersUi": [
+      "event",
+      "p50",
+      "failures",
+      "range"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Wipe cached models and re-probe. Clears out ones a provider dropped.",
     "refreshLabel": "Refresh providers",
     "refreshTooltip": "Re-probe every provider now.",
-    "body": "Directly pipe interface messages to local provider binaries."
+    "body": "Directly pipe interface messages to local provider binaries.",
+    "cliTimeoutLabel": "Timeout per run",
+    "cliTimeoutUnitMinute": "minute",
+    "cliTimeoutUnitMinutes": "minutes",
+    "forceStopLabel": "Stop all sessions",
+    "forceStopTooltip": "Force-quit every CLI run in progress.",
+    "forceStopConfirmTitle": "Stop running CLI sessions?",
+    "forceStopConfirmBody": "This force-quits {count} CLI run(s) in progress. Their output will be lost.",
+    "forceStopConfirmAction": "Stop all",
+    "forceStopNoneRunning": "No CLI sessions running",
+    "forceStopRecordError": "Stopped — CLI sessions were force-quit."
   },
   "header": {
     "title": "Workspace Preferences",

@@ -6023,6 +6023,11 @@ class _Translations$settings$errors$de extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'API-Piggyback-CLI konnte nicht gespeichert werden.';
   @override
+  String get saveCliTimeout => 'CLI-Timeout konnte nicht gespeichert werden.';
+  @override
+  String get stopAllCli =>
+      'Die laufenden CLI-Sitzungen konnten nicht gestoppt werden.';
+  @override
   String clearLocalData({required Object error}) =>
       'Lokale Daten konnten nicht gelöscht werden: ${error}';
 }
@@ -7012,6 +7017,12 @@ class _Translations$settings$wick$de extends Translations$settings$wick$en {
   String get connected => 'wick · verbunden';
   @override
   String get pathToExecutable => 'wick · Pfad zur Executable';
+  @override
+  String get off => 'aus';
+  @override
+  String get disableHint => 'wick-Integration ausschalten';
+  @override
+  String get enableHint => 'wick-Integration einschalten';
 }
 
 // Path: settings.integrations
@@ -7316,6 +7327,28 @@ class _Translations$settings$cliPiggyback$de
   @override
   String get body =>
       'Leite Interface-Nachrichten direkt an lokale Anbieter-Binaries weiter.';
+  @override
+  String get cliTimeoutLabel => 'Timeout pro Lauf';
+  @override
+  String get cliTimeoutUnitMinutes => 'Minuten';
+  @override
+  String get cliTimeoutUnitMinute => 'Minute';
+  @override
+  String get forceStopLabel => 'Alle Sitzungen stoppen';
+  @override
+  String get forceStopTooltip => 'Jeden laufenden CLI-Lauf hart beenden.';
+  @override
+  String get forceStopConfirmTitle => 'Laufende CLI-Sitzungen stoppen?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Damit werden ${count} laufende CLI-Läufe hart beendet. Ihre Ausgabe geht verloren.';
+  @override
+  String get forceStopConfirmAction => 'Alle stoppen';
+  @override
+  String get forceStopNoneRunning => 'Keine CLI-Sitzungen aktiv';
+  @override
+  String get forceStopRecordError =>
+      'Gestoppt — CLI-Sitzungen wurden hart beendet.';
 }
 
 // Path: settings.header

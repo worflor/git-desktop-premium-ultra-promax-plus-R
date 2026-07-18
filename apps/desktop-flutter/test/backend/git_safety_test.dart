@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/git.dart';
+import 'package:git_desktop/features/diff/diff_document.dart';
 
 /// Witnesses for the delayed-destruction and undo safety contracts, run
 /// against real temp-dir git repos and asserted through git plumbing only:
@@ -251,13 +252,14 @@ void main() {
     });
   });
 
-  group('oversized diff guard', () {
-    test('gigantic text diffs return the placeholder, never the content',
+  group('large diffs', () {
+    test('a huge text diff renders its real content, no line-count cap',
         () async {
-      // The marble incident: a vendored-dataset repo produced a GB-class
-      // text diff that ballooned to ~20GB of parse objects on the UI
-      // isolate. The numstat preflight must stub it before any content
-      // materializes.
+      // There is deliberately NO changed-line ceiling: the diff viewer is
+      // virtualized and a large-but-textual change (a big refactor, a
+      // regenerated lockfile) must show its actual content. The only thing
+      // the app declines to materialize is binary/non-text blobs, which
+      // numstat reports as `-` and the binary path owns separately.
       final big = StringBuffer();
       for (var i = 0; i < 120000; i++) {
         big.writeln('data row $i');
@@ -265,7 +267,7 @@ void main() {
       await wf('data.txt').writeAsString(big.toString());
       await git(['add', '-A']);
       await git(['commit', '-qm', 'base']);
-      // Rewrite every line → numstat ≈ 240k changed lines, over the cap.
+      // Rewrite every line → ~240k changed lines.
       final changed = StringBuffer();
       for (var i = 0; i < 120000; i++) {
         changed.writeln('data row $i CHANGED');
@@ -274,11 +276,12 @@ void main() {
 
       final r = await getFileDiff(repo, 'data.txt');
       expect(r.ok, isTrue);
-      expect(r.data, contains('Diff too large to render'));
-      expect(r.data!.length, lessThan(1000),
-          reason: 'placeholder, not materialized content');
+      expect(r.data, isNot(contains('too large')),
+          reason: 'no placeholder stub — the real diff is materialized');
+      expect(r.data, contains('+data row 0 CHANGED'));
+      expect(r.data, contains('-data row 0'));
 
-      // Small diffs are untouched by the guard.
+      // Small diffs render as always.
       await wf('small.txt').writeAsString('one\n');
       await git(['add', '-A']);
       await git(['commit', '-qm', 'small']);
@@ -287,6 +290,56 @@ void main() {
       expect(small.ok, isTrue);
       expect(small.data, contains('-one'));
       expect(small.data, contains('+two'));
+    });
+
+    test('a large refactor diff materializes real content through the model',
+        () async {
+      // The removed ceiling short-circuited *before any model was built*.
+      // Asserting getFileDiff returns a string (above) does not exercise the
+      // path the reviewer flagged: the diff the backend now hands back is fed
+      // to DiffDocument.fromRawContent on the UI, which parses, indexes and
+      // builds an edit unit for every changed line. Drive that construction
+      // here on a realistically-shaped large change — a big refactor that
+      // edits thousands of lines interleaved with untouched context — and
+      // assert it materializes the actual change, every line, both sides,
+      // with no line-count truncation. This is the integration contract the
+      // cap once side-stepped and now must hold openly.
+      const pairs = 20000; // 20k edited lines interleaved with 20k of context
+      final base = StringBuffer();
+      for (var i = 0; i < pairs; i++) {
+        base.writeln('context $i'); // untouched anchor
+        base.writeln('value $i'); // will be rewritten
+      }
+      await wf('refactor.dart').writeAsString(base.toString());
+      await git(['add', '-A']);
+      await git(['commit', '-qm', 'refactor base']);
+
+      final after = StringBuffer();
+      for (var i = 0; i < pairs; i++) {
+        after.writeln('context $i');
+        after.writeln('value $i renamed');
+      }
+      await wf('refactor.dart').writeAsString(after.toString());
+
+      final r = await getFileDiff(repo, 'refactor.dart');
+      expect(r.ok, isTrue);
+      expect(r.data, isNot(contains('too large')));
+
+      final doc = DiffDocument.fromRawContent(
+        rawContent: r.data!,
+        pathHint: 'refactor.dart',
+        documentId: 'test:refactor',
+      );
+      expect(doc.files, hasLength(1));
+      final file = doc.files.first;
+      expect(file.isBinary, isFalse, reason: 'a text diff is never binary');
+      // Every edited line survives the parse — no count is capped or dropped.
+      expect(doc.stats.adds, pairs);
+      expect(doc.stats.dels, pairs);
+      expect(doc.changedLines, pairs * 2);
+      expect(file.lines.any((l) => l.text == '-value 0'), isTrue);
+      expect(file.lines.any((l) => l.text == '+value 0 renamed'), isTrue);
+      expect(file.lines.any((l) => l.text == '-value ${pairs - 1}'), isTrue);
     });
   });
 

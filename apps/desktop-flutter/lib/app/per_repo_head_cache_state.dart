@@ -77,23 +77,35 @@ abstract class PerRepoHeadCacheState<T> extends ChangeNotifier {
   /// Drop every repo's cache except [repoPath]. Used by the workspace
   /// shell on repo switch to evict siblings while keeping the
   /// just-loaded one warm. Pass null to clear everything.
+  ///
+  /// Generation is bumped for every evicted repo, never removed —
+  /// [loadForRepo] captures `_generation[repoPath]` before its awaits;
+  /// removing the entry resets the read-back to the default 0, so an
+  /// in-flight compute started at gen 0 would see `0 != 0 → false`
+  /// after eviction and re-insert the evicted repo's value. Bumping
+  /// instead guarantees the post-await check always observes a change.
   void invalidateAllExcept(String? repoPath) {
     if (repoPath == null) {
       if (_byRepo.isEmpty && _loading.isEmpty && _errors.isEmpty) return;
+      for (final key in {..._byRepo.keys, ..._loading, ..._errors.keys}) {
+        _generation[key] = (_generation[key] ?? 0) + 1;
+      }
       _byRepo.clear();
       _loading.clear();
       _errors.clear();
-      _generation.clear();
       notifyListeners();
       return;
     }
-    final hadOthers = _byRepo.keys.any((k) => k != repoPath) ||
-        _loading.any((k) => k != repoPath);
+    final evicted = {..._byRepo.keys, ..._loading, ..._errors.keys}
+      ..remove(repoPath);
+    if (evicted.isEmpty) return;
+    for (final key in evicted) {
+      _generation[key] = (_generation[key] ?? 0) + 1;
+    }
     _byRepo.removeWhere((k, _) => k != repoPath);
     _loading.removeWhere((k) => k != repoPath);
     _errors.removeWhere((k, _) => k != repoPath);
-    _generation.removeWhere((k, _) => k != repoPath);
-    if (hadOthers) notifyListeners();
+    notifyListeners();
   }
 
   /// Drop the cached value for one repo; the next [loadForRepo] will

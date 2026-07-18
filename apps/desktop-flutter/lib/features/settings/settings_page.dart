@@ -12,7 +12,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../backend/ai.dart' show cliProviderIds;
+import '../../backend/ai.dart'
+    show
+        cliProviderIds,
+        cliSessionCountStream,
+        liveCliSessionCount,
+        stopAllCliSessions;
 import '../../backend/ai_api_provider.dart';
 import '../../backend/ai_audit_store.dart';
 import '../../backend/command_telemetry_store.dart';
@@ -33,6 +38,7 @@ import '../../i18n/gen/strings.g.dart';
 import '../../backend/storage_paths.dart';
 import '../../backend/system_browser.dart';
 import '../../backend/undo_controller.dart';
+import '../../app/ai_activity_state.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/build_info.dart';
 import '../../app/logos_git_state.dart';
@@ -681,6 +687,80 @@ class _SettingsPageState extends State<SettingsPage>
       }
       setState(() => _actionError = context.t.settings.errors.saveApiPiggybackCli);
     }
+  }
+
+  Future<void> _saveCliTimeout(int seconds) async {
+    try {
+      await context.read<AiSettingsState>().setCliTimeoutSeconds(seconds);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = context.t.settings.errors.saveCliTimeout);
+    }
+  }
+
+  Future<void> _forceStopAllCli() async {
+    final running = liveCliSessionCount;
+    if (running == 0) {
+      return;
+    }
+    if (!await _confirmStopAllCliSessions(running)) {
+      return;
+    }
+    try {
+      await stopAllCliSessions();
+      if (!mounted) {
+        return;
+      }
+      // Processes are gone; flip any in-flight AI activity records to failed so
+      // the UI stops spinning on runs whose CLI was just killed.
+      context
+          .read<AiActivityState>()
+          .failAllRunning(context.t.settings.cliPiggyback.forceStopRecordError);
+      setState(() {
+        _actionError = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = context.t.settings.errors.stopAllCli);
+    }
+  }
+
+  Future<bool> _confirmStopAllCliSessions(int count) async {
+    final t = context.tokens;
+    final strings = context.t.settings.cliPiggyback;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          strings.forceStopConfirmTitle,
+          style: TextStyle(color: t.danger, fontWeight: FontWeight.w600),
+        ),
+        content: Text(strings.forceStopConfirmBody(count: count)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.t.common.cancel,
+                style: TextStyle(color: t.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(strings.forceStopConfirmAction,
+                style: TextStyle(color: t.danger)),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   String? _commitPromptStatusLabel() {
@@ -1442,6 +1522,20 @@ class _SettingsPageState extends State<SettingsPage>
                 onChanged: (value) {
                   unawaited(_saveApiPiggybackCli(value));
                 },
+              ),
+              const SizedBox(height: 12),
+              // Live count so "Stop all" enables/disables as sessions start and
+              // finish while Settings is open, not just on an unrelated rebuild.
+              StreamBuilder<int>(
+                stream: cliSessionCountStream,
+                initialData: liveCliSessionCount,
+                builder: (context, snapshot) => _CliRuntimeRow(
+                  timeoutSeconds: aiSettings.cliTimeoutSeconds,
+                  liveSessions: snapshot.data ?? 0,
+                  onTimeoutSecondsChanged: (seconds) =>
+                      unawaited(_saveCliTimeout(seconds)),
+                  onForceStop: () => unawaited(_forceStopAllCli()),
+                ),
               ),
               const _SettingsGap(),
               KeyedSubtree(
@@ -10598,6 +10692,67 @@ class _CheckboxRow extends StatelessWidget {
 /// [_CheckboxRow] — same 18x18 square/label idiom — except the dropdown
 /// and status chip sit outside the toggle's own tap target so picking a
 /// provider doesn't fight the row's on/off gesture.
+/// The CLI runtime controls that sit under the piggyback carrier row: a
+/// per-run timeout field (edited in minutes) and a destructive "stop all"
+/// button that force-quits every in-flight CLI session. [liveSessions] gates
+/// the button — nothing to stop, nothing to press.
+class _CliRuntimeRow extends StatelessWidget {
+  final int timeoutSeconds;
+  final int liveSessions;
+  final ValueChanged<int> onTimeoutSecondsChanged;
+  final VoidCallback onForceStop;
+
+  const _CliRuntimeRow({
+    required this.timeoutSeconds,
+    required this.liveSessions,
+    required this.onTimeoutSecondsChanged,
+    required this.onForceStop,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final s = context.t.settings.cliPiggyback;
+    // Edit in whole minutes; the backend stores seconds. Round so a
+    // hand-edited sub-minute value still renders as a sane whole number.
+    final minutes = (timeoutSeconds / 60).round().clamp(1, 120);
+    final unit =
+        minutes == 1 ? s.cliTimeoutUnitMinute : s.cliTimeoutUnitMinutes;
+    final hasSessions = liveSessions > 0;
+
+    return Row(
+      children: [
+        Text(
+          s.cliTimeoutLabel,
+          style: TextStyle(color: t.textNormal, fontSize: 13),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 104,
+          child: _InputWithUnit(
+            unit: unit,
+            value: minutes,
+            min: 1,
+            max: 120,
+            onChanged: (value) => onTimeoutSecondsChanged(value * 60),
+          ),
+        ),
+        const Spacer(),
+        Tooltip(
+          message: hasSessions ? s.forceStopTooltip : s.forceStopNoneRunning,
+          child: _DeckButton(
+            label: s.forceStopLabel.toUpperCase(),
+            icon: Icons.stop_circle_outlined,
+            enabled: hasSessions,
+            onTap: onForceStop,
+            isDestructive: true,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _PiggybackCliRow extends StatelessWidget {
   final String value;
   final bool dormant;
@@ -14072,6 +14227,14 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
     _persistWickPath(path);
   }
 
+  Future<void> _toggleEnabled() async {
+    final wick = context.read<WickState>();
+    final next = !wick.enabled;
+    wick.setEnabled(next);
+    final current = await SettingsStore.load();
+    await SettingsStore.persist(current.copyWith(wickEnabled: next));
+  }
+
   Future<void> _persistWickPath(String path) async {
     final current = await SettingsStore.load();
     await SettingsStore.persist(current.copyWith(wickExePath: path));
@@ -14081,9 +14244,14 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final wick = context.watch<WickState>();
+    final enabled = wick.enabled;
     final live = wick.available;
-    final statusColor = live ? t.stateAdded : t.textFaint;
-    final hint = live ? context.t.settings.wick.connected : context.t.settings.wick.pathToExecutable;
+    final statusColor = live
+        ? t.stateAdded
+        : (enabled ? t.textFaint : t.textFaint.withValues(alpha: 0.3));
+    final hint = live
+        ? context.t.settings.wick.connected
+        : context.t.settings.wick.pathToExecutable;
     // alpha-math is scaffolded but not yet a live engine, so `available`
     // is always false today and this renders the blanked "coming soon"
     // tease. When the engine ships and detect() flips available, the row
@@ -14128,18 +14296,44 @@ class _WickIntegrationCardState extends State<_WickIntegrationCard> {
                       style: TextStyle(
                         fontSize: 10,
                         fontFamily: AppFonts.mono,
-                        color: _ctrl.text.isEmpty ? t.textFaint : t.textNormal,
+                        color: !enabled
+                            ? t.textFaint.withValues(alpha: 0.45)
+                            : (_ctrl.text.isEmpty ? t.textFaint : t.textNormal),
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  Text(
-                    context.t.settings.integrations.alpha,
-                    style: TextStyle(
-                      fontSize: 8,
-                      fontFamily: AppFonts.mono,
-                      letterSpacing: 0.8,
-                      color: t.textFaint.withValues(alpha: 0.5),
+                  // The alpha chip doubles as the integration's hard on/off.
+                  // Its own tap must not reach the row's browse gesture.
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _toggleEnabled,
+                      child: Tooltip(
+                        message: enabled
+                            ? context.t.settings.wick.disableHint
+                            : context.t.settings.wick.enableHint,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            enabled
+                                ? context.t.settings.integrations.alpha
+                                : context.t.settings.wick.off,
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontFamily: AppFonts.mono,
+                              letterSpacing: 0.8,
+                              color: enabled
+                                  ? t.textFaint.withValues(alpha: 0.5)
+                                  : t.stateDeleted.withValues(alpha: 0.9),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ],

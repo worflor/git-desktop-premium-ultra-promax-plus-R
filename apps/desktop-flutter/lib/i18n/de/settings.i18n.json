@@ -36,6 +36,8 @@
     "saveMuseNotes": "Muse-Notizen konnten nicht gespeichert werden.",
     "saveReviewDoubleCheck": "Review-Doppelprüfungsmodus konnte nicht gespeichert werden.",
     "saveApiPiggybackCli": "API-Piggyback-CLI konnte nicht gespeichert werden.",
+    "saveCliTimeout": "CLI-Timeout konnte nicht gespeichert werden.",
+    "stopAllCli": "Die laufenden CLI-Sitzungen konnten nicht gestoppt werden.",
     "clearLocalData": "Lokale Daten konnten nicht gelöscht werden: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "Alle lokalen App-Daten — inklusive der Liste der zuletzt genutzten Repos — löschen und beenden? Deine tatsächlichen Git-Repos auf der Platte bleiben unangetastet.",
     "confirmReset": "Lokale App-Daten zurücksetzen und beenden?\n\nEinstellungen, Theme, Onboarding, AI-Präferenzen, Telemetrie und Engram-Caches werden gelöscht. Deine Liste der zuletzt genutzten Repos bleibt erhalten."
   },
-  "guardrailStageLabels": ["Locker", "Ausgewogen", "Streng", "Paranoid"],
+  "guardrailStageLabels": [
+    "Locker",
+    "Ausgewogen",
+    "Streng",
+    "Paranoid"
+  ],
   "guardrailMacro": {
     "loose": "locker",
     "balanced": "ausgewogen",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "wick-Executable auswählen",
     "connected": "wick · verbunden",
-    "pathToExecutable": "wick · Pfad zur Executable"
+    "pathToExecutable": "wick · Pfad zur Executable",
+    "off": "aus",
+    "disableHint": "wick-Integration ausschalten",
+    "enableHint": "wick-Integration einschalten"
   },
   "integrations": {
     "title": "& Integrationen",
@@ -475,10 +485,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | Ruckeln {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["befehl", "p50", "zuverlässigkeit", "spanne"],
-    "headersBackend": ["scope", "p50", "p95", "fehler"],
-    "headersDiff": ["renderer", "erster paint", "frame p95", "raster p95", "ruckeln"],
-    "headersUi": ["ereignis", "p50", "fehler", "spanne"]
+    "headersCommand": [
+      "befehl",
+      "p50",
+      "zuverlässigkeit",
+      "spanne"
+    ],
+    "headersBackend": [
+      "scope",
+      "p50",
+      "p95",
+      "fehler"
+    ],
+    "headersDiff": [
+      "renderer",
+      "erster paint",
+      "frame p95",
+      "raster p95",
+      "ruckeln"
+    ],
+    "headersUi": [
+      "ereignis",
+      "p50",
+      "fehler",
+      "spanne"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -534,7 +565,17 @@
     "clearCacheTooltip": "Gecachte Modelle löschen und neu sondieren. Räumt die auf, die ein Anbieter fallengelassen hat.",
     "refreshLabel": "Anbieter aktualisieren",
     "refreshTooltip": "Jeden Anbieter jetzt neu sondieren.",
-    "body": "Leite Interface-Nachrichten direkt an lokale Anbieter-Binaries weiter."
+    "body": "Leite Interface-Nachrichten direkt an lokale Anbieter-Binaries weiter.",
+    "cliTimeoutLabel": "Timeout pro Lauf",
+    "cliTimeoutUnitMinutes": "Minuten",
+    "cliTimeoutUnitMinute": "Minute",
+    "forceStopLabel": "Alle Sitzungen stoppen",
+    "forceStopTooltip": "Jeden laufenden CLI-Lauf hart beenden.",
+    "forceStopConfirmTitle": "Laufende CLI-Sitzungen stoppen?",
+    "forceStopConfirmBody": "Damit werden {count} laufende CLI-Läufe hart beendet. Ihre Ausgabe geht verloren.",
+    "forceStopConfirmAction": "Alle stoppen",
+    "forceStopNoneRunning": "Keine CLI-Sitzungen aktiv",
+    "forceStopRecordError": "Gestoppt — CLI-Sitzungen wurden hart beendet."
   },
   "header": {
     "title": "Workspace-Einstellungen",

@@ -43,7 +43,8 @@ class GitSpawn {
     List<String> args, {
     String? workingDirectory,
     Map<String, String>? environment,
-  })? runOverride;
+  })?
+  runOverride;
 
   /// Replaces the `Process.start` spawn.
   static Future<Process> Function(
@@ -51,7 +52,8 @@ class GitSpawn {
     String? workingDirectory,
     Map<String, String>? environment,
     ProcessStartMode mode,
-  })? startOverride;
+  })?
+  startOverride;
 
   static int runCount = 0;
   static int startCount = 0;
@@ -79,8 +81,11 @@ Future<ProcessResult> _spawnRunRaw(
   GitSpawn.runCount++;
   final override = GitSpawn.runOverride;
   if (override != null) {
-    return override(args,
-        workingDirectory: workingDirectory, environment: environment);
+    return override(
+      args,
+      workingDirectory: workingDirectory,
+      environment: environment,
+    );
   }
   return Process.run(
     'git',
@@ -110,8 +115,12 @@ Future<Process> _spawnStart(
   final env = environment ?? _kNonInteractiveGitEnv;
   final override = GitSpawn.startOverride;
   if (override != null) {
-    return override(args,
-        workingDirectory: workingDirectory, environment: env, mode: mode);
+    return override(
+      args,
+      workingDirectory: workingDirectory,
+      environment: env,
+      mode: mode,
+    );
   }
   return Process.start(
     'git',
@@ -130,13 +139,18 @@ Future<Process> _spawnStart(
 // previous duplicated regexes covered only the unquoted form and silently
 // missed renamed-with-spaces paths.
 
-final RegExp _kDiffHeaderUnquoted =
-    RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-final RegExp _kDiffHeaderQuoted =
-    RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$', multiLine: true);
+final RegExp _kDiffHeaderUnquoted = RegExp(
+  r'^diff --git a/.+ b/(.+)$',
+  multiLine: true,
+);
+final RegExp _kDiffHeaderQuoted = RegExp(
+  r'^diff --git "a/[^"]+" "b/([^"]+)"$',
+  multiLine: true,
+);
 final RegExp _kDiffHeaderUnquotedLine = RegExp(r'^diff --git a/.+ b/(.+)$');
-final RegExp _kDiffHeaderQuotedLine =
-    RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$');
+final RegExp _kDiffHeaderQuotedLine = RegExp(
+  r'^diff --git "a/[^"]+" "b/([^"]+)"$',
+);
 
 /// Returns every touched (b-side) path across the full unified diff text,
 /// handling both unquoted and C-string-quoted forms.
@@ -231,7 +245,10 @@ GitFailure classifyGitError(String stderr, {int? exitCode}) {
       has('push declined') ||
       (has('[remote rejected]') && has('hook'))) {
     return GitFailure(
-        GitErrorCategory.hookRejected, 'Remote rejected the push (hook).', raw);
+      GitErrorCategory.hookRejected,
+      'Remote rejected the push (hook).',
+      raw,
+    );
   }
 
   if (has('could not resolve host') ||
@@ -255,8 +272,11 @@ GitFailure classifyGitError(String stderr, {int? exitCode}) {
       has('updates were rejected') ||
       has('stale info') ||
       has('! [rejected]')) {
-    return GitFailure(GitErrorCategory.nonFastForward,
-        'Remote has newer commits. Pull first.', raw);
+    return GitFailure(
+      GitErrorCategory.nonFastForward,
+      'Remote has newer commits. Pull first.',
+      raw,
+    );
   }
 
   if (has('conflict') ||
@@ -269,15 +289,21 @@ GitFailure classifyGitError(String stderr, {int? exitCode}) {
       has('automatic merge failed') ||
       has('patch does not apply')) {
     return GitFailure(
-        GitErrorCategory.conflict, 'Conflicts need resolving.', raw);
+      GitErrorCategory.conflict,
+      'Conflicts need resolving.',
+      raw,
+    );
   }
 
   final firstLine = raw.isEmpty
       ? 'Command failed.'
       : raw
-          .split('\n')
-          .firstWhere((l) => l.trim().isNotEmpty, orElse: () => 'Command failed.')
-          .trim();
+            .split('\n')
+            .firstWhere(
+              (l) => l.trim().isNotEmpty,
+              orElse: () => 'Command failed.',
+            )
+            .trim();
   return GitFailure(GitErrorCategory.other, firstLine, raw);
 }
 
@@ -296,7 +322,10 @@ class _GitDecodeOutcome {
   final bool lenientFallback;
   final int? malformedAtOffset;
   const _GitDecodeOutcome(
-      this.text, this.lenientFallback, this.malformedAtOffset);
+    this.text,
+    this.lenientFallback,
+    this.malformedAtOffset,
+  );
 }
 
 /// Commands whose stdout is known-ASCII structured data (SHAs, ref
@@ -363,6 +392,20 @@ const List<String> _kDiffContentPins = [
   '--src-prefix=a/',
   '--dst-prefix=b/',
 ];
+
+/// The `diff`/`show` subcommand tokens for every textual-diff call site, with
+/// `diff.binary` force-disabled. A user's `[diff] binary = true` makes every
+/// binary change emit its full base85 payload inline — a multi-GB blob
+/// becomes a multi-GB stdout String, and the churn-based spool gates cannot
+/// see it coming because `--numstat` reports `-` (parsed as 0) for binaries.
+/// Pinning it off keeps the binary case at its canonical one-line
+/// `Binary files a/x and b/x differ` form on every path, spooled or not —
+/// the in-app binary renderer reads blobs directly and never consumes patch
+/// payloads. Same config-immunity doctrine as [_kDiffContentPins]; `-c` is a
+/// GLOBAL git flag that must precede the subcommand, which is why these
+/// spreads carry the subcommand token itself.
+const List<String> _kDiffCmd = ['-c', 'diff.binary=false', 'diff'];
+const List<String> _kShowCmd = ['-c', 'diff.binary=false', 'show'];
 
 /// Pins for every `git log` invocation whose stdout feeds a fixed-layout
 /// parser (`_parseCommitLogLines`' 8-line records, `bulkGetCommitDetails`'
@@ -435,7 +478,7 @@ final _gitSubprocessSemaphore = GitSubprocessSemaphore(
 @visibleForTesting
 class GitSubprocessSemaphore {
   GitSubprocessSemaphore(this._max, {GitConcurrencyController? controller})
-      : _controller = controller {
+    : _controller = controller {
     if (_max < 1) {
       throw ArgumentError.value(_max, 'max', 'must be at least 1');
     }
@@ -543,8 +586,8 @@ class GitSubprocessSemaphore {
 /// measured git-latency curve.)
 class GitConcurrencyController {
   GitConcurrencyController(int ceiling)
-      : _ceiling = ceiling.clamp(1, 64).toDouble(),
-        _limit = ceiling.clamp(1, 64).toDouble();
+    : _ceiling = ceiling.clamp(1, 64).toDouble(),
+      _limit = ceiling.clamp(1, 64).toDouble();
   final double _ceiling;
   double _limit;
   double _ema = 0;
@@ -746,7 +789,10 @@ _GitDecodeOutcome _decodeGitBytes(Object? raw, {required bool strict}) {
     return _GitDecodeOutcome(utf8.decode(raw), false, null);
   } on FormatException catch (e) {
     return _GitDecodeOutcome(
-        utf8.decode(raw, allowMalformed: true), true, e.offset);
+      utf8.decode(raw, allowMalformed: true),
+      true,
+      e.offset,
+    );
   }
 }
 
@@ -808,8 +854,98 @@ bool _isMutatingGitCall(List<String> args) {
   return !_kDedupableSubcommands.contains(sub);
 }
 
-Future<ProcessResult> _git(String workingDir, List<String> args,
-    {Map<String, String>? extraEnv}) async {
+/// Subcommands that rewrite `.git/index`. These are the calls serialized by
+/// the per-repo write lock (see [_withRepoIndexWriteLock]): git's own
+/// index-lock only makes the WRITE exclusive, not the whole read-modify-write
+/// — a command may read the index before acquiring the lock, so two of our
+/// index writers running concurrently in one repo can commit a full index
+/// built from a stale snapshot, silently reverting the other's just-landed
+/// entry (observed empirically: `reset -q HEAD -- fileA` exits 0, yet a
+/// concurrent `apply --cached` for fileB leaves fileA's entry stale). No
+/// retry policy can fix a lost update that reports success, so the class is
+/// removed by never letting two in-process index writers overlap. Ref-only
+/// writers (update-ref, push, fetch) and pure reads are NOT serialized —
+/// ref safety is CAS-based (zero-oid create, force-with-lease) by design.
+const Set<String> _kIndexWritingSubcommands = {
+  'add',
+  'rm',
+  'mv',
+  'reset',
+  'restore',
+  'checkout',
+  'checkout-index',
+  'switch',
+  'apply',
+  'stash',
+  'commit',
+  'merge',
+  'pull',
+  'rebase',
+  'cherry-pick',
+  'revert',
+  'read-tree',
+  'update-index',
+};
+
+bool _isIndexWritingGitCall(List<String> args) {
+  final sub = _gitSubcommandToken(args);
+  // No recognizable subcommand → conservatively serialize: a mutation we
+  // cannot classify must not be allowed to race the index.
+  if (sub == null) return _isMutatingGitCall(args);
+  return _kIndexWritingSubcommands.contains(sub);
+}
+
+/// Tail of each repo's in-process index-write chain, keyed by
+/// [_repoWriteLockKey]. An entry exists only while a writer is queued or
+/// running; the last writer out removes it.
+final Map<String, Future<void>> _repoIndexWriteChainTails =
+    <String, Future<void>>{};
+
+String _repoWriteLockKey(String workingDir) {
+  var key = workingDir.replaceAll('\\', '/');
+  while (key.length > 1 && key.endsWith('/')) {
+    key = key.substring(0, key.length - 1);
+  }
+  // NTFS is case-insensitive: two spellings of one repo path must share a
+  // lock, or the lock silently splits and the race returns.
+  return Platform.isWindows ? key.toLowerCase() : key;
+}
+
+/// Runs [body] with this repo's index-write lock held: at most one
+/// index-writing git subprocess per repo at any moment (see
+/// [_kIndexWritingSubcommands] for why overlap loses updates). FIFO via
+/// promise-chaining; reads and other-repo writers are unaffected. The lock is
+/// acquired BEFORE the subprocess semaphore (inside [body]) so a queued
+/// writer never sits on a semaphore permit while blocked. Cross-process
+/// writers (a terminal `git add` beside the app) remain the domain of git's
+/// own index.lock plus the transient-contention retry.
+Future<T> _withRepoIndexWriteLock<T>(
+  String workingDir,
+  Future<T> Function() body,
+) async {
+  final key = _repoWriteLockKey(workingDir);
+  final prev = _repoIndexWriteChainTails[key] ?? Future<void>.value();
+  final gate = Completer<void>();
+  final tail = gate.future;
+  _repoIndexWriteChainTails[key] = tail;
+  await prev;
+  try {
+    return await body();
+  } finally {
+    gate.complete();
+    if (identical(_repoIndexWriteChainTails[key], tail)) {
+      // remove() hands back the stored (already-completed) tail — nothing to
+      // await, this is pure map cleanup.
+      unawaited(_repoIndexWriteChainTails.remove(key));
+    }
+  }
+}
+
+Future<ProcessResult> _git(
+  String workingDir,
+  List<String> args, {
+  Map<String, String>? extraEnv,
+}) async {
   // Coalesce concurrent identical reads. Two callers asking for
   // `git.status --porcelain=v2 --branch -u` in the same instant pay
   // for ONE subprocess, not two. Only applies to known pure-read
@@ -843,15 +979,19 @@ Future<ProcessResult> _git(String workingDir, List<String> args,
     // unhandled async error even though the real awaiter below handles
     // it. Swallow the error on the cleanup chain ONLY — the caller still
     // sees it through the returned [future].
-    unawaited(future.whenComplete(() {
-      // Only clear if this is still the live entry. A concurrent
-      // race where another caller replaced the future would be a
-      // bug in the caller, not this cache; defensive equality check
-      // just avoids eager-clearing a fresh in-flight call.
-      if (identical(_inflightGitReads[key], future)) {
-        _inflightGitReads.remove(key);
-      }
-    }).then<void>((_) {}, onError: (_) {}));
+    unawaited(
+      future
+          .whenComplete(() {
+            // Only clear if this is still the live entry. A concurrent
+            // race where another caller replaced the future would be a
+            // bug in the caller, not this cache; defensive equality check
+            // just avoids eager-clearing a fresh in-flight call.
+            if (identical(_inflightGitReads[key], future)) {
+              _inflightGitReads.remove(key);
+            }
+          })
+          .then<void>((_) {}, onError: (_) {}),
+    );
     return future;
   }
   return _gitRaw(workingDir, args, env: extraEnv);
@@ -865,8 +1005,12 @@ final math.Random _gitRetryJitter = math.Random();
 /// and assembles the decoded [ProcessResult]. Factored out of [_gitRaw] so
 /// the index.lock retry loop can build a result per attempt without
 /// duplicating the fallback-audit event.
-ProcessResult _finalizeGitResult(String commandLabel, ProcessResult raw,
-    _GitDecodeOutcome stdoutOut, _GitDecodeOutcome stderrOut) {
+ProcessResult _finalizeGitResult(
+  String commandLabel,
+  ProcessResult raw,
+  _GitDecodeOutcome stdoutOut,
+  _GitDecodeOutcome stderrOut,
+) {
   // Surface any lenient-decode fallback as a diagnostic lifecycle event.
   // Without this, malformed-byte replacement (U+FFFD) is invisible to ops —
   // downstream parsers would silently consume corrupted text. The event is
@@ -914,8 +1058,11 @@ void _bumpGitMutations(int delta) {
   }
 }
 
-Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
-    {Map<String, String>? env}) {
+Future<ProcessResult> _gitRaw(
+  String workingDir,
+  List<String> args, {
+  Map<String, String>? env,
+}) {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
   // Classify by subcommand for strict-decode selection. stderr is always
   // lenient — it carries human messages that may be localized to a non-UTF-8
@@ -928,6 +1075,7 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
       subcommand != null && _kStrictDecodeSubcommands.contains(subcommand);
   return _runGitChoreographed(
     commandLabel,
+    workingDir,
     args,
     strictStdout: strictStdout,
     spawnAttempt: () => _spawnRunRaw(
@@ -947,16 +1095,36 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args,
 }
 
 /// Shared exec choreography for every git subprocess: the start/finish
-/// lifecycle events, the [_gitSubprocessSemaphore] permit, the
-/// [gitMutationsInFlight] bump for mutating calls (so [GitDirWatcher] pauses
-/// external-change watching while we mutate), the transient index.lock retry
-/// with jittered backoff, and latency recording. The single [spawnAttempt]
-/// closure is the ONLY thing that varies between the plain path ([_gitRaw] →
-/// [_spawnRunRaw]) and the stdin-piping path ([_gitRawStdin] →
-/// [_spawnAndPipeStdin]); it is re-invoked from scratch on each retry, so a
-/// stdin payload is re-sent per attempt. It must return a raw (undecoded)
-/// [ProcessResult] whose stdout/stderr are byte lists.
+/// lifecycle events, the per-repo index-write lock for index-writing calls
+/// ([_withRepoIndexWriteLock] — git's own index.lock does not make the whole
+/// read-modify-write atomic, so overlapping in-process index writers lose
+/// updates), the [_gitSubprocessSemaphore] permit, the [gitMutationsInFlight]
+/// bump for mutating calls (so [GitDirWatcher] pauses external-change
+/// watching while we mutate), the transient index.lock retry with jittered
+/// backoff, and latency recording. The single [spawnAttempt] closure is the
+/// ONLY thing that varies between the plain path ([_gitRaw] → [_spawnRunRaw])
+/// and the stdin-piping path ([_gitRawStdin] → [_spawnAndPipeStdin]); it is
+/// re-invoked from scratch on each retry, so a stdin payload is re-sent per
+/// attempt. It must return a raw (undecoded) [ProcessResult] whose
+/// stdout/stderr are byte lists.
 Future<ProcessResult> _runGitChoreographed(
+  String commandLabel,
+  String workingDir,
+  List<String> args, {
+  required Future<ProcessResult> Function() spawnAttempt,
+  bool strictStdout = false,
+}) {
+  Future<ProcessResult> run() => _runGitChoreographedUnlocked(
+    commandLabel,
+    args,
+    spawnAttempt: spawnAttempt,
+    strictStdout: strictStdout,
+  );
+  if (!_isIndexWritingGitCall(args)) return run();
+  return _withRepoIndexWriteLock(workingDir, run);
+}
+
+Future<ProcessResult> _runGitChoreographedUnlocked(
   String commandLabel,
   List<String> args, {
   required Future<ProcessResult> Function() spawnAttempt,
@@ -979,11 +1147,16 @@ Future<ProcessResult> _runGitChoreographed(
     // A mutation that loses the race for `index.lock` — another git process,
     // or (the documented Windows pain point above) an antivirus scan briefly
     // holding the file — fails hard even though the contention is transient.
-    // Retry a few times with short jittered backoff before surfacing it; the
-    // jitter de-synchronizes two of our own mutations that collided. We only
-    // retry on the index.lock shape (see [_isIndexLockContention]) so any
-    // other failure is returned on the first attempt, unchanged.
-    const maxLockRetries = 3;
+    // Retry with exponentially escalating jittered backoff before surfacing
+    // it: the lock is held for the duration of the competing git process, and
+    // that duration scales with system load, so a fixed short backoff window
+    // is exactly what gets exhausted on a busy machine (two of our own
+    // back-to-back index mutations can hold it for over a second under
+    // contention). The jitter de-synchronizes two of our own mutations that
+    // collided. We only retry on the index.lock shape (see
+    // [_isIndexLockContention]) so any other failure is returned on the first
+    // attempt, unchanged. Worst-case total wait is ~3s, bounded.
+    const maxLockRetries = 5;
     ProcessResult result;
     var attempt = 0;
     while (true) {
@@ -991,7 +1164,8 @@ Future<ProcessResult> _runGitChoreographed(
       final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
       final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
       result = _finalizeGitResult(commandLabel, raw, stdoutOut, stderrOut);
-      final retryable = mutating &&
+      final retryable =
+          mutating &&
           result.exitCode != 0 &&
           attempt < maxLockRetries &&
           _isIndexLockContention(result.stderr.toString());
@@ -1003,9 +1177,11 @@ Future<ProcessResult> _runGitChoreographed(
         errorCode: 'git.index_lock_contended',
         message: 'index.lock held; retry $attempt/$maxLockRetries',
       );
-      // 50–150ms jittered backoff.
+      // Exponential jittered backoff: 50–100ms, 100–200ms, … 800–1600ms.
+      final baseMs = 50 << (attempt - 1);
       await Future<void>.delayed(
-          Duration(milliseconds: 50 + _gitRetryJitter.nextInt(101)));
+        Duration(milliseconds: baseMs + _gitRetryJitter.nextInt(baseMs + 1)),
+      );
     }
     stopwatch.stop();
     final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
@@ -1113,6 +1289,7 @@ Future<ProcessResult> _gitRawStdin(
   final label = commandLabel ?? (args.isEmpty ? 'git' : 'git.${args.first}');
   return _runGitChoreographed(
     label,
+    workingDir,
     args,
     strictStdout: false,
     spawnAttempt: () => _spawnAndPipeStdin(
@@ -1148,8 +1325,11 @@ Future<ProcessResult> _gitRawStdin(
 /// [extraEnv] always skips read-coalescing (see [_git]'s doc), which is
 /// harmless here since every current [extraEnv] caller is a mutation
 /// anyway.
-Future<ProcessResult> runGit(String workingDir, List<String> args,
-    {Map<String, String>? extraEnv}) {
+Future<ProcessResult> runGit(
+  String workingDir,
+  List<String> args, {
+  Map<String, String>? extraEnv,
+}) {
   return _git(workingDir, args, extraEnv: extraEnv);
 }
 
@@ -1201,8 +1381,12 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
   //   ? <path>                                           — untracked
   //   ! <path>                                           — ignored
   try {
-    final status =
-        await _git(repo, ['status', '--porcelain=v2', '--branch', '-u']);
+    final status = await _git(repo, [
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '-u',
+    ]);
     if (status.exitCode != 0) {
       return GitResult.err(status.stderr.toString().trim());
     }
@@ -1240,7 +1424,7 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         }
         continue;
       }
-      if (first == 0x31 /* '1' */ || first == 0x32 /* '2' */) {
+      if (first == 0x31 /* '1' */ || first == 0x32 /* '2' */ ) {
         // Tracked / renamed: `<type> <XY> <sub> <mH> <mI> <mW> <hH> <hI> [<rename>] <path>`
         // The XY field is at a known position (chars 2-3). For `2`
         // entries there's an additional `<X><score>` field before the
@@ -1265,14 +1449,16 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         // (`"caf\303\251.txt"`); recover the real bytes via the shared decoder.
         path = unCQuoteGitPath(path);
         if (path.isEmpty) continue;
-        files.add(RepositoryStatusFile(
-          path: path,
-          staged: canonicalGitStatusCode(staged, stagedSlot: true),
-          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
-        ));
+        files.add(
+          RepositoryStatusFile(
+            path: path,
+            staged: canonicalGitStatusCode(staged, stagedSlot: true),
+            unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
+          ),
+        );
         continue;
       }
-      if (first == 0x75 /* 'u' */) {
+      if (first == 0x75 /* 'u' */ ) {
         // Unmerged: path starts after the 10th field.
         if (rawLine.length < 4) continue;
         final staged = rawLine[2];
@@ -1281,33 +1467,42 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         if (pathStart <= 0 || pathStart >= rawLine.length) continue;
         final path = unCQuoteGitPath(rawLine.substring(pathStart));
         if (path.isEmpty) continue;
-        files.add(RepositoryStatusFile(
-          path: path,
-          staged: canonicalGitStatusCode(staged, stagedSlot: true),
-          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
-        ));
+        files.add(
+          RepositoryStatusFile(
+            path: path,
+            staged: canonicalGitStatusCode(staged, stagedSlot: true),
+            unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
+          ),
+        );
         continue;
       }
-      if (first == 0x3f /* '?' */ || first == 0x21 /* '!' */) {
+      if (first == 0x3f /* '?' */ || first == 0x21 /* '!' */ ) {
         // Untracked / ignored: `? <path>` or `! <path>`.
         final path = unCQuoteGitPath(rawLine.substring(2));
         if (path.isEmpty) continue;
-        files.add(RepositoryStatusFile(
-          path: path,
-          staged: canonicalGitStatusCode('', stagedSlot: true),
-          unstaged: canonicalGitStatusCode(first == 0x3f ? '?' : '!',
-              stagedSlot: false),
-        ));
+        files.add(
+          RepositoryStatusFile(
+            path: path,
+            staged: canonicalGitStatusCode('', stagedSlot: true),
+            unstaged: canonicalGitStatusCode(
+              first == 0x3f ? '?' : '!',
+              stagedSlot: false,
+            ),
+          ),
+        );
       }
     }
 
-    return GitResult.ok(RepositoryStatus(
+    return GitResult.ok(
+      RepositoryStatus(
         branch: branchName,
         upstream: upstreamName,
         ahead: ahead,
         behind: behind,
         files: files,
-        hasHeadCommit: hasHeadCommit));
+        hasHeadCommit: hasHeadCommit,
+      ),
+    );
   } catch (error) {
     return GitResult.err(error.toString());
   }
@@ -1351,24 +1546,29 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
       i++;
       continue;
     }
-    final parents =
-        lines[i + 2].trim().split(' ').where((s) => s.isNotEmpty).toList();
-    entries.add(CommitHistoryEntry(
-      commitHash: hash,
-      shortHash: lines[i + 1].trim(),
-      parentHashes: parents,
-      refNames: lines[i + 3]
-          .trim()
-          .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
-          .toList(),
-      isMerge: parents.length > 1,
-      subject: lines[i + 4].trim(),
-      authorName: lines[i + 5].trim(),
-      authorEmail: lines[i + 6].trim(),
-      authoredAt: lines[i + 7].trim(),
-    ));
+    final parents = lines[i + 2]
+        .trim()
+        .split(' ')
+        .where((s) => s.isNotEmpty)
+        .toList();
+    entries.add(
+      CommitHistoryEntry(
+        commitHash: hash,
+        shortHash: lines[i + 1].trim(),
+        parentHashes: parents,
+        refNames: lines[i + 3]
+            .trim()
+            .split(',')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList(),
+        isMerge: parents.length > 1,
+        subject: lines[i + 4].trim(),
+        authorName: lines[i + 5].trim(),
+        authorEmail: lines[i + 6].trim(),
+        authoredAt: lines[i + 7].trim(),
+      ),
+    );
     i += 8;
     while (i < lines.length && lines[i].trim().isEmpty) {
       i++;
@@ -1377,8 +1577,11 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
   return entries;
 }
 
-Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
-    {int limit = 200, String? branch}) async {
+Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(
+  String repo, {
+  int limit = 200,
+  String? branch,
+}) async {
   // --no-show-signature: log.showSignature=true injects `gpg:` lines that
   // shift _parseCommitLogLines' fixed-8-line commit windows; pin it off.
   final args = ['log', ..._kCommitLogPins, _kCommitLogFormat, '-n', '$limit'];
@@ -1456,7 +1659,7 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
     if (cur == null) continue;
     if (line.isEmpty) continue;
     final first = line.codeUnitAt(0);
-    if (first == 0x3a /* ':' */) {
+    if (first == 0x3a /* ':' */ ) {
       // Raw row format:
       //   single parent: `:srcMode dstMode srcSha dstSha STATUS\tpath`
       //                  (rename/copy: `STATUS<score>\told\tnew`)
@@ -1515,12 +1718,14 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
     final stats = numstatByHash[c.commitHash] ?? [];
     final types = changeTypesByHash[c.commitHash] ?? {};
     final files = stats
-        .map((s) => CommitFileStatData(
-              path: s.path,
-              additions: s.additions,
-              deletions: s.deletions,
-              changeType: types[s.path] ?? 'M',
-            ))
+        .map(
+          (s) => CommitFileStatData(
+            path: s.path,
+            additions: s.additions,
+            deletions: s.deletions,
+            changeType: types[s.path] ?? 'M',
+          ),
+        )
         .toList();
     out[c.commitHash] = CommitDetailData(
       commitHash: c.commitHash,
@@ -1553,10 +1758,7 @@ class _BulkFileStat {
 class FileHistoryEntry {
   final CommitHistoryEntry commit;
   final String pathAtRevision;
-  const FileHistoryEntry({
-    required this.commit,
-    required this.pathAtRevision,
-  });
+  const FileHistoryEntry({required this.commit, required this.pathAtRevision});
 }
 
 /// Returns the commit history for a file, with `--follow` tracking renames,
@@ -1628,10 +1830,12 @@ Future<GitResult<List<FileHistoryEntry>>> listFileHistoryWithPaths(
 
   final commits = _parseCommitLogLines(metadataLines);
   final entries = commits
-      .map((c) => FileHistoryEntry(
-            commit: c,
-            pathAtRevision: pathsByHash[c.commitHash] ?? filePath,
-          ))
+      .map(
+        (c) => FileHistoryEntry(
+          commit: c,
+          pathAtRevision: pathsByHash[c.commitHash] ?? filePath,
+        ),
+      )
       .toList();
   return GitResult.ok(entries);
 }
@@ -1653,14 +1857,8 @@ Future<GitResult<String>> getFileDiffAtRevision(
   String filePath,
   String commitHash,
 ) async {
-  final stub = await _oversizedDiffStub(
-    repo,
-    ['diff', '--numstat', '$commitHash~1..$commitHash', '--', filePath],
-    filePath,
-  );
-  if (stub != null) return GitResult.ok(stub);
   final r = await _git(repo, [
-    'diff',
+    ..._kDiffCmd,
     ..._kDiffContentPins,
     '--full-index',
     '$commitHash~1..$commitHash',
@@ -1674,14 +1872,21 @@ Future<GitResult<String>> getFileDiffAtRevision(
   // (invalid hash, missing file, etc.) should surface as-is instead of
   // being masked by a second command's failure.
   final primaryErr = r.stderr.toString();
-  final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
+  final looksLikeRootCommit =
+      primaryErr.contains('unknown revision') ||
       primaryErr.contains('ambiguous argument') ||
       primaryErr.contains('bad revision');
   if (!looksLikeRootCommit) {
     return GitResult.err(primaryErr.trim());
   }
-  final r2 = await _git(
-      repo, ['show', ..._kDiffContentPins, '--full-index', commitHash, '--', filePath]);
+  final r2 = await _git(repo, [
+    ..._kShowCmd,
+    ..._kDiffContentPins,
+    '--full-index',
+    commitHash,
+    '--',
+    filePath,
+  ]);
   if (r2.exitCode != 0) {
     // Preserve the original diff error context alongside the fallback's.
     return GitResult.err(
@@ -1775,17 +1980,20 @@ Future<LocalPrMergeResult> mergeBranchIntoBase({
 }) async {
   if (branch == baseRef) {
     return LocalPrMergeResult(
-        MergeFailed('Base and head are the same branch ($branch).'));
+      MergeFailed('Base and head are the same branch ($branch).'),
+    );
   }
   final headTip = await _revParse(repoPath, branch);
   if (headTip.isEmpty) {
     return LocalPrMergeResult(
-        MergeFailed('Could not resolve head branch $branch.'));
+      MergeFailed('Could not resolve head branch $branch.'),
+    );
   }
   final baseTip = await _revParse(repoPath, baseRef);
   if (baseTip.isEmpty) {
     return LocalPrMergeResult(
-        MergeFailed('Could not resolve base branch $baseRef.'));
+      MergeFailed('Could not resolve base branch $baseRef.'),
+    );
   }
 
   switch (method) {
@@ -1798,14 +2006,21 @@ Future<LocalPrMergeResult> mergeBranchIntoBase({
         return _mergeInWorktree(baseWt, branch, baseRef, method, squashSubject);
       }
       return _mergeAtRefLevel(
-          repoPath, branch, baseRef, baseTip, headTip, method, squashSubject);
+        repoPath,
+        branch,
+        baseRef,
+        baseTip,
+        headTip,
+        method,
+        squashSubject,
+      );
   }
 }
 
 String _squashSubject(String? supplied, String branch) =>
     (supplied != null && supplied.trim().isNotEmpty)
-        ? supplied.trim()
-        : 'Merge local PR ($branch)';
+    ? supplied.trim()
+    : 'Merge local PR ($branch)';
 
 /// Native merge inside the worktree that already has [baseRef] out — no
 /// checkout, so the desk's HEAD is exactly where it was. Conflicts leave UU
@@ -1826,7 +2041,8 @@ Future<LocalPrMergeResult> _mergeInWorktree(
   final dirty = await _modifiedPaths(repo);
   if (dirty.tracked.isNotEmpty) {
     return LocalPrMergeResult(
-        MergeBlockedByLocalChanges(dirty.tracked.toList()..sort()));
+      MergeBlockedByLocalChanges(dirty.tracked.toList()..sort()),
+    );
   }
 
   // Capture the base tip BEFORE the merge: the squash verifier needs it to
@@ -1842,54 +2058,78 @@ Future<LocalPrMergeResult> _mergeInWorktree(
       // MERGE_HEAD; the editor's `git commit` conclusion produces the
       // single-parent commit squash wants.
       if (conflicted.isNotEmpty) {
-        return LocalPrMergeResult(MergeConflicted(conflicted),
-            conflictWorktree: repo);
+        return LocalPrMergeResult(
+          MergeConflicted(conflicted),
+          conflictWorktree: repo,
+        );
       }
       final blocked = _untrackedOverwritePaths(sq.stderr as String);
       if (blocked.isNotEmpty) {
-        return LocalPrMergeResult(
-            MergeBlockedByLocalChanges(blocked..sort()));
+        return LocalPrMergeResult(MergeBlockedByLocalChanges(blocked..sort()));
       }
       return LocalPrMergeResult(MergeFailed((sq.stderr as String).trim()));
     }
-    final commit = await _git(
-        repo, ['commit', '-m', _squashSubject(squashSubject, branch)]);
+    final commit = await _git(repo, [
+      'commit',
+      '-m',
+      _squashSubject(squashSubject, branch),
+    ]);
     if (commit.exitCode != 0) {
       return LocalPrMergeResult(
-          MergeFailed('Squash commit failed: ${(commit.stderr as String).trim()}'));
+        MergeFailed(
+          'Squash commit failed: ${(commit.stderr as String).trim()}',
+        ),
+      );
     }
   } else {
     final mc = await _git(repo, ['merge', '--no-ff', '--no-edit', branch]);
     if (mc.exitCode != 0) {
       final conflicted = await _conflictedPaths(repo);
       if (conflicted.isNotEmpty) {
-        return LocalPrMergeResult(MergeConflicted(conflicted),
-            conflictWorktree: repo);
+        return LocalPrMergeResult(
+          MergeConflicted(conflicted),
+          conflictWorktree: repo,
+        );
       }
       final blocked = _untrackedOverwritePaths(mc.stderr as String);
       if (blocked.isNotEmpty) {
-        return LocalPrMergeResult(
-            MergeBlockedByLocalChanges(blocked..sort()));
+        return LocalPrMergeResult(MergeBlockedByLocalChanges(blocked..sort()));
       }
       return LocalPrMergeResult(MergeFailed((mc.stderr as String).trim()));
     }
   }
 
-  final verified = await _verifyMerged(repo, baseRef, branch, method,
-      squashBaseBefore: baseBefore);
+  final verified = await _verifyMerged(
+    repo,
+    baseRef,
+    branch,
+    method,
+    squashBaseBefore: baseBefore,
+  );
   if (!verified) {
     // The commit/merge already advanced the base by this point — say so
     // rather than implying nothing happened. This is near-impossible with
     // tree-equality verification, but the message must never lie.
     final baseAfter = await _revParse(repo, baseRef);
     final moved = baseAfter.isNotEmpty && baseAfter != baseBefore;
-    return LocalPrMergeResult(MergeFailed(moved
-        ? '$baseRef advanced but the merge of $branch could not be verified — '
-            'inspect $baseRef before marking merged.'
-        : 'Merge ran but $baseRef does not contain $branch — not marking merged.'));
+    return LocalPrMergeResult(
+      MergeFailed(
+        moved
+            ? '$baseRef advanced but the merge of $branch could not be verified — '
+                  'inspect $baseRef before marking merged.'
+            : 'Merge ran but $baseRef does not contain $branch — not marking merged.',
+      ),
+    );
   }
-  return LocalPrMergeResult(MergeClean(SyncData(
-      operation: 'merge', remote: '', output: 'Merged $branch into $baseRef.')));
+  return LocalPrMergeResult(
+    MergeClean(
+      SyncData(
+        operation: 'merge',
+        remote: '',
+        output: 'Merged $branch into $baseRef.',
+      ),
+    ),
+  );
 }
 
 /// Zero-checkout merge for a base checked out nowhere: `merge-tree` builds the
@@ -1906,8 +2146,13 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
   BranchMergeMethod method,
   String? squashSubject,
 ) async {
-  final mt =
-      await _git(repo, ['merge-tree', '--write-tree', '--name-only', baseRef, branch]);
+  final mt = await _git(repo, [
+    'merge-tree',
+    '--write-tree',
+    '--name-only',
+    baseRef,
+    branch,
+  ]);
   if (mt.exitCode == 1) {
     // Conflicts. Nothing was written to any ref — this is a pure prediction.
     // `merge-tree --write-tree --name-only` emits THREE sections separated by
@@ -1927,12 +2172,14 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
   }
   if (mt.exitCode != 0) {
     return LocalPrMergeResult(
-        MergeFailed('merge-tree failed: ${(mt.stderr as String).trim()}'));
+      MergeFailed('merge-tree failed: ${(mt.stderr as String).trim()}'),
+    );
   }
   final tree = (mt.stdout as String).trim().split('\n').first.trim();
   if (tree.isEmpty) {
     return const LocalPrMergeResult(
-        MergeFailed('merge-tree produced no tree.'));
+      MergeFailed('merge-tree produced no tree.'),
+    );
   }
 
   final ctArgs = <String>['commit-tree', tree, '-p', baseTip];
@@ -1941,18 +2188,26 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
   final ct = await _git(repo, ctArgs);
   if (ct.exitCode != 0) {
     return LocalPrMergeResult(
-        MergeFailed('commit-tree failed: ${(ct.stderr as String).trim()}'));
+      MergeFailed('commit-tree failed: ${(ct.stderr as String).trim()}'),
+    );
   }
   final newSha = (ct.stdout as String).trim();
 
   // Compare-and-swap: fail cleanly if the base moved between our read and
   // this write, rather than clobbering a concurrent update.
-  final upd =
-      await _git(repo, ['update-ref', 'refs/heads/$baseRef', newSha, baseTip]);
+  final upd = await _git(repo, [
+    'update-ref',
+    'refs/heads/$baseRef',
+    newSha,
+    baseTip,
+  ]);
   if (upd.exitCode != 0) {
-    return LocalPrMergeResult(MergeFailed(
+    return LocalPrMergeResult(
+      MergeFailed(
         '$baseRef moved during the merge — nothing changed, retry. '
-        '(${(upd.stderr as String).trim()})'));
+        '(${(upd.stderr as String).trim()})',
+      ),
+    );
   }
 
   // Verify. A squash here is verified by TREE EQUALITY like the worktree
@@ -1964,11 +2219,21 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
       ? (await _revParse(repo, '$newSha^{tree}')) == tree
       : await _verifyMerged(repo, baseRef, branch, method);
   if (!verified) {
-    return LocalPrMergeResult(MergeFailed(
-        'Merge landed but $baseRef does not contain $branch — not marking merged.'));
+    return LocalPrMergeResult(
+      MergeFailed(
+        'Merge landed but $baseRef does not contain $branch — not marking merged.',
+      ),
+    );
   }
-  return LocalPrMergeResult(MergeClean(SyncData(
-      operation: 'merge', remote: '', output: 'Merged $branch into $baseRef.')));
+  return LocalPrMergeResult(
+    MergeClean(
+      SyncData(
+        operation: 'merge',
+        remote: '',
+        output: 'Merged $branch into $baseRef.',
+      ),
+    ),
+  );
 }
 
 /// Rebase [branch] onto [baseRef], then fast-forward the base. The replay
@@ -1977,24 +2242,33 @@ Future<LocalPrMergeResult> _mergeAtRefLevel(
 /// nowhere yields [MergeNeedsCheckout]: there is no ref-level rebase, and we
 /// won't conjure a temp worktree in v1.
 Future<LocalPrMergeResult> _rebaseIntoBase(
-    String repo, String branch, String baseRef) async {
+  String repo,
+  String branch,
+  String baseRef,
+) async {
   final baseWt = await worktreeHolding(repo, baseRef);
   if (baseWt == null) {
-    return LocalPrMergeResult(MergeNeedsCheckout(
-      branch: branch,
-      baseRef: baseRef,
-      message: 'Rebasing $branch onto $baseRef needs $baseRef checked out in a '
-          'desk. Open it, then rebase — or pick merge commit / squash instead.',
-    ));
+    return LocalPrMergeResult(
+      MergeNeedsCheckout(
+        branch: branch,
+        baseRef: baseRef,
+        message:
+            'Rebasing $branch onto $baseRef needs $baseRef checked out in a '
+            'desk. Open it, then rebase — or pick merge commit / squash instead.',
+      ),
+    );
   }
   final headWt = await worktreeHolding(repo, branch);
   if (headWt == null) {
-    return LocalPrMergeResult(MergeNeedsCheckout(
-      branch: branch,
-      baseRef: baseRef,
-      message: 'Rebasing $branch needs it checked out in a desk. Open it, then '
-          'rebase — or pick merge commit / squash instead.',
-    ));
+    return LocalPrMergeResult(
+      MergeNeedsCheckout(
+        branch: branch,
+        baseRef: baseRef,
+        message:
+            'Rebasing $branch needs it checked out in a desk. Open it, then '
+            'rebase — or pick merge commit / squash instead.',
+      ),
+    );
   }
   // Gate on TRACKED modifications only, read fresh in each worktree. `git
   // rebase` refuses over any tracked change, but untracked scratch files are
@@ -2002,12 +2276,14 @@ Future<LocalPrMergeResult> _rebaseIntoBase(
   final headDirty = await _modifiedPaths(headWt.path);
   if (headDirty.tracked.isNotEmpty) {
     return LocalPrMergeResult(
-        MergeBlockedByLocalChanges(headDirty.tracked.toList()..sort()));
+      MergeBlockedByLocalChanges(headDirty.tracked.toList()..sort()),
+    );
   }
   final baseDirty = await _modifiedPaths(baseWt.path);
   if (baseDirty.tracked.isNotEmpty) {
     return LocalPrMergeResult(
-        MergeBlockedByLocalChanges(baseDirty.tracked.toList()..sort()));
+      MergeBlockedByLocalChanges(baseDirty.tracked.toList()..sort()),
+    );
   }
 
   final rb = await _git(headWt.path, ['rebase', baseRef]);
@@ -2016,12 +2292,16 @@ Future<LocalPrMergeResult> _rebaseIntoBase(
     if (conflicted.isNotEmpty) {
       // Paused mid-rebase in the head's worktree. The flow layer drives the
       // editor loop, then calls [finishLocalPrRebase] to advance the base.
-      return LocalPrMergeResult(MergeConflicted(conflicted),
-          conflictWorktree: headWt.path, rebasePaused: true);
+      return LocalPrMergeResult(
+        MergeConflicted(conflicted),
+        conflictWorktree: headWt.path,
+        rebasePaused: true,
+      );
     }
     await _git(headWt.path, ['rebase', '--abort']);
     return LocalPrMergeResult(
-        MergeFailed('Rebase failed: ${(rb.stderr as String).trim()}'));
+      MergeFailed('Rebase failed: ${(rb.stderr as String).trim()}'),
+    );
   }
   return _fastForwardBaseToHead(repo, branch, baseRef, baseWt);
 }
@@ -2030,34 +2310,57 @@ Future<LocalPrMergeResult> _rebaseIntoBase(
 /// base's worktree, then verify. Shared by the clean-rebase path and the
 /// editor-resolved [finishLocalPrRebase] continuation.
 Future<LocalPrMergeResult> _fastForwardBaseToHead(
-    String repo, String branch, String baseRef, WorktreeData baseWt) async {
+  String repo,
+  String branch,
+  String baseRef,
+  WorktreeData baseWt,
+) async {
   final newHeadTip = await _revParse(repo, branch);
   final ff = await _git(baseWt.path, ['merge', '--ff-only', branch]);
   if (ff.exitCode != 0) {
-    return LocalPrMergeResult(MergeFailed(
-        'Rebased, but fast-forward of $baseRef failed: ${(ff.stderr as String).trim()}'));
+    return LocalPrMergeResult(
+      MergeFailed(
+        'Rebased, but fast-forward of $baseRef failed: ${(ff.stderr as String).trim()}',
+      ),
+    );
   }
   if (!await _isAncestor(repo, newHeadTip, baseRef)) {
-    return LocalPrMergeResult(MergeFailed(
-        'Rebased but $baseRef did not advance to $branch — not marking merged.'));
+    return LocalPrMergeResult(
+      MergeFailed(
+        'Rebased but $baseRef did not advance to $branch — not marking merged.',
+      ),
+    );
   }
-  return LocalPrMergeResult(MergeClean(SyncData(
-      operation: 'merge', remote: '', output: 'Rebased $branch onto $baseRef.')));
+  return LocalPrMergeResult(
+    MergeClean(
+      SyncData(
+        operation: 'merge',
+        remote: '',
+        output: 'Rebased $branch onto $baseRef.',
+      ),
+    ),
+  );
 }
 
 /// Finish a rebase whose conflicts were resolved in the editor: the head
 /// branch is now at its rebased tip, so advance the base by fast-forward.
 /// Returns [MergeNeedsCheckout] if the base's worktree vanished mid-flow.
 Future<LocalPrMergeResult> finishLocalPrRebase(
-    String repo, String branch, String baseRef) async {
+  String repo,
+  String branch,
+  String baseRef,
+) async {
   final baseWt = await worktreeHolding(repo, baseRef);
   if (baseWt == null) {
-    return LocalPrMergeResult(MergeNeedsCheckout(
-      branch: branch,
-      baseRef: baseRef,
-      message: 'Rebased $branch, but $baseRef is no longer checked out — '
-          'open it in a desk to finish the fast-forward.',
-    ));
+    return LocalPrMergeResult(
+      MergeNeedsCheckout(
+        branch: branch,
+        baseRef: baseRef,
+        message:
+            'Rebased $branch, but $baseRef is no longer checked out — '
+            'open it in a desk to finish the fast-forward.',
+      ),
+    );
   }
   return _fastForwardBaseToHead(repo, branch, baseRef, baseWt);
 }
@@ -2075,16 +2378,24 @@ Future<LocalPrMergeResult> finishLocalPrRebase(
 /// many commits were folded in. We recompute that merged tree and require it
 /// to equal `baseRef^{tree}` after the squash landed.
 Future<bool> _verifyMerged(
-    String repo, String baseRef, String branch, BranchMergeMethod method,
-    {String? squashBaseBefore}) async {
+  String repo,
+  String baseRef,
+  String branch,
+  BranchMergeMethod method, {
+  String? squashBaseBefore,
+}) async {
   if (method == BranchMergeMethod.squash) {
     if (squashBaseBefore == null || squashBaseBefore.isEmpty) return false;
     // `merge-tree --write-tree` prints the merged tree SHA on a clean merge
     // (exit 0); a non-zero exit means it could not reproduce a clean tree,
     // which for an already-committed clean squash should never happen — treat
     // it as unverified rather than guessing.
-    final mt =
-        await _git(repo, ['merge-tree', '--write-tree', squashBaseBefore, branch]);
+    final mt = await _git(repo, [
+      'merge-tree',
+      '--write-tree',
+      squashBaseBefore,
+      branch,
+    ]);
     if (mt.exitCode != 0) return false;
     final expectTree = (mt.stdout as String).trim().split('\n').first.trim();
     if (expectTree.isEmpty) return false;
@@ -2124,43 +2435,17 @@ List<String> _untrackedOverwritePaths(String stderr) {
   return paths;
 }
 
-/// variant for root commits (`git diff <hash>~1..<hash>` fails when
-/// there's no parent → fall back to `git show`).
-Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
-  final stub = await _oversizedDiffStub(
-    repo,
-    ['diff', '--numstat', '$commitHash~1..$commitHash'],
-    'commit $commitHash',
-  );
-  if (stub != null) return GitResult.ok(stub);
-  final r = await _git(repo,
-      ['diff', ..._kDiffContentPins, '--full-index', '$commitHash~1..$commitHash']);
-  if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
-  final primaryErr = r.stderr.toString();
-  final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
-      primaryErr.contains('ambiguous argument') ||
-      primaryErr.contains('bad revision');
-  if (!looksLikeRootCommit) {
-    return GitResult.err(primaryErr.trim());
-  }
-  final r2 = await _git(repo, ['show', ..._kDiffContentPins, '--full-index', commitHash]);
-  if (r2.exitCode != 0) {
-    return GitResult.err(
-      '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
-    );
-  }
-  return GitResult.ok(r2.stdout.toString());
-}
-
 Future<GitResult<CommitDetailData>> getCommitDetail(
-    String repo, String hash) async {
+  String repo,
+  String hash,
+) async {
   // Two calls: metadata + numstat, and name-status for change types
   final results = await Future.wait([
     _git(repo, [
       'show',
       '--numstat',
       '--format=%H%n%h%n%s%n%b%n---END-META---%n%aN%n%aE%n%aI',
-      hash
+      hash,
     ]),
     _git(repo, ['diff-tree', '--no-commit-id', '-r', '--name-status', hash]),
   ]);
@@ -2205,8 +2490,9 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
   // identity fields start at index 1. (Indexing from 0 here shipped the
   // avatar-less metadata row for months: name read as '', email as the
   // name, and the noreply email landed in the date slot.)
-  final afterMeta =
-      output.substring(metaEnd + '---END-META---'.length).split('\n');
+  final afterMeta = output
+      .substring(metaEnd + '---END-META---'.length)
+      .split('\n');
   final authorName = afterMeta.length > 1 ? afterMeta[1].trim() : '';
   final authorEmail = afterMeta.length > 2 ? afterMeta[2].trim() : '';
   final authoredAt = afterMeta.length > 3 ? afterMeta[3].trim() : '';
@@ -2220,26 +2506,31 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
     final dels = int.tryParse(parts[1]) ?? 0;
     final filePath = parts[2].trim();
     if (filePath.isEmpty) continue;
-    files.add(CommitFileStatData(
+    files.add(
+      CommitFileStatData(
         path: filePath,
         additions: adds,
         deletions: dels,
-        changeType: changeTypes[filePath] ?? 'M'));
+        changeType: changeTypes[filePath] ?? 'M',
+      ),
+    );
   }
 
-  return GitResult.ok(CommitDetailData(
-    commitHash: fullHash,
-    shortHash: shortHash,
-    subject: subject,
-    body: bodyLines.join('\n').trim(),
-    authorName: authorName,
-    authorEmail: authorEmail,
-    authoredAt: authoredAt,
-    filesChanged: files.length,
-    additions: files.fold(0, (s, f) => s + f.additions),
-    deletions: files.fold(0, (s, f) => s + f.deletions),
-    files: files,
-  ));
+  return GitResult.ok(
+    CommitDetailData(
+      commitHash: fullHash,
+      shortHash: shortHash,
+      subject: subject,
+      body: bodyLines.join('\n').trim(),
+      authorName: authorName,
+      authorEmail: authorEmail,
+      authoredAt: authoredAt,
+      filesChanged: files.length,
+      additions: files.fold(0, (s, f) => s + f.additions),
+      deletions: files.fold(0, (s, f) => s + f.deletions),
+      files: files,
+    ),
+  );
 }
 
 /// Lazily fetch per-file hunk headers for a commit. Header-only parse:
@@ -2250,12 +2541,35 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
 /// Keyed by new-file path (from the `+++ b/…` header; deletions key on
 /// the `--- a/…` old path). Meant to be called once per commit-detail
 /// open and cached by hash on the caller side.
+/// Backstop on the hunk-header count collected for the seismograph. A treemap
+/// of churn bands needs nowhere near this many; it only guards a pathological
+/// commit with millions of scattered hunks from growing the map unbounded.
+const int _kCommitHunkCap = 200000;
+
 Future<GitResult<Map<String, List<CommitHunk>>>> getCommitHunks(
-    String repo, String hash) async {
-  final r = await _git(repo, [
-    'show', '--unified=0', '--no-color', '--no-ext-diff', '--format=', '-M', hash,
-  ]);
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  String repo,
+  String hash,
+) async {
+  // STREAM `git show --unified=0` line-by-line, keeping ONLY the hunk/file
+  // headers. `--unified=0` drops context but still emits every +/- body line;
+  // buffering all of them into one String + splitting it (the old code) meant a
+  // multi-GB commit could exhaust memory just to draw churn bands. Here git
+  // streams the body, we discard it a line at a time — memory is bounded by the
+  // header count, not the patch size.
+  final Process proc;
+  try {
+    proc = await _spawnStart([
+      ..._kShowCmd,
+      '--unified=0',
+      '--no-color',
+      '--no-ext-diff',
+      '--format=',
+      '-M',
+      hash,
+    ], workingDirectory: repo);
+  } on Object catch (e) {
+    return GitResult.err(e.toString());
+  }
 
   final out = <String, List<CommitHunk>>{};
   // `@@ -oldStart[,oldCount] +newStart[,newCount] @@` — counts default to
@@ -2263,29 +2577,44 @@ Future<GitResult<Map<String, List<CommitHunk>>>> getCommitHunks(
   final hunkRe = RegExp(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@');
   String? curNew; // path from +++ b/…
   String? curOld; // path from --- a/… (for deletions / dev-null new side)
-  for (final line in r.stdout.toString().split('\n')) {
-    if (line.startsWith('+++ ')) {
-      final p = line.substring(4).trim();
-      curNew = (p == '/dev/null') ? null : _stripDiffPrefix(p);
-      continue;
-    }
-    if (line.startsWith('--- ')) {
-      final p = line.substring(4).trim();
-      curOld = (p == '/dev/null') ? null : _stripDiffPrefix(p);
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      final m = hunkRe.firstMatch(line);
-      if (m == null) continue;
-      final del = int.tryParse(m.group(1) ?? '') ?? 1;
-      final newStart = int.tryParse(m.group(2) ?? '') ?? 0;
-      final add = int.tryParse(m.group(3) ?? '') ?? 1;
-      final key = curNew ?? curOld;
-      if (key == null) continue;
-      (out[key] ??= <CommitHunk>[]).add(CommitHunk(
-        newStart: newStart, additions: add, deletions: del,
-      ));
-    }
+  var hunkCount = 0;
+
+  final errBuf = BytesBuilder(copy: false);
+  final errDone = proc.stderr.forEach(errBuf.add);
+  await proc.stdout
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .transform(const LineSplitter())
+      .forEach((line) {
+        // Once capped, keep draining stdout (so git isn't blocked on a full pipe)
+        // but stop growing the map.
+        if (hunkCount >= _kCommitHunkCap) return;
+        if (line.startsWith('+++ ')) {
+          final p = line.substring(4).trim();
+          curNew = (p == '/dev/null') ? null : _stripDiffPrefix(p);
+        } else if (line.startsWith('--- ')) {
+          final p = line.substring(4).trim();
+          curOld = (p == '/dev/null') ? null : _stripDiffPrefix(p);
+        } else if (line.startsWith('@@')) {
+          final m = hunkRe.firstMatch(line);
+          if (m == null) return;
+          final del = int.tryParse(m.group(1) ?? '') ?? 1;
+          final newStart = int.tryParse(m.group(2) ?? '') ?? 0;
+          final add = int.tryParse(m.group(3) ?? '') ?? 1;
+          final key = curNew ?? curOld;
+          if (key == null) return;
+          (out[key] ??= <CommitHunk>[]).add(
+            CommitHunk(newStart: newStart, additions: add, deletions: del),
+          );
+          hunkCount++;
+        }
+        // Body lines (+/-) are discarded — never stored.
+      });
+  final code = await proc.exitCode;
+  await errDone;
+  if (code != 0) {
+    return GitResult.err(
+      utf8.decode(errBuf.takeBytes(), allowMalformed: true).trim(),
+    );
   }
   return GitResult.ok(out);
 }
@@ -2301,54 +2630,30 @@ String _stripDiffPrefix(String p) {
   return p;
 }
 
-/// Hard ceiling on changed lines a diff may carry before the app refuses
-/// to MATERIALIZE it. Field-proven necessity: a repo vendoring multi-GB
-/// text datasets (DIMACS road graphs) produced a gigabyte-class diff whose
-/// string + per-line parse objects ballooned to ~20GB on the UI isolate and
-/// froze the app for minutes. The guard costs one `--numstat` (no content)
-/// before any content is generated. 100k changed lines is far beyond
-/// anything a human reviews inline; the file still stages/commits whole.
-const int kMaxRenderableDiffLines = 100000;
-
-/// Cheap pre-flight: total changed lines per `--numstat` for [diffArgs]
-/// (same revision/path args as the real diff, WITHOUT -U/--full-index).
-/// Returns null when under the ceiling (caller proceeds), else a tiny
-/// synthetic diff that renders as an honest placeholder row. Binary
-/// entries report `-` in numstat and count zero — the binary path owns
-/// those.
-Future<String?> _oversizedDiffStub(
+Future<GitResult<String>> getFileDiff(
   String repo,
-  List<String> numstatArgs,
-  String headerPath,
-) async {
-  final probe = await _git(repo, numstatArgs);
-  if (probe.exitCode != 0) return null; // let the real call surface errors
-  var total = 0;
-  for (final line in probe.stdout.toString().split('\n')) {
-    final parts = line.split('\t');
-    if (parts.length < 3) continue;
-    total += (int.tryParse(parts[0]) ?? 0) + (int.tryParse(parts[1]) ?? 0);
-  }
-  if (total <= kMaxRenderableDiffLines) return null;
-  final thousands = (total / 1000).round();
-  return 'diff --git a/$headerPath b/$headerPath\n'
-      '--- a/$headerPath\n'
-      '+++ b/$headerPath\n'
-      ' Diff too large to render: ~${thousands}k changed lines. '
-      'The change itself is intact and stages/commits normally.\n';
-}
-
-Future<GitResult<String>> getFileDiff(String repo, String path,
-    {bool staged = false, int contextLines = 3}) async {
-  final stub = await _oversizedDiffStub(
-    repo,
-    ['diff', '--numstat', if (staged) '--cached', '--', path],
-    path,
-  );
-  if (stub != null) return GitResult.ok(stub);
+  String path, {
+  bool staged = false,
+  int contextLines = 3,
+}) async {
   final args = staged
-      ? ['diff', ..._kDiffContentPins, '--full-index', '--cached', '-U$contextLines', '--', path]
-      : ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', '--', path];
+      ? [
+          ..._kDiffCmd,
+          ..._kDiffContentPins,
+          '--full-index',
+          '--cached',
+          '-U$contextLines',
+          '--',
+          path,
+        ]
+      : [
+          ..._kDiffCmd,
+          ..._kDiffContentPins,
+          '--full-index',
+          '-U$contextLines',
+          '--',
+          path,
+        ];
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
@@ -2388,14 +2693,18 @@ Future<GitResult<({int ahead, int behind})>> getDeskAheadBehind(
   String deskPath,
   String targetRef,
 ) async {
-  final res = await _git(
-    deskPath,
-    ['rev-list', '--left-right', '--count', '$targetRef...HEAD'],
-  );
+  final res = await _git(deskPath, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    '$targetRef...HEAD',
+  ]);
   if (res.exitCode != 0) {
-    return GitResult.err(res.stderr.toString().trim().isEmpty
-        ? 'Could not compare with $targetRef.'
-        : res.stderr.toString().trim());
+    return GitResult.err(
+      res.stderr.toString().trim().isEmpty
+          ? 'Could not compare with $targetRef.'
+          : res.stderr.toString().trim(),
+    );
   }
   final parts = res.stdout.toString().trim().split(RegExp(r'\s+'));
   if (parts.length < 2) {
@@ -2418,14 +2727,13 @@ Future<GitResult<void>> fastForwardDeskTo(
   String deskPath,
   String targetRef,
 ) async {
-  final res = await _git(
-    deskPath,
-    ['merge', '--ff-only', targetRef],
-  );
+  final res = await _git(deskPath, ['merge', '--ff-only', targetRef]);
   if (res.exitCode != 0) {
-    return GitResult.err(res.stderr.toString().trim().isEmpty
-        ? 'Fast-forward from $targetRef failed.'
-        : res.stderr.toString().trim());
+    return GitResult.err(
+      res.stderr.toString().trim().isEmpty
+          ? 'Fast-forward from $targetRef failed.'
+          : res.stderr.toString().trim(),
+    );
   }
   return const GitResult.ok(null);
 }
@@ -2435,26 +2743,28 @@ Future<GitResult<String>> getDeskDumpDiff(
   String targetRef, {
   int contextLines = 3,
 }) async {
-  final base = await _git(
-    deskPath,
-    ['merge-base', targetRef, 'HEAD'],
-  );
+  final base = await _git(deskPath, ['merge-base', targetRef, 'HEAD']);
   if (base.exitCode != 0) {
     // No common ancestor — unrelated histories. There is no meaningful
     // "desk's contribution" to extract; surface the underlying error so
     // the caller can show it instead of silently dumping a giant
     // whole-tree diff.
-    return GitResult.err(base.stderr.toString().trim().isEmpty
-        ? 'No common history between desk and $targetRef.'
-        : base.stderr.toString().trim());
+    return GitResult.err(
+      base.stderr.toString().trim().isEmpty
+          ? 'No common history between desk and $targetRef.'
+          : base.stderr.toString().trim(),
+    );
   }
   final mergeBase = base.stdout.toString().trim();
 
   // Tracked changes since divergence (committed + WIP modifications).
-  final tracked = await _git(
-    deskPath,
-    ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', mergeBase],
-  );
+  final tracked = await _git(deskPath, [
+    ..._kDiffCmd,
+    ..._kDiffContentPins,
+    '--full-index',
+    '-U$contextLines',
+    mergeBase,
+  ]);
   if (tracked.exitCode != 0) {
     return GitResult.err(tracked.stderr.toString().trim());
   }
@@ -2462,10 +2772,11 @@ Future<GitResult<String>> getDeskDumpDiff(
   // Untracked files — enumerate then synthesize new-file diffs.
   // --exclude-standard honours .gitignore + .git/info/exclude + the
   // user's global excludes, so ignored junk doesn't leak into the dump.
-  final untracked = await _git(
-    deskPath,
-    ['ls-files', '--others', '--exclude-standard'],
-  );
+  final untracked = await _git(deskPath, [
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+  ]);
   if (untracked.exitCode != 0) {
     return GitResult.err(untracked.stderr.toString().trim());
   }
@@ -2480,11 +2791,55 @@ Future<GitResult<String>> getDeskDumpDiff(
   final trackedOut = tracked.stdout.toString();
   if (trackedOut.trim().isNotEmpty) parts.add(trackedOut);
   for (final path in untrackedPaths) {
-    parts.add(await _buildSyntheticUntrackedDiff(deskPath, path));
+    // git --no-index synthesizes the new-file diff with bounded memory (no
+    // whole-file read). Exit 1 = "differs from /dev/null" = expected success.
+    // ANY other exit is a real failure (permission, vanished path, git error) —
+    // fail the whole dump rather than silently returning an INCOMPLETE one that
+    // a caller would persist/transfer believing it holds the full change.
+    final r = await _git(deskPath, _untrackedDiffArgs(path));
+    if (r.exitCode == 0 || r.exitCode == 1) {
+      parts.add(r.stdout.toString().trim());
+    } else {
+      return GitResult.err(
+        'untracked diff failed for "$path": ${r.stderr.toString().trim()}',
+      );
+    }
   }
   return GitResult.ok(parts.where((p) => p.trim().isNotEmpty).join('\n'));
 }
 
+/// Base revision for the combined selection diff: `HEAD` when it exists,
+/// else the repo's empty tree (unborn HEAD — no commit yet), resolved with
+/// `hash-object -t tree /dev/null` so it is correct under SHA-1 and SHA-256
+/// repos alike.
+Future<GitResult<String>> _selectionDiffBase(String repo) async {
+  final head = await _git(repo, ['rev-parse', '--verify', 'HEAD']);
+  if (head.exitCode == 0) return const GitResult.ok('HEAD');
+  final emptyTree = await _git(repo, [
+    'hash-object',
+    '-t',
+    'tree',
+    '/dev/null',
+  ]);
+  if (emptyTree.exitCode != 0) {
+    return GitResult.err(emptyTree.stderr.toString().trim());
+  }
+  return GitResult.ok(emptyTree.stdout.toString().trim());
+}
+
+/// The combined "all changes in this selection" diff.
+///
+/// Tracked paths are diffed in ONE `git diff <base> -- <paths>` pass
+/// (HEAD→worktree), never a `--cached` pass plus an unstaged pass. The
+/// two-pass shape emitted the SAME path twice for a staged+unstaged (`MM`)
+/// file, and no consumer could handle that: the document model keys
+/// sections, slices, and navigation by path, so the eager slicer silently
+/// dropped the staged section (last-wins) while the lazy index kept an
+/// unreachable duplicate. One pass makes duplicate sections structurally
+/// impossible AND shows the full HEAD→worktree delta for `MM` files. The
+/// deliberate consequence: a staged change undone in the worktree nets to
+/// nothing here — correct for a combined view; the per-file staged/unstaged
+/// views carry the split story.
 Future<GitResult<String>> getSelectionDiff(
   String repo,
   List<RepositoryStatusFile> files, {
@@ -2498,38 +2853,45 @@ Future<GitResult<String>> getSelectionDiff(
       .where((file) => !_isUntrackedFile(file))
       .map((file) => file.path)
       .toList();
-  final hasTrackedStaged = files.any(
-    (file) => !file.isUntracked && file.hasStagedChange,
-  );
-  final hasTrackedUnstaged = files.any(
-    (file) => !file.isUntracked && file.hasUnstagedChange,
+  final hasTrackedChange = files.any(
+    (file) =>
+        !file.isUntracked && (file.hasStagedChange || file.hasUnstagedChange),
   );
 
   final futures = <Future<GitResult<String>>>[];
 
-  if (trackedPaths.isNotEmpty && hasTrackedStaged) {
-    futures.add(_git(
-      repo,
-      ['diff', ..._kDiffContentPins, '--full-index', '--cached', '-U$contextLines', '--', ...trackedPaths],
-    ).then((r) => r.exitCode != 0
-        ? GitResult.err(r.stderr.toString().trim())
-        : GitResult.ok(r.stdout.toString().trim())));
+  if (trackedPaths.isNotEmpty && hasTrackedChange) {
+    Future<GitResult<String>> trackedPass() async {
+      final base = await _selectionDiffBase(repo);
+      if (!base.ok) return GitResult<String>.err(base.error ?? 'no base');
+      final r = await _git(repo, [
+        ..._kDiffCmd,
+        ..._kDiffContentPins,
+        '--full-index',
+        '-U$contextLines',
+        base.data!,
+        '--',
+        ...trackedPaths,
+      ]);
+      return r.exitCode != 0
+          ? GitResult<String>.err(r.stderr.toString().trim())
+          : GitResult<String>.ok(r.stdout.toString().trim());
+    }
+
+    futures.add(trackedPass());
   }
 
-  if (trackedPaths.isNotEmpty && hasTrackedUnstaged) {
-    futures.add(_git(
-      repo,
-      ['diff', ..._kDiffContentPins, '--full-index', '-U$contextLines', '--', ...trackedPaths],
-    ).then((r) => r.exitCode != 0
-        ? GitResult.err(r.stderr.toString().trim())
-        : GitResult.ok(r.stdout.toString().trim())));
-  }
-
-  final untrackedFutures = files
-      .where(_isUntrackedFile)
-      .map((f) => _buildSyntheticUntrackedDiff(repo, f.path)
-          .then((s) => GitResult.ok(s)))
-      .toList();
+  // Untracked files: let git synthesize the new-file diff via `--no-index`
+  // (bounded memory) instead of reading the whole file into Dart. `--no-index`
+  // exits 1 when the file differs from /dev/null (always, for a new file), so
+  // treat 0 and 1 as success.
+  final untrackedFutures = files.where(_isUntrackedFile).map((f) async {
+    final r = await _git(repo, _untrackedDiffArgs(f.path));
+    if (r.exitCode != 0 && r.exitCode != 1) {
+      return GitResult<String>.err(r.stderr.toString().trim());
+    }
+    return GitResult.ok(r.stdout.toString().trim());
+  }).toList();
 
   final results = await Future.wait([...futures, ...untrackedFutures]);
 
@@ -2543,45 +2905,463 @@ Future<GitResult<String>> getSelectionDiff(
   return GitResult.ok(parts.join('\n'));
 }
 
-bool _isUntrackedFile(RepositoryStatusFile file) => file.isUntracked;
+/// A combined diff streamed straight to a temp spool file — its bytes never all
+/// resided in RAM. Feed [path] to `DiffDocument.lazyFromSpool` for a disk-backed
+/// document whose resident memory is independent of diff size. The owner MUST
+/// call [dispose] when done to delete the spool.
+class SpooledDiff {
+  final String path;
+  final String _dir;
+  final int byteLength;
+  const SpooledDiff(this.path, this._dir, this.byteLength);
 
-Future<String> _buildSyntheticUntrackedDiff(
-    String repo, String relativePath) async {
-  final normalizedPath = relativePath.replaceAll('\\', '/');
-  final file = File(
-    '$repo${Platform.pathSeparator}${normalizedPath.replaceAll('/', Platform.pathSeparator)}',
+  /// The owning temp directory — hand to `DiffDocument.lazyFromSpool`'s
+  /// `ownedTempDir` so the document deletes it on dispose (single owner).
+  String get dir => _dir;
+
+  Future<void> dispose() async {
+    try {
+      await Directory(_dir).delete(recursive: true);
+    } catch (_) {}
+  }
+}
+
+/// Read a spool file back as text with the SAME leniency as the exec
+/// layer's stdout decode (`_decodeGitBytes` with `allowMalformed`): a spool
+/// holds raw git output, and repos legitimately contain non-UTF-8 bytes in
+/// patchable content. A strict `readAsString()` here would THROW on diffs
+/// the lenient pipeline (and the FileByteStore render path) degrades to
+/// U+FFFD and shows fine — re-materializing a small spool must never be
+/// stricter than fetching the same bytes as a String would have been.
+Future<String> readSpoolStringLenient(String spoolPath) async {
+  final bytes = await File(spoolPath).readAsBytes();
+  return utf8.decode(bytes, allowMalformed: true);
+}
+
+/// Write an already-built [content] String to a temp spool file in bounded,
+/// surrogate-safe chunks, and return a [SpooledDiff] over it. Two properties
+/// matter: the chunking keeps the write from doubling peak memory, and a chunk
+/// boundary NEVER splits a UTF-16 surrogate pair (a lone high surrogate would
+/// encode to a replacement byte and corrupt the diff). Used as the retroactive
+/// spill when a diff was fetched in-RAM but turns out too large to hold.
+Future<SpooledDiff> spoolStringToTempFile(
+  String content, {
+  int chunkSize = 4 * 1024 * 1024,
+}) async {
+  final dir = await Directory.systemTemp.createTemp('manifold_diff');
+  final file = File('${dir.path}/selection.diff');
+  final raf = await file.open(mode: FileMode.write);
+  try {
+    var i = 0;
+    while (i < content.length) {
+      var end = (i + chunkSize < content.length)
+          ? i + chunkSize
+          : content.length;
+      if (end < content.length) {
+        final cu = content.codeUnitAt(end - 1);
+        if (cu >= 0xD800 && cu <= 0xDBFF) end++; // keep surrogate pair whole
+      }
+      await raf.writeString(content.substring(i, end));
+      i = end;
+    }
+  } finally {
+    await raf.close();
+  }
+  final len = await file.length();
+  return SpooledDiff(file.path, dir.path, len);
+}
+
+/// [getFileDiff], but streamed to a temp spool file instead of returned as a
+/// (potentially multi-GB) `String`. For a large tracked modification this keeps
+/// git's output off the Dart heap entirely — the diff never has to fit in a
+/// String before it can be spooled. Returns an empty [SpooledDiff] (byteLength
+/// 0) when the file has no diff on the requested side (e.g. it is untracked, or
+/// has no staged/unstaged change), so the caller can fall through.
+Future<GitResult<SpooledDiff>> spoolFileDiff(
+  String repo,
+  String path, {
+  bool staged = false,
+  int contextLines = 3,
+}) async {
+  final args = staged
+      ? [
+          ..._kDiffCmd,
+          ..._kDiffContentPins,
+          '--full-index',
+          '--cached',
+          '-U$contextLines',
+          '--',
+          path,
+        ]
+      : [
+          ..._kDiffCmd,
+          ..._kDiffContentPins,
+          '--full-index',
+          '-U$contextLines',
+          '--',
+          path,
+        ];
+  final dir = await Directory.systemTemp.createTemp('manifold_diff');
+  final spool = File('${dir.path}/file.diff');
+  final sink = spool.openWrite();
+  try {
+    await _streamGitDiffInto(sink, repo, args);
+    await sink.flush();
+    await sink.close();
+    final len = await spool.length();
+    return GitResult.ok(SpooledDiff(spool.path, dir.path, len));
+  } catch (e) {
+    try {
+      await sink.close();
+    } catch (_) {}
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {}
+    return GitResult.err(e.toString());
+  }
+}
+
+/// Stream a diff (produced by [primaryArgs], falling back to [fallbackArgs] on a
+/// root-commit-style revision error) to a fresh spool file. The fallback resets
+/// the spool first so a partial primary write can't corrupt it. Shared by the
+/// history spool functions.
+Future<GitResult<SpooledDiff>> _spoolDiffWithFallback(
+  String repo,
+  List<String> primaryArgs,
+  List<String> fallbackArgs,
+) async {
+  final dir = await Directory.systemTemp.createTemp('manifold_diff');
+  final spool = File('${dir.path}/rev.diff');
+  var sink = spool.openWrite();
+  try {
+    try {
+      await _streamGitDiffInto(sink, repo, primaryArgs);
+    } on ProcessException catch (e) {
+      final err = e.message;
+      final rootish =
+          err.contains('unknown revision') ||
+          err.contains('ambiguous argument') ||
+          err.contains('bad revision');
+      if (!rootish) rethrow;
+      await sink.close();
+      sink = spool.openWrite(); // truncate any partial primary output
+      await _streamGitDiffInto(sink, repo, fallbackArgs);
+    }
+    await sink.flush();
+    await sink.close();
+    final len = await spool.length();
+    return GitResult.ok(SpooledDiff(spool.path, dir.path, len));
+  } catch (e) {
+    try {
+      await sink.close();
+    } catch (_) {}
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {}
+    return GitResult.err(e.toString());
+  }
+}
+
+/// `git diff <hash>~1..<hash>` (falling back to `git show <hash>` for root
+/// commits, which have no parent), streamed to a spool (bounded memory) —
+/// for large commits.
+Future<GitResult<SpooledDiff>> spoolCommitDiff(String repo, String hash) =>
+    _spoolDiffWithFallback(
+      repo,
+      [..._kDiffCmd, ..._kDiffContentPins, '--full-index', '$hash~1..$hash'],
+      [..._kShowCmd, ..._kDiffContentPins, '--full-index', hash],
+    );
+
+/// [getFileDiffAtRevision], streamed to a spool (bounded memory).
+Future<GitResult<SpooledDiff>> spoolFileDiffAtRevision(
+  String repo,
+  String filePath,
+  String commitHash,
+) => _spoolDiffWithFallback(
+  repo,
+  [
+    ..._kDiffCmd,
+    ..._kDiffContentPins,
+    '--full-index',
+    '$commitHash~1..$commitHash',
+    '--',
+    filePath,
+  ],
+  [
+    ..._kShowCmd,
+    ..._kDiffContentPins,
+    '--full-index',
+    commitHash,
+    '--',
+    filePath,
+  ],
+);
+
+/// Spool byte length above which a fetched PR-detail diff stays on disk as
+/// the detail's [SpooledDiff] instead of materializing into the String form.
+/// Every detail loader STREAMS its diff to a spool during transport (gh/glab
+/// CLI stdout, Gitea's uncapped `.diff` response, the local desk range diff),
+/// so this threshold reads the spool's REAL on-disk byte count — never a
+/// String proxy. 8 MiB sits above what the hosted forges serve for ordinary
+/// PRs while a machine-scale patch stays on the bounded path.
+const int kDetailDiffSpillBytes = 8 * 1024 * 1024;
+
+/// `git diff --numstat -z [--find-renames] <spec>` for an arbitrary revision
+/// range spec (`base...head` / `base..head`), through the gated exec layer
+/// with the diff-family pins — raw `Process.run` here would re-open the
+/// hostile-config class (`color.diff=always` corrupting the parse) the pins
+/// closed. Returns raw NUL-separated stdout for the caller to parse.
+Future<GitResult<String>> getRangeNumstatZ(
+  String repo,
+  String spec, {
+  bool findRenames = false,
+}) async {
+  final r = await _git(repo, [
+    ..._kDiffCmd,
+    ..._kDiffContentPins,
+    '--numstat',
+    '-z',
+    if (findRenames) '--find-renames',
+    spec,
+  ]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(r.stdout.toString());
+}
+
+/// `git diff [--find-renames] <spec>` as a String — for ranges the numstat
+/// probe has already sized as small. Same pins as every textual-diff site.
+Future<GitResult<String>> getRangeDiff(
+  String repo,
+  String spec, {
+  bool findRenames = false,
+}) async {
+  final r = await _git(repo, [
+    ..._kDiffCmd,
+    ..._kDiffContentPins,
+    if (findRenames) '--find-renames',
+    spec,
+  ]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(r.stdout.toString());
+}
+
+/// [getRangeDiff], streamed to a spool (bounded memory). Callers stream
+/// FIRST and let the spool's actual [SpooledDiff.byteLength] pick the
+/// representation — no numstat/churn heuristic can be trusted to predict
+/// patch bytes (a handful of very long lines reads as tiny churn; binary
+/// churn reads as 0). The diff never exists as a Dart String at any point.
+Future<GitResult<SpooledDiff>> spoolRangeDiff(
+  String repo,
+  String spec, {
+  bool findRenames = false,
+}) async {
+  final args = [
+    ..._kDiffCmd,
+    ..._kDiffContentPins,
+    if (findRenames) '--find-renames',
+    spec,
+  ];
+  final dir = await Directory.systemTemp.createTemp('manifold_diff');
+  final spool = File('${dir.path}/range.diff');
+  final sink = spool.openWrite();
+  try {
+    await _streamGitDiffInto(sink, repo, args);
+    await sink.flush();
+    await sink.close();
+    final len = await spool.length();
+    return GitResult.ok(SpooledDiff(spool.path, dir.path, len));
+  } catch (e) {
+    try {
+      await sink.close();
+    } catch (_) {}
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {}
+    return GitResult.err(e.toString());
+  }
+}
+
+/// [getSelectionDiff], but the combined diff is streamed to a temp file instead
+/// of assembled into one (potentially multi-GB) `String`. Each `git diff`
+/// invocation's stdout is piped to disk with backpressure, so peak RAM stays
+/// bounded regardless of diff size — the machine-scale path for the changes
+/// list. Tracked paths ride ONE HEAD→worktree pass for the same reason as
+/// [getSelectionDiff]: a `--cached` + unstaged pass pair emitted duplicate
+/// path sections for `MM` files, which the path-keyed document model cannot
+/// represent. The parts concatenate exactly as [getSelectionDiff] joins
+/// them: every `git diff` block ends in a newline, so raw concatenation
+/// yields the same single-newline separation between files.
+Future<GitResult<SpooledDiff>> spoolSelectionDiff(
+  String repo,
+  List<RepositoryStatusFile> files, {
+  int contextLines = 3,
+}) async {
+  if (files.isEmpty) return const GitResult.err('no files');
+
+  final trackedPaths = files
+      .where((file) => !_isUntrackedFile(file))
+      .map((file) => file.path)
+      .toList();
+  final hasTrackedChange = files.any(
+    (file) =>
+        !file.isUntracked && (file.hasStagedChange || file.hasUnstagedChange),
   );
 
-  List<String> lines;
+  final dir = await Directory.systemTemp.createTemp('manifold_diff');
+  final spool = File('${dir.path}/selection.diff');
+  final sink = spool.openWrite();
   try {
-    final bytes = await file.readAsBytes();
-    final isBinary = bytes.contains(0);
-    if (isBinary) {
-      lines = const ['[binary content omitted]'];
-    } else {
-      final content = utf8.decode(bytes, allowMalformed: true);
-      lines = const LineSplitter().convert(content);
-      if (content.isEmpty) {
-        lines = const [''];
+    if (trackedPaths.isNotEmpty && hasTrackedChange) {
+      final base = await _selectionDiffBase(repo);
+      if (!base.ok) {
+        throw ProcessException('git', const ['rev-parse'], base.error ?? '', 1);
       }
+      await _streamGitDiffInto(sink, repo, [
+        ..._kDiffCmd,
+        ..._kDiffContentPins,
+        '--full-index',
+        '-U$contextLines',
+        base.data!,
+        '--',
+        ...trackedPaths,
+      ]);
     }
-  } catch (_) {
-    lines = const ['[unable to read file content]'];
+    for (final f in files.where(_isUntrackedFile)) {
+      // Stream the untracked file's new-file diff straight from git to disk —
+      // git reads it with bounded memory; nothing whole-file lands in Dart RAM.
+      await _streamGitDiffInto(
+        sink,
+        repo,
+        _untrackedDiffArgs(f.path),
+        okCodes: const {0, 1},
+      );
+    }
+    await sink.flush();
+    await sink.close();
+    final len = await spool.length();
+    return GitResult.ok(SpooledDiff(spool.path, dir.path, len));
+  } catch (e) {
+    try {
+      await sink.close();
+    } catch (_) {}
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {}
+    return GitResult.err(e.toString());
   }
-
-  final buffer = StringBuffer()
-    ..writeln('diff --git a/$normalizedPath b/$normalizedPath')
-    ..writeln('new file mode 100644')
-    ..writeln('--- /dev/null')
-    ..writeln('+++ b/$normalizedPath')
-    ..writeln('@@ -0,0 +1,${lines.length} @@');
-
-  for (final line in lines) {
-    buffer.writeln('+$line');
-  }
-
-  return buffer.toString().trimRight();
 }
+
+/// Pipe one `git diff` invocation's stdout into [sink] with backpressure (so a
+/// multi-GB diff never buffers in RAM), draining stderr concurrently to avoid a
+/// pipe deadlock. Throws with the stderr text on an unexpected exit.
+///
+/// [okCodes] are the exit codes treated as success. Default `{0}`; the untracked
+/// path passes `{0, 1}` because `git diff --no-index` exits 1 whenever the files
+/// differ — which, against `/dev/null`, is always true for a non-empty new file.
+Future<void> _streamGitDiffInto(
+  IOSink sink,
+  String repo,
+  List<String> args, {
+  Set<int> okCodes = const {0},
+}) async {
+  // Same choreography contract as every other git subprocess: a semaphore
+  // permit (streamed diff fetches are the MAIN diff path now — many
+  // concurrent PR/history loads must not spawn unbounded git processes) and
+  // the start/success/failure lifecycle events. Deliberately NO index.lock
+  // retry and no mutation bump: these are pure reads, and a retry could not
+  // replay bytes already streamed into [sink] anyway.
+  final commandLabel = 'git.${_gitSubcommandToken(args) ?? 'diff'}.stream';
+  final stopwatch = Stopwatch()..start();
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'start',
+    command: commandLabel,
+  );
+  await _gitSubprocessSemaphore.acquire();
+  var lifecycleRecorded = false;
+  try {
+    final proc = await _spawnStart(args, workingDirectory: repo);
+    final errBuf = BytesBuilder(copy: false);
+    final errDone = proc.stderr.forEach(errBuf.add);
+    try {
+      await sink.addStream(proc.stdout);
+    } catch (_) {
+      // A sink write failure (disk full, spool dir vanished) must not
+      // orphan the live git child mid-stream: kill it and drain the
+      // stderr reader + exit code so nothing dangles or throws
+      // unobserved, then let the outer catch record the failure.
+      proc.kill();
+      try {
+        await errDone;
+      } catch (_) {}
+      try {
+        await proc.exitCode;
+      } catch (_) {}
+      rethrow;
+    }
+    final code = await proc.exitCode;
+    await errDone;
+    stopwatch.stop();
+    final ok = okCodes.contains(code);
+    lifecycleRecorded = true;
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: ok ? 'success' : 'failure',
+      command: commandLabel,
+      durationMs: stopwatch.elapsedMicroseconds / 1000,
+      errorCode: ok ? null : 'git.exit_$code',
+    );
+    if (!ok) {
+      throw ProcessException(
+        'git',
+        args,
+        utf8.decode(errBuf.takeBytes(), allowMalformed: true).trim(),
+        code,
+      );
+    }
+  } catch (e) {
+    if (!lifecycleRecorded) {
+      stopwatch.stop();
+      DiagnosticsState.instance.recordCommandLifecycleEvent(
+        type: 'failure',
+        command: commandLabel,
+        durationMs: stopwatch.elapsedMicroseconds / 1000,
+        errorCode: 'git.stream_failed',
+        message: e.toString(),
+      );
+    }
+    rethrow;
+  } finally {
+    _gitSubprocessSemaphore.release();
+  }
+}
+
+/// `git diff --no-index -- /dev/null <path>` — makes git itself emit the
+/// new-file diff (a `+` for every line) for an UNTRACKED file, reading the file
+/// with git's own bounded memory. This replaces reading the whole file into a
+/// Dart `Uint8List` + decoding + splitting into a 15M-object line list (the
+/// marble OOM). `/dev/null` is understood by git on every platform (it maps to
+/// `nul` on Windows). Binary new files emit `Binary files … differ` naturally.
+List<String> _untrackedDiffArgs(String path) => [
+  ..._kDiffCmd,
+  '--no-index',
+  ..._kDiffContentPins,
+  '--',
+  '/dev/null',
+  path,
+];
+
+bool _isUntrackedFile(RepositoryStatusFile file) => file.isUntracked;
+
+/// True when a selection contains a tracked deletion whose source blob is not
+/// present in the working tree. A filesystem-size estimate necessarily sees
+/// that path as zero bytes, although its patch can be arbitrarily large. Route
+/// these selections to [spoolSelectionDiff] before starting `git diff` so the
+/// deletion never first exists as a Dart String.
+bool selectionContainsTrackedDeletion(List<RepositoryStatusFile> files) =>
+    files.any(
+      (file) =>
+          !file.isUntracked &&
+          (file.stagedCode == 'D' || file.unstagedCode == 'D'),
+    );
 
 Future<Uint8List?> gitBlobBytes(String repo, String objectHash) async {
   await _gitSubprocessSemaphore.acquire();
@@ -2598,8 +3378,11 @@ Future<Uint8List?> gitBlobBytes(String repo, String objectHash) async {
   }
 }
 
-Future<Uint8List?> gitBlobHeader(String repo, String objectHash,
-    [int bytes = 32]) async {
+Future<Uint8List?> gitBlobHeader(
+  String repo,
+  String objectHash, [
+  int bytes = 32,
+]) async {
   await _gitSubprocessSemaphore.acquire();
   Process? proc;
   try {
@@ -2616,7 +3399,9 @@ Future<Uint8List?> gitBlobHeader(String repo, String objectHash,
     }
     proc.kill();
     await Future.wait([proc.exitCode, stderrDrained]);
-    return chunk.isEmpty ? null : Uint8List.fromList(chunk.sublist(0, chunk.length.clamp(0, bytes)));
+    return chunk.isEmpty
+        ? null
+        : Uint8List.fromList(chunk.sublist(0, chunk.length.clamp(0, bytes)));
   } finally {
     proc?.kill();
     _gitSubprocessSemaphore.release();
@@ -2636,7 +3421,7 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
   final r = await _git(repo, [
     'branch',
     '-vv',
-    '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso8601)'
+    '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso8601)',
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
@@ -2646,8 +3431,9 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
     final parts = line.split('\t');
     final name = parts[0].trim();
     final isCurrent = parts.length > 1 && parts[1].trim() == '*';
-    final upstream =
-        parts.length > 2 && parts[2].trim().isNotEmpty ? parts[2].trim() : null;
+    final upstream = parts.length > 2 && parts[2].trim().isNotEmpty
+        ? parts[2].trim()
+        : null;
     int ahead = 0, behind = 0;
     var gone = false;
     if (parts.length > 3) {
@@ -2670,15 +3456,17 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
     if (parts.length > 4) {
       lastCommitAt = DateTime.tryParse(parts[4].trim());
     }
-    branches.add(BranchInfo(
-      name: name,
-      current: isCurrent,
-      upstream: upstream,
-      ahead: ahead,
-      behind: behind,
-      gone: gone,
-      lastCommitAt: lastCommitAt,
-    ));
+    branches.add(
+      BranchInfo(
+        name: name,
+        current: isCurrent,
+        upstream: upstream,
+        ahead: ahead,
+        behind: behind,
+        gone: gone,
+        lastCommitAt: lastCommitAt,
+      ),
+    );
   }
   return GitResult.ok(branches);
 }
@@ -2773,14 +3561,15 @@ Future<List<BranchInfo>> detectSquashMergedBranches(
   final workers = math.min(squashProbeMaxConcurrency, branches.length);
   await Future.wait(
     List.generate(
-        workers,
-        (_) => Future(() async {
-              while (true) {
-                final i = next++;
-                if (i >= branches.length) return;
-                flags[i] = await probe(branches[i]);
-              }
-            })),
+      workers,
+      (_) => Future(() async {
+        while (true) {
+          final i = next++;
+          if (i >= branches.length) return;
+          flags[i] = await probe(branches[i]);
+        }
+      }),
+    ),
   );
   return [
     for (var i = 0; i < branches.length; i++)
@@ -3020,13 +3809,13 @@ Future<bool> mergeTreeAbsorptionSupported(String repo) async {
 /// Returns the raw pieces the callers need: the result tree ('' on error),
 /// whether the trial conflicted, and the conflicted paths.
 Future<({String resultTree, bool conflicted, List<String> conflictedFiles})>
-    _mergeTreeTrial(String repo, String commit, String branch) async {
+_mergeTreeTrial(String repo, String commit, String branch) async {
   final r = await _git(repo, ['merge-tree', '--write-tree', commit, branch]);
   if (r.exitCode > 1) {
     return (
       resultTree: '',
       conflicted: false,
-      conflictedFiles: const <String>[]
+      conflictedFiles: const <String>[],
     );
   }
   final lines = r.stdout.toString().split('\n');
@@ -3035,7 +3824,7 @@ Future<({String resultTree, bool conflicted, List<String> conflictedFiles})>
     return (
       resultTree: resultTree,
       conflicted: false,
-      conflictedFiles: const <String>[]
+      conflictedFiles: const <String>[],
     );
   }
   // Conflicted-file stage lines run up to the first blank line.
@@ -3060,8 +3849,10 @@ Future<String> _patchIdStable(String repo, String patchText) async {
   if (patchText.trim().isEmpty) return '';
   await _gitSubprocessSemaphore.acquire();
   try {
-    final proc = await _spawnStart(['patch-id', '--stable'],
-        workingDirectory: repo);
+    final proc = await _spawnStart([
+      'patch-id',
+      '--stable',
+    ], workingDirectory: repo);
     // Wire the readers BEFORE writing stdin so a large patch can't deadlock
     // on a full stdout pipe buffer.
     final outF = proc.stdout.transform(utf8.decoder).join();
@@ -3144,8 +3935,12 @@ Future<BranchAbsorption?> branchAbsorption(
     if (!await mergeTreeAbsorptionSupported(repo)) return null;
 
     // Every witness found below is permanent for this key: record + return.
-    BranchAbsorption witnessed(String witness, AbsorptionWitnessVia via,
-        {required List<String> tipOutstanding, required bool tipConflicted}) {
+    BranchAbsorption witnessed(
+      String witness,
+      AbsorptionWitnessVia via, {
+      required List<String> tipOutstanding,
+      required bool tipConflicted,
+    }) {
       final v = (
         absorbed: true,
         witness: witness,
@@ -3163,8 +3958,12 @@ Future<BranchAbsorption?> branchAbsorption(
     final tip = await _mergeTreeTrial(repo, baseTip, branch);
     if (tip.resultTree.isEmpty) return null;
     if (!tip.conflicted && tip.resultTree == baseTree) {
-      return witnessed(baseTip, AbsorptionWitnessVia.tip,
-          tipOutstanding: const [], tipConflicted: false);
+      return witnessed(
+        baseTip,
+        AbsorptionWitnessVia.tip,
+        tipOutstanding: const [],
+        tipConflicted: false,
+      );
     }
     // Tip-scoped report for the not-(tip-)absorbed shapes, reused by every
     // return below — the historical scan never changes what merging NOW does.
@@ -3172,8 +3971,13 @@ Future<BranchAbsorption?> branchAbsorption(
     if (tip.conflicted) {
       tipOutstanding = tip.conflictedFiles;
     } else {
-      final diff = await _git(
-          repo, ['diff-tree', '--name-only', '-r', baseTree, tip.resultTree]);
+      final diff = await _git(repo, [
+        'diff-tree',
+        '--name-only',
+        '-r',
+        baseTree,
+        tip.resultTree,
+      ]);
       tipOutstanding = diff.stdout
           .toString()
           .split('\n')
@@ -3224,7 +4028,9 @@ Future<BranchAbsorption?> branchAbsorption(
     // Every proven-no below records the frontier for the next probe, then
     // returns. State passed in is the scan state AT baseTip.
     BranchAbsorption provenNo(
-        Set<String> coveredBranchFiles, Map<String, String> currentBlobs) {
+      Set<String> coveredBranchFiles,
+      Map<String, String> currentBlobs,
+    ) {
       _absorptionFrontiers[key] = _AbsorptionFrontier(
         fork: fork,
         scannedTo: baseTip,
@@ -3329,11 +4135,13 @@ Future<BranchAbsorption?> branchAbsorption(
     // patch-id fast path and the scan's added-line reject filter.
     String? branchDiffText;
     Future<String> branchDiff() async {
-      return branchDiffText ??=
-          (await _git(repo,
-                  ['diff', ..._kDiffContentPins, '--no-renames', fork, branch]))
-              .stdout
-              .toString();
+      return branchDiffText ??= (await _git(repo, [
+        ..._kDiffCmd,
+        ..._kDiffContentPins,
+        '--no-renames',
+        fork,
+        branch,
+      ])).stdout.toString();
     }
 
     if (patchCandidates.isNotEmpty) {
@@ -3357,9 +4165,12 @@ Future<BranchAbsorption?> branchAbsorption(
             if (hit.isEmpty) continue;
             final e = hit.first;
             if (await confirms(e.hash, e.tree)) {
-              return witnessed(e.hash, AbsorptionWitnessVia.patchId,
-                  tipOutstanding: tipOutstanding,
-                  tipConflicted: tip.conflicted);
+              return witnessed(
+                e.hash,
+                AbsorptionWitnessVia.patchId,
+                tipOutstanding: tipOutstanding,
+                tipConflicted: tip.conflicted,
+              );
             }
           }
         }
@@ -3417,16 +4228,21 @@ Future<BranchAbsorption?> branchAbsorption(
         }
       }
       if (overlap == 0 || !covered.containsAll(branchFiles)) continue;
-      final blobExact = branchFiles
-          .every((f) => current[f] != null && current[f] == branchBlobs[f]);
+      final blobExact = branchFiles.every(
+        (f) => current[f] != null && current[f] == branchBlobs[f],
+      );
       if (blobExact) {
         // Near-certain witness (every branch path resolves trivially to
         // c's own version); confirm through the algebra and take it as the
         // exhibit. Earliest-witness preference is a receipt nicety, not
         // law — any confirmed commit is a true witness.
         if (await confirms(e.hash, e.tree)) {
-          return witnessed(e.hash, AbsorptionWitnessVia.scan,
-              tipOutstanding: tipOutstanding, tipConflicted: tip.conflicted);
+          return witnessed(
+            e.hash,
+            AbsorptionWitnessVia.scan,
+            tipOutstanding: tipOutstanding,
+            tipConflicted: tip.conflicted,
+          );
         }
       } else {
         mergeTreeCandidates.add((
@@ -3458,12 +4274,8 @@ Future<BranchAbsorption?> branchAbsorption(
         };
         final contents = await _catFileBatch(repo, needed);
         bool passes(
-            ({
-              String hash,
-              String tree,
-              Map<String, String> snap,
-              int overlap
-            }) c) {
+          ({String hash, String tree, Map<String, String> snap, int overlap}) c,
+        ) {
           for (final entry in addedByFile.entries) {
             final blob = c.snap[entry.key];
             if (blob == null || _kAllZerosOid.hasMatch(blob)) {
@@ -3482,7 +4294,10 @@ Future<BranchAbsorption?> branchAbsorption(
           return true;
         }
 
-        survivors = [for (final c in mergeTreeCandidates) if (passes(c)) c];
+        survivors = [
+          for (final c in mergeTreeCandidates)
+            if (passes(c)) c,
+        ];
       }
       if (survivors.isNotEmpty) {
         // Most-likely witnesses first: a squash/transplant witness touches
@@ -3502,7 +4317,10 @@ Future<BranchAbsorption?> branchAbsorption(
         var next = 0;
         var anyHit = false;
         final workers = math.min(squashProbeMaxConcurrency, ordered.length);
-        await Future.wait(List.generate(workers, (_) => Future(() async {
+        await Future.wait(
+          List.generate(
+            workers,
+            (_) => Future(() async {
               while (true) {
                 final i = next++;
                 if (i >= ordered.length) return;
@@ -3515,11 +4333,17 @@ Future<BranchAbsorption?> branchAbsorption(
                   anyHit = true;
                 }
               }
-            })));
+            }),
+          ),
+        );
         final hit = confirmed.indexOf(true);
         if (hit >= 0) {
-          return witnessed(ordered[hit].hash, AbsorptionWitnessVia.scan,
-              tipOutstanding: tipOutstanding, tipConflicted: tip.conflicted);
+          return witnessed(
+            ordered[hit].hash,
+            AbsorptionWitnessVia.scan,
+            tipOutstanding: tipOutstanding,
+            tipConflicted: tip.conflicted,
+          );
         }
       }
     }
@@ -3527,10 +4351,10 @@ Future<BranchAbsorption?> branchAbsorption(
     // Proven no — the entire fork..baseTip line has been examined (this
     // probe plus any frontier it resumed from). Record the frontier so the
     // next probe only walks base commits newer than today's tip.
-    return provenNo(
-      {for (final f in covered) if (branchFiles.contains(f)) f},
-      Map.of(current),
-    );
+    return provenNo({
+      for (final f in covered)
+        if (branchFiles.contains(f)) f,
+    }, Map.of(current));
   } catch (_) {
     return null;
   }
@@ -3544,13 +4368,17 @@ Future<BranchAbsorption?> branchAbsorption(
 /// and <size> counts BYTES, so the walk happens over raw bytes, never over
 /// a decoded string.
 Future<Map<String, String>> _catFileBatch(
-    String repo, Iterable<String> oids) async {
+  String repo,
+  Iterable<String> oids,
+) async {
   final wanted = oids.toSet();
   if (wanted.isEmpty) return const {};
   await _gitSubprocessSemaphore.acquire();
   try {
-    final proc = await _spawnStart(['cat-file', '--batch'],
-        workingDirectory: repo);
+    final proc = await _spawnStart([
+      'cat-file',
+      '--batch',
+    ], workingDirectory: repo);
     final buf = BytesBuilder(copy: false);
     final outDone = proc.stdout.listen(buf.add).asFuture<void>();
     final errF = proc.stderr.drain<void>();
@@ -3571,8 +4399,9 @@ Future<Map<String, String>> _catFileBatch(
       if (parts.length >= 3 && parts[1] == 'blob') {
         final size = int.tryParse(parts[2]) ?? 0;
         final end = math.min(pos + size, bytes.length);
-        result[parts[0]] = const Utf8Decoder(allowMalformed: true)
-            .convert(bytes.sublist(pos, end));
+        result[parts[0]] = const Utf8Decoder(
+          allowMalformed: true,
+        ).convert(bytes.sublist(pos, end));
         pos = end + 1; // skip the trailing framing '\n'
       }
       // `<oid> missing` (or anything else) has no body; loop continues at
@@ -3666,20 +4495,20 @@ Future<List<BranchInfo>> detectAbsorbedBranches(
 
   // Resolve base tip once so leased branches sitting exactly on base can be
   // skipped without a probe.
-  final baseTip = (await _git(repo, ['rev-parse', '$baseRef^{commit}']))
-      .stdout
-      .toString()
-      .trim();
+  final baseTip = (await _git(repo, [
+    'rev-parse',
+    '$baseRef^{commit}',
+  ])).stdout.toString().trim();
 
   Future<({bool absorbed, String? witness})?> probe(BranchInfo b) async {
     if (b.current) return null;
     if (b.name == baseRef) return null;
     if (b.gone) return null; // already a known corpse; whisper is 'gone'
     if (leasedNames.contains(b.name) && baseTip.isNotEmpty) {
-      final tip = (await _git(repo, ['rev-parse', '${b.name}^{commit}']))
-          .stdout
-          .toString()
-          .trim();
+      final tip = (await _git(repo, [
+        'rev-parse',
+        '${b.name}^{commit}',
+      ])).stdout.toString().trim();
       if (tip == baseTip) return null; // trivial no-op; keep leased material
     }
     final r = await branchAbsorption(repo, b.name, baseRef);
@@ -3688,20 +4517,23 @@ Future<List<BranchInfo>> detectAbsorbedBranches(
     return (absorbed: r.absorbed, witness: r.witness);
   }
 
-  final flags =
-      List<({bool absorbed, String? witness})?>.filled(branches.length, null);
+  final flags = List<({bool absorbed, String? witness})?>.filled(
+    branches.length,
+    null,
+  );
   var next = 0;
   final workers = math.min(squashProbeMaxConcurrency, branches.length);
   await Future.wait(
     List.generate(
-        workers,
-        (_) => Future(() async {
-              while (true) {
-                final i = next++;
-                if (i >= branches.length) return;
-                flags[i] = await probe(branches[i]);
-              }
-            })),
+      workers,
+      (_) => Future(() async {
+        while (true) {
+          final i = next++;
+          if (i >= branches.length) return;
+          flags[i] = await probe(branches[i]);
+        }
+      }),
+    ),
   );
   return [
     for (var i = 0; i < branches.length; i++)
@@ -3712,10 +4544,14 @@ Future<List<BranchInfo>> detectAbsorbedBranches(
   ];
 }
 
-Future<GitResult<void>> createBranch(String repo, String name,
-    {String? from}) async {
-  final args =
-      from != null ? ['checkout', '-b', name, from] : ['checkout', '-b', name];
+Future<GitResult<void>> createBranch(
+  String repo,
+  String name, {
+  String? from,
+}) async {
+  final args = from != null
+      ? ['checkout', '-b', name, from]
+      : ['checkout', '-b', name];
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
@@ -3727,8 +4563,11 @@ Future<GitResult<void>> checkoutBranch(String repo, String name) async {
   return const GitResult.ok(null);
 }
 
-Future<GitResult<void>> deleteBranch(String repo, String name,
-    {bool force = false}) async {
+Future<GitResult<void>> deleteBranch(
+  String repo,
+  String name, {
+  bool force = false,
+}) async {
   final r = await _git(repo, ['branch', force ? '-D' : '-d', name]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
@@ -3745,8 +4584,9 @@ Future<({String name, String email})?> getCommitIdentity(String repo) async {
   final r = await _git(repo, ['var', 'GIT_AUTHOR_IDENT']);
   if (r.exitCode != 0) return null;
   // "Name <email> 1783178174 -0400"
-  final m = RegExp(r'^(.*) <([^>]*)> \d+ [+-]\d{4}$')
-      .firstMatch(r.stdout.toString().trim());
+  final m = RegExp(
+    r'^(.*) <([^>]*)> \d+ [+-]\d{4}$',
+  ).firstMatch(r.stdout.toString().trim());
   if (m == null) return null;
   return (name: m.group(1)!.trim(), email: m.group(2)!.trim());
 }
@@ -3786,8 +4626,7 @@ Future<({Set<String> emails, Set<String> names})> getHistoricalAuthors(
   String repo, {
   int limit = 2000,
 }) async {
-  final r = await _git(
-      repo, ['log', '--format=%aN%x09%aE', '-n', '$limit']);
+  final r = await _git(repo, ['log', '--format=%aN%x09%aE', '-n', '$limit']);
   final emails = <String>{};
   final names = <String>{};
   if (r.exitCode == 0) {
@@ -3854,7 +4693,8 @@ Future<GitResult<void>> deleteBranchIfAt(
   if (tip == null) return const GitResult.ok(null);
   if (tip != expectTip) {
     return GitResult.err(
-        "'$name' moved since the delete was armed; nothing was deleted.");
+      "'$name' moved since the delete was armed; nothing was deleted.",
+    );
   }
   return deleteBranch(repo, name, force: force);
 }
@@ -3872,7 +4712,8 @@ Future<GitResult<void>> deleteTagIfAt(
   if (tip == null) return const GitResult.ok(null);
   if (tip != expectTip) {
     return GitResult.err(
-        "'$name' moved since the delete was armed; nothing was deleted.");
+      "'$name' moved since the delete was armed; nothing was deleted.",
+    );
   }
   return deleteTag(repo, name);
 }
@@ -3882,8 +4723,11 @@ Future<GitResult<void>> deleteTagIfAt(
 /// so callers can surface the actual reason (ref collision, dirty
 /// working tree, etc.).
 Future<GitResult<void>> renameBranch(
-    String repo, String oldName, String newName,
-    {bool force = false}) async {
+  String repo,
+  String oldName,
+  String newName, {
+  bool force = false,
+}) async {
   final r = await _git(repo, ['branch', force ? '-M' : '-m', oldName, newName]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
@@ -3971,8 +4815,11 @@ Future<GitResult<String?>> primaryRemoteName(String repo) async {
 Future<GitResult<String?>> defaultBranchName(String repo) async {
   final remoteRes = await primaryRemoteName(repo);
   final remote = remoteRes.ok ? (remoteRes.data ?? 'origin') : 'origin';
-  final viaRemote = await _git(
-      repo, ['symbolic-ref', '--short', 'refs/remotes/$remote/HEAD']);
+  final viaRemote = await _git(repo, [
+    'symbolic-ref',
+    '--short',
+    'refs/remotes/$remote/HEAD',
+  ]);
   if (viaRemote.exitCode == 0) {
     final raw = viaRemote.stdout.toString().trim();
     // Output form: "<remote>/main" — strip the remote prefix.
@@ -3985,8 +4832,12 @@ Future<GitResult<String?>> defaultBranchName(String repo) async {
   // when both exist (modern convention); `master` used as legacy
   // fallback. `verify` avoids spawning a full `for-each-ref` walk.
   for (final candidate in const ['main', 'master']) {
-    final check = await _git(
-        repo, ['rev-parse', '--verify', '--quiet', 'refs/heads/$candidate']);
+    final check = await _git(repo, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'refs/heads/$candidate',
+    ]);
     if (check.exitCode == 0) return GitResult.ok(candidate);
     final remoteRef = await _git(repo, [
       'rev-parse',
@@ -4029,7 +4880,7 @@ Future<GitResult<List<TagEntryData>>> listTags(String repo) async {
   final r = await _git(repo, [
     'tag',
     '-l',
-    '--format=%(refname:short)%09%(objecttype)%09%(*objectname)%09%(objectname)%09%(creatordate:iso)%09%(taggername)%09%(subject)'
+    '--format=%(refname:short)%09%(objecttype)%09%(*objectname)%09%(objectname)%09%(creatordate:iso)%09%(taggername)%09%(subject)',
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
@@ -4041,22 +4892,28 @@ Future<GitResult<List<TagEntryData>>> listTags(String repo) async {
     if (line.trim().isEmpty) continue;
     final parts = line.split('\t');
     final hashFull = field(parts, 2) ?? field(parts, 3);
-    tags.add(TagEntryData(
-      name: parts[0].trim(),
-      tagType: parts.length > 1 ? parts[1].trim() : 'lightweight',
-      targetHash: hashFull != null && hashFull.length > 8
-          ? hashFull.substring(0, 8)
-          : hashFull,
-      createdAt: field(parts, 4),
-      creatorName: field(parts, 5),
-      subject: field(parts, 6),
-    ));
+    tags.add(
+      TagEntryData(
+        name: parts[0].trim(),
+        tagType: parts.length > 1 ? parts[1].trim() : 'lightweight',
+        targetHash: hashFull != null && hashFull.length > 8
+            ? hashFull.substring(0, 8)
+            : hashFull,
+        createdAt: field(parts, 4),
+        creatorName: field(parts, 5),
+        subject: field(parts, 6),
+      ),
+    );
   }
   return GitResult.ok(tags);
 }
 
-Future<GitResult<void>> createTag(String repo, String name, String targetRef,
-    {String? message}) async {
+Future<GitResult<void>> createTag(
+  String repo,
+  String name,
+  String targetRef, {
+  String? message,
+}) async {
   final args = message != null
       ? ['tag', '-a', '-m', message, name, targetRef]
       : ['tag', name, targetRef];
@@ -4071,13 +4928,19 @@ Future<GitResult<void>> deleteTag(String repo, String name) async {
   return const GitResult.ok(null);
 }
 
-Future<GitResult<List<ReflogEntryData>>> listReflog(String repo,
-    {int limit = 100}) async {
+Future<GitResult<List<ReflogEntryData>>> listReflog(
+  String repo, {
+  int limit = 100,
+}) async {
   // %x09 (a literal tab), NOT %09: git's commit/reflog pretty-format has no
   // `%09` escape — it emits the 3 chars `%09` verbatim, leaving every line
   // tab-less so `split('\t')` yields <6 parts and the whole reflog is dropped.
-  final r = await _git(repo,
-      ['reflog', '--format=%H%x09%h%x09%gd%x09%gs%x09%aN%x09%aI', '-n', '$limit']);
+  final r = await _git(repo, [
+    'reflog',
+    '--format=%H%x09%h%x09%gd%x09%gs%x09%aN%x09%aI',
+    '-n',
+    '$limit',
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
   final entries = <ReflogEntryData>[];
@@ -4085,26 +4948,31 @@ Future<GitResult<List<ReflogEntryData>>> listReflog(String repo,
     if (line.trim().isEmpty) continue;
     final parts = line.split('\t');
     if (parts.length < 6) continue;
-    entries.add(ReflogEntryData(
-      commitHash: parts[0].trim(),
-      shortHash: parts[1].trim(),
-      refSelector: parts[2].trim(),
-      actionSummary: parts[3].trim(),
-      authorName: parts[4].trim(),
-      authoredAt: parts[5].trim(),
-    ));
+    entries.add(
+      ReflogEntryData(
+        commitHash: parts[0].trim(),
+        shortHash: parts[1].trim(),
+        refSelector: parts[2].trim(),
+        actionSummary: parts[3].trim(),
+        authorName: parts[4].trim(),
+        authoredAt: parts[5].trim(),
+      ),
+    );
   }
   return GitResult.ok(entries);
 }
 
-Future<GitResult<List<BlameLineData>>> getFileBlame(String repo, String path,
-    {String? commitRef}) async {
+Future<GitResult<List<BlameLineData>>> getFileBlame(
+  String repo,
+  String path, {
+  String? commitRef,
+}) async {
   final args = [
     'blame',
     '--porcelain',
     if (commitRef != null) commitRef,
     '--',
-    path
+    path,
   ];
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -4135,23 +5003,29 @@ Future<GitResult<List<BlameLineData>>> getFileBlame(String repo, String path,
     }
     if (line.startsWith('\t')) {
       final data = commitData[currentHash] ?? {};
-      lines.add(BlameLineData(
-        lineNumber: lineNumber,
-        commitHash: currentHash,
-        shortHash:
-            currentHash.length >= 8 ? currentHash.substring(0, 8) : currentHash,
-        authorName: data['author'] ?? '',
-        authoredAt: data['time'] ?? '',
-        lineContent: line.substring(1),
-      ));
+      lines.add(
+        BlameLineData(
+          lineNumber: lineNumber,
+          commitHash: currentHash,
+          shortHash: currentHash.length >= 8
+              ? currentHash.substring(0, 8)
+              : currentHash,
+          authorName: data['author'] ?? '',
+          authoredAt: data['time'] ?? '',
+          lineContent: line.substring(1),
+        ),
+      );
     }
   }
   return GitResult.ok(lines);
 }
 
 Future<GitResult<List<CommitSearchResultData>>> searchCommits(
-    String repo, String query,
-    {String scope = 'messages', int limit = 50}) async {
+  String repo,
+  String query, {
+  String scope = 'messages',
+  int limit = 50,
+}) async {
   List<String> args;
   switch (scope) {
     case 'code':
@@ -4161,7 +5035,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
         query,
         '--format=%H%x09%h%x09%s%x09%aN%x09%aI',
         '-n',
-        '$limit'
+        '$limit',
       ];
       break;
     case 'files':
@@ -4171,7 +5045,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
         '-n',
         '$limit',
         '--',
-        query
+        query,
       ];
       break;
     default:
@@ -4181,7 +5055,7 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
         '-i',
         '--format=%H%x09%h%x09%s%x09%aN%x09%aI',
         '-n',
-        '$limit'
+        '$limit',
       ];
   }
   final r = await _git(repo, args);
@@ -4192,13 +5066,15 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
     if (line.trim().isEmpty) continue;
     final parts = line.split('\t');
     if (parts.length < 5) continue;
-    results.add(CommitSearchResultData(
-      commitHash: parts[0].trim(),
-      shortHash: parts[1].trim(),
-      subject: parts[2].trim(),
-      authorName: parts[3].trim(),
-      authoredAt: parts[4].trim(),
-    ));
+    results.add(
+      CommitSearchResultData(
+        commitHash: parts[0].trim(),
+        shortHash: parts[1].trim(),
+        subject: parts[2].trim(),
+        authorName: parts[3].trim(),
+        authoredAt: parts[4].trim(),
+      ),
+    );
   }
   return GitResult.ok(results);
 }
@@ -4209,7 +5085,8 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
 /// `binary: true` so callers can weight them with a baseline instead
 /// of the 0 they'd otherwise get from line counts.
 Future<GitResult<Map<String, FileChangeWeight>>> fileChangeWeights(
-    String repo) async {
+  String repo,
+) async {
   final weights = <String, FileChangeWeight>{};
   for (final cached in [false, true]) {
     final args = <String>['diff', '--numstat', if (cached) '--cached'];
@@ -4360,8 +5237,9 @@ Future<GitResult<FileSignals>> scanFileSignals(
       curEmail = pipe > 0 ? payload.substring(0, pipe) : payload;
       final tsStr = pipe > 0 ? payload.substring(pipe + 1) : '';
       final ts = int.tryParse(tsStr);
-      curAt =
-          ts != null ? DateTime.fromMillisecondsSinceEpoch(ts * 1000) : null;
+      curAt = ts != null
+          ? DateTime.fromMillisecondsSinceEpoch(ts * 1000)
+          : null;
       curFiles = <String>{};
       continue;
     }
@@ -4377,10 +5255,9 @@ Future<GitResult<FileSignals>> scanFileSignals(
     heatByPath[entry.key] = entry.value.clamp(0.0, 1.0).toDouble();
   }
 
-  final authors = counts.entries
-      .map((e) => (email: e.key, commits: e.value))
-      .toList()
-    ..sort((a, b) => b.commits.compareTo(a.commits));
+  final authors =
+      counts.entries.map((e) => (email: e.key, commits: e.value)).toList()
+        ..sort((a, b) => b.commits.compareTo(a.commits));
   return GitResult.ok(FileSignals(authors: authors, heatByPath: heatByPath));
 }
 
@@ -4448,7 +5325,13 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
   // (caught by the exact-staging witness suite).
   final stagedProbe = await _git(repo, [
     '--literal-pathspecs',
-    'diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...paths,
+    'diff',
+    '--cached',
+    '--name-only',
+    '--no-renames',
+    '-z',
+    '--',
+    ...paths,
   ]);
   if (stagedProbe.exitCode != 0) {
     return GitResult.err(stagedProbe.stderr.toString().trim());
@@ -4474,8 +5357,12 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
   // path before a repo's first commit just drops it back to untracked —
   // the correct outcome — instead of failing prepareCommitStaging outright
   // whenever a root commit excludes any staged file.
-  final r = await _git(
-      repo, ['--literal-pathspecs', 'reset', '--', ...stagedPaths]);
+  final r = await _git(repo, [
+    '--literal-pathspecs',
+    'reset',
+    '--',
+    ...stagedPaths,
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
@@ -4522,8 +5409,11 @@ class CommitStagingPlan {
   final List<StagedIndexEntry> excludedEntries;
   final String? snapshotIndexPath;
   final Map<String, String>? snapshotEntries;
-  const CommitStagingPlan(this.excludedEntries,
-      {this.snapshotIndexPath, this.snapshotEntries});
+  const CommitStagingPlan(
+    this.excludedEntries, {
+    this.snapshotIndexPath,
+    this.snapshotEntries,
+  });
 }
 
 /// Prepare the index so the next commit contains exactly [included].
@@ -4547,8 +5437,13 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
   // (porcelain v2 with -u) lists them per file. The included set then
   // holds a file path no record here matches, so the file is silently
   // never staged and a selected new file vanishes from the commit.
-  final st = await _git(
-      repo, ['status', '--porcelain', '-z', '--no-renames', '-uall']);
+  final st = await _git(repo, [
+    'status',
+    '--porcelain',
+    '-z',
+    '--no-renames',
+    '-uall',
+  ]);
   if (st.exitCode != 0) return GitResult.err(st.stderr.toString().trim());
 
   final includedSet = included.toSet();
@@ -4561,7 +5456,10 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
     final y = rec[1];
     final path = rec.substring(3);
     final conflicted =
-        x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D');
+        x == 'U' ||
+        y == 'U' ||
+        (x == 'A' && y == 'A') ||
+        (x == 'D' && y == 'D');
     if (conflicted) continue;
     final staged = x != ' ' && x != '?';
     if (includedSet.contains(path)) {
@@ -4577,7 +5475,11 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
   if (excludedStaged.isNotEmpty) {
     final ls = await _git(repo, [
       '--literal-pathspecs',
-      'ls-files', '-s', '-z', '--', ...excludedStaged,
+      'ls-files',
+      '-s',
+      '-z',
+      '--',
+      ...excludedStaged,
     ]);
     if (ls.exitCode != 0) return GitResult.err(ls.stderr.toString().trim());
     for (final rec in ls.stdout.toString().split('\x00')) {
@@ -4587,20 +5489,19 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
       if (tab < 0) continue;
       final meta = rec.substring(0, tab).split(' ');
       if (meta.length < 3 || meta[2] != '0') continue;
-      entries.add(StagedIndexEntry(
-        mode: meta[0],
-        oid: meta[1],
-        path: rec.substring(tab + 1),
-      ));
+      entries.add(
+        StagedIndexEntry(
+          mode: meta[0],
+          oid: meta[1],
+          path: rec.substring(tab + 1),
+        ),
+      );
     }
   }
   for (final path in excludedDeletions) {
-    entries.add(StagedIndexEntry(
-      mode: '',
-      oid: '',
-      path: path,
-      isDeletion: true,
-    ));
+    entries.add(
+      StagedIndexEntry(mode: '', oid: '', path: path, isDeletion: true),
+    );
   }
 
   final addResult = await stagePaths(repo, toAdd);
@@ -4611,7 +5512,9 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
   if (excluded.isNotEmpty) {
     final unstage = await unstagePaths(repo, excluded);
     if (!unstage.ok) {
-      return GitResult.err(unstage.error ?? 'Failed to unstage excluded files.');
+      return GitResult.err(
+        unstage.error ?? 'Failed to unstage excluded files.',
+      );
     }
   }
   // Freeze the arranged index the instant it is correct, so the commit
@@ -4649,8 +5552,13 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
     // exactly what the snapshot exists to be immune to.
     snapshotEntries = await _indexFileEntries(repo, snapshotIndexPath);
   }
-  return GitResult.ok(CommitStagingPlan(entries,
-      snapshotIndexPath: snapshotIndexPath, snapshotEntries: snapshotEntries));
+  return GitResult.ok(
+    CommitStagingPlan(
+      entries,
+      snapshotIndexPath: snapshotIndexPath,
+      snapshotEntries: snapshotEntries,
+    ),
+  );
 }
 
 /// The stage-0 entry table of an arbitrary index file (`path -> "mode
@@ -4659,10 +5567,14 @@ Future<GitResult<CommitStagingPlan>> prepareCommitStaging(
 /// independent of the live `.git/index`. Conflicted (non-zero stage)
 /// entries are skipped, matching every other entry-capture in this file.
 Future<Map<String, String>> _indexFileEntries(
-    String repo, String indexFile) async {
+  String repo,
+  String indexFile,
+) async {
   final r = await _gitRaw(
-      repo, ['--literal-pathspecs', 'ls-files', '-s', '-z'],
-      env: {'GIT_INDEX_FILE': indexFile});
+    repo,
+    ['--literal-pathspecs', 'ls-files', '-s', '-z'],
+    env: {'GIT_INDEX_FILE': indexFile},
+  );
   final map = <String, String>{};
   if (r.exitCode != 0) return map;
   for (final rec in r.stdout.toString().split('\x00')) {
@@ -4700,8 +5612,10 @@ Future<String?> _snapshotIndex(String repo) async {
     if (!p.isAbsolute(indexPath)) indexPath = p.join(repo, indexPath);
     final indexFile = File(indexPath);
     if (!await indexFile.exists()) return null;
-    final dest = p.join(gitDir,
-        'manifold-commit-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}');
+    final dest = p.join(
+      gitDir,
+      'manifold-commit-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}',
+    );
     await indexFile.copy(dest);
     return dest;
   } catch (_) {
@@ -4752,7 +5666,12 @@ Future<GitResult<void>> restoreStagedSelections(
     if (r.exitCode != 0) errs.add(r.stderr.toString().trim());
   }
   if (removals.isNotEmpty) {
-    final r = await _git(repo, ['update-index', '--force-remove', '--', ...removals]);
+    final r = await _git(repo, [
+      'update-index',
+      '--force-remove',
+      '--',
+      ...removals,
+    ]);
     if (r.exitCode != 0) errs.add(r.stderr.toString().trim());
   }
   if (errs.isNotEmpty) return GitResult.err(errs.join('\n'));
@@ -4825,12 +5744,17 @@ Future<GitResult<void>> undoLastCommit(
   if (head.isEmpty || !head.startsWith(expectHead)) {
     return const GitResult.err('The repository moved on; undo skipped.');
   }
-  final parent =
-      await _git(repo, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
+  final parent = await _git(repo, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    'HEAD~1',
+  ]);
   if (parent.exitCode != 0) {
     return const GitResult.err(
-        'This is the first commit on the branch; undo it with an amend '
-        'instead.');
+      'This is the first commit on the branch; undo it with an amend '
+      'instead.',
+    );
   }
   final r = await _git(repo, ['reset', '--soft', 'HEAD~1']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -4857,8 +5781,13 @@ Future<GitResult<void>> discardFile(
     return _deleteFromDisk(repo, file.path);
   }
   if (file.isStagedAddition) {
-    final unstage =
-        await _git(repo, ['rm', '--cached', '--force', '--', file.path]);
+    final unstage = await _git(repo, [
+      'rm',
+      '--cached',
+      '--force',
+      '--',
+      file.path,
+    ]);
     if (unstage.exitCode != 0) {
       return GitResult.err(unstage.stderr.toString().trim());
     }
@@ -4932,17 +5861,19 @@ Future<GitResult<void>> applyPatch(
   // choreography every other index mutation gets. The former bare _spawnStart
   // had none of that. Payload is raw UTF-8 bytes with a guaranteed trailing
   // newline; the runner re-sends it on each retry attempt.
-  final payload = <int>[
-    ...utf8.encode(patch),
-    if (!patch.endsWith('\n')) 0x0A,
-  ];
+  final payload = <int>[...utf8.encode(patch), if (!patch.endsWith('\n')) 0x0A];
   try {
-    final r = await _gitRawStdin(repo, args,
-        stdinPayload: payload, commandLabel: telemetryLabel ?? 'git.apply');
+    final r = await _gitRawStdin(
+      repo,
+      args,
+      stdinPayload: payload,
+      commandLabel: telemetryLabel ?? 'git.apply',
+    );
     if (r.exitCode != 0) {
       final stderrText = r.stderr.toString().trim();
       return GitResult.err(
-          stderrText.isEmpty ? 'git apply exit ${r.exitCode}' : stderrText);
+        stderrText.isEmpty ? 'git apply exit ${r.exitCode}' : stderrText,
+      );
     }
     return const GitResult.ok(null);
   } catch (e) {
@@ -4953,7 +5884,15 @@ Future<GitResult<void>> applyPatch(
 /// Atomic per-file partial staging: resets the index entry for the file to
 /// HEAD, then applies the user's partial patch — so the index reflects
 /// exactly the set of lines the user has marked staged in the UI.
-/// Reset failures are ignored (untracked files have no HEAD entry).
+///
+/// The reset result is checked, not ignored: `git reset -q HEAD -- <path>`
+/// exits 0 for every benign shape (untracked path with no HEAD entry, unborn
+/// HEAD — both verified empirically), so ANY nonzero exit means the reset
+/// never landed (index.lock exhaustion, index write failure, ...). Applying
+/// on top of an un-reset entry would target a stale preimage and fail with a
+/// misleading "patch does not apply" — or worse, stack onto the wrong
+/// content — so the real reset error is surfaced instead.
+///
 /// An empty patch ends with the file fully unstaged — which is the
 /// correct outcome when the user has deselected every line.
 Future<GitResult<void>> applyFileStaging(
@@ -4961,7 +5900,13 @@ Future<GitResult<void>> applyFileStaging(
   String filePath,
   String patch,
 ) async {
-  await _git(repo, ['reset', '-q', 'HEAD', '--', filePath]);
+  final reset = await _git(repo, ['reset', '-q', 'HEAD', '--', filePath]);
+  if (reset.exitCode != 0) {
+    final stderrText = reset.stderr.toString().trim();
+    return GitResult.err(
+      stderrText.isEmpty ? 'git reset exit ${reset.exitCode}' : stderrText,
+    );
+  }
   if (patch.trim().isEmpty) return const GitResult.ok(null);
   return applyPatch(repo, patch, cached: true);
 }
@@ -5025,16 +5970,16 @@ class CommitAttemptResult {
     this.committedPaths = const {},
     this.hookTouchedPaths = const {},
     this.reconcileWarning,
-  })  : error = null,
-        hookReplayWarning = null;
+  }) : error = null,
+       hookReplayWarning = null;
 
   const CommitAttemptResult.err(
     String this.error, {
     this.hookTouchedPaths = const {},
     this.hookReplayWarning,
-  })  : data = null,
-        committedPaths = const {},
-        reconcileWarning = null;
+  }) : data = null,
+       committedPaths = const {},
+       reconcileWarning = null;
 }
 
 /// Create a commit. When [amend] is true, an empty [message] is
@@ -5090,10 +6035,13 @@ class CommitAttemptResult {
 /// stale pre-commit capture from overwriting work the hook did after that
 /// capture was taken, without ever skipping a restore for a path whose
 /// hook version didn't actually make it back.
-Future<CommitAttemptResult> createCommit(String repo, String message,
-    {bool amend = false,
-    bool signoff = false,
-    CommitStagingPlan? plan}) async {
+Future<CommitAttemptResult> createCommit(
+  String repo,
+  String message, {
+  bool amend = false,
+  bool signoff = false,
+  CommitStagingPlan? plan,
+}) async {
   final indexFile = plan?.snapshotIndexPath;
   final snapshotEntries = plan?.snapshotEntries;
   final args = ['commit'];
@@ -5137,8 +6085,9 @@ Future<CommitAttemptResult> createCommit(String repo, String message,
   //     The old single-rev form emits nothing at all for a rootless
   //     `diff-tree HEAD`, so the live index was never reconciled after a
   //     repo's first commit.
-  final oldTip =
-      indexFile == null ? null : await _revParseVerifyQuiet(repo, 'HEAD');
+  final oldTip = indexFile == null
+      ? null
+      : await _revParseVerifyQuiet(repo, 'HEAD');
   final r = indexFile == null
       ? await _git(repo, args)
       : await _gitRaw(repo, args, env: {'GIT_INDEX_FILE': indexFile});
@@ -5153,8 +6102,11 @@ Future<CommitAttemptResult> createCommit(String repo, String message,
       // any hook-touched path is already inside committedPaths, since a
       // hook stages into the very index that then gets committed.
       if (snapshotEntries != null) {
-        hookTouchedPaths =
-            await _hookIndexDelta(repo, indexFile, snapshotEntries);
+        hookTouchedPaths = await _hookIndexDelta(
+          repo,
+          indexFile,
+          snapshotEntries,
+        );
       }
       // oldTip is null exactly on an unborn-HEAD (root) commit; fall back
       // to the empty-tree oid so the diff still has a base. If BOTH the
@@ -5164,35 +6116,44 @@ Future<CommitAttemptResult> createCommit(String repo, String message,
       // same outward shape as any other reconcile short-circuit.
       final diffBase = oldTip ?? await _emptyTreeOid(repo);
       if (diffBase != null) {
-        final reconciled =
-            await _reconcileLiveIndexAfterSnapshotCommit(repo, diffBase);
+        final reconciled = await _reconcileLiveIndexAfterSnapshotCommit(
+          repo,
+          diffBase,
+        );
         committedPaths = reconciled.paths;
         reconcileWarning = reconciled.warning;
       }
     } else if (snapshotEntries != null) {
-      final replayed =
-          await _replayHookIndexMutations(repo, indexFile, snapshotEntries);
+      final replayed = await _replayHookIndexMutations(
+        repo,
+        indexFile,
+        snapshotEntries,
+      );
       hookTouchedPaths = replayed.paths;
       hookReplayWarning = replayed.warning;
     }
     await _deleteQuietly(indexFile);
   }
   if (r.exitCode != 0) {
-    return CommitAttemptResult.err(r.stderr.toString().trim(),
-        hookTouchedPaths: hookTouchedPaths,
-        hookReplayWarning: hookReplayWarning);
+    return CommitAttemptResult.err(
+      r.stderr.toString().trim(),
+      hookTouchedPaths: hookTouchedPaths,
+      hookReplayWarning: hookReplayWarning,
+    );
   }
   // Parse: "[branch abc1234] Subject line"
   final out = r.stdout.toString();
   final match = RegExp(r'\[(?:[^\s]+)\s+([a-f0-9]+)\]\s*(.+)').firstMatch(out);
   final hash = match?.group(1) ?? '';
-  final summary = match?.group(2)?.trim() ??
+  final summary =
+      match?.group(2)?.trim() ??
       (message.isEmpty ? '(amend)' : message.split('\n').first);
   return CommitAttemptResult.ok(
-      CommitData(repositoryPath: repo, commitHash: hash, summary: summary),
-      committedPaths: committedPaths,
-      hookTouchedPaths: hookTouchedPaths,
-      reconcileWarning: reconcileWarning);
+    CommitData(repositoryPath: repo, commitHash: hash, summary: summary),
+    committedPaths: committedPaths,
+    hookTouchedPaths: hookTouchedPaths,
+    reconcileWarning: reconcileWarning,
+  );
 }
 
 /// After a snapshot-backed commit succeeds, bring the live `.git/index`
@@ -5237,7 +6198,7 @@ Future<CommitAttemptResult> createCommit(String repo, String message,
 /// when HEAD no longer has it (a committed deletion) — no special-casing
 /// needed for adds, edits, or deletes.
 Future<({Set<String> paths, String? warning})>
-    _reconcileLiveIndexAfterSnapshotCommit(String repo, String base) async {
+_reconcileLiveIndexAfterSnapshotCommit(String repo, String base) async {
   final touched = await _git(repo, [
     'diff-tree',
     '--no-commit-id',
@@ -5245,7 +6206,7 @@ Future<({Set<String> paths, String? warning})>
     '-z',
     '-r',
     base,
-    'HEAD'
+    'HEAD',
   ]);
   if (touched.exitCode != 0) return (paths: const <String>{}, warning: null);
   final paths = touched.stdout
@@ -5263,14 +6224,21 @@ Future<({Set<String> paths, String? warning})>
   // desyncing the very live index this helper exists to reconcile. The
   // `diff-tree` above only EMITS paths, never matching them against a
   // pathspec, so it needs no such flag.
-  final reset = await _git(
-      repo, ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...paths]);
+  final reset = await _git(repo, [
+    '--literal-pathspecs',
+    'reset',
+    '-q',
+    'HEAD',
+    '--',
+    ...paths,
+  ]);
   if (reset.exitCode != 0) {
     final shown = paths.take(5).join(', ');
     final more = paths.length > 5 ? ', +${paths.length - 5} more' : '';
     return (
       paths: paths,
-      warning: 'Commit landed, but the live index could not be reconciled '
+      warning:
+          'Commit landed, but the live index could not be reconciled '
           'for $shown$more (may still show as staged with stale content '
           'until the next refresh): ${reset.stderr.toString().trim()}',
     );
@@ -5356,8 +6324,7 @@ Future<({Set<String> paths, String? warning})> _replayHookIndexMutations(
         ..add('${parts[0]},${parts[1]},${e.key}');
     }
   }
-  final removals =
-      frozen.keys.where((path) => !now.containsKey(path)).toList();
+  final removals = frozen.keys.where((path) => !now.containsKey(path)).toList();
 
   final touched = <String>{};
   final failures = <String>[];
@@ -5368,14 +6335,19 @@ Future<({Set<String> paths, String? warning})> _replayHookIndexMutations(
       touched.addAll(addedOrChanged);
     } else {
       final shown = addedOrChanged.take(5).join(', ');
-      final more =
-          addedOrChanged.length > 5 ? ', +${addedOrChanged.length - 5} more' : '';
+      final more = addedOrChanged.length > 5
+          ? ', +${addedOrChanged.length - 5} more'
+          : '';
       failures.add('staged content for $shown$more');
     }
   }
   if (removals.isNotEmpty) {
-    final r =
-        await _git(repo, ['update-index', '--force-remove', '--', ...removals]);
+    final r = await _git(repo, [
+      'update-index',
+      '--force-remove',
+      '--',
+      ...removals,
+    ]);
     if (r.exitCode == 0) {
       touched.addAll(removals);
     } else {
@@ -5388,23 +6360,32 @@ Future<({Set<String> paths, String? warning})> _replayHookIndexMutations(
   if (failures.isEmpty) return (paths: touched, warning: null);
   return (
     paths: touched,
-    warning: 'The pre-commit hook modified the index, but replaying that '
+    warning:
+        'The pre-commit hook modified the index, but replaying that '
         'onto the live index after the rejected commit did not fully land '
         '(${failures.join('; ')}); the older pre-commit staged version was '
         'kept for those paths instead.',
   );
 }
 
-Future<GitResult<SyncData>> fetchRemote(String repo,
-    {String? remote, bool prune = false}) async {
+Future<GitResult<SyncData>> fetchRemote(
+  String repo, {
+  String? remote,
+  bool prune = false,
+}) async {
   final r = remote ?? 'origin';
   final args = ['fetch', if (prune) '--prune', r];
   final result = await _git(repo, args);
   if (result.exitCode != 0) {
     return GitResult.err(result.stderr.toString().trim());
   }
-  return GitResult.ok(SyncData(
-      operation: 'fetch', remote: r, output: result.stdout.toString().trim()));
+  return GitResult.ok(
+    SyncData(
+      operation: 'fetch',
+      remote: r,
+      output: result.stdout.toString().trim(),
+    ),
+  );
 }
 
 // NOTE: the raw `git pull`/`git sync` helpers were deleted with the
@@ -5466,11 +6447,16 @@ Future<String?> _emptyTreeOid(String repo) async {
   if (gitDirRes.exitCode != 0) return null;
   final gitDir = gitDirRes.stdout.toString().trim();
   if (gitDir.isEmpty) return null;
-  final scratchIndex = p.join(gitDir,
-      'manifold-empty-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}');
+  final scratchIndex = p.join(
+    gitDir,
+    'manifold-empty-index-${DateTime.now().microsecondsSinceEpoch}-${_commitIndexSnapshotCounter++}',
+  );
   try {
-    final r = await _git(repo, ['write-tree'],
-        extraEnv: {'GIT_INDEX_FILE': scratchIndex});
+    final r = await _git(
+      repo,
+      ['write-tree'],
+      extraEnv: {'GIT_INDEX_FILE': scratchIndex},
+    );
     if (r.exitCode != 0) return null;
     final oid = (r.stdout as String).trim();
     return oid.isEmpty ? null : oid;
@@ -5486,8 +6472,12 @@ Future<bool> _isAncestor(String repo, String a, String b) async {
 
 /// The upstream ref the active branch tracks (`origin/main`), or null.
 Future<String?> _upstreamRef(String repo) async {
-  final r = await _git(
-      repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  final r = await _git(repo, [
+    'rev-parse',
+    '--abbrev-ref',
+    '--symbolic-full-name',
+    '@{u}',
+  ]);
   if (r.exitCode != 0) return null;
   final s = (r.stdout as String).trim();
   return s.isEmpty ? null : s;
@@ -5519,10 +6509,12 @@ Future<String?> _currentBranchName(String repo) async {
   return s.isEmpty ? null : s;
 }
 
-
 /// Paths the incoming tip changed relative to [base] — the merge's set.
 Future<List<String>> _incomingPaths(
-    String repo, String base, String theirs) async {
+  String repo,
+  String base,
+  String theirs,
+) async {
   final r = await _git(repo, ['diff', '--name-only', '$base..$theirs']);
   if (r.exitCode != 0) return const [];
   return (r.stdout as String)
@@ -5537,7 +6529,8 @@ Future<List<String>> _incomingPaths(
 /// overlap an incoming add) and `tracked` (excludes untracked — the set a
 /// `git rebase` refuses to run over). One `git status` parse for both.
 Future<({Set<String> all, Set<String> tracked})> _modifiedPaths(
-    String repo) async {
+  String repo,
+) async {
   final all = <String>{};
   final tracked = <String>{};
   final r = await _git(repo, ['status', '--porcelain']);
@@ -5577,8 +6570,11 @@ Future<List<String>> _stagedPaths(String repo) async {
 /// would do without touching the working tree. The returned [MergePrep]
 /// tells the flow layer whether to take the clean-tree native path or the
 /// dirty `merge-file` reconcile, and which topology to record.
-Future<MergePrep> prepareMergePull(String repo,
-    {String? remote, bool rebase = false}) async {
+Future<MergePrep> prepareMergePull(
+  String repo, {
+  String? remote,
+  bool rebase = false,
+}) async {
   final upstream = await _upstreamRef(repo);
   final r = remote ?? _remoteOf(upstream) ?? 'origin';
   final fetch = await _git(repo, ['fetch', r]);
@@ -5586,8 +6582,7 @@ Future<MergePrep> prepareMergePull(String repo,
     return MergePrep.failed((fetch.stderr as String).trim());
   }
   if (upstream == null) {
-    return const MergePrep.failed(
-        'No upstream is configured for this branch.');
+    return const MergePrep.failed('No upstream is configured for this branch.');
   }
   final theirs = await _revParse(repo, upstream);
   final head = await _revParse(repo, 'HEAD');
@@ -5638,10 +6633,13 @@ Future<MergeOutcome> runNativeMerge(String repo, MergePrep prep) async {
       : ['merge', '--no-edit', prep.incomingRef];
   final r = await _git(repo, args);
   if (r.exitCode == 0) {
-    return MergeClean(SyncData(
+    return MergeClean(
+      SyncData(
         operation: 'pull',
         remote: prep.remote,
-        output: (r.stdout as String).trim()));
+        output: (r.stdout as String).trim(),
+      ),
+    );
   }
   final conflicted = await _conflictedPaths(repo);
   if (conflicted.isNotEmpty) return MergeConflicted(conflicted);
@@ -5673,9 +6671,11 @@ Future<List<int>?> _blobBytes(String repo, String rev, String path) async {
   // escaping the semaphore the way the bare _spawnRunRaw call used to.
   await _gitSubprocessSemaphore.acquire();
   try {
-    final r = await _spawnRunRaw(['show', '$rev:$path'],
-        workingDirectory: repo,
-        environment: _kNonInteractiveGitEnv);
+    final r = await _spawnRunRaw(
+      ['show', '$rev:$path'],
+      workingDirectory: repo,
+      environment: _kNonInteractiveGitEnv,
+    );
     if (r.exitCode != 0) return null;
     return r.stdout as List<int>;
   } catch (_) {
@@ -5728,14 +6728,17 @@ String? _decodeUtf8OrNull(List<int>? bytes) {
 /// UTF-8 `readAsString` crash and the lossy String round-trip that would
 /// corrupt the file.
 Future<List<ReconciledFile>> reconcileDirtyMerge(
-    String repo, MergePrep prep) async {
+  String repo,
+  MergePrep prep,
+) async {
   final out = <ReconciledFile>[];
   final tmp = await Directory.systemTemp.createTemp('manifold-merge');
   try {
     for (final path in prep.incomingPaths) {
       final oursFile = File(_absPath(repo, path));
-      final oursBytes =
-          await oursFile.exists() ? await oursFile.readAsBytes() : null;
+      final oursBytes = await oursFile.exists()
+          ? await oursFile.readAsBytes()
+          : null;
       final baseBytes = await _blobBytes(repo, prep.baseRef, path);
       final theirsBytes = await _blobBytes(repo, prep.incomingRef, path);
 
@@ -5747,11 +6750,13 @@ Future<List<ReconciledFile>> reconcileDirtyMerge(
       // the binary path. Otherwise the empty-string substitution below
       // (`ours ?? ''` etc.) would feed merge-file blank content and silently
       // corrupt or drop a non-UTF-8 file that happens to carry no NUL byte.
-      final undecodable = (oursBytes != null && ours == null) ||
+      final undecodable =
+          (oursBytes != null && ours == null) ||
           (baseBytes != null && base == null) ||
           (theirsBytes != null && theirs == null);
 
-      final isBinary = undecodable ||
+      final isBinary =
+          undecodable ||
           _looksBinary(oursBytes) ||
           _looksBinary(baseBytes) ||
           _looksBinary(theirsBytes);
@@ -5761,24 +6766,36 @@ Future<List<ReconciledFile>> reconcileDirtyMerge(
             oursBytes == null || _bytesEqual(oursBytes, baseBytes);
         if (theirsBytes == null) {
           // theirs deleted a binary.
-          out.add(ReconciledFile(
+          out.add(
+            ReconciledFile(
               path: path,
               mergedText: '',
               conflicted: !oursUnchanged,
               deleted: oursUnchanged,
-              binary: true));
+              binary: true,
+            ),
+          );
         } else if (oursUnchanged) {
           // Clean update / pure add — take theirs as raw bytes.
-          out.add(ReconciledFile(
+          out.add(
+            ReconciledFile(
               path: path,
               mergedText: '',
               conflicted: false,
               binary: true,
-              binaryBytes: theirsBytes));
+              binaryBytes: theirsBytes,
+            ),
+          );
         } else {
           // Both sides changed a binary — unresolvable in-app; caller blocks.
-          out.add(ReconciledFile(
-              path: path, mergedText: '', conflicted: true, binary: true));
+          out.add(
+            ReconciledFile(
+              path: path,
+              mergedText: '',
+              conflicted: true,
+              binary: true,
+            ),
+          );
         }
         continue;
       }
@@ -5788,21 +6805,34 @@ Future<List<ReconciledFile>> reconcileDirtyMerge(
       // theirs removed the file.
       if (theirsBytes == null) {
         if (oursBytes == null || ours == base) {
-          out.add(ReconciledFile(
-              path: path, mergedText: '', conflicted: false, deleted: true));
+          out.add(
+            ReconciledFile(
+              path: path,
+              mergedText: '',
+              conflicted: false,
+              deleted: true,
+            ),
+          );
         } else {
           // modify/delete — surface as a conflict (ours vs an empty theirs).
-          final marker = '<<<<<<< ${prep.oursLabel}\n$ours\n'
+          final marker =
+              '<<<<<<< ${prep.oursLabel}\n$ours\n'
               '=======\n>>>>>>> ${prep.theirsLabel} (deleted)\n';
-          out.add(ReconciledFile(
-              path: path, mergedText: marker, conflicted: true));
+          out.add(
+            ReconciledFile(path: path, mergedText: marker, conflicted: true),
+          );
         }
         continue;
       }
       // Pure add by theirs with no local copy — take it as-is.
       if (baseBytes == null && oursBytes == null) {
-        out.add(ReconciledFile(
-            path: path, mergedText: theirs ?? '', conflicted: false));
+        out.add(
+          ReconciledFile(
+            path: path,
+            mergedText: theirs ?? '',
+            conflicted: false,
+          ),
+        );
         continue;
       }
       final res = await _mergeFile(
@@ -5814,8 +6844,9 @@ Future<List<ReconciledFile>> reconcileDirtyMerge(
         oursLabel: prep.oursLabel,
         theirsLabel: prep.theirsLabel,
       );
-      out.add(ReconciledFile(
-          path: path, mergedText: res.$1, conflicted: res.$2));
+      out.add(
+        ReconciledFile(path: path, mergedText: res.$1, conflicted: res.$2),
+      );
     }
   } finally {
     try {
@@ -5847,9 +6878,12 @@ Future<(String, bool)> _mergeFile(
     'merge-file',
     '-p',
     '--diff3',
-    '-L', oursLabel,
-    '-L', 'base',
-    '-L', theirsLabel,
+    '-L',
+    oursLabel,
+    '-L',
+    'base',
+    '-L',
+    theirsLabel,
     oursTmp.path,
     baseTmp.path,
     theirsTmp.path,
@@ -5885,9 +6919,9 @@ Future<GitResult<void>> finalizeReconciledMerge(
     originalWt[f.path] = await abs.exists() ? await abs.readAsBytes() : null;
   }
   final incomingSet = prep.incomingPaths.toSet();
-  final unrelatedStaged = (await _stagedPaths(repo))
-      .where((p) => !incomingSet.contains(p))
-      .toList();
+  final unrelatedStaged = (await _stagedPaths(
+    repo,
+  )).where((p) => !incomingSet.contains(p)).toList();
   final stagedSnapshot = await snapshotIndexEntries(repo, unrelatedStaged);
 
   // Undo every finalize mutation (working-tree writes, any half-written merge
@@ -5959,8 +6993,12 @@ Future<GitResult<void>> finalizeReconciledMerge(
       }
       final wrote = await _writeMergeHead(repo, prep.incomingRef);
       if (wrote != null) return rollback(wrote);
-      final commit = await _git(
-          repo, ['commit', '--no-edit', '-m', 'Merge ${prep.theirsLabel}']);
+      final commit = await _git(repo, [
+        'commit',
+        '--no-edit',
+        '-m',
+        'Merge ${prep.theirsLabel}',
+      ]);
       if (commit.exitCode != 0) {
         return rollback(commit.stderr.toString().trim());
       }
@@ -5970,8 +7008,9 @@ Future<GitResult<void>> finalizeReconciledMerge(
 
     default:
       return const GitResult.err(
-          'Rebase pulls into a dirty tree are not reconciled in place — '
-          'commit your changes first.');
+        'Rebase pulls into a dirty tree are not reconciled in place — '
+        'commit your changes first.',
+      );
   }
 }
 
@@ -5996,7 +7035,9 @@ final Map<String, ProcessResult> _repoGeometryCache = {};
 /// above. Only exit-zero results are cached; a failure re-spawns each time so
 /// the caller's error branch sees the real stderr rather than a stale success.
 Future<ProcessResult> _revParseGeometry(
-    String repo, List<String> revParseArgs) async {
+  String repo,
+  List<String> revParseArgs,
+) async {
   final key = _gitDedupKey(repo, revParseArgs);
   final cached = _repoGeometryCache[key];
   if (cached != null) return cached;
@@ -6010,8 +7051,9 @@ Future<ProcessResult> _revParseGeometry(
 /// from a fresh spawn.
 @visibleForTesting
 Future<ProcessResult> revParseGeometryForTesting(
-        String repo, List<String> revParseArgs) =>
-    _revParseGeometry(repo, revParseArgs);
+  String repo,
+  List<String> revParseArgs,
+) => _revParseGeometry(repo, revParseArgs);
 
 /// Drops all memoized geometry so one test can't leak a cached path into the
 /// next (temp repos are recreated per test with fresh paths, but this keeps
@@ -6032,8 +7074,7 @@ Future<String?> _writeMergeHead(String repo, String incomingRef) async {
   final base = isAbsolute ? gitDir : p.join(repo, gitDir);
   try {
     await File(p.join(base, 'MERGE_HEAD')).writeAsString('$incomingRef\n');
-    await File(p.join(base, 'MERGE_MSG'))
-        .writeAsString('Merge commit\n');
+    await File(p.join(base, 'MERGE_MSG')).writeAsString('Merge commit\n');
     return null;
   } catch (e) {
     return 'Could not write MERGE_HEAD: $e';
@@ -6045,7 +7086,9 @@ Future<String?> _writeMergeHead(String repo, String incomingRef) async {
 /// staging side-effect fully reversible — so a rolled-back operation leaves
 /// the index exactly as it was, not just the working tree.
 Future<Map<String, String?>> snapshotIndexEntries(
-    String repo, List<String> paths) async {
+  String repo,
+  List<String> paths,
+) async {
   final out = <String, String?>{for (final p in paths) p: null};
   if (paths.isEmpty) return out;
   final r = await _git(repo, ['ls-files', '--stage', '--', ...paths]);
@@ -6062,7 +7105,9 @@ Future<Map<String, String?>> snapshotIndexEntries(
 /// Restores index entries captured by [snapshotIndexEntries]: re-stages the
 /// original blob, or force-removes the entry when the path wasn't indexed.
 Future<void> restoreIndexEntries(
-    String repo, Map<String, String?> snapshot) async {
+  String repo,
+  Map<String, String?> snapshot,
+) async {
   for (final entry in snapshot.entries) {
     final meta = entry.value;
     if (meta == null) {
@@ -6071,8 +7116,11 @@ Future<void> restoreIndexEntries(
       // meta = "<mode> <oid> <stage>"
       final parts = meta.split(RegExp(r'\s+'));
       if (parts.length >= 2) {
-        await _git(repo,
-            ['update-index', '--cacheinfo', '${parts[0]},${parts[1]},${entry.key}']);
+        await _git(repo, [
+          'update-index',
+          '--cacheinfo',
+          '${parts[0]},${parts[1]},${entry.key}',
+        ]);
       }
     }
   }
@@ -6105,8 +7153,11 @@ Future<GitResult<void>> commitResolvedMerge(String repo) async {
 
 /// True while a rebase is paused (mid-`pull --rebase` conflict resolution).
 Future<bool> isRebaseInProgress(String repo) async {
-  final dir =
-      await _revParseGeometry(repo, ['rev-parse', '--git-path', 'rebase-merge']);
+  final dir = await _revParseGeometry(repo, [
+    'rev-parse',
+    '--git-path',
+    'rebase-merge',
+  ]);
   if (dir.exitCode == 0) {
     final pathMerge = (dir.stdout as String).trim();
     if (pathMerge.isNotEmpty &&
@@ -6114,8 +7165,11 @@ Future<bool> isRebaseInProgress(String repo) async {
       return true;
     }
   }
-  final apply =
-      await _revParseGeometry(repo, ['rev-parse', '--git-path', 'rebase-apply']);
+  final apply = await _revParseGeometry(repo, [
+    'rev-parse',
+    '--git-path',
+    'rebase-apply',
+  ]);
   if (apply.exitCode == 0) {
     final pathApply = (apply.stdout as String).trim();
     if (pathApply.isNotEmpty &&
@@ -6159,17 +7213,22 @@ Future<String?> inProgressOperation(String repo) async {
 /// that ruled out a `core.editor` override for cherry-pick/revert, which have
 /// the `git commit --no-edit` alternative this multi-step flow lacks).
 Future<GitResult<void>> continueRebase(String repo) async {
-  final r = await _git(repo, ['rebase', '--continue'],
-      extraEnv: const {'GIT_EDITOR': 'true'});
+  final r = await _git(
+    repo,
+    ['rebase', '--continue'],
+    extraEnv: const {'GIT_EDITOR': 'true'},
+  );
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
-Future<GitResult<SyncData>> pushRemote(String repo,
-    {String? remote,
-    String? branch,
-    bool setUpstream = false,
-    bool forceWithLease = false}) async {
+Future<GitResult<SyncData>> pushRemote(
+  String repo, {
+  String? remote,
+  String? branch,
+  bool setUpstream = false,
+  bool forceWithLease = false,
+}) async {
   final r = remote ?? 'origin';
   // Canonical arg order: subcommand → flags → positional refspec.
   // Modern git is permissive about flags after positional args, but
@@ -6188,8 +7247,13 @@ Future<GitResult<SyncData>> pushRemote(String repo,
   if (result.exitCode != 0) {
     return GitResult.err(result.stderr.toString().trim());
   }
-  return GitResult.ok(SyncData(
-      operation: 'push', remote: r, output: result.stdout.toString().trim()));
+  return GitResult.ok(
+    SyncData(
+      operation: 'push',
+      remote: r,
+      output: result.stdout.toString().trim(),
+    ),
+  );
 }
 
 // The legacy raw-`git pull` and smart-sync helper functions were removed with
@@ -6200,10 +7264,16 @@ Future<GitResult<SyncData>> pushRemote(String repo,
 // the grep-based removal verifier doesn't read this note as a live use.)
 
 Future<GitResult<String>> archiveRepository(
-    String repoPath, String outputPath) async {
+  String repoPath,
+  String outputPath,
+) async {
   try {
-    final r = await _git(
-        repoPath, ['archive', '--format=zip', '--output=$outputPath', 'HEAD']);
+    final r = await _git(repoPath, [
+      'archive',
+      '--format=zip',
+      '--output=$outputPath',
+      'HEAD',
+    ]);
     if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
     return GitResult.ok(outputPath);
   } catch (error) {
@@ -6212,14 +7282,21 @@ Future<GitResult<String>> archiveRepository(
 }
 
 Future<GitResult<String>> templateFromRepository(
-    String sourceRepo, String targetPath) async {
+  String sourceRepo,
+  String targetPath,
+) async {
   try {
     final dir = Directory(targetPath);
     if (await dir.exists()) {
       return const GitResult.err('Target directory already exists.');
     }
-    final clone =
-        await _git(sourceRepo, ['clone', '--depth', '1', sourceRepo, targetPath]);
+    final clone = await _git(sourceRepo, [
+      'clone',
+      '--depth',
+      '1',
+      sourceRepo,
+      targetPath,
+    ]);
     if (clone.exitCode != 0) {
       return GitResult.err(clone.stderr.toString().trim());
     }
@@ -6251,8 +7328,8 @@ String _gitStepError(String action, ProcessResult result) {
   final detail = stderr.isNotEmpty
       ? stderr
       : stdout.isNotEmpty
-          ? stdout
-          : 'git exited with code ${result.exitCode}';
+      ? stdout
+      : 'git exited with code ${result.exitCode}';
   return 'Failed to $action: $detail';
 }
 
@@ -6359,7 +7436,9 @@ Future<GitResult<String>> initRepository(String path) async {
 const Duration _kInteractiveRebaseTimeout = Duration(seconds: 120);
 
 Future<GitResult<void>> startInteractiveRebase(
-    String repo, List<RebaseTodoEntry> entries) async {
+  String repo,
+  List<RebaseTodoEntry> entries,
+) async {
   // Build the todo list content
   final todo = interactiveRebaseTodoForTesting(entries);
 
@@ -6375,13 +7454,13 @@ Future<GitResult<void>> startInteractiveRebase(
     '${Platform.isWindows ? '.cmd' : '.sh'}',
   );
   if (Platform.isWindows) {
-    await editorScript.writeAsString(windowsSequenceEditorScriptForTesting(
-      tmpFile.path,
-    ));
+    await editorScript.writeAsString(
+      windowsSequenceEditorScriptForTesting(tmpFile.path),
+    );
   } else {
-    await editorScript.writeAsString(unixSequenceEditorScriptForTesting(
-      tmpFile.path,
-    ));
+    await editorScript.writeAsString(
+      unixSequenceEditorScriptForTesting(tmpFile.path),
+    );
   }
   final sequenceEditor = Platform.isWindows
       ? windowsSequenceEditorCommandForTesting(editorScript.path)
@@ -6413,10 +7492,14 @@ Future<GitResult<void>> startInteractiveRebase(
     // a .cmd/.sh sequence-editor wrapper plus a git child, so bind the tree to
     // the kill-on-close job object rather than relying on killProcessTree alone.
     WinJobObject.assignProcess(proc.pid);
-    final stdoutBytes =
-        proc.stdout.fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d));
-    final stderrBytes =
-        proc.stderr.fold<BytesBuilder>(BytesBuilder(), (b, d) => b..add(d));
+    final stdoutBytes = proc.stdout.fold<BytesBuilder>(
+      BytesBuilder(),
+      (b, d) => b..add(d),
+    );
+    final stderrBytes = proc.stderr.fold<BytesBuilder>(
+      BytesBuilder(),
+      (b, d) => b..add(d),
+    );
     int exitCode;
     try {
       exitCode = await proc.exitCode.timeout(_kInteractiveRebaseTimeout);
@@ -6506,24 +7589,31 @@ Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
     final index = indexMatch != null
         ? int.tryParse(indexMatch.group(1)!) ?? 0
         : entries.length;
-    entries.add(StashEntryData(
-      index: index,
-      hash: parts[1],
-      createdAt: parts[2],
-      message: parts[3],
-    ));
+    entries.add(
+      StashEntryData(
+        index: index,
+        hash: parts[1],
+        createdAt: parts[2],
+        message: parts[3],
+      ),
+    );
   }
   // Enrich with file counts (fast — only stat, no diff content).
   for (var i = 0; i < entries.length && i < 20; i++) {
-    final stat = await _git(
-        repo, ['stash', 'show', '--stat', 'stash@{${entries[i].index}}']);
+    final stat = await _git(repo, [
+      'stash',
+      'show',
+      '--stat',
+      'stash@{${entries[i].index}}',
+    ]);
     if (stat.exitCode == 0) {
       final statLines = stat.stdout.toString().trim().split('\n');
       // Last line of --stat is the summary: " 3 files changed, ..."
       final summary = statLines.isNotEmpty ? statLines.last : '';
       final countMatch = RegExp(r'(\d+) files? changed').firstMatch(summary);
-      final count =
-          countMatch != null ? int.tryParse(countMatch.group(1)!) ?? 0 : 0;
+      final count = countMatch != null
+          ? int.tryParse(countMatch.group(1)!) ?? 0
+          : 0;
       entries[i] = StashEntryData(
         index: entries[i].index,
         hash: entries[i].hash,
@@ -6609,7 +7699,16 @@ Future<GitResult<void>> stashDropByHash(String repo, String hash) async {
 }
 
 Future<GitResult<String>> stashShow(String repo, {int index = 0}) async {
-  final r = await _git(repo, ['stash', 'show', '-p', 'stash@{$index}']);
+  // `-c diff.binary=false`: same immunity as [_kDiffCmd] — `-p` output is a
+  // textual patch body and must never inline a binary payload.
+  final r = await _git(repo, [
+    '-c',
+    'diff.binary=false',
+    'stash',
+    'show',
+    '-p',
+    'stash@{$index}',
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
 }
@@ -6625,8 +7724,13 @@ Future<GitResult<List<StashFileStat>>> stashFiles(
   // for `stash show`, which renders a renamed entry as the single bogus path
   // `old => new`. Pinning no-renames makes that shape unrepresentable — a
   // rename splits into a clean delete+add pair instead.
-  final r = await _git(
-      repo, ['stash', 'show', '--numstat', '--no-renames', 'stash@{$index}']);
+  final r = await _git(repo, [
+    'stash',
+    'show',
+    '--numstat',
+    '--no-renames',
+    'stash@{$index}',
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   final out = <StashFileStat>[];
   for (final raw in r.stdout.toString().split('\n')) {
@@ -6639,12 +7743,14 @@ Future<GitResult<List<StashFileStat>>> stashFiles(
     final path = parts.sublist(2).join('\t').trim();
     if (path.isEmpty) continue;
     final binary = addsRaw == '-' || delsRaw == '-';
-    out.add(StashFileStat(
-      path: path,
-      adds: binary ? 0 : (int.tryParse(addsRaw) ?? 0),
-      dels: binary ? 0 : (int.tryParse(delsRaw) ?? 0),
-      binary: binary,
-    ));
+    out.add(
+      StashFileStat(
+        path: path,
+        adds: binary ? 0 : (int.tryParse(addsRaw) ?? 0),
+        dels: binary ? 0 : (int.tryParse(delsRaw) ?? 0),
+        binary: binary,
+      ),
+    );
   }
   return GitResult.ok(out);
 }
@@ -6665,15 +7771,17 @@ Future<GitResult<List<WorktreeData>>> listWorktrees(String repo) async {
 
   void flush() {
     if (curPath == null) return;
-    worktrees.add(WorktreeData(
-      path: curPath!,
-      head: curHead ?? '',
-      branch: curBranch,
-      // First entry from `worktree list` is always the main repo.
-      isMain: worktrees.isEmpty,
-      isDetached: curDetached,
-      isLocked: curLocked,
-    ));
+    worktrees.add(
+      WorktreeData(
+        path: curPath!,
+        head: curHead ?? '',
+        branch: curBranch,
+        // First entry from `worktree list` is always the main repo.
+        isMain: worktrees.isEmpty,
+        isDetached: curDetached,
+        isLocked: curLocked,
+      ),
+    );
     curPath = null;
     curHead = null;
     curBranch = null;
@@ -6707,19 +7815,21 @@ Future<GitResult<List<WorktreeData>>> listWorktrees(String repo) async {
   // Enrich with dirty-file counts per worktree in parallel — each probe
   // is its own `git status` process, so running them concurrently keeps
   // latency flat as desk count grows.
-  final statusResults = await Future.wait(worktrees.map((wt) async {
-    try {
-      final s = await _git(wt.path, ['status', '--porcelain']);
-      if (s.exitCode != 0) return 0;
-      return s.stdout
-          .toString()
-          .split('\n')
-          .where((l) => l.trim().isNotEmpty)
-          .length;
-    } catch (_) {
-      return 0;
-    }
-  }));
+  final statusResults = await Future.wait(
+    worktrees.map((wt) async {
+      try {
+        final s = await _git(wt.path, ['status', '--porcelain']);
+        if (s.exitCode != 0) return 0;
+        return s.stdout
+            .toString()
+            .split('\n')
+            .where((l) => l.trim().isNotEmpty)
+            .length;
+      } catch (_) {
+        return 0;
+      }
+    }),
+  );
   for (var i = 0; i < worktrees.length; i++) {
     final wt = worktrees[i];
     worktrees[i] = WorktreeData(
@@ -6745,14 +7855,17 @@ Future<void> ensureManifoldExcluded(String repo) async {
     // Routed through the geometry memo (and the shared exec layer, so it
     // inherits the non-interactive env + semaphore) — the common-dir is
     // static for this repo path.
-    final gitDirResult =
-        await _revParseGeometry(repo, ['rev-parse', '--git-common-dir']);
+    final gitDirResult = await _revParseGeometry(repo, [
+      'rev-parse',
+      '--git-common-dir',
+    ]);
     if (gitDirResult.exitCode == 0) {
       final gitDir = (gitDirResult.stdout as String).trim();
       final absGitDir = p.isAbsolute(gitDir) ? gitDir : p.join(repo, gitDir);
       final excludeFile = File(p.join(absGitDir, 'info', 'exclude'));
-      final existing =
-          await excludeFile.exists() ? await excludeFile.readAsString() : '';
+      final existing = await excludeFile.exists()
+          ? await excludeFile.readAsString()
+          : '';
       if (!existing.split('\n').map((l) => l.trim()).contains('.manifold/')) {
         await excludeFile.writeAsString(
           '${existing.trimRight()}\n.manifold/\n',
@@ -6776,6 +7889,7 @@ Future<GitResult<String>> addWorktree(
   String repo,
   String worktreePath,
   String branch, {
+
   /// When true, creates a new branch from HEAD at the given name alongside
   /// the worktree. Uses `git worktree add -b <branch> <path>`.
   bool createNewBranch = false,

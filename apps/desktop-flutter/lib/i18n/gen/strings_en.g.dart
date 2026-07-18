@@ -6626,8 +6626,8 @@ class Translations$settings$language$en {
   String systemDefaultDetail({required Object resolved}) =>
       'Follows your OS language (${resolved})';
 
-  /// en: 'Source language, written by the developers.'
-  String get disclosureSource => 'Source language, written by the developers.';
+  /// en: 'Source language, written by the developer.'
+  String get disclosureSource => 'Source language, written by the developer.';
 
   /// en: 'Machine translated by {model}, not yet human reviewed. Corrections welcome.'
   String disclosureAi({required Object model}) =>
@@ -6729,6 +6729,12 @@ class Translations$settings$errors$en {
 
   /// en: 'Failed to save API piggyback CLI.'
   String get saveApiPiggybackCli => 'Failed to save API piggyback CLI.';
+
+  /// en: 'Failed to save CLI timeout.'
+  String get saveCliTimeout => 'Failed to save CLI timeout.';
+
+  /// en: 'Could not stop the running CLI sessions.'
+  String get stopAllCli => 'Could not stop the running CLI sessions.';
 
   /// en: 'Could not clear local data: {error}'
   String clearLocalData({required Object error}) =>
@@ -7821,6 +7827,15 @@ class Translations$settings$wick$en {
 
   /// en: 'wick · path to executable'
   String get pathToExecutable => 'wick · path to executable';
+
+  /// en: 'off'
+  String get off => 'off';
+
+  /// en: 'Turn the wick integration off'
+  String get disableHint => 'Turn the wick integration off';
+
+  /// en: 'Turn the wick integration on'
+  String get enableHint => 'Turn the wick integration on';
 }
 
 // Path: settings.integrations
@@ -8163,6 +8178,37 @@ class Translations$settings$cliPiggyback$en {
   /// en: 'Directly pipe interface messages to local provider binaries.'
   String get body =>
       'Directly pipe interface messages to local provider binaries.';
+
+  /// en: 'Timeout per run'
+  String get cliTimeoutLabel => 'Timeout per run';
+
+  /// en: 'minute'
+  String get cliTimeoutUnitMinute => 'minute';
+
+  /// en: 'minutes'
+  String get cliTimeoutUnitMinutes => 'minutes';
+
+  /// en: 'Stop all sessions'
+  String get forceStopLabel => 'Stop all sessions';
+
+  /// en: 'Force-quit every CLI run in progress.'
+  String get forceStopTooltip => 'Force-quit every CLI run in progress.';
+
+  /// en: 'Stop running CLI sessions?'
+  String get forceStopConfirmTitle => 'Stop running CLI sessions?';
+
+  /// en: 'This force-quits {count} CLI run(s) in progress. Their output will be lost.'
+  String forceStopConfirmBody({required Object count}) =>
+      'This force-quits ${count} CLI run(s) in progress. Their output will be lost.';
+
+  /// en: 'Stop all'
+  String get forceStopConfirmAction => 'Stop all';
+
+  /// en: 'No CLI sessions running'
+  String get forceStopNoneRunning => 'No CLI sessions running';
+
+  /// en: 'Stopped — CLI sessions were force-quit.'
+  String get forceStopRecordError => 'Stopped — CLI sessions were force-quit.';
 }
 
 // Path: settings.header

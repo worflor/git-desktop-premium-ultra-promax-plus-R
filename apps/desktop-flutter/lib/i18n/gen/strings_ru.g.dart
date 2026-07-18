@@ -6112,6 +6112,10 @@ class _Translations$settings$errors$ru extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'Не удалось сохранить CLI для API-пиггибэка.';
   @override
+  String get saveCliTimeout => 'Не удалось сохранить тайм-аут CLI.';
+  @override
+  String get stopAllCli => 'Не удалось остановить запущенные сессии CLI.';
+  @override
   String clearLocalData({required Object error}) =>
       'Не удалось очистить локальные данные: ${error}';
 }
@@ -7098,6 +7102,12 @@ class _Translations$settings$wick$ru extends Translations$settings$wick$en {
   String get connected => 'wick · подключён';
   @override
   String get pathToExecutable => 'wick · путь к исполняемому файлу';
+  @override
+  String get off => 'выкл.';
+  @override
+  String get disableHint => 'Выключить интеграцию wick';
+  @override
+  String get enableHint => 'Включить интеграцию wick';
 }
 
 // Path: settings.integrations
@@ -7417,6 +7427,29 @@ class _Translations$settings$cliPiggyback$ru
   @override
   String get body =>
       'Напрямую передавать сообщения интерфейса локальным бинарникам провайдеров.';
+  @override
+  String get cliTimeoutLabel => 'Тайм-аут на запуск';
+  @override
+  String get cliTimeoutUnitMinutes => 'минуты';
+  @override
+  String get cliTimeoutUnitMinute => 'минута';
+  @override
+  String get forceStopLabel => 'Остановить все сессии';
+  @override
+  String get forceStopTooltip =>
+      'Принудительно завершить каждый запущенный процесс CLI.';
+  @override
+  String get forceStopConfirmTitle => 'Остановить запущенные сессии CLI?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Это принудительно завершит запущенные процессы CLI (${count}). Их вывод будет потерян.';
+  @override
+  String get forceStopConfirmAction => 'Остановить все';
+  @override
+  String get forceStopNoneRunning => 'Нет запущенных сессий CLI';
+  @override
+  String get forceStopRecordError =>
+      'Остановлено — сессии CLI были принудительно завершены.';
 }
 
 // Path: settings.header

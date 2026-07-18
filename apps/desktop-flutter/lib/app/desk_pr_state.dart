@@ -88,11 +88,11 @@ class DeskPrState extends ChangeNotifier {
   /// pointer; the metadata refs live in the common dir.
   Future<String?> _mainRepoOf(String anyPath) async {
     try {
-      final r = await Process.run(
-        'git',
-        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
-        workingDirectory: anyPath,
-      );
+      final r = await Process.run('git', [
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ], workingDirectory: anyPath);
       if (r.exitCode != 0) return null;
       final commonDir = (r.stdout as String).trim();
       if (commonDir.isEmpty) return null;
@@ -134,9 +134,7 @@ class DeskPrState extends ChangeNotifier {
       final r = await store.listAll();
       if (id != _requestId) return;
       if (r.ok) {
-        _byBranch = {
-          for (final pr in r.data!) pr.headRef: pr,
-        };
+        _byBranch = {for (final pr in r.data!) pr.headRef: pr};
         _loadedForRepo = main;
       } else {
         _byBranch = const {};
@@ -292,7 +290,14 @@ class DeskPrState extends ChangeNotifier {
     final pr = _byBranch[branch];
     if (pr == null) return;
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final r = await fetchLocalDeskPrDetail(repoPath: main, pr: pr);
+    // Stats-only: the numstat file list is all this needs. Fetching the
+    // patch body here would be pure waste — and a machine-scale PR's body
+    // arrives as a disk spool whose temp dir this caller would orphan.
+    final r = await fetchLocalDeskPrDetail(
+      repoPath: main,
+      pr: pr,
+      includeDiff: false,
+    );
     if (!r.ok || r.data == null) return;
     final files = r.data!.files;
     final adds = files.fold<int>(0, (a, f) => a + f.additions);
@@ -345,7 +350,9 @@ class DeskPrState extends ChangeNotifier {
     required String repoPath,
     required String branch,
   }) async {
-    if (!_promoting.add('$repoPath:$branch')) return 'promotion already in progress';
+    if (!_promoting.add('$repoPath:$branch')) {
+      return 'promotion already in progress';
+    }
     try {
       final main = await _mainRepoOf(repoPath) ?? repoPath;
       final store = DeskPrStore(_refsFor(main));
@@ -363,8 +370,11 @@ class DeskPrState extends ChangeNotifier {
         return status.reason ?? 'remote forge not available';
       }
       // Push the branch first — forges require the head ref to exist remotely.
-      final pushResult = await git.pushRemote(main,
-          branch: desk.headRef, setUpstream: true);
+      final pushResult = await git.pushRemote(
+        main,
+        branch: desk.headRef,
+        setUpstream: true,
+      );
       if (!pushResult.ok) {
         return 'push failed: ${pushResult.error}';
       }
@@ -381,7 +391,8 @@ class DeskPrState extends ChangeNotifier {
       if (match != null) {
         remoteNumber = match.number;
       } else {
-        final createResult = await provider.createPullRequest(main,
+        final createResult = await provider.createPullRequest(
+          main,
           title: desk.title,
           body: desk.body,
           headRef: desk.headRef,
@@ -429,7 +440,8 @@ class DeskPrState extends ChangeNotifier {
     try {
       final store = DeskPrStore(_refsFor(main));
       final r = await store.syncWithRemote(
-          remote: remote == null ? null : MetadataRemote(remote));
+        remote: remote == null ? null : MetadataRemote(remote),
+      );
       if (!r.ok) return r.error;
       await refreshFor(main);
       return null;
@@ -467,7 +479,8 @@ class DeskPrState extends ChangeNotifier {
         final r = await provider.getPullRequest(main, desk.remoteNumber!);
         if (!r.ok || r.data == null) continue;
         final remote = r.data!;
-        final needsUpdate = desk.state != remote.state ||
+        final needsUpdate =
+            desk.state != remote.state ||
             desk.mergeable != remote.mergeable ||
             desk.additions != remote.additions ||
             desk.deletions != remote.deletions ||
@@ -481,7 +494,9 @@ class DeskPrState extends ChangeNotifier {
           changedFiles: remote.changedFiles,
         );
         final writeResult = await store.updateFull(
-            updated, message: 'reconcile remote #${desk.remoteNumber}');
+          updated,
+          message: 'reconcile remote #${desk.remoteNumber}',
+        );
         if (writeResult.ok) changed = true;
       } catch (e) {
         debugPrint('reconcile PR #${desk.remoteNumber}: $e');

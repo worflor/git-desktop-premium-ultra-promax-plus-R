@@ -5,8 +5,7 @@ import 'dart:ui' as ui show Gradient;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
-import 'package:flutter/physics.dart'
-    show SpringDescription, SpringSimulation;
+import 'package:flutter/physics.dart' show SpringDescription, SpringSimulation;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../i18n/gen/strings.g.dart';
@@ -36,6 +35,7 @@ import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../../backend/commit_fingerprint.dart';
 import '../../backend/file_lifecycle.dart';
+import '../diff/diff_document.dart';
 import '../diff/diff_shell.dart';
 import 'commit_lede.dart';
 import 'commit_seismograph.dart';
@@ -43,7 +43,6 @@ import 'commit_sigil.dart';
 import 'commit_tag_pill.dart';
 import 'commit_tagger.dart';
 import 'worldline_field.dart';
-
 
 const double _kNodeRadius = 3;
 
@@ -130,10 +129,8 @@ Path _catmullRom(List<Offset> p) {
     final p1 = p[i];
     final p2 = p[i + 1];
     final p3 = i + 2 < p.length ? p[i + 2] : p[i + 1];
-    final c1 =
-        Offset(p1.dx + (p2.dx - p0.dx) / 6, p1.dy + (p2.dy - p0.dy) / 6);
-    final c2 =
-        Offset(p2.dx - (p3.dx - p1.dx) / 6, p2.dy - (p3.dy - p1.dy) / 6);
+    final c1 = Offset(p1.dx + (p2.dx - p0.dx) / 6, p1.dy + (p2.dy - p0.dy) / 6);
+    final c2 = Offset(p2.dx - (p3.dx - p1.dx) / 6, p2.dy - (p3.dy - p1.dy) / 6);
     path.cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p2.dx, p2.dy);
   }
   return path;
@@ -163,6 +160,7 @@ Path _catmullRom(List<Offset> p) {
   final yProj = yStrip + (ySky - yStrip) * theta;
   return (center: Offset(xStrip, yProj), depthScale: depthScale);
 }
+
 const double _kVertInset = 8;
 const double _kHorizPad = 4;
 const double _kLeftPad = 6;
@@ -186,7 +184,6 @@ const int _kHistoryDefault = kDefaultHistoryCommits;
 const int _kHistoryRevealCeiling = 5000;
 const int _kHistoryMax = 500;
 
-
 /// One hovered-desk preview list plus the PRECONDITIONS it was fetched
 /// under. A cached value whose inputs aren't recorded can't know when it's
 /// lying; carrying `rev` (the desk tip) and `limit` (the effective history
@@ -196,13 +193,18 @@ class _PreviewCacheEntry {
   final List<CommitHistoryEntry> commits;
   final String rev;
   final int limit;
-  const _PreviewCacheEntry(this.commits, {required this.rev, required this.limit});
+  const _PreviewCacheEntry(
+    this.commits, {
+    required this.rev,
+    required this.limit,
+  });
 }
 
 class _GNode {
   final CommitHistoryEntry entry;
   final int row, lane;
   final List<String> visibleParents;
+
   /// True when this node represents a hovered-desk preview commit
   /// rather than a real ancestor of HEAD. Drives the painter's accent
   /// styling (halo + scaled core), the per-node stagger window, and
@@ -210,35 +212,39 @@ class _GNode {
   /// positions). Real nodes default to false; nothing else needs to
   /// branch on this flag.
   final bool isPreview;
-  const _GNode(
-      {required this.entry,
-      required this.row,
-      required this.lane,
-      required this.visibleParents,
-      this.isPreview = false});
+  const _GNode({
+    required this.entry,
+    required this.row,
+    required this.lane,
+    required this.visibleParents,
+    this.isPreview = false,
+  });
 }
 
 class _GEdge {
   final String from, to;
   final int fromRow, toRow, fromLane, toLane;
-  const _GEdge(
-      {required this.from,
-      required this.to,
-      required this.fromRow,
-      required this.toRow,
-      required this.fromLane,
-      required this.toLane});
+  const _GEdge({
+    required this.from,
+    required this.to,
+    required this.fromRow,
+    required this.toRow,
+    required this.fromLane,
+    required this.toLane,
+  });
 }
 
 class _GLayout {
   final List<_GNode> nodes;
   final List<_GEdge> edges;
   final int laneCount;
+
   /// Lanes occupied by REAL commits (1 = single rail, 2 = trunk +
   /// diverged). Preview strands always take the lane AFTER these, so
   /// an in-flight overlay can never interleave with a real strand on
   /// the same rail.
   final int realLaneCount;
+
   /// Cached hash→nodes-index lookup. Built once at layout time so the
   /// painter can resolve `edge.from`/`edge.to` and z-priority sort
   /// indices in O(1) instead of walking the nodes list each paint.
@@ -257,7 +263,6 @@ class _LensMetric {
   const _LensMetric(this.x, this.y, this.scale);
 }
 
-
 _GLayout _buildLayout(
   List<CommitHistoryEntry> entries, {
   Set<String>? trunkHashes,
@@ -273,7 +278,8 @@ _GLayout _buildLayout(
   // strand ALWAYS takes the next free lane — never a lane real
   // commits sit on, so an in-flight overlay can't interleave with a
   // real strand.
-  final hasDivergedReal = trunkHashes != null &&
+  final hasDivergedReal =
+      trunkHashes != null &&
       entries.any((e) => !trunkHashes.contains(e.commitHash));
   final realLaneCount = hasDivergedReal ? 2 : 1;
   final previewLane = realLaneCount;
@@ -300,16 +306,21 @@ _GLayout _buildLayout(
   for (int i = 0; i < entries.length; i++) {
     final row = realRowOffset + i;
     final entry = entries[i];
-    final parents =
-        entry.parentHashes.where((h) => visibleHashes.contains(h)).toList();
+    final parents = entry.parentHashes
+        .where((h) => visibleHashes.contains(h))
+        .toList();
 
-    final lane = (trunkHashes != null &&
-            !trunkHashes.contains(entry.commitHash))
+    final lane =
+        (trunkHashes != null && !trunkHashes.contains(entry.commitHash))
         ? 1
         : 0;
 
-    final node =
-        _GNode(entry: entry, row: row, lane: lane, visibleParents: parents);
+    final node = _GNode(
+      entry: entry,
+      row: row,
+      lane: lane,
+      visibleParents: parents,
+    );
     nodes.add(node);
     hashToNode[entry.commitHash] = node;
   }
@@ -319,14 +330,16 @@ _GLayout _buildLayout(
     for (final ph in node.visibleParents) {
       final parent = hashToNode[ph];
       if (parent != null) {
-        edges.add(_GEdge(
-          from: node.entry.commitHash,
-          to: ph,
-          fromRow: node.row,
-          toRow: parent.row,
-          fromLane: node.lane,
-          toLane: parent.lane,
-        ));
+        edges.add(
+          _GEdge(
+            from: node.entry.commitHash,
+            to: ph,
+            fromRow: node.row,
+            toRow: parent.row,
+            fromLane: node.lane,
+            toLane: parent.lane,
+          ),
+        );
       }
     }
   }
@@ -335,13 +348,13 @@ _GLayout _buildLayout(
     for (var i = 0; i < nodes.length; i++) nodes[i].entry.commitHash: i,
   };
   return _GLayout(
-      nodes: nodes,
-      edges: edges,
-      laneCount: laneCount,
-      realLaneCount: realLaneCount,
-      hashToIndex: hashToIndex);
+    nodes: nodes,
+    edges: edges,
+    laneCount: laneCount,
+    realLaneCount: realLaneCount,
+    hashToIndex: hashToIndex,
+  );
 }
-
 
 List<double> _computePercents(List<CommitHistoryEntry> entries) {
   final n = entries.length;
@@ -354,8 +367,10 @@ List<double> _computePercents(List<CommitHistoryEntry> entries) {
     return p?.toDouble() ?? DateTime.now().millisecondsSinceEpoch.toDouble();
   }).toList();
 
-  final rawGaps =
-      List.generate(n - 1, (i) => max(1.0, (stamps[i] - stamps[i + 1]).abs()));
+  final rawGaps = List.generate(
+    n - 1,
+    (i) => max(1.0, (stamps[i] - stamps[i + 1]).abs()),
+  );
   final sorted = [...rawGaps]..sort();
   final median = sorted[sorted.length ~/ 2];
   final weighted = rawGaps
@@ -387,8 +402,13 @@ List<double> _computePercents(List<CommitHistoryEntry> entries) {
 /// [firstReal]) are never pinned — they land wherever their percents
 /// put them, so a hover-preview can't yank a dot to the far-left edge.
 List<double> _projectXs(
-    int n, double width, List<double> percents, double lInset, double rInset,
-    {int firstReal = 0}) {
+  int n,
+  double width,
+  List<double> percents,
+  double lInset,
+  double rInset, {
+  int firstReal = 0,
+}) {
   if (n == 0) return [];
   if (n == 1) return [width * 0.5];
 
@@ -405,7 +425,6 @@ List<double> _projectXs(
     return minX + norm * drawable;
   });
 }
-
 
 List<_LensMetric> _lensMetrics({
   required List<_GNode> nodes,
@@ -443,7 +462,6 @@ List<_LensMetric> _lensMetrics({
   });
 }
 
-
 class _TimelinePainter extends CustomPainter {
   final _GLayout layout;
   final List<double> baseXs;
@@ -460,10 +478,12 @@ class _TimelinePainter extends CustomPainter {
   final double laneStep;
   final Map<String, double> churnNorm;
   final Map<String, double> netRatio;
+
   /// Pre-resolved per-hash churn target colors. The painter just lerps
   /// gray→target instead of doing the churn-axis lerp inside the paint
   /// loop on every frame.
   final Map<String, Color> targetColors;
+
   /// 0→1 fade animation. At 0 every node paints the gray fallback;
   /// at 1 it paints its computed churn color. Lerping between makes
   /// the gray→colored transition feel like a fill instead of a flip.
@@ -551,17 +571,17 @@ class _TimelinePainter extends CustomPainter {
     required this.field,
     required this.handleHoverListenable,
   }) : super(
-          repaint: Listenable.merge([
-            hoveredHashListenable,
-            hoverXListenable,
-            churnIntro,
-            previewIntro,
-            resonance,
-            handleHoverListenable,
-            thetaListenable,
-            fieldSettle,
-          ]),
-        );
+         repaint: Listenable.merge([
+           hoveredHashListenable,
+           hoverXListenable,
+           churnIntro,
+           previewIntro,
+           resonance,
+           handleHoverListenable,
+           thetaListenable,
+           fieldSettle,
+         ]),
+       );
 
   String? get hoveredHash => hoveredHashListenable.value;
   double? get hoverX => hoverXListenable.value;
@@ -622,7 +642,10 @@ class _TimelinePainter extends CustomPainter {
       // Per-dot settle: the roll-in sweeps along the time axis (real
       // index order = time order) with overlapping windows.
       final dotSettle = _worldlineDotSettle(
-          settleT, max(i - previewOffset0, 0), realNodeCount);
+        settleT,
+        max(i - previewOffset0, 0),
+        realNodeCount,
+      );
       final p = _projectWorldline(
         xStrip: m.x,
         yStrip: m.y,
@@ -679,8 +702,8 @@ class _TimelinePainter extends CustomPainter {
       final railAlpha = isMain
           ? 0.14
           : laneHasReal
-              ? 0.08 + 0.06 * previewFade
-              : 0.14 * previewFade;
+          ? 0.08 + 0.06 * previewFade
+          : 0.14 * previewFade;
       if (railAlpha <= 0.005) continue;
       railPaint
         ..color = isMain
@@ -718,7 +741,10 @@ class _TimelinePainter extends CustomPainter {
             ..color = tokens.stateAdded.withValues(alpha: 0.55)
             ..strokeWidth = 1.4;
           canvas.drawLine(
-              Offset(tickX, ry - 4), Offset(tickX, ry + 4), railPaint);
+            Offset(tickX, ry - 4),
+            Offset(tickX, ry + 4),
+            railPaint,
+          );
         }
       }
     }
@@ -746,10 +772,10 @@ class _TimelinePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     final edgePath = Path();
     final previewIntroT2 = previewIntro.value;
-    final previewStaggerN =
-        previewCommits.length <= 20 ? previewCommits.length : 20;
-    final previewSlide2 =
-        previewStaggerN > 0 ? 1.0 / previewStaggerN : 1.0;
+    final previewStaggerN = previewCommits.length <= 20
+        ? previewCommits.length
+        : 20;
+    final previewSlide2 = previewStaggerN > 0 ? 1.0 / previewStaggerN : 1.0;
     final previewOffset = previewCommits.length;
 
     for (final edge in layout.edges) {
@@ -840,8 +866,10 @@ class _TimelinePainter extends CustomPainter {
             : previewStaggerN - 1;
         final invertedIdx = previewStaggerN - 1 - clampedIdx;
         final nodeStart = invertedIdx * previewSlide2;
-        var localT =
-            ((previewIntroT2 - nodeStart) / previewSlide2).clamp(0.0, 1.0);
+        var localT = ((previewIntroT2 - nodeStart) / previewSlide2).clamp(
+          0.0,
+          1.0,
+        );
         localT = 1 - pow(1 - localT, 3).toDouble();
         if (localT <= 0) continue;
         alpha *= localT;
@@ -890,8 +918,8 @@ class _TimelinePainter extends CustomPainter {
         int z(String h) => h == selectedHash
             ? 2
             : h == hoveredHash
-                ? 1
-                : 0;
+            ? 1
+            : 0;
         return z(a.entry.commitHash).compareTo(z(b.entry.commitHash));
       });
     } else {
@@ -919,8 +947,9 @@ class _TimelinePainter extends CustomPainter {
     // nothing for this — the per-node check is `if (node.isPreview)`
     // and the stagger math only runs inside that branch.
     final previewIntroT = previewIntro.value;
-    final previewStaggerCount =
-        previewCommits.length <= 20 ? previewCommits.length : 20;
+    final previewStaggerCount = previewCommits.length <= 20
+        ? previewCommits.length
+        : 20;
     final previewSlide = previewStaggerCount > 0
         ? 1.0 / previewStaggerCount
         : 1.0;
@@ -942,15 +971,18 @@ class _TimelinePainter extends CustomPainter {
             : previewStaggerCount - 1;
         final invertedIdx = previewStaggerCount - 1 - clampedIdx;
         final nodeStart = invertedIdx * previewSlide;
-        var localT =
-            ((previewIntroT - nodeStart) / previewSlide).clamp(0.0, 1.0);
+        var localT = ((previewIntroT - nodeStart) / previewSlide).clamp(
+          0.0,
+          1.0,
+        );
         localT = 1 - pow(1 - localT, 3).toDouble();
         if (localT <= 0) continue;
 
         final center = centers[idx];
         final r = _kNodeRadius * m.scale;
-        nodeFillPaint.color =
-            tokens.stateAdded.withValues(alpha: 0.85 * localT);
+        nodeFillPaint.color = tokens.stateAdded.withValues(
+          alpha: 0.85 * localT,
+        );
         canvas.drawCircle(center, r, nodeFillPaint);
         // Preview dots answer touch the same way real ones do —
         // selection and hover rings, faded with the strand.
@@ -974,7 +1006,8 @@ class _TimelinePainter extends CustomPainter {
           ? 1.0
           : 1.0 - (realIndex / (realNodeCount - 1)) * 0.4;
 
-      final isResonant = activeResonanceAuthor != null &&
+      final isResonant =
+          activeResonanceAuthor != null &&
           node.entry.authorEmail == activeResonanceAuthor &&
           hash != hoveredHash;
       final resonanceBoost = isResonant ? 1.0 + 0.35 * resonanceT : 1.0;
@@ -1016,20 +1049,25 @@ class _TimelinePainter extends CustomPainter {
       if (worldActive && worldOrn > 0.001) {
         final coord = field?.coordFor(hash) ?? WorldlineCoord.absent;
         final ds = depthScales[idx];
-        final worldR =
-            _kNodeRadius * m.scale * (0.7 + 1.3 * coord.churn) * ds;
+        final worldR = _kNodeRadius * m.scale * (0.7 + 1.3 * coord.churn) * ds;
         effectiveR += (worldR - effectiveR) * worldOrn;
         if (!isSelected) {
           final ageFrac = realNodeCount <= 1 || realIndex < 0
               ? 0.0
               : realIndex / (realNodeCount - 1); // 0 = newest, 1 = oldest
           final cooled = Color.lerp(
-              fillColor, tokens.textMuted, ageFrac * _kWorldlineAgeCap)!;
-          final depthAtten = 1.0 -
-              (1.0 - _kWorldlineDepthAlpha) * depthFracs[idx] * worldOrn;
+            fillColor,
+            tokens.textMuted,
+            ageFrac * _kWorldlineAgeCap,
+          )!;
+          final depthAtten =
+              1.0 - (1.0 - _kWorldlineDepthAlpha) * depthFracs[idx] * worldOrn;
           final aged = cooled.withValues(
-              alpha: (fillColor.a * (1.0 - 0.35 * ageFrac) * depthAtten)
-                  .clamp(0.0, 1.0));
+            alpha: (fillColor.a * (1.0 - 0.35 * ageFrac) * depthAtten).clamp(
+              0.0,
+              1.0,
+            ),
+          );
           fillColor = Color.lerp(fillColor, aged, worldOrn)!;
         }
       }
@@ -1062,8 +1100,8 @@ class _TimelinePainter extends CustomPainter {
           ..color = isHead
               ? tokens.accentBright.withValues(alpha: 0.55 * temporal)
               : hasTag
-                  ? tokens.stateModified.withValues(alpha: 0.40 * temporal)
-                  : tokens.chromeAccent.withValues(alpha: 0.35 * temporal)
+              ? tokens.stateModified.withValues(alpha: 0.40 * temporal)
+              : tokens.chromeAccent.withValues(alpha: 0.35 * temporal)
           ..strokeWidth = isHead ? 1.4 : 1.0;
         canvas.drawCircle(center, effectiveR + 2.0, refRingPaint);
       }
@@ -1099,8 +1137,7 @@ class _TimelinePainter extends CustomPainter {
   /// is already open (θ>0), so the rest posture stays pixel-identical.
   void _paintGripCue(Canvas canvas, Size size) {
     final hovered = handleHoverListenable.value;
-    final amt =
-        max(hovered ? 1.0 : 0.0, thetaListenable.value.clamp(0.0, 1.0));
+    final amt = max(hovered ? 1.0 : 0.0, thetaListenable.value.clamp(0.0, 1.0));
     if (amt <= 0.0005) return;
     final cx = size.width / 2;
     final cy = size.height - _kWorldlineHandleBand / 2;
@@ -1170,12 +1207,19 @@ class _TimelinePainter extends CustomPainter {
     if (node.isPreview) {
       var label = previewLabel ?? '';
       if (label.length > 24) label = '${label.substring(0, 23)}…';
-      headSpans.add(TextSpan(
+      headSpans.add(
+        TextSpan(
           text: label.isEmpty ? '↑  ' : '↑ $label  ',
-          style: monoStyle.copyWith(color: t.stateAdded)));
+          style: monoStyle.copyWith(color: t.stateAdded),
+        ),
+      );
     } else if (localOnlyHashes.contains(hash)) {
-      headSpans.add(TextSpan(
-          text: '↑  ', style: monoStyle.copyWith(color: t.stateAdded)));
+      headSpans.add(
+        TextSpan(
+          text: '↑  ',
+          style: monoStyle.copyWith(color: t.stateAdded),
+        ),
+      );
     }
     headSpans.add(TextSpan(text: entry.shortHash, style: monoStyle));
 
@@ -1191,18 +1235,24 @@ class _TimelinePainter extends CustomPainter {
       spans.add(TextSpan(text: metaBits.join(' · '), style: metaStyle));
       final d = detailByHash[hash];
       if (d != null && (d.additions > 0 || d.deletions > 0)) {
-        spans.add(TextSpan(
-          text: '   +${d.additions}',
-          style: monoStyle.copyWith(
+        spans.add(
+          TextSpan(
+            text: '   +${d.additions}',
+            style: monoStyle.copyWith(
               color: t.stateAdded.withValues(alpha: 0.9),
-              fontWeight: FontWeight.w600),
-        ));
-        spans.add(TextSpan(
-          text: ' −${d.deletions}',
-          style: monoStyle.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
+        spans.add(
+          TextSpan(
+            text: ' −${d.deletions}',
+            style: monoStyle.copyWith(
               color: t.stateDeleted.withValues(alpha: 0.9),
-              fontWeight: FontWeight.w600),
-        ));
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
       }
       return spans;
     }
@@ -1228,22 +1278,26 @@ class _TimelinePainter extends CustomPainter {
     final subjectAvail =
         maxW - head.width - gap - (tail == null ? 0 : tail.width + gap);
     final subject = subjectAvail > 12
-        ? tpOf([TextSpan(text: entry.subject, style: bodyStyle)],
-            maxWidth: subjectAvail)
+        ? tpOf([
+            TextSpan(text: entry.subject, style: bodyStyle),
+          ], maxWidth: subjectAvail)
         : null;
 
-    final lineH = max(head.height, max(subject?.height ?? 0, tail?.height ?? 0));
+    final lineH = max(
+      head.height,
+      max(subject?.height ?? 0, tail?.height ?? 0),
+    );
     final y = size.height - lineH - 5;
     const x0 = _kLeftPad + 2;
     head.paint(canvas, Offset(x0, y + (lineH - head.height) / 2));
     subject?.paint(
-        canvas,
-        Offset(x0 + head.width + gap,
-            y + (lineH - subject.height) / 2));
+      canvas,
+      Offset(x0 + head.width + gap, y + (lineH - subject.height) / 2),
+    );
     tail?.paint(
-        canvas,
-        Offset(x0 + maxW - tail.width,
-            y + (lineH - tail.height) / 2));
+      canvas,
+      Offset(x0 + maxW - tail.width, y + (lineH - tail.height) / 2),
+    );
     // Every tpOf painter is local to this caption paint — release their
     // native (dart:ui) layouts now (this runs per repaint of the strip).
     head.dispose();
@@ -1290,13 +1344,13 @@ class _TimelinePainter extends CustomPainter {
       old.field != field;
 }
 
-
 class _TimelineStrip extends StatefulWidget {
   final List<CommitHistoryEntry> commits;
   final String? selectedHash;
   final ValueChanged<String> onSelected;
   final AppTokens tokens;
   final Map<String, CommitDetailData> detailCache;
+
   /// Monotonic counter the parent bumps on every `_detailCache`
   /// mutation. The map itself is mutated in place (same reference),
   /// so `old.detailCache.length` reads the post-mutation length —
@@ -1402,6 +1456,7 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// clears for real. Direct assignment would pop every dot off in a
   /// single frame.
   List<CommitHistoryEntry> _shownPreview = const [];
+
   /// Generation guard: a fresh hover mid-exit invalidates the pending
   /// exit cleanup.
   int _previewGen = 0;
@@ -1435,6 +1490,7 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// Drives the panel height and the projection; the painter and the
   /// hit-test both read it, so the surface never disagrees with itself.
   final ValueNotifier<double> _theta = ValueNotifier(0.0);
+
   /// True while the caption-bar drag handle is hovered OR keyboard-focused
   /// — reveals the grip. Two independent input channels feed one cue, so
   /// they're tracked separately and OR-ed: a mouse exit must not hide the
@@ -1515,14 +1571,17 @@ class _TimelineStripState extends State<_TimelineStrip>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final churnScaled = context.motionRead(_churnAuthored);
-    _churnIntroCtrl.duration =
-        churnScaled == Duration.zero ? Duration.zero : churnScaled;
+    _churnIntroCtrl.duration = churnScaled == Duration.zero
+        ? Duration.zero
+        : churnScaled;
     final previewScaled = context.motionRead(_previewAuthored);
-    _previewIntroCtrl.duration =
-        previewScaled == Duration.zero ? Duration.zero : previewScaled;
+    _previewIntroCtrl.duration = previewScaled == Duration.zero
+        ? Duration.zero
+        : previewScaled;
     final resonanceScaled = context.motionRead(_resonanceAuthored);
-    _resonanceCtrl.duration =
-        resonanceScaled == Duration.zero ? Duration.zero : resonanceScaled;
+    _resonanceCtrl.duration = resonanceScaled == Duration.zero
+        ? Duration.zero
+        : resonanceScaled;
   }
 
   int _resonanceGen = 0;
@@ -1542,8 +1601,7 @@ class _TimelineStripState extends State<_TimelineStrip>
     final idx = _layout!.hashToIndex[hash];
     if (idx == null || idx >= _layout!.nodes.length) return;
     final author = _layout!.nodes[idx].entry.authorEmail;
-    if (author == _resonanceAuthorNotifier.value &&
-        _resonanceCtrl.value > 0) {
+    if (author == _resonanceAuthorNotifier.value && _resonanceCtrl.value > 0) {
       return;
     }
     ++_resonanceGen;
@@ -1589,27 +1647,28 @@ class _TimelineStripState extends State<_TimelineStrip>
     _fieldSettleCtrl.value = 0.0;
     loadWorldlineField(widget.repoPath, widget.historyLimit, tip)
         .then((field) {
-      if (!mounted || gen != _fieldGen) return;
-      setState(() => _field = field);
-      // If the user is already in the opened posture, ease the sky in;
-      // otherwise it's just cached for the next pull.
-      if (_theta.value > 0.0 && !context.reduceMotionRead) {
-        _fieldSettleCtrl.forward(from: 0.0);
-      } else {
-        _fieldSettleCtrl.value = 1.0;
-      }
-    }).catchError((_) {
-      if (!mounted || gen != _fieldGen) return;
-      // Release the "handled" claim and memo the failure: the horizon
-      // posture stays (empty field), but the request is retryable again
-      // the next time the user pulls the strip open.
-      setState(() {
-        _field = WorldlineField.empty;
-        _fieldFailedKey = key;
-        _fieldKey = '';
-      });
-      _fieldSettleCtrl.value = 1.0;
-    });
+          if (!mounted || gen != _fieldGen) return;
+          setState(() => _field = field);
+          // If the user is already in the opened posture, ease the sky in;
+          // otherwise it's just cached for the next pull.
+          if (_theta.value > 0.0 && !context.reduceMotionRead) {
+            _fieldSettleCtrl.forward(from: 0.0);
+          } else {
+            _fieldSettleCtrl.value = 1.0;
+          }
+        })
+        .catchError((_) {
+          if (!mounted || gen != _fieldGen) return;
+          // Release the "handled" claim and memo the failure: the horizon
+          // posture stays (empty field), but the request is retryable again
+          // the next time the user pulls the strip open.
+          setState(() {
+            _field = WorldlineField.empty;
+            _fieldFailedKey = key;
+            _fieldKey = '';
+          });
+          _fieldSettleCtrl.value = 1.0;
+        });
   }
 
   /// Map a vertical drag delta to θ. [restHeight] is H0 (the strip's rest
@@ -1646,7 +1705,8 @@ class _TimelineStripState extends State<_TimelineStrip>
             damping: _kWorldlineSpring.damping * rate,
           );
     _thetaSpringCtrl.animateWith(
-        SpringSimulation(spring, _theta.value, target, velocity));
+      SpringSimulation(spring, _theta.value, target, velocity),
+    );
   }
 
   /// Release: a fling (|vy| ≥ the drawer threshold) picks the detent in
@@ -1738,8 +1798,7 @@ class _TimelineStripState extends State<_TimelineStrip>
       // against the newest edge — where leftward room is genuinely
       // unusable — mirrors the strand rightward from its base.
       final desiredSpread = min(38.0, max(10.0, previewCount * 2.2));
-      final minUsable =
-          min(desiredSpread, max(4.0, previewCount * 0.35));
+      final minUsable = min(desiredSpread, max(4.0, previewCount * 0.35));
       // A one-commit strand has no internal spacing to distribute —
       // _computePercents centers it at 50, which would float the dot
       // mid-window. Treat it as the base (p=100): adjacent to fork.
@@ -1752,11 +1811,12 @@ class _TimelineStripState extends State<_TimelineStrip>
             .map((p) => lo + (forkPercent - lo) * (effP(p) / 100.0))
             .toList();
       } else {
-        final spanEnd =
-            min(100.0, max(forkPercent, 0.0) + desiredSpread);
+        final spanEnd = min(100.0, max(forkPercent, 0.0) + desiredSpread);
         previewPercents = rawPreview
-            .map((p) =>
-                forkPercent + (spanEnd - forkPercent) * (1 - effP(p) / 100.0))
+            .map(
+              (p) =>
+                  forkPercent + (spanEnd - forkPercent) * (1 - effP(p) / 100.0),
+            )
             .toList();
       }
       _percents = [...previewPercents, ...realPercents];
@@ -1767,8 +1827,10 @@ class _TimelineStripState extends State<_TimelineStrip>
 
   void _rebuildChurnMaps() {
     final byHash = _byHash(widget.detailCache);
-    final (norm, ratio, spread) =
-        _computeChurnRatioSpread(widget.commits, byHash);
+    final (norm, ratio, spread) = _computeChurnRatioSpread(
+      widget.commits,
+      byHash,
+    );
     // A preview hover/unhover rebuilds the layout but leaves churn
     // data untouched — replaying the gray→color intro then would
     // flash the ENTIRE rail on every chip hover. Only kick the fade
@@ -1874,7 +1936,11 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// density, so dy gets a modest weight rather than full Euclidean
   /// dominance.
   int? _nearestIndex(
-      Offset pos, List<double> baseXs, double laneStep, double height) {
+    Offset pos,
+    List<double> baseXs,
+    double laneStep,
+    double height,
+  ) {
     if (baseXs.isEmpty || _layout == null) return null;
     // Preview dots are only pointer-targets while actually visible —
     // a strand mid-exit (or not yet populated in) shouldn't swallow
@@ -1929,7 +1995,11 @@ class _TimelineStripState extends State<_TimelineStrip>
   }
 
   void _selectNearest(
-      Offset pos, List<double> baseXs, double laneStep, double height) {
+    Offset pos,
+    List<double> baseXs,
+    double laneStep,
+    double height,
+  ) {
     final i = _nearestIndex(pos, baseXs, laneStep, height);
     if (i == null) return;
     final hash = _layout!.nodes[i].entry.commitHash;
@@ -1952,232 +2022,251 @@ class _TimelineStripState extends State<_TimelineStrip>
     return Focus(
       focusNode: _stripFocus,
       onKeyEvent: _onStripKey,
-      child: LayoutBuilder(builder: (ctx, constraints) {
-      final width = max(constraints.maxWidth, 64.0);
-      // Height is a function of RESERVED lanes, not currently-drawn
-      // lanes: real lanes + one preview lane whenever chips exist.
-      // A chip hover can therefore never change the strip's height —
-      // the preview lane's space is already sitting there as quiet
-      // surface before the cursor arrives.
-      final reserved = max(
-        _layout!.realLaneCount + (widget.reservePreviewLane ? 1 : 0),
-        _kReservedLaneCount,
-      );
-      final laneCount = max(_layout!.laneCount, reserved);
-      final height = max(_kMinLaneH, laneCount * 14.0 + 18.0);
-      final laneStep =
-          (height - _kVertInset * 2) / max(laneCount.toDouble(), 1);
-      final totalHeight = height + _kVertInset * 2;
+      child: LayoutBuilder(
+        builder: (ctx, constraints) {
+          final width = max(constraints.maxWidth, 64.0);
+          // Height is a function of RESERVED lanes, not currently-drawn
+          // lanes: real lanes + one preview lane whenever chips exist.
+          // A chip hover can therefore never change the strip's height —
+          // the preview lane's space is already sitting there as quiet
+          // surface before the cursor arrives.
+          final reserved = max(
+            _layout!.realLaneCount + (widget.reservePreviewLane ? 1 : 0),
+            _kReservedLaneCount,
+          );
+          final laneCount = max(_layout!.laneCount, reserved);
+          final height = max(_kMinLaneH, laneCount * 14.0 + 18.0);
+          final laneStep =
+              (height - _kVertInset * 2) / max(laneCount.toDouble(), 1);
+          final totalHeight = height + _kVertInset * 2;
 
-      // Unified x-projection: preview + real nodes share one percent list
-      // computed in `_rebuildLayout`. Real commits are preserved; preview
-      // nodes are inserted ahead of them, so hover can increase node
-      // density instead of hiding older real history.
-      final baseXs = _projectXs(
-        _layout!.nodes.length,
-        width,
-        _percents,
-        _kLeftPad + _kNodeRadius,
-        // Mirror the left inset. A bare _kNodeRadius put the newest
-        // commit's center one radius from the clip edge, so anything
-        // wider than the base dot — selection ring, hover ring, the
-        // worldline's churn-grown radius — painted half-clipped.
-        _kLeftPad + _kNodeRadius,
-        firstReal: _shownPreview.length,
-      );
-      // REPAINT, DON'T REBUILD. The panel physically grows with θ (the
-      // drawer-pull): height eases from H0 (totalHeight) to 3.2×H0, so
-      // exactly one thing must ride the θ tick: the SizedBox that sizes
-      // the paint surface. Everything else — decorated surface, scrub
-      // Listener, painter, handle band, semantics — is `content`, built
-      // ONCE per widget build and re-parented through the sizing
-      // builder's `child`. θ and settle reach the painter as live-read
-      // Listenables wired into `repaint:` (the same idiom hover uses), so
-      // a drag/spring/settle tick costs one box relayout + one repaint —
-      // no subtree rebuild, no fresh painter. At θ==0 the height is
-      // exactly totalHeight and nothing worldline-gated paints: the rest
-      // posture stays byte-identical.
-      final content = Container(
-        decoration: BoxDecoration(
-          color: widget.tokens.surface0,
-          border: Border(
-            bottom: BorderSide(
-                color: widget.tokens.chromeBorder.withValues(alpha: 0.1)),
-          ),
-        ),
-        child: Stack(fit: StackFit.expand, children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: _kHorizPad),
-            child: Listener(
-              // Every callback derives the CURRENT open height via
-              // _openHeightFor — no handler holds a θ snapshot from
-              // build time, so hit-testing stays honest mid-animation.
-              onPointerHover: (e) {
-                _hoverXNotifier.value = e.localPosition.dx;
-                final hash = _nearestHash(e.localPosition, baseXs,
-                    laneStep, _openHeightFor(totalHeight));
-                widget.hoverNotifier.value = hash;
-                _updateResonance(hash);
-              },
-              onPointerDown: (e) {
-                _hoverXNotifier.value = e.localPosition.dx;
-                _dragging = true;
-                _selectNearest(e.localPosition, baseXs, laneStep,
-                    _openHeightFor(totalHeight));
-              },
-              onPointerMove: (e) {
-                if (_dragging) {
-                  _hoverXNotifier.value = e.localPosition.dx;
-                  _selectNearest(e.localPosition, baseXs, laneStep,
-                      _openHeightFor(totalHeight));
-                }
-              },
-              onPointerUp: (_) => _dragging = false,
-              // Wheel over the strip steps the selection one commit
-              // at a time — scroll down walks older, up walks newer.
-              onPointerSignal: (e) {
-                if (e is! PointerScrollEvent || e.scrollDelta.dy == 0) {
-                  return;
-                }
-                _stepSelection(e.scrollDelta.dy > 0 ? 1 : -1);
-              },
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onExit: (_) {
-                  _hoverXNotifier.value = null;
-                  widget.hoverNotifier.value = null;
-                  _updateResonance(null);
-                },
-                // RepaintBoundary isolates the timeline's repaint
-                // region so the header/siblings don't get
-                // invalidated on every hover tick.
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: _TimelinePainter(
-                      layout: _layout!,
-                      baseXs: baseXs,
-                      selectedHash: widget.selectedHash,
-                      hoveredHashListenable: widget.hoverNotifier,
-                      hoverXListenable: _hoverXNotifier,
-                      tokens: widget.tokens,
-                      width: width,
-                      height: height,
-                      vertInset: _kVertInset,
-                      laneStep: laneStep,
-                      churnNorm: _churnNorm,
-                      netRatio: _netRatio,
-                      fileSpread: _fileSpread,
-                      targetColors: _churnTargetColors,
-                      churnIntro: _churnIntroCtrl,
-                      previewCommits: _shownPreview,
-                      previewIntro: _previewIntroCtrl,
-                      resonance: _resonanceCtrl,
-                      resonanceAuthorListenable: _resonanceAuthorNotifier,
-                      localOnlyHashes: widget.localOnlyHashes,
-                      detailByHash: _detailByHash,
-                      previewLabel: widget.previewLabel,
-                      captionFontFamily: inheritedStyle.fontFamily,
-                      captionFontFallback: inheritedStyle.fontFamilyFallback,
-                      thetaListenable: _theta,
-                      fieldSettle: _fieldSettleCtrl,
-                      field: _field,
-                      handleHoverListenable: _handleHover,
-                    ),
-                    // Fills the θ-sized surface (the outer SizedBox is the
-                    // one thing that relayouts per tick), replacing the
-                    // old per-tick `size:` reconstruction.
-                    child: const SizedBox.expand(),
-                  ),
+          // Unified x-projection: preview + real nodes share one percent list
+          // computed in `_rebuildLayout`. Real commits are preserved; preview
+          // nodes are inserted ahead of them, so hover can increase node
+          // density instead of hiding older real history.
+          final baseXs = _projectXs(
+            _layout!.nodes.length,
+            width,
+            _percents,
+            _kLeftPad + _kNodeRadius,
+            // Mirror the left inset. A bare _kNodeRadius put the newest
+            // commit's center one radius from the clip edge, so anything
+            // wider than the base dot — selection ring, hover ring, the
+            // worldline's churn-grown radius — painted half-clipped.
+            _kLeftPad + _kNodeRadius,
+            firstReal: _shownPreview.length,
+          );
+          // REPAINT, DON'T REBUILD. The panel physically grows with θ (the
+          // drawer-pull): height eases from H0 (totalHeight) to 3.2×H0, so
+          // exactly one thing must ride the θ tick: the SizedBox that sizes
+          // the paint surface. Everything else — decorated surface, scrub
+          // Listener, painter, handle band, semantics — is `content`, built
+          // ONCE per widget build and re-parented through the sizing
+          // builder's `child`. θ and settle reach the painter as live-read
+          // Listenables wired into `repaint:` (the same idiom hover uses), so
+          // a drag/spring/settle tick costs one box relayout + one repaint —
+          // no subtree rebuild, no fresh painter. At θ==0 the height is
+          // exactly totalHeight and nothing worldline-gated paints: the rest
+          // posture stays byte-identical.
+          final content = Container(
+            decoration: BoxDecoration(
+              color: widget.tokens.surface0,
+              border: Border(
+                bottom: BorderSide(
+                  color: widget.tokens.chromeBorder.withValues(alpha: 0.1),
                 ),
               ),
             ),
-          ),
-          // The caption bar IS the drag handle: a thin band at the
-          // bottom edge. Pull down to open the worldline, back up to
-          // close. Activate (keyboard / screen-reader) toggles.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: _kWorldlineHandleBand,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeUpDown,
-              onEnter: (_) {
-                _handleHovered = true;
-                _syncHandleCue();
-              },
-              onExit: (_) {
-                _handleHovered = false;
-                _syncHandleCue();
-              },
-              // Only the Semantics wrapper listens to the posture bit —
-              // the label flips at the 0.5 crossing (twice per gesture,
-              // not per tick) and the detector/gesture subtree passes
-              // through `child` untouched.
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _postureOpen,
-                // THE keyboard path to the posture. The strip's own
-                // focus node is skipTraversal (it's the Esc catcher,
-                // not a tab stop), so without this detector the handle
-                // was pointer-only despite its toggle contract. Tab
-                // reaches it, the grip reveals on focus, Enter/Space
-                // (default ActivateIntent bindings) toggle open↔closed,
-                // and Esc bubbles from here to the strip Focus above.
-                child: FocusableActionDetector(
-                  onShowFocusHighlight: (f) {
-                    _handleFocused = f;
-                    _syncHandleCue();
-                  },
-                  actions: <Type, Action<Intent>>{
-                    ActivateIntent: CallbackAction<ActivateIntent>(
-                      onInvoke: (_) {
-                        _toggleTheta();
-                        return null;
-                      },
-                    ),
-                  },
-                  child: GestureDetector(
-                    // Opaque so a pull on the band is owned by the handle
-                    // and never leaks through to the scrub Listener behind.
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragStart: (_) {
-                      _thetaSpringCtrl.stop();
-                      _stripFocus.requestFocus();
-                      // A fresh pull releases any failure memo — the
-                      // gesture is the retry.
-                      if (_fieldFailedKey.isNotEmpty) {
-                        _fieldFailedKey = '';
-                        _maybeLoadField();
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: _kHorizPad),
+                  child: Listener(
+                    // Every callback derives the CURRENT open height via
+                    // _openHeightFor — no handler holds a θ snapshot from
+                    // build time, so hit-testing stays honest mid-animation.
+                    onPointerHover: (e) {
+                      _hoverXNotifier.value = e.localPosition.dx;
+                      final hash = _nearestHash(
+                        e.localPosition,
+                        baseXs,
+                        laneStep,
+                        _openHeightFor(totalHeight),
+                      );
+                      widget.hoverNotifier.value = hash;
+                      _updateResonance(hash);
+                    },
+                    onPointerDown: (e) {
+                      _hoverXNotifier.value = e.localPosition.dx;
+                      _dragging = true;
+                      _selectNearest(
+                        e.localPosition,
+                        baseXs,
+                        laneStep,
+                        _openHeightFor(totalHeight),
+                      );
+                    },
+                    onPointerMove: (e) {
+                      if (_dragging) {
+                        _hoverXNotifier.value = e.localPosition.dx;
+                        _selectNearest(
+                          e.localPosition,
+                          baseXs,
+                          laneStep,
+                          _openHeightFor(totalHeight),
+                        );
                       }
                     },
-                    onVerticalDragUpdate: (d) =>
-                        _dragTheta(d.primaryDelta ?? 0.0, totalHeight),
-                    onVerticalDragEnd: (d) => _springToDetent(d, totalHeight),
-                    onTap: _toggleTheta,
+                    onPointerUp: (_) => _dragging = false,
+                    // Wheel over the strip steps the selection one commit
+                    // at a time — scroll down walks older, up walks newer.
+                    onPointerSignal: (e) {
+                      if (e is! PointerScrollEvent || e.scrollDelta.dy == 0) {
+                        return;
+                      }
+                      _stepSelection(e.scrollDelta.dy > 0 ? 1 : -1);
+                    },
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      onExit: (_) {
+                        _hoverXNotifier.value = null;
+                        widget.hoverNotifier.value = null;
+                        _updateResonance(null);
+                      },
+                      // RepaintBoundary isolates the timeline's repaint
+                      // region so the header/siblings don't get
+                      // invalidated on every hover tick.
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _TimelinePainter(
+                            layout: _layout!,
+                            baseXs: baseXs,
+                            selectedHash: widget.selectedHash,
+                            hoveredHashListenable: widget.hoverNotifier,
+                            hoverXListenable: _hoverXNotifier,
+                            tokens: widget.tokens,
+                            width: width,
+                            height: height,
+                            vertInset: _kVertInset,
+                            laneStep: laneStep,
+                            churnNorm: _churnNorm,
+                            netRatio: _netRatio,
+                            fileSpread: _fileSpread,
+                            targetColors: _churnTargetColors,
+                            churnIntro: _churnIntroCtrl,
+                            previewCommits: _shownPreview,
+                            previewIntro: _previewIntroCtrl,
+                            resonance: _resonanceCtrl,
+                            resonanceAuthorListenable: _resonanceAuthorNotifier,
+                            localOnlyHashes: widget.localOnlyHashes,
+                            detailByHash: _detailByHash,
+                            previewLabel: widget.previewLabel,
+                            captionFontFamily: inheritedStyle.fontFamily,
+                            captionFontFallback:
+                                inheritedStyle.fontFamilyFallback,
+                            thetaListenable: _theta,
+                            fieldSettle: _fieldSettleCtrl,
+                            field: _field,
+                            handleHoverListenable: _handleHover,
+                          ),
+                          // Fills the θ-sized surface (the outer SizedBox is the
+                          // one thing that relayouts per tick), replacing the
+                          // old per-tick `size:` reconstruction.
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                builder: (context, open, child) => Semantics(
-                  button: true,
-                  label: open
-                      ? context.t.history.worldline.closeWorldline
-                      : context.t.history.worldline.dragToOpenWorldline,
-                  onTap: _toggleTheta,
-                  child: child,
+                // The caption bar IS the drag handle: a thin band at the
+                // bottom edge. Pull down to open the worldline, back up to
+                // close. Activate (keyboard / screen-reader) toggles.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: _kWorldlineHandleBand,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeUpDown,
+                    onEnter: (_) {
+                      _handleHovered = true;
+                      _syncHandleCue();
+                    },
+                    onExit: (_) {
+                      _handleHovered = false;
+                      _syncHandleCue();
+                    },
+                    // Only the Semantics wrapper listens to the posture bit —
+                    // the label flips at the 0.5 crossing (twice per gesture,
+                    // not per tick) and the detector/gesture subtree passes
+                    // through `child` untouched.
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _postureOpen,
+                      // THE keyboard path to the posture. The strip's own
+                      // focus node is skipTraversal (it's the Esc catcher,
+                      // not a tab stop), so without this detector the handle
+                      // was pointer-only despite its toggle contract. Tab
+                      // reaches it, the grip reveals on focus, Enter/Space
+                      // (default ActivateIntent bindings) toggle open↔closed,
+                      // and Esc bubbles from here to the strip Focus above.
+                      child: FocusableActionDetector(
+                        onShowFocusHighlight: (f) {
+                          _handleFocused = f;
+                          _syncHandleCue();
+                        },
+                        actions: <Type, Action<Intent>>{
+                          ActivateIntent: CallbackAction<ActivateIntent>(
+                            onInvoke: (_) {
+                              _toggleTheta();
+                              return null;
+                            },
+                          ),
+                        },
+                        child: GestureDetector(
+                          // Opaque so a pull on the band is owned by the handle
+                          // and never leaks through to the scrub Listener behind.
+                          behavior: HitTestBehavior.opaque,
+                          onVerticalDragStart: (_) {
+                            _thetaSpringCtrl.stop();
+                            _stripFocus.requestFocus();
+                            // A fresh pull releases any failure memo — the
+                            // gesture is the retry.
+                            if (_fieldFailedKey.isNotEmpty) {
+                              _fieldFailedKey = '';
+                              _maybeLoadField();
+                            }
+                          },
+                          onVerticalDragUpdate: (d) =>
+                              _dragTheta(d.primaryDelta ?? 0.0, totalHeight),
+                          onVerticalDragEnd: (d) =>
+                              _springToDetent(d, totalHeight),
+                          onTap: _toggleTheta,
+                        ),
+                      ),
+                      builder: (context, open, child) => Semantics(
+                        button: true,
+                        label: open
+                            ? context.t.history.worldline.closeWorldline
+                            : context.t.history.worldline.dragToOpenWorldline,
+                        onTap: _toggleTheta,
+                        child: child,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ),
-        ]),
-      );
-      return ValueListenableBuilder<double>(
-        valueListenable: _theta,
-        child: content,
-        builder: (_, __, child) => SizedBox(
-          height: _openHeightFor(totalHeight),
-          child: child,
-        ),
-      );
-    }));
+          );
+          return ValueListenableBuilder<double>(
+            valueListenable: _theta,
+            child: content,
+            builder: (_, __, child) =>
+                SizedBox(height: _openHeightFor(totalHeight), child: child),
+          );
+        },
+      ),
+    );
   }
 
   /// Escape springs the strip shut when it's open.
@@ -2197,9 +2286,7 @@ class _TimelineStripState extends State<_TimelineStrip>
     final commits = widget.commits;
     if (commits.isEmpty) return;
     final sel = widget.selectedHash;
-    final i = sel == null
-        ? -1
-        : commits.indexWhere((c) => c.commitHash == sel);
+    final i = sel == null ? -1 : commits.indexWhere((c) => c.commitHash == sel);
     final next = i == -1 ? 0 : (i + dir).clamp(0, commits.length - 1);
     if (next == i) return;
     widget.onSelected(commits[next].commitHash);
@@ -2207,7 +2294,8 @@ class _TimelineStripState extends State<_TimelineStrip>
 
   // Build hash→detail lookup from the repo-keyed cache
   static Map<String, CommitDetailData> _byHash(
-      Map<String, CommitDetailData> cache) {
+    Map<String, CommitDetailData> cache,
+  ) {
     final out = <String, CommitDetailData>{};
     for (final e in cache.entries) {
       // cache keys are "repoPath::hash" — extract hash after last '::'
@@ -2222,9 +2310,10 @@ class _TimelineStripState extends State<_TimelineStrip>
   /// hash-keyed detail map (the caller retains that map for the
   /// inline hover caption, so it's built exactly once per rebuild).
   static (Map<String, double>, Map<String, double>, Map<String, double>)
-      _computeChurnRatioSpread(
-      List<CommitHistoryEntry> commits,
-      Map<String, CommitDetailData> byHash) {
+  _computeChurnRatioSpread(
+    List<CommitHistoryEntry> commits,
+    Map<String, CommitDetailData> byHash,
+  ) {
     final raws = <String, double>{};
     final ratio = <String, double>{};
     final spread = <String, double>{};
@@ -2249,12 +2338,15 @@ class _TimelineStripState extends State<_TimelineStrip>
   }
 
   String? _nearestHash(
-      Offset pos, List<double> baseXs, double laneStep, double height) {
+    Offset pos,
+    List<double> baseXs,
+    double laneStep,
+    double height,
+  ) {
     final i = _nearestIndex(pos, baseXs, laneStep, height);
     return i == null ? null : _layout!.nodes[i].entry.commitHash;
   }
 }
-
 
 /// Worktree path normalization shared by the IN FLIGHT surfaces —
 /// separators unified; case-insensitive except on Linux.
@@ -2273,17 +2365,20 @@ class _CommitImpact extends StatelessWidget {
     final t = tokens;
     if (detail == null) {
       return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(
-              5,
-              (_) => Container(
-                    width: 6,
-                    height: 3,
-                    margin: const EdgeInsets.only(left: 1.5),
-                    decoration: BoxDecoration(
-                        color: t.textMuted.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(0.5)),
-                  )));
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(
+          5,
+          (_) => Container(
+            width: 6,
+            height: 3,
+            margin: const EdgeInsets.only(left: 1.5),
+            decoration: BoxDecoration(
+              color: t.textMuted.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(0.5),
+            ),
+          ),
+        ),
+      );
     }
 
     final adds = detail!.additions;
@@ -2293,54 +2388,72 @@ class _CommitImpact extends StatelessWidget {
 
     final addBlocks = (adds / total * 5).round();
 
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      // +/- numbers
-      Text('$adds',
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // +/- numbers
+        Text(
+          '$adds',
           style: TextStyle(
-              color: t.stateAdded.withValues(alpha: 0.9),
-              fontSize: 9,
-              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
-              fontWeight: FontWeight.w700)),
-      Text('/',
-          style: TextStyle(
-              color: t.textMuted.withValues(alpha: 0.3),
-              fontSize: 9,
-              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-      Text('$dels',
-          style: TextStyle(
-              color: t.stateDeleted.withValues(alpha: 0.9),
-              fontSize: 9,
-              fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
-              fontWeight: FontWeight.w700)),
-      const SizedBox(width: 4),
-      // 5-block bar
-      Container(
-        padding: const EdgeInsets.all(1),
-        decoration: BoxDecoration(
-          color: t.chromeBorder.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(2),
-          border: Border.all(
-              color: t.chromeBorder.withValues(alpha: 0.1), width: 0.5),
+            color: t.stateAdded.withValues(alpha: 0.9),
+            fontSize: 9,
+            fontFamily: AppFonts.mono,
+            fontFamilyFallback: AppFonts.monoFallback,
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        child: Row(
+        Text(
+          '/',
+          style: TextStyle(
+            color: t.textMuted.withValues(alpha: 0.3),
+            fontSize: 9,
+            fontFamily: AppFonts.mono,
+            fontFamilyFallback: AppFonts.monoFallback,
+          ),
+        ),
+        Text(
+          '$dels',
+          style: TextStyle(
+            color: t.stateDeleted.withValues(alpha: 0.9),
+            fontSize: 9,
+            fontFamily: AppFonts.mono,
+            fontFamilyFallback: AppFonts.monoFallback,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 4),
+        // 5-block bar
+        Container(
+          padding: const EdgeInsets.all(1),
+          decoration: BoxDecoration(
+            color: t.chromeBorder.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(
+              color: t.chromeBorder.withValues(alpha: 0.1),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: List.generate(
-                5,
-                (i) => Container(
-                      width: 6,
-                      height: 3,
-                      margin: EdgeInsets.only(left: i == 0 ? 0 : 1.5),
-                      decoration: BoxDecoration(
-                        color: (i < addBlocks ? t.stateAdded : t.stateDeleted)
-                            .withValues(alpha: 0.75),
-                        borderRadius: BorderRadius.circular(0.5),
-                      ),
-                    ))),
-      ),
-    ]);
+              5,
+              (i) => Container(
+                width: 6,
+                height: 3,
+                margin: EdgeInsets.only(left: i == 0 ? 0 : 1.5),
+                decoration: BoxDecoration(
+                  color: (i < addBlocks ? t.stateAdded : t.stateDeleted)
+                      .withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(0.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
-
 
 /// Input bundle for the off-main-isolate profile build. Must only
 /// contain isolate-transferable types — `FileCouplingMatrix`,
@@ -2350,12 +2463,14 @@ class _TagProfileInput {
   final List<CommitHistoryEntry> commits;
   final Map<String, CommitDetailData> details;
   final FileCouplingMatrix? coupling;
+
   /// Engine-derived multi-axis coherence per commit, computed on the
   /// main isolate before [compute] hands off (the LogosGit engine isn't
   /// trivially transferable, but a Map<String, double> is). When the
   /// engine isn't warm, this is null and the isolate falls back to the
   /// matrix's single-axis Jaccard.
   final Map<String, double>? engineCoherences;
+
   /// Per-commit expected-token distribution, computed on the main
   /// thread via [LogosGit.projectTokenDistribution] and summed per
   /// bucket inside the isolate.
@@ -2390,8 +2505,7 @@ Map<String, Map<String, double>>? _projectPerCommitExpectedTokens(
     if (tokens.isEmpty) continue;
     final weight = 1.0 / tokens.length;
     for (final f in detail.files) {
-      final row =
-          fileTokens.putIfAbsent(f.path, () => <String, double>{});
+      final row = fileTokens.putIfAbsent(f.path, () => <String, double>{});
       for (final w in tokens) {
         row.update(w, (v) => v + weight, ifAbsent: () => weight);
       }
@@ -2434,7 +2548,6 @@ RepositoryTagProfile _tagProfileIsolate(_TagProfileInput input) {
     expectedTokensByHash: input.expectedTokensByHash,
   );
 }
-
 
 class HistoryPage extends StatefulWidget {
   final String? initialCommitHash;
@@ -2479,10 +2592,18 @@ class _HistoryPageState extends State<HistoryPage> {
   String? _commitDiffFile;
   String? _commitDiffHash;
   String? _commitDiffContent;
+  // For a LARGE commit/file diff, the patch is streamed to a spool and read
+  // through this disk-backed document instead of being held as a String — so a
+  // multi-GB committed rewrite stays bounded. The doc owns its spool temp dir;
+  // disposing it deletes the spool. At most one active; null for small diffs
+  // (which use the in-RAM `_commitDiffContent` String).
+  DiffDocument? _commitDiffDocument;
   bool _commitDiffLoading = false;
   String? _commitDiffError;
   int _commitDiffReqId = 0;
+  int _historyLoadReqId = 0;
   static const String _kAllFilesPath = '\u0000all\u0000';
+
   /// Bumped on every `_detailCache` mutation. The map is shared by
   /// reference with `_TimelineStrip`, so length/identity comparisons
   /// at `didUpdateWidget` can't see the mutation. This counter is the
@@ -2602,6 +2723,7 @@ class _HistoryPageState extends State<HistoryPage> {
   /// fade — live triage by geometry, the user sees what landing the
   /// hovered desk would add without leaving their current view.
   String? _previewDeskPath;
+
   /// Cached preview commit lists keyed by desk path. The fetch is
   /// `git log <desk-branch> ^HEAD` so we get exactly the diverged set.
   /// Entries are self-validating: each carries the desk rev and history
@@ -2617,6 +2739,7 @@ class _HistoryPageState extends State<HistoryPage> {
   List<CommitHistoryEntry> get _activePreviewCommits => _previewDeskPath == null
       ? const []
       : (_previewCommitsCache[_previewDeskPath]?.commits ?? const []);
+
   /// In-flight fetch guard so a quick mouse-trail across chips doesn't
   /// fire duplicate `git log` for the same desk.
   final Set<String> _previewLoadingDesks = <String>{};
@@ -2682,6 +2805,7 @@ class _HistoryPageState extends State<HistoryPage> {
     _tagEscapeFocus.dispose();
     _tagProfileDebounce?.cancel();
     _previewExitTimer?.cancel();
+    _commitDiffDocument?.dispose(); // free any disk-backed commit diff spool
     super.dispose();
   }
 
@@ -2698,8 +2822,7 @@ class _HistoryPageState extends State<HistoryPage> {
       if (!mounted || _commits.isEmpty) return;
       final myBuildId = ++_tagProfileBuildId;
       // Snapshot on the main isolate before handing off.
-      final coupling =
-          context.read<FileCouplingState>().matrixFor(repoPath);
+      final coupling = context.read<FileCouplingState>().matrixFor(repoPath);
       final commitsCopy = List<CommitHistoryEntry>.unmodifiable(_commits);
       final detailsCopy = <String, CommitDetailData>{
         for (final e in _detailCache.entries)
@@ -2716,8 +2839,7 @@ class _HistoryPageState extends State<HistoryPage> {
       Map<String, double>? engineCoherences;
       Map<String, Map<String, double>>? expectedTokensByHash;
       try {
-        final engine =
-            context.read<LogosGitState>().engineFor(repoPath);
+        final engine = context.read<LogosGitState>().engineFor(repoPath);
         if (engine != null) {
           // Invalidate the per-commit cache when the engine has moved
           // on. Otherwise honour cached values; commits we've already
@@ -2742,21 +2864,27 @@ class _HistoryPageState extends State<HistoryPage> {
           }
           // Project per-commit expected-token distributions on the
           // main thread so the isolate has them ready.
-          expectedTokensByHash =
-              _projectPerCommitExpectedTokens(engine, commitsCopy, detailsCopy);
+          expectedTokensByHash = _projectPerCommitExpectedTokens(
+            engine,
+            commitsCopy,
+            detailsCopy,
+          );
         }
       } catch (_) {
         // No state provider, no engine — silently fall back.
       }
       // Off-isolate build. The tagger is pure-Dart data crunch; safe
       // to send across the isolate boundary.
-      final profile = await compute(_tagProfileIsolate, _TagProfileInput(
-        commits: commitsCopy,
-        details: detailsCopy,
-        coupling: coupling,
-        engineCoherences: engineCoherences,
-        expectedTokensByHash: expectedTokensByHash,
-      ));
+      final profile = await compute(
+        _tagProfileIsolate,
+        _TagProfileInput(
+          commits: commitsCopy,
+          details: detailsCopy,
+          coupling: coupling,
+          engineCoherences: engineCoherences,
+          expectedTokensByHash: expectedTokensByHash,
+        ),
+      );
       if (!mounted || myBuildId != _tagProfileBuildId) return;
       setState(() {
         _tagProfile = profile;
@@ -2784,9 +2912,11 @@ class _HistoryPageState extends State<HistoryPage> {
     // a trunk walk of only N stops short by K. Matching limits would
     // misclassify the oldest on-screen trunk commits as "diverged"
     // and kink the rail's tail onto lane 1. 2× covers any K ≤ N.
-    final r =
-        await ancestorHashes(repo, branch.data!,
-            limit: _effectiveHistoryLimit * 2);
+    final r = await ancestorHashes(
+      repo,
+      branch.data!,
+      limit: _effectiveHistoryLimit * 2,
+    );
     if (!r.ok || r.data == null) return const <String>{};
     return r.data!;
   }
@@ -2808,6 +2938,7 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Future<void> _load(String repo) async {
+    final reqId = ++_historyLoadReqId;
     final stopwatch = Stopwatch()..start();
     setState(() {
       _loading = true;
@@ -2818,14 +2949,16 @@ class _HistoryPageState extends State<HistoryPage> {
     // the top timeline — the commit list renders without them — so a
     // failure in either just falls through to the plainer rendering
     // without blocking the main load.
-    final historyFuture =
-        listCommitHistory(repo, limit: _effectiveHistoryLimit);
+    final historyFuture = listCommitHistory(
+      repo,
+      limit: _effectiveHistoryLimit,
+    );
     final trunkFuture = _resolveTrunkHashes(repo);
     final localOnlyFuture = _resolveLocalOnly(repo);
     final r = await historyFuture;
     final trunk = await trunkFuture;
     final localOnly = await localOnlyFuture;
-    if (!mounted) return;
+    if (!mounted || reqId != _historyLoadReqId || _lastRepo != repo) return;
     setState(() {
       _loading = false;
       _trunkHashes = trunk;
@@ -2843,9 +2976,7 @@ class _HistoryPageState extends State<HistoryPage> {
       _scheduleTagProfileRebuild(repo);
       // Ensure the coupling matrix is available for hub/focused/sprawl
       // tags. Idempotent if already loaded from the changes page.
-      unawaited(
-        context.read<FileCouplingState>().loadForRepo(repo),
-      );
+      unawaited(context.read<FileCouplingState>().loadForRepo(repo));
     }
 
     final initialHash = widget.initialCommitHash;
@@ -2857,6 +2988,7 @@ class _HistoryPageState extends State<HistoryPage> {
       // Reveal handles the outside-the-window case (widen + reload) instead of
       // silently skipping a hit that hasn't been loaded yet.
       await _revealCommit(repo, revealHash);
+      if (!mounted || reqId != _historyLoadReqId || _lastRepo != repo) return;
     }
     stopwatch.stop();
     await DiagnosticsState.instance.recordUiTiming(
@@ -2868,7 +3000,11 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  Future<void> _openCommitFileDiff(String repo, String hash, String filePath) async {
+  Future<void> _openCommitFileDiff(
+    String repo,
+    String hash,
+    String filePath,
+  ) async {
     if (filePath == _commitDiffFile &&
         hash == _commitDiffHash &&
         !_commitDiffLoading) {
@@ -2882,28 +3018,120 @@ class _HistoryPageState extends State<HistoryPage> {
       _commitDiffError = null;
       _commitDiffLoading = true;
     });
+    // The prior disk-backed doc (if any) is off-screen now; free it AFTER the
+    // new content is shown so a closed handle is never rendered.
+    final priorDoc = _commitDiffDocument;
+    _commitDiffDocument = null;
     final isAll = filePath == _kAllFilesPath;
-    final r = isAll
-        ? await getCommitDiff(repo, hash)
-        : await getFileDiffAtRevision(repo, filePath, hash);
-    if (!mounted || reqId != _commitDiffReqId) return;
+
+    // The patch ALWAYS streams to a disk spool first; the ACTUAL byte length
+    // then picks the representation. A line-churn gate was tried here and
+    // rejected: a diff with a few extremely long changed lines reports tiny
+    // churn while weighing tens of MB, so any numstat-derived heuristic
+    // reopens the OOM class (and binary churn reads as 0 outright). Counting
+    // bytes after streaming cannot be wrong; a multi-GB rewrite never
+    // becomes a multi-GB String, and a small diff costs one temp-file round
+    // trip — noise next to the git spawn it replaces.
+    final res = isAll
+        ? await spoolCommitDiff(repo, hash)
+        : await spoolFileDiffAtRevision(repo, filePath, hash);
+    if (!mounted || reqId != _commitDiffReqId) {
+      await res.data?.dispose();
+      priorDoc?.dispose();
+      return;
+    }
+    if (!res.ok || res.data == null) {
+      setState(() {
+        _commitDiffLoading = false;
+        _commitDiffError = res.error ?? 'failed to load diff';
+      });
+      priorDoc?.dispose();
+      return;
+    }
+    final spool = res.data!;
+
+    if (spool.byteLength > kDetailDiffSpillBytes) {
+      final DiffDocument doc;
+      try {
+        doc = await DiffDocument.adoptSpool(
+          spool,
+          pathHint: isAll ? null : filePath,
+          documentId: 'commit-spool:$hash:$filePath',
+          trimLeadingMeta: !isAll,
+        );
+      } catch (e) {
+        // adoptSpool's own failure path already released the store handle
+        // and the adopted temp dir; here the failure just becomes the pane's
+        // normal error state instead of an unhandled async exception that
+        // leaves the view stuck on its loading spinner.
+        if (!mounted || reqId != _commitDiffReqId) {
+          priorDoc?.dispose();
+          return;
+        }
+        setState(() {
+          _commitDiffLoading = false;
+          _commitDiffError = 'failed to index diff: $e';
+        });
+        priorDoc?.dispose();
+        return;
+      }
+      if (!mounted || reqId != _commitDiffReqId) {
+        doc.dispose();
+        priorDoc?.dispose();
+        return;
+      }
+      setState(() {
+        _commitDiffLoading = false;
+        _commitDiffDocument = doc;
+      });
+      priorDoc?.dispose();
+      return;
+    }
+
+    // Small diff: materialize the String (the shell's in-RAM lazy path still
+    // bounds the object explosion above its own threshold) and release the
+    // spool. Byte length 0 is a legitimately empty diff.
+    String content = '';
+    String? readError;
+    try {
+      if (spool.byteLength > 0) {
+        // Lenient like the exec layer's stdout decode: non-UTF-8 patch
+        // bytes degrade to U+FFFD instead of throwing on the small path.
+        content = await readSpoolStringLenient(spool.path);
+      }
+    } catch (e) {
+      readError = 'failed to read diff: $e';
+    } finally {
+      await spool.dispose();
+    }
+    if (!mounted || reqId != _commitDiffReqId) {
+      priorDoc?.dispose();
+      return;
+    }
     setState(() {
       _commitDiffLoading = false;
-      if (r.ok) {
-        _commitDiffContent = r.data;
+      if (readError == null) {
+        _commitDiffContent = content;
       } else {
-        _commitDiffError = r.error ?? 'failed to load diff';
+        _commitDiffError = readError;
       }
     });
+    priorDoc?.dispose();
   }
 
   void _openCommitAllDiff(String repo, String hash) =>
       _openCommitFileDiff(repo, hash, _kAllFilesPath);
 
   void _clearCommitDiffState() {
+    // Invalidate an in-flight spool/String fetch. Without this, closing the
+    // pane or switching repos could be undone when the old request completed.
+    _commitDiffReqId++;
     _commitDiffFile = null;
     _commitDiffHash = null;
     _commitDiffContent = null;
+    _commitDiffDocument
+        ?.dispose(); // closes handle + deletes the spool temp dir
+    _commitDiffDocument = null;
     _commitDiffError = null;
     _commitDiffLoading = false;
   }
@@ -2929,8 +3157,7 @@ class _HistoryPageState extends State<HistoryPage> {
   /// `engineFor(repoPath)` is the pre-warmed cache; the lifecycle
   /// classifier is one O(N log N) sweep on top.
   Map<String, FileLifecycle>? _lifecyclesFor(String repoPath) {
-    final engine =
-        context.read<LogosGitState>().engineFor(repoPath);
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
     if (engine == null) return null;
     final commitCount = engine.stats.totalCommits;
     if (_fileLifecycles != null &&
@@ -2994,7 +3221,8 @@ class _HistoryPageState extends State<HistoryPage> {
         // because the version is the timeline's "anything changed"
         // signal. Body text doesn't affect churn colors.
         final old = _detailCache[cacheKey];
-        final churnChanged = old == null ||
+        final churnChanged =
+            old == null ||
             old.additions != r.data!.additions ||
             old.deletions != r.data!.deletions;
         _detailCache[cacheKey] = r.data!;
@@ -3019,8 +3247,11 @@ class _HistoryPageState extends State<HistoryPage> {
   Future<void> _prefetchAllDetails(String repo) async {
     final commits = List<CommitHistoryEntry>.from(_commits);
     if (commits.isEmpty) return;
-    final r = await bulkGetCommitDetails(repo, commits,
-        limit: _effectiveHistoryLimit);
+    final r = await bulkGetCommitDetails(
+      repo,
+      commits,
+      limit: _effectiveHistoryLimit,
+    );
     if (!mounted || !r.ok) return;
     // Bulk fill the cache, bump the version counter, then notify.
     // The version counter is the only reliable change-signal because
@@ -3060,7 +3291,8 @@ class _HistoryPageState extends State<HistoryPage> {
     // sees at a glance that ONLY the commit's diff moves, and WHERE
     // it lands. Falls back to "current branch" when status hasn't
     // loaded yet (e.g. on first paint) — still parseable.
-    final branch = context.read<RepositoryState>().status?.branch ??
+    final branch =
+        context.read<RepositoryState>().status?.branch ??
         context.t.history.contextMenu.currentBranchFallback;
     final items = <AppContextMenuItem>[
       AppContextMenuItem(
@@ -3084,8 +3316,11 @@ class _HistoryPageState extends State<HistoryPage> {
     if (!r.ok) {
       // Conflicts → unified editor → `cherry-pick --continue`. Only a
       // genuine non-conflict failure (or a cancel) falls back to the error.
-      final resolved =
-          await resolveSequencerConflicts(context, repoPath, SequencerKind.cherryPick);
+      final resolved = await resolveSequencerConflicts(
+        context,
+        repoPath,
+        SequencerKind.cherryPick,
+      );
       if (!mounted) return;
       if (!resolved) {
         // If the cherry-pick is still in progress, the text conflicts were
@@ -3094,30 +3329,37 @@ class _HistoryPageState extends State<HistoryPage> {
         final paused = (await inProgressOperation(repoPath)) != null;
         if (!mounted) return;
         if (paused) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(context.t.history.cherryPick.paused),
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.t.history.cherryPick.paused)),
+          );
         } else {
           // Lead with the classified reason; keep raw stderr one tap away.
           final f = r.failure;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(context.t.history.cherryPick
-                .failed(error: '${f?.message ?? r.error}')),
-            action: f != null && f.detail.isNotEmpty && f.detail != f.message
-                ? SnackBarAction(
-                    label: context.t.common.copy,
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: f.detail)),
-                  )
-                : null,
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.t.history.cherryPick.failed(
+                  error: '${f?.message ?? r.error}',
+                ),
+              ),
+              action: f != null && f.detail.isNotEmpty && f.detail != f.message
+                  ? SnackBarAction(
+                      label: context.t.common.copy,
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: f.detail)),
+                    )
+                  : null,
+            ),
+          );
         }
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                context.t.history.cherryPick.pickedResolved(short: short))),
+          content: Text(
+            context.t.history.cherryPick.pickedResolved(short: short),
+          ),
+        ),
       );
       // The resolved pick created a commit — reload the history list (so it
       // appears) and refresh status, matching the revert path.
@@ -3127,7 +3369,8 @@ class _HistoryPageState extends State<HistoryPage> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text(context.t.history.cherryPick.picked(short: short))),
+        content: Text(context.t.history.cherryPick.picked(short: short)),
+      ),
     );
     await context.read<RepositoryState>().refreshStatus();
   }
@@ -3137,36 +3380,46 @@ class _HistoryPageState extends State<HistoryPage> {
     if (!mounted) return;
     final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
     if (!r.ok) {
-      final resolved =
-          await resolveSequencerConflicts(context, repoPath, SequencerKind.revert);
+      final resolved = await resolveSequencerConflicts(
+        context,
+        repoPath,
+        SequencerKind.revert,
+      );
       if (!mounted) return;
       if (!resolved) {
         final paused = (await inProgressOperation(repoPath)) != null;
         if (!mounted) return;
         if (paused) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(context.t.history.revert.paused),
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(context.t.history.revert.paused)),
+          );
         } else {
           final f = r.failure;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(context.t.history.revert
-                .failed(error: '${f?.message ?? r.error}')),
-            action: f != null && f.detail.isNotEmpty && f.detail != f.message
-                ? SnackBarAction(
-                    label: context.t.common.copy,
-                    onPressed: () =>
-                        Clipboard.setData(ClipboardData(text: f.detail)),
-                  )
-                : null,
-          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                context.t.history.revert.failed(
+                  error: '${f?.message ?? r.error}',
+                ),
+              ),
+              action: f != null && f.detail.isNotEmpty && f.detail != f.message
+                  ? SnackBarAction(
+                      label: context.t.common.copy,
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: f.detail)),
+                    )
+                  : null,
+            ),
+          );
         }
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(context.t.history.revert.revertedResolved(short: short))),
+          content: Text(
+            context.t.history.revert.revertedResolved(short: short),
+          ),
+        ),
       );
       await _load(repoPath);
       // A resolved revert creates a commit — refresh the status bar
@@ -3212,7 +3465,11 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   void _onPreviewDeskHover(
-      String repoPath, String? deskPath, String rev, String label) {
+    String repoPath,
+    String? deskPath,
+    String rev,
+    String label,
+  ) {
     if (deskPath == null) {
       _schedulePreviewExit();
       return;
@@ -3247,8 +3504,11 @@ class _HistoryPageState extends State<HistoryPage> {
       _previewLoadingDesks.remove(deskPath);
       if (!r.ok) return;
       setState(() {
-        _previewCommitsCache[deskPath] =
-            _PreviewCacheEntry(r.data!, rev: rev, limit: limit);
+        _previewCommitsCache[deskPath] = _PreviewCacheEntry(
+          r.data!,
+          rev: rev,
+          limit: limit,
+        );
       });
     }());
   }
@@ -3288,8 +3548,7 @@ class _HistoryPageState extends State<HistoryPage> {
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
           label: context.t.history.reflog.copyCommitHash,
-          onTap: () =>
-              Clipboard.setData(ClipboardData(text: entry.commitHash)),
+          onTap: () => Clipboard.setData(ClipboardData(text: entry.commitHash)),
         ),
       ]),
     ]);
@@ -3320,11 +3579,15 @@ class _HistoryPageState extends State<HistoryPage> {
           children: [
             Text(
               context.t.history.reflog.anchorLine(
-                  short: entry.shortHash, summary: entry.actionSummary),
+                short: entry.shortHash,
+                summary: entry.actionSummary,
+              ),
               style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 11,
-                  fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback),
+                color: t.textMuted,
+                fontSize: 11,
+                fontFamily: AppFonts.mono,
+                fontFamilyFallback: AppFonts.monoFallback,
+              ),
             ),
             const SizedBox(height: 12),
             AppTextField(
@@ -3341,8 +3604,7 @@ class _HistoryPageState extends State<HistoryPage> {
             child: Text(context.t.common.cancel),
           ),
           TextButton(
-            onPressed: () =>
-                Navigator.of(ctx).pop(controller.text.trim()),
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
             child: Text(context.t.history.reflog.createAction),
           ),
         ],
@@ -3356,15 +3618,22 @@ class _HistoryPageState extends State<HistoryPage> {
     if (!res.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(context.t.history.reflog
-                .createBranchFailed(error: '${res.error}'))),
+          content: Text(
+            context.t.history.reflog.createBranchFailed(error: '${res.error}'),
+          ),
+        ),
       );
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content: Text(context.t.history.reflog
-              .branchCreatedAt(name: name, short: entry.shortHash))),
+        content: Text(
+          context.t.history.reflog.branchCreatedAt(
+            name: name,
+            short: entry.shortHash,
+          ),
+        ),
+      ),
     );
   }
 
@@ -3404,10 +3673,13 @@ class _HistoryPageState extends State<HistoryPage> {
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(context.t.history
-          .revealCeilingExceeded(n: _kHistoryRevealCeiling)),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          context.t.history.revealCeilingExceeded(n: _kHistoryRevealCeiling),
+        ),
+      ),
+    );
   }
 
   /// Proportional scroll to the row for [hash]. Commit rows are near-uniform
@@ -3505,8 +3777,8 @@ class _HistoryPageState extends State<HistoryPage> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(context.t.history
-                .deleteTagFailed(error: '${r.error}'))),
+          content: Text(context.t.history.deleteTagFailed(error: '${r.error}')),
+        ),
       );
     }
   }
@@ -3605,10 +3877,12 @@ class _HistoryPageState extends State<HistoryPage> {
       // Re-activation is the natural "did I push since" checkpoint —
       // refresh the unpushed set quietly so the rail tint doesn't
       // claim stale local-only state after a push happened elsewhere.
-      unawaited(_resolveLocalOnly(repoPath).then((s) {
-        if (!mounted || setEquals(s, _localOnlyHashes)) return;
-        setState(() => _localOnlyHashes = s);
-      }));
+      unawaited(
+        _resolveLocalOnly(repoPath).then((s) {
+          if (!mounted || setEquals(s, _localOnlyHashes)) return;
+          setState(() => _localOnlyHashes = s);
+        }),
+      );
     }
 
     if (_loading && _commits.isEmpty) {
@@ -3633,359 +3907,417 @@ class _HistoryPageState extends State<HistoryPage> {
     final rangeMin = min(rebaseStart, rebaseEnd);
     final rangeMax = max(rebaseStart, rebaseEnd);
 
-    return Column(children: [
-      MaterialSurface(
-        tone: AppMaterialTone.surface0,
-        radius: 0,
-        border: Border(
-          bottom: BorderSide(color: t.chromeBorderFaint),
-        ),
-        elevated: false,
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(children: [
-          // The page title doubles as the worldline toggle — visually
-          // unchanged (the posture is discoverable via the handle; this
-          // is a power-user shortcut, cursor + semantics only).
-          Semantics(
-            button: true,
-            label: context.t.history.toggleWorldline,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () =>
-                    _timelineStripKey.currentState?._toggleTheta(),
-                child: Text(context.t.history.pageTitle,
-                    style: TextStyle(
+    return Column(
+      children: [
+        MaterialSurface(
+          tone: AppMaterialTone.surface0,
+          radius: 0,
+          border: Border(bottom: BorderSide(color: t.chromeBorderFaint)),
+          elevated: false,
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              // The page title doubles as the worldline toggle — visually
+              // unchanged (the posture is discoverable via the handle; this
+              // is a power-user shortcut, cursor + semantics only).
+              Semantics(
+                button: true,
+                label: context.t.history.toggleWorldline,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _timelineStripKey.currentState?._toggleTheta(),
+                    child: Text(
+                      context.t.history.pageTitle,
+                      style: TextStyle(
                         color: t.textMuted,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 0.05)),
+                        letterSpacing: 0.05,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              const Spacer(),
+              Row(
+                children: [
+                  Text(
+                    context.t.history.viewingLast,
+                    style: TextStyle(color: t.textMuted, fontSize: 11),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    width: 56,
+                    child: AppTextField(
+                      controller: _limitCtrl,
+                      height: 22,
+                      fontSize: 11,
+                      textAlign: TextAlign.center,
+                      keyboardType: TextInputType.number,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      onSubmitted: _onLimitSubmit,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    context.t.history.commitsUnit,
+                    style: TextStyle(color: t.textMuted, fontSize: 11),
+                  ),
+                ],
+              ),
+            ],
           ),
-          const Spacer(),
-          Row(children: [
-            Text(context.t.history.viewingLast,
-                style: TextStyle(color: t.textMuted, fontSize: 11)),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 56,
-              child: AppTextField(
-                controller: _limitCtrl,
-                height: 22,
-                fontSize: 11,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                onSubmitted: _onLimitSubmit,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(context.t.history.commitsUnit,
-                style: TextStyle(color: t.textMuted, fontSize: 11)),
-          ]),
-        ]),
-      ),
-
-      if (_commits.isNotEmpty)
-        _TimelineStrip(
-          key: _timelineStripKey,
-          commits: _commits,
-          selectedHash: _selectedHash,
-          onSelected: (hash) {
-            setState(() {
-              _selectCommit(hash);
-              _rebaseRangeEndIndex = null;
-              _tagInputVisible = false;
-              _clearCommitDiffState();
-            });
-            _loadDetail(repoPath, hash);
-            // Rail-originated selection (click, drag-scrub, wheel)
-            // pulls the list to the commit it landed on, so the two
-            // surfaces never disagree about where "here" is.
-            _scrollToCommit(hash);
-          },
-          tokens: t,
-          detailCache: _detailCache,
-          detailCacheVersion: _detailCacheVersion,
-          hoverNotifier: _railHover,
-          repoPath: repoPath,
-          historyLimit: _effectiveHistoryLimit,
-          trunkHashes: _trunkHashes,
-          previewCommits: _activePreviewCommits,
-          previewLabel: _previewBranch,
-          localOnlyHashes: _localOnlyHashes,
-          reservePreviewLane: hasInFlightDesks,
         ),
 
-      Expanded(
-        child: Row(children: [
-          // Left — commit list
-          MaterialSurface(
-            tone: AppMaterialTone.surface1,
-            radius: 0,
-            border: Border(
-              right: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
-            ),
-            elevated: false,
-            width: 280,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Other desks with commits ahead of THEIR own upstream
-                // surface here as ghost rows. Click → switch to that
-                // desk + drop the user on its Changes panel (where the
-                // "in-flight work" lives). Mirrors the symmetric strip
-                // in the Changes page so the language is consistent
-                // across surfaces. Hidden when no other desk has
-                // unpushed work — no chrome with nothing to say.
-                _DesksInFlightStrip(
-                  tokens: t,
-                  activeRepoPath: repoPath,
-                  onJumpToDesk: (deskPath) async {
-                    await context
-                        .read<RepositoryState>()
-                        .setActivePath(deskPath, addToRecents: false);
-                    if (!mounted) return;
-                    widget.onOpenChanges?.call();
-                  },
-                  onPreviewHover: (deskPath, rev, label) =>
-                      _onPreviewDeskHover(repoPath, deskPath, rev, label),
-                ),
-                Expanded(
-                  child: NotificationListener<ScrollEndNotification>(
-                    onNotification: (n) {
-                      if (n.metrics.extentAfter < 200) _loadReflog(repoPath);
-                      return false;
-                    },
-                    child: Builder(builder: (ctx) {
-                      // Hovered-desk preview prefix. When the user is
-                      // hovering an IN FLIGHT chip and its commits
-                      // have resolved, prepend them — each row fades
-                      // in with a row-index-staggered delay so the
-                      // sequence reads as "landing one at a time"
-                      // rather than a single snap-in.
-                      final preview = _activePreviewCommits;
-                      final previewCount = preview.length;
-                      return ListView.builder(
-                        controller: _commitScroll,
-                        padding: EdgeInsets.zero,
-                        itemCount: previewCount + _commits.length +
-                            (_reflogLoaded ? _reflog.length + 1 : 1),
-                        itemBuilder: (ctx, rawIndex) {
-                          // Preview rows at the top. Each gets its own
-                          // staggered animation so the list populates
-                          // in sequence. Stagger budget is bounded —
-                          // cap total animation to ~1.2s even when the
-                          // desk has many commits, so very wide dives
-                          // still complete promptly.
-                          if (rawIndex < previewCount) {
-                            return _PreviewCommitRow(
-                              key: ValueKey(
-                                  'prev:$_previewDeskPath:${preview[rawIndex].commitHash}'),
-                              commit: preview[rawIndex],
-                              tokens: t,
-                              indexInPreview: rawIndex,
-                              totalPreview: previewCount,
-                              railHover: _railHover,
-                              onHoverChanged: _onPreviewRowHover,
-                            );
-                        }
-                        final i = rawIndex - previewCount;
-                        if (i < _commits.length) {
-                    final commit = _commits[i];
-                    final isSelected = commit.commitHash == _selectedHash;
-                    final inRange =
-                        _isRebaseMode && i >= rangeMin && i <= rangeMax;
-                    return _CommitRow(
-                      commit: commit,
-                      tokens: t,
-                      isSelected: isSelected,
-                      inRange: inRange,
-                      cachedDetail: _detailCache['$repoPath::${commit.commitHash}'],
-                      tagProfile: _tagProfile,
-                      couplingMatrix: context
-                          .read<FileCouplingState>()
-                          .matrixFor(repoPath),
-                      logosEngine: context
-                          .read<LogosGitState>()
-                          .engineFor(repoPath),
-                      engineCoherences: _cachedEngineCoherences,
-                      resolvedGitTags: _gitTagsForHash(
-                          commit.commitHash, commit.refNames),
-                      isLocalOnly:
-                          _localOnlyHashes.contains(commit.commitHash),
-                      railHover: _railHover,
-                      onTap: (shift) => _onCommitTap(i, shift),
-                      onSecondaryTap: (pos) => _showCommitContextMenu(
-                          context, pos, _commits[i], repoPath),
-                    );
-                  }
-                  if (i == _commits.length) {
-                    return _ReflogDivider(
-                        t: t,
-                        loaded: _reflogLoaded,
-                        onLoad: () => _loadReflog(repoPath));
-                  }
-                  final ri = i - _commits.length - 1;
-                  if (ri < _reflog.length) {
-                    final entry = _reflog[ri];
-                    return _ReflogRow(
-                        entry: entry,
-                        tokens: t,
-                        onTap: () {
-                          setState(() {
-                            _selectCommit(entry.commitHash);
-                            _rebaseRangeEndIndex = null;
-                            _clearCommitDiffState();
-                          });
-                          _loadDetail(repoPath, entry.commitHash);
-                        },
-                        onSecondaryTap: (pos) =>
-                            _showReflogRecoveryMenu(repoPath, entry, pos));
-                  }
-                  return const SizedBox.shrink();
-                },
-              );
-                    }),
-            ),
-                ),
-              ],
-            ),
+        if (_commits.isNotEmpty)
+          _TimelineStrip(
+            key: _timelineStripKey,
+            commits: _commits,
+            selectedHash: _selectedHash,
+            onSelected: (hash) {
+              setState(() {
+                _selectCommit(hash);
+                _rebaseRangeEndIndex = null;
+                _tagInputVisible = false;
+                _clearCommitDiffState();
+              });
+              _loadDetail(repoPath, hash);
+              // Rail-originated selection (click, drag-scrub, wheel)
+              // pulls the list to the commit it landed on, so the two
+              // surfaces never disagree about where "here" is.
+              _scrollToCommit(hash);
+            },
+            tokens: t,
+            detailCache: _detailCache,
+            detailCacheVersion: _detailCacheVersion,
+            hoverNotifier: _railHover,
+            repoPath: repoPath,
+            historyLimit: _effectiveHistoryLimit,
+            trunkHashes: _trunkHashes,
+            previewCommits: _activePreviewCommits,
+            previewLabel: _previewBranch,
+            localOnlyHashes: _localOnlyHashes,
+            reservePreviewLane: hasInFlightDesks,
           ),
 
-          // Right — detail or rebase editor
-          Expanded(
-            child: MaterialSurface(
-              tone: AppMaterialTone.surface0,
-              radius: 0,
-              borderAlpha: 0,
-              elevated: false,
-              child: _isRebaseMode
-                  ? _RebaseEditor(
-                      commits: _commits.sublist(rangeMin, rangeMax + 1),
+        Expanded(
+          child: Row(
+            children: [
+              // Left — commit list
+              MaterialSurface(
+                tone: AppMaterialTone.surface1,
+                radius: 0,
+                border: Border(
+                  right: BorderSide(
+                    color: t.chromeBorder.withValues(alpha: 0.15),
+                  ),
+                ),
+                elevated: false,
+                width: 280,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Other desks with commits ahead of THEIR own upstream
+                    // surface here as ghost rows. Click → switch to that
+                    // desk + drop the user on its Changes panel (where the
+                    // "in-flight work" lives). Mirrors the symmetric strip
+                    // in the Changes page so the language is consistent
+                    // across surfaces. Hidden when no other desk has
+                    // unpushed work — no chrome with nothing to say.
+                    _DesksInFlightStrip(
                       tokens: t,
-                      repoPath: repoPath,
-                      onCancel: () =>
-                          setState(() => _rebaseRangeEndIndex = null),
-                    )
-                  : _selectedHash == null
+                      activeRepoPath: repoPath,
+                      onJumpToDesk: (deskPath) async {
+                        await context.read<RepositoryState>().setActivePath(
+                          deskPath,
+                          addToRecents: false,
+                        );
+                        if (!mounted) return;
+                        widget.onOpenChanges?.call();
+                      },
+                      onPreviewHover: (deskPath, rev, label) =>
+                          _onPreviewDeskHover(repoPath, deskPath, rev, label),
+                    ),
+                    Expanded(
+                      child: NotificationListener<ScrollEndNotification>(
+                        onNotification: (n) {
+                          if (n.metrics.extentAfter < 200) {
+                            _loadReflog(repoPath);
+                          }
+                          return false;
+                        },
+                        child: Builder(
+                          builder: (ctx) {
+                            // Hovered-desk preview prefix. When the user is
+                            // hovering an IN FLIGHT chip and its commits
+                            // have resolved, prepend them — each row fades
+                            // in with a row-index-staggered delay so the
+                            // sequence reads as "landing one at a time"
+                            // rather than a single snap-in.
+                            final preview = _activePreviewCommits;
+                            final previewCount = preview.length;
+                            return ListView.builder(
+                              controller: _commitScroll,
+                              padding: EdgeInsets.zero,
+                              itemCount:
+                                  previewCount +
+                                  _commits.length +
+                                  (_reflogLoaded ? _reflog.length + 1 : 1),
+                              itemBuilder: (ctx, rawIndex) {
+                                // Preview rows at the top. Each gets its own
+                                // staggered animation so the list populates
+                                // in sequence. Stagger budget is bounded —
+                                // cap total animation to ~1.2s even when the
+                                // desk has many commits, so very wide dives
+                                // still complete promptly.
+                                if (rawIndex < previewCount) {
+                                  return _PreviewCommitRow(
+                                    key: ValueKey(
+                                      'prev:$_previewDeskPath:${preview[rawIndex].commitHash}',
+                                    ),
+                                    commit: preview[rawIndex],
+                                    tokens: t,
+                                    indexInPreview: rawIndex,
+                                    totalPreview: previewCount,
+                                    railHover: _railHover,
+                                    onHoverChanged: _onPreviewRowHover,
+                                  );
+                                }
+                                final i = rawIndex - previewCount;
+                                if (i < _commits.length) {
+                                  final commit = _commits[i];
+                                  final isSelected =
+                                      commit.commitHash == _selectedHash;
+                                  final inRange =
+                                      _isRebaseMode &&
+                                      i >= rangeMin &&
+                                      i <= rangeMax;
+                                  return _CommitRow(
+                                    commit: commit,
+                                    tokens: t,
+                                    isSelected: isSelected,
+                                    inRange: inRange,
+                                    cachedDetail:
+                                        _detailCache['$repoPath::${commit.commitHash}'],
+                                    tagProfile: _tagProfile,
+                                    couplingMatrix: context
+                                        .read<FileCouplingState>()
+                                        .matrixFor(repoPath),
+                                    logosEngine: context
+                                        .read<LogosGitState>()
+                                        .engineFor(repoPath),
+                                    engineCoherences: _cachedEngineCoherences,
+                                    resolvedGitTags: _gitTagsForHash(
+                                      commit.commitHash,
+                                      commit.refNames,
+                                    ),
+                                    isLocalOnly: _localOnlyHashes.contains(
+                                      commit.commitHash,
+                                    ),
+                                    railHover: _railHover,
+                                    onTap: (shift) => _onCommitTap(i, shift),
+                                    onSecondaryTap: (pos) =>
+                                        _showCommitContextMenu(
+                                          context,
+                                          pos,
+                                          _commits[i],
+                                          repoPath,
+                                        ),
+                                  );
+                                }
+                                if (i == _commits.length) {
+                                  return _ReflogDivider(
+                                    t: t,
+                                    loaded: _reflogLoaded,
+                                    onLoad: () => _loadReflog(repoPath),
+                                  );
+                                }
+                                final ri = i - _commits.length - 1;
+                                if (ri < _reflog.length) {
+                                  final entry = _reflog[ri];
+                                  return _ReflogRow(
+                                    entry: entry,
+                                    tokens: t,
+                                    onTap: () {
+                                      setState(() {
+                                        _selectCommit(entry.commitHash);
+                                        _rebaseRangeEndIndex = null;
+                                        _clearCommitDiffState();
+                                      });
+                                      _loadDetail(repoPath, entry.commitHash);
+                                    },
+                                    onSecondaryTap: (pos) =>
+                                        _showReflogRecoveryMenu(
+                                          repoPath,
+                                          entry,
+                                          pos,
+                                        ),
+                                  );
+                                }
+                                return const SizedBox.shrink();
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Right — detail or rebase editor
+              Expanded(
+                child: MaterialSurface(
+                  tone: AppMaterialTone.surface0,
+                  radius: 0,
+                  borderAlpha: 0,
+                  elevated: false,
+                  child: _isRebaseMode
+                      ? _RebaseEditor(
+                          commits: _commits.sublist(rangeMin, rangeMax + 1),
+                          tokens: t,
+                          repoPath: repoPath,
+                          onCancel: () =>
+                              setState(() => _rebaseRangeEndIndex = null),
+                        )
+                      : _selectedHash == null
                       ? AppStatusView(
                           title: context.t.history.noCommitSelectedTitle,
                           message: context.t.history.noCommitSelectedMessage,
                           compact: true,
                         )
                       : _detail != null
-                          // Cross-fade between overview and per-file
-                          // diff so the swap reads as a smooth depth
-                          // change inside the same panel.
-                          ? AnimatedSwitcher(
-                              duration: context.motion(
-                                  const Duration(milliseconds: 140)),
-                              switchInCurve: Curves.easeOut,
-                              switchOutCurve: Curves.easeIn,
-                              transitionBuilder: (child, anim) =>
-                                  FadeTransition(opacity: anim, child: child),
-                              child: KeyedSubtree(
-                                // Key is binary (overview vs diff), NOT
-                                // per-file. Switching files inside diff
-                                // mode keeps the pane mounted so the
-                                // rail's wake animation doesn't restart;
-                                // only the inner DiffShell swaps content.
-                                key: ValueKey(_commitDiffFile == null
-                                    ? 'overview'
-                                    : 'diff'),
-                                child: _commitDiffFile != null
-                                    ? _CommitFileDiffPane(
-                                        detail: _detail!,
-                                        filePath: _commitDiffFile!,
-                                        diffContent: _commitDiffContent,
-                                        loading: _commitDiffLoading,
-                                        error: _commitDiffError,
-                                        tokens: t,
-                                        repoPath: repoPath,
-                                        onOpenFile: (path) =>
-                                            _openCommitFileDiff(repoPath,
-                                                _detail!.commitHash, path),
-                                        onClose: _closeCommitFileDiff,
-                                      )
-                                    : _CommitDetailTransition(
-                              detail: _detail!,
-                              loading:
-                                  _detailLoading && _detailLoadingHash != null,
-                              tokens: t,
-                              repoPath: repoPath,
-                              tagInputVisible: _tagInputVisible,
-                              tagInputValue: _tagInputValue,
-                              tagController: _tagCtrl,
-                              tagError: _tagError,
-                              gitTags: _gitTagsForHash(
-                                _detail!.commitHash,
-                                _selectedRefNames,
-                              ),
-                              onToggleTag: () => setState(() {
-                                _tagInputVisible = !_tagInputVisible;
-                                _tagError = null;
-                              }),
-                              onTagChanged: (v) =>
-                                  setState(() => _tagInputValue = v),
-                              onCreateTag: () =>
-                                  _createTag(repoPath, _detail!.commitHash),
-                              onDeleteTag: (name) =>
-                                  _deleteTag(repoPath, name),
-                              onOpenFile: (path) => _openCommitFileDiff(
-                                  repoPath, _detail!.commitHash, path),
-                              onOpenAllFiles: () => _openCommitAllDiff(
-                                  repoPath, _detail!.commitHash),
-                              onOpenDirectory: (dirPath) =>
-                                  _openCommitFileDiff(repoPath,
-                                      _detail!.commitHash, dirPath),
-                              tagEscapeFocus: _tagEscapeFocus,
-                              signature: _signatureFor(_detail!),
-                              lifecycles: _lifecyclesFor(repoPath),
+                      // Cross-fade between overview and per-file
+                      // diff so the swap reads as a smooth depth
+                      // change inside the same panel.
+                      ? AnimatedSwitcher(
+                          duration: context.motion(
+                            const Duration(milliseconds: 140),
+                          ),
+                          switchInCurve: Curves.easeOut,
+                          switchOutCurve: Curves.easeIn,
+                          transitionBuilder: (child, anim) =>
+                              FadeTransition(opacity: anim, child: child),
+                          child: KeyedSubtree(
+                            // Key is binary (overview vs diff), NOT
+                            // per-file. Switching files inside diff
+                            // mode keeps the pane mounted so the
+                            // rail's wake animation doesn't restart;
+                            // only the inner DiffShell swaps content.
+                            key: ValueKey(
+                              _commitDiffFile == null ? 'overview' : 'diff',
                             ),
-                              ),
-                            )
-                          : _detailLoading
-                              ? AppStatusView.loading(
-                                  title: context.t.history.loadingCommitTitle,
-                                  message:
-                                      context.t.history.loadingCommitMessage,
-                                  compact: true,
-                                )
-                              : AppStatusView.error(
-                                  title: context.t.history.commitUnavailableTitle,
-                                  message: _detailError ??
-                                      context.t.history.couldNotLoadCommit,
-                                  compact: true,
-                                ),
-            ),
+                            child: _commitDiffFile != null
+                                ? _CommitFileDiffPane(
+                                    detail: _detail!,
+                                    filePath: _commitDiffFile!,
+                                    diffContent: _commitDiffContent,
+                                    document: _commitDiffDocument,
+                                    loading: _commitDiffLoading,
+                                    error: _commitDiffError,
+                                    tokens: t,
+                                    repoPath: repoPath,
+                                    onOpenFile: (path) => _openCommitFileDiff(
+                                      repoPath,
+                                      _detail!.commitHash,
+                                      path,
+                                    ),
+                                    onClose: _closeCommitFileDiff,
+                                  )
+                                : _CommitDetailTransition(
+                                    detail: _detail!,
+                                    loading:
+                                        _detailLoading &&
+                                        _detailLoadingHash != null,
+                                    tokens: t,
+                                    repoPath: repoPath,
+                                    tagInputVisible: _tagInputVisible,
+                                    tagInputValue: _tagInputValue,
+                                    tagController: _tagCtrl,
+                                    tagError: _tagError,
+                                    gitTags: _gitTagsForHash(
+                                      _detail!.commitHash,
+                                      _selectedRefNames,
+                                    ),
+                                    onToggleTag: () => setState(() {
+                                      _tagInputVisible = !_tagInputVisible;
+                                      _tagError = null;
+                                    }),
+                                    onTagChanged: (v) =>
+                                        setState(() => _tagInputValue = v),
+                                    onCreateTag: () => _createTag(
+                                      repoPath,
+                                      _detail!.commitHash,
+                                    ),
+                                    onDeleteTag: (name) =>
+                                        _deleteTag(repoPath, name),
+                                    onOpenFile: (path) => _openCommitFileDiff(
+                                      repoPath,
+                                      _detail!.commitHash,
+                                      path,
+                                    ),
+                                    onOpenAllFiles: () => _openCommitAllDiff(
+                                      repoPath,
+                                      _detail!.commitHash,
+                                    ),
+                                    onOpenDirectory: (dirPath) =>
+                                        _openCommitFileDiff(
+                                          repoPath,
+                                          _detail!.commitHash,
+                                          dirPath,
+                                        ),
+                                    tagEscapeFocus: _tagEscapeFocus,
+                                    signature: _signatureFor(_detail!),
+                                    lifecycles: _lifecyclesFor(repoPath),
+                                  ),
+                          ),
+                        )
+                      : _detailLoading
+                      ? AppStatusView.loading(
+                          title: context.t.history.loadingCommitTitle,
+                          message: context.t.history.loadingCommitMessage,
+                          compact: true,
+                        )
+                      : AppStatusView.error(
+                          title: context.t.history.commitUnavailableTitle,
+                          message:
+                              _detailError ??
+                              context.t.history.couldNotLoadCommit,
+                          compact: true,
+                        ),
+                ),
+              ),
+            ],
           ),
-        ]),
-      ),
-    ]);
+        ),
+      ],
+    );
   }
 }
-
 
 class _CommitRow extends StatefulWidget {
   final CommitHistoryEntry commit;
   final AppTokens tokens;
   final bool isSelected, inRange;
   final CommitDetailData? cachedDetail;
+
   /// Auto-derived tag profile for the current repo. Empty profile
   /// (first frame, or empty repo) yields no auto-tags — falls back
   /// to just git-native tag pills.
   final RepositoryTagProfile tagProfile;
+
   /// Coupling matrix used for coherence-axis tags (focused / sprawl).
   /// Null when not yet computed; rows silently skip coherence tags.
   final FileCouplingMatrix? couplingMatrix;
+
   /// Optional Logos engine for the active repo. When warm, supplies
   /// Born-mixed multi-axis coherence to the row's focused/sprawl gate
   /// in preference to the raw Jaccard fallback.
   final LogosGit? logosEngine;
+
   /// Per-commit coherence map cached at tag-profile build time. When
   /// non-null, the row reads its coherence from here instead of
   /// recomputing `engine.coherence(files)` (which is ~2-10ms per
@@ -3993,9 +4325,11 @@ class _CommitRow extends StatefulWidget {
   /// per-row allocation.
   final Map<String, double>? engineCoherences;
   final List<String> resolvedGitTags;
+
   /// True when this commit hasn't reached `@{upstream}` yet — renders
   /// the same ↑ marker language the timeline's unpushed rail tint uses.
   final bool isLocalOnly;
+
   /// Shared rail↔list hover channel (see `_HistoryPageState._railHover`).
   /// Row hover writes the commit hash here (lighting the dot on the
   /// rail); the row listens and tints itself when the rail hovers its
@@ -4026,6 +4360,7 @@ class _CommitRow extends StatefulWidget {
 class _CommitRowState extends State<_CommitRow> {
   bool _hovered = false;
   bool _pressed = false;
+
   /// True while the timeline strip hovers this commit's dot. Kept as
   /// a bool derived from the shared notifier so the listener only
   /// setStates on transitions — 100 rows listening costs 100 equality
@@ -4089,7 +4424,6 @@ class _CommitRowState extends State<_CommitRow> {
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
@@ -4097,10 +4431,13 @@ class _CommitRowState extends State<_CommitRow> {
 
     return InteractionFeedback(
       onTap: () {
-        final shift = HardwareKeyboard.instance.logicalKeysPressed
-                .contains(LogicalKeyboardKey.shiftLeft) ||
-            HardwareKeyboard.instance.logicalKeysPressed
-                .contains(LogicalKeyboardKey.shiftRight);
+        final shift =
+            HardwareKeyboard.instance.logicalKeysPressed.contains(
+              LogicalKeyboardKey.shiftLeft,
+            ) ||
+            HardwareKeyboard.instance.logicalKeysPressed.contains(
+              LogicalKeyboardKey.shiftRight,
+            );
         widget.onTap(shift);
       },
       onSecondaryTapDown: widget.onSecondaryTap,
@@ -4135,16 +4472,15 @@ class _CommitRowState extends State<_CommitRow> {
             color: widget.isSelected
                 ? t.itemActiveBg
                 : widget.inRange
-                    ? t.chromeAccent.withValues(alpha: 0.06)
-                    : _hovered
-                        ? t.itemHoverBg
-                        // Rail hovering this commit's dot: a softer
-                        // echo of the row's own hover, so sweeping the
-                        // strip visibly tracks through the list.
-                        : _railHovered
-                            ? t.itemHoverBg
-                                .withValues(alpha: t.itemHoverBg.a * 0.55)
-                            : t.itemHoverBg.withValues(alpha: 0),
+                ? t.chromeAccent.withValues(alpha: 0.06)
+                : _hovered
+                ? t.itemHoverBg
+                // Rail hovering this commit's dot: a softer
+                // echo of the row's own hover, so sweeping the
+                // strip visibly tracks through the list.
+                : _railHovered
+                ? t.itemHoverBg.withValues(alpha: t.itemHoverBg.a * 0.55)
+                : t.itemHoverBg.withValues(alpha: 0),
             border: Border(
               left: BorderSide(
                 color: widget.isSelected
@@ -4157,74 +4493,92 @@ class _CommitRowState extends State<_CommitRow> {
           ),
           child: Padding(
             padding: const EdgeInsets.only(left: 10),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Text(
-                  c.shortHash,
-                  style: TextStyle(
-                    color: widget.isSelected ? t.textStrong : t.textMuted,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
-                    fontWeight:
-                        widget.isSelected ? FontWeight.w700 : FontWeight.w600,
-                  ),
-                ),
-                // Same ↑ the in-flight chips and the rail's unpushed
-                // tint speak — this commit hasn't reached upstream.
-                if (widget.isLocalOnly)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4),
-                    child: Text(
-                      '↑',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      c.shortHash,
                       style: TextStyle(
-                        color: t.stateAdded.withValues(alpha: 0.9),
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
+                        color: widget.isSelected ? t.textStrong : t.textMuted,
+                        fontSize: 10,
                         fontFamily: AppFonts.mono,
                         fontFamilyFallback: AppFonts.monoFallback,
+                        fontWeight: widget.isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                     ),
-                  ),
-                const Spacer(),
-                Text(relativeAgeAgo(c.authoredAt),
-                    style: TextStyle(
+                    // Same ↑ the in-flight chips and the rail's unpushed
+                    // tint speak — this commit hasn't reached upstream.
+                    if (widget.isLocalOnly)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text(
+                          '↑',
+                          style: TextStyle(
+                            color: t.stateAdded.withValues(alpha: 0.9),
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: AppFonts.mono,
+                            fontFamilyFallback: AppFonts.monoFallback,
+                          ),
+                        ),
+                      ),
+                    const Spacer(),
+                    Text(
+                      relativeAgeAgo(c.authoredAt),
+                      style: TextStyle(
                         color: t.textMuted.withValues(alpha: 0.8),
-                        fontSize: 10)),
-              ]),
-              const SizedBox(height: 3),
-              Row(children: [
-                Expanded(
-                  child: Text(
-                    c.subject,
-                    style: TextStyle(
-                      color: widget.isSelected ? t.textStrong : t.textNormal,
-                      fontSize: 13,
-                      fontWeight:
-                          widget.isSelected ? FontWeight.w600 : FontWeight.w500,
+                        fontSize: 10,
+                      ),
                     ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  ],
                 ),
-              ]),
-              const SizedBox(height: 3),
-              Row(children: [
-                Text(c.authorName,
-                    style: TextStyle(color: t.textMuted, fontSize: 11)),
-                const SizedBox(width: 8),
-                // Tag strip — fills the space between author and impact
-                // column. Longer usernames leave less room for tags.
-                Expanded(
-                  child: _FittingTagRow(
-                    autoTags: _autoTagsFor(c),
-                    gitTagNames: widget.resolvedGitTags,
-                    tokens: t,
-                  ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        c.subject,
+                        style: TextStyle(
+                          color: widget.isSelected
+                              ? t.textStrong
+                              : t.textNormal,
+                          fontSize: 13,
+                          fontWeight: widget.isSelected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                _CommitImpact(detail: widget.cachedDetail, tokens: t),
-              ]),
-            ]),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Text(
+                      c.authorName,
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                    ),
+                    const SizedBox(width: 8),
+                    // Tag strip — fills the space between author and impact
+                    // column. Longer usernames leave less room for tags.
+                    Expanded(
+                      child: _FittingTagRow(
+                        autoTags: _autoTagsFor(c),
+                        gitTagNames: widget.resolvedGitTags,
+                        tokens: t,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _CommitImpact(detail: widget.cachedDetail, tokens: t),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -4232,47 +4586,65 @@ class _CommitRowState extends State<_CommitRow> {
   }
 }
 
-
 class _ReflogDivider extends StatelessWidget {
   final AppTokens t;
   final bool loaded;
   final VoidCallback onLoad;
-  const _ReflogDivider(
-      {required this.t, required this.loaded, required this.onLoad});
+  const _ReflogDivider({
+    required this.t,
+    required this.loaded,
+    required this.onLoad,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-        child: Row(children: [
-          Expanded(
-              child: Divider(
-                  color: t.chromeBorder.withValues(alpha: 0.3), height: 1)),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(context.t.history.reflogDividerLabel,
-                style: TextStyle(
-                    color: t.textMuted, fontSize: 10, letterSpacing: 0.05)),
-          ),
-          Expanded(
-              child: Divider(
-                  color: t.chromeBorder.withValues(alpha: 0.3), height: 1)),
-        ]),
-      ),
-      if (!loaded)
+    return Column(
+      children: [
         Padding(
-          padding: const EdgeInsets.all(16),
-          child: GestureDetector(
-            onTap: onLoad,
-            child: Text(context.t.history.loadReflog,
-                style: TextStyle(color: t.accentBright, fontSize: 11)),
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Divider(
+                  color: t.chromeBorder.withValues(alpha: 0.3),
+                  height: 1,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  context.t.history.reflogDividerLabel,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    letterSpacing: 0.05,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Divider(
+                  color: t.chromeBorder.withValues(alpha: 0.3),
+                  height: 1,
+                ),
+              ),
+            ],
           ),
         ),
-    ]);
+        if (!loaded)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: GestureDetector(
+              onTap: onLoad,
+              child: Text(
+                context.t.history.loadReflog,
+                style: TextStyle(color: t.accentBright, fontSize: 11),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
-
 
 /// Greedy-fit tag strip: measures pills with a TextPainter and stops
 /// admitting once the cumulative width would exceed the parent's max.
@@ -4297,7 +4669,8 @@ class _FittingTagRow extends StatelessWidget {
   static const double _pillSpacing = 4;
   static const TextStyle _pillTextStyle = TextStyle(
     fontSize: 9,
-    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+    fontFamily: AppFonts.mono,
+    fontFamilyFallback: AppFonts.monoFallback,
     letterSpacing: 0.2,
   );
 
@@ -4314,38 +4687,40 @@ class _FittingTagRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final maxW = constraints.maxWidth;
-      if (maxW <= 0 || (autoTags.isEmpty && gitTagNames.isEmpty)) {
-        return const SizedBox.shrink();
-      }
-      final admitted = <Widget>[];
-      var used = 0.0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        if (maxW <= 0 || (autoTags.isEmpty && gitTagNames.isEmpty)) {
+          return const SizedBox.shrink();
+        }
+        final admitted = <Widget>[];
+        var used = 0.0;
 
-      bool tryAdd(Widget pill, double pillWidth) {
-        final sep = admitted.isEmpty ? 0.0 : _pillSpacing;
-        if (used + sep + pillWidth > maxW) return false;
-        if (sep > 0) admitted.add(const SizedBox(width: _pillSpacing));
-        admitted.add(pill);
-        used += sep + pillWidth;
-        return true;
-      }
+        bool tryAdd(Widget pill, double pillWidth) {
+          final sep = admitted.isEmpty ? 0.0 : _pillSpacing;
+          if (used + sep + pillWidth > maxW) return false;
+          if (sep > 0) admitted.add(const SizedBox(width: _pillSpacing));
+          admitted.add(pill);
+          used += sep + pillWidth;
+          return true;
+        }
 
-      for (final tag in autoTags) {
-        final w = _measureTextWidth(tag.label) + _autoPillChrome;
-        if (!tryAdd(CommitTagPill(tag: tag, tokens: tokens), w)) break;
-      }
-      for (final name in gitTagNames) {
-        final w = _measureTextWidth(name) + _gitPillChrome;
-        if (!tryAdd(_TagPill(name: name, tokens: tokens), w)) break;
-      }
+        for (final tag in autoTags) {
+          final w = _measureTextWidth(tag.label) + _autoPillChrome;
+          if (!tryAdd(CommitTagPill(tag: tag, tokens: tokens), w)) break;
+        }
+        for (final name in gitTagNames) {
+          final w = _measureTextWidth(name) + _gitPillChrome;
+          if (!tryAdd(_TagPill(name: name, tokens: tokens), w)) break;
+        }
 
-      // Right-aligned so tags sit against the impact column.
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Row(mainAxisSize: MainAxisSize.min, children: admitted),
-      );
-    });
+        // Right-aligned so tags sit against the impact column.
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Row(mainAxisSize: MainAxisSize.min, children: admitted),
+        );
+      },
+    );
   }
 }
 
@@ -4362,22 +4737,29 @@ class _TagPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: t.accentBright.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+          context.surfaceShader.geometry.badgeRadius,
+        ),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        AppIcon(name: 'tag', size: 9, color: t.accentBright),
-        const SizedBox(width: 3),
-        Text(name,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppIcon(name: 'tag', size: 9, color: t.accentBright),
+          const SizedBox(width: 3),
+          Text(
+            name,
             style: TextStyle(
-                color: t.accentBright,
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-                fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-      ]),
+              color: t.accentBright,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              fontFamily: AppFonts.mono,
+              fontFamilyFallback: AppFonts.monoFallback,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
-
 
 class _DetailTagPill extends StatefulWidget {
   final String name;
@@ -4412,28 +4794,36 @@ class _DetailTagPillState extends State<_DetailTagPill> {
               : t.accentBright.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          AppIcon(
-              name: 'tag', size: 10, color: t.accentBright),
-          const SizedBox(width: 4),
-          Text(widget.name,
-              style: TextStyle(
-                  color: t.accentBright,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: AppFonts.mono,
-                  fontFamilyFallback: AppFonts.monoFallback)),
-          if (_hovered) ...[
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppIcon(name: 'tag', size: 10, color: t.accentBright),
             const SizedBox(width: 4),
-            GestureDetector(
-              onTap: widget.onDelete,
-              child: Text('✕',
-                  style: TextStyle(
-                      color: t.textMuted.withValues(alpha: 0.6),
-                      fontSize: 10)),
+            Text(
+              widget.name,
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                fontFamily: AppFonts.mono,
+                fontFamilyFallback: AppFonts.monoFallback,
+              ),
             ),
+            if (_hovered) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: widget.onDelete,
+                child: Text(
+                  '✕',
+                  style: TextStyle(
+                    color: t.textMuted.withValues(alpha: 0.6),
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
@@ -4566,19 +4956,24 @@ class _TagCreatorState extends State<_TagCreator> {
                 color: _hovered
                     ? t.accentBright.withValues(alpha: 0.06)
                     : Colors.transparent,
-                borderRadius:
-                    BorderRadius.circular(shader.geometry.pillRadius),
+                borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                AppIcon(name: 'tag', size: 10, color: color),
-                const SizedBox(width: 1),
-                Text('+',
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppIcon(name: 'tag', size: 10, color: color),
+                  const SizedBox(width: 1),
+                  Text(
+                    '+',
                     style: TextStyle(
-                        color: color,
-                        fontSize: 11,
-                        height: 1.0,
-                        fontWeight: FontWeight.w600)),
-              ]),
+                      color: color,
+                      fontSize: 11,
+                      height: 1.0,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -4596,8 +4991,7 @@ class _TagCreatorState extends State<_TagCreator> {
     return KeyboardListener(
       focusNode: widget.escapeFocus,
       onKeyEvent: (e) {
-        if (e is KeyDownEvent &&
-            e.logicalKey == LogicalKeyboardKey.escape) {
+        if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.escape) {
           widget.onToggle();
         }
       },
@@ -4614,38 +5008,43 @@ class _TagCreatorState extends State<_TagCreator> {
             color: t.accentBright.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
             border: Border.all(
-                color: hasError ? t.stateConflicted : t.itemActiveBorder),
+              color: hasError ? t.stateConflicted : t.itemActiveBorder,
+            ),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            AppIcon(name: 'tag', size: 10, color: accent),
-            const SizedBox(width: 4),
-            Flexible(
-              child: TextField(
-                controller: widget.controller,
-                focusNode: _fieldFocus,
-                autofocus: true,
-                cursorColor: accent,
-                cursorHeight: 12,
-                cursorWidth: 1.5,
-                // Text styled exactly like a _DetailTagPill's label — you are
-                // editing the tag, not filling a form field.
-                style: TextStyle(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(name: 'tag', size: 10, color: accent),
+              const SizedBox(width: 4),
+              Flexible(
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: _fieldFocus,
+                  autofocus: true,
+                  cursorColor: accent,
+                  cursorHeight: 12,
+                  cursorWidth: 1.5,
+                  // Text styled exactly like a _DetailTagPill's label — you are
+                  // editing the tag, not filling a form field.
+                  style: TextStyle(
                     color: accent,
                     fontSize: 10.5,
                     fontWeight: FontWeight.w600,
                     fontFamily: AppFonts.mono,
-                    fontFamilyFallback: AppFonts.monoFallback),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  isCollapsed: true,
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    isCollapsed: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onChanged: widget.onChanged,
+                  onSubmitted: (_) => _submit(),
                 ),
-                onChanged: widget.onChanged,
-                onSubmitted: (_) => _submit(),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
       ),
     );
@@ -4656,6 +5055,7 @@ class _ReflogRow extends StatefulWidget {
   final ReflogEntryData entry;
   final AppTokens tokens;
   final VoidCallback onTap;
+
   /// Right-click → context menu opener. Receives the global pointer
   /// position so the parent can anchor the menu. Null disables the
   /// recovery affordance (e.g., when no repo path is bound).
@@ -4695,37 +5095,54 @@ class _ReflogRowState extends State<_ReflogRow> {
           color: _hovered ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0),
           child: Opacity(
             opacity: 0.7,
-            child: Row(children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
                     color: t.chromeAccent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(
-                        context.surfaceShader.geometry.badgeRadius)),
-                child: Text(e.refSelector,
+                      context.surfaceShader.geometry.badgeRadius,
+                    ),
+                  ),
+                  child: Text(
+                    e.refSelector,
                     style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 9,
-                        fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                  child: Text(e.actionSummary,
-                      style: TextStyle(color: t.textNormal, fontSize: 11),
-                      overflow: TextOverflow.ellipsis)),
-              Text(e.shortHash,
+                      color: t.accentBright,
+                      fontSize: 9,
+                      fontFamily: AppFonts.mono,
+                      fontFamilyFallback: AppFonts.monoFallback,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    e.actionSummary,
+                    style: TextStyle(color: t.textNormal, fontSize: 11),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  e.shortHash,
                   style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 10,
-                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-            ]),
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
-
 
 class _CommitDetail extends StatelessWidget {
   final CommitDetailData detail;
@@ -4797,181 +5214,207 @@ class _CommitDetail extends StatelessWidget {
     final t = tokens;
     final d = detail;
     final authorName = _displayAuthor(d.authorName);
-    final dirtyPaths = context
+    final dirtyPaths =
+        context
             .watch<RepositoryState>()
             .status
             ?.files
             .map((f) => f.path.replaceAll('\\', '/'))
             .toSet() ??
         <String>{};
-    return ListView(padding: const EdgeInsets.all(20), children: [
-      // Subject (primary heading) — morphs when you click a different
-      // commit so the panel reads as a swap, not a teleport. Trades off
-      // resonanceText's markdown styling since commit subjects are
-      // overwhelmingly plain prose.
-      CommitLede(
-        detail: d,
-        repoPath: repoPath,
-        tokens: t,
-        signature: signature,
-        subjectStyle: TextStyle(
-          color: t.textStrong,
-          fontSize: 18,
-          fontWeight: FontWeight.w600,
-          height: 1.35,
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        // Subject (primary heading) — morphs when you click a different
+        // commit so the panel reads as a swap, not a teleport. Trades off
+        // resonanceText's markdown styling since commit subjects are
+        // overwhelmingly plain prose.
+        CommitLede(
+          detail: d,
+          repoPath: repoPath,
+          tokens: t,
+          signature: signature,
+          subjectStyle: TextStyle(
+            color: t.textStrong,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            height: 1.35,
+          ),
         ),
-      ),
 
-      const SizedBox(height: 14),
+        const SizedBox(height: 14),
 
-      // Metadata row: avatar | name | · | date | · | hash | · tag* | ⊕
-      // Tags lead the affordance; the ghost coin (⊕) whispers at the tail.
-      Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          // Author avatar + name
-          if (authorName.isNotEmpty)
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              // Avatar coin. Routed through MaterialSurface so it wears
-              // the theme's actual material (glass glaze, block bevel,
-              // ink line) instead of a flat wash. Shape follows the
-              // theme's geometry: a full circle wherever corners are
-              // soft, snapping square only when the theme itself is
-              // sharp — a rounded-rect avatar is neither coin nor tile.
-              MaterialSurface(
-                width: 22,
-                height: 22,
-                tone: t.innerPanelTone,
-                radius: context.surfaceShader.geometry.radius <= 0
-                    ? 0.0
-                    : 11.0,
-                borderAlpha: 0.22,
-                innerHighlight: true,
-                child: Center(
-                    child: Text(
-                  authorName[0].toUpperCase(),
-                  style: TextStyle(
-                      color: t.textStrong,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700),
-                )),
-              ),
-              const SizedBox(width: 6),
-              Text(authorName,
-                  style: TextStyle(
+        // Metadata row: avatar | name | · | date | · | hash | · tag* | ⊕
+        // Tags lead the affordance; the ghost coin (⊕) whispers at the tail.
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            // Author avatar + name
+            if (authorName.isNotEmpty)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Avatar coin. Routed through MaterialSurface so it wears
+                  // the theme's actual material (glass glaze, block bevel,
+                  // ink line) instead of a flat wash. Shape follows the
+                  // theme's geometry: a full circle wherever corners are
+                  // soft, snapping square only when the theme itself is
+                  // sharp — a rounded-rect avatar is neither coin nor tile.
+                  MaterialSurface(
+                    width: 22,
+                    height: 22,
+                    tone: t.innerPanelTone,
+                    radius: context.surfaceShader.geometry.radius <= 0
+                        ? 0.0
+                        : 11.0,
+                    borderAlpha: 0.22,
+                    innerHighlight: true,
+                    child: Center(
+                      child: Text(
+                        authorName[0].toUpperCase(),
+                        style: TextStyle(
+                          color: t.textStrong,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    authorName,
+                    style: TextStyle(
                       color: t.textNormal,
                       fontSize: 12,
-                      fontWeight: FontWeight.w500)),
-            ]),
-          Text('·',
-              style: TextStyle(
-                  color: t.textFaint, fontSize: 12)),
-          // Date — relative in the row, absolute on hover.
-          Tooltip(
-            message: _formatDate(d.authoredAt),
-            waitDuration: const Duration(milliseconds: 300),
-            child: Text(_relativeDate(d.authoredAt),
-                style: TextStyle(color: t.textMuted, fontSize: 11)),
-          ),
-          Text('·',
-              style: TextStyle(
-                  color: t.textFaint, fontSize: 12)),
-          // Short hash
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            Text('·', style: TextStyle(color: t.textFaint, fontSize: 12)),
+            // Date — relative in the row, absolute on hover.
+            Tooltip(
+              message: _formatDate(d.authoredAt),
+              waitDuration: const Duration(milliseconds: 300),
+              child: Text(
+                _relativeDate(d.authoredAt),
+                style: TextStyle(color: t.textMuted, fontSize: 11),
+              ),
+            ),
+            Text('·', style: TextStyle(color: t.textFaint, fontSize: 12)),
+            // Short hash
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
                 color: t.chromeAccent.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.badgeRadius)),
-            child: Text(d.shortHash,
+                  context.surfaceShader.geometry.badgeRadius,
+                ),
+              ),
+              child: Text(
+                d.shortHash,
                 style: TextStyle(
-                    color: t.accentBright,
-                    fontSize: 11,
-                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-          ),
-          // Tags lead. Real tags sit immediately after the hash, each
-          // introduced by its own separator dot — so zero tags means zero
-          // trailing dots, no orphaned punctuation.
-          for (final name in gitTags) ...[
-            Text('·',
-                style: TextStyle(
-                    color: t.textFaint, fontSize: 12)),
-            _DetailTagPill(
-              name: name,
+                  color: t.accentBright,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono,
+                  fontFamilyFallback: AppFonts.monoFallback,
+                ),
+              ),
+            ),
+            // Tags lead. Real tags sit immediately after the hash, each
+            // introduced by its own separator dot — so zero tags means zero
+            // trailing dots, no orphaned punctuation.
+            for (final name in gitTags) ...[
+              Text('·', style: TextStyle(color: t.textFaint, fontSize: 12)),
+              _DetailTagPill(
+                name: name,
+                tokens: t,
+                onDelete: () => onDeleteTag(name),
+              ),
+            ],
+            // The creation affordance is last and dotless: a ghost coin that
+            // morphs in place into the tag it will become. It's an affordance
+            // waiting to be a datum, not a datum — so it earns no separator.
+            _TagCreator(
               tokens: t,
-              onDelete: () => onDeleteTag(name),
+              expanded: tagInputVisible,
+              error: tagError,
+              controller: tagController,
+              escapeFocus: tagEscapeFocus,
+              onToggle: onToggleTag,
+              onChanged: onTagChanged,
+              onCreate: onCreateTag,
             ),
           ],
-          // The creation affordance is last and dotless: a ghost coin that
-          // morphs in place into the tag it will become. It's an affordance
-          // waiting to be a datum, not a datum — so it earns no separator.
-          _TagCreator(
-            tokens: t,
-            expanded: tagInputVisible,
-            error: tagError,
-            controller: tagController,
-            escapeFocus: tagEscapeFocus,
-            onToggle: onToggleTag,
-            onChanged: onTagChanged,
-            onCreate: onCreateTag,
-          ),
-        ],
-      ),
+        ),
 
-      if (d.body.isNotEmpty) ...[
-        const SizedBox(height: 16),
-        resonanceText(d.body, t,
-            baseStyle: TextStyle(color: t.textNormal, fontSize: 12, height: 1.5)),
-      ],
-
-      const SizedBox(height: 20),
-      Row(children: [
-        // The structural sigil sits at the head of the stat row as a
-        // static glyph — purely decorative-informative, NOT an
-        // affordance. The chips beside it carry the click semantics.
-        if (signature != null) ...[
-          IgnorePointer(
-            child: CommitSigil(
-              fingerprint: signature!.fingerprint,
-              tokens: t,
+        if (d.body.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          resonanceText(
+            d.body,
+            t,
+            baseStyle: TextStyle(
+              color: t.textNormal,
+              fontSize: 12,
+              height: 1.5,
             ),
           ),
-          const SizedBox(width: 8),
         ],
-        // Tapping any of these chips opens the entire commit's diff
-        // (multi-file) in the existing DiffShell. The "39 files" chip
-        // and the +/- chips all act as the same affordance — wherever
-        // the user's eye lands when they want "show me everything."
-        _StatChip(
-            label: context.t.common.fileCount(n: d.filesChanged),
-            color: t.textMuted,
-            onTap: onOpenAllFiles),
-        const SizedBox(width: 6),
-        _StatChip(
-            label: '+${d.additions}',
-            color: t.stateAdded,
-            onTap: onOpenAllFiles),
-        const SizedBox(width: 4),
-        _StatChip(
-            label: '-${d.deletions}',
-            color: t.stateDeleted,
-            onTap: onOpenAllFiles),
-      ]),
 
-      const SizedBox(height: 18),
-      CommitSeismograph(
-        detail: d,
-        tokens: t,
-        dirtyPaths: dirtyPaths,
-        repoPath: repoPath,
-        onOpenFile: onOpenFile,
-        onOpenAllFiles: onOpenAllFiles,
-        onOpenDirectory: onOpenDirectory,
-        lifecycles: lifecycles,
-      ),
-    ]);
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            // The structural sigil sits at the head of the stat row as a
+            // static glyph — purely decorative-informative, NOT an
+            // affordance. The chips beside it carry the click semantics.
+            if (signature != null) ...[
+              IgnorePointer(
+                child: CommitSigil(
+                  fingerprint: signature!.fingerprint,
+                  tokens: t,
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            // Tapping any of these chips opens the entire commit's diff
+            // (multi-file) in the existing DiffShell. The "39 files" chip
+            // and the +/- chips all act as the same affordance — wherever
+            // the user's eye lands when they want "show me everything."
+            _StatChip(
+              label: context.t.common.fileCount(n: d.filesChanged),
+              color: t.textMuted,
+              onTap: onOpenAllFiles,
+            ),
+            const SizedBox(width: 6),
+            _StatChip(
+              label: '+${d.additions}',
+              color: t.stateAdded,
+              onTap: onOpenAllFiles,
+            ),
+            const SizedBox(width: 4),
+            _StatChip(
+              label: '-${d.deletions}',
+              color: t.stateDeleted,
+              onTap: onOpenAllFiles,
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 18),
+        CommitSeismograph(
+          detail: d,
+          tokens: t,
+          dirtyPaths: dirtyPaths,
+          repoPath: repoPath,
+          onOpenFile: onOpenFile,
+          onOpenAllFiles: onOpenAllFiles,
+          onOpenDirectory: onOpenDirectory,
+          lifecycles: lifecycles,
+        ),
+      ],
+    );
   }
 }
 
@@ -5079,6 +5522,9 @@ class _CommitFileDiffPane extends StatefulWidget {
   final CommitDetailData detail;
   final String filePath;
   final String? diffContent;
+  // Disk-backed document for a large commit diff (takes precedence over
+  // [diffContent] when set); null for the in-RAM String path.
+  final DiffDocument? document;
   final bool loading;
   final String? error;
   final AppTokens tokens;
@@ -5090,6 +5536,7 @@ class _CommitFileDiffPane extends StatefulWidget {
     required this.detail,
     required this.filePath,
     required this.diffContent,
+    required this.document,
     required this.loading,
     required this.error,
     required this.tokens,
@@ -5103,8 +5550,7 @@ class _CommitFileDiffPane extends StatefulWidget {
 }
 
 class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
-  late final FocusNode _focusNode =
-      FocusNode(debugLabel: 'CommitFileDiffPane');
+  late final FocusNode _focusNode = FocusNode(debugLabel: 'CommitFileDiffPane');
 
   @override
   void initState() {
@@ -5145,33 +5591,37 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(children: [
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  onTap: widget.onClose,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: AppIcon(
+            child: Row(
+              children: [
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: widget.onClose,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: AppIcon(
                         name: 'arrow-left',
                         size: 13,
-                        color: t.textMuted),
+                        color: t.textMuted,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              Flexible(
-                child: Text(
-                  headerPath,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 12,
-                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
-                    fontWeight: FontWeight.w600,
+                Flexible(
+                  child: Text(
+                    headerPath,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 12,
+                      fontFamily: AppFonts.mono,
+                      fontFamilyFallback: AppFonts.monoFallback,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ]),
+              ],
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -5191,9 +5641,11 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
               // In all-files mode pass a synthetic label DiffShell can
               // display as the file header — it natively renders
               // multi-file diffs containing per-file `+++/---` markers.
-              filePath:
-                  isAll ? context.t.history.allChangesLabel : widget.filePath,
+              filePath: isAll
+                  ? context.t.history.allChangesLabel
+                  : widget.filePath,
               tokens: t,
+              document: widget.document,
               diffContent: widget.diffContent,
               loading: widget.loading,
               error: widget.error,
@@ -5251,7 +5703,8 @@ class _HistoryMiniButtonState extends State<_HistoryMiniButton> {
           decoration: BoxDecoration(
             color: chrome.background,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.radius),
+              context.surfaceShader.geometry.radius,
+            ),
             border: Border.all(color: chrome.borderColor),
             boxShadow: chrome.shadows,
           ),
@@ -5284,11 +5737,17 @@ class _StatChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+          context.surfaceShader.geometry.badgeRadius,
+        ),
       ),
-      child: Text(label,
-          style: TextStyle(
-              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
     if (onTap == null) return chip;
     return MouseRegion(
@@ -5298,17 +5757,17 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-
 class _RebaseEditor extends StatefulWidget {
   final List<CommitHistoryEntry> commits;
   final AppTokens tokens;
   final String repoPath;
   final VoidCallback onCancel;
-  const _RebaseEditor(
-      {required this.commits,
-      required this.tokens,
-      required this.repoPath,
-      required this.onCancel});
+  const _RebaseEditor({
+    required this.commits,
+    required this.tokens,
+    required this.repoPath,
+    required this.onCancel,
+  });
   @override
   State<_RebaseEditor> createState() => _RebaseEditorState();
 }
@@ -5326,8 +5785,9 @@ class _RebaseEditorState extends State<_RebaseEditor> {
   void initState() {
     super.initState();
     _todo = widget.commits
-        .map((c) =>
-            {'action': 'pick', 'hash': c.commitHash, 'subject': c.subject})
+        .map(
+          (c) => {'action': 'pick', 'hash': c.commitHash, 'subject': c.subject},
+        )
         .toList();
     _original = _todo.map((e) => Map<String, String>.of(e)).toList();
     _rewordCtrl = TextEditingController();
@@ -5353,8 +5813,9 @@ class _RebaseEditorState extends State<_RebaseEditor> {
     if (_todo.isEmpty) return null;
     final first = _todo[0]['action']!;
     if (first == 'squash' || first == 'fixup') {
-      return context.t.history.rebase
-          .firstCommitCannotBe(action: _todo[0]['action']!);
+      return context.t.history.rebase.firstCommitCannotBe(
+        action: _todo[0]['action']!,
+      );
     }
     return null;
   }
@@ -5393,240 +5854,308 @@ class _RebaseEditorState extends State<_RebaseEditor> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final validation = _validationError;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(
-              child: Text(
-                  context.t.history.rebase.rebaseCommitCount(n: _todo.length),
-                  style: TextStyle(
-                      color: t.textStrong,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600)),
-            ),
-            if (_isDirty)
-              GestureDetector(
-                onTap: _reset,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: Text(context.t.history.rebase.resetLabel,
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-                ),
-              ),
-          ]),
-          const SizedBox(height: 2),
-          Text(context.t.history.rebase.dragToReorderHint,
-              style: TextStyle(color: t.textMuted, fontSize: 11)),
-        ]),
-      ),
-      Expanded(
-        child: ReorderableListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          itemCount: _todo.length,
-          buildDefaultDragHandles: false,
-          proxyDecorator: (child, index, animation) {
-            return AnimatedBuilder(
-              animation: animation,
-              builder: (context, child) => Material(
-                color: Colors.transparent,
-                elevation: 4 * animation.value,
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.cardRadius),
-                child: child,
-              ),
-              child: child,
-            );
-          },
-          onReorder: (oldIndex, newIndex) {
-            setState(() {
-              if (newIndex > oldIndex) newIndex--;
-              final item = _todo.removeAt(oldIndex);
-              _todo.insert(newIndex, item);
-              _rewordIndex = null;
-            });
-          },
-          itemBuilder: (ctx, i) {
-            final entry = _todo[i];
-            final action = entry['action']!;
-            final isDropped = action == 'drop';
-            final isSquash = action == 'squash' || action == 'fixup';
-            final isReword = action == 'reword';
-            final isEditing = _rewordIndex == i;
-
-            // Visual grouping: squash/fixup merges into the commit above
-            final mergesUp = isSquash && i > 0;
-            final borderColor = mergesUp
-                ? t.stateModified.withValues(alpha: 0.3)
-                : isDropped
-                    ? t.chromeBorder.withValues(alpha: 0.1)
-                    : t.chromeBorder.withValues(alpha: 0.2);
-
-            return Container(
-              key: ValueKey(entry['hash']),
-              margin: EdgeInsets.only(
-                top: mergesUp ? 0 : 3,
-                bottom: 3,
-                left: mergesUp ? 16 : 0,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: isDropped
-                    ? t.surface1.withValues(alpha: 0.4)
-                    : mergesUp
-                        ? t.stateModified.withValues(alpha: 0.04)
-                        : t.surface1,
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.cardRadius),
-                border: Border.all(color: borderColor),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Row(children: [
-                    ReorderableDragStartListener(
-                      index: i,
+                  Expanded(
+                    child: Text(
+                      context.t.history.rebase.rebaseCommitCount(
+                        n: _todo.length,
+                      ),
+                      style: TextStyle(
+                        color: t.textStrong,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (_isDirty)
+                    GestureDetector(
+                      onTap: _reset,
                       child: MouseRegion(
-                        cursor: SystemMouseCursors.grab,
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Icon(Icons.drag_indicator,
-                              size: 14,
-                              color: t.textFaint.withValues(alpha: 0.5)),
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 90,
-                      child: AppDropdownField<String>(
-                        value: action,
-                        height: 24,
-                        fontSize: 11,
-                        menuColor: t.bg2,
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        items: _actions
-                            .map((a) =>
-                                DropdownMenuItem(value: a, child: Text(a)))
-                            .toList(),
-                        onChanged: (v) {
-                          if (v != null) _setAction(i, v);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                        entry['hash']!
-                            .substring(0, min(7, entry['hash']!.length)),
-                        style: TextStyle(
-                            color: isDropped ? t.textFaint : t.textMuted,
-                            fontSize: 10,
-                            fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(entry['subject']!,
-                            style: TextStyle(
-                                color:
-                                    isDropped ? t.textFaint : t.textNormal,
-                                fontSize: 11,
-                                fontStyle: isReword
-                                    ? FontStyle.italic
-                                    : FontStyle.normal,
-                                decoration: isDropped
-                                    ? TextDecoration.lineThrough
-                                    : null),
-                            overflow: TextOverflow.ellipsis)),
-                  ]),
-                  if (isEditing) ...[
-                    const SizedBox(height: 6),
-                    Row(children: [
-                      const SizedBox(width: 20),
-                      Expanded(
-                        child: TextField(
-                          controller: _rewordCtrl,
-                          autofocus: true,
+                        cursor: SystemMouseCursors.click,
+                        child: Text(
+                          context.t.history.rebase.resetLabel,
                           style: TextStyle(
-                            color: t.textStrong,
-                            fontSize: 11,
-                            fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                            color: t.textMuted,
+                            fontSize: 10,
+                            fontFamily: AppFonts.mono,
+                            fontFamilyFallback: AppFonts.monoFallback,
                           ),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 6),
-                            hintText: context.t.history.rebase.newMessageHint,
-                            hintStyle: TextStyle(
-                                color: t.textFaint, fontSize: 11),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(
-                                  context.surfaceShader.geometry.badgeRadius),
-                              borderSide: BorderSide(
-                                  color: t.inputBorder, width: 0.8),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(
-                                  context.surfaceShader.geometry.badgeRadius),
-                              borderSide: BorderSide(
-                                  color: t.accentBright, width: 0.8),
-                            ),
-                          ),
-                          onSubmitted: (_) => _commitReword(i),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: () => _commitReword(i),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: Icon(Icons.check,
-                              size: 14, color: t.stateAdded),
-                        ),
-                      ),
-                    ]),
-                  ],
+                    ),
                 ],
               ),
-            );
-          },
+              const SizedBox(height: 2),
+              Text(
+                context.t.history.rebase.dragToReorderHint,
+                style: TextStyle(color: t.textMuted, fontSize: 11),
+              ),
+            ],
+          ),
         ),
-      ),
-      if (validation != null)
-        Padding(
+        Expanded(
+          child: ReorderableListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _todo.length,
+            buildDefaultDragHandles: false,
+            proxyDecorator: (child, index, animation) {
+              return AnimatedBuilder(
+                animation: animation,
+                builder: (context, child) => Material(
+                  color: Colors.transparent,
+                  elevation: 4 * animation.value,
+                  borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.cardRadius,
+                  ),
+                  child: child,
+                ),
+                child: child,
+              );
+            },
+            onReorder: (oldIndex, newIndex) {
+              setState(() {
+                if (newIndex > oldIndex) newIndex--;
+                final item = _todo.removeAt(oldIndex);
+                _todo.insert(newIndex, item);
+                _rewordIndex = null;
+              });
+            },
+            itemBuilder: (ctx, i) {
+              final entry = _todo[i];
+              final action = entry['action']!;
+              final isDropped = action == 'drop';
+              final isSquash = action == 'squash' || action == 'fixup';
+              final isReword = action == 'reword';
+              final isEditing = _rewordIndex == i;
+
+              // Visual grouping: squash/fixup merges into the commit above
+              final mergesUp = isSquash && i > 0;
+              final borderColor = mergesUp
+                  ? t.stateModified.withValues(alpha: 0.3)
+                  : isDropped
+                  ? t.chromeBorder.withValues(alpha: 0.1)
+                  : t.chromeBorder.withValues(alpha: 0.2);
+
+              return Container(
+                key: ValueKey(entry['hash']),
+                margin: EdgeInsets.only(
+                  top: mergesUp ? 0 : 3,
+                  bottom: 3,
+                  left: mergesUp ? 16 : 0,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: isDropped
+                      ? t.surface1.withValues(alpha: 0.4)
+                      : mergesUp
+                      ? t.stateModified.withValues(alpha: 0.04)
+                      : t.surface1,
+                  borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.cardRadius,
+                  ),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        ReorderableDragStartListener(
+                          index: i,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.grab,
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Icon(
+                                Icons.drag_indicator,
+                                size: 14,
+                                color: t.textFaint.withValues(alpha: 0.5),
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 90,
+                          child: AppDropdownField<String>(
+                            value: action,
+                            height: 24,
+                            fontSize: 11,
+                            menuColor: t.bg2,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            items: _actions
+                                .map(
+                                  (a) => DropdownMenuItem(
+                                    value: a,
+                                    child: Text(a),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) _setAction(i, v);
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          entry['hash']!.substring(
+                            0,
+                            min(7, entry['hash']!.length),
+                          ),
+                          style: TextStyle(
+                            color: isDropped ? t.textFaint : t.textMuted,
+                            fontSize: 10,
+                            fontFamily: AppFonts.mono,
+                            fontFamilyFallback: AppFonts.monoFallback,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            entry['subject']!,
+                            style: TextStyle(
+                              color: isDropped ? t.textFaint : t.textNormal,
+                              fontSize: 11,
+                              fontStyle: isReword
+                                  ? FontStyle.italic
+                                  : FontStyle.normal,
+                              decoration: isDropped
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (isEditing) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: TextField(
+                              controller: _rewordCtrl,
+                              autofocus: true,
+                              style: TextStyle(
+                                color: t.textStrong,
+                                fontSize: 11,
+                                fontFamily: AppFonts.mono,
+                                fontFamilyFallback: AppFonts.monoFallback,
+                              ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                hintText:
+                                    context.t.history.rebase.newMessageHint,
+                                hintStyle: TextStyle(
+                                  color: t.textFaint,
+                                  fontSize: 11,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    context.surfaceShader.geometry.badgeRadius,
+                                  ),
+                                  borderSide: BorderSide(
+                                    color: t.inputBorder,
+                                    width: 0.8,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    context.surfaceShader.geometry.badgeRadius,
+                                  ),
+                                  borderSide: BorderSide(
+                                    color: t.accentBright,
+                                    width: 0.8,
+                                  ),
+                                ),
+                              ),
+                              onSubmitted: (_) => _commitReword(i),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            onTap: () => _commitReword(i),
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: Icon(
+                                Icons.check,
+                                size: 14,
+                                color: t.stateAdded,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        if (validation != null)
+          Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            child: Text(validation,
-                style: TextStyle(color: t.stateConflicted, fontSize: 11))),
-      if (_error != null)
-        Padding(
+            child: Text(
+              validation,
+              style: TextStyle(color: t.stateConflicted, fontSize: 11),
+            ),
+          ),
+        if (_error != null)
+          Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            child: Text(_error!,
-                style: TextStyle(color: t.stateConflicted, fontSize: 11))),
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(children: [
-          Expanded(
-              child: _RebaseBtn(
+            child: Text(
+              _error!,
+              style: TextStyle(color: t.stateConflicted, fontSize: 11),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Expanded(
+                child: _RebaseBtn(
                   label: _running
                       ? context.t.history.rebase.runningEllipsis
                       : context.t.history.rebase.startRebase,
                   t: t,
                   primary: true,
                   enabled: !_running && validation == null,
-                  onTap: _execute)),
-          const SizedBox(width: 8),
-          Expanded(
-              child: _RebaseBtn(
+                  onTap: _execute,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _RebaseBtn(
                   label: context.t.common.cancel,
                   t: t,
                   primary: false,
                   enabled: !_running,
-                  onTap: widget.onCancel)),
-        ]),
-      ),
-    ]);
+                  onTap: widget.onCancel,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _execute() async {
@@ -5637,11 +6166,13 @@ class _RebaseEditorState extends State<_RebaseEditor> {
     final r = await startInteractiveRebase(
       widget.repoPath,
       _todo
-          .map((e) => RebaseTodoEntry(
-                action: e['action']!,
-                commitHash: e['hash']!,
-                subject: e['subject']!,
-              ))
+          .map(
+            (e) => RebaseTodoEntry(
+              action: e['action']!,
+              commitHash: e['hash']!,
+              subject: e['subject']!,
+            ),
+          )
           .toList(),
     );
     if (!mounted) return;
@@ -5658,12 +6189,13 @@ class _RebaseBtn extends StatefulWidget {
   final AppTokens t;
   final bool primary, enabled;
   final VoidCallback onTap;
-  const _RebaseBtn(
-      {required this.label,
-      required this.t,
-      required this.primary,
-      required this.enabled,
-      required this.onTap});
+  const _RebaseBtn({
+    required this.label,
+    required this.t,
+    required this.primary,
+    required this.enabled,
+    required this.onTap,
+  });
   @override
   State<_RebaseBtn> createState() => _RebaseBtnState();
 }
@@ -5691,12 +6223,14 @@ class _RebaseBtnState extends State<_RebaseBtn> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hov = true),
       onExit: (_) => setState(() => _hov = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: widget.enabled ? widget.onTap : null,
-        onTapDown:
-            widget.enabled ? (_) => setState(() => _pressed = true) : null,
+        onTapDown: widget.enabled
+            ? (_) => setState(() => _pressed = true)
+            : null,
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedScale(
@@ -5709,18 +6243,22 @@ class _RebaseBtnState extends State<_RebaseBtn> {
               color: chrome.background,
               gradient: chrome.gradient,
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.radius),
+                context.surfaceShader.geometry.radius,
+              ),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
             child: Center(
               child: Transform.translate(
                 offset: chrome.offset,
-                child: Text(widget.label,
-                    style: TextStyle(
-                        color: widget.primary ? t.btnText : t.textMuted,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: widget.primary ? t.btnText : t.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
           ),
@@ -5744,6 +6282,7 @@ class _DesksInFlightStrip extends StatefulWidget {
   final AppTokens tokens;
   final String activeRepoPath;
   final ValueChanged<String> onJumpToDesk;
+
   /// Hover-preview signal. Fires `(deskPath, rev, label)` when the
   /// cursor enters a chip; fires `(null, '', '')` when it leaves.
   /// `rev` is always fetchable (branch name, or raw HEAD hash for a
@@ -5752,7 +6291,7 @@ class _DesksInFlightStrip extends StatefulWidget {
   /// desk's diverged commits in real time. Optional — when null the
   /// chips are click-only and behave like the original strip.
   final void Function(String? deskPath, String rev, String label)?
-      onPreviewHover;
+  onPreviewHover;
 
   const _DesksInFlightStrip({
     required this.tokens,
@@ -5801,8 +6340,7 @@ class _DesksInFlightStripState extends State<_DesksInFlightStrip> {
       decoration: BoxDecoration(
         color: t.accentBright.withValues(alpha: 0.04),
         border: Border(
-          bottom:
-              BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
+          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
         ),
       ),
       child: Row(
@@ -5833,21 +6371,24 @@ class _DesksInFlightStripState extends State<_DesksInFlightStrip> {
                   separatorBuilder: (_, __) => const SizedBox(width: 6),
                   itemBuilder: (ctx, i) {
                     final (desk, ahead) = inFlight[i];
-                    final label = desk.branch ??
+                    final label =
+                        desk.branch ??
                         (desk.isDetached
-                            ? desk.head.substring(0,
-                                desk.head.length < 7 ? desk.head.length : 7)
+                            ? desk.head.substring(
+                                0,
+                                desk.head.length < 7 ? desk.head.length : 7,
+                              )
                             : context.t.history.inFlight.deskFallbackLabel);
                     return _InFlightDeskChip(
                       tokens: t,
                       label: label,
                       ahead: ahead,
                       onTap: () => widget.onJumpToDesk(desk.path),
-                      onHoverChange: (hovering) =>
-                          widget.onPreviewHover?.call(
-                              hovering ? desk.path : null,
-                              hovering ? (desk.branch ?? desk.head) : '',
-                              hovering ? label : ''),
+                      onHoverChange: (hovering) => widget.onPreviewHover?.call(
+                        hovering ? desk.path : null,
+                        hovering ? (desk.branch ?? desk.head) : '',
+                        hovering ? label : '',
+                      ),
                     );
                   },
                 ),
@@ -5917,7 +6458,8 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 ? t.accentBright.withValues(alpha: 0.10)
                 : t.surface1,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(
               color: _hovered
                   ? t.accentBright.withValues(alpha: 0.5)
@@ -5939,7 +6481,8 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                   style: TextStyle(
                     color: _hovered ? t.textStrong : t.textNormal,
                     fontSize: 10.5,
-                    fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -5950,7 +6493,8 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 style: TextStyle(
                   color: t.stateAdded,
                   fontSize: 10,
-                  fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback,
+                  fontFamily: AppFonts.mono,
+                  fontFamilyFallback: AppFonts.monoFallback,
                   fontWeight: FontWeight.w800,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
@@ -5978,9 +6522,11 @@ class _PreviewCommitRow extends StatefulWidget {
   final AppTokens tokens;
   final int indexInPreview;
   final int totalPreview;
+
   /// Shared rail↔list hover channel — hovering a ghost row lights its
   /// preview dot on the timeline, same as real rows do.
   final ValueNotifier<String?>? railHover;
+
   /// Fires on pointer enter/exit so the page can SUSTAIN the preview
   /// while the cursor walks the ghost rows — without this, leaving
   /// the chip to read the rows would dismiss the very rows being read.
@@ -6022,11 +6568,10 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
       return;
     }
     _ac.duration = scaled;
-    final staggerCount = widget.totalPreview <= 20
-        ? widget.totalPreview
-        : 20;
+    final staggerCount = widget.totalPreview <= 20 ? widget.totalPreview : 20;
     final perStep = _staggerBudget ~/ staggerCount.clamp(1, 1 << 30);
-    final delay = perStep *
+    final delay =
+        perStep *
         (widget.indexInPreview < staggerCount
             ? widget.indexInPreview
             : staggerCount);
@@ -6056,8 +6601,7 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
         position: Tween<Offset>(
           begin: const Offset(0, -0.2),
           end: Offset.zero,
-        ).animate(CurvedAnimation(
-            parent: _ac, curve: Curves.easeOutCubic)),
+        ).animate(CurvedAnimation(parent: _ac, curve: Curves.easeOutCubic)),
         child: MouseRegion(
           onEnter: (_) {
             widget.railHover?.value = c.commitHash;
@@ -6069,46 +6613,56 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
             }
             widget.onHoverChanged?.call(false);
           },
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-          decoration: BoxDecoration(
-            color: t.accentBright.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.cardRadius),
-            border: Border.all(
-              color: t.accentBright.withValues(alpha: 0.25),
-              width: 0.8,
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+            decoration: BoxDecoration(
+              color: t.accentBright.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.cardRadius,
+              ),
+              border: Border.all(
+                color: t.accentBright.withValues(alpha: 0.25),
+                width: 0.8,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Text('↑',
+            child: Row(
+              children: [
+                Text(
+                  '↑',
                   style: TextStyle(
-                      color: t.stateAdded,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-              const SizedBox(width: 6),
-              Text(shortHash,
+                    color: t.stateAdded,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  shortHash,
                   style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 10,
-                      fontFamily: AppFonts.mono, fontFamilyFallback: AppFonts.monoFallback)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  c.subject,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    c.subject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
                       color: t.textNormal,
                       fontSize: 11,
-                      fontStyle: FontStyle.italic),
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           ),
         ),
       ),

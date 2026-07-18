@@ -15,6 +15,7 @@ import 'dtos.dart' show BlameLineData;
 import 'engram_bootstrap.dart' show EngramRuntime;
 import 'engram_text_kspace.dart';
 import 'file_coupling.dart' show FileCouplingMatrix;
+import 'admitted_git.dart' show admitFileText, gitObjectSize;
 import 'git.dart' show runGit;
 import 'perf_span.dart' show perfSpan, perfSpanSync;
 import 'logos_branch_orbit.dart'
@@ -1002,6 +1003,13 @@ class DiffLogosFacade {
     return session;
   }
 
+  /// How far (in display rows, each direction) the pinned-line rhyme scan
+  /// looks from the pin. 40k rows total covers every human-scale diff whole,
+  /// so results are unchanged there; on machine-scale diffs (the marble
+  /// road-graph corpus: multi-hundred-k-line new files) it turns an
+  /// O(document) simHash-hydrating pass per pointer-down into a constant.
+  static const int kPinnedRhymeScanRadius = 20000;
+
   Future<DiffPinnedContextModel> analyzePinnedLine(
       DiffPinnedLineRequest request) async {
     final line = request.line;
@@ -1057,20 +1065,51 @@ class DiffLogosFacade {
     final srcHash = line.simHash;
     if (srcHash != 0) {
       final candidates = <_PinnedRhymeCandidate>[];
-      for (var i = 0; i < request.displayLines.length; i++) {
-        if (i == request.displayIndex) continue;
-        final h = request.displayLines[i].simHash;
-        if (h == 0) continue;
-        final hamming = ParsedLine.hamming64(srcHash, h);
-        if (hamming <= 8) {
-          candidates.add(
-            _PinnedRhymeCandidate(
-              displayIndex: i,
-              line: request.displayLines[i],
-              hamming: hamming,
-            ),
-          );
+      // Bounded window, not the whole document. The scan computes simHash for
+      // every visited row — lazy at parse exactly so an unread row never pays
+      // it, and on spool-backed documents each visit also hydrates from disk.
+      // Unbounded, this ran on EVERY pin (which fires on pointer-down) and
+      // was measured at ~2.2s per press on a 300k-line diff — the dominant
+      // interaction jank on machine-scale diffs. The window covers
+      // 2×[kPinnedRhymeScanRadius] rows centred on the pin: identical results
+      // for any diff a human actually reads, constant cost past that. Yields
+      // between slices so the UI isolate keeps drawing frames while the scan
+      // runs.
+      const sliceRows = 4096;
+      final start = math.max(0, request.displayIndex - kPinnedRhymeScanRadius);
+      final end = math.min(
+        request.displayLines.length,
+        request.displayIndex + kPinnedRhymeScanRadius,
+      );
+      try {
+        for (var sliceStart = start;
+            sliceStart < end;
+            sliceStart += sliceRows) {
+          final sliceEnd = math.min(end, sliceStart + sliceRows);
+          for (var i = sliceStart; i < sliceEnd; i++) {
+            if (i == request.displayIndex) continue;
+            final h = request.displayLines[i].simHash;
+            if (h == 0) continue;
+            final hamming = ParsedLine.hamming64(srcHash, h);
+            if (hamming <= 8) {
+              candidates.add(
+                _PinnedRhymeCandidate(
+                  displayIndex: i,
+                  line: request.displayLines[i],
+                  hamming: hamming,
+                ),
+              );
+            }
+          }
+          if (sliceEnd < end) {
+            await Future<void>.delayed(Duration.zero);
+          }
         }
+      } catch (_) {
+        // Best-effort, same policy as the engine block above: the yields
+        // between slices mean the document can be swapped/disposed mid-scan
+        // (impossible when this loop was synchronous); a torn read then must
+        // degrade to "fewer rhymes", never fail the diff shell.
       }
       if (candidates.isNotEmpty) {
         const clusterRadius = 6;
@@ -2220,21 +2259,37 @@ Future<String?> _loadFileContent({
   required String filePath,
   String? revisionRef,
 }) async {
+  // Background analysis calls this per file visible in a historical diff, so
+  // a commit touching a large file used to pull the whole thing into RAM with
+  // nothing asking. Both branches are admitted at their MEASURED size
+  // (`cat-file -s` for a revision, `stat` for the working file — exact, not
+  // estimated). Declining costs this file its Logos context, which is what a
+  // best-effort enrichment should lose rather than the machine's memory.
   try {
     if (revisionRef != null && revisionRef.trim().isNotEmpty) {
-      final result = await runGit(
-        repositoryPath,
-        ['show', '${revisionRef.trim()}:${filePath.replaceAll('\\', '/')}'],
-      );
-      if (result.exitCode == 0) {
-        return result.stdout.toString();
+      final spec = '${revisionRef.trim()}:${filePath.replaceAll('\\', '/')}';
+      final size = await gitObjectSize(repositoryPath, spec);
+      if (size != null) {
+        final admitted = await admitFileText(
+          size,
+          () => runGit(repositoryPath, ['show', spec]),
+        );
+        final result = admitted.ran ? admitted.value! : null;
+        if (result != null && result.exitCode == 0) {
+          return result.stdout.toString();
+        }
+        if (!admitted.ran) return null;
       }
     }
     final ioPath =
         p.join(repositoryPath, filePath.replaceAll('/', p.separator));
     final file = File(ioPath);
     if (await file.exists()) {
-      return file.readAsString();
+      final admitted = await admitFileText(
+        await file.length(),
+        () => file.readAsString(),
+      );
+      return admitted.ran ? admitted.value : null;
     }
   } catch (_) {
     return null;

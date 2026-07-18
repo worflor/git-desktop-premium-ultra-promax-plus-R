@@ -36,6 +36,8 @@
     "saveMuseNotes": "muse 노트 저장에 실패했습니다.",
     "saveReviewDoubleCheck": "리뷰 이중 확인 모드 저장에 실패했습니다.",
     "saveApiPiggybackCli": "API 피기백 CLI 저장에 실패했습니다.",
+    "saveCliTimeout": "CLI 타임아웃 저장에 실패했습니다.",
+    "stopAllCli": "실행 중인 CLI 세션을 중지할 수 없습니다.",
     "clearLocalData": "로컬 데이터를 지울 수 없음: {error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "최근 저장소 목록을 포함한 모든 로컬 앱 데이터를 지우고 종료하시겠습니까? 디스크의 실제 git 저장소는 건드리지 않습니다.",
     "confirmReset": "로컬 앱 데이터를 초기화하고 종료하시겠습니까?\n\n설정, 테마, 온보딩, AI 환경설정, 텔레메트리, engram 캐시가 지워집니다. 최근 저장소 목록은 유지됩니다."
   },
-  "guardrailStageLabels": ["느슨", "균형", "엄격", "편집증"],
+  "guardrailStageLabels": [
+    "느슨",
+    "균형",
+    "엄격",
+    "편집증"
+  ],
   "guardrailMacro": {
     "loose": "느슨",
     "balanced": "균형",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "wick 실행 파일 선택",
     "connected": "wick · 연결됨",
-    "pathToExecutable": "wick · 실행 파일 경로"
+    "pathToExecutable": "wick · 실행 파일 경로",
+    "off": "끔",
+    "disableHint": "wick 통합 끄기",
+    "enableHint": "wick 통합 켜기"
   },
   "integrations": {
     "title": "& 통합",
@@ -472,10 +482,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | 잰크 {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["명령", "p50", "신뢰도", "범위"],
-    "headersBackend": ["범위", "p50", "p95", "실패"],
-    "headersDiff": ["렌더러", "첫 페인트", "프레임 p95", "래스터 p95", "잰크"],
-    "headersUi": ["이벤트", "p50", "실패", "범위"]
+    "headersCommand": [
+      "명령",
+      "p50",
+      "신뢰도",
+      "범위"
+    ],
+    "headersBackend": [
+      "범위",
+      "p50",
+      "p95",
+      "실패"
+    ],
+    "headersDiff": [
+      "렌더러",
+      "첫 페인트",
+      "프레임 p95",
+      "래스터 p95",
+      "잰크"
+    ],
+    "headersUi": [
+      "이벤트",
+      "p50",
+      "실패",
+      "범위"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -527,7 +558,17 @@
     "clearCacheTooltip": "캐시된 모델을 지우고 다시 탐지합니다. 제공자가 뺀 것들을 정리합니다.",
     "refreshLabel": "제공자 새로고침",
     "refreshTooltip": "지금 모든 제공자를 다시 탐지합니다.",
-    "body": "인터페이스 메시지를 로컬 제공자 바이너리로 직접 연결합니다."
+    "body": "인터페이스 메시지를 로컬 제공자 바이너리로 직접 연결합니다.",
+    "cliTimeoutLabel": "실행당 타임아웃",
+    "cliTimeoutUnitMinutes": "분",
+    "cliTimeoutUnitMinute": "분",
+    "forceStopLabel": "모든 세션 중지",
+    "forceStopTooltip": "진행 중인 모든 CLI 실행을 강제 종료합니다.",
+    "forceStopConfirmTitle": "실행 중인 CLI 세션을 중지할까요?",
+    "forceStopConfirmBody": "진행 중인 CLI 실행 {count}개를 강제 종료합니다. 출력이 사라집니다.",
+    "forceStopConfirmAction": "모두 중지",
+    "forceStopNoneRunning": "실행 중인 CLI 세션 없음",
+    "forceStopRecordError": "중지됨 — CLI 세션이 강제 종료되었습니다."
   },
   "header": {
     "title": "작업 공간 환경설정",

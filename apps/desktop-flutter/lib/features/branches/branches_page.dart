@@ -23,6 +23,7 @@ import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../backend/admitted_git.dart';
 import '../../backend/git.dart';
 import '../../backend/ai.dart';
 import '../../backend/git_result.dart';
@@ -54,6 +55,7 @@ import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
+import '../diff/diff_document.dart' show DiffDocument;
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../changes/merge_conflict_editor.dart'
@@ -106,8 +108,10 @@ class _AiReviewProgressDialog extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          Text(context.t.branches.runningAiReview,
-              style: TextStyle(color: t.textNormal, fontSize: 12)),
+          Text(
+            context.t.branches.runningAiReview,
+            style: TextStyle(color: t.textNormal, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -131,28 +135,30 @@ class _PrAiReviewDialog extends StatelessWidget {
     final verdictColor = verdict == 'ship'
         ? t.stateAdded
         : verdict == 'block'
-            ? t.stateDeleted
-            : t.textNormal;
+        ? t.stateDeleted
+        : t.textNormal;
     return AlertDialog(
       title: Row(
         children: [
           Text(
             review.verdict.toUpperCase(),
             style: TextStyle(
-                color: verdictColor,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 2,
-                fontFamily: AppFonts.mono),
+              color: verdictColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 2,
+              fontFamily: AppFonts.mono,
+            ),
           ),
           const SizedBox(width: 10),
           Text(
             '${review.score}',
             style: TextStyle(
-                color: verdictColor,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFamily: AppFonts.mono),
+              color: verdictColor,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              fontFamily: AppFonts.mono,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -172,17 +178,22 @@ class _PrAiReviewDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (review.summary.trim().isNotEmpty) ...[
-                Text(review.summary,
-                    style: TextStyle(color: t.textNormal, fontSize: 12)),
+                Text(
+                  review.summary,
+                  style: TextStyle(color: t.textNormal, fontSize: 12),
+                ),
                 const SizedBox(height: 12),
               ],
               if (review.findings.isNotEmpty) ...[
-                Text(context.t.branches.findings,
-                    style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4)),
+                Text(
+                  context.t.branches.findings,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.4,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 for (final f in review.findings)
                   Padding(
@@ -193,41 +204,55 @@ class _PrAiReviewDialog extends StatelessWidget {
                         Text(
                           '${f.severity.toUpperCase()} · ${f.origin}',
                           style: TextStyle(
-                              color: t.accentBright,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w800,
-                              fontFamily: AppFonts.mono),
+                            color: t.accentBright,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: AppFonts.mono,
+                          ),
                         ),
                         if (f.filePath != null && f.filePath!.isNotEmpty)
-                          Text(f.filePath!,
-                              style: TextStyle(
-                                  color: t.textMuted,
-                                  fontSize: 10,
-                                  fontFamily: AppFonts.mono)),
-                        const SizedBox(height: 2),
-                        Text(f.title,
+                          Text(
+                            f.filePath!,
                             style: TextStyle(
-                                color: t.textNormal,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
+                              color: t.textMuted,
+                              fontSize: 10,
+                              fontFamily: AppFonts.mono,
+                            ),
+                          ),
+                        const SizedBox(height: 2),
+                        Text(
+                          f.title,
+                          style: TextStyle(
+                            color: t.textNormal,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         if (f.evidence.trim().isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
-                            child: Text(f.evidence,
-                                style: TextStyle(
-                                    color: t.textMuted, fontSize: 11)),
+                            child: Text(
+                              f.evidence,
+                              style: TextStyle(
+                                color: t.textMuted,
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                       ],
                     ),
                   ),
               ],
               if (review.observations.isNotEmpty) ...[
-                Text(context.t.branches.observations,
-                    style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4)),
+                Text(
+                  context.t.branches.observations,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.4,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 for (final o in review.observations)
                   Padding(
@@ -235,15 +260,19 @@ class _PrAiReviewDialog extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(o.title,
-                            style: TextStyle(
-                                color: t.textNormal,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600)),
+                        Text(
+                          o.title,
+                          style: TextStyle(
+                            color: t.textNormal,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         if (o.detail.trim().isNotEmpty)
-                          Text(o.detail,
-                              style:
-                                  TextStyle(color: t.textMuted, fontSize: 11)),
+                          Text(
+                            o.detail,
+                            style: TextStyle(color: t.textMuted, fontSize: 11),
+                          ),
                       ],
                     ),
                   ),
@@ -256,9 +285,13 @@ class _PrAiReviewDialog extends StatelessWidget {
         TextButton(
           onPressed: () {
             Clipboard.setData(
-                ClipboardData(text: renderCommitReviewReport(review)));
+              ClipboardData(text: renderCommitReviewReport(review)),
+            );
           },
-          child: Text(context.t.common.copy, style: TextStyle(color: t.textMuted)),
+          child: Text(
+            context.t.common.copy,
+            style: TextStyle(color: t.textMuted),
+          ),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -306,8 +339,9 @@ class _BranchesPageState extends State<BranchesPage> {
   // pill sits collapsed at the tail of the branch list and morphs in
   // place into a naming input. Esc collapse rides on its own focus node.
   bool _branchCreatorExpanded = false;
-  final FocusNode _branchCreatorEscapeFocus =
-      FocusNode(debugLabel: 'BranchCreator.escape');
+  final FocusNode _branchCreatorEscapeFocus = FocusNode(
+    debugLabel: 'BranchCreator.escape',
+  );
 
   // Lens state ------------------------------------------------------------
   _BranchesLens _lens = _BranchesLens.branches;
@@ -327,9 +361,21 @@ class _BranchesPageState extends State<BranchesPage> {
   final Map<int, List<CheckSummary>> _prChecks = {};
   final Set<int> _prChecksLoading = {};
   // Per-PR detail cache (body, files, comments, diff). Same shape as
-  // checks: lazy load on expand, drop on repo switch.
+  // checks: lazy load on expand, drop on repo switch. MUTATE ONLY through
+  // [_putPrDetail]/[_evictPrDetail]/[_evictAllPrDetails] — a detail may own
+  // a disk spool (machine-scale diff) whose temp dir must be deleted when
+  // the entry is replaced or dropped, and its lazy document's file handle
+  // must be closed BEFORE the dir goes (Windows can't delete open files).
   final Map<int, PullRequestDetail> _prDetails = {};
   final Set<int> _prDetailsLoading = {};
+
+  // Lazy documents over PR-detail diffs that carry no cached per-file
+  // slices, keyed like [_prDetails]: spooled (machine-scale) details AND
+  // mid-size String details above the eager slice threshold. Built once
+  // per detail (one linear index scan) so the active file's raw slice is
+  // an O(1) byte-offset extraction per pill switch — never a whole-diff
+  // rescan, and for spools never a materialized String.
+  final Map<int, DiffDocument> _prDiffDocs = {};
   // Per-issue detail cache.
   final Map<int, IssueDetail> _issueDetails = {};
   final Set<int> _issueDetailsLoading = {};
@@ -504,12 +550,15 @@ class _BranchesPageState extends State<BranchesPage> {
       final out = <int, DateTime>{};
       for (final e in j.entries) {
         final n = int.tryParse(e.key);
-        final ts =
-            e.value is String ? DateTime.tryParse(e.value as String) : null;
+        final ts = e.value is String
+            ? DateTime.tryParse(e.value as String)
+            : null;
         if (n != null && ts != null) out[n] = ts;
       }
       if (mounted) setState(() => _prLastSeen = out);
-    } catch (_) {/* ignore corrupt blob */}
+    } catch (_) {
+      /* ignore corrupt blob */
+    }
   }
 
   Future<void> _markPrSeen(int number) async {
@@ -531,7 +580,8 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _persistPrLastSeen() async {
     final prefs = await SharedPreferences.getInstance();
     final j = <String, String>{
-      for (final e in _prLastSeen.entries) '${e.key}': e.value.toIso8601String()
+      for (final e in _prLastSeen.entries)
+        '${e.key}': e.value.toIso8601String(),
     };
     await prefs.setString(_kPrLastSeenKey, jsonEncode(j));
   }
@@ -576,32 +626,56 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<String?> _computeBranchNameDream(String repoPath) async {
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     if (engine == null) return null;
-    final results = await Future.wait([
-      runGit(repoPath, [
-        'diff', '-U3', '--no-color', '--patience', '--ignore-cr-at-eol',
+    // A dreamed branch-name slug is decoration; it must never be the reason
+    // analysis memory blows. This probe is UNSCOPED (the whole working tree,
+    // unlike the commit dream's path-scoped one) and fires automatically when
+    // the composer opens, so on a tree carrying large data files it was the
+    // worst ingestion site in the app. A tree too big to admit simply dreams
+    // nothing; a repo switch drops it while still queued.
+    // No status yet ⇒ the diff's paths can't be enumerated ⇒ its size can't
+    // be measured. Unknown is not free: dream nothing until status lands.
+    final status = context.read<RepositoryState>().status;
+    if (status == null) return null;
+    final admitted = await admitGitDiffText(
+      repoPath,
+      status.files.map((f) => f.path),
+      () => Future.wait([
+        runGit(repoPath, [
+          'diff',
+          '-U3',
+          '--no-color',
+          '--patience',
+          '--ignore-cr-at-eol',
+        ]),
+        runGit(repoPath, [
+          'diff',
+          '--cached',
+          '-U3',
+          '--no-color',
+          '--patience',
+          '--ignore-cr-at-eol',
+        ]),
+        runGit(repoPath, ['log', '--format=%s', '-100']),
       ]),
-      runGit(repoPath, [
-        'diff', '--cached', '-U3', '--no-color', '--patience',
-        '--ignore-cr-at-eol',
-      ]),
-      runGit(repoPath, ['log', '--format=%s', '-100']),
-    ]);
-    final unstaged =
-        results[0].exitCode == 0 ? results[0].stdout.toString() : '';
-    final staged =
-        results[1].exitCode == 0 ? results[1].stdout.toString() : '';
-    final diffText = [staged, unstaged]
-        .where((d) => d.trim().isNotEmpty)
-        .join('\n');
+    );
+    final results = admitted.ran ? admitted.value! : null;
+    if (results == null) return null;
+    final unstaged = results[0].exitCode == 0
+        ? results[0].stdout.toString()
+        : '';
+    final staged = results[1].exitCode == 0 ? results[1].stdout.toString() : '';
+    final diffText = [
+      staged,
+      unstaged,
+    ].where((d) => d.trim().isNotEmpty).join('\n');
     if (diffText.isEmpty) return null;
     final subjects = results[2].exitCode == 0
-        ? results[2]
-            .stdout
-            .toString()
-            .split('\n')
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .toList()
+        ? results[2].stdout
+              .toString()
+              .split('\n')
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .toList()
         : const <String>[];
     return dreamBranchSlug(
       repoPath: repoPath,
@@ -622,6 +696,7 @@ class _BranchesPageState extends State<BranchesPage> {
     _lensFocusNode.dispose();
     _hoveredPrNumber.dispose();
     _auroraSourceFile.dispose();
+    _evictAllPrDetails();
     super.dispose();
   }
 
@@ -762,38 +837,36 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _prefetchPrDetails(
-      String repo, List<PullRequestSummary> prs) async {
-    await _bounded<void>(
-      [
-        for (final pr in prs)
-          () async {
-            if (!mounted || _lastRepo != repo) return;
-            // Metadata-only prefetch: body + files + comments, no diff.
-            // The diff is megabyte-scale and parses in a worker isolate —
-            // warming dozens in parallel was the freeze. User click
-            // upgrades to full via `_ensurePrDetailLoaded(full: true)`.
-            await Future.wait([
-              _ensurePrDetailLoaded(repo, pr.number, full: false),
-              _ensureChecksLoaded(repo, pr.number),
-            ]);
-          },
-      ],
-      maxConcurrent: 4,
-    );
+    String repo,
+    List<PullRequestSummary> prs,
+  ) async {
+    await _bounded<void>([
+      for (final pr in prs)
+        () async {
+          if (!mounted || _lastRepo != repo) return;
+          // Metadata-only prefetch: body + files + comments, no diff.
+          // The diff is megabyte-scale and parses in a worker isolate —
+          // warming dozens in parallel was the freeze. User click
+          // upgrades to full via `_ensurePrDetailLoaded(full: true)`.
+          await Future.wait([
+            _ensurePrDetailLoaded(repo, pr.number, full: false),
+            _ensureChecksLoaded(repo, pr.number),
+          ]);
+        },
+    ], maxConcurrent: 4);
   }
 
   Future<void> _prefetchIssueDetails(
-      String repo, List<IssueSummary> issues) async {
-    await _bounded<void>(
-      [
-        for (final issue in issues)
-          () async {
-            if (!mounted || _lastRepo != repo) return;
-            await _ensureIssueDetailLoaded(repo, issue.number);
-          },
-      ],
-      maxConcurrent: 4,
-    );
+    String repo,
+    List<IssueSummary> issues,
+  ) async {
+    await _bounded<void>([
+      for (final issue in issues)
+        () async {
+          if (!mounted || _lastRepo != repo) return;
+          await _ensureIssueDetailLoaded(repo, issue.number);
+        },
+    ], maxConcurrent: 4);
   }
 
   /// Run [tasks] with at most [maxConcurrent] in flight at a time.
@@ -811,7 +884,9 @@ class _BranchesPageState extends State<BranchesPage> {
         if (i >= tasks.length) return;
         try {
           await tasks[i]();
-        } catch (_) {/* best-effort prefetch */}
+        } catch (_) {
+          /* best-effort prefetch */
+        }
       }
     }
 
@@ -834,17 +909,24 @@ class _BranchesPageState extends State<BranchesPage> {
     // Exhaustive (no `_`) so a new MergeOutcome variant fails to compile here.
     final err = switch (outcome) {
       MergeClean() => null,
-      MergeConflicted(:final resolved) => resolved
-          ? null
-          : mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
-      MergeBlockedByLocalChanges() =>
-        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeConflicted(:final resolved) =>
+        resolved
+            ? null
+            : mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeBlockedByLocalChanges() => mergeOutcomeMessage(
+        outcome,
+        op: context.t.backend.ops.switchOp,
+      ),
       // A switch never produces this (it operates on the checked-out tree);
       // handled for exhaustiveness so the guidance surfaces if it ever does.
-      MergeNeedsCheckout() =>
-        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
-      MergeFailed() =>
-        mergeOutcomeMessage(outcome, op: context.t.backend.ops.switchOp),
+      MergeNeedsCheckout() => mergeOutcomeMessage(
+        outcome,
+        op: context.t.backend.ops.switchOp,
+      ),
+      MergeFailed() => mergeOutcomeMessage(
+        outcome,
+        op: context.t.backend.ops.switchOp,
+      ),
     };
     if (err != null) setState(() => _actionError = err);
     if (outcome is MergeFailed) return; // hard failure: don't reload
@@ -895,7 +977,9 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() => _actionRunning = false);
     if (!r.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.publishFailed(error: r.error ?? ''))),
+        SnackBar(
+          content: Text(context.t.branches.publishFailed(error: r.error ?? '')),
+        ),
       );
       return;
     }
@@ -906,9 +990,10 @@ class _BranchesPageState extends State<BranchesPage> {
   /// lens' desk chip and the desk-aware delete error both route here.
   Future<void> _openDeskForBranch(WorktreeData desk) async {
     if (desk.path.isEmpty) return;
-    final err = await context
-        .read<RepositoryState>()
-        .setActivePath(desk.path, addToRecents: false);
+    final err = await context.read<RepositoryState>().setActivePath(
+      desk.path,
+      addToRecents: false,
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.t.branches.couldntOpenDesk(error: err))),
@@ -936,8 +1021,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _syncManifold(String repoPath) async {
     if (_manifoldSyncing) return;
     setState(() => _manifoldSyncing = true);
-    final prErr =
-        await context.read<DeskPrState>().syncWithRemote(repoPath: repoPath);
+    final prErr = await context.read<DeskPrState>().syncWithRemote(
+      repoPath: repoPath,
+    );
     if (!mounted) return;
     if (prErr == null) {
       await context.read<DeskIssueState>().refreshFor(repoPath);
@@ -963,20 +1049,24 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          title: Text(ctx.t.branches.renameBranchTitle,
-              style: TextStyle(color: t.textStrong, fontSize: 14)),
+          title: Text(
+            ctx.t.branches.renameBranchTitle,
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
           content: SizedBox(
             width: 320,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(oldName,
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 11,
-                      fontFamily: AppFonts.mono,
-                    )),
+                Text(
+                  oldName,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 11,
+                    fontFamily: AppFonts.mono,
+                  ),
+                ),
                 const SizedBox(height: 10),
                 AppTextField(
                   controller: ctrl,
@@ -991,7 +1081,10 @@ class _BranchesPageState extends State<BranchesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(null),
-              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+              child: Text(
+                ctx.t.common.cancel,
+                style: TextStyle(color: t.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
@@ -1006,15 +1099,17 @@ class _BranchesPageState extends State<BranchesPage> {
     // check-ref-format --branch is the authoritative check — it rejects
     // names with path-illegal characters (.., ~, ^, :, ?, *, [, spaces,
     // etc.) and gives a clean exit code without touching any ref.
-    final checkRef = await Process.run(
-      'git',
-      ['check-ref-format', '--branch', newName],
-      workingDirectory: repoPath,
-    );
+    final checkRef = await Process.run('git', [
+      'check-ref-format',
+      '--branch',
+      newName,
+    ], workingDirectory: repoPath);
     if (checkRef.exitCode != 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.t.branches.invalidBranchName(name: newName))),
+          SnackBar(
+            content: Text(context.t.branches.invalidBranchName(name: newName)),
+          ),
         );
       }
       return;
@@ -1024,7 +1119,9 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     if (!r.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.renameFailed(error: r.error ?? ''))),
+        SnackBar(
+          content: Text(context.t.branches.renameFailed(error: r.error ?? '')),
+        ),
       );
       return;
     }
@@ -1044,9 +1141,9 @@ class _BranchesPageState extends State<BranchesPage> {
     // UndoActionKind.branchDelete slot existed since day one but was
     // never scheduled, so deletes fired instantly with no way back.
     final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.branchDelete);
+    final windowSec = context.read<PreferencesState>().undoWindowFor(
+      UndoActionKind.branchDelete,
+    );
     // Identity capture at ARM time: the delete fires seconds from now and
     // a branch name is a mutable pointer — pin the tip the user is looking
     // at, and fail closed if it can't be pinned. The delayed delete then
@@ -1054,8 +1151,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final expectTip = await refTip(repo, 'refs/heads/$name');
     if (!mounted) return const _DeleteBranchOutcome.error('cancelled');
     if (expectTip == null) {
-      return _DeleteBranchOutcome.error(
-          context.t.branches.couldNotPinBranch);
+      return _DeleteBranchOutcome.error(context.t.branches.couldNotPinBranch);
     }
     setState(() => _actionRunning = true);
     final r = await coord.schedule<GitResult<void>>(
@@ -1081,14 +1177,18 @@ class _BranchesPageState extends State<BranchesPage> {
           final label = desk.path.split(RegExp(r'[\\/]')).last;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(context.t.branches.branchOpenInDesk(name: name, desk: label)),
+              content: Text(
+                context.t.branches.branchOpenInDesk(name: name, desk: label),
+              ),
               action: SnackBarAction(
                 label: context.t.branches.openDesk,
                 onPressed: () => _openDeskForBranch(desk),
               ),
             ),
           );
-          return _DeleteBranchOutcome.error(context.t.branches.openInDeskShort(desk: label));
+          return _DeleteBranchOutcome.error(
+            context.t.branches.openInDeskShort(desk: label),
+          );
         case DeleteFailed(:final message):
           return _DeleteBranchOutcome.error(message);
       }
@@ -1099,16 +1199,15 @@ class _BranchesPageState extends State<BranchesPage> {
 
   Future<void> _deleteTag(String repo, String name) async {
     final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.tagDelete);
+    final windowSec = context.read<PreferencesState>().undoWindowFor(
+      UndoActionKind.tagDelete,
+    );
     // Same identity-pinned contract as branch delete: capture at arm time,
     // fail closed when uncapturable, verify at fire time.
     final expectTip = await refTip(repo, 'refs/tags/$name');
     if (!mounted) return;
     if (expectTip == null) {
-      setState(
-          () => _actionError = context.t.branches.couldNotPinTag);
+      setState(() => _actionError = context.t.branches.couldNotPinTag);
       return;
     }
     setState(() {
@@ -1253,15 +1352,17 @@ class _BranchesPageState extends State<BranchesPage> {
     final activePath = context.read<RepositoryState>().activePath;
     final deskTargets = isLocal
         ? context
-            .read<WorktreeState>()
-            .desks
-            .where((d) =>
-                d.path.isNotEmpty &&
-                d.path != activePath &&
-                !d.isLocked &&
-                d.branch != null &&
-                d.branch != pr.headRef)
-            .toList()
+              .read<WorktreeState>()
+              .desks
+              .where(
+                (d) =>
+                    d.path.isNotEmpty &&
+                    d.path != activePath &&
+                    !d.isLocked &&
+                    d.branch != null &&
+                    d.branch != pr.headRef,
+              )
+              .toList()
         : const <WorktreeData>[];
     final sections = <MenuSection>[
       ListMenuSection([
@@ -1275,12 +1376,17 @@ class _BranchesPageState extends State<BranchesPage> {
           label: context.t.branches.applyToActiveChanges,
           onTap: () async {
             var detail = _prDetails[pr.number];
-            if (detail == null || detail.diff.isEmpty) {
+            if (!_detailDiffLoaded(detail)) {
               await _ensurePrDetailLoaded(repoPath, pr.number);
               if (!mounted) return;
               detail = _prDetails[pr.number];
             }
-            if (detail == null || detail.diff.isEmpty) {
+            // Spooled (machine-scale) diffs are read back for this explicit
+            // one-shot action, bounded by _detailDiffText's cap.
+            final diffText = !_detailHasDiff(detail)
+                ? null
+                : await _detailDiffText(detail!);
+            if (diffText == null || diffText.isEmpty) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
@@ -1290,8 +1396,11 @@ class _BranchesPageState extends State<BranchesPage> {
             if (!context.mounted) return;
             await _openPatchPreview(
               repoPath,
-              detail.diff,
-              sourceLabel: context.t.branches.prSourceLabel(number: pr.number, title: pr.title),
+              diffText,
+              sourceLabel: context.t.branches.prSourceLabel(
+                number: pr.number,
+                title: pr.title,
+              ),
             );
           },
         ),
@@ -1343,12 +1452,12 @@ class _BranchesPageState extends State<BranchesPage> {
           label: context.t.branches.gitPatch,
           onTap: () async {
             var detail = _prDetails[pr.number];
-            if (detail == null || detail.diff.isEmpty) {
+            if (!_detailDiffLoaded(detail)) {
               await _ensurePrDetailLoaded(repoPath, pr.number);
               if (!mounted) return;
               detail = _prDetails[pr.number];
             }
-            if (detail == null || detail.diff.isEmpty) {
+            if (!_detailHasDiff(detail)) {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
@@ -1356,7 +1465,7 @@ class _BranchesPageState extends State<BranchesPage> {
               return;
             }
             if (!context.mounted) return;
-            await _exportPrAsPatch(context, pr, detail);
+            await _exportPrAsPatch(context, pr, detail!);
           },
         ),
         AppContextMenuItem(
@@ -1366,7 +1475,9 @@ class _BranchesPageState extends State<BranchesPage> {
             await Clipboard.setData(ClipboardData(text: pr.headRef));
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.t.branches.copiedRef(ref: pr.headRef))),
+              SnackBar(
+                content: Text(context.t.branches.copiedRef(ref: pr.headRef)),
+              ),
             );
           },
         ),
@@ -1396,7 +1507,9 @@ class _BranchesPageState extends State<BranchesPage> {
           icon: unread
               ? Icons.mark_email_read_outlined
               : Icons.mark_email_unread_outlined,
-          label: unread ? context.t.branches.markAsRead : context.t.branches.markAsUnread,
+          label: unread
+              ? context.t.branches.markAsRead
+              : context.t.branches.markAsUnread,
           onTap: () =>
               unread ? _markPrSeen(pr.number) : _unmarkPrSeen(pr.number),
         ),
@@ -1416,7 +1529,10 @@ class _BranchesPageState extends State<BranchesPage> {
     // the worktree). The "no remote configured" case comes back as a
     // PrCheckoutFailed, so there is nothing to resolve locally here.
     final outcome = await fetchPrHeadToBranch(
-        repoPath, pr.number, _prProvider!.fetchRefspec(pr.number));
+      repoPath,
+      pr.number,
+      _prProvider!.fetchRefspec(pr.number),
+    );
     if (!mounted) return;
     switch (outcome) {
       case PrCheckoutWouldClobber(:final localRef):
@@ -1438,22 +1554,32 @@ class _BranchesPageState extends State<BranchesPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(false),
-                child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+                child: Text(
+                  ctx.t.common.cancel,
+                  style: TextStyle(color: t.textMuted),
+                ),
               ),
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(true),
                 // Overwrites unreachable local commits — destructive.
-                child: Text(ctx.t.branches.update,
-                    style: TextStyle(
-                        color: t.danger, fontWeight: FontWeight.w600)),
+                child: Text(
+                  ctx.t.branches.update,
+                  style: TextStyle(
+                    color: t.danger,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ),
         );
         if (ok != true || !mounted) return;
         final forced = await fetchPrHeadToBranch(
-            repoPath, pr.number, _prProvider!.fetchRefspec(pr.number),
-            force: true);
+          repoPath,
+          pr.number,
+          _prProvider!.fetchRefspec(pr.number),
+          force: true,
+        );
         if (!mounted) return;
         switch (forced) {
           case PrCheckoutOk():
@@ -1463,13 +1589,17 @@ class _BranchesPageState extends State<BranchesPage> {
             return;
           case PrCheckoutFailed(:final error):
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.t.branches.couldntFetchPr(error: error))),
+              SnackBar(
+                content: Text(context.t.branches.couldntFetchPr(error: error)),
+              ),
             );
             return;
         }
       case PrCheckoutFailed(:final error):
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.t.branches.couldntFetchPr(error: error))),
+          SnackBar(
+            content: Text(context.t.branches.couldntFetchPr(error: error)),
+          ),
         );
         return;
       case PrCheckoutOk():
@@ -1483,7 +1613,9 @@ class _BranchesPageState extends State<BranchesPage> {
     final err = await context.read<WorktreeState>().addDesk('pr-${pr.number}');
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntOpenAsDesk(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntOpenAsDesk(error: err)),
+        ),
       );
     }
   }
@@ -1492,16 +1624,21 @@ class _BranchesPageState extends State<BranchesPage> {
   /// which handles the URL resolution for any remote (origin / fork
   /// / etc) the gh CLI knows about.
   Future<void> _openPrInBrowser(String repoPath, int prNumber) async {
-    final res = await Process.run(
-      'gh',
-      ['pr', 'view', '$prNumber', '--web'],
-      workingDirectory: repoPath,
-    );
+    final res = await Process.run('gh', [
+      'pr',
+      'view',
+      '$prNumber',
+      '--web',
+    ], workingDirectory: repoPath);
     if (res.exitCode != 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(context.t.branches
-                .couldntOpenInBrowser(error: (res.stderr as String).trim()))),
+          content: Text(
+            context.t.branches.couldntOpenInBrowser(
+              error: (res.stderr as String).trim(),
+            ),
+          ),
+        ),
       );
     }
   }
@@ -1515,10 +1652,14 @@ class _BranchesPageState extends State<BranchesPage> {
   /// surface in a "RELEVANT" section above the full filter, so common
   /// cases resolve without typing.
   Future<void> _showLinkToIssuePicker(
-      String repoPath, PullRequestSummary pr, bool prIsLocal) async {
+    String repoPath,
+    PullRequestSummary pr,
+    bool prIsLocal,
+  ) async {
     final remoteIssues = _issues ?? const <IssueSummary>[];
     final localIssues = context.read<DeskIssueState>().all;
-    final prPaths = _prDetails[pr.number]?.files.map((f) => f.path).toList() ??
+    final prPaths =
+        _prDetails[pr.number]?.files.map((f) => f.path).toList() ??
         const <String>[];
     // Remote-remote linking isn't persistable locally — filter those
     // candidates out of the list entirely when the PR itself is
@@ -1552,8 +1693,8 @@ class _BranchesPageState extends State<BranchesPage> {
     final emptyMessage = entries.isNotEmpty
         ? null
         : (prIsLocal
-            ? context.t.branches.noIssuesYetLocal
-            : context.t.branches.remotePrsLinkLocalOnly);
+              ? context.t.branches.noIssuesYetLocal
+              : context.t.branches.remotePrsLinkLocalOnly);
     await showDialog<void>(
       context: context,
       builder: (ctx) => _StickyLinkPicker(
@@ -1581,7 +1722,10 @@ class _BranchesPageState extends State<BranchesPage> {
   /// Reverse picker: from an issue row, pick PR(s) that address this
   /// issue. Same sticky + ranked shape, candidates on the PR side.
   Future<void> _showLinkToPrPickerFromIssue(
-      String repoPath, IssueSummary issue, bool issueIsLocal) async {
+    String repoPath,
+    IssueSummary issue,
+    bool issueIsLocal,
+  ) async {
     final remotePrs = (_prs ?? const <PullRequestSummary>[])
         .where((p) => p.state == 'OPEN')
         .toList();
@@ -1590,7 +1734,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // mentioned file paths each PR actually touches.
     final issueBody = issueIsLocal
         ? (context.read<DeskIssueState>().issueFor(issue.number)?.body ??
-            issue.title)
+              issue.title)
         : (_issueDetails[issue.number]?.body ?? issue.title);
     // Remote issues can only bind to LOCAL PRs (the remote forge owns
     // its own PR-issue graph). Filter remote PRs out instead of
@@ -1604,7 +1748,12 @@ class _BranchesPageState extends State<BranchesPage> {
             title: p.title,
             isRemote: true,
             isLinked: _isPrLinkedToIssue(
-                issue, issueIsLocal, p.number, true, p.headRef),
+              issue,
+              issueIsLocal,
+              p.number,
+              true,
+              p.headRef,
+            ),
             relevance: _scoreRelevance(
               _prDetails[p.number]?.files.map((f) => f.path).toList() ??
                   const [],
@@ -1617,7 +1766,12 @@ class _BranchesPageState extends State<BranchesPage> {
           title: dp.title,
           isRemote: false,
           isLinked: _isPrLinkedToIssue(
-              issue, issueIsLocal, dp.deskId, false, dp.headRef),
+            issue,
+            issueIsLocal,
+            dp.deskId,
+            false,
+            dp.headRef,
+          ),
           relevance: _scoreRelevance(
             _prDetails[dp.deskId]?.files.map((f) => f.path).toList() ??
                 const [],
@@ -1628,8 +1782,8 @@ class _BranchesPageState extends State<BranchesPage> {
     final emptyMessage = entries.isNotEmpty
         ? null
         : (issueIsLocal
-            ? context.t.branches.noPrsYetLocal
-            : context.t.branches.remoteIssuesLinkLocalOnly);
+              ? context.t.branches.noPrsYetLocal
+              : context.t.branches.remoteIssuesLinkLocalOnly);
     await showDialog<void>(
       context: context,
       builder: (ctx) => _StickyLinkPicker(
@@ -1657,17 +1811,22 @@ class _BranchesPageState extends State<BranchesPage> {
   /// word tokens. Used to score issue bodies against PR file paths
   /// (and vice versa) so the picker can surface "obviously relevant"
   /// candidates without asking the user to type.
-  static final RegExp _pathLikeRegex =
-      RegExp(r'[A-Za-z0-9_.\-/]+\.[A-Za-z0-9]{1,6}');
+  static final RegExp _pathLikeRegex = RegExp(
+    r'[A-Za-z0-9_.\-/]+\.[A-Za-z0-9]{1,6}',
+  );
   static final RegExp _wordRegex = RegExp(r'[A-Za-z][A-Za-z0-9_]{2,}');
 
   double _scoreRelevance(List<String> paths, String body) {
     if (paths.isEmpty || body.trim().isEmpty) return 0;
     final bodyLower = body.toLowerCase();
-    final mentionedPaths =
-        _pathLikeRegex.allMatches(bodyLower).map((m) => m.group(0)!).toSet();
-    final bodyTokens =
-        _wordRegex.allMatches(bodyLower).map((m) => m.group(0)!).toSet();
+    final mentionedPaths = _pathLikeRegex
+        .allMatches(bodyLower)
+        .map((m) => m.group(0)!)
+        .toSet();
+    final bodyTokens = _wordRegex
+        .allMatches(bodyLower)
+        .map((m) => m.group(0)!)
+        .toSet();
 
     var score = 0.0;
     for (final p in paths) {
@@ -1738,11 +1897,10 @@ class _BranchesPageState extends State<BranchesPage> {
           .firstWhere((p) => p?.number == candidate.id, orElse: () => null);
       prBranch = remote?.headRef;
     } else {
-      final local = context
-          .read<DeskPrState>()
-          .all
-          .cast<DeskPr?>()
-          .firstWhere((d) => d?.deskId == candidate.id, orElse: () => null);
+      final local = context.read<DeskPrState>().all.cast<DeskPr?>().firstWhere(
+        (d) => d?.deskId == candidate.id,
+        orElse: () => null,
+      );
       prBranch = local?.headRef;
     }
     if (prBranch == null) return 'PR not found';
@@ -1756,17 +1914,17 @@ class _BranchesPageState extends State<BranchesPage> {
       final issueState = context.read<DeskIssueState>();
       final prState = context.read<DeskPrState>();
       final err = await issueState.toggleAddressedBy(
-            repoPath: repoPath,
-            id: issue.number,
-            branch: addressedKey,
-          );
+        repoPath: repoPath,
+        id: issue.number,
+        branch: addressedKey,
+      );
       if (err == null && !candidate.isRemote) {
         await prState.toggleLinkedIssue(
-              repoPath: repoPath,
-              branch: prBranch,
-              issueId: issue.number,
-              isRemote: false,
-            );
+          repoPath: repoPath,
+          branch: prBranch,
+          issueId: issue.number,
+          isRemote: false,
+        );
       }
       return err;
     } else {
@@ -1778,16 +1936,20 @@ class _BranchesPageState extends State<BranchesPage> {
         return 'remote-remote link not supported';
       }
       return context.read<DeskPrState>().toggleLinkedIssue(
-            repoPath: repoPath,
-            branch: prBranch,
-            issueId: issue.number,
-            isRemote: true,
-          );
+        repoPath: repoPath,
+        branch: prBranch,
+        issueId: issue.number,
+        isRemote: true,
+      );
     }
   }
 
   bool _isIssueLinkedToPr(
-      PullRequestSummary pr, bool prIsLocal, int issueId, bool issueIsRemote) {
+    PullRequestSummary pr,
+    bool prIsLocal,
+    int issueId,
+    bool issueIsRemote,
+  ) {
     if (prIsLocal) {
       final dp = context.read<DeskPrState>().prFor(pr.headRef);
       if (dp == null) return false;
@@ -1819,19 +1981,19 @@ class _BranchesPageState extends State<BranchesPage> {
       final prState = context.read<DeskPrState>();
       final issueState = context.read<DeskIssueState>();
       err = await prState.toggleLinkedIssue(
-            repoPath: repoPath,
-            branch: pr.headRef,
-            issueId: candidate.id,
-            isRemote: candidate.isRemote,
-          );
+        repoPath: repoPath,
+        branch: pr.headRef,
+        issueId: candidate.id,
+        isRemote: candidate.isRemote,
+      );
       // For LOCAL PR + LOCAL issue, also write the symmetric
       // back-reference on the issue side.
       if (err == null && !candidate.isRemote) {
         await issueState.toggleAddressedBy(
-              repoPath: repoPath,
-              id: candidate.id,
-              branch: pr.headRef,
-            );
+          repoPath: repoPath,
+          id: candidate.id,
+          branch: pr.headRef,
+        );
       }
     } else {
       // REMOTE PR side: linking is only meaningful for LOCAL issues.
@@ -1842,14 +2004,16 @@ class _BranchesPageState extends State<BranchesPage> {
         return 'remote-remote link not supported';
       }
       err = await context.read<DeskIssueState>().toggleAddressedBy(
-            repoPath: repoPath,
-            id: candidate.id,
-            branch: 'pr#${pr.number}',
-          );
+        repoPath: repoPath,
+        id: candidate.id,
+        branch: 'pr#${pr.number}',
+      );
     }
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntToggleLink(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntToggleLink(error: err)),
+        ),
       );
     }
     return err;
@@ -1899,8 +2063,11 @@ class _BranchesPageState extends State<BranchesPage> {
           return;
         }
         if (!mounted) return;
-        await _openPatchPreview(repoPath, text,
-            sourceLabel: context.t.branches.clipboardPatchLabel);
+        await _openPatchPreview(
+          repoPath,
+          text,
+          sourceLabel: context.t.branches.clipboardPatchLabel,
+        );
       }
     } catch (e) {
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -1911,7 +2078,9 @@ class _BranchesPageState extends State<BranchesPage> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.failedToOpenPatch(error: '$e'))),
+        SnackBar(
+          content: Text(context.t.branches.failedToOpenPatch(error: '$e')),
+        ),
       );
     }
   }
@@ -1995,10 +2164,12 @@ class _BranchesPageState extends State<BranchesPage> {
       fightOrder.add(pr.number);
     }
     fightOrder.sort(
-        (a, b) => fightShared[b]!.length.compareTo(fightShared[a]!.length));
+      (a, b) => fightShared[b]!.length.compareTo(fightShared[a]!.length),
+    );
 
-    final couplingMatrix =
-        context.read<FileCouplingState>().matrixFor(repoPath);
+    final couplingMatrix = context.read<FileCouplingState>().matrixFor(
+      repoPath,
+    );
     final auroraSource = ValueNotifier<String?>(null);
 
     if (!mounted) return;
@@ -2012,8 +2183,9 @@ class _BranchesPageState extends State<BranchesPage> {
         prFiles: prFiles,
         filesByPath: parsed,
         dryRunOk: check.ok,
-        dryRunError:
-            check.ok ? null : (check.error ?? context.t.branches.applyCheckFailed),
+        dryRunError: check.ok
+            ? null
+            : (check.error ?? context.t.branches.applyCheckFailed),
         conflictingPaths: conflictingPaths,
         fightTitles: fightTitles,
         fightShared: fightShared,
@@ -2021,28 +2193,29 @@ class _BranchesPageState extends State<BranchesPage> {
         couplingMatrix: couplingMatrix,
         auroraSource: auroraSource,
         filePillsWrap: _filePillsWrap,
-        onApply: ({
-          required String rawPatch,
-          required bool threeWay,
-          required bool reverse,
-        }) async {
-          final r = await applyPatch(
-            repoPath,
-            rawPatch,
-            cached: false,
-            threeWay: threeWay,
-            reverse: reverse,
-            telemetryLabel: reverse
-                ? 'git.patch_apply_reverse'
-                : threeWay
+        onApply:
+            ({
+              required String rawPatch,
+              required bool threeWay,
+              required bool reverse,
+            }) async {
+              final r = await applyPatch(
+                repoPath,
+                rawPatch,
+                cached: false,
+                threeWay: threeWay,
+                reverse: reverse,
+                telemetryLabel: reverse
+                    ? 'git.patch_apply_reverse'
+                    : threeWay
                     ? 'git.patch_apply_3way'
                     : 'git.patch_apply',
-          );
-          if (r.ok && mounted) {
-            await context.read<RepositoryState>().refreshStatus();
-          }
-          return r;
-        },
+              );
+              if (r.ok && mounted) {
+                await context.read<RepositoryState>().refreshStatus();
+              }
+              return r;
+            },
       ),
     );
     auroraSource.dispose();
@@ -2086,8 +2259,10 @@ class _BranchesPageState extends State<BranchesPage> {
     RepositoryStatus? status,
   ) {
     if (status == null || prFiles.isEmpty) return const {};
-    final dirty =
-        status.files.where((f) => f.hasAnyChange).map((f) => f.path).toSet();
+    final dirty = status.files
+        .where((f) => f.hasAnyChange)
+        .map((f) => f.path)
+        .toSet();
     if (dirty.isEmpty) return const {};
     final out = <String>{};
     for (final f in prFiles) {
@@ -2104,8 +2279,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Map<int, Set<int>> _issueBacklinksFromPrs() {
     final out = <int, Set<int>>{};
     final closingRe = RegExp(
-        r'\b(?:closes?|closed|fixes|fixed|resolves?|resolved|addresses?|refs?|references?)\s+#(\d+)',
-        caseSensitive: false);
+      r'\b(?:closes?|closed|fixes|fixed|resolves?|resolved|addresses?|refs?|references?)\s+#(\d+)',
+      caseSensitive: false,
+    );
     final bareRe = RegExp(r'(?:^|[^\w/])#(\d+)\b');
     for (final entry in _prDetails.entries) {
       final body = entry.value.body;
@@ -2331,43 +2507,202 @@ class _BranchesPageState extends State<BranchesPage> {
   /// Bulk-fetch local desk PR details so their rows have files +
   /// diff loaded for the magnetic-field / row chrome. Idempotent —
   /// skips PRs whose detail is already cached or in flight.
+  /// Install a freshly loaded PR detail, releasing whatever the key held
+  /// before (spool temp dir + document handle included). Safe inside
+  /// setState: only map mutation is synchronous; disposal I/O is deferred.
+  void _putPrDetail(int key, PullRequestDetail detail) {
+    _evictPrDetail(key);
+    _prDetails[key] = detail;
+    // Reconcile the persisted file selection against the NEW file set —
+    // in this one funnel, so every loader (local, remote, refresh) is
+    // covered identically. A force-push or refresh can remove the selected
+    // file, and the renderer trusts any non-null selection: a stale one
+    // makes every per-file lookup (spool slice, cached slice, on-demand
+    // slice) resolve empty and the pane renders as if the PR had no diff,
+    // even though the detail loaded fine.
+    final files = detail.files;
+    final active = _activeFileByPr[key];
+    if (files.isEmpty) {
+      _activeFileByPr.remove(key);
+    } else if (active == null || !files.any((f) => f.path == active)) {
+      _activeFileByPr[key] = files.first.path;
+    }
+    final spool = detail.diffSpool;
+    if (spool != null) {
+      unawaited(_buildPrSpoolDoc(key, spool));
+    } else if (detail.diff.isNotEmpty && detail.rawDiffByFile.isEmpty) {
+      // The mid-size gap: above the eager per-file-slice threshold but
+      // below the spool threshold, the detail is a String with NO cached
+      // slices — without an index, every file-pill switch rescans the
+      // whole diff (sliceSingleDiffByFile). Build the same lazy per-file
+      // byte-offset document the spooled path uses; until it lands the
+      // on-demand rescan fallback keeps rendering correct content.
+      unawaited(_buildPrSliceDoc(key, detail));
+    }
+  }
+
+  /// [_buildPrSpoolDoc]'s in-RAM sibling for the mid-size gap. Guarded
+  /// against the detail having been evicted/replaced mid-build.
+  Future<void> _buildPrSliceDoc(int key, PullRequestDetail detail) async {
+    final DiffDocument doc;
+    try {
+      doc = await DiffDocument.lazyAsync(
+        rawContent: detail.diff,
+        documentId: 'pr-slice:$key:${identityHashCode(detail)}',
+      );
+    } catch (_) {
+      return; // fallback rendering (on-demand slicing) remains correct
+    }
+    if (!mounted || !identical(_prDetails[key], detail)) {
+      doc.dispose();
+      return;
+    }
+    setState(() => _prDiffDocs[key] = doc);
+  }
+
+  /// Build the lazy per-file-slice document over a spooled detail diff.
+  /// Guarded against the detail having been evicted/replaced mid-build.
+  Future<void> _buildPrSpoolDoc(int key, SpooledDiff spool) async {
+    final DiffDocument doc;
+    try {
+      // Identity includes the spool PATH: every fetch streams into a fresh
+      // random temp dir, so the path is unique per fetch — a refreshed
+      // (e.g. force-pushed) PR whose new patch happens to weigh the same
+      // bytes still mints a new documentId, and DiffShell (which rebuilds
+      // on documentId change, not document instance) picks up the new
+      // content instead of rendering the stale store.
+      // VIEW mode, not adopt: the spool belongs to the PR detail cache and
+      // serves other readers too (patch export, capped text preview), so the
+      // doc must not delete it — eviction does.
+      doc = await DiffDocument.viewSpool(
+        spool,
+        documentId: 'pr-spool:$key:${spool.path}:${spool.byteLength}',
+      );
+    } catch (_) {
+      // An eviction (fast refresh / repo switch / selection churn) can
+      // delete the spool mid-build — losing that race is a normal cache
+      // outcome, not an async crash; the evictor owns that cleanup. But a
+      // genuine build failure while the detail is STILL CURRENT must not
+      // strand the row: the pane would sit on its "reading files" loading
+      // state forever (diffSpool set, doc never arriving) with the spool
+      // dir held for the whole session. Evict the detail instead — that
+      // disposes the spool NOW and the next expand refetches fresh, so a
+      // transient failure heals itself.
+      if (mounted && identical(_prDetails[key]?.diffSpool, spool)) {
+        setState(() => _evictPrDetail(key));
+      }
+      return;
+    }
+    if (!mounted || !identical(_prDetails[key]?.diffSpool, spool)) {
+      // Stale: an eviction won while we were building. Close our handle,
+      // then RE-attempt the spool deletion — on Windows the evictor's
+      // delete silently fails while this build held the file open, so
+      // without this retry the temp dir would leak.
+      doc.dispose();
+      unawaited(spool.dispose());
+      return;
+    }
+    setState(() => _prDiffDocs[key] = doc);
+  }
+
+  void _evictPrDetail(int key) {
+    // Close the document's file handle BEFORE deleting the spool dir.
+    _prDiffDocs.remove(key)?.dispose();
+    final old = _prDetails.remove(key);
+    final spool = old?.diffSpool;
+    if (spool != null) unawaited(spool.dispose());
+  }
+
+  void _evictAllPrDetails() {
+    for (final key in _prDetails.keys.toList()) {
+      _evictPrDetail(key);
+    }
+  }
+
+  /// The full diff text of [detail], reading a spooled diff back from disk
+  /// when an explicit one-shot action (patch preview, AI review) needs the
+  /// String form. Returns null when the diff is genuinely absent or too
+  /// large to sensibly materialize for that action.
+  Future<String?> _detailDiffText(
+    PullRequestDetail detail, {
+    int maxSpoolBytes = 64 * 1024 * 1024,
+  }) async {
+    if (detail.diff.isNotEmpty) return detail.diff;
+    final spool = detail.diffSpool;
+    if (spool == null || spool.byteLength > maxSpoolBytes) return null;
+    try {
+      // Lenient like the exec layer's stdout decode: non-UTF-8 patch bytes
+      // degrade to U+FFFD instead of failing the whole one-shot action.
+      return await readSpoolStringLenient(spool.path);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Null-tolerant wrapper over [PullRequestDetail.hasDiff] — "is there
+  /// patch CONTENT to act on". For "has the diff finished LOADING" (refetch
+  /// gating) use [_detailDiffLoaded]: a legitimately empty patch has no
+  /// content yet is completely loaded, and conflating the two makes the
+  /// loaded-empty state unreachable (the row refetches on every expand).
+  static bool _detailHasDiff(PullRequestDetail? detail) =>
+      detail?.hasDiff ?? false;
+
+  /// Null-tolerant wrapper over [PullRequestDetail.diffLoaded].
+  static bool _detailDiffLoaded(PullRequestDetail? detail) =>
+      detail?.diffLoaded ?? false;
+
   Future<void> _prefetchLocalDeskPrDetails(
-      String repoPath, List<DeskPr> deskPrs) async {
+    String repoPath,
+    List<DeskPr> deskPrs,
+  ) async {
     for (final dp in deskPrs) {
       if (_prDetails.containsKey(dp.deskId)) continue;
       if (_localDeskDiffsLoading.contains(dp.headRef)) continue;
       _localDeskDiffsLoading.add(dp.headRef);
-      // Fire-and-forget; per-PR setState lands when the diff resolves.
-      unawaited(_loadLocalDeskPrDetail(repoPath, dp));
+      // Fire-and-forget; per-PR setState lands when the stats resolve.
+      // METADATA ONLY, matching the remote prefetch (`full: false`): a repo
+      // with many desks must not kick off a full diff fetch + spool/index
+      // build per desk at page load. The numstat-derived stats are all the
+      // collapsed row renders; `diffLoaded` stays false, so the first
+      // expand triggers the full load exactly like a remote PR.
+      unawaited(_loadLocalDeskPrDetail(repoPath, dp, includeDiff: false));
     }
   }
 
-  Future<void> _loadLocalDeskPrDetail(String repoPath, DeskPr pr) async {
+  Future<void> _loadLocalDeskPrDetail(
+    String repoPath,
+    DeskPr pr, {
+    bool includeDiff = true,
+  }) async {
     try {
-      final r = await fetchLocalDeskPrDetail(repoPath: repoPath, pr: pr);
+      final r = await fetchLocalDeskPrDetail(
+        repoPath: repoPath,
+        pr: pr,
+        includeDiff: includeDiff,
+      );
       if (!mounted) return;
       if (r.ok && r.data != null) {
         final files = r.data!.files;
         final adds = files.fold<int>(0, (a, f) => a + f.additions);
         final dels = files.fold<int>(0, (a, f) => a + f.deletions);
         setState(() {
-          _prDetails[pr.deskId] = r.data!;
-          if (files.isNotEmpty && !_activeFileByPr.containsKey(pr.deskId)) {
-            _activeFileByPr[pr.deskId] = files.first.path;
-          }
+          // Selection seeding/reconciliation happens inside _putPrDetail.
+          _putPrDetail(pr.deskId, r.data!);
           _invalidatePrDerivations();
         });
         // Persist the diff metrics back into refs/manifold/desks/<branch>
         // so the row's metric line ("+N -M, K files") reads truthfully
         // before the user expands. Quiet — the store skips the commit
         // when nothing changed, so this is cheap on the steady state.
-        unawaited(context.read<DeskPrState>().refreshDiffStats(
-              repoPath: repoPath,
-              branch: pr.headRef,
-              additions: adds,
-              deletions: dels,
-              changedFiles: files.length,
-            ));
+        unawaited(
+          context.read<DeskPrState>().refreshDiffStats(
+            repoPath: repoPath,
+            branch: pr.headRef,
+            additions: adds,
+            deletions: dels,
+            changedFiles: files.length,
+          ),
+        );
         // Same as remote: kick the magnetic-shape compute so the row's
         // rail / orbital ordering / WILL-FIGHT cosines all light up
         // identically for local PRs.
@@ -2425,8 +2760,9 @@ class _BranchesPageState extends State<BranchesPage> {
   /// atmospheric row halo, not a label.
   bool _awaitingMyReview(PullRequestSummary pr) {
     if (_viewerLogin.isEmpty) return false;
-    return pr.reviewers
-        .any((r) => r.login == _viewerLogin && r.state == 'PENDING');
+    return pr.reviewers.any(
+      (r) => r.login == _viewerLogin && r.state == 'PENDING',
+    );
   }
 
   /// What was the LAST thing that happened on this PR? Synthesizes a
@@ -2443,12 +2779,14 @@ class _BranchesPageState extends State<BranchesPage> {
       // whether it was a review or a top-level comment.
       for (final c in detail.comments) {
         final isReview = c.body.startsWith('[');
-        candidates.add(TailEvent(
-          kind: isReview ? 'review' : 'comment',
-          actor: c.authorLogin,
-          at: c.createdAt,
-          state: isReview ? _extractReviewTag(c.body) : '',
-        ));
+        candidates.add(
+          TailEvent(
+            kind: isReview ? 'review' : 'comment',
+            actor: c.authorLogin,
+            at: c.createdAt,
+            state: isReview ? _extractReviewTag(c.body) : '',
+          ),
+        );
       }
     }
     final checks = _prChecks[pr.number];
@@ -2461,24 +2799,24 @@ class _BranchesPageState extends State<BranchesPage> {
         // failing.
         final completedHint =
             c.conclusion == 'fail' || c.conclusion == 'failure'
-                ? pr.updatedAt
-                : pr.updatedAt.subtract(const Duration(hours: 1));
-        candidates.add(TailEvent(
-          kind: 'check',
-          actor: '',
-          at: completedHint,
-          state: c.conclusion ?? '',
-        ));
+            ? pr.updatedAt
+            : pr.updatedAt.subtract(const Duration(hours: 1));
+        candidates.add(
+          TailEvent(
+            kind: 'check',
+            actor: '',
+            at: completedHint,
+            state: c.conclusion ?? '',
+          ),
+        );
       }
     }
     // Author-push proxy: pr.updatedAt is the most-recent-anything on
     // the PR. If no comment/review at that exact moment, treat as a
     // push from the author.
-    candidates.add(TailEvent(
-      kind: 'push',
-      actor: pr.authorLogin,
-      at: pr.updatedAt,
-    ));
+    candidates.add(
+      TailEvent(kind: 'push', actor: pr.authorLogin, at: pr.updatedAt),
+    );
     if (candidates.isEmpty) return null;
     candidates.sort((a, b) => b.at.compareTo(a.at));
     return candidates.first;
@@ -2500,8 +2838,10 @@ class _BranchesPageState extends State<BranchesPage> {
   ///   * 'commented'
   String _myReviewStateFor(PullRequestSummary pr) {
     if (_viewerLogin.isEmpty) return '';
-    final mine = pr.reviewers.firstWhere((r) => r.login == _viewerLogin,
-        orElse: () => const PrReviewer(login: '', state: ''));
+    final mine = pr.reviewers.firstWhere(
+      (r) => r.login == _viewerLogin,
+      orElse: () => const PrReviewer(login: '', state: ''),
+    );
     if (mine.login.isEmpty) return '';
     final state = mine.state;
     if (state == 'PENDING') return 'pending';
@@ -2535,11 +2875,13 @@ class _BranchesPageState extends State<BranchesPage> {
   bool _hasOverrideScar(PullRequestSummary pr) {
     if (pr.state != 'MERGED') return false;
     final checks = _prChecks[pr.number] ?? const <CheckSummary>[];
-    final hasFailingCheck = checks.any((c) =>
-        c.conclusion == 'fail' ||
-        c.conclusion == 'failure' ||
-        c.conclusion == 'timed_out' ||
-        c.conclusion == 'action_required');
+    final hasFailingCheck = checks.any(
+      (c) =>
+          c.conclusion == 'fail' ||
+          c.conclusion == 'failure' ||
+          c.conclusion == 'timed_out' ||
+          c.conclusion == 'action_required',
+    );
     final hasApprovedReview = pr.reviewers.any((r) => r.state == 'APPROVED');
     return hasFailingCheck || !hasApprovedReview;
   }
@@ -2551,8 +2893,9 @@ class _BranchesPageState extends State<BranchesPage> {
     if (detail == null) return const {};
     final out = <int>{};
     final re = RegExp(
-        r'\b(?:closes?|closed|fixes|fixed|resolves?|resolved|addresses?|refs?|references?)\s+#(\d+)',
-        caseSensitive: false);
+      r'\b(?:closes?|closed|fixes|fixed|resolves?|resolved|addresses?|refs?|references?)\s+#(\d+)',
+      caseSensitive: false,
+    );
     for (final m in re.allMatches(detail.body)) {
       final n = int.tryParse(m.group(1) ?? '');
       if (n != null) out.add(n);
@@ -2575,15 +2918,17 @@ class _BranchesPageState extends State<BranchesPage> {
       // PRs awaiting your review specifically. Match either an explicit
       // review-request on you, or a "REVIEW_REQUIRED" decision when the
       // viewer is also a reviewer.
-      final youOnDeck = pr.reviewers
-          .any((r) => r.login == _viewerLogin && r.state == 'PENDING');
+      final youOnDeck = pr.reviewers.any(
+        (r) => r.login == _viewerLogin && r.state == 'PENDING',
+      );
       if (!youOnDeck) return false;
     }
     if (_prSearch.isNotEmpty) {
       final q = _prSearch.toLowerCase();
-      final hay = '${pr.title} ${pr.headRef} ${pr.authorLogin} '
-              '${pr.labels.join(' ')}'
-          .toLowerCase();
+      final hay =
+          '${pr.title} ${pr.headRef} ${pr.authorLogin} '
+                  '${pr.labels.join(' ')}'
+              .toLowerCase();
       if (!hay.contains(q)) return false;
     }
     return true;
@@ -2591,7 +2936,8 @@ class _BranchesPageState extends State<BranchesPage> {
 
   bool _issueMatchesFilters(IssueSummary issue) {
     if (_issueFilters.contains('MINE')) {
-      final mine = issue.authorLogin == _viewerLogin ||
+      final mine =
+          issue.authorLogin == _viewerLogin ||
           issue.assignees.contains(_viewerLogin);
       if (!mine) return false;
     }
@@ -2604,9 +2950,10 @@ class _BranchesPageState extends State<BranchesPage> {
     }
     if (_issueSearch.isNotEmpty) {
       final q = _issueSearch.toLowerCase();
-      final hay = '${issue.title} ${issue.authorLogin} '
-              '${issue.labels.join(' ')}'
-          .toLowerCase();
+      final hay =
+          '${issue.title} ${issue.authorLogin} '
+                  '${issue.labels.join(' ')}'
+              .toLowerCase();
       if (!hay.contains(q)) return false;
     }
     return true;
@@ -2631,41 +2978,46 @@ class _BranchesPageState extends State<BranchesPage> {
     if (_prDetailsLoading.contains(prNumber)) return;
     // If we've cached metadata-only and the caller wants the full
     // version, drop the cache so we re-fetch with the diff this time.
-    if (cached != null && (!full || cached.diff.isNotEmpty)) return;
+    // "Loaded" is diffLoaded, not content presence: a machine-scale detail
+    // carries diff: '' + a spool, and a legitimately EMPTY patch carries
+    // neither — both are complete fetches that must reach a stable state,
+    // never refetch-on-every-expand.
+    if (cached != null && (!full || _detailDiffLoaded(cached))) return;
     // Local desk PR? Route through the local diff fetch instead of
     // `gh pr view` (which would 404). Metadata + thread come from
     // DeskPrState; the diff comes from `git diff baseRef..headRef`.
     if (_localPrNumbers.contains(prNumber)) {
       final dp = context.read<DeskPrState>().all.firstWhere(
-            (p) => p.deskId == prNumber,
-            orElse: () => DeskPr(
-              deskId: prNumber,
-              title: '',
-              body: '',
-              headRef: '',
-              baseRef: 'main',
-              state: 'OPEN',
-              isDraft: true,
-              authorIdentity: '',
-              createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-              updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
-            ),
-          );
+        (p) => p.deskId == prNumber,
+        orElse: () => DeskPr(
+          deskId: prNumber,
+          title: '',
+          body: '',
+          headRef: '',
+          baseRef: 'main',
+          state: 'OPEN',
+          isDraft: true,
+          authorIdentity: '',
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      );
       if (dp.headRef.isEmpty) return;
       await _loadLocalDeskPrDetail(repoPath, dp);
       return;
     }
     setState(() => _prDetailsLoading.add(prNumber));
-    final r = await _prProvider!.getPullRequestDetail(repoPath, prNumber, includeDiff: full);
+    final r = await _prProvider!.getPullRequestDetail(
+      repoPath,
+      prNumber,
+      includeDiff: full,
+    );
     if (!mounted) return;
     setState(() {
       _prDetailsLoading.remove(prNumber);
       if (r.ok) {
-        _prDetails[prNumber] = r.data!;
-        if (r.data!.files.isNotEmpty &&
-            !_activeFileByPr.containsKey(prNumber)) {
-          _activeFileByPr[prNumber] = r.data!.files.first.path;
-        }
+        // Selection seeding/reconciliation happens inside _putPrDetail.
+        _putPrDetail(prNumber, r.data!);
         _invalidatePrDerivations();
       }
     });
@@ -2688,11 +3040,15 @@ class _BranchesPageState extends State<BranchesPage> {
     }
     final detail = _prDetails[prNumber];
     if (detail == null || detail.files.isEmpty) return;
-    final paths = ([...detail.files]..sort((a, b) =>
-            (b.additions + b.deletions).compareTo(a.additions + a.deletions)))
-        .take(12)
-        .map((f) => f.path)
-        .toList();
+    final paths =
+        ([...detail.files]..sort(
+              (a, b) => (b.additions + b.deletions).compareTo(
+                a.additions + a.deletions,
+              ),
+            ))
+            .take(12)
+            .map((f) => f.path)
+            .toList();
     setState(() => _prFileSignalsLoading.add(prNumber));
     final r = await scanFileSignals(repoPath, paths);
     if (!mounted) return;
@@ -2703,7 +3059,9 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _ensureIssueDetailLoaded(
-      String repoPath, int issueNumber) async {
+    String repoPath,
+    int issueNumber,
+  ) async {
     if (_issueDetails.containsKey(issueNumber) ||
         _issueDetailsLoading.contains(issueNumber)) {
       return;
@@ -2752,7 +3110,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // the user doesn't lose their place after merge / approve / etc.
     final fetches = <Future<void>>[];
     if (refreshDetail) {
-      _prDetails.remove(number);
+      _evictPrDetail(number);
       _prChecks.remove(number);
       _invalidatePrDerivations();
       fetches.add(_ensurePrDetailLoaded(repoPath, number));
@@ -2821,22 +3179,25 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _promoteToForge(String repoPath, String branch) async {
     final deskPrState = context.read<DeskPrState>();
     final err = await deskPrState.promoteToRemote(
-        repoPath: repoPath, branch: branch);
+      repoPath: repoPath,
+      branch: branch,
+    );
     if (!mounted) return;
     if (err != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err)),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.t.branches.prPushedToForge)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.t.branches.prPushedToForge)));
     await _fetchPullRequests(repoPath);
   }
 
-  Future<void> _checkoutPr(String repoPath, int number,
-      {bool force = false}) async {
+  Future<void> _checkoutPr(
+    String repoPath,
+    int number, {
+    bool force = false,
+  }) async {
     if (_actionInFlight.contains(number)) return;
     setState(() => _actionInFlight.add(number));
     final outcome = await _prProvider!.checkout(repoPath, number, force: force);
@@ -2881,11 +3242,17 @@ class _BranchesPageState extends State<BranchesPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+            child: Text(
+              ctx.t.common.cancel,
+              style: TextStyle(color: t.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(ctx.t.branches.overwrite, style: TextStyle(color: t.stateDeleted)),
+            child: Text(
+              ctx.t.branches.overwrite,
+              style: TextStyle(color: t.stateDeleted),
+            ),
           ),
         ],
       ),
@@ -2924,27 +3291,35 @@ class _BranchesPageState extends State<BranchesPage> {
       if (visible.isEmpty) return KeyEventResult.ignored;
       if (key == LogicalKeyboardKey.keyJ ||
           key == LogicalKeyboardKey.arrowDown) {
-        setState(() => _focusedPrIndex =
-            ((_focusedPrIndex ?? -1) + 1).clamp(0, visible.length - 1));
+        setState(
+          () => _focusedPrIndex = ((_focusedPrIndex ?? -1) + 1).clamp(
+            0,
+            visible.length - 1,
+          ),
+        );
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyK || key == LogicalKeyboardKey.arrowUp) {
-        setState(() => _focusedPrIndex =
-            ((_focusedPrIndex ?? visible.length) - 1)
-                .clamp(0, visible.length - 1));
+        setState(
+          () => _focusedPrIndex = ((_focusedPrIndex ?? visible.length) - 1)
+              .clamp(0, visible.length - 1),
+        );
         return KeyEventResult.handled;
       }
       if (_focusedPrIndex != null) {
         final pr = visible[_focusedPrIndex!];
         if (key == LogicalKeyboardKey.enter) {
           setState(() {
-            _expandedPrNumber =
-                _expandedPrNumber == pr.number ? null : pr.number;
+            _expandedPrNumber = _expandedPrNumber == pr.number
+                ? null
+                : pr.number;
           });
           if (_expandedPrNumber != null) {
             _ensureChecksLoaded(repoPath, pr.number);
-            _ensurePrDetailLoaded(repoPath, pr.number)
-                .then((_) => _ensurePrFileSignalsLoaded(repoPath, pr.number));
+            _ensurePrDetailLoaded(
+              repoPath,
+              pr.number,
+            ).then((_) => _ensurePrFileSignalsLoaded(repoPath, pr.number));
           }
           return KeyEventResult.handled;
         }
@@ -2953,17 +3328,28 @@ class _BranchesPageState extends State<BranchesPage> {
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.keyA) {
-          _runPrAction(repoPath, pr.number,
-              () => _prProvider!.submitReview(repoPath, pr.number, event: 'approve'));
+          _runPrAction(
+            repoPath,
+            pr.number,
+            () => _prProvider!.submitReview(
+              repoPath,
+              pr.number,
+              event: 'approve',
+            ),
+          );
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.keyR) {
           _runPrAction(
+            repoPath,
+            pr.number,
+            () => _prProvider!.submitReview(
               repoPath,
               pr.number,
-              () => _prProvider!.submitReview(repoPath, pr.number,
-                  event: 'request-changes',
-                  body: '(requested changes from Manifold)'));
+              event: 'request-changes',
+              body: '(requested changes from Manifold)',
+            ),
+          );
           return KeyEventResult.handled;
         }
         // Ctrl/Cmd+L: open the sticky link picker for this PR. Single
@@ -2992,22 +3378,29 @@ class _BranchesPageState extends State<BranchesPage> {
       if (visible.isEmpty) return KeyEventResult.ignored;
       if (key == LogicalKeyboardKey.keyJ ||
           key == LogicalKeyboardKey.arrowDown) {
-        setState(() => _focusedIssueIndex =
-            ((_focusedIssueIndex ?? -1) + 1).clamp(0, visible.length - 1));
+        setState(
+          () => _focusedIssueIndex = ((_focusedIssueIndex ?? -1) + 1).clamp(
+            0,
+            visible.length - 1,
+          ),
+        );
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyK || key == LogicalKeyboardKey.arrowUp) {
-        setState(() => _focusedIssueIndex =
-            ((_focusedIssueIndex ?? visible.length) - 1)
-                .clamp(0, visible.length - 1));
+        setState(
+          () =>
+              _focusedIssueIndex = ((_focusedIssueIndex ?? visible.length) - 1)
+                  .clamp(0, visible.length - 1),
+        );
         return KeyEventResult.handled;
       }
       if (_focusedIssueIndex != null) {
         final issue = visible[_focusedIssueIndex!];
         if (key == LogicalKeyboardKey.enter) {
           setState(() {
-            _expandedIssueNumber =
-                _expandedIssueNumber == issue.number ? null : issue.number;
+            _expandedIssueNumber = _expandedIssueNumber == issue.number
+                ? null
+                : issue.number;
           });
           if (_expandedIssueNumber != null) {
             _ensureIssueDetailLoaded(repoPath, issue.number);
@@ -3081,7 +3474,7 @@ class _BranchesPageState extends State<BranchesPage> {
       _issues = null;
       _prChecks.clear();
       _prChecksLoading.clear();
-      _prDetails.clear();
+      _evictAllPrDetails();
       _prDetailsLoading.clear();
       _invalidatePrDerivations();
       // PR shape data is φ-indexed into the outgoing repo's LogosGit
@@ -3142,115 +3535,121 @@ class _BranchesPageState extends State<BranchesPage> {
       focusNode: _lensFocusNode,
       autofocus: true,
       onKeyEvent: _onLensKey,
-      child: Stack(children: [
-        Column(children: [
-          // Lens ribbon — three modes share this tab.
-          _LensRibbon(
-            active: _lens,
-            branchCount: _branches.length,
-            prCount: _prs?.length,
-            issueCount: _issues?.length,
-            refreshing: _loading || _prsLoading || _issuesLoading,
-            onChanged: (lens) => _switchLens(lens, repoPath),
-            onRefresh: () => _refreshActiveLens(repoPath),
-            onToggleHelp: () =>
-                setState(() => _showKeyboardHelp = !_showKeyboardHelp),
-            onImportPatch: () => _importPatch(repoPath),
-            onSyncManifold: () => _syncManifold(repoPath),
-            syncing: _manifoldSyncing,
+      child: Stack(
+        children: [
+          Column(
+            children: [
+              // Lens ribbon — three modes share this tab.
+              _LensRibbon(
+                active: _lens,
+                branchCount: _branches.length,
+                prCount: _prs?.length,
+                issueCount: _issues?.length,
+                refreshing: _loading || _prsLoading || _issuesLoading,
+                onChanged: (lens) => _switchLens(lens, repoPath),
+                onRefresh: () => _refreshActiveLens(repoPath),
+                onToggleHelp: () =>
+                    setState(() => _showKeyboardHelp = !_showKeyboardHelp),
+                onImportPatch: () => _importPatch(repoPath),
+                onSyncManifold: () => _syncManifold(repoPath),
+                syncing: _manifoldSyncing,
+              ),
+              // Filter row — appears only on PR/Issue lenses; pills latch on
+              // click. Search box on the same line.
+              if (_lens == _BranchesLens.prs)
+                _FilterRow(
+                  searchCtrl: _prSearchCtrl,
+                  searchHint: context.t.branches.filterPullRequestsHint,
+                  onSearchChanged: (v) => setState(() => _prSearch = v),
+                  pills: [
+                    (
+                      'MINE',
+                      _prs?.where(_prMatchesMine).length,
+                      _prFilters.contains('MINE'),
+                    ),
+                    ('DRAFTS', null, _prFilters.contains('DRAFTS')),
+                    (
+                      'REVIEW NEEDED',
+                      null,
+                      _prFilters.contains('REVIEW NEEDED'),
+                    ),
+                  ],
+                  onTogglePill: (label) {
+                    setState(() {
+                      if (_prFilters.contains(label)) {
+                        _prFilters.remove(label);
+                      } else {
+                        _prFilters.add(label);
+                      }
+                      _focusedPrIndex = null;
+                    });
+                  },
+                ),
+              if (_lens == _BranchesLens.issues)
+                _FilterRow(
+                  searchCtrl: _issueSearchCtrl,
+                  searchHint: context.t.branches.filterIssuesHint,
+                  onSearchChanged: (v) => setState(() => _issueSearch = v),
+                  pills: [
+                    ('MINE', null, _issueFilters.contains('MINE')),
+                    ('UNASSIGNED', null, _issueFilters.contains('UNASSIGNED')),
+                    ('BUGS', null, _issueFilters.contains('BUGS')),
+                  ],
+                  onTogglePill: (label) {
+                    setState(() {
+                      if (_issueFilters.contains(label)) {
+                        _issueFilters.remove(label);
+                      } else {
+                        _issueFilters.add(label);
+                      }
+                      _focusedIssueIndex = null;
+                    });
+                  },
+                ),
+
+              if (_lens == _BranchesLens.branches && _error != null)
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: t.stateConflicted, fontSize: 11),
+                  ),
+                ),
+
+              // Body — switched by lens. AnimatedSwitcher fades between lenses
+              // using the active theme's motion shader (snappy / fluid /
+              // elastic), so the transition feels native to each theme. The
+              // morph between specific row identities (branches that have PRs
+              // → PR rows in place) is a v2 enrichment; for v1 a clean fade
+              // already sells the lens metaphor while keeping the per-lens
+              // surfaces unrelated in code.
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: context.motion(context.surfaceShader.duration),
+                  switchInCurve: context.surfaceShader.safeCurve,
+                  switchOutCurve: context.surfaceShader.safeCurve,
+                  child: KeyedSubtree(
+                    key: ValueKey(_lens),
+                    child: switch (_lens) {
+                      _BranchesLens.branches => _buildBranchesBody(t, repoPath),
+                      _BranchesLens.prs => _buildPullRequestsBody(t, repoPath),
+                      _BranchesLens.issues => _buildIssuesBody(t, repoPath),
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-          // Filter row — appears only on PR/Issue lenses; pills latch on
-          // click. Search box on the same line.
-          if (_lens == _BranchesLens.prs)
-            _FilterRow(
-              searchCtrl: _prSearchCtrl,
-              searchHint: context.t.branches.filterPullRequestsHint,
-              onSearchChanged: (v) => setState(() => _prSearch = v),
-              pills: [
-                (
-                  'MINE',
-                  _prs?.where(_prMatchesMine).length,
-                  _prFilters.contains('MINE'),
-                ),
-                ('DRAFTS', null, _prFilters.contains('DRAFTS')),
-                (
-                  'REVIEW NEEDED',
-                  null,
-                  _prFilters.contains('REVIEW NEEDED'),
-                ),
-              ],
-              onTogglePill: (label) {
-                setState(() {
-                  if (_prFilters.contains(label)) {
-                    _prFilters.remove(label);
-                  } else {
-                    _prFilters.add(label);
-                  }
-                  _focusedPrIndex = null;
-                });
-              },
-            ),
-          if (_lens == _BranchesLens.issues)
-            _FilterRow(
-              searchCtrl: _issueSearchCtrl,
-              searchHint: context.t.branches.filterIssuesHint,
-              onSearchChanged: (v) => setState(() => _issueSearch = v),
-              pills: [
-                ('MINE', null, _issueFilters.contains('MINE')),
-                ('UNASSIGNED', null, _issueFilters.contains('UNASSIGNED')),
-                ('BUGS', null, _issueFilters.contains('BUGS')),
-              ],
-              onTogglePill: (label) {
-                setState(() {
-                  if (_issueFilters.contains(label)) {
-                    _issueFilters.remove(label);
-                  } else {
-                    _issueFilters.add(label);
-                  }
-                  _focusedIssueIndex = null;
-                });
-              },
-            ),
-
-          if (_lens == _BranchesLens.branches && _error != null)
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(_error!,
-                  style: TextStyle(color: t.stateConflicted, fontSize: 11)),
-            ),
-
-          // Body — switched by lens. AnimatedSwitcher fades between lenses
-          // using the active theme's motion shader (snappy / fluid /
-          // elastic), so the transition feels native to each theme. The
-          // morph between specific row identities (branches that have PRs
-          // → PR rows in place) is a v2 enrichment; for v1 a clean fade
-          // already sells the lens metaphor while keeping the per-lens
-          // surfaces unrelated in code.
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: context.motion(context.surfaceShader.duration),
-              switchInCurve: context.surfaceShader.safeCurve,
-              switchOutCurve: context.surfaceShader.safeCurve,
-              child: KeyedSubtree(
-                key: ValueKey(_lens),
-                child: switch (_lens) {
-                  _BranchesLens.branches => _buildBranchesBody(t, repoPath),
-                  _BranchesLens.prs => _buildPullRequestsBody(t, repoPath),
-                  _BranchesLens.issues => _buildIssuesBody(t, repoPath),
-                },
+          // Keyboard help overlay — translucent veneer that slides over
+          // the lens body. Dismisses on any pointer-down or `?` toggle.
+          if (_showKeyboardHelp)
+            Positioned.fill(
+              child: _KeyboardHelpOverlay(
+                onDismiss: () => setState(() => _showKeyboardHelp = false),
               ),
             ),
-          ),
-        ]),
-        // Keyboard help overlay — translucent veneer that slides over
-        // the lens body. Dismisses on any pointer-down or `?` toggle.
-        if (_showKeyboardHelp)
-          Positioned.fill(
-            child: _KeyboardHelpOverlay(
-              onDismiss: () => setState(() => _showKeyboardHelp = false),
-            ),
-          ),
-      ]),
+        ],
+      ),
     );
   }
 
@@ -3267,8 +3666,9 @@ class _BranchesPageState extends State<BranchesPage> {
     // every mutation, so this identity select repaints the per-branch
     // cross-link chips precisely when a desk opens/closes or a PR's
     // state / issue links move.
-    final deskPrs =
-        context.select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch);
+    final deskPrs = context.select<DeskPrState, Map<String, DeskPr>>(
+      (s) => s.byBranch,
+    );
     final leases = <String, String>{
       for (final d in desks)
         if (d.branch != null && d.branch!.isNotEmpty) d.branch!: d.path,
@@ -3309,10 +3709,12 @@ class _BranchesPageState extends State<BranchesPage> {
       // dividing. The material shift itself already reads as a new band,
       // so no labels are needed (and none are allowed).
       if (prev != null && stratum != prev) {
-        rows.add(Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Container(height: 1, color: t.chromeBorderFaint),
-        ));
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Container(height: 1, color: t.chromeBorderFaint),
+          ),
+        );
       }
       // Desk / desk-PR / issue cross-links for this branch (main's
       // plumbing feature): rendered as subtle chips inside the card when
@@ -3322,119 +3724,133 @@ class _BranchesPageState extends State<BranchesPage> {
         desks: desks,
         deskPrsByBranch: deskPrs,
       );
-      rows.add(Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: _BranchCard(
-          key: ValueKey(b.name),
-          branch: b,
-          tokens: t,
-          actionRunning: _actionRunning,
-          stratum: stratum,
-          leased: leased,
-          worktreePath: leased ? leases[b.name] : null,
-          repoPath: repoPath,
-          onCheckout: b.current ? null : () => _checkout(repoPath, b.name),
-          onDelete: b.current
-              ? null
-              : ({bool force = false}) =>
-                  _deleteBranch(repoPath, b.name, force: force),
-          onSecondaryTap: (pos) =>
-              _showBranchContextMenu(context, pos, b, repoPath),
-          links: links,
-          onOpenDesk: links.desk == null
-              ? null
-              : () => _openDeskForBranch(links.desk!),
-          onOpenPr: links.deskPr == null
-              ? null
-              : () => _openDeskPrInLens(links.deskPr!, repoPath),
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: _BranchCard(
+            key: ValueKey(b.name),
+            branch: b,
+            tokens: t,
+            actionRunning: _actionRunning,
+            stratum: stratum,
+            leased: leased,
+            worktreePath: leased ? leases[b.name] : null,
+            repoPath: repoPath,
+            onCheckout: b.current ? null : () => _checkout(repoPath, b.name),
+            onDelete: b.current
+                ? null
+                : ({bool force = false}) =>
+                      _deleteBranch(repoPath, b.name, force: force),
+            onSecondaryTap: (pos) =>
+                _showBranchContextMenu(context, pos, b, repoPath),
+            links: links,
+            onOpenDesk: links.desk == null
+                ? null
+                : () => _openDeskForBranch(links.desk!),
+            onOpenPr: links.deskPr == null
+                ? null
+                : () => _openDeskPrInLens(links.deskPr!, repoPath),
+          ),
         ),
-      ));
+      );
       prev = stratum;
     }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        ...rows,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...rows,
 
-        // Ghost creator ROW — the permanent rail is gone. A full-width
-        // dashed row at the end of the branch strata (one stratum gap
-        // above) morphs in place into a naming input (Enter creates,
-        // Esc/blur collapses). One stratum gap, no mystery void.
-        Padding(
-          padding: const EdgeInsets.only(top: 6, bottom: 6),
-          child: _BranchCreator(
-            tokens: t,
-            expanded: _branchCreatorExpanded,
-            error: _actionError,
-            enabled: !_actionRunning,
-            controller: _newBranchCtrl,
-            escapeFocus: _branchCreatorEscapeFocus,
-            hintText: _branchNameDream.value ?? context.t.branches.branchNameHint,
-            onToggle: () => setState(() {
-              _branchCreatorExpanded = !_branchCreatorExpanded;
-              if (!_branchCreatorExpanded) {
-                _newBranchCtrl.clear();
-                _actionError = null;
-              }
-            }),
-            onChanged: (_) => setState(() {}),
-            onCreate: () => _createBranch(repoPath),
+          // Ghost creator ROW — the permanent rail is gone. A full-width
+          // dashed row at the end of the branch strata (one stratum gap
+          // above) morphs in place into a naming input (Enter creates,
+          // Esc/blur collapses). One stratum gap, no mystery void.
+          Padding(
+            padding: const EdgeInsets.only(top: 6, bottom: 6),
+            child: _BranchCreator(
+              tokens: t,
+              expanded: _branchCreatorExpanded,
+              error: _actionError,
+              enabled: !_actionRunning,
+              controller: _newBranchCtrl,
+              escapeFocus: _branchCreatorEscapeFocus,
+              hintText:
+                  _branchNameDream.value ?? context.t.branches.branchNameHint,
+              onToggle: () => setState(() {
+                _branchCreatorExpanded = !_branchCreatorExpanded;
+                if (!_branchCreatorExpanded) {
+                  _newBranchCtrl.clear();
+                  _actionError = null;
+                }
+              }),
+              onChanged: (_) => setState(() {}),
+              onCreate: () => _createBranch(repoPath),
+            ),
           ),
-        ),
 
-        // Tags — the quiet terminal register. One stratum gap, then a
-        // perceptible hairline with the tag glyph engraved at its left
-        // end — glyph and line compose one divider; no loud "Tags"
-        // heading. textMuted glyph + subtle-tier line so the pair reads
-        // together instead of a floating orphan over an invisible rule.
-        // The glyph doubles as the sort-direction flip — same persisted
-        // display-law idiom as the ISSUES header. `git tag -l` emits
-        // refname order (oldest release first for version tags), so
-        // descending (default) is simply the reversed list: releases
-        // read newest-first out of the box.
-        if (_tags.isNotEmpty) ...[
-          Builder(builder: (context) {
-            final tagsDescending = context.select<PreferencesState, bool>(
-              (s) => s.tagsSortDescending,
-            );
-            final orderedTags =
-                tagsDescending ? _tags.reversed.toList() : _tags;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  // The glyph's own hit padding (6 vertical, 6 right)
-                  // already contributes the breathing room and the
-                  // glyph→line gap, so the outer padding shrinks by the
-                  // same amount — net geometry identical to the old
-                  // static divider.
-                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
-                  child: Row(children: [
-                    _buildTagsSortGlyph(t, tagsDescending),
-                    Expanded(
-                        child: Container(
-                            height: 1, color: t.chromeBorderSubtle)),
-                  ]),
-                ),
-                for (final tag in orderedTags)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: _TagCard(
-                      tag: tag,
-                      tokens: t,
-                      hovered: _hoveredTag == tag.name,
-                      actionRunning: _actionRunning,
-                      onHoverChange: (v) =>
-                          setState(() => _hoveredTag = v ? tag.name : null),
-                      onDelete: () => _deleteTag(repoPath, tag.name),
+          // Tags — the quiet terminal register. One stratum gap, then a
+          // perceptible hairline with the tag glyph engraved at its left
+          // end — glyph and line compose one divider; no loud "Tags"
+          // heading. textMuted glyph + subtle-tier line so the pair reads
+          // together instead of a floating orphan over an invisible rule.
+          // The glyph doubles as the sort-direction flip — same persisted
+          // display-law idiom as the ISSUES header. `git tag -l` emits
+          // refname order (oldest release first for version tags), so
+          // descending (default) is simply the reversed list: releases
+          // read newest-first out of the box.
+          if (_tags.isNotEmpty) ...[
+            Builder(
+              builder: (context) {
+                final tagsDescending = context.select<PreferencesState, bool>(
+                  (s) => s.tagsSortDescending,
+                );
+                final orderedTags = tagsDescending
+                    ? _tags.reversed.toList()
+                    : _tags;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      // The glyph's own hit padding (6 vertical, 6 right)
+                      // already contributes the breathing room and the
+                      // glyph→line gap, so the outer padding shrinks by the
+                      // same amount — net geometry identical to the old
+                      // static divider.
+                      padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+                      child: Row(
+                        children: [
+                          _buildTagsSortGlyph(t, tagsDescending),
+                          Expanded(
+                            child: Container(
+                              height: 1,
+                              color: t.chromeBorderSubtle,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-              ],
-            );
-          }),
+                    for (final tag in orderedTags)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: _TagCard(
+                          tag: tag,
+                          tokens: t,
+                          hovered: _hoveredTag == tag.name,
+                          actionRunning: _actionRunning,
+                          onHoverChange: (v) =>
+                              setState(() => _hoveredTag = v ? tag.name : null),
+                          onDelete: () => _deleteTag(repoPath, tag.name),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 
@@ -3446,15 +3862,17 @@ class _BranchesPageState extends State<BranchesPage> {
   Widget _buildTagsSortGlyph(AppTokens t, bool descending) {
     return Semantics(
       button: true,
-      label: descending ? context.t.branches.tagsNewestFirst : context.t.branches.tagsOldestFirst,
+      label: descending
+          ? context.t.branches.tagsNewestFirst
+          : context.t.branches.tagsOldestFirst,
       hint: context.t.branches.flipSortDirection,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => context
-              .read<PreferencesState>()
-              .setTagsSortDescending(!descending),
+          onTap: () => context.read<PreferencesState>().setTagsSortDescending(
+            !descending,
+          ),
           child: Padding(
             // Right/vertical only — the glyph stays engraved at the
             // divider's left edge; the padding is pure hit area (the
@@ -3516,10 +3934,10 @@ class _BranchesPageState extends State<BranchesPage> {
     // [DeskPrState] replaces `_byBranch` with a fresh instance, so the
     // identity compare fires precisely on state moves without
     // rebuilding on unrelated notifier activity.
-    final deskPrs =
-        context.select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch)
-            .values
-            .toList();
+    final deskPrs = context
+        .select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch)
+        .values
+        .toList();
     if (isActive) {
       final warmToken = logosEngine == null
           ? null
@@ -3572,25 +3990,27 @@ class _BranchesPageState extends State<BranchesPage> {
       // Reauthor the summary with the effective viewer login so the
       // MINE filter sees the user as the author of their own local PRs.
       final s = dp.toSummary();
-      localSummaries.add(PullRequestSummary(
-        number: s.number,
-        title: s.title,
-        headRef: s.headRef,
-        baseRef: s.baseRef,
-        state: s.state,
-        isDraft: s.isDraft,
-        authorLogin: viewerLogin,
-        conversationCount: s.conversationCount,
-        updatedAt: s.updatedAt,
-        additions: s.additions,
-        deletions: s.deletions,
-        changedFiles: s.changedFiles,
-        mergeable: s.mergeable,
-        reviewers: s.reviewers,
-        labels: s.labels,
-        assignees: s.assignees,
-        reviewDecision: s.reviewDecision,
-      ));
+      localSummaries.add(
+        PullRequestSummary(
+          number: s.number,
+          title: s.title,
+          headRef: s.headRef,
+          baseRef: s.baseRef,
+          state: s.state,
+          isDraft: s.isDraft,
+          authorLogin: viewerLogin,
+          conversationCount: s.conversationCount,
+          updatedAt: s.updatedAt,
+          additions: s.additions,
+          deletions: s.deletions,
+          changedFiles: s.changedFiles,
+          mergeable: s.mergeable,
+          reviewers: s.reviewers,
+          labels: s.labels,
+          assignees: s.assignees,
+          reviewDecision: s.reviewDecision,
+        ),
+      );
     }
     final allPrs = [...remoteList, ...localSummaries];
     if (allPrs.isEmpty) {
@@ -3618,12 +4038,9 @@ class _BranchesPageState extends State<BranchesPage> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: _bucketedPrChildren(
-                repoPath,
-                prs,
-                t,
-                {for (final s in localSummaries) s.number},
-              ),
+              children: _bucketedPrChildren(repoPath, prs, t, {
+                for (final s in localSummaries) s.number,
+              }),
             ),
           );
     // Issues sidebar — same structural slot as the branches view's
@@ -3677,15 +4094,17 @@ class _BranchesPageState extends State<BranchesPage> {
   Widget _buildIssuesSortHeader(AppTokens t, int count, bool descending) {
     return Semantics(
       button: true,
-      label: descending ? context.t.branches.issuesNewestFirst : context.t.branches.issuesOldestFirst,
+      label: descending
+          ? context.t.branches.issuesNewestFirst
+          : context.t.branches.issuesOldestFirst,
       hint: context.t.branches.flipSortDirection,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => context
-              .read<PreferencesState>()
-              .setIssuesSortDescending(!descending),
+          onTap: () => context.read<PreferencesState>().setIssuesSortDescending(
+            !descending,
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -3928,14 +4347,15 @@ class _BranchesPageState extends State<BranchesPage> {
     orbitSort(older);
 
     final out = <Widget>[];
-    void emitBucket(String label, List<PullRequestSummary> bucket,
-        {bool tone = false}) {
+    void emitBucket(
+      String label,
+      List<PullRequestSummary> bucket, {
+      bool tone = false,
+    }) {
       if (bucket.isEmpty) return;
-      out.add(_BucketDivider(
-        label: label,
-        count: bucket.length,
-        toneAlarm: tone,
-      ));
+      out.add(
+        _BucketDivider(label: label, count: bucket.length, toneAlarm: tone),
+      );
       for (var i = 0; i < bucket.length; i++) {
         // Resolve original index via reference identity so action
         // handlers still target the right entry in `prs`.
@@ -3951,8 +4371,12 @@ class _BranchesPageState extends State<BranchesPage> {
     return out;
   }
 
-  Widget _buildPrRow(String repoPath, List<PullRequestSummary> prs, int i,
-      Set<int> localNumbers) {
+  Widget _buildPrRow(
+    String repoPath,
+    List<PullRequestSummary> prs,
+    int i,
+    Set<int> localNumbers,
+  ) {
     final pr = prs[i];
     final isLocalPr = localNumbers.contains(pr.number);
     final expanded = _expandedPrNumber == pr.number;
@@ -3990,6 +4414,7 @@ class _BranchesPageState extends State<BranchesPage> {
       checks: _prChecks[pr.number],
       checksLoading: _prChecksLoading.contains(pr.number),
       detail: detail,
+      spoolDoc: _prDiffDocs[pr.number],
       detailLoading: _prDetailsLoading.contains(pr.number),
       activeFilePath: _activeFileByPr[pr.number],
       actionInFlight: _actionInFlight.contains(pr.number),
@@ -4000,10 +4425,7 @@ class _BranchesPageState extends State<BranchesPage> {
       collisionTitles: {
         for (final n in collisions)
           n: (_prs ?? const <PullRequestSummary>[])
-              .firstWhere(
-                (p) => p.number == n,
-                orElse: () => pr,
-              )
+              .firstWhere((p) => p.number == n, orElse: () => pr)
               .title,
       },
       collisionSharedFiles: {
@@ -4051,20 +4473,27 @@ class _BranchesPageState extends State<BranchesPage> {
         });
         if (!expanded) {
           _ensureChecksLoaded(repoPath, pr.number);
-          _ensurePrDetailLoaded(repoPath, pr.number)
-              .then((_) => _ensurePrFileSignalsLoaded(repoPath, pr.number));
+          _ensurePrDetailLoaded(
+            repoPath,
+            pr.number,
+          ).then((_) => _ensurePrFileSignalsLoaded(repoPath, pr.number));
           _markPrSeen(pr.number);
         }
       },
       onSelectFile: (path) => setState(() => _activeFileByPr[pr.number] = path),
       onSubmitReview: isLocalPr
           ? (event, body) =>
-              _submitLocalReview(repoPath, pr.headRef, event, body)
+                _submitLocalReview(repoPath, pr.headRef, event, body)
           : (event, body) => _runPrAction(
               repoPath,
               pr.number,
-              () => _prProvider!.submitReview(repoPath, pr.number,
-                  event: event, body: body)),
+              () => _prProvider!.submitReview(
+                repoPath,
+                pr.number,
+                event: event,
+                body: body,
+              ),
+            ),
       onCheckout: isLocalPr
           ? () => _checkoutLocalPr(pr.headRef)
           : () => _checkoutPr(repoPath, pr.number),
@@ -4078,9 +4507,10 @@ class _BranchesPageState extends State<BranchesPage> {
               if (mainPath == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                      content: Text(
-                    context.t.branches.couldNotResolveMainWorktree,
-                  )),
+                    content: Text(
+                      context.t.branches.couldNotResolveMainWorktree,
+                    ),
+                  ),
                 );
                 return;
               }
@@ -4095,8 +4525,13 @@ class _BranchesPageState extends State<BranchesPage> {
           : (method, deleteBranch) => _runPrAction(
               repoPath,
               pr.number,
-              () => _prProvider!.merge(repoPath, pr.number,
-                  method: method, deleteBranch: deleteBranch)),
+              () => _prProvider!.merge(
+                repoPath,
+                pr.number,
+                method: method,
+                deleteBranch: deleteBranch,
+              ),
+            ),
       onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
     );
   }
@@ -4115,16 +4550,22 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _submitLocalReview(
-      String repoPath, String branch, String event, String body) async {
+    String repoPath,
+    String branch,
+    String event,
+    String body,
+  ) async {
     final err = await context.read<DeskPrState>().addReview(
-          repoPath: repoPath,
-          branch: branch,
-          verdict: _verdictFromEvent(event),
-          body: body,
-        );
+      repoPath: repoPath,
+      branch: branch,
+      verdict: _verdictFromEvent(event),
+      body: body,
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntSubmitReview(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntSubmitReview(error: err)),
+        ),
       );
     }
   }
@@ -4140,13 +4581,19 @@ class _BranchesPageState extends State<BranchesPage> {
     // Defense-in-depth: PR review is AI — skip when hidden.
     if (context.read<PreferencesState>().hideAiFeatures) return;
     var detail = _prDetails[pr.number];
-    if (detail == null || detail.diff.isEmpty) {
+    if (!_detailDiffLoaded(detail)) {
       await _ensurePrDetailLoaded(repoPath, pr.number);
       if (!mounted) return;
       detail = _prDetails[pr.number];
     }
-    if (detail == null || detail.diff.isEmpty) {
-      if (!mounted) return;
+    // A spooled diff is read back for this explicit action, but capped well
+    // below the machine-scale zone — no model ingests a 100MB+ patch, and
+    // materializing one to try would recreate the OOM the spool prevents.
+    final reviewDiff = !_detailHasDiff(detail)
+        ? null
+        : await _detailDiffText(detail!, maxSpoolBytes: 32 * 1024 * 1024);
+    if (!mounted) return;
+    if (detail == null || reviewDiff == null || reviewDiff.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.t.branches.couldNotLoadPrDiff)),
       );
@@ -4161,10 +4608,13 @@ class _BranchesPageState extends State<BranchesPage> {
       );
       return;
     }
-    final selectedCategory = categories
-            .where((c) =>
-                c.id == aiSettings.reviewCommitModelCategoryId &&
-                c.models.isNotEmpty)
+    final selectedCategory =
+        categories
+            .where(
+              (c) =>
+                  c.id == aiSettings.reviewCommitModelCategoryId &&
+                  c.models.isNotEmpty,
+            )
             .firstOrNull ??
         categories.where((c) => c.models.isNotEmpty).firstOrNull;
     if (selectedCategory == null) {
@@ -4173,9 +4623,11 @@ class _BranchesPageState extends State<BranchesPage> {
       );
       return;
     }
-    final selectedModel = selectedCategory.models
-            .where((m) =>
-                m.value == aiSettings.modelSelections[selectedCategory.id])
+    final selectedModel =
+        selectedCategory.models
+            .where(
+              (m) => m.value == aiSettings.modelSelections[selectedCategory.id],
+            )
             .firstOrNull ??
         selectedCategory.models.first;
     // Open a progress dialog so the user knows the review is running;
@@ -4186,21 +4638,28 @@ class _BranchesPageState extends State<BranchesPage> {
     // effort: null until the background indices warm, in which case the
     // manifest simply skips IDF-ranking and coupling sections (themes +
     // moves from logos φ and engram wells still emit).
-    final prCouplingMatrix =
-        context.read<FileCouplingState>().matrixFor(repoPath);
+    final prCouplingMatrix = context.read<FileCouplingState>().matrixFor(
+      repoPath,
+    );
 
-    unawaited(showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const _AiReviewProgressDialog(),
-    ));
-    final prEffort =
-        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const _AiReviewProgressDialog(),
+      ),
+    );
+    final prEffort = aiSettings.resolveEffort(
+      selectedCategory.id,
+      selectedModel.value,
+    );
     final result = await reviewCommit(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
       modelCategoryLabel: aiSettings.labelForCategory(
-          selectedCategory.id, selectedCategory.label),
+        selectedCategory.id,
+        selectedCategory.label,
+      ),
       scopeLabel: 'PR #${pr.number}: ${pr.title}',
       reasoningEffort: prEffort.effort,
       fastMode: prEffort.fast,
@@ -4212,7 +4671,7 @@ class _BranchesPageState extends State<BranchesPage> {
       guardrailStage: preferences.guardrailStage,
       doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
       readOnly: preferences.aiReadOnlyDefault,
-      rawDiffOverride: detail.diff,
+      rawDiffOverride: reviewDiff,
       diffBranchName: pr.headRef,
       couplingMatrix: prCouplingMatrix,
     );
@@ -4220,7 +4679,11 @@ class _BranchesPageState extends State<BranchesPage> {
     Navigator.of(context, rootNavigator: true).pop(); // close progress
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.reviewFailed(error: result.error ?? ''))),
+        SnackBar(
+          content: Text(
+            context.t.branches.reviewFailed(error: result.error ?? ''),
+          ),
+        ),
       );
       return;
     }
@@ -4247,10 +4710,13 @@ class _BranchesPageState extends State<BranchesPage> {
       // non-interactive env, lenient-UTF-8 decode) rather than a raw
       // Process.run — this probe runs in the same worktree as a live merge
       // and must not race the index or inherit a terminal.
-      final r = await runGit(
-        repoPath,
-        ['merge-tree', '--write-tree', '--name-only', baseRef, headRef],
-      );
+      final r = await runGit(repoPath, [
+        'merge-tree',
+        '--write-tree',
+        '--name-only',
+        baseRef,
+        headRef,
+      ]);
       return classifyMergeTreeProbe(
         r.exitCode,
         r.stdout as String,
@@ -4258,7 +4724,10 @@ class _BranchesPageState extends State<BranchesPage> {
       );
     } catch (_) {
       return const MergePreflight(
-          mergeable: false, conflictingPaths: [], available: false);
+        mergeable: false,
+        conflictingPaths: [],
+        available: false,
+      );
     }
   }
 
@@ -4272,13 +4741,19 @@ class _BranchesPageState extends State<BranchesPage> {
   /// (the desk we're merging INTO). Squash subject threads the PR
   /// title through for a legible merge commit.
   Future<void> _showMergeIntoDeskMenu(
-      PullRequestSummary pr, WorktreeData desk) async {
+    PullRequestSummary pr,
+    WorktreeData desk,
+  ) async {
     if (desk.dirtyFileCount > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(context.t.branches.deskUncommittedChanges(
-                n: desk.dirtyFileCount,
-                branch: desk.branch ?? context.t.branches.deskFallback))),
+          content: Text(
+            context.t.branches.deskUncommittedChanges(
+              n: desk.dirtyFileCount,
+              branch: desk.branch ?? context.t.branches.deskFallback,
+            ),
+          ),
+        ),
       );
       return;
     }
@@ -4307,8 +4782,11 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-              title: Text(
-            ctx.t.branches.mergePrIntoDesk(number: pr.number, branch: desk.branch ?? ''),
+          title: Text(
+            ctx.t.branches.mergePrIntoDesk(
+              number: pr.number,
+              branch: desk.branch ?? '',
+            ),
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
           content: Column(
@@ -4344,7 +4822,8 @@ class _BranchesPageState extends State<BranchesPage> {
                   decoration: BoxDecoration(
                     color: t.stateConflicted.withValues(alpha: 0.08),
                     border: Border.all(
-                        color: t.stateConflicted.withValues(alpha: 0.35)),
+                      color: t.stateConflicted.withValues(alpha: 0.35),
+                    ),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Column(
@@ -4352,7 +4831,8 @@ class _BranchesPageState extends State<BranchesPage> {
                     children: [
                       Text(
                         ctx.t.branches.willConflictFiles(
-                            n: preflight.conflictingPaths.length),
+                          n: preflight.conflictingPaths.length,
+                        ),
                         style: TextStyle(
                           color: t.stateConflicted,
                           fontSize: 9,
@@ -4375,7 +4855,8 @@ class _BranchesPageState extends State<BranchesPage> {
                       if (preflight.conflictingPaths.length > 6)
                         Text(
                           ctx.t.branches.plusMore(
-                              n: preflight.conflictingPaths.length - 6),
+                            n: preflight.conflictingPaths.length - 6,
+                          ),
                           style: TextStyle(color: t.textMuted, fontSize: 10),
                         ),
                     ],
@@ -4387,7 +4868,10 @@ class _BranchesPageState extends State<BranchesPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(null),
-              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+              child: Text(
+                ctx.t.common.cancel,
+                style: TextStyle(color: t.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop('rebase'),
@@ -4438,26 +4922,29 @@ class _BranchesPageState extends State<BranchesPage> {
     // For a local PR, "checkout" means switch the active path to the
     // desk's worktree (the same action the desk-tab tap performs).
     final wt = context.read<WorktreeState>().desks.firstWhere(
-          (d) => d.branch == branch,
-          orElse: () => const WorktreeData(
-            path: '',
-            head: '',
-            branch: null,
-            isMain: false,
-            isDetached: false,
-            isLocked: false,
-            dirtyFileCount: 0,
-          ),
-        );
+      (d) => d.branch == branch,
+      orElse: () => const WorktreeData(
+        path: '',
+        head: '',
+        branch: null,
+        isMain: false,
+        isDetached: false,
+        isLocked: false,
+        dirtyFileCount: 0,
+      ),
+    );
     if (wt.path.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.noDeskForBranch(branch: branch))),
+        SnackBar(
+          content: Text(context.t.branches.noDeskForBranch(branch: branch)),
+        ),
       );
       return;
     }
-    await context
-        .read<RepositoryState>()
-        .setActivePath(wt.path, addToRecents: false);
+    await context.read<RepositoryState>().setActivePath(
+      wt.path,
+      addToRecents: false,
+    );
   }
 
   /// Perform a local PR merge in a chosen worktree.
@@ -4522,7 +5009,8 @@ class _BranchesPageState extends State<BranchesPage> {
     // proves it with is-ancestor / cherry before returning MergeClean) or the
     // conflicts were fully resolved and committed in the editor — never
     // trusted from a bare success path.
-    final landed = outcome is MergeClean ||
+    final landed =
+        outcome is MergeClean ||
         (outcome is MergeConflicted && outcome.resolved);
     if (!landed) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4538,10 +5026,10 @@ class _BranchesPageState extends State<BranchesPage> {
     // records via refs/manifold/desks/*, shared across all worktrees of the
     // repo, so the audit trail is reachable from any of them.
     await context.read<DeskPrState>().setStateFor(
-          repoPath: mergeRepoPath,
-          branch: branch,
-          state: 'MERGED',
-        );
+      repoPath: mergeRepoPath,
+      branch: branch,
+      state: 'MERGED',
+    );
     if (mounted) {
       await context.read<RepositoryState>().refreshStatus();
     }
@@ -4565,7 +5053,8 @@ class _BranchesPageState extends State<BranchesPage> {
               decoration: BoxDecoration(
                 color: t.stateConflicted.withValues(alpha: 0.08),
                 border: Border.all(
-                    color: t.stateConflicted.withValues(alpha: 0.35)),
+                  color: t.stateConflicted.withValues(alpha: 0.35),
+                ),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Column(
@@ -4605,12 +5094,17 @@ class _BranchesPageState extends State<BranchesPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+            child: Text(
+              ctx.t.common.cancel,
+              style: TextStyle(color: t.textMuted),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(ctx.t.branches.mergeAnyway,
-                style: TextStyle(color: t.stateConflicted)),
+            child: Text(
+              ctx.t.branches.mergeAnyway,
+              style: TextStyle(color: t.stateConflicted),
+            ),
           ),
         ],
       ),
@@ -4698,22 +5192,22 @@ class _BranchesPageState extends State<BranchesPage> {
     final bodyCtrl = TextEditingController();
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => _CreateLocalIssueDialog(
-        titleCtrl: titleCtrl,
-        bodyCtrl: bodyCtrl,
-      ),
+      builder: (ctx) =>
+          _CreateLocalIssueDialog(titleCtrl: titleCtrl, bodyCtrl: bodyCtrl),
     );
     if (result != true || !mounted) return;
     final title = titleCtrl.text.trim();
     if (title.isEmpty) return;
     final err = await context.read<DeskIssueState>().create(
-          repoPath: repoPath,
-          title: title,
-          body: bodyCtrl.text.trim(),
-        );
+      repoPath: repoPath,
+      title: title,
+      body: bodyCtrl.text.trim(),
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntCreateIssue(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntCreateIssue(error: err)),
+        ),
       );
     }
   }
@@ -4785,20 +5279,32 @@ class _BranchesPageState extends State<BranchesPage> {
           // app's identity is implicitly "self" by being the only
           // identity in the system. No-op rather than error.
           ? () {}
-          : () => _runIssueAction(repoPath, issue.number,
-              () => _issueProvider!.assignSelf(repoPath, issue.number)),
+          : () => _runIssueAction(
+              repoPath,
+              issue.number,
+              () => _issueProvider!.assignSelf(repoPath, issue.number),
+            ),
       onClose: isLocal
           ? () => _closeLocalIssue(repoPath, issue.number)
           : () => _runIssueAction(
-              repoPath, issue.number, () => _issueProvider!.closeIssue(repoPath, issue.number)),
+              repoPath,
+              issue.number,
+              () => _issueProvider!.closeIssue(repoPath, issue.number),
+            ),
       onComment: isLocal
           ? (body) => _commentOnLocalIssue(repoPath, issue.number, body)
-          : (body) => _runIssueAction(repoPath, issue.number,
-              () => _issueProvider!.addComment(repoPath, issue.number, body)),
+          : (body) => _runIssueAction(
+              repoPath,
+              issue.number,
+              () => _issueProvider!.addComment(repoPath, issue.number, body),
+            ),
       onAddLabel: isLocal
           ? (label) => _addLabelToLocalIssue(repoPath, issue.number, label)
-          : (label) => _runIssueAction(repoPath, issue.number,
-              () => _issueProvider!.addLabel(repoPath, issue.number, label)),
+          : (label) => _runIssueAction(
+              repoPath,
+              issue.number,
+              () => _issueProvider!.addLabel(repoPath, issue.number, label),
+            ),
       onSecondaryTap: (pos) =>
           _showIssueContextMenu(context, pos, issue, isLocal, repoPath),
     );
@@ -4813,8 +5319,9 @@ class _BranchesPageState extends State<BranchesPage> {
   ) {
     // Resolve the local twin (if any) so remote-link actions gate on the
     // issue's actual remoteNumber rather than the summary shape.
-    final local =
-        isLocal ? context.read<DeskIssueState>().issueFor(issue.number) : null;
+    final local = isLocal
+        ? context.read<DeskIssueState>().issueFor(issue.number)
+        : null;
     final hasRemoteLink = local?.remoteNumber != null;
     final forgeUsable = _remoteStatus?.canWrite ?? false;
 
@@ -4872,45 +5379,52 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _promoteIssueToRemote(String repoPath, int id) async {
-    final err = await context
-        .read<DeskIssueState>()
-        .promoteToRemote(repoPath: repoPath, id: id);
+    final err = await context.read<DeskIssueState>().promoteToRemote(
+      repoPath: repoPath,
+      id: id,
+    );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? context.t.branches.issuePromotedToRemote),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(err ?? context.t.branches.issuePromotedToRemote)),
+    );
   }
 
   Future<void> _pushIssueToRemote(String repoPath, int id) async {
-    final err = await context
-        .read<DeskIssueState>()
-        .pushToRemote(repoPath: repoPath, id: id);
+    final err = await context.read<DeskIssueState>().pushToRemote(
+      repoPath: repoPath,
+      id: id,
+    );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? context.t.branches.issuePushedToRemote),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(err ?? context.t.branches.issuePushedToRemote)),
+    );
   }
 
   Future<void> _pullIssueFromRemote(String repoPath, int id) async {
-    final err = await context
-        .read<DeskIssueState>()
-        .syncFromRemote(repoPath: repoPath, id: id);
+    final err = await context.read<DeskIssueState>().syncFromRemote(
+      repoPath: repoPath,
+      id: id,
+    );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? context.t.branches.issuePulledFromRemote),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(err ?? context.t.branches.issuePulledFromRemote)),
+    );
   }
 
   Future<void> _importRemoteIssue(String repoPath, IssueSummary issue) async {
     final err = await context.read<DeskIssueState>().importFromRemote(
-          repoPath: repoPath,
-          remote: issue,
-          detail: _issueDetails[issue.number],
-        );
+      repoPath: repoPath,
+      remote: issue,
+      detail: _issueDetails[issue.number],
+    );
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(err ?? context.t.branches.issueImportedLocally(number: issue.number)),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          err ?? context.t.branches.issueImportedLocally(number: issue.number),
+        ),
+      ),
+    );
   }
 
   Future<void> _abandonLocalIssue(String repoPath, int id) async {
@@ -4922,8 +5436,10 @@ class _BranchesPageState extends State<BranchesPage> {
       confirmLabel: context.t.branches.abandon,
     );
     if (!ok || !mounted) return;
-    final err =
-        await context.read<DeskIssueState>().abandon(repoPath: repoPath, id: id);
+    final err = await context.read<DeskIssueState>().abandon(
+      repoPath: repoPath,
+      id: id,
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(context.t.branches.couldntAbandon(error: err))),
@@ -4943,13 +5459,18 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          title: Text(title,
-              style: TextStyle(color: t.danger, fontWeight: FontWeight.w600)),
+          title: Text(
+            title,
+            style: TextStyle(color: t.danger, fontWeight: FontWeight.w600),
+          ),
           content: Text(message, style: TextStyle(color: t.textNormal)),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(ctx.t.common.cancel, style: TextStyle(color: t.textMuted)),
+              child: Text(
+                ctx.t.common.cancel,
+                style: TextStyle(color: t.textMuted),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
@@ -4963,34 +5484,44 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _commentOnLocalIssue(
-      String repoPath, int id, String body) async {
+    String repoPath,
+    int id,
+    String body,
+  ) async {
     final err = await context.read<DeskIssueState>().addComment(
-          repoPath: repoPath,
-          id: id,
-          body: body,
-        );
+      repoPath: repoPath,
+      id: id,
+      body: body,
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntPostComment(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntPostComment(error: err)),
+        ),
       );
     }
   }
 
   Future<void> _closeLocalIssue(String repoPath, int id) async {
     final err = await context.read<DeskIssueState>().setStateFor(
-          repoPath: repoPath,
-          id: id,
-          state: 'CLOSED',
-        );
+      repoPath: repoPath,
+      id: id,
+      state: 'CLOSED',
+    );
     if (err != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.branches.couldntCloseIssue(error: err))),
+        SnackBar(
+          content: Text(context.t.branches.couldntCloseIssue(error: err)),
+        ),
       );
     }
   }
 
   Future<void> _addLabelToLocalIssue(
-      String repoPath, int id, String label) async {
+    String repoPath,
+    int id,
+    String label,
+  ) async {
     final issue = context.read<DeskIssueState>().issueFor(id);
     if (issue == null) return;
     if (issue.labels.contains(label)) return;
@@ -5077,15 +5608,19 @@ class _LensRibbon extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: onToggleHelp,
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  child: Text('?',
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 13,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w800,
-                      )),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    '?',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 13,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -5096,16 +5631,20 @@ class _LensRibbon extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onTap: onImportPatch,
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    child: Text(context.t.branches.patchUp,
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 11,
-                          fontFamily: AppFonts.mono,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.3,
-                        )),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                    child: Text(
+                      context.t.branches.patchUp,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 11,
+                        fontFamily: AppFonts.mono,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -5120,8 +5659,10 @@ class _LensRibbon extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onTap: syncing ? null : onSyncManifold,
                   child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                     child: AnimatedDefaultTextStyle(
                       duration: context.motion(AppMotion.snap),
                       curve: AppMotion.snapCurve,
@@ -5251,8 +5792,8 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
     final bg = widget.isActive
         ? accent.withValues(alpha: _pressed ? 0.28 : 0.18)
         : (_hovered
-            ? t.chromeBorder.withValues(alpha: 0.18)
-            : t.chromeBorder.withValues(alpha: 0));
+              ? t.chromeBorder.withValues(alpha: 0.18)
+              : t.chromeBorder.withValues(alpha: 0));
     final border = widget.isActive
         ? accent.withValues(alpha: 0.55)
         : t.chromeBorder.withValues(alpha: 0.35);
@@ -5274,7 +5815,8 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(color: border, width: 1),
           ),
           child: Row(
@@ -5364,62 +5906,62 @@ class _KeyboardHelpOverlay extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 460),
               padding: const EdgeInsets.fromLTRB(28, 24, 28, 24),
               child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  context.t.branches.kbHeading,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.6,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                for (final b in bindings)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        SizedBox(
-                          width: 130,
-                          child: Text(
-                            b.$1,
-                            style: TextStyle(
-                              color: t.accentBright,
-                              fontSize: 11,
-                              fontFamily: AppFonts.mono,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            b.$2,
-                            style: TextStyle(
-                              color: t.textNormal,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    context.t.branches.kbHeading,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.6,
                     ),
                   ),
-                const SizedBox(height: 14),
-                Text(
-                  context.t.branches.kbPressToDismiss,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    color: t.textMuted.withValues(alpha: 0.7),
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
+                  const SizedBox(height: 14),
+                  for (final b in bindings)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          SizedBox(
+                            width: 130,
+                            child: Text(
+                              b.$1,
+                              style: TextStyle(
+                                color: t.accentBright,
+                                fontSize: 11,
+                                fontFamily: AppFonts.mono,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              b.$2,
+                              style: TextStyle(
+                                color: t.textNormal,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                  Text(
+                    context.t.branches.kbPressToDismiss,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.7),
+                      fontSize: 10,
+                      fontFamily: AppFonts.mono,
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
             ),
           ),
         ),
@@ -5453,8 +5995,9 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final accent = t.accentBright;
-    final color =
-        widget.isActive ? accent : (_hovered ? t.textStrong : t.textNormal);
+    final color = widget.isActive
+        ? accent
+        : (_hovered ? t.textStrong : t.textNormal);
     final shader = context.surfaceShader;
     return InteractionFeedback(
       onTap: widget.onTap,
@@ -5486,8 +6029,9 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
                     style: TextStyle(
                       color: color,
                       fontSize: 11,
-                      fontWeight:
-                          widget.isActive ? FontWeight.w700 : FontWeight.w600,
+                      fontWeight: widget.isActive
+                          ? FontWeight.w700
+                          : FontWeight.w600,
                       letterSpacing: 1.2,
                     ),
                     child: Text(widget.label),
@@ -5543,8 +6087,10 @@ class _RefreshGlyph extends StatefulWidget {
 class _RefreshGlyphState extends State<_RefreshGlyph>
     with SingleTickerProviderStateMixin, WindowAwakeGuardedMixin {
   static const Duration _authoredPeriod = Duration(milliseconds: 1100);
-  late final AnimationController _spin =
-      AnimationController(vsync: this, duration: _authoredPeriod);
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: _authoredPeriod,
+  );
   PreferencesState? _prefs;
 
   @override
@@ -5583,11 +6129,10 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
       // Scale the rotation period with motionRate so a 2x rate spins
       // visibly faster, matching the "motion rate = speed" contract.
       _spin.duration = Duration(
-        microseconds:
-            (_authoredPeriod.inMicroseconds / rate).round().clamp(
-                  const Duration(milliseconds: 100).inMicroseconds,
-                  const Duration(seconds: 60).inMicroseconds,
-                ),
+        microseconds: (_authoredPeriod.inMicroseconds / rate).round().clamp(
+          const Duration(milliseconds: 100).inMicroseconds,
+          const Duration(seconds: 60).inMicroseconds,
+        ),
       );
       if (!_spin.isAnimating) _spin.repeat();
     } else {
@@ -5622,8 +6167,8 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
                 color: widget.active
                     ? t.accentBright
                     : hovered
-                        ? t.textStrong
-                        : t.textMuted,
+                    ? t.textStrong
+                    : t.textMuted,
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
               ),
@@ -5646,6 +6191,9 @@ class _PullRequestRow extends StatefulWidget {
   final List<CheckSummary>? checks;
   final bool checksLoading;
   final PullRequestDetail? detail;
+
+  /// See [_PrExpanded.spoolDoc] — threaded through from the page state.
+  final DiffDocument? spoolDoc;
   final bool detailLoading;
   final String? activeFilePath;
   final bool actionInFlight;
@@ -5779,6 +6327,7 @@ class _PullRequestRow extends StatefulWidget {
     required this.checks,
     required this.checksLoading,
     required this.detail,
+    this.spoolDoc,
     required this.detailLoading,
     required this.activeFilePath,
     required this.actionInFlight,
@@ -5854,8 +6403,9 @@ class _PullRequestRowState extends State<_PullRequestRow> {
     final t = context.tokens;
     final shader = context.surfaceShader;
     final state = _stateColor(t);
-    final railAlpha =
-        widget.expanded || widget.focused ? 1.0 : (_hovered ? 0.85 : 0.55);
+    final railAlpha = widget.expanded || widget.focused
+        ? 1.0
+        : (_hovered ? 0.85 : 0.55);
     // Remote PRs are draggable — drop them on the desk strip in the
     // topbar to materialise a worktree for IDE-native review. Local
     // PRs already have their own desk so dragging them is a no-op;
@@ -5919,7 +6469,8 @@ class _PullRequestRowState extends State<_PullRequestRow> {
         // handled by `_hovered`). Tinted in `stateConflicted` to
         // match the inter-PR collision strip, so the eye reads
         // "highlighted because of merge-order risk."
-        final isSiblingOfHover = hovered != null &&
+        final isSiblingOfHover =
+            hovered != null &&
             hovered != widget.pr.number &&
             widget.collidesWithPrs.contains(hovered);
         return _buildRowFrame(
@@ -6004,30 +6555,32 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                 color: widget.expanded
                     ? t.surface1.withValues(alpha: 0.7)
                     : (_hovered || widget.focused
-                        ? t.surface1.withValues(alpha: 0.45)
-                        : (isSiblingOfHover
-                            // Sibling-of-hovered-PR — the user's
-                            // mouse is on a row that collides with
-                            // us. Tint in collision-orange so the
-                            // collision graph reads spatially.
-                            ? t.stateConflicted.withValues(alpha: 0.12)
-                            // Awaiting-review wash: subtle accent
-                            // tint even at rest, so PRs blocking on
-                            // YOU pop before any other state.
-                            : reviewWash)),
+                          ? t.surface1.withValues(alpha: 0.45)
+                          : (isSiblingOfHover
+                                // Sibling-of-hovered-PR — the user's
+                                // mouse is on a row that collides with
+                                // us. Tint in collision-orange so the
+                                // collision graph reads spatially.
+                                ? t.stateConflicted.withValues(alpha: 0.12)
+                                // Awaiting-review wash: subtle accent
+                                // tint even at rest, so PRs blocking on
+                                // YOU pop before any other state.
+                                : reviewWash)),
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.cardRadius),
+                  context.surfaceShader.geometry.cardRadius,
+                ),
                 border: Border(
                   left: BorderSide(
                     // railColor swaps to accentBright when the PR's
                     // branch is currently checked out — "you're on
                     // this PR right now" without a label.
                     color: railColor.withValues(
-                        alpha: widget.isCheckedOut ? 1.0 : railAlpha),
+                      alpha: widget.isCheckedOut ? 1.0 : railAlpha,
+                    ),
                     width:
                         widget.focused || widget.expanded || widget.isCheckedOut
-                            ? 4
-                            : 3,
+                        ? 4
+                        : 3,
                   ),
                 ),
               ),
@@ -6087,6 +6640,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             pr: widget.pr,
                             viewerLogin: widget.viewerLogin,
                             detail: widget.detail,
+                            spoolDoc: widget.spoolDoc,
                             detailLoading: widget.detailLoading,
                             checks: widget.checks,
                             checksLoading: widget.checksLoading,
@@ -6136,9 +6690,11 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.only(
                         topLeft: Radius.circular(
-                            context.surfaceShader.geometry.tinyRadius),
+                          context.surfaceShader.geometry.tinyRadius,
+                        ),
                         topRight: Radius.circular(
-                            context.surfaceShader.geometry.tinyRadius),
+                          context.surfaceShader.geometry.tinyRadius,
+                        ),
                       ),
                       gradient: LinearGradient(
                         colors: [
@@ -6169,7 +6725,8 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                 child: _HazardStrip(
                   color: t.stateDeleted,
                   tooltip: context.t.branches.filesOverlapUncommitted(
-                      n: widget.conflictingPaths.length),
+                    n: widget.conflictingPaths.length,
+                  ),
                 ),
               ),
             if (hasCollisions)
@@ -6182,12 +6739,16 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                   // Name the PRs + count of shared files per pair, so
                   // the tooltip is *actionable* — you know exactly
                   // who you'll fight, not just that you'll fight.
-                  tooltip: widget.collidesWithPrs.map((n) {
-                    final shared =
-                        widget.collisionSharedFiles[n] ?? const <String>{};
-                    return context.t.branches
-                        .collisionPrShared(pr: n, n: shared.length);
-                  }).join('\n'),
+                  tooltip: widget.collidesWithPrs
+                      .map((n) {
+                        final shared =
+                            widget.collisionSharedFiles[n] ?? const <String>{};
+                        return context.t.branches.collisionPrShared(
+                          pr: n,
+                          n: shared.length,
+                        );
+                      })
+                      .join('\n'),
                   // Jump to the collision partner with the most shared
                   // files — that's the pair the reviewer most needs to
                   // look at. Degenerate tiebreak is insertion order
@@ -6340,60 +6901,62 @@ class _PrHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 3),
-              Builder(builder: (context) {
-                // Surface the most-loaded PENDING reviewer assigned
-                // to this PR. Threshold ≥ 3 so it only appears when
-                // someone is *actually* buried — not for a normal
-                // single-PR review request.
-                MapEntry<String, int>? heaviest;
-                for (final r in pr.reviewers) {
-                  if (r.state != 'PENDING') continue;
-                  final n = reviewerQueueDepth[r.login] ?? 0;
-                  if (n < 3) continue;
-                  if (heaviest == null || n > heaviest.value) {
-                    heaviest = MapEntry(r.login, n);
+              Builder(
+                builder: (context) {
+                  // Surface the most-loaded PENDING reviewer assigned
+                  // to this PR. Threshold ≥ 3 so it only appears when
+                  // someone is *actually* buried — not for a normal
+                  // single-PR review request.
+                  MapEntry<String, int>? heaviest;
+                  for (final r in pr.reviewers) {
+                    if (r.state != 'PENDING') continue;
+                    final n = reviewerQueueDepth[r.login] ?? 0;
+                    if (n < 3) continue;
+                    if (heaviest == null || n > heaviest.value) {
+                      heaviest = MapEntry(r.login, n);
+                    }
                   }
-                }
-                return Text.rich(
-                  TextSpan(
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 10.5,
-                      fontFamily: AppFonts.mono,
-                      letterSpacing: 0.1,
-                    ),
-                    children: [
-                      TextSpan(text: '${pr.headRef} → ${pr.baseRef} · '),
-                      TextSpan(text: '@${pr.authorLogin}'),
-                      if (authorQueueCount >= 2)
-                        TextSpan(
-                          text: ' ($authorQueueCount)',
-                          style: TextStyle(
-                            color: t.textMuted.withValues(alpha: 0.7),
-                            fontWeight: FontWeight.w700,
+                  return Text.rich(
+                    TextSpan(
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 10.5,
+                        fontFamily: AppFonts.mono,
+                        letterSpacing: 0.1,
+                      ),
+                      children: [
+                        TextSpan(text: '${pr.headRef} → ${pr.baseRef} · '),
+                        TextSpan(text: '@${pr.authorLogin}'),
+                        if (authorQueueCount >= 2)
+                          TextSpan(
+                            text: ' ($authorQueueCount)',
+                            style: TextStyle(
+                              color: t.textMuted.withValues(alpha: 0.7),
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
-                      if (heaviest != null) ...[
-                        TextSpan(
-                          text: '  ←  @${heaviest.key} (${heaviest.value})',
-                          style: TextStyle(
-                            // Reviewer queue uses stateConflicted
-                            // (orange) so it visually distinguishes
-                            // from author queue's neutral muted —
-                            // "your reviewer is at risk" reads as
-                            // mild alarm, not the same flavor as
-                            // "this author is busy."
-                            color: t.stateConflicted.withValues(alpha: 0.85),
-                            fontWeight: FontWeight.w700,
+                        if (heaviest != null) ...[
+                          TextSpan(
+                            text: '  ←  @${heaviest.key} (${heaviest.value})',
+                            style: TextStyle(
+                              // Reviewer queue uses stateConflicted
+                              // (orange) so it visually distinguishes
+                              // from author queue's neutral muted —
+                              // "your reviewer is at risk" reads as
+                              // mild alarm, not the same flavor as
+                              // "this author is busy."
+                              color: t.stateConflicted.withValues(alpha: 0.85),
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                        ),
+                        ],
                       ],
-                    ],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                );
-              }),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -6404,7 +6967,8 @@ class _PrHeader extends StatelessWidget {
             decoration: BoxDecoration(
               color: t.chromeAccent.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(
-                  context.surfaceShader.geometry.badgeRadius),
+                context.surfaceShader.geometry.badgeRadius,
+              ),
               border: Border.all(
                 color: t.chromeAccent.withValues(alpha: 0.35),
                 width: 0.5,
@@ -6427,7 +6991,8 @@ class _PrHeader extends StatelessWidget {
           decoration: BoxDecoration(
             color: stateColor.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
+              context.surfaceShader.geometry.badgeRadius,
+            ),
           ),
           child: Text(
             label,
@@ -6499,12 +7064,7 @@ class _BucketDivider extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Expanded(
-            child: Container(
-              height: 1,
-              color: ruleColor,
-            ),
-          ),
+          Expanded(child: Container(height: 1, color: ruleColor)),
         ],
       ),
     );
@@ -6524,7 +7084,10 @@ class _MyReviewPill extends StatelessWidget {
     final (label, color) = switch (state) {
       'pending' => (context.t.branches.myReviewPending, t.accentBright),
       'approved' => (context.t.branches.myReviewApproved, t.accentBright),
-      'changes_requested' => (context.t.branches.myReviewChangesRequested, t.stateConflicted),
+      'changes_requested' => (
+        context.t.branches.myReviewChangesRequested,
+        t.stateConflicted,
+      ),
       'commented' => (context.t.branches.myReviewCommented, t.textNormal),
       _ => (context.t.branches.myReviewDefault, t.textMuted),
     };
@@ -6532,8 +7095,9 @@ class _MyReviewPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.badgeRadius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.badgeRadius,
+        ),
         border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
       ),
       child: Text(
@@ -6587,12 +7151,16 @@ class _ConversationTailPill extends StatelessWidget {
     final convSuffix = conversationCount >= 2 ? ' · $conversationCount' : '';
     return Tooltip(
       message: switch (ev.kind) {
-        'comment' => conversationCount >= 2
-            ? context.t.branches.tailCommentsAuthor(count: conversationCount)
-            : context.t.branches.tailLastComment,
-        'review' => ev.state.isNotEmpty
-            ? context.t.branches.tailLastReviewState(state: ev.state.toLowerCase())
-            : context.t.branches.tailLastReview,
+        'comment' =>
+          conversationCount >= 2
+              ? context.t.branches.tailCommentsAuthor(count: conversationCount)
+              : context.t.branches.tailLastComment,
+        'review' =>
+          ev.state.isNotEmpty
+              ? context.t.branches.tailLastReviewState(
+                  state: ev.state.toLowerCase(),
+                )
+              : context.t.branches.tailLastReview,
         'check' => context.t.branches.tailLastCheckState(state: ev.state),
         'push' => context.t.branches.tailLastCommit,
         _ => context.t.branches.tailLastActivity,
@@ -6609,10 +7177,7 @@ class _ConversationTailPill extends StatelessWidget {
               fontWeight: FontWeight.w800,
             ),
           ),
-          Text(
-            '$actor · ${relativeTime(ev.at)}$convSuffix',
-            style: mono,
-          ),
+          Text('$actor · ${relativeTime(ev.at)}$convSuffix', style: mono),
         ],
       ),
     );
@@ -6656,11 +7221,7 @@ class _HazardStrip extends StatelessWidget {
   /// enlarging the glow — the atmospheric aesthetic stays; only the
   /// cursor cues discoverability.
   final VoidCallback? onTap;
-  const _HazardStrip({
-    required this.color,
-    required this.tooltip,
-    this.onTap,
-  });
+  const _HazardStrip({required this.color, required this.tooltip, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -6668,7 +7229,8 @@ class _HazardStrip extends StatelessWidget {
       height: 3,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.all(
-            Radius.circular(context.surfaceShader.geometry.tinyRadius)),
+          Radius.circular(context.surfaceShader.geometry.tinyRadius),
+        ),
         gradient: LinearGradient(
           colors: [
             color.withValues(alpha: 0.0),
@@ -6750,7 +7312,8 @@ class _DiffSparkline extends StatelessWidget {
           // of being a chart, not just a colored stripe.
           ClipRRect(
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.tinyRadius),
+              context.surfaceShader.geometry.tinyRadius,
+            ),
             child: SizedBox(
               width: barWidth,
               height: barHeight,
@@ -7023,57 +7586,66 @@ class _PrMetricLine extends StatelessWidget {
     );
     final blocks = <Widget>[];
     if (checks != null && checks!.isNotEmpty) {
-      blocks.add(Tooltip(
-        message: checks!.map((c) => '${_checkGlyph(c)}  ${c.name}').join('\n'),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final c in checks!.take(8))
-              Padding(
-                padding: const EdgeInsets.only(right: 1),
-                child: Text(
-                  _checkGlyph(c),
-                  style: TextStyle(
-                    color: _checkColor(t, c),
-                    fontSize: 11,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w800,
+      blocks.add(
+        Tooltip(
+          message: checks!
+              .map((c) => '${_checkGlyph(c)}  ${c.name}')
+              .join('\n'),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final c in checks!.take(8))
+                Padding(
+                  padding: const EdgeInsets.only(right: 1),
+                  child: Text(
+                    _checkGlyph(c),
+                    style: TextStyle(
+                      color: _checkColor(t, c),
+                      fontSize: 11,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-              ),
-            const SizedBox(width: 3),
-            Text(context.t.branches.checksLabel, style: mono),
-          ],
+              const SizedBox(width: 3),
+              Text(context.t.branches.checksLabel, style: mono),
+            ],
+          ),
         ),
-      ));
+      );
     }
     if (pr.reviewers.isNotEmpty) {
-      blocks.add(Tooltip(
-        message: pr.reviewers
-            .map((r) => '${_reviewerGlyph(r.state)}  @${r.login}'
-                ' · ${r.state.toLowerCase().replaceAll('_', ' ')}')
-            .join('\n'),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final r in pr.reviewers.take(6))
-              Padding(
-                padding: const EdgeInsets.only(right: 1),
-                child: Text(
-                  _reviewerGlyph(r.state),
-                  style: TextStyle(
-                    color: _reviewerColor(t, r.state),
-                    fontSize: 11,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w800,
+      blocks.add(
+        Tooltip(
+          message: pr.reviewers
+              .map(
+                (r) =>
+                    '${_reviewerGlyph(r.state)}  @${r.login}'
+                    ' · ${r.state.toLowerCase().replaceAll('_', ' ')}',
+              )
+              .join('\n'),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final r in pr.reviewers.take(6))
+                Padding(
+                  padding: const EdgeInsets.only(right: 1),
+                  child: Text(
+                    _reviewerGlyph(r.state),
+                    style: TextStyle(
+                      color: _reviewerColor(t, r.state),
+                      fontSize: 11,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
-              ),
-            const SizedBox(width: 3),
-            Text(context.t.branches.reviewersLabel, style: mono),
-          ],
+              const SizedBox(width: 3),
+              Text(context.t.branches.reviewersLabel, style: mono),
+            ],
+          ),
         ),
-      ));
+      );
     }
     if (pr.changedFiles > 0) {
       // Diff sparkline replaces `+N -M` text. Each segment = a file
@@ -7082,22 +7654,27 @@ class _PrMetricLine extends StatelessWidget {
       // a single proportional segment when per-file detail isn't yet
       // cached. This is the *shape* of the change at a glance —
       // reviewer sees where the mass is before reading anything.
-      blocks.add(_DiffSparkline(
-        pr: pr,
-        files: files,
-        addedColor: t.stateAdded,
-        deletedColor: t.stateDeleted,
-        emptyColor: t.chromeBorder.withValues(alpha: 0.35),
-      ));
+      blocks.add(
+        _DiffSparkline(
+          pr: pr,
+          files: files,
+          addedColor: t.stateAdded,
+          deletedColor: t.stateDeleted,
+          emptyColor: t.chromeBorder.withValues(alpha: 0.35),
+        ),
+      );
     }
     // Conversation count merged into the tail block — there's no
     // value in showing both `3 conv` AND `💬 alice · 4h` because the
     // tail IS the latest beat of the conversation. The count rides
     // along inside the tail pill (only when ≥ 1).
     if (pr.mergeable == 'CONFLICTING') {
-      blocks
-          .add(Text(context.t.branches.conflictsLabel,
-              style: mono.copyWith(color: t.stateDeleted)));
+      blocks.add(
+        Text(
+          context.t.branches.conflictsLabel,
+          style: mono.copyWith(color: t.stateDeleted),
+        ),
+      );
     }
     // MY-REVIEW-STATE pill — distinct from anonymous reviewer dots.
     // Lights up when *I* have engaged with this PR, separating
@@ -7112,11 +7689,13 @@ class _PrMetricLine extends StatelessWidget {
     // CONVERSATION TAIL — rightmost segment, the "what's currently
     // true" answer in one glyph + actor + relative time. Replaces
     // the standalone updated-time text above.
-    blocks.add(_ConversationTailPill(
-      tail: tail,
-      fallbackAt: pr.updatedAt,
-      conversationCount: pr.conversationCount,
-    ));
+    blocks.add(
+      _ConversationTailPill(
+        tail: tail,
+        fallbackAt: pr.updatedAt,
+        conversationCount: pr.conversationCount,
+      ),
+    );
 
     return Wrap(
       spacing: 14,
@@ -7143,8 +7722,10 @@ class _ActionProgressBarState extends State<_ActionProgressBar>
   // actual fetch/push continues in the background. Reduce-motion
   // still stops it (the sweep is cosmetic; the user's pref overrides
   // the animation either way), but window blur does not.
-  late final AnimationController _ac =
-      AnimationController(vsync: this, duration: const Duration(seconds: 2));
+  late final AnimationController _ac = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 2),
+  );
   PreferencesState? _prefs;
 
   @override
@@ -7184,23 +7765,25 @@ class _ActionProgressBarState extends State<_ActionProgressBar>
       child: AnimatedBuilder(
         animation: _ac,
         builder: (context, _) {
-          return LayoutBuilder(builder: (context, constraints) {
-            final w = constraints.maxWidth;
-            // Sweeping bar — left edge tied to progress, fixed width.
-            final left = (-w * 0.4) + (w * 1.4) * _ac.value;
-            return Stack(
-              children: [
-                Container(color: widget.color.withValues(alpha: 0.08)),
-                Positioned(
-                  left: left,
-                  top: 0,
-                  bottom: 0,
-                  width: w * 0.4,
-                  child: Container(color: widget.color),
-                ),
-              ],
-            );
-          });
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              // Sweeping bar — left edge tied to progress, fixed width.
+              final left = (-w * 0.4) + (w * 1.4) * _ac.value;
+              return Stack(
+                children: [
+                  Container(color: widget.color.withValues(alpha: 0.08)),
+                  Positioned(
+                    left: left,
+                    top: 0,
+                    bottom: 0,
+                    width: w * 0.4,
+                    child: Container(color: widget.color),
+                  ),
+                ],
+              );
+            },
+          );
         },
       ),
     );
@@ -7216,7 +7799,6 @@ Future<void> _exportPrAsPatch(
   PullRequestDetail detail,
 ) async {
   final suggested = 'pr-${pr.number}.patch';
-  final patch = formatPrAsPatch(pr, detail);
   try {
     final path = await FilePicker.platform.saveFile(
       dialogTitle: 'Export PR #${pr.number} as .patch',
@@ -7225,7 +7807,21 @@ Future<void> _exportPrAsPatch(
       allowedExtensions: const ['patch', 'diff'],
     );
     if (path == null) return;
-    await File(path).writeAsString(patch);
+    final spool = detail.diffSpool;
+    if (spool == null) {
+      await File(path).writeAsString(formatPrAsPatch(pr, detail));
+    } else {
+      // Machine-scale diff: stream header + spool bytes — the patch never
+      // exists as a Dart String.
+      final sink = File(path).openWrite();
+      try {
+        sink.write(prPatchHeader(pr, detail));
+        await sink.addStream(File(spool.path).openRead());
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+    }
   } catch (e) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -7238,6 +7834,12 @@ class _PrExpanded extends StatelessWidget {
   final PullRequestSummary pr;
   final String viewerLogin;
   final PullRequestDetail? detail;
+
+  /// Lazy document over [detail]'s spooled diff (machine-scale PRs only) —
+  /// per-file raw slices come from here (`rawSliceForPath`) with memory
+  /// bounded by the single active file, never the whole patch. Null while
+  /// the index is still building or when the diff is a plain String.
+  final DiffDocument? spoolDoc;
   final bool detailLoading;
   final List<CheckSummary>? checks;
   final bool checksLoading;
@@ -7286,6 +7888,7 @@ class _PrExpanded extends StatelessWidget {
     required this.pr,
     required this.viewerLogin,
     required this.detail,
+    this.spoolDoc,
     required this.detailLoading,
     required this.checks,
     required this.checksLoading,
@@ -7405,17 +8008,24 @@ class _PrExpanded extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           if (detail == null && detailLoading)
-            Text(context.t.branches.readingFiles,
-                style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic))
+            Text(
+              context.t.branches.readingFiles,
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+            )
           else if (detail == null)
-            Text(context.t.branches.noDetailAvailable,
-                style: TextStyle(color: t.textMuted, fontSize: 11))
+            Text(
+              context.t.branches.noDetailAvailable,
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+            )
           else if (detail!.files.isEmpty)
-            Text(context.t.branches.noFilesReported,
-                style: TextStyle(color: t.textMuted, fontSize: 11))
+            Text(
+              context.t.branches.noFilesReported,
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+            )
           else
             _FilePillStrip(
               files: detail!.files,
@@ -7427,7 +8037,9 @@ class _PrExpanded extends StatelessWidget {
                 couplingMatrix,
                 engine: () {
                   final r = context.read<RepositoryState>().activePath;
-                  return r == null ? null : context.read<LogosGitState>().engineFor(r);
+                  return r == null
+                      ? null
+                      : context.read<LogosGitState>().engineFor(r);
                 }(),
               ),
               // Keystone paths = repo-wide load-bearing files (the
@@ -7440,8 +8052,9 @@ class _PrExpanded extends StatelessWidget {
               keystonePaths: () {
                 final repo = context.read<RepositoryState>().activePath;
                 if (repo == null) return const <String>{};
-                final snapshot =
-                    context.watch<RepositoryXrayState>().snapshotFor(repo);
+                final snapshot = context
+                    .watch<RepositoryXrayState>()
+                    .snapshotFor(repo);
                 if (snapshot == null) return const <String>{};
                 return <String>{
                   for (final h in snapshot.hotspots)
@@ -7459,36 +8072,69 @@ class _PrExpanded extends StatelessWidget {
             // already computed for the file pills so the diff header's
             // identity matches exactly. Defaults to the first file
             // when no pill is selected yet.
-            Builder(builder: (ctx) {
-              final activePath = activeFilePath ?? detail!.files.first.path;
-              // Hand the active file's pre-sliced raw diff straight to
-              // DiffShell — the canonical review surface — so PR
-              // reviewers get the same affordances the Changes and
-              // History diffs have (hunk nav, search, blame, themed
-              // chrome) without a second renderer drifting out of
-              // parity. Staging is off: PR diffs aren't stageable from
-              // this surface. Repo path is passed so blame can resolve
-              // locally when the PR's head has been fetched; missing
-              // commits degrade gracefully to "no blame" inside Shell.
-              //
-              // Bounded height keeps the diff in a stable lane so the
-              // surrounding review form, checks, and WILL FIGHT
-              // partners stay visible while the reviewer scrolls the
-              // diff internally. Keyed on the active path so internal
-              // scroll + search state resets cleanly per file switch.
-              final repo = context.read<RepositoryState>().activePath;
-              return SizedBox(
-                height: 520,
-                child: DiffShell(
-                  filePath: activePath,
-                  tokens: t,
-                  diffContent: detail!.rawDiffByFile[activePath],
-                  repositoryPath: repo,
-                  showFileHeader: true,
-                  enableStaging: false,
-                ),
-              );
-            }),
+            Builder(
+              builder: (ctx) {
+                final activePath = activeFilePath ?? detail!.files.first.path;
+                // Hand the active file's pre-sliced raw diff straight to
+                // DiffShell — the canonical review surface — so PR
+                // reviewers get the same affordances the Changes and
+                // History diffs have (hunk nav, search, blame, themed
+                // chrome) without a second renderer drifting out of
+                // parity. Staging is off: PR diffs aren't stageable from
+                // this surface. Repo path is passed so blame can resolve
+                // locally when the PR's head has been fetched; missing
+                // commits degrade gracefully to "no blame" inside Shell.
+                //
+                // Bounded height keeps the diff in a stable lane so the
+                // surrounding review form, checks, and WILL FIGHT
+                // partners stay visible while the reviewer scrolls the
+                // diff internally. Keyed on the active path so internal
+                // scroll + search state resets cleanly per file switch.
+                final repo = context.read<RepositoryState>().activePath;
+                // Spooled (machine-scale) details slice the active file
+                // straight off the on-disk index — memory bounded by this
+                // one file, never the whole patch. String details keep the
+                // pre-sliced / on-demand-sliced path.
+                final spooled = spoolDoc;
+                // A spooled detail publishes BEFORE its lazy document
+                // finishes indexing (the build is async by design — a
+                // multi-GB spool takes a moment to scan). Until it lands,
+                // the String fallbacks are empty by construction, so an
+                // empty DiffShell here would read as "this PR has no diff"
+                // for exactly the machine-scale case. Show the loading
+                // state instead; the setState that installs the doc
+                // repaints this builder.
+                if (detail!.diffSpool != null && spooled == null) {
+                  return SizedBox(
+                    height: 60,
+                    child: Center(
+                      child: Text(
+                        context.t.branches.readingFiles,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                return SizedBox(
+                  height: 520,
+                  child: DiffShell(
+                    filePath: activePath,
+                    tokens: t,
+                    diffContent: spooled != null
+                        ? (spooled.rawSliceForPath(activePath) ?? '')
+                        : detail!.rawDiffByFile[activePath] ??
+                              sliceSingleDiffByFile(detail!.diff, activePath),
+                    repositoryPath: repo,
+                    showFileHeader: true,
+                    enableStaging: false,
+                  ),
+                );
+              },
+            ),
           ],
           const SizedBox(height: 16),
           const _SectionLabel('REVIEW'),
@@ -7539,8 +8185,12 @@ class _PrExpanded extends StatelessWidget {
             onAiReview: onAiReview,
             onMerge: onMerge,
             stateOpen: pr.state == 'OPEN',
-            canExportPatch: detail != null && detail!.diff.isNotEmpty,
-            onExportPatch: detail != null && detail!.diff.isNotEmpty
+            canExportPatch:
+                detail != null &&
+                (detail!.diff.isNotEmpty || detail!.diffSpool != null),
+            onExportPatch:
+                detail != null &&
+                    (detail!.diff.isNotEmpty || detail!.diffSpool != null)
                 ? () => _exportPrAsPatch(context, pr, detail!)
                 : null,
           ),
@@ -7612,22 +8262,26 @@ class _PeopleSection extends StatelessWidget {
     final reviewerLogins = reviewers.map((r) => r.login).toSet();
     final entries = <_PersonEntry>[];
     for (final r in reviewers) {
-      entries.add(_PersonEntry(
-        login: r.login,
-        state: r.state,
-        commits: commits[r.login] ?? 0,
-        isReviewer: true,
-      ));
+      entries.add(
+        _PersonEntry(
+          login: r.login,
+          state: r.state,
+          commits: commits[r.login] ?? 0,
+          isReviewer: true,
+        ),
+      );
     }
     for (final a in recentTouchers) {
       final stem = _stem(a.email);
       if (reviewerLogins.contains(stem)) continue;
-      entries.add(_PersonEntry(
-        login: stem,
-        state: '',
-        commits: a.commits,
-        isReviewer: false,
-      ));
+      entries.add(
+        _PersonEntry(
+          login: stem,
+          state: '',
+          commits: a.commits,
+          isReviewer: false,
+        ),
+      );
     }
     entries.sort((a, b) {
       final sw = _stateWeight(a.state).compareTo(_stateWeight(b.state));
@@ -7646,9 +8300,7 @@ class _PeopleSection extends StatelessWidget {
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final e in entries) _PersonRow(entry: e),
-      ],
+      children: [for (final e in entries) _PersonRow(entry: e)],
     );
   }
 }
@@ -7730,7 +8382,8 @@ class _PersonRow extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: t.chromeBorder.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(
-                      context.surfaceShader.geometry.badgeRadius),
+                    context.surfaceShader.geometry.badgeRadius,
+                  ),
                 ),
                 child: Text(
                   '${entry.commits}c',
@@ -7782,8 +8435,9 @@ class _WillFightSection extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: t.stateConflicted.withValues(alpha: 0.06),
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border(
           left: BorderSide(
             color: t.stateConflicted.withValues(alpha: 0.7),
@@ -7864,16 +8518,18 @@ class _WillFightRowState extends State<_WillFightRow> {
           curve: shader.safeCurve,
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
           decoration: BoxDecoration(
-            color: t.stateConflicted
-                .withValues(alpha: _hovered ? hoverAlpha : restAlpha),
+            color: t.stateConflicted.withValues(
+              alpha: _hovered ? hoverAlpha : restAlpha,
+            ),
             borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
           ),
           child: Tooltip(
             message: widget.shared.isEmpty
                 ? (cos == null
-                    ? '#${widget.number}'
-                    : context.t.branches
-                        .orbitalPartnerCos(cos: cos.toStringAsFixed(2)))
+                      ? '#${widget.number}'
+                      : context.t.branches.orbitalPartnerCos(
+                          cos: cos.toStringAsFixed(2),
+                        ))
                 : widget.shared.join('\n'),
             child: Row(
               children: [
@@ -7952,8 +8608,9 @@ class _ConflictsWithYouSection extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: t.stateDeleted.withValues(alpha: 0.06),
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border(
           left: BorderSide(
             color: t.stateDeleted.withValues(alpha: 0.7),
@@ -8071,9 +8728,12 @@ class _IssueLinkChipState extends State<_IssueLinkChip> {
                 ? t.accentBright.withValues(alpha: 0.18)
                 : t.accentBright.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(
-                color: t.accentBright.withValues(alpha: 0.45), width: 1),
+              color: t.accentBright.withValues(alpha: 0.45),
+              width: 1,
+            ),
           ),
           child: Text(
             '↗ #${widget.number}',
@@ -8206,8 +8866,11 @@ Map<String, int> _computeClusters(
 }) {
   if (matrix == null || files.length < 2) return const {};
   final paths = files.map((f) => f.path).toList();
-  final clusters = clusterFiles(paths, matrix,
-      couplingConstants: couplingConstants);
+  final clusters = clusterFiles(
+    paths,
+    matrix,
+    couplingConstants: couplingConstants,
+  );
   return clusters.byPath;
 }
 
@@ -8239,11 +8902,7 @@ Set<String> _resonanceForecast(
     // amplitude composition. t=1.0 is the commit-review default — close-
     // neighbour scope, doesn't reach across the whole repo.
     final weights = <String, double>{for (final p in inPr) p: 1.0};
-    final scored = engine.diffuseWeighted(
-      weights,
-      t: 1.0,
-      excludePaths: inPr,
-    );
+    final scored = engine.diffuseWeighted(weights, t: 1.0, excludePaths: inPr);
     if (scored.isEmpty) return const {};
     // Threshold against a fraction of the top score — engine φ values
     // aren't on the same scale as Jaccard, so a fixed 0.4 cutoff would
@@ -8316,12 +8975,13 @@ class _FilesSectionHeader extends StatelessWidget {
     final engine = repoPath == null
         ? null
         : (isActive
-            ? context.select<LogosGitState, LogosGit?>(
-                (state) => state.engineFor(repoPath),
-              )
-            : context.read<LogosGitState>().engineFor(repoPath));
+              ? context.select<LogosGitState, LogosGit?>(
+                  (state) => state.engineFor(repoPath),
+                )
+              : context.read<LogosGitState>().engineFor(repoPath));
     final fallbackMatrix = engine?.stats.coupling ?? matrix;
-    final coherence = shape?.coherence ??
+    final coherence =
+        shape?.coherence ??
         (fallbackMatrix == null || files.length < 2
             ? null
             : fallbackMatrix.coherenceFor(paths));
@@ -8335,13 +8995,14 @@ class _FilesSectionHeader extends StatelessWidget {
     final higherOrder = shape?.higherOrderLift ?? 0.0;
     final reducibility = shape?.reducibilityGap ?? 0.0;
     final flow = shape?.flow;
-    final topWitnessKinds = (shape?.witnessKindFractions.entries.toList() ??
-        <MapEntry<String, double>>[])
-      ..sort((a, b) {
-        final byValue = b.value.compareTo(a.value);
-        if (byValue != 0) return byValue;
-        return a.key.compareTo(b.key);
-      });
+    final topWitnessKinds =
+        (shape?.witnessKindFractions.entries.toList() ??
+              <MapEntry<String, double>>[])
+          ..sort((a, b) {
+            final byValue = b.value.compareTo(a.value);
+            if (byValue != 0) return byValue;
+            return a.key.compareTo(b.key);
+          });
     final witnessPill = topWitnessKinds.isEmpty
         ? null
         : topWitnessKinds.take(3).map((e) => e.key).join('|');
@@ -8352,8 +9013,11 @@ class _FilesSectionHeader extends StatelessWidget {
     final dotActive = stability == null
         ? t.accentBright
         : Color.lerp(
-                t.accentBright, t.textFaint, (1 - stability).clamp(0.0, 1.0)) ??
-            t.accentBright;
+                t.accentBright,
+                t.textFaint,
+                (1 - stability).clamp(0.0, 1.0),
+              ) ??
+              t.accentBright;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -8398,14 +9062,17 @@ class _FilesSectionHeader extends StatelessWidget {
               if (align != null)
                 context.t.branches.shapeField(v: align.toStringAsFixed(2)),
               if (sourceAlign != null)
-                context.t.branches
-                    .shapeSource(v: sourceAlign.toStringAsFixed(2)),
+                context.t.branches.shapeSource(
+                  v: sourceAlign.toStringAsFixed(2),
+                ),
               if (sourceSurprise != null)
-                context.t.branches
-                    .shapeSrcDelta(v: sourceSurprise.toStringAsFixed(2)),
+                context.t.branches.shapeSrcDelta(
+                  v: sourceSurprise.toStringAsFixed(2),
+                ),
               if (fieldSurprise != null)
-                context.t.branches
-                    .shapeFldDelta(v: fieldSurprise.toStringAsFixed(2)),
+                context.t.branches.shapeFldDelta(
+                  v: fieldSurprise.toStringAsFixed(2),
+                ),
               if (highFreq > 0.01)
                 context.t.branches.shapeHf(v: highFreq.toStringAsFixed(2)),
               if (higherOrder > 0.01)
@@ -8413,17 +9080,21 @@ class _FilesSectionHeader extends StatelessWidget {
               if (reducibility > 0.01)
                 context.t.branches.shapeRg(v: reducibility.toStringAsFixed(2)),
               if (flow != null)
-                context.t.branches
-                    .shapeFlowG(v: flow.gradientMass.toStringAsFixed(2)),
+                context.t.branches.shapeFlowG(
+                  v: flow.gradientMass.toStringAsFixed(2),
+                ),
               if (flow != null)
-                context.t.branches
-                    .shapeFlowC(v: flow.curlMass.toStringAsFixed(2)),
+                context.t.branches.shapeFlowC(
+                  v: flow.curlMass.toStringAsFixed(2),
+                ),
               if (flow != null)
-                context.t.branches
-                    .shapeFlowH(v: flow.harmonicMass.toStringAsFixed(2)),
+                context.t.branches.shapeFlowH(
+                  v: flow.harmonicMass.toStringAsFixed(2),
+                ),
               if (flow != null)
-                context.t.branches
-                    .shapeStress(v: flow.structuralStress.toStringAsFixed(2)),
+                context.t.branches.shapeStress(
+                  v: flow.structuralStress.toStringAsFixed(2),
+                ),
               if (witnessPill != null)
                 context.t.branches.shapeWit(v: witnessPill),
             ].join(' · '),
@@ -8462,7 +9133,9 @@ class _FilesSectionHeader extends StatelessWidget {
             ),
           const SizedBox(width: 6),
           Text(
-            context.t.branches.resonanceReadout(v: coherence.toStringAsFixed(2)),
+            context.t.branches.resonanceReadout(
+              v: coherence.toStringAsFixed(2),
+            ),
             style: TextStyle(
               color: t.textMuted,
               fontSize: 9.5,
@@ -8575,11 +9248,7 @@ class _FilePillStrip extends StatelessWidget {
       for (final ghost in ghostPaths) _GhostFilePill(path: ghost),
     ];
     if (wrapped) {
-      return Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        children: pills,
-      );
+      return Wrap(spacing: 6, runSpacing: 6, children: pills);
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -8856,13 +9525,15 @@ class _FilePillState extends State<_FilePill> {
         // FILL: selection wash + both cascades + hover bump.
         final fillTouched =
             widget.isActive || aurora > 0 || selAura > 0 || _hovered;
-        final fillAlpha = (widget.isActive ? selectedFillAlpha : 0.0) +
+        final fillAlpha =
+            (widget.isActive ? selectedFillAlpha : 0.0) +
             aurora * hoverFillPeak +
             selAura * selectionFillPeak +
             liveHoverFill;
         final fillColor = fillTouched
-            ? (widget.isActive ? accent : cascadeTint())
-                .withValues(alpha: fillAlpha.clamp(0.0, 0.55))
+            ? (widget.isActive ? accent : cascadeTint()).withValues(
+                alpha: fillAlpha.clamp(0.0, 0.55),
+              )
             : t.surface1.withValues(alpha: restingFillAlpha);
 
         // BORDER: resting/selected base + both cascades + hover bump.
@@ -8870,15 +9541,16 @@ class _FilePillState extends State<_FilePill> {
             widget.isActive || aurora > 0 || selAura > 0 || _hovered;
         final borderAlpha =
             (widget.isActive ? selectedBorderAlpha : restingBorderAlpha) +
-                aurora * hoverBorderPeak +
-                selAura * selectionBorderPeak +
-                liveHoverBorder;
-        final borderColor = (widget.isActive
-                ? accent
-                : borderTouched
+            aurora * hoverBorderPeak +
+            selAura * selectionBorderPeak +
+            liveHoverBorder;
+        final borderColor =
+            (widget.isActive
+                    ? accent
+                    : borderTouched
                     ? cascadeTint()
                     : t.chromeBorder)
-            .withValues(alpha: borderAlpha.clamp(0.0, 0.95));
+                .withValues(alpha: borderAlpha.clamp(0.0, 0.95));
 
         // BRIDGE ring (own channel) — geometric mean suppresses
         // asymmetric pairs; balanced couplings get full brightness.
@@ -8886,18 +9558,24 @@ class _FilePillState extends State<_FilePill> {
         // colors (selection + hover): bridges visibly carry BOTH
         // identities, not a weighted compromise. Distinct SHAPE so
         // intersection is unambiguous even when alphas coincide.
-        final bridge =
-            (aurora > 0 && selAura > 0) ? math.sqrt(aurora * selAura) : 0.0;
+        final bridge = (aurora > 0 && selAura > 0)
+            ? math.sqrt(aurora * selAura)
+            : 0.0;
         // Both auroras inherit the Jaccard 0.4 floor when nonzero, so
         // the minimum visible bridge is 0.4. A simple "is nonzero" gate
         // is the honest threshold — any earlier "0.04" looked meaningful
         // but was unreachable.
         final showBridge = bridge > 0;
-        final bridgeBlend = Color.lerp(hoverSrcColor ?? clusterColor ?? accent,
-                selSrcColor ?? clusterColor ?? accent, 0.5) ??
+        final bridgeBlend =
+            Color.lerp(
+              hoverSrcColor ?? clusterColor ?? accent,
+              selSrcColor ?? clusterColor ?? accent,
+              0.5,
+            ) ??
             (clusterColor ?? accent);
-        final bridgeColor =
-            bridgeBlend.withValues(alpha: bridge * bridgeRingMax);
+        final bridgeColor = bridgeBlend.withValues(
+          alpha: bridge * bridgeRingMax,
+        );
 
         final pillRadius = context.surfaceShader.geometry.pillRadius;
 
@@ -8977,9 +9655,11 @@ class _FilePillState extends State<_FilePill> {
                                         end: Alignment.centerRight,
                                         colors: [
                                           t.stateConflicted.withValues(
-                                              alpha: widget.heat * 0.9),
+                                            alpha: widget.heat * 0.9,
+                                          ),
                                           t.stateConflicted.withValues(
-                                              alpha: widget.heat * 0.3),
+                                            alpha: widget.heat * 0.3,
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -9025,8 +9705,9 @@ class _FilePillState extends State<_FilePill> {
                         Text(
                           filename,
                           style: TextStyle(
-                            color:
-                                widget.isActive ? t.textStrong : t.textNormal,
+                            color: widget.isActive
+                                ? t.textStrong
+                                : t.textNormal,
                             fontSize: 10.5,
                             fontFamily: AppFonts.mono,
                             fontWeight: widget.isActive
@@ -9035,25 +9716,25 @@ class _FilePillState extends State<_FilePill> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text('+${widget.file.additions}',
-                            style: TextStyle(
-                              color: t.stateAdded.withValues(alpha: 0.85),
-                              fontSize: 9,
-                              fontFamily: AppFonts.mono,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ],
-                            )),
+                        Text(
+                          '+${widget.file.additions}',
+                          style: TextStyle(
+                            color: t.stateAdded.withValues(alpha: 0.85),
+                            fontSize: 9,
+                            fontFamily: AppFonts.mono,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
                         const SizedBox(width: 3),
-                        Text('-${widget.file.deletions}',
-                            style: TextStyle(
-                              color: t.stateDeleted.withValues(alpha: 0.85),
-                              fontSize: 9,
-                              fontFamily: AppFonts.mono,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures()
-                              ],
-                            )),
+                        Text(
+                          '-${widget.file.deletions}',
+                          style: TextStyle(
+                            color: t.stateDeleted.withValues(alpha: 0.85),
+                            fontSize: 9,
+                            fontFamily: AppFonts.mono,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -9094,7 +9775,8 @@ class _ReviewFormState extends State<_ReviewForm> {
           decoration: BoxDecoration(
             color: t.bg0,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.pillRadius),
+              context.surfaceShader.geometry.pillRadius,
+            ),
             border: Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
           ),
           child: TextField(
@@ -9181,29 +9863,29 @@ class _ActionButtonState extends State<_ActionButton> {
     final shader = context.surfaceShader;
     final (fg, bg, border) = switch (widget.tone) {
       _ActionTone.primary => (
-          _hovered ? t.bg0 : t.accentBright,
-          _hovered ? t.accentBright : t.accentBright.withValues(alpha: 0.12),
-          t.accentBright.withValues(alpha: 0.6),
-        ),
+        _hovered ? t.bg0 : t.accentBright,
+        _hovered ? t.accentBright : t.accentBright.withValues(alpha: 0.12),
+        t.accentBright.withValues(alpha: 0.6),
+      ),
       _ActionTone.warning => (
-          _hovered ? t.textStrong : t.stateConflicted,
-          _hovered
-              ? t.stateConflicted.withValues(alpha: 0.18)
-              : t.stateConflicted.withValues(alpha: 0.08),
-          t.stateConflicted.withValues(alpha: 0.5),
-        ),
+        _hovered ? t.textStrong : t.stateConflicted,
+        _hovered
+            ? t.stateConflicted.withValues(alpha: 0.18)
+            : t.stateConflicted.withValues(alpha: 0.08),
+        t.stateConflicted.withValues(alpha: 0.5),
+      ),
       _ActionTone.danger => (
-          _hovered ? t.bg0 : t.stateDeleted,
-          _hovered ? t.stateDeleted : t.stateDeleted.withValues(alpha: 0.1),
-          t.stateDeleted.withValues(alpha: 0.55),
-        ),
+        _hovered ? t.bg0 : t.stateDeleted,
+        _hovered ? t.stateDeleted : t.stateDeleted.withValues(alpha: 0.1),
+        t.stateDeleted.withValues(alpha: 0.55),
+      ),
       _ActionTone.neutral => (
-          _hovered ? t.textStrong : t.textNormal,
-          _hovered
-              ? t.chromeBorder.withValues(alpha: 0.25)
-              : t.chromeBorder.withValues(alpha: 0.12),
-          t.chromeBorder.withValues(alpha: 0.4),
-        ),
+        _hovered ? t.textStrong : t.textNormal,
+        _hovered
+            ? t.chromeBorder.withValues(alpha: 0.25)
+            : t.chromeBorder.withValues(alpha: 0.12),
+        t.chromeBorder.withValues(alpha: 0.4),
+      ),
     };
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -9304,14 +9986,13 @@ class _PrActionToolbarState extends State<_PrActionToolbar> {
               onTap: widget.onOpenAsDesk!,
             ),
           _ActionButton(
-              label: context.t.branches.actionCheckout, onTap: widget.onCheckout),
+            label: context.t.branches.actionCheckout,
+            onTap: widget.onCheckout,
+          ),
           if (widget.stateOpen)
             // Merge button + popover. The popover positions itself
             // above the button via Overlay so it doesn't push the row.
-            _MergeMenuAnchor(
-              enabled: widget.mergeable,
-              onPick: widget.onMerge,
-            ),
+            _MergeMenuAnchor(enabled: widget.mergeable, onPick: widget.onMerge),
         ],
       ),
     );
@@ -9333,108 +10014,129 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
 
   void _open() {
     final overlay = Overlay.of(context);
-    _entry = OverlayEntry(builder: (ctx) {
-      final t = ctx.tokens;
-      final box = context.findRenderObject()! as RenderBox;
-      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
-          + const Offset(0, 6);
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) => _close(),
-            ),
-          ),
-          Positioned.fill(
-            child: CustomSingleChildLayout(
-              delegate: ViewportClampDelegate(
-                desired: target,
-                anchor: Alignment.topRight,
+    _entry = OverlayEntry(
+      builder: (ctx) {
+        final t = ctx.tokens;
+        final box = context.findRenderObject()! as RenderBox;
+        final target =
+            box.localToGlobal(Offset(box.size.width, box.size.height)) +
+            const Offset(0, 6);
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) => _close(),
               ),
-              child: Material(
-                color: Colors.transparent,
-                // IntrinsicWidth must live INSIDE MaterialSurface: the
-                // glass/phosphor shader path wraps a LayoutBuilder, which
-                // throws when an IntrinsicWidth ancestor queries its
-                // intrinsics. Wrapping the surface would crash this menu on
-                // Glass/Phosphor themes (same fix as context_menu.dart).
-                child: MaterialSurface(
-                  tone: AppMaterialTone.surface1,
-                  elevated: true,
-                  glaze: true,
-                  radius: ctx.surfaceShader.geometry.cardRadius,
-                  borderColor: t.chromeBorder,
-                  borderAlpha: 0.28,
-                  constraints: const BoxConstraints(minWidth: 200),
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: IntrinsicWidth(
-                    child: StatefulBuilder(
-                      builder: (ctx, setLocal) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _MergeMenuRow(
+            ),
+            Positioned.fill(
+              child: CustomSingleChildLayout(
+                delegate: ViewportClampDelegate(
+                  desired: target,
+                  anchor: Alignment.topRight,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  // IntrinsicWidth must live INSIDE MaterialSurface: the
+                  // glass/phosphor shader path wraps a LayoutBuilder, which
+                  // throws when an IntrinsicWidth ancestor queries its
+                  // intrinsics. Wrapping the surface would crash this menu on
+                  // Glass/Phosphor themes (same fix as context_menu.dart).
+                  child: MaterialSurface(
+                    tone: AppMaterialTone.surface1,
+                    elevated: true,
+                    glaze: true,
+                    radius: ctx.surfaceShader.geometry.cardRadius,
+                    borderColor: t.chromeBorder,
+                    borderAlpha: 0.28,
+                    constraints: const BoxConstraints(minWidth: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: IntrinsicWidth(
+                      child: StatefulBuilder(
+                        builder: (ctx, setLocal) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _MergeMenuRow(
                               label: ctx.t.branches.mergeMenuMergeCommit,
                               onTap: () {
                                 widget.onPick('merge', _deleteBranchAfter);
                                 _close();
-                              }),
-                          _MergeMenuRow(
+                              },
+                            ),
+                            _MergeMenuRow(
                               label: ctx.t.branches.mergeMenuSquash,
                               onTap: () {
                                 widget.onPick('squash', _deleteBranchAfter);
                                 _close();
-                              }),
-                          _MergeMenuRow(
+                              },
+                            ),
+                            _MergeMenuRow(
                               label: ctx.t.branches.mergeMenuRebase,
                               onTap: () {
                                 widget.onPick('rebase', _deleteBranchAfter);
                                 _close();
-                              }),
-                          Container(
+                              },
+                            ),
+                            Container(
                               height: 1,
                               margin: const EdgeInsets.symmetric(vertical: 4),
-                              color: t.chromeBorder.withValues(alpha: 0.25)),
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => setLocal(
-                                () => _deleteBranchAfter = !_deleteBranchAfter),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 6),
-                              child: Row(children: [
-                                Container(
-                                  width: 11,
-                                  height: 11,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(
-                                        ctx.surfaceShader.geometry.tinyRadius),
-                                    border: Border.all(
-                                        color: t.chromeBorder
-                                            .withValues(alpha: 0.6)),
-                                    color: _deleteBranchAfter
-                                        ? t.accentBright
-                                        : t.accentBright.withValues(alpha: 0),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(ctx.t.branches.deleteBranchAfter,
-                                    style: TextStyle(
-                                        color: t.textNormal, fontSize: 10.5)),
-                              ]),
+                              color: t.chromeBorder.withValues(alpha: 0.25),
                             ),
-                          ),
-                        ],
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => setLocal(
+                                () => _deleteBranchAfter = !_deleteBranchAfter,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 11,
+                                      height: 11,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(
+                                          ctx.surfaceShader.geometry.tinyRadius,
+                                        ),
+                                        border: Border.all(
+                                          color: t.chromeBorder.withValues(
+                                            alpha: 0.6,
+                                          ),
+                                        ),
+                                        color: _deleteBranchAfter
+                                            ? t.accentBright
+                                            : t.accentBright.withValues(
+                                                alpha: 0,
+                                              ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      ctx.t.branches.deleteBranchAfter,
+                                      style: TextStyle(
+                                        color: t.textNormal,
+                                        fontSize: 10.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
-      );
-    });
+          ],
+        );
+      },
+    );
     overlay.insert(_entry!);
   }
 
@@ -9578,17 +10280,24 @@ class _CommentBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            Text('@${comment.authorLogin}',
+          Row(
+            children: [
+              Text(
+                '@${comment.authorLogin}',
                 style: TextStyle(
-                    color: t.accentBright,
-                    fontSize: 10.5,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(width: 8),
-            Text(relativeTime(comment.createdAt),
-                style: TextStyle(color: t.textMuted, fontSize: 10)),
-          ]),
+                  color: t.accentBright,
+                  fontSize: 10.5,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                relativeTime(comment.createdAt),
+                style: TextStyle(color: t.textMuted, fontSize: 10),
+              ),
+            ],
+          ),
           const SizedBox(height: 4),
           // Themed markdown styling — body in DM Sans (default), code in
           // JetBrainsMono, headings shrink one step from the page chrome
@@ -9654,9 +10363,11 @@ class _CommentBlock extends StatelessWidget {
               codeblockDecoration: BoxDecoration(
                 color: t.bg0,
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.pillRadius),
-                border:
-                    Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
+                  context.surfaceShader.geometry.pillRadius,
+                ),
+                border: Border.all(
+                  color: t.chromeBorder.withValues(alpha: 0.3),
+                ),
               ),
               codeblockPadding: const EdgeInsets.all(8),
               blockquote: TextStyle(
@@ -9673,8 +10384,11 @@ class _CommentBlock extends StatelessWidget {
                   ),
                 ),
               ),
-              blockquotePadding:
-                  const EdgeInsets.only(left: 10, top: 2, bottom: 2),
+              blockquotePadding: const EdgeInsets.only(
+                left: 10,
+                top: 2,
+                bottom: 2,
+              ),
               a: TextStyle(
                 color: t.accentBright,
                 decoration: TextDecoration.underline,
@@ -9692,9 +10406,7 @@ class _CommentBlock extends StatelessWidget {
               ),
               horizontalRuleDecoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(
-                    color: t.chromeBorder.withValues(alpha: 0.4),
-                  ),
+                  top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.4)),
                 ),
               ),
             ),
@@ -9822,19 +10534,25 @@ class _IssueRowState extends State<_IssueRow> {
               duration: context.motion(shader.duration),
               curve: shader.safeCurve,
               padding: EdgeInsets.fromLTRB(
-                  12, 10, addressingCount > 0 ? 26 : 12, 10),
+                12,
+                10,
+                addressingCount > 0 ? 26 : 12,
+                10,
+              ),
               decoration: BoxDecoration(
                 color: widget.expanded
                     ? t.surface1.withValues(alpha: 0.7)
                     : (_hovered || widget.focused
-                        ? t.surface1.withValues(alpha: 0.45)
-                        : t.surface1.withValues(alpha: 0)),
+                          ? t.surface1.withValues(alpha: 0.45)
+                          : t.surface1.withValues(alpha: 0)),
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.cardRadius),
+                  context.surfaceShader.geometry.cardRadius,
+                ),
                 border: Border(
                   left: BorderSide(
                     color: rail.withValues(
-                        alpha: widget.expanded || widget.focused ? 1.0 : 0.55),
+                      alpha: widget.expanded || widget.focused ? 1.0 : 0.55,
+                    ),
                     width: widget.focused || widget.expanded ? 4 : 3,
                   ),
                 ),
@@ -9863,7 +10581,7 @@ class _IssueRowState extends State<_IssueRow> {
                                 fontFamily: AppFonts.mono,
                                 fontWeight: FontWeight.w700,
                                 fontFeatures: const [
-                                  FontFeature.tabularFigures()
+                                  FontFeature.tabularFigures(),
                                 ],
                                 letterSpacing: 0.3,
                               ),
@@ -9891,9 +10609,10 @@ class _IssueRowState extends State<_IssueRow> {
                                     '@${widget.issue.authorLogin}',
                                     if (widget.issue.assignees.isNotEmpty)
                                       context.t.branches.assignedTo(
-                                          names: widget.issue.assignees
-                                              .map((a) => '@$a')
-                                              .join(', ')),
+                                        names: widget.issue.assignees
+                                            .map((a) => '@$a')
+                                            .join(', '),
+                                      ),
                                   ].join(' · '),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -9907,15 +10626,15 @@ class _IssueRowState extends State<_IssueRow> {
                                 const SizedBox(height: 3),
                                 Text(
                                   context.t.branches.issueConvLine(
-                                      n: widget.issue.commentCount,
-                                      time: relativeTime(
-                                          widget.issue.updatedAt)),
+                                    n: widget.issue.commentCount,
+                                    time: relativeTime(widget.issue.updatedAt),
+                                  ),
                                   style: TextStyle(
                                     color: t.textMuted.withValues(alpha: 0.8),
                                     fontSize: 10,
                                     fontFamily: AppFonts.mono,
                                     fontFeatures: const [
-                                      FontFeature.tabularFigures()
+                                      FontFeature.tabularFigures(),
                                     ],
                                     letterSpacing: 0.2,
                                   ),
@@ -9927,11 +10646,14 @@ class _IssueRowState extends State<_IssueRow> {
                             Container(
                               margin: const EdgeInsets.only(left: 8, top: 1),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: t.chromeAccent.withValues(alpha: 0.10),
                                 borderRadius: BorderRadius.circular(
-                                    context.surfaceShader.geometry.badgeRadius),
+                                  context.surfaceShader.geometry.badgeRadius,
+                                ),
                                 border: Border.all(
                                   color: t.chromeAccent.withValues(alpha: 0.35),
                                   width: 0.5,
@@ -9951,11 +10673,14 @@ class _IssueRowState extends State<_IssueRow> {
                           Container(
                             margin: const EdgeInsets.only(left: 8, top: 1),
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: rail.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(
-                                  context.surfaceShader.geometry.badgeRadius),
+                                context.surfaceShader.geometry.badgeRadius,
+                              ),
                             ),
                             child: Text(
                               widget.issue.state,
@@ -9990,15 +10715,22 @@ class _IssueRowState extends State<_IssueRow> {
                               children: [
                                 if (widget.detail == null &&
                                     widget.detailLoading)
-                                  Text(context.t.branches.readingThread,
-                                      style: TextStyle(
-                                          color: t.textMuted,
-                                          fontSize: 11,
-                                          fontStyle: FontStyle.italic))
+                                  Text(
+                                    context.t.branches.readingThread,
+                                    style: TextStyle(
+                                      color: t.textMuted,
+                                      fontSize: 11,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  )
                                 else if (widget.detail == null)
-                                  Text(context.t.branches.noDetailAvailable,
-                                      style: TextStyle(
-                                          color: t.textMuted, fontSize: 11))
+                                  Text(
+                                    context.t.branches.noDetailAvailable,
+                                    style: TextStyle(
+                                      color: t.textMuted,
+                                      fontSize: 11,
+                                    ),
+                                  )
                                 else ...[
                                   // ADDRESSED BY — workline backlinks. PRs
                                   // whose body says they close/ref this
@@ -10007,7 +10739,8 @@ class _IssueRowState extends State<_IssueRow> {
                                   // worked on" before reading the body.
                                   if (widget.addressingPrs.isNotEmpty) ...[
                                     _SectionLabel(
-                                        context.t.branches.addressedByHeading),
+                                      context.t.branches.addressedByHeading,
+                                    ),
                                     const SizedBox(height: 6),
                                     Wrap(
                                       spacing: 6,
@@ -10025,7 +10758,8 @@ class _IssueRowState extends State<_IssueRow> {
                                   ],
                                   if (widget.detail!.body.isNotEmpty) ...[
                                     _SectionLabel(
-                                        context.t.branches.descriptionHeading),
+                                      context.t.branches.descriptionHeading,
+                                    ),
                                     const SizedBox(height: 6),
                                     _CommentBlock(
                                       comment: RemoteComment(
@@ -10038,7 +10772,8 @@ class _IssueRowState extends State<_IssueRow> {
                                   ],
                                   if (widget.detail!.comments.isNotEmpty) ...[
                                     _SectionLabel(
-                                        context.t.branches.threadHeading),
+                                      context.t.branches.threadHeading,
+                                    ),
                                     const SizedBox(height: 6),
                                     for (final c in widget.detail!.comments)
                                       _CommentBlock(comment: c),
@@ -10046,15 +10781,22 @@ class _IssueRowState extends State<_IssueRow> {
                                   ],
                                   Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 8),
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: t.bg0,
                                       borderRadius: BorderRadius.circular(
-                                          context.surfaceShader.geometry
-                                              .pillRadius),
+                                        context
+                                            .surfaceShader
+                                            .geometry
+                                            .pillRadius,
+                                      ),
                                       border: Border.all(
-                                          color: t.chromeBorder
-                                              .withValues(alpha: 0.3)),
+                                        color: t.chromeBorder.withValues(
+                                          alpha: 0.3,
+                                        ),
+                                      ),
                                     ),
                                     child: TextField(
                                       controller: _replyCtrl,
@@ -10064,14 +10806,17 @@ class _IssueRowState extends State<_IssueRow> {
                                       // and let the theme's typography
                                       // pick the family.
                                       style: TextStyle(
-                                          color: t.textNormal, fontSize: 11),
+                                        color: t.textNormal,
+                                        fontSize: 11,
+                                      ),
                                       decoration: InputDecoration(
                                         isDense: true,
                                         border: InputBorder.none,
                                         hintText: context.t.branches.replyHint,
                                         hintStyle: TextStyle(
-                                          color: t.textMuted
-                                              .withValues(alpha: 0.6),
+                                          color: t.textMuted.withValues(
+                                            alpha: 0.6,
+                                          ),
                                           fontSize: 11,
                                         ),
                                       ),
@@ -10085,8 +10830,9 @@ class _IssueRowState extends State<_IssueRow> {
                                     const Spacer(),
                                     if (!isAssignedToMe && isOpen)
                                       Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 8),
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
                                         child: _ActionButton(
                                           label: context.t.branches.assignMe,
                                           onTap: widget.onAssignSelf,
@@ -10094,8 +10840,9 @@ class _IssueRowState extends State<_IssueRow> {
                                       ),
                                     if (isOpen)
                                       Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 8),
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
                                         child: _ActionButton(
                                           label: context.t.branches.closeLower,
                                           tone: _ActionTone.danger,
@@ -10305,7 +11052,7 @@ class _RemoteMissingNotice extends StatelessWidget {
 String _forgeSigil(RemoteForge forge) => switch (forge) {
   RemoteForge.github => '●',
   RemoteForge.gitlab => '◆',
-  RemoteForge.gitea  => '⬡',
+  RemoteForge.gitea => '⬡',
   RemoteForge.unknown => '',
 };
 
@@ -10429,7 +11176,9 @@ _BranchStratum _classifyBranch(BranchInfo b, {bool leased = false}) {
 /// highest; dateless branches sink to the bottom of their band
 /// (name-tiebroken).
 List<BranchInfo> _evidenceSorted(
-    List<BranchInfo> branches, Set<String> leasedNames) {
+  List<BranchInfo> branches,
+  Set<String> leasedNames,
+) {
   int rank(BranchInfo b) {
     final leased = !b.current && leasedNames.contains(b.name);
     return switch (_classifyBranch(b, leased: leased)) {
@@ -10496,21 +11245,22 @@ class _BranchCard extends StatefulWidget {
   /// Returns the future from the menu so the row can pre-highlight
   /// while the menu is open and clear the highlight on dismiss.
   final Future<void> Function(Offset)? onSecondaryTap;
-  const _BranchCard(
-      {super.key,
-      required this.branch,
-      required this.tokens,
-      required this.actionRunning,
-      required this.stratum,
-      this.leased = false,
-      this.worktreePath,
-      required this.repoPath,
-      this.onCheckout,
-      this.onDelete,
-      this.onSecondaryTap,
-      this.links,
-      this.onOpenDesk,
-      this.onOpenPr});
+  const _BranchCard({
+    super.key,
+    required this.branch,
+    required this.tokens,
+    required this.actionRunning,
+    required this.stratum,
+    this.leased = false,
+    this.worktreePath,
+    required this.repoPath,
+    this.onCheckout,
+    this.onDelete,
+    this.onSecondaryTap,
+    this.links,
+    this.onOpenDesk,
+    this.onOpenPr,
+  });
   @override
   State<_BranchCard> createState() => _BranchCardState();
 }
@@ -10521,8 +11271,9 @@ class _BranchCardState extends State<_BranchCard> {
   // the future arrow-nav lands here; it reveals the verbs exactly like
   // hover does, so keyboard users get the same affordances by construction.
   bool _focused = false;
-  late final FocusNode _focusNode =
-      FocusNode(debugLabel: 'BranchCard.${widget.branch.name}');
+  late final FocusNode _focusNode = FocusNode(
+    debugLabel: 'BranchCard.${widget.branch.name}',
+  );
 
   // Churn sparkline data (UNIX-second commit timestamps, newest-first)
   // for this branch's last 90 days. Fetched lazily off the build path
@@ -10621,9 +11372,14 @@ class _BranchCardState extends State<_BranchCard> {
   /// the receipt as a Tooltip ('delivered in <shortHash>'); gone/squashed
   /// keep the Semantics label as their only narration. Data, not microcopy.
   Widget _corpseWhisperText(BranchInfo b, AppTokens t) {
-    final text = Text(_corpseWhisper(b),
-        style: TextStyle(
-            color: t.textFaint, fontSize: 10.5, fontFamily: AppFonts.mono));
+    final text = Text(
+      _corpseWhisper(b),
+      style: TextStyle(
+        color: t.textFaint,
+        fontSize: 10.5,
+        fontFamily: AppFonts.mono,
+      ),
+    );
     if (!b.gone && b.absorbed == true) {
       return Tooltip(
         message: _absorbedReceipt(b),
@@ -10651,18 +11407,23 @@ class _BranchCardState extends State<_BranchCard> {
         // glyph's hover carries the worktree path — a path is data.
         if (widget.leased) {
           if (b.gone || b.squashMerged == true || b.absorbed == true) {
-            children.add(Padding(
+            children.add(
+              Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: _corpseWhisperText(b, t)));
+                child: _corpseWhisperText(b, t),
+              ),
+            );
           }
-          children.add(Padding(
+          children.add(
+            Padding(
               padding: const EdgeInsets.only(right: 6),
               child: Tooltip(
                 message: widget.worktreePath ?? '',
                 waitDuration: const Duration(milliseconds: 400),
-                child:
-                    AppIcon(name: 'app-logo', size: 11, color: t.textMuted),
-              )));
+                child: AppIcon(name: 'app-logo', size: 11, color: t.textMuted),
+              ),
+            ),
+          );
         }
         // Arrows sit LEFT of the spark, so the spark's right edge is the
         // shared column line across every living row. An ABSORBED branch
@@ -10670,30 +11431,48 @@ class _BranchCardState extends State<_BranchCard> {
         // base already holds, so ↑N would be a lie. (Behind is untouched —
         // it's honest about what base has that this branch doesn't.)
         if (b.ahead > 0 && b.absorbed != true) {
-          children.add(Padding(
+          children.add(
+            Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: Text('${b.ahead}↑',
-                  style: TextStyle(color: t.stateAdded, fontSize: 10))));
+              child: Text(
+                '${b.ahead}↑',
+                style: TextStyle(color: t.stateAdded, fontSize: 10),
+              ),
+            ),
+          );
         }
         if (b.behind > 0) {
-          children.add(Padding(
+          children.add(
+            Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: Text('${b.behind}↓',
-                  style: TextStyle(color: t.stateModified, fontSize: 10))));
+              child: Text(
+                '${b.behind}↓',
+                style: TextStyle(color: t.stateModified, fontSize: 10),
+              ),
+            ),
+          );
         }
         if (_churn != null && _churn!.isNotEmpty) {
-          children.add(Padding(
+          children.add(
+            Padding(
               padding: EdgeInsets.only(left: children.isEmpty ? 0 : 2),
-              child: _ChurnSpark(timestamps: _churn!, color: t.textNormal)));
+              child: _ChurnSpark(timestamps: _churn!, color: t.textNormal),
+            ),
+          );
         }
       case _BranchStratum.idle:
         final age = idleAgeShort(b.lastCommitAt);
         if (age != null) {
-          children.add(Text(age,
+          children.add(
+            Text(
+              age,
               style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 11,
-                  fontFamily: AppFonts.mono)));
+                color: t.textMuted,
+                fontSize: 11,
+                fontFamily: AppFonts.mono,
+              ),
+            ),
+          );
         }
       case _BranchStratum.corpse:
         // The quietest stratum whispers its reason — plain faint mono,
@@ -10766,27 +11545,34 @@ class _BranchCardState extends State<_BranchCard> {
         return context.t.branches.semanticsCurrentBranch(name: b.name);
       case _BranchStratum.live:
         var label = b.upstream != null
-            ? context.t.branches
-                .semanticsTracking(name: b.name, upstream: b.upstream!)
+            ? context.t.branches.semanticsTracking(
+                name: b.name,
+                upstream: b.upstream!,
+              )
             : b.name;
         if (widget.leased) {
           // The lease keeps a would-be corpse in the live band, but its
           // reason is still narrated alongside the open room.
           if (b.gone || b.squashMerged == true || b.absorbed == true) {
             label = context.t.branches.semanticsLabelWithTag(
-                label: label, tag: _corpseSemanticsTag(b));
+              label: label,
+              tag: _corpseSemanticsTag(b),
+            );
           }
           label = context.t.branches.semanticsWorktreeOpen(label: label);
         }
         return label;
       case _BranchStratum.idle:
         return context.t.branches.semanticsIdle(
-            name: b.name, phrase: idlePhrase(b.lastCommitAt));
+          name: b.name,
+          phrase: idlePhrase(b.lastCommitAt),
+        );
       case _BranchStratum.corpse:
         return context.t.branches.semanticsCorpse(
-            name: b.name,
-            tag: _corpseSemanticsTag(b),
-            phrase: idlePhrase(b.lastCommitAt));
+          name: b.name,
+          tag: _corpseSemanticsTag(b),
+          phrase: idlePhrase(b.lastCommitAt),
+        );
     }
   }
 
@@ -10903,8 +11689,8 @@ class _BranchCardState extends State<_BranchCard> {
     final borderColor = isHead
         ? t.accentBright.withValues(alpha: 0.30)
         : (_focused
-            ? t.accentBright.withValues(alpha: 0.22)
-            : t.chromeBorderFaint);
+              ? t.accentBright.withValues(alpha: 0.22)
+              : t.chromeBorderFaint);
     // Live rows breathe wider than idle so the compression down the bands
     // is *felt*, not just tinted. HEAD and live sit tall; idle compresses
     // hard; corpses compress hardest.
@@ -10967,8 +11753,7 @@ class _BranchCardState extends State<_BranchCard> {
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: vpad),
                   decoration: BoxDecoration(
                     color: fill,
-                    borderRadius:
-                        BorderRadius.circular(shader.geometry.radius),
+                    borderRadius: BorderRadius.circular(shader.geometry.radius),
                     border: Border.all(color: borderColor),
                   ),
                   child: Column(
@@ -10976,27 +11761,29 @@ class _BranchCardState extends State<_BranchCard> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // Branch icon or checkmark
-                            b.current
-                                ? AppIcon(
-                                    name: 'check',
-                                    size: 12,
-                                    color: t.accentBright)
-                                : AppIcon(
-                                    name: 'git-branch',
-                                    size: 12,
-                                    color: t.textMuted),
-                            const SizedBox(width: 8),
-                            // Name + tracking
-                            Expanded(
-                                child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                  Row(children: [
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          // Branch icon or checkmark
+                          b.current
+                              ? AppIcon(
+                                  name: 'check',
+                                  size: 12,
+                                  color: t.accentBright,
+                                )
+                              : AppIcon(
+                                  name: 'git-branch',
+                                  size: 12,
+                                  color: t.textMuted,
+                                ),
+                          const SizedBox(width: 8),
+                          // Name + tracking
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  children: [
                                     Flexible(
                                       child: Text(
                                         b.name,
@@ -11012,18 +11799,24 @@ class _BranchCardState extends State<_BranchCard> {
                                       const SizedBox(width: 8),
                                       Container(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 1),
+                                          horizontal: 6,
+                                          vertical: 1,
+                                        ),
                                         decoration: BoxDecoration(
                                           color: t.accentBright,
                                           borderRadius: BorderRadius.circular(
-                                              shader.geometry.pillRadius),
+                                            shader.geometry.pillRadius,
+                                          ),
                                         ),
-                                        child: Text(context.t.branches.headBadge,
-                                            style: TextStyle(
-                                                color: t.surface0,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                                letterSpacing: 0.02)),
+                                        child: Text(
+                                          context.t.branches.headBadge,
+                                          style: TextStyle(
+                                            color: t.surface0,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.02,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                     // Health pills — visual signal only.
@@ -11048,104 +11841,108 @@ class _BranchCardState extends State<_BranchCard> {
                                       const SizedBox(width: 6),
                                       _BranchStatePill(
                                         tokens: t,
-                                        label: context.t.branches.corpseSquashed,
+                                        label:
+                                            context.t.branches.corpseSquashed,
                                         color: t.stateAdded,
                                       ),
                                     ],
-                                  ]),
-                                  // Cross-link chips (desk / desk PR / linked
-                                  // issues) — only when a branch actually owns
-                                  // one, so the restrained rows stay clean.
-                                  // Tapping a chip jumps to that surface.
-                                  if (widget.links?.hasAny ?? false) ...[
-                                    const SizedBox(height: 5),
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.only(left: 20),
-                                      child: _buildLinkChips(t),
-                                    ),
                                   ],
-                                  // Tracking sub-line survives only on HEAD.
-                                  // Live rows carry the living detail in the
-                                  // right data zone (ahead/behind); everyone
-                                  // else drops it — compression carries the
-                                  // age, Semantics carries the words.
-                                  if (isHead && b.upstream != null) ...[
-                                    const SizedBox(height: 4),
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.only(left: 20),
-                                      child: Text(
-                                        context.t.branches
-                                            .trackingLine(upstream: b.upstream!),
-                                        style: TextStyle(
-                                            color: t.textMuted,
-                                            fontSize: 11,
-                                            fontFamily: AppFonts.mono),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ])),
-                            // Verbs — reserved space, revealed on hover/focus
-                            // to the LEFT of the data zone so ten always-on
-                            // bordered buttons don't shout. The slot always
-                            // reserves its width (opacity, not visibility),
-                            // so revealing it never reflows the data zone.
-                            if (!b.current)
-                              AnimatedOpacity(
-                                duration: context.motion(shader.duration),
-                                opacity: reveal ? 1 : 0,
-                                child: IgnorePointer(
-                                  ignoring: !reveal,
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (widget.onDelete != null)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                              right: 6),
-                                          child: _armedForForce
-                                              ? _ForceDeletePill(
-                                                  tokens: t,
-                                                  enabled:
-                                                      !widget.actionRunning,
-                                                  onTap: () => _handleDelete(
-                                                      force: true),
-                                                )
-                                              : _BranchIconAction(
-                                                  icon: 'trash',
-                                                  enabled:
-                                                      !widget.actionRunning,
-                                                  onTap: () =>
-                                                      _handleDelete(),
-                                                ),
-                                        ),
-                                      SizedBox(
-                                        width: 80,
-                                        height: 24,
-                                        child: _ChromeButton(
-                                          label: context.t.branches.checkoutButton,
-                                          compact: true,
-                                          enabled: !widget.actionRunning,
-                                          onPressed: widget.actionRunning
-                                              ? null
-                                              : widget.onCheckout,
-                                        ),
-                                      ),
-                                    ],
+                                ),
+                                // Cross-link chips (desk / desk PR / linked
+                                // issues) — only when a branch actually owns
+                                // one, so the restrained rows stay clean.
+                                // Tapping a chip jumps to that surface.
+                                if (widget.links?.hasAny ?? false) ...[
+                                  const SizedBox(height: 5),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 20),
+                                    child: _buildLinkChips(t),
                                   ),
+                                ],
+                                // Tracking sub-line survives only on HEAD.
+                                // Live rows carry the living detail in the
+                                // right data zone (ahead/behind); everyone
+                                // else drops it — compression carries the
+                                // age, Semantics carries the words.
+                                if (isHead && b.upstream != null) ...[
+                                  const SizedBox(height: 4),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 20),
+                                    child: Text(
+                                      context.t.branches.trackingLine(
+                                        upstream: b.upstream!,
+                                      ),
+                                      style: TextStyle(
+                                        color: t.textMuted,
+                                        fontSize: 11,
+                                        fontFamily: AppFonts.mono,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          // Verbs — reserved space, revealed on hover/focus
+                          // to the LEFT of the data zone so ten always-on
+                          // bordered buttons don't shout. The slot always
+                          // reserves its width (opacity, not visibility),
+                          // so revealing it never reflows the data zone.
+                          if (!b.current)
+                            AnimatedOpacity(
+                              duration: context.motion(shader.duration),
+                              opacity: reveal ? 1 : 0,
+                              child: IgnorePointer(
+                                ignoring: !reveal,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (widget.onDelete != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 6,
+                                        ),
+                                        child: _armedForForce
+                                            ? _ForceDeletePill(
+                                                tokens: t,
+                                                enabled: !widget.actionRunning,
+                                                onTap: () =>
+                                                    _handleDelete(force: true),
+                                              )
+                                            : _BranchIconAction(
+                                                icon: 'trash',
+                                                enabled: !widget.actionRunning,
+                                                onTap: () => _handleDelete(),
+                                              ),
+                                      ),
+                                    SizedBox(
+                                      width: 80,
+                                      height: 24,
+                                      child: _ChromeButton(
+                                        label:
+                                            context.t.branches.checkoutButton,
+                                        compact: true,
+                                        enabled: !widget.actionRunning,
+                                        onPressed: widget.actionRunning
+                                            ? null
+                                            : widget.onCheckout,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            // Right-anchored data zone — one consistent
-                            // rhythm column per row: churn spark + ahead/
-                            // behind for the living bands, a quiet mono age
-                            // for idle, a whisper reason for corpses. Sits
-                            // flush to the right edge, writes leftward, and
-                            // never reflows when the verbs reveal to its left.
-                            const SizedBox(width: 8),
-                            _buildDataZone(context, t),
-                          ]),
+                            ),
+                          // Right-anchored data zone — one consistent
+                          // rhythm column per row: churn spark + ahead/
+                          // behind for the living bands, a quiet mono age
+                          // for idle, a whisper reason for corpses. Sits
+                          // flush to the right edge, writes leftward, and
+                          // never reflows when the verbs reveal to its left.
+                          const SizedBox(width: 8),
+                          _buildDataZone(context, t),
+                        ],
+                      ),
                       _buildInlineError(context, t),
                     ],
                   ),
@@ -11172,22 +11969,19 @@ class _BranchCardState extends State<_BranchCard> {
           : Padding(
               padding: const EdgeInsets.only(top: 6, left: 20),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
                   color: t.stateConflicted.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(
-                      context.surfaceShader.geometry.badgeRadius),
+                    context.surfaceShader.geometry.badgeRadius,
+                  ),
                   border: Border.all(
                     color: t.stateConflicted.withValues(alpha: 0.25),
                   ),
                 ),
                 child: Text(
                   _inlineError!,
-                  style: TextStyle(
-                    color: t.stateConflicted,
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(color: t.stateConflicted, fontSize: 11),
                 ),
               ),
             ),
@@ -11264,8 +12058,10 @@ class _ChurnSparkPainter extends CustomPainter {
     if (maxC == 0) return;
     final paint = Paint()..color = color;
     const gap = 1.0;
-    final bw = ((size.width - gap * (_buckets - 1)) / _buckets)
-        .clamp(0.5, size.width);
+    final bw = ((size.width - gap * (_buckets - 1)) / _buckets).clamp(
+      0.5,
+      size.width,
+    );
     for (var i = 0; i < _buckets; i++) {
       if (counts[i] == 0) continue;
       // Floor a hair of height so a single-commit bucket still reads.
@@ -11410,8 +12206,10 @@ class _BranchCreatorState extends State<_BranchCreator> {
               child: AnimatedContainer(
                 duration: context.motion(shader.duration),
                 curve: shader.safeCurve,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   // Barely-there surface wash at rest so the row-shape
                   // exists as material, not just an outline.
@@ -11420,16 +12218,21 @@ class _BranchCreatorState extends State<_BranchCreator> {
                       : t.surface1.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(shader.geometry.radius),
                 ),
-                child: Row(children: [
-                  AppIcon(name: 'git-branch', size: 12, color: color),
-                  const SizedBox(width: 8),
-                  Text('+',
+                child: Row(
+                  children: [
+                    AppIcon(name: 'git-branch', size: 12, color: color),
+                    const SizedBox(width: 8),
+                    Text(
+                      '+',
                       style: TextStyle(
-                          color: color,
-                          fontSize: 13,
-                          height: 1.0,
-                          fontWeight: FontWeight.w600)),
-                ]),
+                        color: color,
+                        fontSize: 13,
+                        height: 1.0,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -11446,8 +12249,7 @@ class _BranchCreatorState extends State<_BranchCreator> {
     return KeyboardListener(
       focusNode: widget.escapeFocus,
       onKeyEvent: (e) {
-        if (e is KeyDownEvent &&
-            e.logicalKey == LogicalKeyboardKey.escape) {
+        if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.escape) {
           widget.onToggle();
         }
       },
@@ -11464,44 +12266,50 @@ class _BranchCreatorState extends State<_BranchCreator> {
             color: t.accentBright.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
             border: Border.all(
-                color: hasError ? t.stateConflicted : t.itemActiveBorder),
+              color: hasError ? t.stateConflicted : t.itemActiveBorder,
+            ),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            AppIcon(name: 'git-branch', size: 11, color: accent),
-            const SizedBox(width: 6),
-            Flexible(
-              child: TextField(
-                controller: widget.controller,
-                focusNode: _fieldFocus,
-                autofocus: true,
-                enabled: widget.enabled,
-                cursorColor: accent,
-                cursorHeight: 13,
-                cursorWidth: 1.5,
-                style: TextStyle(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(name: 'git-branch', size: 11, color: accent),
+              const SizedBox(width: 6),
+              Flexible(
+                child: TextField(
+                  controller: widget.controller,
+                  focusNode: _fieldFocus,
+                  autofocus: true,
+                  enabled: widget.enabled,
+                  cursorColor: accent,
+                  cursorHeight: 13,
+                  cursorWidth: 1.5,
+                  style: TextStyle(
                     color: accent,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                     fontFamily: AppFonts.mono,
-                    fontFamilyFallback: AppFonts.monoFallback),
-                decoration: InputDecoration(
-                  isDense: true,
-                  isCollapsed: true,
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  hintText: widget.hintText,
-                  hintStyle: TextStyle(
+                    fontFamilyFallback: AppFonts.monoFallback,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    isCollapsed: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                    hintText: widget.hintText,
+                    hintStyle: TextStyle(
                       color: t.textFaint,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                       fontFamily: AppFonts.mono,
-                      fontFamilyFallback: AppFonts.monoFallback),
+                      fontFamilyFallback: AppFonts.monoFallback,
+                    ),
+                  ),
+                  onChanged: widget.onChanged,
+                  onSubmitted: (_) => _submit(),
                 ),
-                onChanged: widget.onChanged,
-                onSubmitted: (_) => _submit(),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
       ),
     );
@@ -11574,18 +12382,21 @@ class _ForceDeletePill extends StatelessWidget {
             borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
             border: Border.all(color: t.stateDeleted.withValues(alpha: 0.55)),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            AppIcon(name: 'trash', size: 11, color: t.stateDeleted),
-            const SizedBox(width: 5),
-            Text(
-              context.t.branches.forceDelete,
-              style: TextStyle(
-                color: t.stateDeleted,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(name: 'trash', size: 11, color: t.stateDeleted),
+              const SizedBox(width: 5),
+              Text(
+                context.t.branches.forceDelete,
+                style: TextStyle(
+                  color: t.stateDeleted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          ]),
+            ],
+          ),
         ),
       ),
     );
@@ -11599,13 +12410,14 @@ class _TagCard extends StatelessWidget {
   final bool actionRunning;
   final ValueChanged<bool> onHoverChange;
   final VoidCallback onDelete;
-  const _TagCard(
-      {required this.tag,
-      required this.tokens,
-      required this.hovered,
-      required this.actionRunning,
-      required this.onHoverChange,
-      required this.onDelete});
+  const _TagCard({
+    required this.tag,
+    required this.tokens,
+    required this.hovered,
+    required this.actionRunning,
+    required this.onHoverChange,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -11620,59 +12432,72 @@ class _TagCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
         decoration: BoxDecoration(
           color: t.surface1,
-          borderRadius:
-              BorderRadius.circular(context.surfaceShader.geometry.radius),
+          borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.radius,
+          ),
           border: Border.all(color: t.chromeBorder.withValues(alpha: 0.08)),
         ),
-        child: Row(children: [
-          AppIcon(name: 'tag', size: 12, color: t.textMuted),
-          const SizedBox(width: 8),
-          // Name eats the slack so the short-hash + annotated marker
-          // right-anchor into one aligned column across every tag row.
-          Expanded(
-            child: Text(
-              tag.name,
-              style: TextStyle(color: t.textNormal, fontSize: 12.5),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (tag.targetHash != null) ...[
+        child: Row(
+          children: [
+            AppIcon(name: 'tag', size: 12, color: t.textMuted),
             const SizedBox(width: 8),
-            Text(
-              tag.targetHash!,
-              style: TextStyle(
+            // Name eats the slack so the short-hash + annotated marker
+            // right-anchor into one aligned column across every tag row.
+            Expanded(
+              child: Text(
+                tag.name,
+                style: TextStyle(color: t.textNormal, fontSize: 12.5),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (tag.targetHash != null) ...[
+              const SizedBox(width: 8),
+              Text(
+                tag.targetHash!,
+                style: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.7),
                   fontSize: 10,
-                  fontFamily: AppFonts.mono),
-            ),
-          ],
-          if (tag.tagType == 'annotated') ...[
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                color: t.accentBright.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(3),
+                  fontFamily: AppFonts.mono,
+                ),
               ),
-              child: Text(context.t.branches.annotated,
+            ],
+            if (tag.tagType == 'annotated') ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: t.accentBright.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  context.t.branches.annotated,
                   style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600)),
-            ),
-          ],
-          if (hovered)
-            GestureDetector(
-              onTap: actionRunning ? null : onDelete,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: Text('✕',
-                    style: TextStyle(
-                        color: t.textMuted.withValues(alpha: 0.6),
-                        fontSize: 10)),
+                    color: t.accentBright,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ),
-        ]),
+            ],
+            if (hovered)
+              GestureDetector(
+                onTap: actionRunning ? null : onDelete,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    '✕',
+                    style: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.6),
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -11711,12 +12536,14 @@ class _ChromeButtonState extends State<_ChromeButton> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: widget.enabled ? widget.onPressed : null,
-        onTapDown:
-            widget.enabled ? (_) => setState(() => _pressed = true) : null,
+        onTapDown: widget.enabled
+            ? (_) => setState(() => _pressed = true)
+            : null,
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: Opacity(
@@ -11734,7 +12561,8 @@ class _ChromeButtonState extends State<_ChromeButton> {
                 color: chrome.background,
                 gradient: chrome.gradient,
                 borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.pillRadius),
+                  context.surfaceShader.geometry.pillRadius,
+                ),
                 border: Border.all(color: chrome.borderColor),
                 boxShadow: chrome.shadows,
               ),
@@ -11782,8 +12610,9 @@ class _BranchIconActionState extends State<_BranchIconAction> {
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: widget.enabled ? widget.onTap : null,
         child: AnimatedContainer(
@@ -11795,7 +12624,8 @@ class _BranchIconActionState extends State<_BranchIconAction> {
                 ? t.stateConflicted.withValues(alpha: 0.08)
                 : t.stateConflicted.withValues(alpha: 0),
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
+              context.surfaceShader.geometry.badgeRadius,
+            ),
             border: Border.all(
               color: _hovered
                   ? t.stateConflicted.withValues(alpha: 0.16)
@@ -11909,8 +12739,9 @@ Future<void> showPatchPreviewDialog(
       prFiles: prFiles,
       filesByPath: parsed,
       dryRunOk: check.ok,
-      dryRunError:
-          check.ok ? null : (check.error ?? context.t.branches.applyCheckFailed),
+      dryRunError: check.ok
+          ? null
+          : (check.error ?? context.t.branches.applyCheckFailed),
       conflictingPaths: const {},
       fightTitles: const {},
       fightShared: const {},
@@ -11921,31 +12752,32 @@ Future<void> showPatchPreviewDialog(
       stageMode: stageMode,
       expectedPaths: expectedPaths,
       onRefine: onRefine,
-      onApply: ({
-        required String rawPatch,
-        required bool threeWay,
-        required bool reverse,
-      }) async {
-        final r = await applyPatch(
-          repoPath,
-          rawPatch,
-          cached: stageMode,
-          threeWay: threeWay,
-          reverse: reverse,
-          telemetryLabel: stageMode
-              ? 'git.shape_apply'
-              : reverse
+      onApply:
+          ({
+            required String rawPatch,
+            required bool threeWay,
+            required bool reverse,
+          }) async {
+            final r = await applyPatch(
+              repoPath,
+              rawPatch,
+              cached: stageMode,
+              threeWay: threeWay,
+              reverse: reverse,
+              telemetryLabel: stageMode
+                  ? 'git.shape_apply'
+                  : reverse
                   ? 'git.patch_apply_reverse'
                   : threeWay
-                      ? 'git.patch_apply_3way'
-                      : 'git.patch_apply',
-        );
-        if (r.ok && ctx.mounted) {
-          await ctx.read<RepositoryState>().refreshStatus();
-          onApplied?.call();
-        }
-        return r;
-      },
+                  ? 'git.patch_apply_3way'
+                  : 'git.patch_apply',
+            );
+            if (r.ok && ctx.mounted) {
+              await ctx.read<RepositoryState>().refreshStatus();
+              onApplied?.call();
+            }
+            return r;
+          },
     ),
   );
   auroraSource.dispose();
@@ -11976,13 +12808,15 @@ class _PatchSourceMenu extends StatelessWidget {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-                  child: Text(context.t.branches.openPatchFrom,
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
-                      )),
+                  child: Text(
+                    context.t.branches.openPatchFrom,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
                 ),
                 _PatchSourceRow(
                   label: context.t.branches.patchFromFile,
@@ -12041,20 +12875,24 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
           ),
           child: Row(
             children: [
-              Text(widget.label,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w600,
-                  )),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 12,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(width: 14),
-              Text(widget.hint,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
-                  )),
+              Text(
+                widget.hint,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
             ],
           ),
         ),
@@ -12092,7 +12930,8 @@ class _PatchPreviewDialog extends StatefulWidget {
     required String rawPatch,
     required bool threeWay,
     required bool reverse,
-  }) onApply;
+  })
+  onApply;
 
   const _PatchPreviewDialog({
     required this.repoPath,
@@ -12215,8 +13054,10 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     if (!_reverseArmed) {
       final oursByPath = <String, String>{};
       for (final path in _filesByPath.keys) {
-        final abs =
-            '${widget.repoPath}/$path'.replaceAll('/', Platform.pathSeparator);
+        final abs = '${widget.repoPath}/$path'.replaceAll(
+          '/',
+          Platform.pathSeparator,
+        );
         final f = File(abs);
         if (await f.exists()) oursByPath[path] = await f.readAsString();
       }
@@ -12355,7 +13196,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       }
       if (line.startsWith(errorPrefix) && line.endsWith(notAppliedSuffix)) {
         final path = line.substring(
-            errorPrefix.length, line.length - notAppliedSuffix.length);
+          errorPrefix.length,
+          line.length - notAppliedSuffix.length,
+        );
         if (path.isNotEmpty) {
           out.putIfAbsent(path, () => <int>{});
         }
@@ -12383,7 +13226,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         '... omitted lines ${headEnd + 1}-${math.max(headEnd + 1, tailStart)} ...',
         '@@ target excerpt lines ${tailStart + 1}-${lines.length} @@',
         _formatTargetExcerptLines(
-            lines, tailStart, lines.length, const <int>{}),
+          lines,
+          tailStart,
+          lines.length,
+          const <int>{},
+        ),
       ].join('\n').trim();
     }
 
@@ -12415,7 +13262,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       }
       buf.writeln('@@ target excerpt lines ${range.start + 1}-${range.end} @@');
       buf.writeln(
-          _formatTargetExcerptLines(lines, range.start, range.end, lineHints));
+        _formatTargetExcerptLines(lines, range.start, range.end, lineHints),
+      );
       cursor = range.end;
     }
     if (cursor < lines.length) {
@@ -12473,31 +13321,43 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   ) {
     final buf = StringBuffer();
     buf.writeln(
-        'A unified diff failed to apply against a git repository with `git apply --check`.');
+      'A unified diff failed to apply against a git repository with `git apply --check`.',
+    );
     buf.writeln(
-        'Only some file blocks failed. Rewrite ONLY those failing file blocks so they apply cleanly against the current target state.');
+      'Only some file blocks failed. Rewrite ONLY those failing file blocks so they apply cleanly against the current target state.',
+    );
     buf.writeln();
     buf.writeln('Rules:');
     buf.writeln(
-        '  1. Output ONLY replacement unified diff file sections for the failing paths listed below.');
+      '  1. Output ONLY replacement unified diff file sections for the failing paths listed below.',
+    );
     buf.writeln(
-        '  2. Keep the same file-block order as listed below. Do not emit any non-failing files.');
+      '  2. Keep the same file-block order as listed below. Do not emit any non-failing files.',
+    );
     buf.writeln(
-        '  3. For failing hunks, integrate the change in a situationally cohesive way that');
+      '  3. For failing hunks, integrate the change in a situationally cohesive way that',
+    );
     buf.writeln(
-        '     aligns with the contextual surroundings already present on the target.');
+      '     aligns with the contextual surroundings already present on the target.',
+    );
     buf.writeln(
-        '  4. Preserve each block\'s original intent. New files stay new. Deleted files stay deleted.');
+      '  4. Preserve each block\'s original intent. New files stay new. Deleted files stay deleted.',
+    );
     buf.writeln(
-        '  5. The caller will splice your rewritten blocks back into the original patch and keep every non-failing block verbatim.');
+      '  5. The caller will splice your rewritten blocks back into the original patch and keep every non-failing block verbatim.',
+    );
     buf.writeln(
-        '  6. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+      '  6. Output format: raw unified diff only. No code fences, no prose, no commentary.',
+    );
     buf.writeln(
-        '  7. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.');
+      '  7. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.',
+    );
     buf.writeln(
-        '     Use it to stay aligned with the failing block intent, not to expand the rewrite outside the listed failing files.');
+      '     Use it to stay aligned with the failing block intent, not to expand the rewrite outside the listed failing files.',
+    );
     buf.writeln(
-        '  8. In target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.');
+      '  8. In target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.',
+    );
     buf.writeln();
     buf.writeln('`git apply --check` stderr:');
     buf.writeln('--- begin stderr ---');
@@ -12527,7 +13387,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       buf.writeln();
     }
     buf.writeln(
-        'Output the replacement unified diff file sections for those failing paths now.');
+      'Output the replacement unified diff file sections for those failing paths now.',
+    );
     return buf.toString();
   }
 
@@ -12539,29 +13400,40 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   ) {
     final buf = StringBuffer();
     buf.writeln(
-        'A unified diff failed to apply against a git repository with `git apply --check`.');
+      'A unified diff failed to apply against a git repository with `git apply --check`.',
+    );
     buf.writeln(
-        'Rewrite the patch so it applies cleanly against the current target state.');
+      'Rewrite the patch so it applies cleanly against the current target state.',
+    );
     buf.writeln();
     buf.writeln('Rules:');
     buf.writeln(
-        '  1. Output ONE unified diff that preserves the original intent of every hunk.');
+      '  1. Output ONE unified diff that preserves the original intent of every hunk.',
+    );
     buf.writeln(
-        '  2. For failing hunks, integrate the change in a situationally cohesive way that');
+      '  2. For failing hunks, integrate the change in a situationally cohesive way that',
+    );
     buf.writeln(
-        '     aligns with the contextual surroundings already present on the target.');
+      '     aligns with the contextual surroundings already present on the target.',
+    );
     buf.writeln(
-        '  3. Keep non-failing hunks verbatim (file paths, line numbers, context all unchanged).');
+      '  3. Keep non-failing hunks verbatim (file paths, line numbers, context all unchanged).',
+    );
     buf.writeln(
-        '  4. New files stay new. Deleted files stay deleted. No reordering of file blocks.');
+      '  4. New files stay new. Deleted files stay deleted. No reordering of file blocks.',
+    );
     buf.writeln(
-        '  5. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+      '  5. Output format: raw unified diff only. No code fences, no prose, no commentary.',
+    );
     buf.writeln(
-        '  6. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.');
+      '  6. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.',
+    );
     buf.writeln(
-        '     It sharpens the rewrite target but does not authorize broader file changes.');
+      '     It sharpens the rewrite target but does not authorize broader file changes.',
+    );
     buf.writeln(
-        '  7. In any target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.');
+      '  7. In any target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.',
+    );
     buf.writeln();
     buf.writeln('Original patch:');
     buf.writeln('--- begin patch ---');
@@ -12589,7 +13461,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       buf.writeln();
     }
     buf.writeln(
-        'Output the rewritten unified diff that applies cleanly over the target.');
+      'Output the rewritten unified diff that applies cleanly over the target.',
+    );
     return buf.toString();
   }
 
@@ -12606,9 +13479,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     };
     if (uniquePaths.isEmpty) return const {};
     final evidence = engine.gatherEvidence(
-      focusWeights: <String, double>{
-        for (final path in uniquePaths) path: 1.0,
-      },
+      focusWeights: <String, double>{for (final path in uniquePaths) path: 1.0},
       detailBudget: 24,
       includeSummaryDiagnostics: false,
     );
@@ -12626,13 +13497,15 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       }
       if (signal.witnessResidual > 0.05) {
         parts.add(
-            'missing-witness=${signal.witnessResidual.toStringAsFixed(2)}');
+          'missing-witness=${signal.witnessResidual.toStringAsFixed(2)}',
+        );
       }
       if (signal.dominantAxis != null && signal.dominantAxis!.isNotEmpty) {
         parts.add('axis=${signal.dominantAxis}');
       }
-      final lineSummary =
-          _summarizeHintLines(lineHintsByPath[path] ?? const {});
+      final lineSummary = _summarizeHintLines(
+        lineHintsByPath[path] ?? const {},
+      );
       if (lineSummary.isNotEmpty) {
         parts.add('focus-lines=$lineSummary');
       }
@@ -12700,8 +13573,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     final aiSettings = context.read<AiSettingsState>();
     final modelValue = aiSettings.modelSelections[categoryId] ?? '';
     if (modelValue.isEmpty) {
-      setState(() => _resolveError = context.t.branches.noModelConfiguredFor(
-          label: aiSettings.labelForCategory(categoryId, categoryId)));
+      setState(
+        () => _resolveError = context.t.branches.noModelConfiguredFor(
+          label: aiSettings.labelForCategory(categoryId, categoryId),
+        ),
+      );
       return;
     }
 
@@ -12709,13 +13585,15 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     final failingHintsByPath = _failingLineHintsFromStderr(err);
     final failingPaths = failingHintsByPath.keys.toSet();
     final originalBlocks = sliceDiffByFile(_rawPatch);
-    final canFocusOnFailingBlocks = failingPaths.isNotEmpty &&
+    final canFocusOnFailingBlocks =
+        failingPaths.isNotEmpty &&
         originalBlocks.isNotEmpty &&
         failingPaths.every(originalBlocks.containsKey);
     // If we couldn't parse anything, include every path the patch
     // touches — better to send too much context than none.
-    final pathsToInclude =
-        failingPaths.isEmpty ? _filesByPath.keys.toSet() : failingPaths;
+    final pathsToInclude = failingPaths.isEmpty
+        ? _filesByPath.keys.toSet()
+        : failingPaths;
     final logosHintsByPath = _logosHintsForPatchResolution(
       widget.repoPath,
       pathsToInclude,
@@ -12786,26 +13664,25 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
 
       if (canFocusOnFailingBlocks && skippedSensitivePaths.isNotEmpty) {
         if (!mounted) return;
-        setState(() => _resolveError =
-            'blocked — failing patch touches sensitive file(s): ${skippedSensitivePaths.join(', ')}');
+        setState(
+          () => _resolveError =
+              'blocked — failing patch touches sensitive file(s): ${skippedSensitivePaths.join(', ')}',
+        );
         return;
       }
 
       final prompt = canFocusOnFailingBlocks
-          ? _buildFocusedPatchResolutionPrompt(
-              err,
-              [
-                for (final path in originalBlocks.keys)
-                  if (failingPaths.contains(path))
-                    (
-                      path: path,
-                      patchBlock: originalBlocks[path]!,
-                      targetContent: snapshotByPath[path] ??
-                          '<<target file missing or unreadable>>',
-                    ),
-              ],
-              logosHintsByPath,
-            )
+          ? _buildFocusedPatchResolutionPrompt(err, [
+              for (final path in originalBlocks.keys)
+                if (failingPaths.contains(path))
+                  (
+                    path: path,
+                    patchBlock: originalBlocks[path]!,
+                    targetContent:
+                        snapshotByPath[path] ??
+                        '<<target file missing or unreadable>>',
+                  ),
+            ], logosHintsByPath)
           : _buildPatchResolutionPrompt(
               _rawPatch,
               err,
@@ -12815,8 +13692,10 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       final secretHit = detectLikelySecretInPrompt(prompt);
       if (secretHit != null) {
         if (!mounted) return;
-        setState(() => _resolveError =
-            'blocked — a failing file looks like it contains a $secretHit');
+        setState(
+          () => _resolveError =
+              'blocked — a failing file looks like it contains a $secretHit',
+        );
         return;
       }
 
@@ -12828,7 +13707,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       );
       if (!mounted) return;
       if (!r.ok) {
-        setState(() => _resolveError = r.error ?? context.t.branches.resolutionFailed);
+        setState(
+          () => _resolveError = r.error ?? context.t.branches.resolutionFailed,
+        );
         return;
       }
 
@@ -12836,8 +13717,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
           ? _spliceResolvedPatchBlocks(
                   originalPatch: _rawPatch,
                   failingPaths: failingPaths,
-                  rewrittenPatch: r.data!.patch) ??
-              ''
+                  rewrittenPatch: r.data!.patch,
+                ) ??
+                ''
           : r.data!.patch;
       if (newPatch.isEmpty) {
         setState(() => _resolveError = context.t.branches.patchBlocksNoCover);
@@ -12855,8 +13737,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       }
       if (parsed.isEmpty) {
         if (!mounted) return;
-        setState(() =>
-            _resolveError = context.t.branches.emptyOrUnparseablePatch);
+        setState(
+          () => _resolveError = context.t.branches.emptyOrUnparseablePatch,
+        );
         return;
       }
       final newPrFiles = <PrFile>[];
@@ -12869,8 +13752,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
             dels++;
           }
         }
-        newPrFiles
-            .add(PrFile(path: entry.key, additions: adds, deletions: dels));
+        newPrFiles.add(
+          PrFile(path: entry.key, additions: adds, deletions: dels),
+        );
       }
 
       final check = await applyPatch(
@@ -12932,30 +13816,31 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(context.t.branches.patchPreviewHeading,
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          letterSpacing: 1.4,
-                          fontFamily: AppFonts.mono,
-                          fontWeight: FontWeight.w700,
-                        )),
+                    Text(
+                      context.t.branches.patchPreviewHeading,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 10,
+                        letterSpacing: 1.4,
+                        fontFamily: AppFonts.mono,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(width: 10),
                     Flexible(
-                      child: Text(widget.sourceLabel,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.textNormal,
-                            fontSize: 13,
-                            fontFamily: AppFonts.mono,
-                            fontWeight: FontWeight.w600,
-                          )),
+                      child: Text(
+                        widget.sourceLabel,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.textNormal,
+                          fontSize: 13,
+                          fontFamily: AppFonts.mono,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                     const Spacer(),
-                    _ApplyBadge(
-                      ok: _dryRunOk,
-                      error: _dryRunError,
-                    ),
+                    _ApplyBadge(ok: _dryRunOk, error: _dryRunError),
                     const SizedBox(width: 6),
                     MouseRegion(
                       cursor: SystemMouseCursors.click,
@@ -12964,14 +13849,16 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                         onTap: () => Navigator.of(context).pop(),
                         child: Padding(
                           padding: const EdgeInsets.all(8),
-                          child: Text('×',
-                              style: TextStyle(
-                                color: t.textMuted,
-                                fontSize: 18,
-                                fontFamily: AppFonts.mono,
-                                fontWeight: FontWeight.w700,
-                                height: 1.0,
-                              )),
+                          child: Text(
+                            '×',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 18,
+                              fontFamily: AppFonts.mono,
+                              fontWeight: FontWeight.w700,
+                              height: 1.0,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -12979,7 +13866,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                 ),
               ),
               Container(
-                  height: 1, color: t.chromeBorder.withValues(alpha: 0.18)),
+                height: 1,
+                color: t.chromeBorder.withValues(alpha: 0.18),
+              ),
 
               // Body
               Expanded(
@@ -12995,20 +13884,24 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // resolutions: a green "applies cleanly" badge on
                       // a patch that silently omitted 2 of 12 files.
                       if (widget.expectedPaths.isNotEmpty)
-                        Builder(builder: (ctx) {
-                          final got = _filesByPath.keys.toSet();
-                          final missing = widget.expectedPaths.difference(got);
-                          if (missing.isEmpty) {
-                            return const SizedBox.shrink();
-                          }
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _DroppedPathsBanner(
-                              missing: missing.toList()..sort(),
-                              total: widget.expectedPaths.length,
-                            ),
-                          );
-                        }),
+                        Builder(
+                          builder: (ctx) {
+                            final got = _filesByPath.keys.toSet();
+                            final missing = widget.expectedPaths.difference(
+                              got,
+                            );
+                            if (missing.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _DroppedPathsBanner(
+                                missing: missing.toList()..sort(),
+                                total: widget.expectedPaths.length,
+                              ),
+                            );
+                          },
+                        ),
                       // AI RESOLVE DROP — same trust-failure guard as
                       // the expectedPaths banner, scoped to the
                       // patch-resolve flow. Compares against the
@@ -13017,24 +13910,27 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // resolves can't progressively hide files
                       // dropped by earlier attempts.
                       if (_hasResolved)
-                        Builder(builder: (ctx) {
-                          final got = _filesByPath.keys.toSet();
-                          final missing = _originalPatchPaths.difference(got);
-                          if (missing.isEmpty) {
-                            return const SizedBox.shrink();
-                          }
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _DroppedPathsBanner(
-                              missing: missing.toList()..sort(),
-                              total: _originalPatchPaths.length,
-                            ),
-                          );
-                        }),
+                        Builder(
+                          builder: (ctx) {
+                            final got = _filesByPath.keys.toSet();
+                            final missing = _originalPatchPaths.difference(got);
+                            if (missing.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: _DroppedPathsBanner(
+                                missing: missing.toList()..sort(),
+                                total: _originalPatchPaths.length,
+                              ),
+                            );
+                          },
+                        ),
                       // CONFLICTS-WITH-YOU — highest-stakes local signal.
                       if (widget.conflictingPaths.isNotEmpty) ...[
                         _ConflictsWithYouSection(
-                            paths: widget.conflictingPaths.toList()..sort()),
+                          paths: widget.conflictingPaths.toList()..sort(),
+                        ),
                         const SizedBox(height: 10),
                       ],
                       // WILL FIGHT — patch vs open PRs.
@@ -13069,7 +13965,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                         couplingMatrix: widget.couplingMatrix,
                         wrapped: widget.filePillsWrap,
                         onSelect: (p) => setState(
-                            () => _expanded = _expanded == p ? null : p),
+                          () => _expanded = _expanded == p ? null : p,
+                        ),
                       ),
                       const SizedBox(height: 10),
                       // Per-file diff blocks — expand via pill click or
@@ -13080,8 +13977,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                           path: path,
                           lines: _filesByPath[path]!,
                           expanded: _expanded == path,
-                          onToggle: () => setState(() =>
-                              _expanded = _expanded == path ? null : path),
+                          onToggle: () => setState(
+                            () => _expanded = _expanded == path ? null : path,
+                          ),
                           counts: _countsFor(_filesByPath[path]!),
                         ),
                     ],
@@ -13091,7 +13989,9 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
 
               // Footer
               Container(
-                  height: 1, color: t.chromeBorder.withValues(alpha: 0.18)),
+                height: 1,
+                color: t.chromeBorder.withValues(alpha: 0.18),
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 14, 12),
                 child: Row(
@@ -13111,34 +14011,39 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                     const SizedBox(width: 14),
                     if (_applied)
                       Text(
-                          widget.stageMode
-                              ? context.t.branches.stagedDone
-                              : context.t.branches.appliedDone,
-                          style: TextStyle(
-                            color: t.stateAdded,
-                            fontSize: 11,
-                            fontFamily: AppFonts.mono,
-                            fontWeight: FontWeight.w600,
-                          ))
+                        widget.stageMode
+                            ? context.t.branches.stagedDone
+                            : context.t.branches.appliedDone,
+                        style: TextStyle(
+                          color: t.stateAdded,
+                          fontSize: 11,
+                          fontFamily: AppFonts.mono,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
                     else if (_applyError != null)
                       Flexible(
-                        child: Text(_applyError!,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: t.stateConflicted,
-                              fontSize: 11,
-                              fontFamily: AppFonts.mono,
-                            )),
+                        child: Text(
+                          _applyError!,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.stateConflicted,
+                            fontSize: 11,
+                            fontFamily: AppFonts.mono,
+                          ),
+                        ),
                       )
                     else if (_resolveError != null)
                       Flexible(
-                        child: Text(_resolveError!,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: t.stateConflicted,
-                              fontSize: 11,
-                              fontFamily: AppFonts.mono,
-                            )),
+                        child: Text(
+                          _resolveError!,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.stateConflicted,
+                            fontSize: 11,
+                            fontFamily: AppFonts.mono,
+                          ),
+                        ),
                       ),
                     const Spacer(),
                     if (!_applied) ...[
@@ -13149,9 +14054,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // when the user opted out. Users can still fall
                       // back to reverse / 3-way / manual.
                       if (!_dryRunOk &&
-                          !context
-                              .read<PreferencesState>()
-                              .hideAiFeatures) ...[
+                          !context.read<PreferencesState>().hideAiFeatures) ...[
                         _PatchResolveSplitButton(
                           busy: _resolving,
                           onAction: _resolveWithAi,
@@ -13180,24 +14083,24 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                           tone: _dryRunOk
                               ? _ActionTone.neutral
                               : _ActionTone.primary,
-                          onTap:
-                              _applying ? () {} : () => _openMergeEditor(),
+                          onTap: _applying ? () {} : () => _openMergeEditor(),
                         ),
                         const SizedBox(width: 8),
                       ],
                       _ActionButton(
                         label: _applying
                             ? (widget.stageMode
-                                ? context.t.branches.staging
-                                : context.t.branches.applying)
+                                  ? context.t.branches.staging
+                                  : context.t.branches.applying)
                             : (widget.stageMode
-                                ? context.t.branches.stage
-                                : context.t.branches.apply),
+                                  ? context.t.branches.stage
+                                  : context.t.branches.apply),
                         tone: _dryRunOk
                             ? _ActionTone.primary
                             : _ActionTone.neutral,
-                        onTap:
-                            _applying ? () {} : () => _doApply(threeWay: false),
+                        onTap: _applying
+                            ? () {}
+                            : () => _doApply(threeWay: false),
                       ),
                     ] else
                       _ActionButton(
@@ -13267,13 +14170,15 @@ class _RefineBarState extends State<_RefineBar> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text('↳',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 13,
-                fontFamily: AppFonts.mono,
-                fontWeight: FontWeight.w600,
-              )),
+          Text(
+            '↳',
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 13,
+              fontFamily: AppFonts.mono,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -13344,8 +14249,8 @@ class _ReverseToggleState extends State<_ReverseToggle> {
               color: widget.armed
                   ? t.stateConflicted.withValues(alpha: 0.12)
                   : (_hover
-                      ? t.chromeBorder.withValues(alpha: 0.15)
-                      : t.chromeBorder.withValues(alpha: 0)),
+                        ? t.chromeBorder.withValues(alpha: 0.15)
+                        : t.chromeBorder.withValues(alpha: 0)),
               borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
               border: Border.all(
                 color: widget.armed
@@ -13354,16 +14259,17 @@ class _ReverseToggleState extends State<_ReverseToggle> {
               ),
             ),
             child: Text(
-                widget.armed
-                    ? context.t.branches.reverseArmedLabel
-                    : context.t.branches.reverseLabel,
-                style: TextStyle(
-                  color: accent,
-                  fontSize: 10.5,
-                  fontFamily: AppFonts.mono,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.3,
-                )),
+              widget.armed
+                  ? context.t.branches.reverseArmedLabel
+                  : context.t.branches.reverseLabel,
+              style: TextStyle(
+                color: accent,
+                fontSize: 10.5,
+                fontFamily: AppFonts.mono,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
+            ),
           ),
         ),
       ),
@@ -13392,8 +14298,9 @@ class _DroppedPathsBanner extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: t.stateConflicted.withValues(alpha: 0.08),
-        borderRadius:
-            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.pillRadius,
+        ),
         border: Border(
           left: BorderSide(
             color: t.stateConflicted.withValues(alpha: 0.8),
@@ -13406,44 +14313,52 @@ class _DroppedPathsBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(context.t.branches.untouchedHeading,
-                  style: TextStyle(
-                    color: t.stateConflicted,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.4,
-                  )),
+              Text(
+                context.t.branches.untouchedHeading,
+                style: TextStyle(
+                  color: t.stateConflicted,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.4,
+                ),
+              ),
               const SizedBox(width: 8),
               Text(
-                  context.t.branches
-                      .untouchedFiles(count: missing.length, n: total),
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 11,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w600,
-                  )),
+                context.t.branches.untouchedFiles(
+                  count: missing.length,
+                  n: total,
+                ),
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 6),
           for (final p in missing)
             Padding(
               padding: const EdgeInsets.only(top: 2),
-              child: Text('· $p',
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 11,
-                    fontFamily: AppFonts.mono,
-                  )),
+              child: Text(
+                '· $p',
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
             ),
           const SizedBox(height: 6),
           Text(
-              context.t.branches.staysConflicted,
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 10,
-                fontStyle: FontStyle.italic,
-              )),
+            context.t.branches.staysConflicted,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
         ],
       ),
     );
@@ -13458,10 +14373,7 @@ class _DroppedPathsBanner extends StatelessWidget {
 class _PatchResolveSplitButton extends StatefulWidget {
   final bool busy;
   final ValueChanged<String> onAction;
-  const _PatchResolveSplitButton({
-    required this.busy,
-    required this.onAction,
-  });
+  const _PatchResolveSplitButton({required this.busy, required this.onAction});
   @override
   State<_PatchResolveSplitButton> createState() =>
       _PatchResolveSplitButtonState();
@@ -13496,61 +14408,68 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
         .where((e) => e.value.isNotEmpty && e.key != currentDefault)
         .toList();
     if (alt.isEmpty) return;
-    _entry = OverlayEntry(builder: (ctx) {
-      final box = context.findRenderObject()! as RenderBox;
-      final target = box.localToGlobal(Offset(box.size.width, box.size.height))
-          + const Offset(0, 6);
-      return Stack(children: [
-        Positioned.fill(
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (_) => _closeMenu(),
-          ),
-        ),
-        Positioned.fill(
-          child: CustomSingleChildLayout(
-            delegate: ViewportClampDelegate(
-              desired: target,
-              anchor: Alignment.topRight,
+    _entry = OverlayEntry(
+      builder: (ctx) {
+        final box = context.findRenderObject()! as RenderBox;
+        final target =
+            box.localToGlobal(Offset(box.size.width, box.size.height)) +
+            const Offset(0, 6);
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: (_) => _closeMenu(),
+              ),
             ),
-            child: MaterialSurface(
-              tone: AppMaterialTone.surface1,
-              radius: ctx.surfaceShader.geometry.cardRadius,
-              elevated: true,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: IntrinsicWidth(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                      child: Text(context.t.branches.orWith,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 9,
-                            letterSpacing: 1.4,
-                            fontFamily: AppFonts.mono,
-                            fontWeight: FontWeight.w800,
-                          )),
+            Positioned.fill(
+              child: CustomSingleChildLayout(
+                delegate: ViewportClampDelegate(
+                  desired: target,
+                  anchor: Alignment.topRight,
+                ),
+                child: MaterialSurface(
+                  tone: AppMaterialTone.surface1,
+                  radius: ctx.surfaceShader.geometry.cardRadius,
+                  elevated: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: IntrinsicWidth(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                          child: Text(
+                            context.t.branches.orWith,
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 9,
+                              letterSpacing: 1.4,
+                              fontFamily: AppFonts.mono,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        for (final e in alt)
+                          _PatchResolveMenuRow(
+                            label: ai.labelForCategory(e.key, e.key),
+                            modelDisplay: _modelDisplay(e.value),
+                            onTap: () {
+                              _closeMenu();
+                              widget.onAction(e.key);
+                            },
+                          ),
+                      ],
                     ),
-                    for (final e in alt)
-                      _PatchResolveMenuRow(
-                        label: ai.labelForCategory(e.key, e.key),
-                        modelDisplay: _modelDisplay(e.value),
-                        onTap: () {
-                          _closeMenu();
-                          widget.onAction(e.key);
-                        },
-                      ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ]);
-    });
+          ],
+        );
+      },
+    );
     overlay.insert(_entry!);
   }
 
@@ -13572,13 +14491,15 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
     final ai = context.watch<AiSettingsState>();
     final defaultCategory = _defaultCategoryId(ai);
     if (defaultCategory.isEmpty) {
-      return Text(context.t.branches.noAiModelConfigured,
-          style: TextStyle(
-            color: t.textMuted,
-            fontSize: 10.5,
-            fontFamily: AppFonts.mono,
-            fontStyle: FontStyle.italic,
-          ));
+      return Text(
+        context.t.branches.noAiModelConfigured,
+        style: TextStyle(
+          color: t.textMuted,
+          fontSize: 10.5,
+          fontFamily: AppFonts.mono,
+          fontStyle: FontStyle.italic,
+        ),
+      );
     }
     final label = ai.labelForCategory(defaultCategory, defaultCategory);
     final modelValue = ai.modelSelections[defaultCategory] ?? '';
@@ -13592,84 +14513,90 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
           onExit: (_) => setState(() => _hoverMain = false),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap:
-                widget.busy ? null : () => widget.onAction(defaultCategory),
+            onTap: widget.busy ? null : () => widget.onAction(defaultCategory),
             child: Tooltip(
               message: modelDisplay.isEmpty
                   ? context.t.branches.applyWithPatchFrom(label: label)
-                  : context.t.branches
-                      .applyWithPatchFromModel(label: label, model: modelDisplay),
-                child: AnimatedContainer(
-                  duration: context.motion(shader.duration),
-                  curve: shader.safeCurve,
-                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
-                  decoration: BoxDecoration(
-                    color: widget.busy
-                        ? t.accentBright.withValues(alpha: 0.08)
-                        : (_hoverMain
+                  : context.t.branches.applyWithPatchFromModel(
+                      label: label,
+                      model: modelDisplay,
+                    ),
+              child: AnimatedContainer(
+                duration: context.motion(shader.duration),
+                curve: shader.safeCurve,
+                padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                decoration: BoxDecoration(
+                  color: widget.busy
+                      ? t.accentBright.withValues(alpha: 0.08)
+                      : (_hoverMain
                             ? t.accentBright.withValues(alpha: 0.14)
                             : t.accentBright.withValues(alpha: 0.08)),
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(shader.geometry.badgeRadius),
-                      bottomLeft: Radius.circular(shader.geometry.badgeRadius),
-                    ),
-                    border: Border.all(
-                      color: t.accentBright.withValues(alpha: 0.45),
-                    ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(shader.geometry.badgeRadius),
+                    bottomLeft: Radius.circular(shader.geometry.badgeRadius),
                   ),
-                  child: Text(
-                    widget.busy
-                        ? context.t.branches.patching
-                        : context.t.branches.applyWithPatchFromGlyph(label: label),
-                    style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 11,
-                      fontFamily: AppFonts.mono,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
-                    ),
+                  border: Border.all(
+                    color: t.accentBright.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Text(
+                  widget.busy
+                      ? context.t.branches.patching
+                      : context.t.branches.applyWithPatchFromGlyph(
+                          label: label,
+                        ),
+                  style: TextStyle(
+                    color: t.accentBright,
+                    fontSize: 11,
+                    fontFamily: AppFonts.mono,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
                   ),
                 ),
               ),
             ),
           ),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            onEnter: (_) => setState(() => _hoverChev = true),
-            onExit: (_) => setState(() => _hoverChev = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.busy ? null : () => _openMenu(defaultCategory),
-              child: Tooltip(
-                message: context.t.branches.orWithAnotherModel,
-                child: AnimatedContainer(
-                  duration: context.motion(shader.duration),
-                  curve: shader.safeCurve,
-                  padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
-                  decoration: BoxDecoration(
-                    color: _hoverChev
-                        ? t.accentBright.withValues(alpha: 0.16)
-                        : t.accentBright.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.only(
-                      topRight: Radius.circular(shader.geometry.badgeRadius),
-                      bottomRight: Radius.circular(shader.geometry.badgeRadius),
-                    ),
-                    border: Border.all(
-                        color: t.accentBright.withValues(alpha: 0.45)),
+        ),
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hoverChev = true),
+          onExit: (_) => setState(() => _hoverChev = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.busy ? null : () => _openMenu(defaultCategory),
+            child: Tooltip(
+              message: context.t.branches.orWithAnotherModel,
+              child: AnimatedContainer(
+                duration: context.motion(shader.duration),
+                curve: shader.safeCurve,
+                padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
+                decoration: BoxDecoration(
+                  color: _hoverChev
+                      ? t.accentBright.withValues(alpha: 0.16)
+                      : t.accentBright.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.only(
+                    topRight: Radius.circular(shader.geometry.badgeRadius),
+                    bottomRight: Radius.circular(shader.geometry.badgeRadius),
                   ),
-                  child: Text('▾',
-                      style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 10,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w800,
-                      )),
+                  border: Border.all(
+                    color: t.accentBright.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Text(
+                  '▾',
+                  style: TextStyle(
+                    color: t.accentBright,
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
           ),
-        ],
-      );
+        ),
+      ],
+    );
   }
 }
 
@@ -13710,20 +14637,24 @@ class _PatchResolveMenuRowState extends State<_PatchResolveMenuRow> {
           ),
           child: Row(
             children: [
-              Text(widget.label,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontFamily: AppFonts.mono,
-                    fontWeight: FontWeight.w600,
-                  )),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 12,
+                  fontFamily: AppFonts.mono,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(width: 14),
-              Text(widget.modelDisplay,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontFamily: AppFonts.mono,
-                  )),
+              Text(
+                widget.modelDisplay,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
             ],
           ),
         ),
@@ -13749,8 +14680,9 @@ class _ApplyBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: c.withValues(alpha: 0.12),
-          borderRadius:
-              BorderRadius.circular(context.surfaceShader.geometry.tinyRadius),
+          borderRadius: BorderRadius.circular(
+            context.surfaceShader.geometry.tinyRadius,
+          ),
           border: Border.all(color: c.withValues(alpha: 0.45)),
         ),
         child: Row(
@@ -13762,14 +14694,18 @@ class _ApplyBadge extends StatelessWidget {
               decoration: BoxDecoration(color: c, shape: BoxShape.circle),
             ),
             const SizedBox(width: 6),
-            Text(ok ? context.t.branches.appliesClean : context.t.branches.willNotApply,
-                style: TextStyle(
-                  color: c,
-                  fontSize: 10,
-                  fontFamily: AppFonts.mono,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.4,
-                )),
+            Text(
+              ok
+                  ? context.t.branches.appliesClean
+                  : context.t.branches.willNotApply,
+              style: TextStyle(
+                color: c,
+                fontSize: 10,
+                fontFamily: AppFonts.mono,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+              ),
+            ),
           ],
         ),
       ),
@@ -13813,36 +14749,44 @@ class _PatchFileBlock extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
                 child: Row(
                   children: [
-                    Text(expanded ? '▾' : '▸',
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          fontFamily: AppFonts.mono,
-                        )),
+                    Text(
+                      expanded ? '▾' : '▸',
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 10,
+                        fontFamily: AppFonts.mono,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(path,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.textNormal,
-                            fontSize: 12,
-                            fontFamily: AppFonts.mono,
-                          )),
+                      child: Text(
+                        path,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.textNormal,
+                          fontSize: 12,
+                          fontFamily: AppFonts.mono,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 10),
-                    Text('+$adds',
-                        style: TextStyle(
-                          color: t.stateAdded,
-                          fontSize: 11,
-                          fontFamily: AppFonts.mono,
-                        )),
+                    Text(
+                      '+$adds',
+                      style: TextStyle(
+                        color: t.stateAdded,
+                        fontSize: 11,
+                        fontFamily: AppFonts.mono,
+                      ),
+                    ),
                     const SizedBox(width: 6),
-                    Text('−$dels',
-                        style: TextStyle(
-                          color: t.stateConflicted,
-                          fontSize: 11,
-                          fontFamily: AppFonts.mono,
-                        )),
+                    Text(
+                      '−$dels',
+                      style: TextStyle(
+                        color: t.stateConflicted,
+                        fontSize: 11,
+                        fontFamily: AppFonts.mono,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -13858,9 +14802,11 @@ class _PatchFileBlock extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: t.surface0,
                       border: Border.all(
-                          color: t.chromeBorder.withValues(alpha: 0.2)),
+                        color: t.chromeBorder.withValues(alpha: 0.2),
+                      ),
                       borderRadius: BorderRadius.circular(
-                          context.surfaceShader.geometry.tinyRadius),
+                        context.surfaceShader.geometry.tinyRadius,
+                      ),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Column(
@@ -13903,10 +14849,7 @@ class _PatchFileBlock extends StatelessWidget {
 class _IssuesEmptyState extends StatelessWidget {
   final String message;
   final VoidCallback onCreateLocal;
-  const _IssuesEmptyState({
-    required this.message,
-    required this.onCreateLocal,
-  });
+  const _IssuesEmptyState({required this.message, required this.onCreateLocal});
 
   @override
   Widget build(BuildContext context) {
@@ -13968,7 +14911,8 @@ class _NewLocalIssueActionState extends State<_NewLocalIssueAction> {
                 ? t.chromeAccent.withValues(alpha: 0.10)
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(
-                context.surfaceShader.geometry.badgeRadius),
+              context.surfaceShader.geometry.badgeRadius,
+            ),
             border: Border.all(
               color: t.chromeAccent.withValues(alpha: _hovered ? 0.45 : 0.25),
               width: 0.5,
@@ -14035,13 +14979,15 @@ class _DeskDragFeedback extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('⊞',
-                style: TextStyle(
-                  color: t.accentBright,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  height: 1,
-                )),
+            Text(
+              '⊞',
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                height: 1,
+              ),
+            ),
             const SizedBox(width: 6),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 240),
@@ -14142,26 +15088,27 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
     // relevance threshold. Only shown when there are real hits; empty
     // section is hidden so the picker doesn't look broken on repos
     // where issue bodies don't mention file paths.
-    final relevant = widget.candidates
-        .where((c) => !c.isLinked && c.relevance >= _relevanceThreshold)
-        .toList()
-      ..sort((a, b) => b.relevance.compareTo(a.relevance));
-    final relevantTop =
-        relevant.take(_relevantMaxShown).toList(growable: false);
+    final relevant =
+        widget.candidates
+            .where((c) => !c.isLinked && c.relevance >= _relevanceThreshold)
+            .toList()
+          ..sort((a, b) => b.relevance.compareTo(a.relevance));
+    final relevantTop = relevant
+        .take(_relevantMaxShown)
+        .toList(growable: false);
     final relevantIds = relevantTop.map((c) => c.id).toSet();
 
     // "All" section: everything else (filtered by text when active).
     final allFiltered =
         widget.candidates.where((c) => !relevantIds.contains(c.id)).where((c) {
-      if (lower.isEmpty) return true;
-      return c.title.toLowerCase().contains(lower) ||
-          '#${c.id}'.contains(lower);
-    }).toList()
-          ..sort((a, b) {
-            // Linked first, then most-recent IDs (approximates recency).
-            if (a.isLinked != b.isLinked) return a.isLinked ? -1 : 1;
-            return b.id.compareTo(a.id);
-          });
+          if (lower.isEmpty) return true;
+          return c.title.toLowerCase().contains(lower) ||
+              '#${c.id}'.contains(lower);
+        }).toList()..sort((a, b) {
+          // Linked first, then most-recent IDs (approximates recency).
+          if (a.isLinked != b.isLinked) return a.isLinked ? -1 : 1;
+          return b.id.compareTo(a.id);
+        });
 
     return Dialog(
       backgroundColor: t.surface2,
@@ -14194,7 +15141,9 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                 decoration: InputDecoration(
                   hintText: context.t.branches.filterHint,
                   hintStyle: TextStyle(
-                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
+                    color: t.textMuted.withValues(alpha: 0.6),
+                    fontSize: 12,
+                  ),
                   isDense: true,
                   border: OutlineInputBorder(
                     borderSide: BorderSide(color: t.chromeBorder),
@@ -14212,7 +15161,8 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                     ? Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          widget.emptyMessage ?? context.t.branches.nothingToLink,
+                          widget.emptyMessage ??
+                              context.t.branches.nothingToLink,
                           style: TextStyle(
                             color: t.textMuted,
                             fontSize: 11,
@@ -14221,55 +15171,57 @@ class _StickyLinkPickerState extends State<_StickyLinkPicker> {
                         ),
                       )
                     : (relevantTop.isEmpty && allFiltered.isEmpty)
-                        ? Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Text(
-                              context.t.branches.nothingMatchesDot,
-                              style:
-                                  TextStyle(color: t.textMuted, fontSize: 11),
+                    ? Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          context.t.branches.nothingMatchesDot,
+                          style: TextStyle(color: t.textMuted, fontSize: 11),
+                        ),
+                      )
+                    : ListView(
+                        shrinkWrap: true,
+                        children: [
+                          if (relevantTop.isNotEmpty) ...[
+                            _StickyLinkSectionLabel(
+                              label: context.t.branches.relevantHeading,
+                              tokens: t,
                             ),
-                          )
-                        : ListView(
-                            shrinkWrap: true,
-                            children: [
-                              if (relevantTop.isNotEmpty) ...[
-                                _StickyLinkSectionLabel(
-                                  label: context.t.branches.relevantHeading,
-                                  tokens: t,
-                                ),
-                                for (final c in relevantTop)
-                                  _LinkCandidateRow(
-                                    candidate: c,
-                                    isBusy: _busy.contains(c.id),
-                                    showRelevance: true,
-                                    onTap: () => _toggle(c),
-                                  ),
-                                const SizedBox(height: 6),
-                                _StickyLinkSectionLabel(
-                                  label: context.t.branches.allHeading,
-                                  tokens: t,
-                                ),
-                              ],
-                              for (final c in allFiltered)
-                                _LinkCandidateRow(
-                                  candidate: c,
-                                  isBusy: _busy.contains(c.id),
-                                  showRelevance: false,
-                                  onTap: () => _toggle(c),
-                                ),
-                            ],
-                          ),
+                            for (final c in relevantTop)
+                              _LinkCandidateRow(
+                                candidate: c,
+                                isBusy: _busy.contains(c.id),
+                                showRelevance: true,
+                                onTap: () => _toggle(c),
+                              ),
+                            const SizedBox(height: 6),
+                            _StickyLinkSectionLabel(
+                              label: context.t.branches.allHeading,
+                              tokens: t,
+                            ),
+                          ],
+                          for (final c in allFiltered)
+                            _LinkCandidateRow(
+                              candidate: c,
+                              isBusy: _busy.contains(c.id),
+                              showRelevance: false,
+                              onTap: () => _toggle(c),
+                            ),
+                        ],
+                      ),
               ),
               const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text(context.t.branches.doneLower,
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)),
+                  child: Text(
+                    context.t.branches.doneLower,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -14398,10 +15350,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                   c.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 11,
-                  ),
+                  style: TextStyle(color: t.textNormal, fontSize: 11),
                 ),
               ),
               if (widget.showRelevance) ...[
@@ -14471,7 +15420,9 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 decoration: InputDecoration(
                   hintText: context.t.branches.titleHint,
                   hintStyle: TextStyle(
-                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
+                    color: t.textMuted.withValues(alpha: 0.6),
+                    fontSize: 12,
+                  ),
                   isDense: true,
                   border: OutlineInputBorder(
                     borderSide: BorderSide(color: t.chromeBorder),
@@ -14488,7 +15439,9 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 decoration: InputDecoration(
                   hintText: context.t.branches.bodyHint,
                   hintStyle: TextStyle(
-                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 11),
+                    color: t.textMuted.withValues(alpha: 0.6),
+                    fontSize: 11,
+                  ),
                   isDense: true,
                   border: OutlineInputBorder(
                     borderSide: BorderSide(color: t.chromeBorder),
@@ -14502,17 +15455,22 @@ class _CreateLocalIssueDialog extends StatelessWidget {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(false),
-                    child: Text(context.t.branches.cancelLower,
-                        style: TextStyle(color: t.textMuted, fontSize: 11)),
+                    child: Text(
+                      context.t.branches.cancelLower,
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                    ),
                   ),
                   const SizedBox(width: 6),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(true),
-                    child: Text(context.t.branches.createLower,
-                        style: TextStyle(
-                            color: t.chromeAccent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800)),
+                    child: Text(
+                      context.t.branches.createLower,
+                      style: TextStyle(
+                        color: t.chromeAccent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                 ],
               ),

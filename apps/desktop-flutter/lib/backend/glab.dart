@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show compute;
-
-import 'gh.dart' show runForgeCli;
+import 'gh.dart' show runForgeCli, spoolForgeCliStdout, resolveDetailDiffSpool;
+import 'git.dart' as git;
 import 'git_result.dart';
 import 'remote_types.dart';
 import '../features/diff/diff_models.dart';
@@ -30,10 +29,18 @@ Future<GlabStatus> glabStatus() async {
   late ProcessResult a;
   try {
     final results = await Future.wait([
-      Process.run('glab', ['--version'],
-          stdoutEncoding: utf8, stderrEncoding: utf8),
-      Process.run('glab', ['auth', 'status'],
-          stdoutEncoding: utf8, stderrEncoding: utf8),
+      Process.run(
+        'glab',
+        ['--version'],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ),
+      Process.run(
+        'glab',
+        ['auth', 'status'],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      ),
     ]);
     v = results[0];
     a = results[1];
@@ -72,7 +79,6 @@ Future<String> glabWhoami() async {
     return '';
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // Merge Requests
@@ -121,12 +127,27 @@ Future<GitResult<int>> createGlabMr(
   List<String> assignees = const [],
   List<String> reviewers = const [],
 }) async {
-  final args = ['mr', 'create', '--title', title, '--description', body,
-      '--source-branch', headRef, '--target-branch', baseRef, '--yes'];
+  final args = [
+    'mr',
+    'create',
+    '--title',
+    title,
+    '--description',
+    body,
+    '--source-branch',
+    headRef,
+    '--target-branch',
+    baseRef,
+    '--yes',
+  ];
   if (draft) args.add('--draft');
   if (labels.isNotEmpty) args.addAll(['--label', labels.join(',')]);
-  for (final a in assignees) { args.addAll(['--assignee', a]); }
-  for (final r in reviewers) { args.addAll(['--reviewer', r]); }
+  for (final a in assignees) {
+    args.addAll(['--assignee', a]);
+  }
+  for (final r in reviewers) {
+    args.addAll(['--reviewer', r]);
+  }
   final r = await _glab(repoPath, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   final out = r.stdout.toString().trim();
@@ -139,19 +160,15 @@ Future<GitResult<PullRequestSummary>> getMergeRequest(
   String repoPath,
   int number,
 ) async {
-  final r = await _glab(repoPath, [
-    'mr',
-    'view',
-    '$number',
-    '-F',
-    'json',
-  ]);
+  final r = await _glab(repoPath, ['mr', 'view', '$number', '-F', 'json']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
     final mr = mrSummaryFromGlab(j);
     if (mr == null) {
-      return const GitResult.err('glab mr view returned a row with no usable iid');
+      return const GitResult.err(
+        'glab mr view returned a row with no usable iid',
+      );
     }
     return GitResult.ok(mr);
   } catch (e) {
@@ -166,12 +183,21 @@ Future<GitResult<PullRequestDetail>> mergeRequestDetail(
 }) async {
   final viewFut = _glab(repoPath, ['mr', 'view', '$number', '-F', 'json']);
   final diffFut = includeDiff
-      ? _glab(repoPath, ['mr', 'diff', '$number'])
-      : Future<ProcessResult?>.value(null);
+      // The diff STREAMS to a spool during transport (see gh.dart's
+      // spoolForgeCliStdout): the patch never fully materializes in memory.
+      ? spoolForgeCliStdout('glab', repoPath, ['mr', 'diff', '$number'])
+      : Future<GitResult<git.SpooledDiff>?>.value(null);
   final view = await viewFut;
   final diffRes = await diffFut;
   if (view.exitCode != 0) {
+    await diffRes?.data?.dispose(); // don't leak the parallel fetch's spool
     return GitResult.err(view.stderr.toString().trim());
+  }
+  // Same contract as gh.dart: a requested-but-failed patch fetch is an
+  // error, never a silently empty diff.
+  if (diffRes != null && !diffRes.ok) {
+    final err = (diffRes.error ?? '').trim();
+    return GitResult.err(err.isEmpty ? 'glab mr diff failed' : err);
   }
   try {
     final j = jsonDecode(view.stdout.toString()) as Map<String, dynamic>;
@@ -179,40 +205,48 @@ Future<GitResult<PullRequestDetail>> mergeRequestDetail(
     final changes = j['changes'] as List? ?? const [];
     final files = changes
         .whereType<Map<String, dynamic>>()
-        .map((f) => PrFile(
-              path: (f['new_path'] as String? ?? f['old_path'] as String? ?? '').trim(),
-              additions: countGlabDiffLines(f['diff'] as String? ?? '', '+'),
-              deletions: countGlabDiffLines(f['diff'] as String? ?? '', '-'),
-            ))
+        .map(
+          (f) => PrFile(
+            path: (f['new_path'] as String? ?? f['old_path'] as String? ?? '')
+                .trim(),
+            additions: countGlabDiffLines(f['diff'] as String? ?? '', '+'),
+            deletions: countGlabDiffLines(f['diff'] as String? ?? '', '-'),
+          ),
+        )
         .toList();
 
     final notes = j['notes'] as List? ?? const [];
-    final comments = notes
-        .whereType<Map<String, dynamic>>()
-        .where((n) => n['system'] != true)
-        .map(commentFromGlab)
-        .toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final comments =
+        notes
+            .whereType<Map<String, dynamic>>()
+            .where((n) => n['system'] != true)
+            .map(commentFromGlab)
+            .toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
-    final rawDiff = diffRes?.stdout.toString() ?? '';
-    final parsedLines = rawDiff.length < 32 * 1024
-        ? parseUnifiedDiff(rawDiff)
-        : await compute(parseUnifiedDiff, rawDiff);
-    final byFile = <String, List<ParsedLine>>{};
-    for (final l in parsedLines) {
-      final key = l.filePath;
-      if (key == null) continue;
-      (byFile[key] ??= <ParsedLine>[]).add(l);
-    }
-    return GitResult.ok(PullRequestDetail(
-      body: (j['description'] as String? ?? '').trim(),
-      files: files,
-      comments: comments,
-      diff: rawDiff,
-      diffByFile: byFile,
-      rawDiffByFile: sliceDiffByFile(rawDiff),
-    ));
+    // No eager ParsedLine parse (the `diffByFile` field it fed was never read
+    // and a large PR would OOM); the diff renders lazily downstream. Small
+    // spools materialize into the String form; large ones stay on disk.
+    final resolved = diffRes?.data == null
+        ? (rawDiff: '', spill: null as git.SpooledDiff?)
+        : await resolveDetailDiffSpool(diffRes!.data!);
+    return GitResult.ok(
+      PullRequestDetail(
+        body: (j['description'] as String? ?? '').trim(),
+        files: files,
+        comments: comments,
+        diff: resolved.rawDiff,
+        rawDiffByFile: resolved.spill == null
+            ? sliceDiffByFileForDetail(resolved.rawDiff)
+            : const {},
+        diffSpool: resolved.spill,
+        diffLoaded: includeDiff,
+      ),
+    );
   } catch (e) {
+    // Parse failure after a successful diff fetch: release the spool the
+    // detail object never got to own.
+    await diffRes?.data?.dispose();
     return GitResult.err('Failed to parse glab mr view: $e');
   }
 }
@@ -266,10 +300,12 @@ Future<GitResult<void>> closeMr(String repoPath, int number) async {
 }
 
 Future<GitResult<void>> commentOnMr(
-    String repoPath, int number, String body) async {
+  String repoPath,
+  int number,
+  String body,
+) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);
-  final r = await _glab(
-      repoPath, ['mr', 'note', '$number', '--message', body]);
+  final r = await _glab(repoPath, ['mr', 'note', '$number', '--message', body]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
@@ -279,7 +315,13 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
   int mrNumber,
 ) async {
   // Get the MR's source branch, then list CI jobs for that branch.
-  final mrRes = await _glab(repoPath, ['mr', 'view', '$mrNumber', '-F', 'json']);
+  final mrRes = await _glab(repoPath, [
+    'mr',
+    'view',
+    '$mrNumber',
+    '-F',
+    'json',
+  ]);
   if (mrRes.exitCode != 0) return GitResult.err(mrRes.stderr.toString().trim());
   try {
     final mrJson = jsonDecode(mrRes.stdout.toString()) as Map<String, dynamic>;
@@ -292,7 +334,12 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
     }
     // List jobs for this specific pipeline.
     final jobsRes = await _glab(repoPath, [
-      'ci', 'list', '--pipeline-id', '$pipelineId', '-F', 'json',
+      'ci',
+      'list',
+      '--pipeline-id',
+      '$pipelineId',
+      '-F',
+      'json',
     ]);
     if (jobsRes.exitCode != 0) {
       // Fallback to pipeline-level status.
@@ -300,17 +347,18 @@ Future<GitResult<List<CheckSummary>>> listMrPipelines(
     }
     final jobsList = jsonDecode(jobsRes.stdout.toString());
     if (jobsList is List && jobsList.isNotEmpty) {
-      return GitResult.ok(jobsList
-          .whereType<Map<String, dynamic>>()
-          .map(checkFromGlabJob)
-          .toList());
+      return GitResult.ok(
+        jobsList
+            .whereType<Map<String, dynamic>>()
+            .map(checkFromGlabJob)
+            .toList(),
+      );
     }
     return GitResult.ok([checkFromGlabJob(pipeline)]);
   } catch (e) {
     return GitResult.err('Failed to parse pipeline: $e');
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // Issues
@@ -352,20 +400,15 @@ Future<GitResult<IssueSummary>> getGlabIssue(
   String repoPath,
   int number,
 ) async {
-  final r = await _glab(repoPath, [
-    'issue',
-    'view',
-    '$number',
-    '-F',
-    'json',
-  ]);
+  final r = await _glab(repoPath, ['issue', 'view', '$number', '-F', 'json']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
     final issue = issueSummaryFromGlab(j);
     if (issue == null) {
       return const GitResult.err(
-          'glab issue view returned a row with no usable iid');
+        'glab issue view returned a row with no usable iid',
+      );
     }
     return GitResult.ok(issue);
   } catch (e) {
@@ -377,13 +420,7 @@ Future<GitResult<IssueDetail>> glabIssueDetail(
   String repoPath,
   int number,
 ) async {
-  final r = await _glab(repoPath, [
-    'issue',
-    'view',
-    '$number',
-    '-F',
-    'json',
-  ]);
+  final r = await _glab(repoPath, ['issue', 'view', '$number', '-F', 'json']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   try {
     final j = jsonDecode(r.stdout.toString()) as Map<String, dynamic>;
@@ -393,12 +430,14 @@ Future<GitResult<IssueDetail>> glabIssueDetail(
         .where((n) => n['system'] != true)
         .map(commentFromGlab)
         .toList();
-    return GitResult.ok(IssueDetail(
-      body: (j['description'] as String? ?? '').trim(),
-      comments: comments,
-      assignees: glabAssigneeLogins(j['assignees']),
-      labels: glabLabels(j['labels']),
-    ));
+    return GitResult.ok(
+      IssueDetail(
+        body: (j['description'] as String? ?? '').trim(),
+        comments: comments,
+        assignees: glabAssigneeLogins(j['assignees']),
+        labels: glabLabels(j['labels']),
+      ),
+    );
   } catch (e) {
     return GitResult.err('Failed to parse glab issue view: $e');
   }
@@ -436,7 +475,9 @@ Future<GitResult<void>> editGlabIssue(
   if (title != null) args.addAll(['--title', title]);
   if (body != null) args.addAll(['--description', body]);
   if (addLabels.isNotEmpty) args.addAll(['--label', addLabels.join(',')]);
-  if (removeLabels.isNotEmpty) args.addAll(['--unlabel', removeLabels.join(',')]);
+  if (removeLabels.isNotEmpty) {
+    args.addAll(['--unlabel', removeLabels.join(',')]);
+  }
   if (args.length == 3) return const GitResult.ok(null);
   final r = await _glab(repoPath, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -456,32 +497,54 @@ Future<GitResult<void>> reopenGlabIssue(String repoPath, int number) async {
 }
 
 Future<GitResult<void>> commentOnGlabIssue(
-    String repoPath, int number, String body) async {
+  String repoPath,
+  int number,
+  String body,
+) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);
-  final r = await _glab(
-      repoPath, ['issue', 'note', '$number', '--message', body]);
+  final r = await _glab(repoPath, [
+    'issue',
+    'note',
+    '$number',
+    '--message',
+    body,
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> assignSelfToGlabIssue(
-    String repoPath, int number) async {
+  String repoPath,
+  int number,
+) async {
   final login = await glabWhoami();
   if (login.isEmpty) return const GitResult.err('not authenticated with glab');
-  final r = await _glab(
-      repoPath, ['issue', 'update', '$number', '--assignee', login]);
+  final r = await _glab(repoPath, [
+    'issue',
+    'update',
+    '$number',
+    '--assignee',
+    login,
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> addGlabIssueLabel(
-    String repoPath, int number, String label) async {
-  final r = await _glab(
-      repoPath, ['issue', 'update', '$number', '--label', label]);
+  String repoPath,
+  int number,
+  String label,
+) async {
+  final r = await _glab(repoPath, [
+    'issue',
+    'update',
+    '$number',
+    '--label',
+    label,
+  ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
-
 
 // ---------------------------------------------------------------------------
 // JSON → DTO mappers (normalize GitLab field names to shared shapes)
@@ -495,8 +558,9 @@ PullRequestSummary? mrSummaryFromGlab(Map<String, dynamic> j) {
   final number = glabIntOrNull(j['iid']);
   if (number == null) return null;
   final authorRaw = j['author'];
-  final login =
-      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
+  final login = authorRaw is Map<String, dynamic>
+      ? (authorRaw['username'] as String? ?? '')
+      : '';
 
   final reviewers = <String, PrReviewer>{};
   final reviewerList = j['reviewers'];
@@ -510,12 +574,13 @@ PullRequestSummary? mrSummaryFromGlab(Map<String, dynamic> j) {
   if (approvedBy is List) {
     for (final a in approvedBy.whereType<Map<String, dynamic>>()) {
       final nestedUser = a['user'];
-      final u = (a['username'] as String? ??
-              (nestedUser is Map<String, dynamic>
-                  ? nestedUser['username'] as String?
-                  : null) ??
-              '')
-          .trim();
+      final u =
+          (a['username'] as String? ??
+                  (nestedUser is Map<String, dynamic>
+                      ? nestedUser['username'] as String?
+                      : null) ??
+                  '')
+              .trim();
       if (u.isNotEmpty) reviewers[u] = PrReviewer(login: u, state: 'APPROVED');
     }
   }
@@ -547,7 +612,8 @@ PullRequestSummary? mrSummaryFromGlab(Map<String, dynamic> j) {
     updatedAt: parseGlabDate(j['updated_at']),
     additions: glabIntOrNull(j['additions']) ?? 0,
     deletions: glabIntOrNull(j['deletions']) ?? 0,
-    changedFiles: glabChangesCount(j['changes_count']) ??
+    changedFiles:
+        glabChangesCount(j['changes_count']) ??
         glabChangesCount(j['changed_files']) ??
         0,
     mergeable: mergeable,
@@ -603,8 +669,9 @@ IssueSummary? issueSummaryFromGlab(Map<String, dynamic> j) {
   final number = glabIntOrNull(j['iid']);
   if (number == null) return null;
   final authorRaw = j['author'];
-  final login =
-      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
+  final login = authorRaw is Map<String, dynamic>
+      ? (authorRaw['username'] as String? ?? '')
+      : '';
   final glabState = (j['state'] as String? ?? 'opened').toLowerCase();
 
   return IssueSummary(
@@ -621,8 +688,9 @@ IssueSummary? issueSummaryFromGlab(Map<String, dynamic> j) {
 
 RemoteComment commentFromGlab(Map<String, dynamic> j) {
   final authorRaw = j['author'];
-  final login =
-      authorRaw is Map<String, dynamic> ? (authorRaw['username'] as String? ?? '') : '';
+  final login = authorRaw is Map<String, dynamic>
+      ? (authorRaw['username'] as String? ?? '')
+      : '';
   return RemoteComment(
     authorLogin: login,
     body: (j['body'] as String? ?? '').trim(),
@@ -632,8 +700,12 @@ RemoteComment commentFromGlab(Map<String, dynamic> j) {
 
 CheckSummary checkFromGlabJob(Map<String, dynamic> j) {
   final glabStatus = (j['status'] as String? ?? '').toLowerCase();
-  final isCompleted = const {'success', 'failed', 'canceled', 'skipped'}
-      .contains(glabStatus);
+  final isCompleted = const {
+    'success',
+    'failed',
+    'canceled',
+    'skipped',
+  }.contains(glabStatus);
   final conclusion = switch (glabStatus) {
     'success' => 'success',
     'failed' => 'failure',
@@ -655,7 +727,6 @@ CheckSummary checkFromGlabJob(Map<String, dynamic> j) {
     duration: durSec != null ? Duration(seconds: durSec) : null,
   );
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers

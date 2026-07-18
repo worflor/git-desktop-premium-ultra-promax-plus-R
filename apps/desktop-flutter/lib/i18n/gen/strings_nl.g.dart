@@ -6006,6 +6006,10 @@ class _Translations$settings$errors$nl extends Translations$settings$errors$en {
   String get saveApiPiggybackCli =>
       'API-piggyback-CLI kon niet worden opgeslagen.';
   @override
+  String get saveCliTimeout => 'CLI-time-out kon niet worden opgeslagen.';
+  @override
+  String get stopAllCli => 'De lopende CLI-sessies konden niet worden gestopt.';
+  @override
   String clearLocalData({required Object error}) =>
       'Lokale gegevens konden niet worden gewist: ${error}';
 }
@@ -6994,6 +6998,12 @@ class _Translations$settings$wick$nl extends Translations$settings$wick$en {
   String get connected => 'wick · verbonden';
   @override
   String get pathToExecutable => 'wick · pad naar executable';
+  @override
+  String get off => 'uit';
+  @override
+  String get disableHint => 'wick-integratie uitschakelen';
+  @override
+  String get enableHint => 'wick-integratie inschakelen';
 }
 
 // Path: settings.integrations
@@ -7300,6 +7310,28 @@ class _Translations$settings$cliPiggyback$nl
   @override
   String get body =>
       'Leid interface-berichten direct door naar lokale provider-binaries.';
+  @override
+  String get cliTimeoutLabel => 'Time-out per run';
+  @override
+  String get cliTimeoutUnitMinutes => 'minuten';
+  @override
+  String get cliTimeoutUnitMinute => 'minuut';
+  @override
+  String get forceStopLabel => 'Alle sessies stoppen';
+  @override
+  String get forceStopTooltip => 'Elke lopende CLI-run hard afsluiten.';
+  @override
+  String get forceStopConfirmTitle => 'Lopende CLI-sessies stoppen?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Dit sluit ${count} lopende CLI-runs hard af. Hun uitvoer gaat verloren.';
+  @override
+  String get forceStopConfirmAction => 'Alles stoppen';
+  @override
+  String get forceStopNoneRunning => 'Geen CLI-sessies actief';
+  @override
+  String get forceStopRecordError =>
+      'Gestopt — CLI-sessies zijn hard afgesloten.';
 }
 
 // Path: settings.header

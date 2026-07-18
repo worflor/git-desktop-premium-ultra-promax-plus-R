@@ -5927,6 +5927,10 @@ class _Translations$settings$errors$id extends Translations$settings$errors$en {
   @override
   String get saveApiPiggybackCli => 'Gagal menyimpan CLI piggyback API.';
   @override
+  String get saveCliTimeout => 'Gagal menyimpan batas waktu CLI.';
+  @override
+  String get stopAllCli => 'Tidak bisa menghentikan sesi CLI yang berjalan.';
+  @override
   String clearLocalData({required Object error}) =>
       'Tidak bisa membersihkan data lokal: ${error}';
 }
@@ -6914,6 +6918,12 @@ class _Translations$settings$wick$id extends Translations$settings$wick$en {
   String get connected => 'wick · terhubung';
   @override
   String get pathToExecutable => 'wick · path ke executable';
+  @override
+  String get off => 'mati';
+  @override
+  String get disableHint => 'Matikan integrasi wick';
+  @override
+  String get enableHint => 'Aktifkan integrasi wick';
 }
 
 // Path: settings.integrations
@@ -7205,6 +7215,28 @@ class _Translations$settings$cliPiggyback$id
   String get refreshTooltip => 'Periksa ulang setiap provider sekarang.';
   @override
   String get body => 'Pipa langsung pesan antarmuka ke biner provider lokal.';
+  @override
+  String get cliTimeoutLabel => 'Batas waktu per eksekusi';
+  @override
+  String get cliTimeoutUnitMinutes => 'menit';
+  @override
+  String get cliTimeoutUnitMinute => 'menit';
+  @override
+  String get forceStopLabel => 'Hentikan semua sesi';
+  @override
+  String get forceStopTooltip =>
+      'Paksa berhenti setiap eksekusi CLI yang sedang berjalan.';
+  @override
+  String get forceStopConfirmTitle => 'Hentikan sesi CLI yang berjalan?';
+  @override
+  String forceStopConfirmBody({required Object count}) =>
+      'Ini memaksa berhenti ${count} eksekusi CLI yang sedang berjalan. Outputnya akan hilang.';
+  @override
+  String get forceStopConfirmAction => 'Hentikan semua';
+  @override
+  String get forceStopNoneRunning => 'Tidak ada sesi CLI yang berjalan';
+  @override
+  String get forceStopRecordError => 'Dihentikan — sesi CLI dipaksa berhenti.';
 }
 
 // Path: settings.header

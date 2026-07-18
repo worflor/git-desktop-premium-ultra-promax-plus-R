@@ -40,6 +40,7 @@ class AiSettingsState extends ChangeNotifier {
   String _reviewCommitPromptPath = '';
   bool _reviewCommitDoubleCheckEnabled = false;
   String _apiPiggybackCli = 'codex';
+  int _cliTimeoutSeconds = 1200;
   String _musePrompt = '';
   String _musePromptPath = '';
   String _museBrainstormModelCategoryId = 'fast';
@@ -74,6 +75,9 @@ class AiSettingsState extends ChangeNotifier {
   String get reviewCommitPromptPath => _reviewCommitPromptPath;
   bool get reviewCommitDoubleCheckEnabled => _reviewCommitDoubleCheckEnabled;
   String get apiPiggybackCli => _apiPiggybackCli;
+  /// Per-attempt wall-clock cap (seconds) for the long-running AI CLIs. The UI
+  /// edits this in minutes; the backend consumes it via [configureCliTimeout].
+  int get cliTimeoutSeconds => _cliTimeoutSeconds;
   String get musePrompt => _musePrompt;
   String get musePromptPath => _musePromptPath;
   String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
@@ -143,10 +147,14 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitModelCategoryId = snapshot.reviewCommitModelCategoryId;
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
     _apiPiggybackCli = snapshot.apiPiggybackCli;
+    _cliTimeoutSeconds = snapshot.cliTimeoutSeconds;
     // Seed the module-level transport snapshot ai.dart consults at its
     // single dispatch seam, so every API-model call (review, muse, ask,
     // debug, patch, commit) picks up the policy without threading it.
     configurePiggybackCli(_apiPiggybackCli);
+    // Same seam for the CLI runtime cap — pushed in once here, and on every
+    // setter change, so _runtimeTimeoutFor picks it up without threading.
+    configureCliTimeout(Duration(seconds: _cliTimeoutSeconds));
     _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
     _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
     final loadedQuiver = snapshot.museQuiver.isEmpty
@@ -362,6 +370,28 @@ class AiSettingsState extends ChangeNotifier {
       // and the dispatch-seam snapshot back before surfacing the error.
       _apiPiggybackCli = previous;
       configurePiggybackCli(previous);
+      rethrow;
+    }
+    notifyListeners();
+  }
+
+  Future<void> setCliTimeoutSeconds(int value) async {
+    // Same bounds the store clamps to on load (30s .. 2h).
+    final clamped = value.clamp(30, 7200);
+    if (_cliTimeoutSeconds == clamped) {
+      return;
+    }
+
+    final previous = _cliTimeoutSeconds;
+    _cliTimeoutSeconds = clamped;
+    // Push into ai.dart's timeout seam immediately, before persistence, so a
+    // run started right after the change already sees the new cap.
+    configureCliTimeout(Duration(seconds: _cliTimeoutSeconds));
+    try {
+      await _persistSnapshot();
+    } catch (_) {
+      _cliTimeoutSeconds = previous;
+      configureCliTimeout(Duration(seconds: previous));
       rethrow;
     }
     notifyListeners();
@@ -683,6 +713,7 @@ class AiSettingsState extends ChangeNotifier {
         reviewCommitModelCategoryId: _reviewCommitModelCategoryId,
         reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,
         apiPiggybackCli: _apiPiggybackCli,
+        cliTimeoutSeconds: _cliTimeoutSeconds,
         museBrainstormModelCategoryId: _museBrainstormModelCategoryId,
         museSynthesisModelCategoryId: _museSynthesisModelCategoryId,
         presentModelCategoryId: _presentModelCategoryId,

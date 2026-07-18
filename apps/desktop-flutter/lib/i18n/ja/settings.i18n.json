@@ -36,6 +36,8 @@
     "saveMuseNotes": "Muse のノートの保存に失敗しました。",
     "saveReviewDoubleCheck": "レビューのダブルチェックモードの保存に失敗しました。",
     "saveApiPiggybackCli": "API ピギーバック CLI の保存に失敗しました。",
+    "saveCliTimeout": "CLI タイムアウトの保存に失敗しました。",
+    "stopAllCli": "実行中の CLI セッションを停止できませんでした。",
     "clearLocalData": "ローカルデータを消去できませんでした：{error}"
   },
   "promptStatus": {
@@ -52,7 +54,12 @@
     "confirmWipeAll": "最近のリポジトリ一覧を含む、すべてのローカルアプリデータを消去して終了しますか？ ディスク上の実際の git リポジトリには手を触れません。",
     "confirmReset": "ローカルのアプリデータをリセットして終了しますか？\n\n設定、テーマ、オンボーディング、AI の設定、テレメトリ、エングラムキャッシュが消去されます。最近のリポジトリ一覧は残ります。"
   },
-  "guardrailStageLabels": ["緩め", "バランス", "厳格", "偏執"],
+  "guardrailStageLabels": [
+    "緩め",
+    "バランス",
+    "厳格",
+    "偏執"
+  ],
   "guardrailMacro": {
     "loose": "緩め",
     "balanced": "バランス",
@@ -423,7 +430,10 @@
   "wick": {
     "selectExecutable": "wick の実行ファイルを選択",
     "connected": "wick · 接続済み",
-    "pathToExecutable": "wick · 実行ファイルへのパス"
+    "pathToExecutable": "wick · 実行ファイルへのパス",
+    "off": "オフ",
+    "disableHint": "wick 連携をオフにする",
+    "enableHint": "wick 連携をオンにする"
   },
   "integrations": {
     "title": "＆連携",
@@ -472,10 +482,31 @@
     "summaryBackend": "{samples} | {commands}",
     "summaryDiff": "{sessions} | ジャンク {jank}%",
     "summaryUi": "{samples} | {events}",
-    "headersCommand": ["コマンド", "p50", "信頼性", "範囲"],
-    "headersBackend": ["スコープ", "p50", "p95", "失敗"],
-    "headersDiff": ["レンダラー", "初回描画", "フレーム p95", "ラスター p95", "ジャンク"],
-    "headersUi": ["イベント", "p50", "失敗", "範囲"]
+    "headersCommand": [
+      "コマンド",
+      "p50",
+      "信頼性",
+      "範囲"
+    ],
+    "headersBackend": [
+      "スコープ",
+      "p50",
+      "p95",
+      "失敗"
+    ],
+    "headersDiff": [
+      "レンダラー",
+      "初回描画",
+      "フレーム p95",
+      "ラスター p95",
+      "ジャンク"
+    ],
+    "headersUi": [
+      "イベント",
+      "p50",
+      "失敗",
+      "範囲"
+    ]
   },
   "telemetry": {
     "samples": {
@@ -527,7 +558,17 @@
     "clearCacheTooltip": "キャッシュされたモデルを消去して再探査します。プロバイダーが外したものを一掃します。",
     "refreshLabel": "プロバイダーを更新",
     "refreshTooltip": "今すぐすべてのプロバイダーを再探査します。",
-    "body": "インターフェースのメッセージをローカルのプロバイダーバイナリへ直接パイプします。"
+    "body": "インターフェースのメッセージをローカルのプロバイダーバイナリへ直接パイプします。",
+    "cliTimeoutLabel": "実行ごとのタイムアウト",
+    "cliTimeoutUnitMinutes": "分",
+    "cliTimeoutUnitMinute": "分",
+    "forceStopLabel": "すべてのセッションを停止",
+    "forceStopTooltip": "実行中の CLI をすべて強制終了します。",
+    "forceStopConfirmTitle": "実行中の CLI セッションを停止しますか？",
+    "forceStopConfirmBody": "実行中の CLI {count} 件を強制終了します。出力は失われます。",
+    "forceStopConfirmAction": "すべて停止",
+    "forceStopNoneRunning": "実行中の CLI セッションはありません",
+    "forceStopRecordError": "停止： CLI セッションを強制終了しました。"
   },
   "header": {
     "title": "ワークスペースの設定",
