@@ -14,5 +14,9 @@
       "question": "BU NEREYE GİDİYOR?",
       "body": "İlk kilometre taşı GitHub Desktop, SourceTree ve GitKraken ile tam denklik. Hızlı hissettiren ve temelleri her şeyden daha iyi ele alan çapraz platform bir git istemcisi. Bu büyük ölçüde tamam. Spektral motor, diğer istemcilerin sana manuel olarak düşündürdüğü işlemler için bize şimdiden bir avantaj sağlıyor.\n\nBunun ötesinde amaç, diğer her git istemcisini hız, erişilebilirlik, zekâ ve genel UX açısından geçmek. Burada duyurulandan daha fazlası hazırlıkta."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · WLCSL topluluk kaynaklı araştırma çekirdeği · garanti yok"
   }
 }

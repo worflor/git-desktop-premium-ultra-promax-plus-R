@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for `_extractMetadataOnlyChanges` — the side capture that
 // preserves visibility of binary/mode-only/pure-rename file changes
 // under the unified diff pipeline. The hunk parser drops these

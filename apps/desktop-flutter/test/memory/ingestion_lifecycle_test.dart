@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // ingestion_lifecycle_test.dart — WHY THIS EXISTS: the marble repo-switch
 // incident took the whole developer machine down. A repo with a few
 // multi-hundred-MB working-tree files got opened, the analysis pipelines

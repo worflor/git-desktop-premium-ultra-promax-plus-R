@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -30,6 +34,42 @@ class ReleaseNotesPanel extends StatelessWidget {
           _AboutBlock(entry: entry, tokens: t),
           const SizedBox(height: 24),
         ],
+        _LegalFooter(tokens: t),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+class _LegalFooter extends StatelessWidget {
+  final AppTokens tokens;
+  const _LegalFooter({required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final legal = context.t.releaseNotes.legal;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          legal.copyright,
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 11,
+            fontFamily: AppFonts.mono,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          legal.license,
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 11,
+            height: 1.5,
+          ),
+        ),
       ],
     );
   }

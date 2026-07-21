@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Serialization roundtrip + malformed-input-robustness fuzz tests for
 // Manifold's DTOs. `VersionVector`/`LogosEdit` byte codecs are covered by
 // the separate logos_edits_codec suite.

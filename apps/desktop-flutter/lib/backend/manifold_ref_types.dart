@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // manifold_ref_types.dart — the typed algebra of the Manifold ref namespace.
 //
 // Zero-cost extension types (erased to String at runtime) that make the

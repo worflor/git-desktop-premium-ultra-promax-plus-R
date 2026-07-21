@@ -14,5 +14,9 @@
       "question": "DOKĄD TO ZMIERZA?",
       "body": "Pierwszy kamień milowy to pełna równość z GitHub Desktop, SourceTree i GitKraken. Wieloplatformowy klient git, który działa szybko i radzi sobie z podstawami lepiej niż cokolwiek innego. To w większości już jest. Silnik spektralny już daje nam przewagę w operacjach, które inne klienty każą przemyśleć ręcznie.\n\nDalej celem jest przewyższyć każdy inny klient git pod względem szybkości, dostępności, inteligencji i ogólnego UX. W przygotowaniu jest więcej niż to, co ogłoszono tutaj."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · rdzeń badawczy community-source WLCSL · bez gwarancji"
   }
 }

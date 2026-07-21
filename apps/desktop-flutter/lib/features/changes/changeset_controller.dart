@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Changeset controller — owns the working-tree-dependent async sources of the
 // Changes page (per-file impact weights, flow analysis, and the spectral-
 // coupling overlay), the cheap fusions that depend on them (the spectral-

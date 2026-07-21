@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins the round-trip contract for the External Tool args editor:
 // `parse(display(args)) == args` for any list of strings, including
 // arguments that contain whitespace, double quotes, and backslashes.

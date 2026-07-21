@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Woflo Labs
+SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+-->
+
 # Logos Engine Performance Audit — 2026-06-15
 
 Pre-release performance audit of the Manifold git-logos attention engine. Two-round

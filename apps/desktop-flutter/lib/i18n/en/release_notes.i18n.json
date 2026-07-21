@@ -14,5 +14,9 @@
       "question": "WHERE IS THIS GOING?",
       "body": "The first milestone is full parity with GitHub Desktop, SourceTree, and GitKraken. A cross-platform git client that feels fast and handles the fundamentals better than anything else. That's mostly here. The spectral engine already gives us an advantage for operations that other clients make you think through manually.\n\nPast that, the goal is to surpass every other git client in speed, accessibility, intelligence, and overall UX. There's more in the pipeline than what's announced here."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · WLCSL community-source research core · no warranty"
   }
 }

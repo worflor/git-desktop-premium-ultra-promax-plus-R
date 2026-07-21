@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // analysis_admission.dart — the single authority over how much working-tree /
 // diff content Manifold's analysis pipelines may hold in memory at once.
 //

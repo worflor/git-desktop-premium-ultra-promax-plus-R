@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // LOGOS DIFF ATTENTION — adaptive level-of-detail hunk compactor.
 //
 // Replaces the binary admit/skip knapsack in [packHunksUnderBudget]

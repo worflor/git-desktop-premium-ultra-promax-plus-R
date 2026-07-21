@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Content-integrity bug hunt over the diff document layer, anchored against
 // the real machine-scale road-graph corpus (marble/data/USA-road-d.NY.gr,
 // 733,853 lines / ~14MB). The corpus is READ-ONLY; any mutated copy lives

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // The muse panel and the clipboard export are two renderings of the
 // same output. composeMuseSections is the single source of truth they
 // both walk; these tests pin its inclusion/ordering rules and verify

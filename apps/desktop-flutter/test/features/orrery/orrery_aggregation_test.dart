@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Contract tests for module aggregation (the LOD / "don't blob at scale"
 // layer). These lock the partition invariants: every file lands in exactly one
 // module, dense subtrees drill deeper than sparse ones, and a module's position

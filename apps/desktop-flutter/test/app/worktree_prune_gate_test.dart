@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit test for the once-per-repo worktree-prune gate. `git worktree
 // prune` should fire the first time a repo path is listed and never
 // again that session, so the gate is a pure Set membership claim.

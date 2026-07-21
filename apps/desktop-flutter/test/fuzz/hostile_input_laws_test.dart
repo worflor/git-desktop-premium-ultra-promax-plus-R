@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Law-based hostile-input properties for four small, high-blast-radius
 // primitives that had zero (or near-zero) property coverage: the numeric
 // JSON readers, the magic-byte content sniffer, ref-name encoding, and the

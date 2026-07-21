@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Real-behavior tests for the AI backend's git-execution parity with the
 // hardened backend/git.dart layer:
 //   • throttling is real — a burst of git runs launched through ai.dart's own

@@ -1845,6 +1845,9 @@ class _Translations$releaseNotes$id extends Translations$releaseNotes$en {
   @override
   late final _Translations$releaseNotes$about$id about =
       _Translations$releaseNotes$about$id._(_root);
+  @override
+  late final _Translations$releaseNotes$legal$id legal =
+      _Translations$releaseNotes$legal$id._(_root);
 }
 
 // Path: repoSummary
@@ -5649,6 +5652,23 @@ class _Translations$releaseNotes$about$id
   @override
   late final _Translations$releaseNotes$about$whereGoing$id whereGoing =
       _Translations$releaseNotes$about$whereGoing$id._(_root);
+}
+
+// Path: releaseNotes.legal
+class _Translations$releaseNotes$legal$id
+    extends Translations$releaseNotes$legal$en {
+  _Translations$releaseNotes$legal$id._(TranslationsId root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsId _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get copyright => '© 2026 Woflo Labs';
+  @override
+  String get license =>
+      'GPL-3.0-or-later · inti riset community-source WLCSL · tanpa jaminan';
 }
 
 // Path: repoSummary.backbone

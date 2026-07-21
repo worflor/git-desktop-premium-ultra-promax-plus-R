@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Behavior coverage for the history-surgery wizard's SAFETY-CRITICAL logic:
 // the typed-literal confirmation gate that is the sole barrier before an
 // irreversible history rewrite + force-push, the phase machine that must never

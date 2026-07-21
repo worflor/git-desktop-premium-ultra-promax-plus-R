@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for `ApertureSweep.sampleAt(int window)` — the continuous-
 // domain interpolation used by the history scrubber. Pins the
 // load-bearing invariants:

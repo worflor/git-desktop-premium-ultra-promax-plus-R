@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // engram_glove.dart — compact GloVe vocabulary loader.
 //
 // Reads the int16-quantised GloVe binary produced by the preprocessing

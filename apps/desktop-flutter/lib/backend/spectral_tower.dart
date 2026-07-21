@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // SPECTRAL TOWER — multi-scale spectral decomposition of the codebase.
 //
 // Every unit of code, from a chunk up through the full file graph,

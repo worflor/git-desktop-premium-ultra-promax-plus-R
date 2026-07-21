@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Law-based coverage for BlobLoader + BlobRef (lib/backend/blob_loader.dart)
 // and its magic_bytes.dart content-class probe, both previously untested.
 //

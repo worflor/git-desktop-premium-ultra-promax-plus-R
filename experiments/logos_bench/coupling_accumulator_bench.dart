@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // coupling_accumulator_bench.dart — A/B: does the int-scatter Gram accumulator
 // beat the current String-keyed nested-map co-change build enough to justify
 // rewriting the sacred file_coupling.dart kernel? Measures the ACCUMULATION

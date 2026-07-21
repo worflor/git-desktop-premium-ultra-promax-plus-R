@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // engram_bootstrap.dart — singleton provider + isolate-safe snapshot.
 //
 // The brain + glove assets are loaded once per app launch (via

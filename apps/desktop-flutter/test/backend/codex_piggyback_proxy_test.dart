@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins the codex-piggyback wire contract: codex speaks ONLY the Responses
 // API (streaming SSE over POST /v1/responses); the proxy translates that to
 // a single buffered Chat Completions call against any OpenAI-compatible

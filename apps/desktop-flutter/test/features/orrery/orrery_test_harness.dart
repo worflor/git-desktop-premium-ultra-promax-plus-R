@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Shared harness for OrreryView widget/render tests. Since the Orrery now uses
 // the app's house controls (ChromeButton / InteractionFeedback) and motion
 // engine, its widget tree needs a PreferencesState in scope — exactly as the

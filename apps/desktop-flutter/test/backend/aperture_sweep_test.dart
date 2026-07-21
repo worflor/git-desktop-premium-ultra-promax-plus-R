@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit tests for the aperture-sweep primitive's pure analysis
 // functions. The sweep COLLECTOR hits git and requires a real repo;
 // those paths are covered by integration probes in test/research/.

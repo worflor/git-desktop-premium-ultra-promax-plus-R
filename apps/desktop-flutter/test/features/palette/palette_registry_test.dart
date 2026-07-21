@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Coverage for lib/features/palette/palette_registry.dart's
 // buildStaticEntries — the command-palette entry builder. Every one of
 // its section builders (_repoEntries, _actionEntries, _gitCommandEntries,

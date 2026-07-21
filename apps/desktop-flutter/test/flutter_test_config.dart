@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // flutter_test_config.dart — global harness config, applied to EVERY test
 // in this package by flutter_test's convention (this file wraps each
 // test file's main()).

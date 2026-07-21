@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins openRepository's stale-folder contract: a path that no longer exists
 // yields the clean, user-facing message — never the raw `ProcessException:
 // The directory name is invalid` text that `git rev-parse` would otherwise

@@ -14,5 +14,9 @@
       "question": "OÙ EST-CE QUE ÇA VA ?",
       "body": "Le premier jalon, c'est la parité complète avec GitHub Desktop, SourceTree et GitKraken. Un client git multiplateforme qui donne une impression de rapidité et gère les fondamentaux mieux que tout le reste. C'est en grande partie fait. Le moteur spectral nous donne déjà un avantage sur les opérations que les autres clients vous forcent à réfléchir à la main.\n\nAu-delà, l'objectif est de surpasser tous les autres clients git en vitesse, en accessibilité, en intelligence et en UX globale. Il y a plus dans les tuyaux que ce qui est annoncé ici."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · noyau de recherche community-source WLCSL · sans garantie"
   }
 }

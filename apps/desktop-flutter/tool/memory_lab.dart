@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // tool/memory_lab.dart — reproduce the "open a repo with multi-hundred-MB
 // working-tree files, analysis pipelines fan out, switch repos" scenario in
 // a CHILD process and report memory behaviour as JSON, so this never has to

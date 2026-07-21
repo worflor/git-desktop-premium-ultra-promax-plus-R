@@ -14,5 +14,9 @@
       "question": "¿HACIA DÓNDE VA ESTO?",
       "body": "El primer hito es la paridad completa con GitHub Desktop, SourceTree y GitKraken. Un cliente de git multiplataforma que se siente rápido y maneja lo fundamental mejor que cualquier otra cosa. Eso ya está casi listo. El motor espectral ya nos da ventaja en operaciones que otros clientes te hacen razonar a mano.\n\nMás allá de eso, la meta es superar a todos los demás clientes de git en velocidad, accesibilidad, inteligencia y UX en general. Hay más en camino de lo que se anuncia aquí."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · núcleo de investigación community-source WLCSL · sin garantía"
   }
 }

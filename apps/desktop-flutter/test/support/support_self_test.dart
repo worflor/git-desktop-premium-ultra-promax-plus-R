@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Self-test for the property-testing foundation itself (prop.dart +
 // gen.dart). Other agents build on top of these two files, so this suite
 // exists to catch a broken Rng, a forAll that swallows errors, or an

@@ -1,7 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Woflo Labs
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 name: git_desktop
 description: Your Personal Git Client
 publish_to: 'none'
 version: 0.1.6
+repository: https://github.com/worflor/git-desktop-premium-ultra-promax-plus-R
 
 environment:
   # Raised from 3.3.0/3.22.0: the `analyzer` dev-dependency (the source-law

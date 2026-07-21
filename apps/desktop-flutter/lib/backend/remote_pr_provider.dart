@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // remote_pr_provider.dart — forge-agnostic PR sync interface
 //
 // Mirrors remote_issue_provider.dart for pull requests. The local

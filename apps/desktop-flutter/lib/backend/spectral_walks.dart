@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // SPECTRAL WALKS — path-integral sampling over the graph.
 //
 // The heat kernel `φ(t, x, y) = Σⱼ e^{−t·λⱼ}·uⱼ[x]·uⱼ[y]` is the

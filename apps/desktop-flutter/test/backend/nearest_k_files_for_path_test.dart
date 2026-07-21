@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for the nearestKFilesForPath helper — the canonical
 // "what files are semantically nearest to THIS file?" surface.
 // Replaces the row-unpack dance that used to live inline in

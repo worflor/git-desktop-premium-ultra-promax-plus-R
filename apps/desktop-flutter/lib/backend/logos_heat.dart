@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Heat-kernel observables — the Feynman-Kac path propagator, its Wick-
 // rotated Schrödinger twin, heat-kernel signatures (Sun-Ovsjanikov-
 // Guibas 2009), diffusion distance, emergent gravitational potential,

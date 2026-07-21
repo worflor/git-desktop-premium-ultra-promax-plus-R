@@ -2194,6 +2194,8 @@ class Translations$releaseNotes$en {
 
   late final Translations$releaseNotes$about$en about =
       Translations$releaseNotes$about$en.internal(_root);
+  late final Translations$releaseNotes$legal$en legal =
+      Translations$releaseNotes$legal$en.internal(_root);
 }
 
 // Path: repoSummary
@@ -6408,6 +6410,22 @@ class Translations$releaseNotes$about$en {
       Translations$releaseNotes$about$spectralEngine$en.internal(_root);
   late final Translations$releaseNotes$about$whereGoing$en whereGoing =
       Translations$releaseNotes$about$whereGoing$en.internal(_root);
+}
+
+// Path: releaseNotes.legal
+class Translations$releaseNotes$legal$en {
+  Translations$releaseNotes$legal$en.internal(this._root);
+
+  final Translations _root; // ignore: unused_field
+
+  // Translations
+
+  /// en: '© 2026 Woflo Labs'
+  String get copyright => '© 2026 Woflo Labs';
+
+  /// en: 'GPL-3.0-or-later · WLCSL community-source research core · no warranty'
+  String get license =>
+      'GPL-3.0-or-later · WLCSL community-source research core · no warranty';
 }
 
 // Path: repoSummary.backbone

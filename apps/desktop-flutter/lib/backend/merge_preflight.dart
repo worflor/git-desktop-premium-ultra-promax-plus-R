@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Side-effect-free classification of a `git merge-tree --write-tree` probe.
 //
 // Kept in its own dependency-light library so the classifier is a pure

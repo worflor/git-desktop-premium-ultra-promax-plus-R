@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // File-wide timeout: see the contention note in main() — heavy property
 // cases pass solo in ~10-30s but share the global git-subprocess semaphore
 // with the whole suite in integrated runs.

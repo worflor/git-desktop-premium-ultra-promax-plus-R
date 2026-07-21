@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // SPECTRAL RICCI — Ollivier-Ricci edge curvature field.
 //
 //   κ(u, v) = 1 − W₁(μ_u, μ_v) / d(u, v)

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // User-configured external tools — the entries surfaced by the
 // "Open with…" submenu on a project row. Each tool is a name + an
 // argv recipe + a launch mode. The recipe substitutes `{path}` with

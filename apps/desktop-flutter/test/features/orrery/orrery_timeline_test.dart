@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // The timeline's marker-band contract: the band is an EVENT index. Only
 // commit-anchored findings earn a tick — position and trend findings anchor
 // to the head as a jump target, not a moment, and a tick would assert "this

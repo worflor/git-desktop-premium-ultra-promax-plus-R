@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Verifies every deterministic DAG-shape builder in
 // test/support/repo_topology.dart actually builds the shape it claims —
 // each test asserts the specific structural property (parent count, merge

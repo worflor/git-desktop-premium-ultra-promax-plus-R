@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins _runObservedProcess's launch-vs-timeout contract — the centerpiece of
 // the "make failures loud" fix. A failed spawn must come back as a non-null
 // result carrying the real OS error (exitCode -1), while ONLY a genuine

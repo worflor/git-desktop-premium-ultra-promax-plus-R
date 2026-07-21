@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Generators for the raw material of a *diff*: a `(before, after)` pair of
 // file contents related by a realistic edit, plus the adversarial line shapes
 // that a unified-diff parser must disambiguate from structure.

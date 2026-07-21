@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Round-trip coverage for the apiPiggybackCli field on
 // AiSettingsSnapshot. Two contracts pinned here: '' is a real, distinct
 // value (piggyback off) rather than "unset", and the value set is CLOSED

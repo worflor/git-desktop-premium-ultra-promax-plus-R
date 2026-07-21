@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Kirby comic-book overlay. One program with a uMode switch:
 //   0 → halftone dots
 //   1 → cross-hatch (two diagonal stripe sets ANDed)

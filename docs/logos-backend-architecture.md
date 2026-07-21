@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Woflo Labs
+SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+-->
+
 # Logos-Inspired Backend Architecture
 
 This document translates the best ideas from the Whisper codecs into a backend architecture for the desktop app. It does not change visuals or product behavior. It changes how the backend thinks, caches, schedules, and invalidates read work so the app feels static and immediate.

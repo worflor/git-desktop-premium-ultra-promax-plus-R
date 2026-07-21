@@ -14,5 +14,9 @@
       "question": "WOHIN GEHT DAS?",
       "body": "Der erste Meilenstein ist volle Ebenbürtigkeit mit GitHub Desktop, SourceTree und GitKraken. Ein plattformübergreifender Git-Client, der sich schnell anfühlt und die Grundlagen besser beherrscht als alles andere. Das ist größtenteils da. Die Spektral-Engine verschafft uns schon jetzt einen Vorteil bei Operationen, die dich andere Clients manuell durchdenken lassen.\n\nDarüber hinaus ist das Ziel, jeden anderen Git-Client in Geschwindigkeit, Zugänglichkeit, Intelligenz und der Gesamt-UX zu übertreffen. In der Pipeline steckt mehr, als hier angekündigt ist."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · WLCSL Community-Source-Forschungskern · keine Gewährleistung"
   }
 }

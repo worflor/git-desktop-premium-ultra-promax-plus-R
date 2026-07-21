@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Exercises the retry/decode/recovery paths inside `_gitRaw` and `_git`
 // (lib/backend/git.dart) by scripting failures at the `GitSpawn` seam — see
 // test/support/git_faults.dart. Nothing here spawns a real failing process;

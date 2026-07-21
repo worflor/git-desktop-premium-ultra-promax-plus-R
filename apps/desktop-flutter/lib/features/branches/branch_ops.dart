@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pure decision logic for the branches lens: cross-link resolution and
 // branch-delete failure classification. No Flutter/BuildContext — every
 // function here takes plain data in and returns a plain (sealed, where the

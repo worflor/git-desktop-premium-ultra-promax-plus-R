@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // logos_git_stats.dart — repo telemetry harvester for LogosGit
 //
 // Pulls the four Phase-1 statistics the engine needs (touches, total

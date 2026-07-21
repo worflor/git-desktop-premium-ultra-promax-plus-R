@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 /// Translation layer from raw logos engine values (coherence, motion
 /// warp, flow stress, witness residual, etc.) to semantic bands that
 /// an LLM can interpret without hallucinating.

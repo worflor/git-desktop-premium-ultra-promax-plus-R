@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // geometric_tokenizer.dart — the GEOMETRICALLY yielded adaptive tokenizer.
 //
 // A real tokenizer (vocabulary, encode text→ids, decode ids→text), learned

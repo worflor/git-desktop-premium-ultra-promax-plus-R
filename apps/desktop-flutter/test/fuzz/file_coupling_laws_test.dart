@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Metamorphic property tests for Manifold's file-coupling engine
 // (lib/backend/file_coupling.dart + lib/backend/engram_fit.dart).
 //

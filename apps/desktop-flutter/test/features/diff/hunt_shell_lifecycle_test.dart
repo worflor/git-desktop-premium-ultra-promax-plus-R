@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // hunt_shell_lifecycle_test.dart — adversarial-sequencing bug hunt for
 // DiffShell's interaction lifecycle: search, pin, document swap, hunk
 // collapse, and keyboard nav under torture ordering. Confirmed-repro tests

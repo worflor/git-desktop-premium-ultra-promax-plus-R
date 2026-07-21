@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Integration tests for the desk-issue plumbing. Mirrors the
 // desk_pr_store_test pattern: spin up a temp git repo, exercise the
 // public DeskIssueStore API, verify on-disk state via plain `git`.

@@ -14,5 +14,9 @@
       "question": "WAAR GAAT DIT HEEN?",
       "body": "De eerste mijlpaal is volledige pariteit met GitHub Desktop, SourceTree en GitKraken. Een cross-platform git-client die snel aanvoelt en de fundamenten beter afhandelt dan wat dan ook. Dat is grotendeels er. De spectrale engine geeft ons nu al een voordeel bij bewerkingen die andere clients je handmatig laten doordenken.\n\nDaarna is het doel om elke andere git-client te overtreffen in snelheid, toegankelijkheid, intelligentie en algehele UX. Er zit meer in de pijplijn dan hier is aangekondigd."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · WLCSL community-source onderzoekskern · geen garantie"
   }
 }

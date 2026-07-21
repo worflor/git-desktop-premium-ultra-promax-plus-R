@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Contract tests for the net-new (CodeScene-can't-do-this) findings: thrashing
 // (motion without progress) and silent reshuffle (a quiet commit that moved
 // which files are central). Both are derived purely from the UASE-stable

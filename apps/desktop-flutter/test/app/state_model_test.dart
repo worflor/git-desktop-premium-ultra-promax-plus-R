@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Model-based / stateful property testing for the app-state ChangeNotifier
 // layer (lib/app/*.dart). Existing test/app/*_test.dart files cover
 // individual methods in isolation; this file drives each state class

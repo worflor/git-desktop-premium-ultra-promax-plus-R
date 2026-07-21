@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 /// Pure, dependency-free logic for mapping a Cursor CLI effort/thinking/fast
 /// selection onto the exact model ids that `cursor-agent models` enumerates.
 ///

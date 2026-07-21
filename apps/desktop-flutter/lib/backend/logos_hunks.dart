@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // LOGOS HUNKS â€” hunk-level heat-kernel diffusion
 //
 // Sits parallel to LogosGit's file graph. Nodes are HUNKS inside one diff;

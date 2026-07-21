@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit coverage for the typed OID layer's object-format handling
 // (lib/backend/manifold_ref_types.dart). SHA-1 is 40 lowercase-hex chars;
 // git also supports SHA-256 (`git init --object-format=sha256`) which yields

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit + real-git coverage for the shared `diff --git` header parser.
 //
 // git_diff_paths.dart is the single source of truth for BOTH the backend

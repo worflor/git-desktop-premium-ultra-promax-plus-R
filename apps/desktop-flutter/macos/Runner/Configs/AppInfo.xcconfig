@@ -11,4 +11,4 @@ PRODUCT_NAME = git_desktop
 PRODUCT_BUNDLE_IDENTIFIER = com.manifold.gitDesktop
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.manifold. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Woflo Labs. All rights reserved.

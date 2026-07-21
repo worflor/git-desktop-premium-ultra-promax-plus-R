@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Auto-collapse policy — pure math, no widget state, so it unit-tests in
 // isolation and the diff shell just wires importances in and fold-indices
 // out.

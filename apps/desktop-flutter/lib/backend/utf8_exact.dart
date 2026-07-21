@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // utf8_exact.dart — BOM-preserving UTF-8 decoding.
 //
 // Dart's `Utf8Decoder` (and therefore `utf8.decode`) silently strips a

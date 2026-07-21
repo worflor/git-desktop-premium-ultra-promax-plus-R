@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Minimal pure-Dart stub of package:flutter/services.dart for the logos
 // benchmark harness. Provides `rootBundle` (the only flutter symbol the
 // engine's buildFromStats import-closure pulls directly, via

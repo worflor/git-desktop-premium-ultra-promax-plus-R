@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Coverage for the dark half of lib/backend/logos_hunks.dart:
 // parseDiffHunks / parseDiffHunksForFile on multi-file diffs, renames,
 // new/deleted files, binary stanzas, mode changes, CRLF content, and

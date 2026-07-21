@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // transport_lane_bench.dart — clean same-process A/B of the transport-lane
 // fast path. The scoreLoop reads only `.strength`; the witness object
 // (LogosTransportLane, 5 fields) was allocated per call, fwd+rev, per scored

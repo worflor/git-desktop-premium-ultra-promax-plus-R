@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Not a pass/fail test — render harnesses that pump real widgets (real fonts)
 // and write zoomed PNGs to .preview/ for eyeballing. Run with:
 //   flutter test test/ui/split_pill_preview_test.dart

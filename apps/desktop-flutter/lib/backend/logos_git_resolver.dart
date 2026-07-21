@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // logos_git_resolver.dart — single source of truth for engine lifecycle
 //
 // One resolver. Any caller — UI state class, AI context builder, tests —

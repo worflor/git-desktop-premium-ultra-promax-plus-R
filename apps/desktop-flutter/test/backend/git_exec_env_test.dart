@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Real-behavior tests for the hardened git exec layer in backend/git.dart:
 //   • the non-interactive environment (GIT_TERMINAL_PROMPT / GIT_OPTIONAL_LOCKS)
 //     is actually applied to spawned subprocesses,

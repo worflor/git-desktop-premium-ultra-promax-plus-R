@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Ephemeral loopback proxy letting `codex exec` (which speaks ONLY the
 // OpenAI Responses API — streaming SSE over POST /v1/responses) drive any
 // Chat-Completions-compatible upstream (OpenRouter, OpenAI, xAI). Codex

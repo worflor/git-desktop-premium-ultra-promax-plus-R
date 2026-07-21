@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins the pure argv builder for the codex-piggyback dispatch path
 // (`_buildCodexPiggybackArgs`, exposed via `buildCodexPiggybackArgsForTesting`).
 // This is the argv actually handed to `codex exec` when a review runs through

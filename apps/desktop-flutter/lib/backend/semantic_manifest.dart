@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // semantic_manifest.dart — structured change summary for AI prompts
 //
 // Upstream of the packed diff in the commit-message / review prompt, the

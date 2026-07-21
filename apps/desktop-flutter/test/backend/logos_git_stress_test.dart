@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // logos_git_stress_test.dart — stress + edge-case probing of the CORE engine
 // (buildFromStats → diffuse → gatherEvidence → spectral) on pathological and
 // large synthetic inputs, with REAL execution. Small connected unit-test

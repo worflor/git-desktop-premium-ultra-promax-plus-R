@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // LOGOS HYPERCOMPLEX — the forward & inverse 2-axis Fourier transform
 // that unifies everything this engine computes.
 //

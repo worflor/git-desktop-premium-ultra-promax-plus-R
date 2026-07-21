@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Comprehensive tests for the generative primitives on the Logos
 // engine. Every test here verifies a specific probabilistic identity
 // derived in docs/architecture/spectral-generative.md.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Verifies the redesigned onboarding mock workspace (WorkspacePreview)
 // renders and behaves without exceptions: every top-bar panel switch is
 // exercised (changes / history / branches / x-ray / settings), the new

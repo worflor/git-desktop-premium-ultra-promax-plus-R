@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // End-to-end proof that the Manifold ref plumbing works in a git repository
 // using the SHA-256 object format (`git init --object-format=sha256`), whose
 // object IDs are 64 lowercase-hex chars instead of SHA-1's 40 — and whose

@@ -49,6 +49,9 @@ You don't need to speak to the maintainer's language to help — you need to spe
   `humanReviewedPercent` honestly (reviewed keys ÷ total keys).
 - A locale flips from "machine translated" to "human translation" in the picker when its
   reviewers have covered substantially all strings (`source: "human"`).
+- Translation PRs are contributions like any other: the PR template's one
+  checkbox covers them (see [CONTRIBUTING.md](CONTRIBUTING.md)). You keep
+  ownership of your work.
 - New locale? Open an issue first. High-resource languages can launch AI-drafted;
   low-resource languages wait for a human reviewer before shipping — machine translation
   quality drops sharply where training data is thin, and shipping a bad translation with

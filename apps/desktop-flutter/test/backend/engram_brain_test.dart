@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for engram_brain.dart / engram_glove.dart — round-trip the
 // binary formats against synthetic inputs, then spot-check nearest-well
 // math.

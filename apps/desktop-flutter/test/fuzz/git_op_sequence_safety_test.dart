@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Deep git-safety fuzz suite, built on top of the shared ScratchRepo/RepoOp
 // harness (test/support/scratch_repo.dart). The harness's own self-test
 // (scratch_repo_self_test.dart) already checks fsck+HEAD-valid for 6 fixed

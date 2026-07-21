@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Compare mode's analytical core: topMovers ranks what actually travelled
 // between two moments (skipping the unborn and the noise), and the A/B bench
 // flow — pick two frames, read the movers, drill a mover into scrub pinned.

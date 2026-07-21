@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // GitLab CLI integration — glab.dart shells out to the `glab` binary and
 // parses its JSON stdout (same shape as gh.dart, just a different CLI and a
 // different wire vocabulary). Unlike gitea_api.dart (HTTP, testable end to

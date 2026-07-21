@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // wsl_runner.dart — generalized WSL2 execution plumbing, extracted from
 // test/fuzz/cross_os_differential_test.dart (that file is left untouched;
 // this is a faithful extraction of its WSL-invocation mechanics into a

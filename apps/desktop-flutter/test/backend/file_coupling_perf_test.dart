@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Micro-benchmarks pinning the speedups from the Perf pass.
 //
 // These are not absolute-latency tests — they are RATIO pins. We run

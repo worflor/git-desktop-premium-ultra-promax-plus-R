@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Real-data smoke test + render: builds the SpectralTrajectory for this actual
 // repo, maps it through OrreryModel.fromTrajectory, and renders the result.
 // Verifies the real path end-to-end and writes PNGs to .preview/. Run with:

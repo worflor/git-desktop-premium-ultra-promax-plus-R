@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for the claim-outcome ratchet (axis 5 of the review
 // pipeline). The ratchet's job is to turn "the user accepted /
 // rejected this finding" into a posterior `p(accept | shape)`

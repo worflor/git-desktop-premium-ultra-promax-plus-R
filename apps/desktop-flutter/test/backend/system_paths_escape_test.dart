@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins the cmd.exe arg escape contract for runInTerminal's Windows
 // fallback. cmd's `/K "..."` parser keeps `& | < > ^ ( )` literal
 // inside double quotes, but `%var%` expansion still happens — that

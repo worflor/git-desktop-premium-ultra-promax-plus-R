@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // CRT phosphor shader, applied as an `ImageFilter.shader` so the live
 // scene is auto-bound to `uBackdrop` and we can transform it through
 // real CRT optics:

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // remote_types.dart — provider-neutral DTO types for remote forge sync
 //
 // These types describe the *shape* of issues, PRs, comments, checks,

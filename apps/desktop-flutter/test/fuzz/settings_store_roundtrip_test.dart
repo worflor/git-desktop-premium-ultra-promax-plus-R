@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Roundtrip + coercion-robustness fuzz coverage for AppSettingsSnapshot /
 // SettingsStore (lib/backend/settings_store.dart) — the single point
 // where every app setting is saved/loaded. This is NOT the migration

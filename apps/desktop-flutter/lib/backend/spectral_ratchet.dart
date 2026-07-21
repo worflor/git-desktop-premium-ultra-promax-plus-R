@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // SPECTRAL RATCHET — forward-only dynamics for the Logos membrane.
 //
 // Borrowed verbatim in *discipline* from the Whisper kizuna double-

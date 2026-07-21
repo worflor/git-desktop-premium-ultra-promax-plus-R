@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit tests for [modulateMuseTemperature] — the geometric-mean-of-
 // calm modulation that drives the muse synthesis temperature in
 // `_spectrallyModulatedTemperature`. The math is load-bearing: an

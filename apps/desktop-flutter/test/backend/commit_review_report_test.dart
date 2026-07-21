@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // The Changes-page review pane and the branches PR-review dialog copy
 // the same output. renderCommitReviewReport is the single source of
 // truth they both serialize; these tests pin its layout — especially the

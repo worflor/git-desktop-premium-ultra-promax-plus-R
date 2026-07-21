@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Woflo Labs
+SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+-->
+
 # Coupling Axis Audit — the temporal-holdout jury
 
 The file-coupling surface (cluster stripes, nudges, atlas coherence) makes one

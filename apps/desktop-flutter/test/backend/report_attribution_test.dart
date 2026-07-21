@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // report_attribution is the single formatter for the "which model produced
 // this" line shared by every LLM-output clipboard export. These tests pin
 // the partial-identity edge cases the comments promise — provider-only,

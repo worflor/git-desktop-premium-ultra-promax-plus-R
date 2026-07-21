@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Architectural tripwire + seam contract, in the spirit of
 // manifold_refs_transport_guard_test.dart: a source-grep test is unusual in
 // this codebase, but it is the only mechanism that catches a NEW direct

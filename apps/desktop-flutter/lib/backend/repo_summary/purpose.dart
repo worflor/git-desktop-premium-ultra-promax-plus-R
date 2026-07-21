@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // purpose.dart — one-line purpose extraction from a file's head.
 //
 // Engram's file-index caps per-file reads at 16 KB because "the top

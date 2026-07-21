@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // posix_fault_differential_test.dart — exercises real `git` against POSIX
 // filesystem conditions that are physically impossible to construct on an
 // NTFS/Windows checkout: permission-denied object writes, a disk that runs

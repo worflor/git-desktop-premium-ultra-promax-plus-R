@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // engram_tokenizer.dart — split identifiers into sub-tokens.
 //
 // Code identifiers (`getUserAuthProfile`, `build_diff_hunk`, `PHPVersion`)

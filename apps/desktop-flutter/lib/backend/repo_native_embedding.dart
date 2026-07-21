@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // repo_native_embedding.dart — repo-native content vectors for file coupling.
 //
 // WHY AN IDF TOKEN BAG, NOT A SPECTRAL EMBEDDING

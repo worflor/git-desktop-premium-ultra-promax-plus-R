@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // GYAL — Geometric Yielded Adaptive Lattice (formerly "GYAT, Tokenizer").
 //
 // The repo's structural feature prior. A 256-cell Welford lattice on Q₈

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Guards the machine-scale diff-load contract that the marble OOM taught us:
 // the combined/multi-file path must build a LAZY, bounded-hydration document —
 // it must never eagerly materialize one ParsedLine per line (the ~5.7x-input

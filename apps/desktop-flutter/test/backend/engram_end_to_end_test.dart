@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // End-to-end test using the actual bundled Alexandria + GloVe assets.
 // Loads from rootBundle the same way production does, runs a synthetic
 // hunk through the encoder, and verifies the nearest well lands

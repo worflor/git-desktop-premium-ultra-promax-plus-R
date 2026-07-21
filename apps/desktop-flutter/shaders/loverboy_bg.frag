@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Loverboy background — Conway's Game of Life, crossfaded.
 //
 // Binary B3/S23 rules (Conway 1970), sampled from the previous frame

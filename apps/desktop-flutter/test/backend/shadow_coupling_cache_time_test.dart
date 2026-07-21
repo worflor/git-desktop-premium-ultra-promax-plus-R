@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins ShadowCouplingCacheData's 60-minute freshness boundary with a
 // FakeClock. The freshness rule is `now - discoveredAt < 60 whole minutes`
 // (integer-minute truncation), so the entry is fresh at 59m59s, and stale

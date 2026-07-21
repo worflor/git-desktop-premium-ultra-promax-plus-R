@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // os_probe_corpus.dart — shared cross-OS differential probe.
 //
 // Runs a FIXED, hardcoded, adversarial corpus of inputs through every

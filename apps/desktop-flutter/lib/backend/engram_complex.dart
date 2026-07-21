@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // engram_complex.dart — complex AR(2) fit_all (port of engram_codec.fit_all)
 //
 // Companion to engram_fit.dart. That file is the real-1D specialisation

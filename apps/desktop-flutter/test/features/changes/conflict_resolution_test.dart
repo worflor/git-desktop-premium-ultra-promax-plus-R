@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Coverage for lib/features/changes/conflict_resolution.dart — the
 // AI-assisted conflict resolution flow and the shared "conflict window"
 // dialog. Almost every pure helper in this file (_extractConflictExcerpts,

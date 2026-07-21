@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // tool/diff_load_profiler.dart — measure ONE diff-pipeline stage at ONE input
 // size, in a fresh isolated process, and report peak RSS + wall time as JSON.
 //

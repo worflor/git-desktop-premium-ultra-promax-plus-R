@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Spool gate for local desk PR detail (fetchLocalDeskPrDetail).
 //
 // The patch body always streams to a disk spool first; the spool's ACTUAL

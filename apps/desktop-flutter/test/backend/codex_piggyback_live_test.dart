@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Live contract test: drives the REAL `codex` binary through
 // CodexPiggybackProxy against a mock chat/completions upstream, using the
 // exact argv shape the piggyback dispatch builds. This is the empirical

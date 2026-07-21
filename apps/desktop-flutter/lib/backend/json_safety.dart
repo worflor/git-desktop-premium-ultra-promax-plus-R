@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // json_safety.dart — total, type-safe readers for untrusted JSON.
 //
 // `j['x'] as T?` is null-safe but not type-safe: a present-but-wrong-typed

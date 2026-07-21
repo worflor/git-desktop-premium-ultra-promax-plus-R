@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // A ByteStore is the diff viewer's single source of truth: the raw bytes of a
 // unified diff, addressed by opaque offsets. The predictive index and the lazy
 // row list read the diff ONLY through this interface, so the storage medium —

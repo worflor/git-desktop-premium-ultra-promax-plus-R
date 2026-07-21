@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // One-shot diagnostic: walk a directory tree, find every git repo,
 // run BOTH the current whitelist-based classifier and the proposed
 // emergent (bare-host) variant against each remote URL, print a

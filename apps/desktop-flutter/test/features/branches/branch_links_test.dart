@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Unit tests for the pure branch cross-link resolver and the desk-aware
 // delete-failure classifier surfaced on the branches lens. Both live in
 // branch_ops.dart — pure functions (no BuildContext / no git), so they're

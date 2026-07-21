@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // diff_scroll_probe_test.dart — bisection probe for O(document) interaction
 // cost on machine-scale diffs. When diff_smoothness_lab_test.dart's vscroll
 // gate goes red, run this to localize WHERE in a drag the time goes. It found

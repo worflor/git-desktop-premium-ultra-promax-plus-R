@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // admitted_git.dart — the front door for pulling git DIFF TEXT into memory.
 //
 // WHY THIS EXISTS. `runGit(repo, ['diff', ...])` hands back the whole patch as

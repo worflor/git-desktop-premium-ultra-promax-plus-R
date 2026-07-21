@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Truth-table + property coverage for the secret-egress gate in
 // `lib/backend/ai.dart` — the two functions that stop a user's own secrets
 // (`.env`, private keys, API tokens) from being shipped to a third-party LLM:

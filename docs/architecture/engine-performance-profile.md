@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Woflo Labs
+SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+-->
+
 # Logos Engine — Whole-Engine Performance Profile (2026-06)
 
 A board-level profile of the spectral engine and everything it touches: where time

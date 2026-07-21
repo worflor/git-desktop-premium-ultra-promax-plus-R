@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // End-to-end tests for [GitDirWatcher]. These are REAL filesystem-watch
 // tests: each spins up a temp git repo, points a live watcher at it,
 // mutates `.git` with shell `git`, and asserts the coalesced callback

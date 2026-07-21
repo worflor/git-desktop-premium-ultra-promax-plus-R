@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Spectrum-honesty profiler — measures the CURRENT eigensolver's behaviour
 // so the block/kernel/truncation work has a real before/after baseline.
 //

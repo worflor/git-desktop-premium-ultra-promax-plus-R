@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Minimal pure-Dart stub of package:flutter/foundation.dart for the
 // logos benchmark harness. Provides only the compile-time symbols the
 // engine's buildFromStats import-closure (and the shared_preferences

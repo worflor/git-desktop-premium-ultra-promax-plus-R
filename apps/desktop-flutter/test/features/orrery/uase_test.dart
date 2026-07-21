@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Validates the UASE numerical core on a dynamic graph with a known answer:
 // two stable communities, one growing, and a node that migrates between them.
 // The properties that matter for Orrery: a node whose neighbourhood is

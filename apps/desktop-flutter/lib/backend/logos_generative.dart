@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Generative primitives for the Logos engine — the full probabilistic
 // physics apparatus built on the Gaussian Free Field prior.
 //

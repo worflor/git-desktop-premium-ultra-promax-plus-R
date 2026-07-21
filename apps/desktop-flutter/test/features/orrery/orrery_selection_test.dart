@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // P1 #9 — the selection card answers "why is this file here?" in plain
 // language (coupling-central vs peripheral, and which way it drifted), with no
 // eigen-anything on the surface. These lock that phrasing to real geometry.

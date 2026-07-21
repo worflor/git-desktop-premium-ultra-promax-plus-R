@@ -14,5 +14,9 @@
       "question": "MAU DIBAWA KE MANA INI?",
       "body": "Milestone pertama adalah kesetaraan penuh dengan GitHub Desktop, SourceTree, dan GitKraken. Git client lintas-platform yang terasa cepat dan menangani hal-hal dasar lebih baik dari yang lain. Sebagian besar sudah di sini. Spectral engine sudah memberi kita keunggulan untuk operasi yang membuatmu harus berpikir manual di client lain.\n\nSetelah itu, tujuannya adalah melampaui setiap git client lain dalam kecepatan, aksesibilitas, kecerdasan, dan UX keseluruhan. Ada lebih banyak di pipeline daripada yang diumumkan di sini."
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · inti riset community-source WLCSL · tanpa jaminan"
   }
 }

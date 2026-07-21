@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // A DETERMINISTIC concurrency scheduler built on the one seam every git
 // subprocess in this app passes through: `GitSpawn.runOverride` /
 // `GitSpawn.startOverride` (lib/backend/git.dart). Sibling to

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Metamorphic property tests for the INCREMENTAL graph-update operations of
 // Manifold's spectral engine (lib/backend/logos_core.dart +
 // lib/backend/graph/csr_builder.dart).

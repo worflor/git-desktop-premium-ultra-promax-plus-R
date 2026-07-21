@@ -1,16 +1,3 @@
-# Node
-node_modules/
-dist/
-.vite/
-
-# Rust
-/target/
-**/*.rs.bk
-
-# Tauri
-src-tauri/target/
-apps/desktop/src-tauri/target/
-
 # Claude Code local state — session locks, agent configs, ephemeral
 # PIDs, etc. Nothing under here is shared across contributors.
 .claude/
@@ -27,6 +14,10 @@ apps/desktop/src-tauri/target/
 # The branches themselves live in the repo's history; the on-disk
 # checkouts don't belong in the tree.
 .manifold/
+
+# Local-only records (license-migration audit notes, counsel questions,
+# cross-repo hashes). Never published.
+/.local/
 
 # IDE and OS
 .vscode/

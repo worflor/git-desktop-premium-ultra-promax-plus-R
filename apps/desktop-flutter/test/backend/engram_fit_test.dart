@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for the Engram AR(2) fit port. Mirrors the Rust test suite's
 // key invariants: linear ramp, pure cosine (sustained orbit), damped
 // cosine (decaying orbit), degenerate constant, too-short input,

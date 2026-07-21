@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Not a pass/fail test — a render harness for the disk painter alone. Paints
 // the Orrery on synthetic data and writes PNGs to .preview/ so the disk can be
 // eyeballed without the page chrome. Run with:

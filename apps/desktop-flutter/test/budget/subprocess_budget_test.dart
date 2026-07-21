@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Deterministic subprocess-spawn budgets for common git flows.
 //
 // These are contracts, not aspirations: each number was MEASURED once on a

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Migration semantics for the `updateChannelExplicit` flag added to
 // AppSettingsSnapshot. Pre-flag installs have no field; the loader
 // infers a sensible value from what the old schema could possibly

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // LogosPersistence — persistent homology on the coupling filtration.
 //
 // We sweep a decreasing coupling threshold θ from max(weight) down to

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // NewFileIndex — the zero-copy path for an UNTRACKED file's diff.
 //
 // An untracked file's diff is a pure function of the file: a "new file" header

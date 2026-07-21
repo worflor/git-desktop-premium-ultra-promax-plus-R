@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // LRG structural rings — read a code graph's intrinsic structural scales from
 // the heat-kernel diffusion-time axis (the Laplacian Renormalization Group),
 // NOT from the size of a commit window.

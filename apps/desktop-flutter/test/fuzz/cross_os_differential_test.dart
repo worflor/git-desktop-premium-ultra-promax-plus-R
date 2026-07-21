@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // cross_os_differential_test.dart — catches Windows-vs-Linux divergence in
 // functions that LOOK OS-invariant (paths passed in explicitly, no ambient
 // Platform reads) but might secretly not be: a hidden `\` assumption, a

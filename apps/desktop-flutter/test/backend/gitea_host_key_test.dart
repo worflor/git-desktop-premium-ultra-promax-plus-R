@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // `canonicalGiteaHostKey` owns the key shape that `resolveGiteaToken`
 // looks up in the per-host token map. Whatever a user pastes into the
 // settings token card — a bare host, a full clone URL, an scp remote —

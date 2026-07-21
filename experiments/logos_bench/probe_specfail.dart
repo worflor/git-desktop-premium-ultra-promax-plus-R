@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // Probe the two spectral_observables_test failures against dense ground
 // truth, to decide: solver bug, or test calibrated to the old undercount?
 //

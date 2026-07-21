@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -9,6 +13,10 @@ final bool _isTty = stderr.hasTerminal;
 void main(List<String> args) async {
   if (args.isEmpty || args.first == '--help' || args.first == '-h') {
     _printUsage();
+    exit(0);
+  }
+  if (args.first == '--version' || args.first == '-v') {
+    _printVersion();
     exit(0);
   }
 
@@ -625,6 +633,26 @@ String _pad(dynamic v) {
   return s.padLeft(7);
 }
 
+void _printVersion() {
+  // Mirrors BuildInfo.versionDisplay without importing app code: BuildInfo
+  // lives behind package:flutter, and this binary must stay runnable on the
+  // plain Dart VM.
+  const versionDefine = String.fromEnvironment('MANIFOLD_VERSION');
+  const shaDefine = String.fromEnvironment('MANIFOLD_GIT_SHA');
+  final version = versionDefine.isEmpty
+      ? 'dev'
+      : (shaDefine.isEmpty
+          ? versionDefine
+          : '$versionDefine '
+              '(${shaDefine.substring(0, shaDefine.length < 7 ? shaDefine.length : 7)})');
+  stdout.writeln('manifold $version');
+  stdout.writeln('© 2026 Woflo Labs');
+  stdout.writeln(
+    'GPL-3.0-or-later with the Manifold-Woflo exception; '
+    'research components under WLCSL-1.0. See LICENSE.md.',
+  );
+}
+
 void _printUsage() {
   stdout.writeln('''
 manifold — CLI bridge to the running Manifold git client.
@@ -658,7 +686,10 @@ Options:
   --limit <n>      Cap results
   --model <id>     Override model selection
   --budget <chars>  Token budget for context
+  --version, -v    Print version and license summary
 
 File params accept: --files, --file, --path, --seeds, --changed.
+
+© 2026 Woflo Labs · GPL-3.0-or-later with the Manifold-Woflo exception; research components under WLCSL-1.0. See LICENSE.md.
 ''');
 }

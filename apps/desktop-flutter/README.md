@@ -1,7 +1,6 @@
 # git_desktop
 
-The Manifold desktop client (Flutter). This is the live app; `apps/*-ts` and the
-Rust crates are legacy.
+The Manifold desktop client (Flutter).
 
 ## Command-line bridge
 

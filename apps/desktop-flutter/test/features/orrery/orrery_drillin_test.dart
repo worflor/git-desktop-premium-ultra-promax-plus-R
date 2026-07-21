@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Per-module drill-in (focus+context): a module super-node expands to its files
 // in place while the rest stay collapsed, with a breadcrumb back to the map.
 

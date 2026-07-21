@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // repo_head_cache.dart — process-wide cache of `git rev-parse HEAD`
 // keyed by repo path, with a short TTL so concurrent staleness checks
 // collapse into a single subprocess.

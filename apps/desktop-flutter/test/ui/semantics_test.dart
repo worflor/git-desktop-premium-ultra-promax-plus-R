@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // semantics_test.dart — zero accessibility tests existed before this file.
 //
 // Runs Flutter's built-in a11y guideline checks against a themed sample

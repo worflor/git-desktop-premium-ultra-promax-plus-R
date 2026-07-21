@@ -6,13 +6,13 @@ A cross-platform desktop Git client for Windows and Linux. Built in Flutter, Dar
   <img src="pics/code-review-hero.webp" alt="Manifold reviewing a diff: files and evidence orbiting a central node while Logos diffuses signal across the repo" width="760">
 </p>
 
-> Manifold is a free, open source Git client for Windows and Linux with a spectral engine (Logos) that reads your commit history as a graph of how files couple, then uses it for merge conflict prediction, grounded AI code review, and codebase maps. Works with GitHub, GitLab, and self-hosted Gitea, or fully offline with local-first pull requests and issues that need no remote.
+> Manifold is a free Git client for Windows and Linux with a spectral engine (Logos) that reads your commit history as a graph of how files couple, then uses it for merge conflict prediction, grounded AI code review, and codebase maps. Works with GitHub, GitLab, and self-hosted Gitea, or fully offline with local-first pull requests and issues that need no remote.
 
 ## It's a Git client :]
 
 Stage, commit, push, pull, diff, branch, merge, rebase, stash, cherry-pick,
 reflog. The usual. If you've used GitHub Desktop, Sourcetree, Fork,
-Tower or GitKraken; you already know the shape, and Manifold does that shape, an open source alternative to them all. The
+Tower or GitKraken; you already know the shape, and Manifold does that shape, a free alternative to them all. The
 day-to-day stuff works how you'd expect it to.
 
 Works with GitHub, GitLab (including self-hosted), and Gitea, syncing PRs and issues both ways. Or go local-first: with no remote at all, PRs and issues still live inside the repo, fully offline.
@@ -142,7 +142,7 @@ Cellshaded comic book page, cosmic glass in three unique perspectives... you get
 
 ## Questions you might have
 
-**Is it free?** Yes, completely. Free and open source, no account required.
+**Is it free?** Yes, completely. No charge, no account required, and the code is public.
 
 **Does it work offline, without a remote?** Yes. PRs and issues live inside the repo as orphan refs, so it is fully local-first. Push whenever you feel like it.
 
@@ -166,9 +166,10 @@ Needs Flutter 3.35+, Dart 3.9+, and Git on your PATH.
 
 ## On the code, openly
 
-Manifold is open source. yippee!!! Use it as your daily driver if it clicks for you.
-Fork it, lift pieces for your own projects, audit it, whatever helps. If it
-ends up being the Git client someone actually reaches for, that's great.
+The code is all here, in the open. yippee!!! Use it as your daily driver if it clicks for you.
+Read it, audit it, fork it, lift pieces for your own projects under the terms
+they carry. If it ends up being the Git client someone actually reaches for,
+that's great.
 
 Issues are welcome. Bug reports, questions, "this broke", "this is
 confusing", "X seems wrong" - all of that is useful, and I'll get to it
@@ -190,7 +191,8 @@ The engine mixes:
 PRs that touch the engine may violate invariants that look fine in
 code review but quietly wreck properties the rest of the system depends
 on. Unwinding that eats the time I'd rather spend *not*. So read it,
-fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just not vibe-understood PRs or I'll vibe-respond.
+fork it, yoink from it, file issues, fix issues I haven't experienced yet. App-side
+fixes and improvements are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Just not vibe-understood PRs or I'll vibe-respond.
 
 
 ## Known Things
@@ -200,8 +202,11 @@ fork it, yoink from it, file issues, fix issues I haven't experienced yet. Just 
 
 ## License
 
-See [LICENSE](LICENSE). WLAC and WEEC ship under the same Free License I hold the
-rights to.
+Manifold is mixed. Most of it is GPL-3.0-or-later with the Manifold-Woflo
+exception, and the reusable Woflo research components listed in the root license
+keep their Woflo Labs community-source terms. [LICENSE.md](LICENSE.md) draws the
+exact path boundary between them. If you'd like to contribute, [CONTRIBUTING.md](CONTRIBUTING.md)
+covers how that works.
 
 ## Acknowledgments
 

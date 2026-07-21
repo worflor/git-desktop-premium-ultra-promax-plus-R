@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // SPECTRAL SPACETIME — the file graph tensored with the commit graph.
 //
 // Our engine diffuses mass over files (spatial graph). OG Logos

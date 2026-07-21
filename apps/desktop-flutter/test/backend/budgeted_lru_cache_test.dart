@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // budgeted_lru_cache_test.dart — laws for the byte-budgeted LRU. A count-only
 // LRU pinned gigabytes of a heavy repo's diffs ("12 entries, all fine"); this
 // primitive exists so every content-retaining cache enforces the BYTES axis.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // wick_enabled_gate_test.dart — the wick integration's hard on/off.
 //
 // The toggle exists to stop CPU, so the laws are about WORK, not labels: a

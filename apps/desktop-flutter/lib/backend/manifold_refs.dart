@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // manifold_refs.dart — git plumbing for Manifold metadata refs
 //
 // "Local PRs" (and local issues, etc.) live as orphan commit histories

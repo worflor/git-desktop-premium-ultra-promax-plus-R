@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // COMMIT ATLAS, candidate commits, not a file list
 //
 // The conventional Git UI asks *which files?*, a mechanical checkbox.

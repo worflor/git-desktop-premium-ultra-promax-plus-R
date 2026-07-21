@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // strings.dart — the whole-sentence i18n boundary for the repo summary.
 //
 // Every user-facing sentence the summary assembles goes through this

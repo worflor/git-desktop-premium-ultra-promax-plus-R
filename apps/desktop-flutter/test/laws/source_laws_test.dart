@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // source_laws_test.dart — the codebase reads itself.
 //
 // Structural laws over lib/'s real AST (test/support/law_corpus.dart). Each

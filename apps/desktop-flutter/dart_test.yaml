@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Woflo Labs
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 ## Real-Git witnesses are process and filesystem heavy. Flutter's default
 ## worker-per-CPU policy oversubscribes them on larger hosts; an async test can
 ## then time out while Git is still alive and teardown removes its repository.

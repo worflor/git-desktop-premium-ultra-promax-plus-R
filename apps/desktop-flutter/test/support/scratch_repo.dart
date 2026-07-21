@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // A real-git scratch-repository harness: spins up an ephemeral temp
 // directory, `git init`s it, and drives every subsequent git call through
 // the app's OWN production wrapper — `runGit` in backend/git.dart — so a

@@ -38,7 +38,8 @@ just works.
 ## Commands
 
 Run `manifold help` for the machine-readable schema, or `manifold --help` for
-this list. Anything that calls a model or diffuses the graph streams a progress
+this list. `manifold --version` (`-v`) prints the build version and a one-line
+license summary. Anything that calls a model or diffuses the graph streams a progress
 line to stderr while it works (`review`, `review-evidence`, `muse`, `impact`,
 `dream`, `deadcode`).
 
@@ -78,6 +79,7 @@ timings without spending tokens.
 | `--limit <n>` | Cap result count |
 | `--model <id>` | Override model selection for AI commands |
 | `--budget <chars>` | Context token budget |
+| `--version`, `-v` | Print version and license summary, then exit |
 
 File arguments are accepted under any of `--files`, `--file`, `--path`,
 `--seeds`, `--changed` — pass whichever reads best for the command. A single

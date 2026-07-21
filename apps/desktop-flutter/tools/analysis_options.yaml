@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Woflo Labs
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 # Command-line tools/scripts print to stdout as their primary output, so
 # avoid_print is relaxed here; everything else inherits the strict root config.
 include: ../analysis_options.yaml

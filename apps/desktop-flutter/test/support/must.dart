@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // must.dart — await-and-assert for arrange-phase store calls.
 //
 // A test that drops a GitResult in its arrange phase can silently run its

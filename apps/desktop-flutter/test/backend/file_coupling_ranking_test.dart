@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for the canonical ranking API on FileCouplingMatrix.
 // These methods are the single source of truth for "who are this
 // file's co-change partners?" and "how central is each file in the

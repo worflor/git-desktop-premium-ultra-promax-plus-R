@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 /// User preferences for the shape of generated commit messages.
 /// Consumed by `_buildCommitMessagePrompt` in `ai.dart` to shape the
 /// AI's output, and by the settings stage UI to preview it.

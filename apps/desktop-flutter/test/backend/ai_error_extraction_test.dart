@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Pins the contract that provider-error parsing surfaces the
 // deepest human-readable message from arbitrarily nested payloads.
 // The motivating regression is the gpt-5.5 case below — codex JSONL

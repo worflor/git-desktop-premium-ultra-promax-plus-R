@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for the shadow-history (footgun) channel formatting + ranking.
 // The cold git discovery path is exercised elsewhere; here we pin the
 // pure rendering and severity ordering.

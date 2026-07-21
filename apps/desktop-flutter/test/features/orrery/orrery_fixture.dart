@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Synthetic OrreryModel for visual iteration — a plausible 26-step history:
 // an undifferentiated core that matures into three radial arms (modularisation)
 // with a mid-history reorg where a slice of files migrate between arms.

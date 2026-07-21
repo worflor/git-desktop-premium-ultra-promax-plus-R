@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // spoolSelectionDiff streams the combined diff to disk instead of building one
 // String. This oracle test proves — on REAL git — that the spooled bytes, read
 // back through DiffDocument.lazyFromSpool, reconstruct exactly the same document

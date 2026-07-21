@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Tests for `_formatAxisBreakdown` — the per-file axis-explanation
 // formatter that makes the Logos relevance neighborhood emission
 // self-explaining (`via=cc(64%) sp=21% f0=15%` instead of just a φ).

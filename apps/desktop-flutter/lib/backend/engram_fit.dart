@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // engram_fit.dart — Whisper Engram AR(2) oscillator fit (real specialization)
 //
 // Direct port of Engram's `fit_pair` kernel: five dot products + a 2×2

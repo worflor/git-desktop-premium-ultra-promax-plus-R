@@ -14,5 +14,9 @@
       "question": "这将走向何方？",
       "body": "第一个里程碑是与 GitHub Desktop、SourceTree 和 GitKraken 完全看齐。一个跨平台的 git 客户端，既要快得称手，又要把基本功打磨得胜过其他任何工具。这一步基本已经到位。谱引擎已经让我们在那些别的客户端要你手动琢磨的操作上占了优势。\n\n再往前，目标是在速度、无障碍、智能和整体体验上超越所有其他 git 客户端。管线里还有比这里公布的更多的东西。"
     }
+  },
+  "legal": {
+    "copyright": "© 2026 Woflo Labs",
+    "license": "GPL-3.0-or-later · WLCSL 社区源研究核心 · 不提供担保"
   }
 }

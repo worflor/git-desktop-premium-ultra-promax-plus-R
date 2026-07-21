@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // cursor-agent reports per-request usage in the SAME JSON we parse for the
 // answer. The envelope is snake_case (is_error, duration_ms, request_id) but
 // we have no fixture pinning the nested `usage` object's casing — so the

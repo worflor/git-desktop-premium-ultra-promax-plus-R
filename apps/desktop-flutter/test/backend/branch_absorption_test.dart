@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Witnesses for the ABSORPTION LAW — existential over history: a branch is
 // absorbed into its base iff SOME first-parent base commit c since the fork
 // satisfies `git merge-tree --write-tree <c> <branch>` == c's own tree.

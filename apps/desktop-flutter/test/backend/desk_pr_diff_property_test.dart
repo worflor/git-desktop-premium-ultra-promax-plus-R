@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // Property-based (seeded random) tests for local desk-PR diff
 // materialisation. Where desk_pr_diff_test.dart pins hand-built
 // topologies, this file fuzzes small-repo topologies against git itself

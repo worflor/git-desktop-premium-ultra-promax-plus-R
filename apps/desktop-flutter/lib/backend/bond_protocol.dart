@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
+// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+
 // BOND PROTOCOL — peer-to-peer handshake decisions.
 //
 // Two machines each have a LogosGit engine. Each computes:
