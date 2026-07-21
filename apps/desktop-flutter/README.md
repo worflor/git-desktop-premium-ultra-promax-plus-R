@@ -1,17 +1,22 @@
 # git_desktop
 
-A new Fwutter project.
+The Manifold desktop client (Flutter). This is the live app; `apps/*-ts` and the
+Rust crates are legacy.
 
-## Getting Started
+## Command-line bridge
 
-This project is a starting point for a Flutter application.
+`bin/manifold_cli.dart` is a CLI that talks to the running app over a loopback
+socket, so scripts and agents can pull the same warm engine answers the UI shows
+— `status`, `blast-radius`, `review`, and friends, with `--json` for piping.
+Full command list, options, and protocol notes: [`docs/cli.md`](../../docs/cli.md).
 
-A few resources to get you started if this is your first Flutter project:
+```
+dart compile exe bin/manifold_cli.dart -o manifold
+manifold status
+manifold blast-radius --files lib/backend/git.dart --json
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## Flutter basics
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+New to Flutter? Start with the [online documentation](https://docs.flutter.dev/)
+for tutorials, samples, and the API reference.
