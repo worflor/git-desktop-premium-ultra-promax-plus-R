@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 import 'dart:async';
 import 'dart:io' show File, Process, pid;
 import 'dart:isolate';
@@ -390,7 +394,9 @@ Future<Map<String, dynamic>> _status(
 ) async {
   final repo = _requireRepo(params, ctx);
   final result = await getRepositoryStatus(repo);
-  if (!result.ok) return {'error': result.error};
+  if (!result.ok) {
+    throw StateError(result.error ?? 'Failed to read repository status.');
+  }
   final s = result.data!;
   return {
     'repo': repo,
@@ -436,7 +442,7 @@ Future<Map<String, dynamic>> _diff(
   final file = params['file'] as String? ?? params['path'] as String?;
   if (file != null) {
     final r = await getFileDiff(repo, file);
-    if (!r.ok) return {'error': r.error};
+    if (!r.ok) throw StateError(r.error ?? 'Failed to diff $file.');
     return {'file': file, 'diff': r.data};
   }
   // Unscoped whole-tree diff: the paths it can ever print are exactly the
@@ -469,9 +475,7 @@ Future<Map<String, dynamic>> _diff(
   );
   if (unstagedAdmitted.decision != AdmissionDecision.ran ||
       stagedAdmitted.decision != AdmissionDecision.ran) {
-    return {
-      'error': 'Change-set too large to diff. Narrow with --file <path>.',
-    };
+    throw StateError('Change-set too large to diff. Narrow with --file <path>.');
   }
   final unstaged = unstagedAdmitted.value!;
   final staged = stagedAdmitted.value!;
@@ -1187,7 +1191,9 @@ Future<Map<String, dynamic>> _review(
   totalSw.stop();
 
   if (!result.ok || result.data == null) {
-    return {'error': result.error ?? 'Review failed.'};
+    // Throw, don't return {'error': …}: a returned error map hides under
+    // `result`, which the CLI reads as success (exit 0).
+    throw StateError(result.error ?? 'Review failed.');
   }
   final d = result.data!;
   return {
@@ -1309,7 +1315,7 @@ Future<Map<String, dynamic>> _reviewEvidence(
   totalSw.stop();
 
   if (!result.ok || result.data == null) {
-    return {'error': result.error ?? 'Evidence gather failed.'};
+    throw StateError(result.error ?? 'Evidence gather failed.');
   }
   final d = result.data!;
   return {
@@ -1387,7 +1393,7 @@ Future<Map<String, dynamic>> _muse(
   totalSw.stop();
 
   if (!result.ok || result.data == null) {
-    return {'error': result.error ?? 'Muse failed.'};
+    throw StateError(result.error ?? 'Muse failed.');
   }
   final d = result.data!;
   return {

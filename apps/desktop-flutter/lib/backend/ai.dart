@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -5892,8 +5896,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // normal review/commit/muse paths — a handful of stopwatches of overhead.
   GatherDiagnostics? diag,
 }) async {
-  final scopeArgs =
-      scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
   final gitSw = diag != null ? (Stopwatch()..start()) : null;
 
   final String branchName;
@@ -5915,18 +5917,20 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       return _CommitDiffContextResult.err(branch.error!);
     }
 
-    final status = await _runGitCommand(
+    final status = await _runGitCommandPathChunked(
       repositoryPath,
-      ['status', '--porcelain=v1', ...scopeArgs],
+      const ['status', '--porcelain=v1'],
+      scopedPaths,
     );
     if (!status.ok) {
       return _CommitDiffContextResult.err(status.error!);
     }
 
     final stagedStat = includeStaged
-        ? await _runGitCommand(
+        ? await _runGitCommandPathChunked(
             repositoryPath,
-            ['diff', '--cached', '--stat=$_diffStatWidth', ...scopeArgs],
+            ['diff', '--cached', '--stat=$_diffStatWidth'],
+            scopedPaths,
           )
         : const GitResult.ok('');
     if (!stagedStat.ok) {
@@ -5934,9 +5938,10 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     }
 
     final unstagedStat = includeUnstaged
-        ? await _runGitCommand(
+        ? await _runGitCommandPathChunked(
             repositoryPath,
-            ['diff', '--stat=$_diffStatWidth', ...scopeArgs],
+            ['diff', '--stat=$_diffStatWidth'],
+            scopedPaths,
           )
         : const GitResult.ok('');
     if (!unstagedStat.ok) {
@@ -5947,7 +5952,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     // Context lines adapt to scope size: small changes get more surrounding
     // code (the AI sees the full function), large changes get less (save
     // token budget for actual changes).
-    final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
+    final fileCount = scopedPaths.isNotEmpty ? scopedPaths.length : 10;
     final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
     final diffFlags = [
       '--no-color',
@@ -5970,17 +5975,25 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
           ? scopedPaths
           : _porcelainPaths(status.data ?? ''),
       () async {
+        final diffFlagsNoRename = [
+          for (final f in diffFlags)
+            if (f != '-M') f,
+        ];
         final staged = includeStaged
-            ? await _runGitCommand(
+            ? await _runGitCommandPathChunked(
                 repositoryPath,
-                ['diff', '--cached', ...diffFlags, ...scopeArgs],
+                ['diff', '--cached', ...diffFlags],
+                scopedPaths,
+                baseArgsWhenChunked: ['diff', '--cached', ...diffFlagsNoRename],
                 timeout: const Duration(seconds: _diffTimeoutSeconds),
               )
             : const GitResult.ok('');
         final unstaged = includeUnstaged
-            ? await _runGitCommand(
+            ? await _runGitCommandPathChunked(
                 repositoryPath,
-                ['diff', ...diffFlags, ...scopeArgs],
+                ['diff', ...diffFlags],
+                scopedPaths,
+                baseArgsWhenChunked: ['diff', ...diffFlagsNoRename],
                 timeout: const Duration(seconds: _diffTimeoutSeconds),
               )
             : const GitResult.ok('');
@@ -6007,7 +6020,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     // are just new files with their full content as added lines. Synthesize
     // proper unified-diff entries for each one so the reviewer can see them.
     final untrackedDiff = includeUnstaged
-        ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
+        ? await _collectUntrackedFilesDiff(repositoryPath, scopedPaths)
         : '';
 
     fullDiff = _joinDiffSections(
@@ -6110,7 +6123,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     const _LogosTopologyProducer(),
     const _RelevanceNeighborhoodProducer(),
     _ChangeTypesProducer(
-      scopeArgs: scopeArgs,
+      scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
     ),
@@ -6379,8 +6392,9 @@ String _joinDiffSections({
 /// it'll hallucinate that they don't exist). We read each file's content
 /// and emit a synthetic `/dev/null → b/<path>` diff block so the reviewer
 /// gets the full new file content as added lines.
-/// [scopeArgs] follows the same convention as elsewhere — either `['--']`
-/// for "all files" or `['--', path1, path2, ...]` to restrict scope.
+/// [scopedPaths] restricts scope when non-empty; empty means the whole
+/// working tree. Paths ride the chunked runner so a large dirty set cannot
+/// overflow the Windows argv limit.
 /// Decode bytes as UTF-8, tolerating malformed sequences by falling back
 /// to a byte-for-byte reading. Most source files are UTF-8; using the
 /// Latin-1-ish `String.fromCharCodes` corrupts any non-ASCII character
@@ -6396,19 +6410,14 @@ String _tryDecodeUtf8(List<int> bytes) {
 
 Future<String> _collectUntrackedFilesDiff(
   String repositoryPath,
-  List<String> scopeArgs,
+  List<String> scopedPaths,
 ) async {
   // List untracked, non-ignored files. `--exclude-standard` respects
   // .gitignore + global excludes + .git/info/exclude.
-  final listArgs = <String>[
-    'ls-files',
-    '--others',
-    '--exclude-standard',
-    ...scopeArgs,
-  ];
-  final listResult = await _runGitCommand(
+  final listResult = await _runGitCommandPathChunked(
     repositoryPath,
-    listArgs,
+    const ['ls-files', '--others', '--exclude-standard'],
+    scopedPaths,
     timeout: const Duration(seconds: _diffTimeoutSeconds),
   );
   if (!listResult.ok) return '';
@@ -6677,7 +6686,7 @@ class _FileMetaResult {
 /// so it doesn't guess.
 Future<String> _collectChangeTypes({
   required String repositoryPath,
-  required List<String> scopeArgs,
+  required List<String> scopedPaths,
   required bool includeStaged,
   required bool includeUnstaged,
 }) async {
@@ -6685,26 +6694,23 @@ Future<String> _collectChangeTypes({
     final results = <String>[];
 
     if (includeStaged) {
-      final r = await _runGitCommand(repositoryPath, [
-        'diff',
-        '--cached',
-        '--name-status',
-        '-M',
-        '-C',
-        ...scopeArgs,
-      ]);
+      final r = await _runGitCommandPathChunked(
+        repositoryPath,
+        const ['diff', '--cached', '--name-status', '-M', '-C'],
+        scopedPaths,
+        baseArgsWhenChunked: const ['diff', '--cached', '--name-status'],
+      );
       if (r.ok && (r.data ?? '').trim().isNotEmpty) {
         results.add(r.data!.trim());
       }
     }
     if (includeUnstaged) {
-      final r = await _runGitCommand(repositoryPath, [
-        'diff',
-        '--name-status',
-        '-M',
-        '-C',
-        ...scopeArgs,
-      ]);
+      final r = await _runGitCommandPathChunked(
+        repositoryPath,
+        const ['diff', '--name-status', '-M', '-C'],
+        scopedPaths,
+        baseArgsWhenChunked: const ['diff', '--name-status'],
+      );
       if (r.ok && (r.data ?? '').trim().isNotEmpty) {
         results.add(r.data!.trim());
       }
@@ -7419,11 +7425,11 @@ class _RelevanceNeighborhoodProducer extends AiContextProducer {
 /// existed. Same for [_StructuralVerificationProducer] below.
 class _ChangeTypesProducer extends AiContextProducer {
   const _ChangeTypesProducer({
-    required this.scopeArgs,
+    required this.scopedPaths,
     required this.includeStaged,
     required this.includeUnstaged,
   });
-  final List<String> scopeArgs;
+  final List<String> scopedPaths;
   final bool includeStaged;
   final bool includeUnstaged;
 
@@ -7442,7 +7448,7 @@ class _ChangeTypesProducer extends AiContextProducer {
     // its own naturally-bounded output (one line per touched file).
     final body = await _collectChangeTypes(
       repositoryPath: req.repositoryPath,
-      scopeArgs: scopeArgs,
+      scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
     );
@@ -12147,6 +12153,64 @@ Future<GitResult<String>> _runGitCommand(
     return GitResult.err(stderr.isEmpty ? 'Git command failed.' : stderr);
   }
   return GitResult.ok(result.stdout);
+}
+
+/// Windows caps a child's command line at ~32K characters, so a dirty tree of
+/// a few hundred paths spliced into `git status`/`git diff` argv fails at the
+/// spawn itself ("The filename or extension is too long", process_win.cc).
+/// For commands whose output is a per-path concatenation (porcelain status,
+/// diff, --stat), the same command over disjoint path chunks concatenated in
+/// order is equivalent, so chunk by cumulative argument length. An empty
+/// [paths] runs [baseArgs] once, unscoped.
+///
+/// Cross-path analyses are NOT chunk-safe: rename/copy detection (`-M`/`-C`)
+/// pairs sources with destinations only within one invocation, so a rename
+/// split across chunks would surface as an unrelated delete + add. Callers
+/// whose [baseArgs] carry such flags pass a rename-free [baseArgsWhenChunked];
+/// it is used for EVERY chunk once splitting engages, so the degrade is
+/// uniform (all renames shown as delete+add) rather than split-dependent.
+/// Single-chunk scopes always run plain [baseArgs] — identical to the
+/// unchunked call.
+Future<GitResult<String>> _runGitCommandPathChunked(
+  String repositoryPath,
+  List<String> baseArgs,
+  List<String> paths, {
+  List<String>? baseArgsWhenChunked,
+  Duration timeout = _gitCommandTimeout,
+}) async {
+  if (paths.isEmpty) {
+    return _runGitCommand(repositoryPath, baseArgs, timeout: timeout);
+  }
+  // Conservative: leaves headroom under 32767 for git.exe's own path, the
+  // base args, and per-argument quoting overhead.
+  const argBudget = 24000;
+  final chunks = <List<String>>[];
+  var current = <String>[];
+  var currentLen = 0;
+  for (final p in paths) {
+    final cost = p.length + 3;
+    if (current.isNotEmpty && currentLen + cost > argBudget) {
+      chunks.add(current);
+      current = <String>[];
+      currentLen = 0;
+    }
+    current.add(p);
+    currentLen += cost;
+  }
+  if (current.isNotEmpty) chunks.add(current);
+  final effectiveArgs =
+      chunks.length > 1 ? (baseArgsWhenChunked ?? baseArgs) : baseArgs;
+  final buffer = StringBuffer();
+  for (final chunk in chunks) {
+    final r = await _runGitCommand(
+      repositoryPath,
+      [...effectiveArgs, '--', ...chunk],
+      timeout: timeout,
+    );
+    if (!r.ok) return r;
+    buffer.write(r.data ?? '');
+  }
+  return GitResult.ok(buffer.toString());
 }
 
 Future<_CommandResult?> _runCommandWithTimeout(

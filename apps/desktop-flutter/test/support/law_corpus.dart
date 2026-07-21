@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
 // law_corpus.dart — the parsed source corpus behind test/laws/.
 //
 // Loads every Dart file under lib/ ONCE per test run, parses it with
@@ -147,7 +151,15 @@ class _FactsVisitor extends RecursiveAstVisitor<void> {
     'readAsBytesSync',
   };
   static const _spawnNames = {'run', 'start', 'runSync'};
-  static const _gitRunNames = {'runGit', '_git', '_gitRaw', '_runGitCommand'};
+  static const _gitRunNames = {
+    'runGit',
+    '_git',
+    '_gitRaw',
+    '_runGitCommand',
+    // Argv-chunking wrapper (ai.dart): same stdout-into-String transport,
+    // so the same content-scaling census applies to its baseArgs.
+    '_runGitCommandPathChunked',
+  };
   /// Subcommands whose output scales with repo CONTENT, not repo shape.
   static const _unboundedGitVerbs = {'diff', 'show', 'blame'};
   /// Flags that reduce those to a summary (bounded by file COUNT).
