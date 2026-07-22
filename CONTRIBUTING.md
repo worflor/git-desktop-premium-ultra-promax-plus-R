@@ -7,6 +7,12 @@ Thanks for wanting to help. A few things worth knowing before you open a PR.
 App-side fixes and improvements are welcome. Bug reports, questions, "this
 broke", "this is confusing", "X seems wrong" are all useful too.
 
+Translations are a sweet spot. The UI ships in over a dozen languages, most of
+them AI-drafted, and a native speaker catches things no model or maintainer
+ever will. If a string reads wrong in your language, fixing it is one of the
+most valuable and easiest contributions to land. [TRANSLATIONS.md](TRANSLATIONS.md)
+covers the file format and the provenance rules.
+
 PRs that touch the engine or the research components generally aren't what I'm
 after. The math underneath is specific and easy to break in ways that don't
 look broken, and unwinding that costs more than it saves. Read it, fork it,

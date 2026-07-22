@@ -2,6 +2,10 @@
 
 A cross-platform desktop Git client for Windows and Linux. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
 
+[![woflo.dev](https://img.shields.io/badge/woflo.dev-2b2d42)](https://woflo.dev)
+[![license](https://img.shields.io/badge/license-GPL--3.0%20%2B%20community--source-4a5568)](LICENSE.md)
+[![platform](https://img.shields.io/badge/platform-windows%20%7C%20linux-4a5568)](#status)
+
 <p align="center">
   <img src="pics/code-review-hero.webp" alt="Manifold reviewing a diff: files and evidence orbiting a central node while Logos diffuses signal across the repo" width="760">
 </p>
@@ -35,6 +39,7 @@ What that looks like in practice:
 
 - Manifold can map your diff to external file context automatically using repo history, the spectral graph, and an experimental execution flow engine; Filament.
   - It feeds LLM-powered Code Review, Muse Brainstorming, and Generate Message, all with *logos-backed* context. The one-shot gather stays cheap and fast, and a new optional read-only agentic harness explores outward from what Logos surfaces. It piggybacks Codex, so Codex and API models can go agentic (Claude Code can't host the harness, so it stays one-shot there).
+  - There's a long-running debate in AI about whether the model matters more than the harness around it. Manifold takes the harness side literally: Logos and the evidence gather are the harness, the model is a guest. Not my first one either; my [college capstone](https://woflo.dev/blog/wdym/) put an LLM inside a live Minecraft JVM with real-time bytecode patching. This is that idea, pointed at git.
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
 - View changes by *geometric Atlas* (preview) rather than by file.
 - PRs, worktrees, and branches get **Orbits**, orbital shapes drawn from the coupling graph, so related branches surface as merge risk even when they aren't touching the same files.
@@ -42,6 +47,7 @@ What that looks like in practice:
   structural siblings. Surface hotspots or keystone files.
 - Bring your own model. Route the AI features through Cursor, Copilot, Codex, OpenRouter, or opencode.
 - Plus the stuff a mature client needs: a scrubbable history timeline (Orrery, preview), image, video, and binary diffs, and a command palette tying it together.
+- Speaks 14 languages. AI-drafted so every locale is complete from day one, human-corrected wherever a native speaker has stepped in, and the language picker tells you honestly which is which.
 
 Oh yeah, and it's *free* ♥
 
@@ -144,11 +150,25 @@ Cellshaded comic book page, cosmic glass in three unique perspectives... you get
 
 **Is it free?** Yes, completely. No charge, no account required, and the code is public.
 
+**Is it open source?** Community source available, open development. The GPL portions are open source in the strict sense; the research core carries community-source terms instead, so if you're anal about definitions, the repo as a whole technically isn't. [LICENSE.md](LICENSE.md) draws the exact line.
+
 **Does it work offline, without a remote?** Yes. PRs and issues live inside the repo as orphan refs, so it is fully local-first. Push whenever you feel like it.
+
+**What does it add to my repo?** Nothing you can see. The local-first PRs and issues live as orphan refs inside `.git`, so they never touch your worktree, your branches, or your history. Other clients can't even tell they're there, and deleting the refs removes every trace. Your repo stays a plain git repo the whole time.
+
+**Do I need AI set up to use it?** No. The AI features piggyback on tools you already have, like Cursor, Copilot, Codex, or opencode. Got none? Then there's nothing to set up and everything else just works. Install one someday and Manifold picks it up on its own. And if you'd rather not install anything at all, drop in an API key and dip your feet in at your own pace, or never.
 
 **Which AI models can it use?** Yours. Cursor, Copilot, Codex, OpenRouter, or anything through opencode. The agentic review mode is read-only: it looks everywhere and changes nothing.
 
+**Does my code leave my machine?** Only when you press an AI button, and only to the provider you picked in settings. The exhaustive list of features that send anything: Generate Message, Code Review, Muse, and Debug (which might get yeeted). That's it. The engine, the maps, the predictions, all local math. No telemetry, no account, no background anything. Local model support will keep getting better, and long term I keep moving intelligence out of the AI layer and into raw math, so the list shrinks over time.
+
+**Is it in my language?** Probably. Manifold ships in English, German, Spanish, French, Indonesian, Italian, Japanese, Korean, Dutch, Polish, Brazilian Portuguese, Russian, Turkish, and Simplified Chinese, with right-to-left languages in the works. Machine translation gets every locale complete on day one, human corrections win permanently once they land, and the language picker states plainly how your locale was made. If a string reads awkward in yours, [TRANSLATIONS.md](TRANSLATIONS.md) shows how to fix it.
+
+**Will it handle my giant monorepo?** It should. I make no performance claims while it's in beta, only because I'm still chasing snappy, but absurd monorepos are what the analysis budget was built for: it degrades gracefully instead of dying. If yours makes Manifold struggle, complain once and I'll do everything in my power to fix it. The one caveat is single multi-gigabyte files. Those work since the diff viewer's memory rework, but not yet to my standard, and they're due proper investment soon.
+
 **How is it different from GitKraken or GitHub Desktop?** They show you your repo. Manifold has done the math on it: it predicts merge conflicts, grounds AI review in your real coupling structure, and can map a codebase you have never seen.
+
+**What about macOS?** I don't own a Mac. If you do, this is the one place I officially endorse vibe coding: point your model at the repo, say "get it working on macOS, make no mistakes", and let it cook. Worst case, nothing happens. Best case, you're the reason there's a macOS build. I'd love to see it.
 
 ## Status
 
@@ -185,20 +205,22 @@ The engine mixes:
 - chemistry-flavoured structural analogies. coupling, diffusion, phase
   transitions on the repo graph
 - **kizuna math**, a term I coined for a particular flavor of
-  higher-dimensional hypercomplex algebra I use across my projects.
+  higher-dimensional hypercomplex algebra I use
+  [across my projects](https://woflo.dev/blog/kizuna-codecs/).
   Manifold leans on parts of it, alongside everything else above.
 
 PRs that touch the engine may violate invariants that look fine in
 code review but quietly wreck properties the rest of the system depends
 on. Unwinding that eats the time I'd rather spend *not*. So read it,
 fork it, yoink from it, file issues, fix issues I haven't experienced yet. App-side
-fixes and improvements are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Just not vibe-understood PRs or I'll vibe-respond.
+fixes and improvements are welcome, and so are translation fixes when a string
+reads clumsy in your language; see [CONTRIBUTING.md](CONTRIBUTING.md). Just not vibe-understood PRs or I'll vibe-respond.
 
 
 ## Known Things
 
 - Runs hot 👉👈 (hot math ayo)
-- Loading a huge, MANY-gb file still causes big issues. on the list.
+- Multi-gb single files work, but not to the standard I want yet. Proper investment is on the list.
 
 ## License
 

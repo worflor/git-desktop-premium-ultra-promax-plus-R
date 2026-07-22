@@ -436,6 +436,16 @@ List<_AboutEntry> _aboutEntries(BuildContext context) {
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.2.0',
+    date: '2026-07-22',
+    bullets: [
+      '(the big one) Manifold speaks 14 languages now, not just english. the whole UI moved onto a real translation system, the AI prompts got localized too, and every machine-translated string fesses up in the language picker: which model wrote it, and whether a human\'s checked it yet. no pretending a robot is a native speaker. this is why it\'s 0.2.0.',
+      'diff and git handling got tougher where it was quietly wrong. a few staging bugs that could drop or mangle lines are fixed at the root, and switching into a giant, messy repo no longer tries to eat all your RAM on the way in.',
+      'Manifold has a real license now. GPL-3.0 under Woflo Labs, with a carve-out for the research bits. there\'s a little legal footer down here now. hi.',
+      'the release notes are still in english though. baby steps.',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.6',
     date: '2026-07-11',
     bullets: [
