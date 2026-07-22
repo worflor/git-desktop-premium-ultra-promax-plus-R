@@ -168,6 +168,8 @@
     "instantBlameDescription": "差分の行でブレーム情報が表示されるまでの 180ms の遅延をスキップします。",
     "autoSelectLabel": "新しい変更を自動選択",
     "autoSelectDescription": "新しく追跡・変更されたファイルを、自動でコミットの選択に追加します。",
+    "changeIdLabel": "change-id ヘッダーを書き込む",
+    "changeIdDescription": "新しいコミットに change-id 識別ヘッダーを付与します（Jujutsu・GitButler・Gerrit の規約）。各コミットは作成直後に一度書き換えられます。",
     "fetchIssuesLabel": "ブランチ読み込み時にオンラインの Issue を取得",
     "fetchIssuesDescription": "ブランチページを開いたとき、バックグラウンドで git プロバイダーから PR と Issue の詳細を取得します。",
     "hateAiLabel": "AI が嫌い",

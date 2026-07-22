@@ -168,6 +168,8 @@
     "instantBlameDescription": "Lewati jeda 180ms sebelum info blame muncul di baris diff.",
     "autoSelectLabel": "Pilih otomatis perubahan baru",
     "autoSelectDescription": "File yang baru di-track atau berubah otomatis ditambahkan ke pilihan commit.",
+    "changeIdLabel": "Tulis header change-id",
+    "changeIdDescription": "Menambahkan header identitas change-id pada commit baru (konvensi Jujutsu, GitButler, dan Gerrit). Setiap commit ditulis ulang sekali tepat setelah dibuat.",
     "fetchIssuesLabel": "Ambil issue online saat branch dimuat",
     "fetchIssuesDescription": "Tarik detail PR dan issue dari provider git-mu di latar belakang saat halaman branches dibuka.",
     "hateAiLabel": "Aku benci AI",

@@ -1380,6 +1380,17 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               const SizedBox(height: 10),
               _CheckboxRow(
+                label: context.t.settings.toggles.changeIdLabel,
+                description: context.t.settings.toggles.changeIdDescription,
+                value: preferences.writeChangeIdHeader,
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setWriteChangeIdHeader(value));
+                },
+              ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
                 label: context.t.settings.toggles.fetchIssuesLabel,
                 description: context.t.settings.toggles.fetchIssuesDescription,
                 value: preferences.fetchOnlineIssuesOnBranchLoad,

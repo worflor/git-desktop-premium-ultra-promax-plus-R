@@ -51,6 +51,14 @@ class AppSettingsSnapshot {
   final double reduceMotionPhase;
   final bool stashCabinetDefaultExpanded;
   final bool instantBlameHover;
+  /// When true, commits Manifold creates carry a `change-id` identity
+  /// header (the jj/GitButler/Gerrit convention) via a one-time post-commit
+  /// rewrite. OFF by default: the rewrite has observable side effects (a
+  /// second reflog entry per commit, post-commit hooks see the pre-stamp
+  /// sha), so it is strictly opt-in — mirroring jj's own
+  /// `git.write-change-id-header` gate. Reading change ids never depends
+  /// on this: unstamped commits resolve to the synthetic fallback.
+  final bool writeChangeIdHeader;
   /// When true, newly tracked or changed files appearing in a status
   /// refresh are automatically added to the commit selection. Off by
   /// default — historical behavior is purely subtractive reconciliation.
@@ -171,6 +179,7 @@ class AppSettingsSnapshot {
     required this.reduceMotionPhase,
     required this.stashCabinetDefaultExpanded,
     required this.instantBlameHover,
+    this.writeChangeIdHeader = false,
     required this.autoSelectNewChanges,
     this.diffMediaEnabled = true,
     this.diffBinaryEnabled = true,
@@ -221,6 +230,7 @@ class AppSettingsSnapshot {
         'reduceMotionPhase': reduceMotionPhase,
         'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
         'instantBlameHover': instantBlameHover,
+        'writeChangeIdHeader': writeChangeIdHeader,
         'autoSelectNewChanges': autoSelectNewChanges,
         'diffMediaEnabled': diffMediaEnabled,
         'diffBinaryEnabled': diffBinaryEnabled,
@@ -273,6 +283,7 @@ class AppSettingsSnapshot {
         reduceMotionPhase: 0.0,
         stashCabinetDefaultExpanded: false,
         instantBlameHover: false,
+        writeChangeIdHeader: false,
         autoSelectNewChanges: false,
         fetchOnlineIssuesOnBranchLoad: true,
         rememberWorkInProgress: true,
@@ -397,6 +408,10 @@ class AppSettingsSnapshot {
       instantBlameHover: SettingsStore._boolOr(
         json['instantBlameHover'],
         defaults.instantBlameHover,
+      ),
+      writeChangeIdHeader: SettingsStore._boolOr(
+        json['writeChangeIdHeader'],
+        defaults.writeChangeIdHeader,
       ),
       autoSelectNewChanges: SettingsStore._boolOr(
         json['autoSelectNewChanges'],
@@ -528,6 +543,7 @@ class AppSettingsSnapshot {
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
+    bool? writeChangeIdHeader,
     bool? autoSelectNewChanges,
     bool? diffMediaEnabled,
     bool? diffBinaryEnabled,
@@ -584,6 +600,7 @@ class AppSettingsSnapshot {
       stashCabinetDefaultExpanded:
           stashCabinetDefaultExpanded ?? this.stashCabinetDefaultExpanded,
       instantBlameHover: instantBlameHover ?? this.instantBlameHover,
+      writeChangeIdHeader: writeChangeIdHeader ?? this.writeChangeIdHeader,
       autoSelectNewChanges:
           autoSelectNewChanges ?? this.autoSelectNewChanges,
       diffMediaEnabled: diffMediaEnabled ?? this.diffMediaEnabled,

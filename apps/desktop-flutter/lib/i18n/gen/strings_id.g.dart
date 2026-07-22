@@ -6331,6 +6331,11 @@ class _Translations$settings$toggles$id
   String get autoSelectDescription =>
       'File yang baru di-track atau berubah otomatis ditambahkan ke pilihan commit.';
   @override
+  String get changeIdLabel => 'Tulis header change-id';
+  @override
+  String get changeIdDescription =>
+      'Menambahkan header identitas change-id pada commit baru (konvensi Jujutsu, GitButler, dan Gerrit). Setiap commit ditulis ulang sekali tepat setelah dibuat.';
+  @override
   String get fetchIssuesLabel => 'Ambil issue online saat branch dimuat';
   @override
   String get fetchIssuesDescription =>

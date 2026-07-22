@@ -11,6 +11,7 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
 import 'repository_xray_strings.dart';
+import 'change_id.dart';
 import 'dtos.dart';
 import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
@@ -5967,6 +5968,14 @@ class CommitAttemptResult {
   /// no hook mutation to replay, or the replay fully succeeded.
   final String? hookReplayWarning;
 
+  /// Non-fatal, success-only: the commit landed but the post-commit
+  /// `change-id` stamp did not (unreadable object, hash-object failure,
+  /// or the ref moved under us — see [stampHeadChangeId]). The commit is
+  /// simply unstamped; its identity degrades to the synthetic fallback.
+  /// Deliberate skips (signed commits, already-stamped commits) are NOT
+  /// warnings. Null when the stamp landed or was deliberately skipped.
+  final String? changeIdWarning;
+
   bool get ok => error == null;
 
   const CommitAttemptResult.ok(
@@ -5974,6 +5983,7 @@ class CommitAttemptResult {
     this.committedPaths = const {},
     this.hookTouchedPaths = const {},
     this.reconcileWarning,
+    this.changeIdWarning,
   }) : error = null,
        hookReplayWarning = null;
 
@@ -5983,7 +5993,163 @@ class CommitAttemptResult {
     this.hookReplayWarning,
   }) : data = null,
        committedPaths = const {},
-       reconcileWarning = null;
+       reconcileWarning = null,
+       changeIdWarning = null;
+}
+
+// ---------------------------------------------------------------------------
+// Change identity (the `change-id` commit header)
+// ---------------------------------------------------------------------------
+
+/// Raw bytes of a commit object, exactly as stored. Byte-exact on purpose:
+/// commit messages are not guaranteed UTF-8, and the stamping rewrite in
+/// [stampHeadChangeId] must reproduce every non-header byte verbatim or it
+/// would corrupt the commit it rewrites. Rides [_spawnRunRaw] (which returns
+/// undecoded stdout) rather than [_git] (which decodes to String).
+Future<Uint8List?> _catFileCommitBytes(String repo, String rev) async {
+  try {
+    final r = await _spawnRunRaw(
+      ['cat-file', 'commit', rev],
+      workingDirectory: repo,
+      environment: _kNonInteractiveGitEnv,
+    );
+    if (r.exitCode != 0) return null;
+    final out = r.stdout;
+    if (out is! List<int>) return null;
+    return Uint8List.fromList(out);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Writes [bytes] as a commit object (`hash-object -t commit -w --stdin`)
+/// and returns its oid. Stdin-streamed so the bytes land exactly — a temp
+/// file or String round-trip could mangle line endings or non-UTF-8
+/// message payload.
+Future<String?> _hashCommitObject(String repo, Uint8List bytes) async {
+  try {
+    final proc = await _spawnStart(
+      ['hash-object', '-t', 'commit', '-w', '--stdin'],
+      workingDirectory: repo,
+    );
+    proc.stdin.add(bytes);
+    await proc.stdin.close();
+    final out = await proc.stdout.transform(utf8.decoder).join();
+    // Drain stderr so the child can exit even if it writes a warning.
+    await proc.stderr.drain<void>();
+    final code = await proc.exitCode;
+    if (code != 0) return null;
+    final sha = out.trim();
+    return sha.isEmpty ? null : sha;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Outcome of [stampHeadChangeId]: the sha HEAD resolves to after the
+/// attempt (stamped or original — never dangling), the identity the commit
+/// now carries when one could be determined, and a non-fatal warning when
+/// stamping was attempted but did not land.
+class ChangeIdStampOutcome {
+  /// Full sha HEAD resolves to after the attempt (stamped or original).
+  final String sha;
+  final ChangeId? changeId;
+  final String? warning;
+  const ChangeIdStampOutcome(this.sha, this.changeId, {this.warning});
+}
+
+/// Stamps HEAD's commit with a `change-id` header, rewriting it in place
+/// (same tree, same parents, same author/committer/message bytes) and
+/// CAS-advancing the ref. The working tree and index are untouched — the
+/// tree oid is identical, so status stays clean.
+///
+/// Skips — returning the original sha with no warning — when the commit is
+/// signed (a rewrite would strip the signature; signing wins over identity,
+/// the synthetic fallback covers those commits) or already carries a
+/// change id (returned as-is).
+///
+/// [inherit] carries identity across an amend: the pre-amend commit's id,
+/// so the amended commit remains the SAME change. Absent, a fresh id is
+/// minted.
+///
+/// Never fails the surrounding operation: any plumbing miss degrades to
+/// "commit stays unstamped" with a [ChangeIdStampOutcome.warning], because
+/// the commit this runs after has already landed and must be reported
+/// faithfully.
+@visibleForTesting
+Future<ChangeIdStampOutcome?> stampHeadChangeId(
+  String repo, {
+  ChangeId? inherit,
+}) async {
+  final head = await _revParseVerifyQuiet(repo, 'HEAD');
+  if (head == null) return null;
+  final oldSha = head;
+  final raw = await _catFileCommitBytes(repo, head);
+  if (raw == null) {
+    return ChangeIdStampOutcome(oldSha, null,
+        warning: 'change-id: could not read commit $head');
+  }
+  final scan = parseCommitHeaders(raw);
+  if (scan == null) {
+    return ChangeIdStampOutcome(oldSha, null,
+        warning: 'change-id: $head is not a parseable commit object');
+  }
+  if (scan.changeId != null) return ChangeIdStampOutcome(oldSha, scan.changeId);
+  if (scan.hasChangeIdKey) {
+    // A change-id key exists but its value is malformed (foreign tool,
+    // corrupted write). Never add a second key next to it — first-wins
+    // readers would resolve the garbage one. Identity degrades to the
+    // synthetic fallback; deliberate skip, not a warning.
+    return ChangeIdStampOutcome(oldSha, null);
+  }
+  if (scan.hasSignature) {
+    // Deliberate skip, not a warning: the user chose signing, and a
+    // signature outranks a convenience header. Identity for signed
+    // commits comes from the synthetic fallback.
+    return ChangeIdStampOutcome(oldSha, null);
+  }
+  final id = inherit ?? generateChangeId();
+  final Uint8List stamped;
+  try {
+    stamped = stampChangeId(raw, id);
+  } on StateError catch (e) {
+    return ChangeIdStampOutcome(oldSha, null, warning: 'change-id: $e');
+  }
+  final newSha = await _hashCommitObject(repo, stamped);
+  if (newSha == null) {
+    return ChangeIdStampOutcome(oldSha, null,
+        warning: 'change-id: hash-object failed');
+  }
+  // CAS against the sha we rewrote: if anything moved HEAD between the
+  // commit and this stamp, lose gracefully — the commit that won is not
+  // ours to rewrite.
+  final upd = await _git(repo, [
+    'update-ref',
+    '-m',
+    'commit (change-id): stamp',
+    'HEAD',
+    newSha,
+    oldSha,
+  ]);
+  if (upd.exitCode != 0) {
+    return ChangeIdStampOutcome(oldSha, null,
+        warning:
+            'change-id: ref moved before stamp (${upd.stderr.toString().trim()})');
+  }
+  return ChangeIdStampOutcome(newSha, id);
+}
+
+/// The change identity of [rev]: the declared `change-id` header when
+/// present, else the jj-compatible synthetic fallback derived from the
+/// commit id — so every commit always resolves to SOME id. Null only when
+/// [rev] does not resolve to a readable commit.
+Future<ChangeId?> changeIdOfCommit(String repo, String rev) async {
+  final head = await _revParseVerifyQuiet(repo, rev);
+  if (head == null) return null;
+  final raw = await _catFileCommitBytes(repo, head);
+  if (raw == null) return syntheticChangeIdForCommit(head);
+  final scan = parseCommitHeaders(raw);
+  return scan?.changeId ?? syntheticChangeIdForCommit(head);
 }
 
 /// Create a commit. When [amend] is true, an empty [message] is
@@ -6039,11 +6205,18 @@ class CommitAttemptResult {
 /// stale pre-commit capture from overwriting work the hook did after that
 /// capture was taken, without ever skipping a restore for a path whose
 /// hook version didn't actually make it back.
+/// [stampChangeId] — opt-in (default OFF): after the commit lands, rewrite
+/// it once to carry a `change-id` identity header (see [stampHeadChangeId]).
+/// Off, this function's git behavior is byte-identical to the pre-identity
+/// era — zero extra subprocesses, no object rewrites, no reflog entries.
+/// The caller threads the user's explicit preference here; git.dart never
+/// reads settings itself.
 Future<CommitAttemptResult> createCommit(
   String repo,
   String message, {
   bool amend = false,
   bool signoff = false,
+  bool stampChangeId = false,
   CommitStagingPlan? plan,
 }) async {
   final indexFile = plan?.snapshotIndexPath;
@@ -6092,6 +6265,21 @@ Future<CommitAttemptResult> createCommit(
   final oldTip = indexFile == null
       ? null
       : await _revParseVerifyQuiet(repo, 'HEAD');
+  // Amend rewrites a commit but must NOT re-mint its identity — the
+  // amended commit is the same logical change. Capture the pre-amend
+  // declared change-id (if any) so the stamp below carries it forward.
+  // Only DECLARED ids inherit: a commit that had merely a synthetic
+  // fallback gets a fresh durable id now, which is the upgrade path.
+  ChangeId? inheritedChangeId;
+  if (stampChangeId && amend) {
+    final preAmendHead = await _revParseVerifyQuiet(repo, 'HEAD');
+    if (preAmendHead != null) {
+      final preAmendRaw = await _catFileCommitBytes(repo, preAmendHead);
+      if (preAmendRaw != null) {
+        inheritedChangeId = parseCommitHeaders(preAmendRaw)?.changeId;
+      }
+    }
+  }
   final r = indexFile == null
       ? await _git(repo, args)
       : await _gitRaw(repo, args, env: {'GIT_INDEX_FILE': indexFile});
@@ -6145,10 +6333,22 @@ Future<CommitAttemptResult> createCommit(
       hookReplayWarning: hookReplayWarning,
     );
   }
+  // Stamp the fresh commit with its change identity — ONLY when the user
+  // opted in. Runs after the snapshot reconcile above — the stamp rewrites
+  // headers only (same tree), so the reconcile's diff-tree/reset against
+  // HEAD is unaffected by the order; stamping last keeps the
+  // commit/reconcile choreography exactly as it was before identity
+  // existed. Failure never unwinds the commit: it degrades to an
+  // unstamped commit plus a warning.
+  final stamp = stampChangeId
+      ? await stampHeadChangeId(repo, inherit: inheritedChangeId)
+      : null;
   // Parse: "[branch abc1234] Subject line"
   final out = r.stdout.toString();
   final match = RegExp(r'\[(?:[^\s]+)\s+([a-f0-9]+)\]\s*(.+)').firstMatch(out);
-  final hash = match?.group(1) ?? '';
+  // Prefer the post-stamp resolved sha (full, and correct even when the
+  // stamp rewrote the commit) over the porcelain's abbreviated parse.
+  final hash = stamp?.sha ?? match?.group(1) ?? '';
   final summary =
       match?.group(2)?.trim() ??
       (message.isEmpty ? '(amend)' : message.split('\n').first);
@@ -6157,6 +6357,7 @@ Future<CommitAttemptResult> createCommit(
     committedPaths: committedPaths,
     hookTouchedPaths: hookTouchedPaths,
     reconcileWarning: reconcileWarning,
+    changeIdWarning: stamp?.warning,
   );
 }
 

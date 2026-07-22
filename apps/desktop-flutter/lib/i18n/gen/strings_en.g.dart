@@ -7184,6 +7184,13 @@ class Translations$settings$toggles$en {
   String get autoSelectDescription =>
       'Newly tracked or changed files are added to the commit selection automatically.';
 
+  /// en: 'Write change-id headers'
+  String get changeIdLabel => 'Write change-id headers';
+
+  /// en: 'Stamp new commits with a change-id identity header (the Jujutsu, GitButler, and Gerrit convention). Each commit is rewritten once, right after it lands.'
+  String get changeIdDescription =>
+      'Stamp new commits with a change-id identity header (the Jujutsu, GitButler, and Gerrit convention). Each commit is rewritten once, right after it lands.';
+
   /// en: 'Fetch online issues on branch load'
   String get fetchIssuesLabel => 'Fetch online issues on branch load';
 

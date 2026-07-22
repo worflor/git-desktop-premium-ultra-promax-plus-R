@@ -168,6 +168,8 @@
     "instantBlameDescription": "Passe le délai de 180 ms avant l'affichage du blame sur une ligne de diff.",
     "autoSelectLabel": "Sélection auto des nouvelles modifications",
     "autoSelectDescription": "Les fichiers nouvellement suivis ou modifiés sont ajoutés automatiquement à la sélection de commit.",
+    "changeIdLabel": "Écrire les en-têtes change-id",
+    "changeIdDescription": "Ajoute aux nouveaux commits un en-tête d'identité change-id (la convention de Jujutsu, GitButler et Gerrit). Chaque commit est réécrit une fois juste après sa création.",
     "fetchIssuesLabel": "Récupérer les tickets en ligne au chargement des branches",
     "fetchIssuesDescription": "Récupère en arrière-plan les détails des PR et tickets depuis votre fournisseur git à l'ouverture de la page des branches.",
     "hateAiLabel": "Je déteste l'IA",

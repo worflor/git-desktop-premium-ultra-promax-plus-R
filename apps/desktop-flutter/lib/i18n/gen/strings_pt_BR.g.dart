@@ -6431,6 +6431,11 @@ class _Translations$settings$toggles$pt_BR
   String get autoSelectDescription =>
       'Arquivos recém-rastreados ou alterados são adicionados à seleção de commit automaticamente.';
   @override
+  String get changeIdLabel => 'Gravar cabeçalhos change-id';
+  @override
+  String get changeIdDescription =>
+      'Adiciona aos novos commits um cabeçalho de identidade change-id (a convenção do Jujutsu, GitButler e Gerrit). Cada commit é reescrito uma vez logo após ser criado.';
+  @override
   String get fetchIssuesLabel => 'Buscar issues online ao carregar branches';
   @override
   String get fetchIssuesDescription =>

@@ -18,6 +18,7 @@
   "reduceMotionPhase": 0.42,
   "stashCabinetDefaultExpanded": true,
   "instantBlameHover": true,
+  "writeChangeIdHeader": true,
   "autoSelectNewChanges": true,
   "diffMediaEnabled": false,
   "diffBinaryEnabled": false,

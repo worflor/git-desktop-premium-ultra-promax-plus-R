@@ -188,6 +188,7 @@ Gen<AppSettingsSnapshot> _genValidSnapshot() => (rng) {
         reduceMotionPhase: rng.nextDouble(),
         stashCabinetDefaultExpanded: rng.nextBool(),
         instantBlameHover: rng.nextBool(),
+        writeChangeIdHeader: rng.nextBool(),
         autoSelectNewChanges: rng.nextBool(),
         diffMediaEnabled: rng.nextBool(),
         diffBinaryEnabled: rng.nextBool(),
@@ -321,6 +322,8 @@ void _expectSnapshotEquals(
       reason: '${ctx}stashCabinetDefaultExpanded');
   expect(actual.instantBlameHover, equals(expected.instantBlameHover),
       reason: '${ctx}instantBlameHover');
+  expect(actual.writeChangeIdHeader, equals(expected.writeChangeIdHeader),
+      reason: '${ctx}writeChangeIdHeader');
   expect(actual.autoSelectNewChanges, equals(expected.autoSelectNewChanges),
       reason: '${ctx}autoSelectNewChanges');
   expect(actual.diffMediaEnabled, equals(expected.diffMediaEnabled),
@@ -502,6 +505,7 @@ void main() {
         'aiReadOnlyDefault', 'logoAnimatesWhenUnfocused',
         'crashReportingEnabled', 'utilityDrawerDefaultExpanded',
         'stashCabinetDefaultExpanded', 'instantBlameHover',
+        'writeChangeIdHeader',
         'autoSelectNewChanges', 'fetchOnlineIssuesOnBranchLoad',
         'rememberWorkInProgress', 'hideAiFeatures', 'fileSortInverted',
         'reduceMotion', 'onboardingComplete', 'bondExperimentEnabled',

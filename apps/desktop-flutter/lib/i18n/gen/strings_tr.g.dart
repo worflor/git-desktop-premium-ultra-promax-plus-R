@@ -6400,6 +6400,11 @@ class _Translations$settings$toggles$tr
   String get autoSelectDescription =>
       'Yeni izlenen ya da değişen dosyalar otomatik olarak commit seçimine eklenir.';
   @override
+  String get changeIdLabel => 'change-id üstbilgilerini yaz';
+  @override
+  String get changeIdDescription =>
+      'Yeni commit\'lere change-id kimlik üstbilgisi ekler (Jujutsu, GitButler ve Gerrit standardı). Her commit oluşturulduktan hemen sonra bir kez yeniden yazılır.';
+  @override
   String get fetchIssuesLabel =>
       'Dal yüklenirken çevrimiçi issue\'ları fetch et';
   @override

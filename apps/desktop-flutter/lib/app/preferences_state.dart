@@ -42,6 +42,7 @@ class PreferencesState extends ChangeNotifier {
   double _reduceMotionPhase = 0.0;
   bool _stashCabinetDefaultExpanded = false;
   bool _instantBlameHover = false;
+  bool _writeChangeIdHeader = false;
   bool _autoSelectNewChanges = false;
   bool _diffMediaEnabled = true;
   bool _diffBinaryEnabled = true;
@@ -86,6 +87,11 @@ class PreferencesState extends ChangeNotifier {
 
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
+
+  /// Opt-in `change-id` identity headers on commits Manifold creates.
+  /// OFF by default — the stamp is a post-commit rewrite with observable
+  /// side effects, so it is never on unless the user chose it.
+  bool get writeChangeIdHeader => _writeChangeIdHeader;
   bool get autoSelectNewChanges => _autoSelectNewChanges;
   bool get diffMediaEnabled => _diffMediaEnabled;
   bool get diffBinaryEnabled => _diffBinaryEnabled;
@@ -143,6 +149,7 @@ class PreferencesState extends ChangeNotifier {
     _reduceMotionPhase = settings.reduceMotionPhase;
     _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
     _instantBlameHover = settings.instantBlameHover;
+    _writeChangeIdHeader = settings.writeChangeIdHeader;
     _autoSelectNewChanges = settings.autoSelectNewChanges;
     _diffMediaEnabled = settings.diffMediaEnabled;
     _diffBinaryEnabled = settings.diffBinaryEnabled;
@@ -181,6 +188,7 @@ class PreferencesState extends ChangeNotifier {
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
+    bool? writeChangeIdHeader,
     bool? autoSelectNewChanges,
     bool? diffMediaEnabled,
     bool? diffBinaryEnabled,
@@ -215,6 +223,7 @@ class PreferencesState extends ChangeNotifier {
         reduceMotionPhase: reduceMotionPhase,
         stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
         instantBlameHover: instantBlameHover,
+        writeChangeIdHeader: writeChangeIdHeader,
         autoSelectNewChanges: autoSelectNewChanges,
         diffMediaEnabled: diffMediaEnabled,
         diffBinaryEnabled: diffBinaryEnabled,
@@ -327,6 +336,13 @@ class PreferencesState extends ChangeNotifier {
     if (_instantBlameHover == value) return;
     _instantBlameHover = value;
     await _persistWith(instantBlameHover: value);
+    notifyListeners();
+  }
+
+  Future<void> setWriteChangeIdHeader(bool value) async {
+    if (_writeChangeIdHeader == value) return;
+    _writeChangeIdHeader = value;
+    await _persistWith(writeChangeIdHeader: value);
     notifyListeners();
   }
 

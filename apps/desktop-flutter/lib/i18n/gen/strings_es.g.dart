@@ -6430,6 +6430,11 @@ class _Translations$settings$toggles$es
   String get autoSelectDescription =>
       'Los archivos recién rastreados o modificados se añaden a la selección de commit automáticamente.';
   @override
+  String get changeIdLabel => 'Escribir cabeceras change-id';
+  @override
+  String get changeIdDescription =>
+      'Añade a los commits nuevos una cabecera de identidad change-id (la convención de Jujutsu, GitButler y Gerrit). Cada commit se reescribe una vez justo después de crearse.';
+  @override
   String get fetchIssuesLabel => 'Traer issues en línea al cargar las ramas';
   @override
   String get fetchIssuesDescription =>

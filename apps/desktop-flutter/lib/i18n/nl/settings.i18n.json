@@ -168,6 +168,8 @@
     "instantBlameDescription": "Sla de vertraging van 180 ms over voordat blame-info op een diff-regel verschijnt.",
     "autoSelectLabel": "Nieuwe wijzigingen auto-selecteren",
     "autoSelectDescription": "Nieuw getrackte of gewijzigde bestanden worden automatisch aan de commit-selectie toegevoegd.",
+    "changeIdLabel": "change-id-headers schrijven",
+    "changeIdDescription": "Voegt aan nieuwe commits een change-id-identiteitsheader toe (de conventie van Jujutsu, GitButler en Gerrit). Elke commit wordt direct na het maken één keer herschreven.",
     "fetchIssuesLabel": "Online issues ophalen bij laden van branches",
     "fetchIssuesDescription": "Haal PR- en issue-details op de achtergrond op bij je git-provider wanneer de branches-pagina opent.",
     "hateAiLabel": "Ik haat AI",

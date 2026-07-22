@@ -6412,6 +6412,11 @@ class _Translations$settings$toggles$nl
   String get autoSelectDescription =>
       'Nieuw getrackte of gewijzigde bestanden worden automatisch aan de commit-selectie toegevoegd.';
   @override
+  String get changeIdLabel => 'change-id-headers schrijven';
+  @override
+  String get changeIdDescription =>
+      'Voegt aan nieuwe commits een change-id-identiteitsheader toe (de conventie van Jujutsu, GitButler en Gerrit). Elke commit wordt direct na het maken één keer herschreven.';
+  @override
   String get fetchIssuesLabel => 'Online issues ophalen bij laden van branches';
   @override
   String get fetchIssuesDescription =>

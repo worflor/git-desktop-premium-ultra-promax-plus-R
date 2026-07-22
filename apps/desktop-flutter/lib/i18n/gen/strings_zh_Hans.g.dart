@@ -6182,6 +6182,11 @@ class _Translations$settings$toggles$zh_Hans
   @override
   String get autoSelectDescription => '新跟踪或改动的文件会自动加入提交选择。';
   @override
+  String get changeIdLabel => '写入 change-id 头';
+  @override
+  String get changeIdDescription =>
+      '为新提交添加 change-id 标识头（Jujutsu、GitButler 与 Gerrit 的约定）。每个提交在落地后会被重写一次。';
+  @override
   String get fetchIssuesLabel => '加载分支时抓取在线议题';
   @override
   String get fetchIssuesDescription => '打开分支页面时在后台从你的 git 提供方拉取 PR 和议题详情。';

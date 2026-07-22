@@ -168,6 +168,8 @@
     "instantBlameDescription": "Skip the 180ms delay before blame info reveals on a diff line.",
     "autoSelectLabel": "Auto select new changes",
     "autoSelectDescription": "Newly tracked or changed files are added to the commit selection automatically.",
+    "changeIdLabel": "Write change-id headers",
+    "changeIdDescription": "Stamp new commits with a change-id identity header (the Jujutsu, GitButler, and Gerrit convention). Each commit is rewritten once, right after it lands.",
     "fetchIssuesLabel": "Fetch online issues on branch load",
     "fetchIssuesDescription": "Pull PR and issue details from your git provider in the background when the branches page opens.",
     "hateAiLabel": "I hate AI",

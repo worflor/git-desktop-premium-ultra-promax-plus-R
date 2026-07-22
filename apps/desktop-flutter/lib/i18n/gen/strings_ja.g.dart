@@ -6208,6 +6208,11 @@ class _Translations$settings$toggles$ja
   @override
   String get autoSelectDescription => '新しく追跡・変更されたファイルを、自動でコミットの選択に追加します。';
   @override
+  String get changeIdLabel => 'change-id ヘッダーを書き込む';
+  @override
+  String get changeIdDescription =>
+      '新しいコミットに change-id 識別ヘッダーを付与します（Jujutsu・GitButler・Gerrit の規約）。各コミットは作成直後に一度書き換えられます。';
+  @override
   String get fetchIssuesLabel => 'ブランチ読み込み時にオンラインの Issue を取得';
   @override
   String get fetchIssuesDescription =>

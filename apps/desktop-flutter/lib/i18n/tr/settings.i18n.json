@@ -168,6 +168,8 @@
     "instantBlameDescription": "Bir diff satırında blame bilgisi belirmeden önceki 180ms gecikmeyi atla.",
     "autoSelectLabel": "Yeni değişiklikleri otomatik seç",
     "autoSelectDescription": "Yeni izlenen ya da değişen dosyalar otomatik olarak commit seçimine eklenir.",
+    "changeIdLabel": "change-id üstbilgilerini yaz",
+    "changeIdDescription": "Yeni commit'lere change-id kimlik üstbilgisi ekler (Jujutsu, GitButler ve Gerrit standardı). Her commit oluşturulduktan hemen sonra bir kez yeniden yazılır.",
     "fetchIssuesLabel": "Dal yüklenirken çevrimiçi issue'ları fetch et",
     "fetchIssuesDescription": "Dallar sayfası açıldığında PR ve issue ayrıntılarını git sağlayıcından arka planda çek.",
     "hateAiLabel": "AI'dan nefret ediyorum",

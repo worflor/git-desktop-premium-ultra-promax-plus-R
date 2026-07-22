@@ -6430,6 +6430,11 @@ class _Translations$settings$toggles$it
   String get autoSelectDescription =>
       'I file appena tracciati o modificati vengono aggiunti automaticamente alla selezione del commit.';
   @override
+  String get changeIdLabel => 'Scrivi header change-id';
+  @override
+  String get changeIdDescription =>
+      'Aggiunge ai nuovi commit un header di identità change-id (la convenzione di Jujutsu, GitButler e Gerrit). Ogni commit viene riscritto una volta subito dopo la creazione.';
+  @override
   String get fetchIssuesLabel =>
       'Recupera le issue online al caricamento dei branch';
   @override

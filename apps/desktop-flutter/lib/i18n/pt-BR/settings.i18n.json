@@ -168,6 +168,8 @@
     "instantBlameDescription": "Pula o atraso de 180ms antes de o blame aparecer numa linha do diff.",
     "autoSelectLabel": "Selecionar novas mudanças automaticamente",
     "autoSelectDescription": "Arquivos recém-rastreados ou alterados são adicionados à seleção de commit automaticamente.",
+    "changeIdLabel": "Gravar cabeçalhos change-id",
+    "changeIdDescription": "Adiciona aos novos commits um cabeçalho de identidade change-id (a convenção do Jujutsu, GitButler e Gerrit). Cada commit é reescrito uma vez logo após ser criado.",
     "fetchIssuesLabel": "Buscar issues online ao carregar branches",
     "fetchIssuesDescription": "Puxa detalhes de PRs e issues do seu provedor git em segundo plano quando a página de branches abre.",
     "hateAiLabel": "Eu odeio AI",

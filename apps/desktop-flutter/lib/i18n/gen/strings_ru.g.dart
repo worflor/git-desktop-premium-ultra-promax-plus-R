@@ -6518,6 +6518,11 @@ class _Translations$settings$toggles$ru
   String get autoSelectDescription =>
       'Новые отслеживаемые или изменённые файлы автоматически добавляются в выбор для коммита.';
   @override
+  String get changeIdLabel => 'Записывать заголовки change-id';
+  @override
+  String get changeIdDescription =>
+      'Добавляет новым коммитам заголовок идентичности change-id (соглашение Jujutsu, GitButler и Gerrit). Каждый коммит переписывается один раз сразу после создания.';
+  @override
   String get fetchIssuesLabel => 'Загружать онлайн-задачи при открытии веток';
   @override
   String get fetchIssuesDescription =>

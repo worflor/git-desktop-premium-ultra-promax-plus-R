@@ -1052,6 +1052,11 @@ final List<(String, Future<void> Function(PreferencesState, bool), bool Function
     (s) => s.instantBlameHover
   ),
   (
+    'writeChangeIdHeader',
+    (s, v) => s.setWriteChangeIdHeader(v),
+    (s) => s.writeChangeIdHeader
+  ),
+  (
     'autoSelectNewChanges',
     (s, v) => s.setAutoSelectNewChanges(v),
     (s) => s.autoSelectNewChanges

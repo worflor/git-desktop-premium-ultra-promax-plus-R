@@ -6535,6 +6535,11 @@ class _Translations$settings$toggles$pl
   String get autoSelectDescription =>
       'Nowo śledzone lub zmienione pliki są automatycznie dodawane do wyboru do commita.';
   @override
+  String get changeIdLabel => 'Zapisuj nagłówki change-id';
+  @override
+  String get changeIdDescription =>
+      'Dodaje nowym commitom nagłówek tożsamości change-id (konwencja Jujutsu, GitButler i Gerrit). Każdy commit jest przepisywany raz, tuż po utworzeniu.';
+  @override
   String get fetchIssuesLabel =>
       'Pobieraj zgłoszenia online przy ładowaniu gałęzi';
   @override

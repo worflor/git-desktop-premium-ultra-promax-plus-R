@@ -6197,6 +6197,11 @@ class _Translations$settings$toggles$ko
   @override
   String get autoSelectDescription => '새로 추적되거나 변경된 파일이 커밋 선택에 자동으로 추가됩니다.';
   @override
+  String get changeIdLabel => 'change-id 헤더 기록';
+  @override
+  String get changeIdDescription =>
+      '새 커밋에 change-id 식별 헤더를 추가합니다 (Jujutsu, GitButler, Gerrit 규약). 각 커밋은 생성 직후 한 번 다시 작성됩니다.';
+  @override
   String get fetchIssuesLabel => '브랜치 로드 시 온라인 이슈 가져오기';
   @override
   String get fetchIssuesDescription =>

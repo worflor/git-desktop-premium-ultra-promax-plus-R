@@ -6243,6 +6243,9 @@ class _ChangesPageState extends State<ChangesPage> {
     String message, {
     bool amend = false,
   }) async {
+    // The user's explicit change-identity opt-in, captured before any
+    // await — createCommit itself never reads settings.
+    final stampChangeId = context.read<PreferencesState>().writeChangeIdHeader;
     // Index-respecting staging: a file the user hunk-staged keeps its
     // hand-built index entry — the blanket `git add` that used to run
     // here re-staged whole files and silently erased per-line
@@ -6268,6 +6271,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // index mutation (e.g. lint-staged auto-fix + `git add`) onto the
       // live index using the plan's snapshotEntries as the baseline.
       plan: plan,
+      stampChangeId: stampChangeId,
     );
     if (!commitResult.ok) {
       // The commit didn't happen. Put captured selections back so the index
@@ -6312,8 +6316,12 @@ class _ChangesPageState extends State<ChangesPage> {
     // message below is deliberate: both are "the commit is good, but
     // check the index" follow-ups, and a genuine restore failure is the
     // more urgent of the two, so it overwrites this rather than the other
-    // way around.
-    String? syncError = commitResult.reconcileWarning;
+    // way around. A change-id stamp miss rides the same channel at the
+    // lowest precedence: the user explicitly opted into identity headers,
+    // so a commit that landed unstamped must say so, not report plain
+    // success (see [CommitAttemptResult.changeIdWarning]).
+    String? syncError =
+        commitResult.reconcileWarning ?? commitResult.changeIdWarning;
 
     final restore = await finalizeCommitStaging(repoPath, plan, commitResult);
     if (!restore.ok) {

@@ -6440,6 +6440,11 @@ class _Translations$settings$toggles$fr
   String get autoSelectDescription =>
       'Les fichiers nouvellement suivis ou modifiés sont ajoutés automatiquement à la sélection de commit.';
   @override
+  String get changeIdLabel => 'Écrire les en-têtes change-id';
+  @override
+  String get changeIdDescription =>
+      'Ajoute aux nouveaux commits un en-tête d\'identité change-id (la convention de Jujutsu, GitButler et Gerrit). Chaque commit est réécrit une fois juste après sa création.';
+  @override
   String get fetchIssuesLabel =>
       'Récupérer les tickets en ligne au chargement des branches';
   @override

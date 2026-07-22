@@ -168,6 +168,8 @@
     "instantBlameDescription": "Pomiń opóźnienie 180 ms przed pokazaniem informacji blame na linii diff.",
     "autoSelectLabel": "Automatyczny wybór nowych zmian",
     "autoSelectDescription": "Nowo śledzone lub zmienione pliki są automatycznie dodawane do wyboru do commita.",
+    "changeIdLabel": "Zapisuj nagłówki change-id",
+    "changeIdDescription": "Dodaje nowym commitom nagłówek tożsamości change-id (konwencja Jujutsu, GitButler i Gerrit). Każdy commit jest przepisywany raz, tuż po utworzeniu.",
     "fetchIssuesLabel": "Pobieraj zgłoszenia online przy ładowaniu gałęzi",
     "fetchIssuesDescription": "Podciągaj szczegóły PR i zgłoszeń od twojego dostawcy git w tle, gdy otwiera się strona gałęzi.",
     "hateAiLabel": "Nienawidzę AI",

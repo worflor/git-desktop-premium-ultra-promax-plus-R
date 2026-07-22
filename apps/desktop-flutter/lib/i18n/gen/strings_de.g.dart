@@ -6432,6 +6432,11 @@ class _Translations$settings$toggles$de
   String get autoSelectDescription =>
       'Neu getrackte oder geänderte Dateien werden automatisch zur Commit-Auswahl hinzugefügt.';
   @override
+  String get changeIdLabel => 'change-id-Header schreiben';
+  @override
+  String get changeIdDescription =>
+      'Neue Commits erhalten einen change-id-Header als Identität (Konvention von Jujutsu, GitButler und Gerrit). Jeder Commit wird direkt nach dem Erstellen einmal neu geschrieben.';
+  @override
   String get fetchIssuesLabel => 'Online-Issues beim Branch-Laden abrufen';
   @override
   String get fetchIssuesDescription =>

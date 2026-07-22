@@ -268,6 +268,7 @@ AppSettingsSnapshot _sampleAppSettingsSnapshot() =>
       reduceMotionPhase: 0.42,
       stashCabinetDefaultExpanded: true,
       instantBlameHover: true,
+      writeChangeIdHeader: true, // edge: non-default (defaults false)
       autoSelectNewChanges: true,
       diffMediaEnabled: false,
       diffBinaryEnabled: false,
@@ -328,6 +329,7 @@ void _expectAppSettingsSnapshotEquals(
   expect(b.reduceMotionPhase, a.reduceMotionPhase);
   expect(b.stashCabinetDefaultExpanded, a.stashCabinetDefaultExpanded);
   expect(b.instantBlameHover, a.instantBlameHover);
+  expect(b.writeChangeIdHeader, a.writeChangeIdHeader);
   expect(b.autoSelectNewChanges, a.autoSelectNewChanges);
   expect(b.diffMediaEnabled, a.diffMediaEnabled);
   expect(b.diffBinaryEnabled, a.diffBinaryEnabled);

@@ -168,6 +168,8 @@
     "instantBlameDescription": "跳过在差异行上显示 blame 信息前的 180ms 延迟。",
     "autoSelectLabel": "自动选择新改动",
     "autoSelectDescription": "新跟踪或改动的文件会自动加入提交选择。",
+    "changeIdLabel": "写入 change-id 头",
+    "changeIdDescription": "为新提交添加 change-id 标识头（Jujutsu、GitButler 与 Gerrit 的约定）。每个提交在落地后会被重写一次。",
     "fetchIssuesLabel": "加载分支时抓取在线议题",
     "fetchIssuesDescription": "打开分支页面时在后台从你的 git 提供方拉取 PR 和议题详情。",
     "hateAiLabel": "我讨厌 AI",
