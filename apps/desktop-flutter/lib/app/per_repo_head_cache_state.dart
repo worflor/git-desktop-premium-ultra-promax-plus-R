@@ -14,6 +14,8 @@
 // just the compute function, the head-hash extractor, and an error
 // label. Adding a new sibling becomes 20 lines, not 80.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../backend/repo_head_cache.dart';
@@ -120,6 +122,58 @@ abstract class PerRepoHeadCacheState<T> extends ChangeNotifier {
     if (_byRepo.remove(repoPath) != null) {
       notifyListeners();
     }
+  }
+
+  /// Staleness-aware awaited accessor: the value for [repoPath], fresh
+  /// at HEAD granularity, or null when nothing could be computed within
+  /// [timeout].
+  ///
+  /// Routes through [loadForRepo] on EVERY call — a single cheap
+  /// (TTL-deduped) `rev-parse HEAD` when history hasn't moved, a
+  /// recompute when it has. This is the accessor for callers that need
+  /// the CURRENT repo's answer now (the CLI bridge, one-shot gathers),
+  /// as opposed to [valueFor], which is the UI's non-blocking probe of
+  /// whatever is already warm. Probe-then-return was the CLI staleness
+  /// bug: the first call's snapshot served every later call, and only
+  /// the UI's manual refresh ever advanced it.
+  ///
+  /// [timeout] bounds the WHOLE call — including a cold compute this
+  /// call itself starts, not just the wait on a concurrent load (the
+  /// first cut only bounded the latter, so a stuck compute hung the CLI
+  /// bridge unboundedly; caught by Manifold's own review). On timeout
+  /// the load keeps running in the background (next call reaps it) and
+  /// whatever the cache currently holds is returned — possibly a stale
+  /// value, possibly null — degrading exactly like the old bounded
+  /// warmup did rather than blocking the caller.
+  Future<T?> freshValueFor(
+    String repoPath, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      await loadForRepo(repoPath).timeout(timeout);
+    } on TimeoutException {
+      return _byRepo[repoPath];
+    }
+    if (!_loading.contains(repoPath)) return _byRepo[repoPath];
+    final remaining = timeout - sw.elapsed;
+    if (remaining <= Duration.zero) return _byRepo[repoPath];
+    final completer = Completer<void>();
+    void listener() {
+      if (!_loading.contains(repoPath) && !completer.isCompleted) {
+        completer.complete();
+      }
+    }
+    addListener(listener);
+    try {
+      // Re-check after subscribing — the load may have finished between
+      // the gate check above and addListener.
+      if (!_loading.contains(repoPath)) return _byRepo[repoPath];
+      await completer.future.timeout(remaining, onTimeout: () {});
+    } finally {
+      removeListener(listener);
+    }
+    return _byRepo[repoPath];
   }
 
   /// Kick off a compute for [repoPath]. If a cached value exists and

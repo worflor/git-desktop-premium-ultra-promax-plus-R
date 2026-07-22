@@ -6,7 +6,6 @@ import 'dart:async';
 import 'dart:io' show File, Process, pid;
 import 'dart:isolate';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:path/path.dart' as p;
 
 import '../admitted_git.dart';
@@ -91,15 +90,19 @@ Future<String> _resolveCommonRoot(String repo) async {
 
 Future<LogosGit> _awaitEngine(String repo, ManifoldBridgeContext ctx) async {
   final root = await _resolveCommonRoot(repo);
-  var engine = ctx.logosGitState.engineFor(root);
+  // Freshness-aware on EVERY call: routes through the state's
+  // loadForRepo, whose resolver probes HEAD (one TTL-deduped rev-parse)
+  // and rebuilds only when history moved — exactly what the UI's manual
+  // refresh does, now automatic per CLI call. The old probe-then-return
+  // pinned every later call to whatever engine the FIRST call warmed,
+  // which is why subsequent review/muse runs saw stale context.
+  final engine = await ctx.logosGitState
+      .freshEngineFor(root, timeout: const Duration(seconds: 15));
   if (engine != null) return engine;
-  unawaited(ctx.logosGitState.loadForRepo(root));
-  for (var i = 0; i < 30; i++) {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    engine = ctx.logosGitState.engineFor(root);
-    if (engine != null) return engine;
-  }
-  throw StateError('Logos engine did not load within 15s for $repo.');
+  final err = ctx.logosGitState.errorFor(root);
+  throw StateError(err == null
+      ? 'Logos engine did not load within 15s for $repo.'
+      : 'Logos engine failed for $repo: $err');
 }
 
 final RegExp _pubspecName =
@@ -223,51 +226,25 @@ void _progress(String phase, [String detail = '']) {
   fn?.call(phase, detail);
 }
 
-Future<_WarmResult<T>> _awaitWarm<T>({
-  required T? Function() probe,
-  required void Function() kick,
-  required ChangeNotifier notifier,
-  Duration timeout = const Duration(seconds: 10),
-}) async {
-  final sw = Stopwatch()..start();
-  final existing = probe();
-  if (existing != null) return _WarmResult(existing, sw.elapsedMilliseconds);
-  final completer = Completer<T?>();
-  void listener() {
-    final v = probe();
-    if (v != null && !completer.isCompleted) completer.complete(v);
-  }
-  notifier.addListener(listener);
-  kick();
-  final result = await completer.future
-      .timeout(timeout, onTimeout: () => null);
-  notifier.removeListener(listener);
-  return _WarmResult(
-    result,
-    sw.elapsedMilliseconds,
-    timedOut: result == null,
-  );
-}
-
 Future<_WarmResult<FileCouplingMatrix>> _awaitCoupling(
   String repo,
   ManifoldBridgeContext ctx,
-) =>
-    _awaitWarm(
-      probe: () => ctx.fileCouplingState.matrixFor(repo),
-      kick: () => unawaited(ctx.fileCouplingState.loadForRepo(repo)),
-      notifier: ctx.fileCouplingState,
-    );
-
+) async {
+  final sw = Stopwatch()..start();
+  // Freshness-aware, same rationale as [_awaitEngine]: loadForRepo's
+  // HEAD check makes this free when history is unmoved and a recompute
+  // when it isn't, so every CLI call enriches against current history.
+  final m = await ctx.fileCouplingState.freshValueFor(repo);
+  return _WarmResult(m, sw.elapsedMilliseconds, timedOut: m == null);
+}
 
 Future<FileCouplingMatrix> _coupling(String repo, ManifoldBridgeContext ctx,
     [LogosGit? engine]) async {
   final root = await _resolveCommonRoot(repo);
-  final m = ctx.fileCouplingState.matrixFor(root) ??
+  final m = await ctx.fileCouplingState.freshValueFor(root) ??
       engine?.stats.coupling ??
       ctx.logosGitState.engineFor(root)?.stats.coupling;
   if (m != null) return m;
-  unawaited(ctx.fileCouplingState.loadForRepo(root));
   throw StateError('No coupling data for $repo. Loading now, retry shortly.');
 }
 

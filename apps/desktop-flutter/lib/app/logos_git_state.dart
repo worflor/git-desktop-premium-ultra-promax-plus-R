@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../backend/file_coupling.dart';
@@ -121,6 +123,56 @@ class LogosGitState extends ChangeNotifier {
       }
       notifyListeners();
     }
+  }
+
+  /// Staleness-aware awaited accessor: the engine for [repoPath], fresh
+  /// at HEAD granularity, or null when it could not be resolved within
+  /// [timeout].
+  ///
+  /// Routes through [loadForRepo] on EVERY call — the shared resolver's
+  /// HEAD probe makes that a single cheap (TTL-deduped) rev-parse when
+  /// history hasn't moved, and a rebuild when it has. This is the
+  /// accessor for callers that need the current repo's engine NOW (the
+  /// CLI bridge); [engineFor] stays the UI's non-blocking probe.
+  /// Probe-then-return was the CLI staleness bug: the first call's
+  /// engine snapshot served every later call unrefreshed.
+  ///
+  /// [timeout] bounds the WHOLE call — including a cold build this call
+  /// itself starts (a first cut bounded only the concurrent-load wait,
+  /// so a slow rebuild hung the CLI bridge unboundedly; caught by
+  /// Manifold's own review). On timeout the build keeps running in the
+  /// background (next call reaps it) and whatever engine is currently
+  /// cached — possibly stale, possibly none — is returned.
+  Future<LogosGit?> freshEngineFor(
+    String repoPath, {
+    FileCouplingMatrix? coupling,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      await loadForRepo(repoPath, coupling: coupling).timeout(timeout);
+    } on TimeoutException {
+      return _engineByRepo[repoPath];
+    }
+    if (!_loading.contains(repoPath)) return _engineByRepo[repoPath];
+    final remaining = timeout - sw.elapsed;
+    if (remaining <= Duration.zero) return _engineByRepo[repoPath];
+    final completer = Completer<void>();
+    void listener() {
+      if (!_loading.contains(repoPath) && !completer.isCompleted) {
+        completer.complete();
+      }
+    }
+    addListener(listener);
+    try {
+      // Re-check after subscribing — the load may have finished between
+      // the gate check above and addListener.
+      if (!_loading.contains(repoPath)) return _engineByRepo[repoPath];
+      await completer.future.timeout(remaining, onTimeout: () {});
+    } finally {
+      removeListener(listener);
+    }
+    return _engineByRepo[repoPath];
   }
 
   void invalidateRepo(String repoPath) {

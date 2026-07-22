@@ -16,7 +16,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leak_tracker_flutter_testing/leak_tracker_flutter_testing.dart';
 
-import 'package:git_desktop/features/diff/diff_document.dart';
 import 'package:git_desktop/features/diff/diff_shell.dart';
 import 'package:git_desktop/ui/tokens.dart';
 
@@ -133,7 +132,7 @@ void main() {
     hPos.jumpTo(hPos.maxScrollExtent);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    final lastBlockCol = ((monsterChars - 32) ~/ 32) * 32;
+    const lastBlockCol = ((monsterChars - 32) ~/ 32) * 32;
     expect(
       find.textContaining(
         'COL${lastBlockCol.toString().padLeft(6, '0')}',
