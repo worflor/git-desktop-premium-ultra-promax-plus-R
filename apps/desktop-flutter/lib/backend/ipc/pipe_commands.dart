@@ -1116,6 +1116,34 @@ Future<_ScopeResult> _resolveScope(
   );
 }
 
+/// Hard ceiling on one AI provider call from the bridge. A hung
+/// provider must become a LOUD, prompt error — observed 2026-07-22: a
+/// wedged review sat silent for 6006s and finally surfaced as an empty
+/// result the CLI rendered as "No findings."
+///
+/// Per-provider-call budget, deliberately ABOVE ai.dart's
+/// `_providerRuntimeTimeout` (20m): the provider runner owns the real
+/// timeout — it kills its subprocess tree and records diagnostics — and
+/// the bridge must never win that race with a generic message that
+/// masks the runner's specific one. The ceiling SCALES with the flow's
+/// sequential provider calls (double-check review = draft + verify,
+/// muse = brainstorm + synthesis): a flat ceiling starved legitimate
+/// multi-call runs (caught by the manifold review). It backstops only
+/// hangs OUTSIDE the runner; it does not cancel underlying work.
+const Duration _kAiCallBudget = Duration(minutes: 22);
+
+Future<T> _boundedAi<T>(String what, Future<T> call, {int calls = 1}) {
+  final ceiling = _kAiCallBudget * calls;
+  return call.timeout(
+    ceiling,
+    onTimeout: () => throw StateError(
+        '$what timed out after ${ceiling.inMinutes} minutes '
+        '($calls provider call${calls == 1 ? '' : 's'} budgeted) — the AI '
+        'provider is likely hung. Retry; if it persists, restart '
+        'Manifold.'),
+  );
+}
+
 Future<Map<String, dynamic>> _review(
   Map<String, dynamic> params,
   ManifoldBridgeContext ctx,
@@ -1147,7 +1175,9 @@ Future<Map<String, dynamic>> _review(
   final shortModel = model.modelValue.split('/').last;
   _progress('ai', shortModel);
   final aiSw = Stopwatch()..start();
-  final result = await reviewCommit(
+  final result = await _boundedAi(
+    'review',
+    reviewCommit(
     repositoryPath: repo,
     modelValue: model.modelValue,
     modelCategoryLabel: model.categoryLabel,
@@ -1163,6 +1193,8 @@ Future<Map<String, dynamic>> _review(
     doubleCheckEnabled: ai.reviewCommitDoubleCheckEnabled,
     readOnly: true,
     couplingMatrix: couplingWarm.data,
+  ),
+    calls: ai.reviewCommitDoubleCheckEnabled ? 2 : 1,
   );
   final aiMs = aiSw.elapsedMilliseconds;
   totalSw.stop();
@@ -1347,7 +1379,9 @@ Future<Map<String, dynamic>> _muse(
   final shortModel = brainstormModel.modelValue.split('/').last;
   _progress('brainstorm', shortModel);
   final aiSw = Stopwatch()..start();
-  final result = await runMuse(
+  final result = await _boundedAi(
+    'muse',
+    runMuse(
     repositoryPath: repo,
     brainstormModelValue: brainstormModel.modelValue,
     synthesisModelValue: synthesisModel.modelValue,
@@ -1365,6 +1399,8 @@ Future<Map<String, dynamic>> _muse(
     guardrailStage: prefs.guardrailStage,
     readOnly: true,
     couplingMatrix: couplingWarm.data,
+  ),
+    calls: 2,
   );
   final aiMs = aiSw.elapsedMilliseconds;
   totalSw.stop();

@@ -435,6 +435,13 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
 }
 
 void _printReview(Map<String, dynamic> result, int elapsedMs) {
+  // A result map without its core fields is a FAILURE, not a quiet
+  // review — rendering it as "null · ?/? files · No findings." (observed
+  // after a 100-minute app-side provider hang) is the worst possible
+  // outcome: it reads as a clean bill. Fail loudly, exit nonzero.
+  if (result['score'] == null || result['summary'] == null) {
+    _failEmptyResult('review', elapsedMs);
+  }
   final files = result['files'] as Map<String, dynamic>?;
   final reviewed = files?['reviewed'] ?? '?';
   final total = files?['total'] ?? '?';
@@ -497,6 +504,15 @@ void _printReview(Map<String, dynamic> result, int elapsedMs) {
   if (findings.isEmpty && obs.isEmpty) {
     stdout.writeln(_dim(' No findings.'));
   }
+}
+
+/// The shared empty-result failure: loud, actionable, nonzero exit.
+Never _failEmptyResult(String what, int elapsedMs) {
+  stderr.writeln(
+      'error: $what returned an empty result after ${_timeFmt(elapsedMs)} — '
+      'app-side failure or a hung AI provider. Retry; if it persists, '
+      'restart Manifold.');
+  exit(2);
 }
 
 String _p3(dynamic v) => (v as num?)?.toStringAsFixed(3) ?? '?';
@@ -580,6 +596,10 @@ void _printEvidence(Map<String, dynamic> result, int elapsedMs) {
 }
 
 void _printMuse(Map<String, dynamic> result, int elapsedMs) {
+  // Same empty-result guard as review: a field-less map is a failure.
+  if (result['brainstormModel'] == null && result['model'] == null) {
+    _failEmptyResult('muse', elapsedMs);
+  }
   final files = result['files'] as Map<String, dynamic>?;
   final reviewed = files?['reviewed'] ?? '?';
   final total = files?['total'] ?? '?';
