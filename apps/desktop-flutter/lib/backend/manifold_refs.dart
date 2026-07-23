@@ -25,6 +25,8 @@ import 'package:meta/meta.dart';
 import 'git.dart' as git;
 import 'git_result.dart';
 import 'manifold_ref_types.dart';
+import 'merge_policy.dart';
+import 'review_records.dart' show kReviewSchemaVersion, kReviewStateSchema;
 
 export 'manifold_ref_types.dart';
 
@@ -331,7 +333,7 @@ class ManifoldRefs {
   /// for that.
   @useResult
   Future<GitResult<void>> updateRef({
-    required LiveManifoldRef ref,
+    required WritableManifoldRef ref,
     required CommitOid newSha,
     Oid? oldSha,
   }) async {
@@ -367,16 +369,22 @@ class ManifoldRefs {
   /// the second creator overwrite the first.
   @useResult
   Future<GitResult<void>> createRef({
-    required LiveManifoldRef ref,
+    required WritableManifoldRef ref,
     required CommitOid newSha,
   }) =>
       updateRef(ref: ref, newSha: newSha, oldSha: Oid.zero);
 
   /// Delete [ref]. Idempotent — succeeds if the ref doesn't exist.
+  /// With [expectedSha] this is CAS-delete (`update-ref -d <ref> <old>`):
+  /// git refuses when the ref has moved past the expected tip — the
+  /// primitive that lets a consumer delete EXACTLY the revision it
+  /// processed and never a newer one that arrived meanwhile.
   @useResult
-  Future<GitResult<void>> deleteRef(LiveManifoldRef ref) async {
+  Future<GitResult<void>> deleteRef(WritableManifoldRef ref,
+      {CommitOid? expectedSha}) async {
     try {
-      final r = await git.runGit(repoPath, ['update-ref', '-d', ref]);
+      final r = await git.runGit(repoPath,
+          ['update-ref', '-d', ref, if (expectedSha != null) expectedSha]);
       if (r.exitCode != 0) {
         final err = (r.stderr as String).trim();
         if (err.contains('does not exist') || err.isEmpty) {
@@ -1126,10 +1134,33 @@ class ManifoldRefs {
     // Identical tips → already in sync.
     if (localSha == stagedSha) return const GitResult.ok(null);
 
+    // DISPATCH ORDER IS LOAD-BEARING from here down: counter (MAX) →
+    // review-round pins (adopt-larger, NO ancestor logic) → generic
+    // ancestor/merge. A future ref kind must be slotted deliberately —
+    // the generic path's fast-forward semantics are wrong for pins and
+    // its tree-merge is wrong for anything that isn't a single-blob
+    // JSON record.
+    //
     // The shared counter is not a mergeable record: reconcile by MAX of
     // the two integer values so it never moves backwards.
     if (ref == ManifoldNs.idCounter) {
       return _reconcileCounter(
+          ref: ref, localSha: localSha, stagedSha: stagedSha);
+    }
+
+    // Review-round pins point at REAL branch commits, not orphan JSON
+    // histories. Neither ancestor fast-forwarding (a pin must never
+    // follow a descendant — pinning is the point) nor the divergence
+    // tree-merge below (which would read source trees as JSON) may
+    // apply. Same round name, different commits — a rare double-cut
+    // race — converges by deterministic sha choice on both machines
+    // (the state doc's rounds field converges by the SAME commit-sha
+    // rule via its collideBy policy, so metadata and pin agree). The
+    // losing snapshot loses its pin and is only as reachable as the
+    // branch keeps it — after a force-push it may be GC-bait; honest
+    // cost of losing the race, never of winning it.
+    if (ManifoldNs.isReviewRoundRef(ref)) {
+      return _adoptLargerSha(
           ref: ref, localSha: localSha, stagedSha: stagedSha);
     }
 
@@ -1174,10 +1205,41 @@ class ManifoldRefs {
     // Records genuinely differ → deterministic field-wise union merge.
     // Tie-breaks (equal updatedAt) resolve toward the lexicographically
     // larger tip sha so BOTH machines choose the same winner and the two
-    // independent merges produce identical content.
+    // independent merges produce identical content. Review-state docs
+    // merge under their DECLARED schema (per-field policy — the
+    // generalization of the comment-list heuristic); every other record
+    // kind keeps the legacy generic merge byte-for-byte.
+    // Forward-compat hands-off: a review-state doc from a NEWER schema
+    // must never be merged with THIS client's field semantics — the
+    // hybrid would carry the newer version stamp with older merge rules
+    // baked in and propagate to peers (the sync-side twin of the
+    // store's refuse-to-mutate guard; caught by the manifold review).
+    // Leave the divergence standing: local keeps local, nothing is
+    // pushed for this ref, and a client that understands the schema
+    // converges it later. No data is lost — both lineages remain on
+    // their own machines.
+    if (ManifoldNs.isReviewStateRef(ref)) {
+      int versionOf(String blob) {
+        try {
+          final j = jsonDecode(blob);
+          return j is Map ? (j['schemaVersion'] as num? ?? 1).toInt() : 1;
+        } catch (_) {
+          return 1;
+        }
+      }
+
+      if (versionOf(lc.content) > kReviewSchemaVersion ||
+          versionOf(sc.content) > kReviewSchemaVersion) {
+        return const GitResult.ok(null);
+      }
+    }
+
     final String merged;
     try {
-      merged = _mergeJsonRecords(lc.content, sc.content, localSha, stagedSha);
+      merged = ManifoldNs.isReviewStateRef(ref)
+          ? mergeWithSchema(
+              kReviewStateSchema, lc.content, sc.content, localSha, stagedSha)
+          : _mergeJsonRecords(lc.content, sc.content, localSha, stagedSha);
     } catch (e) {
       return GitResult.err('merge of $ref failed: $e');
     }

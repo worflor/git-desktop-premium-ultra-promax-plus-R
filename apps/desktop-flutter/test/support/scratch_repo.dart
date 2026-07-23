@@ -86,6 +86,43 @@ class ScratchRepo {
     return repo;
   }
 
+  /// Clone [sourceUrl] (typically a sibling scratch bare repo's path)
+  /// into a fresh private sandbox, with the same config isolation and
+  /// identity discipline as [create]. The clone keeps its `origin`
+  /// remote pointed at [sourceUrl], so push/fetch round-trips work out
+  /// of the box — the multi-clone reconcile lab's member factory.
+  static Future<ScratchRepo> cloneLocal({
+    required String sourceUrl,
+    String? name,
+    bool autocrlf = false,
+    String userName = 'Scratch Repo',
+    String userEmail = 'scratch@example.invalid',
+  }) async {
+    final prefix = 'scratch_clone_${name == null ? '' : '${name}_'}';
+    final sandbox = await Directory.systemTemp.createTemp(prefix);
+    final dir = Directory(p.join(sandbox.path, 'repo'));
+    // The clone command runs from the sandbox (the repo dir must not
+    // exist yet); isolation env paths are sandbox-anchored because the
+    // instance's dir-anchored ones don't exist until the clone lands.
+    final cloneEnv = {
+      'GIT_CONFIG_NOSYSTEM': '1',
+      'GIT_CONFIG_GLOBAL':
+          p.join(sandbox.path, '.scratch-no-global-gitconfig'),
+      'GIT_CONFIG_SYSTEM':
+          p.join(sandbox.path, '.scratch-no-system-gitconfig'),
+    };
+    final r = await runGit(
+        sandbox.path, ['clone', '-q', sourceUrl, 'repo'],
+        extraEnv: cloneEnv);
+    if (r.exitCode != 0) {
+      throw StateError('git clone failed: ${r.stderr}');
+    }
+    final repo = ScratchRepo._(dir, sandbox);
+    await repo._writeIdentityConfig(
+        autocrlf: autocrlf, userName: userName, userEmail: userEmail);
+    return repo;
+  }
+
   Future<void> _initialize(
       {required bool autocrlf, String? objectFormat}) async {
     final initResult = await git([
@@ -127,19 +164,40 @@ class ScratchRepo {
   /// merge). `git init -b main` is confirmed (empirically, on the git build
   /// this harness runs against) to already emit a trailing `[core]` block
   /// ending in `\n`, so a straight append never collides mid-line.
-  Future<void> _writeIdentityConfig({required bool autocrlf}) async {
+  Future<void> _writeIdentityConfig({
+    required bool autocrlf,
+    String userName = 'Scratch Repo',
+    String userEmail = 'scratch@example.invalid',
+  }) async {
     final configFile = File(p.join(dir.path, '.git', 'config'));
     final existing = await configFile.readAsString();
     final buffer = StringBuffer(existing);
     if (!existing.endsWith('\n')) buffer.write('\n');
     buffer
       ..writeln('[user]')
-      ..writeln('\tname = Scratch Repo')
-      ..writeln('\temail = scratch@example.invalid')
+      ..writeln('\tname = $userName')
+      ..writeln('\temail = $userEmail')
       ..writeln('[commit]')
       ..writeln('\tgpgsign = false')
       ..writeln('[core]')
       ..writeln('\tautocrlf = ${autocrlf ? 'true' : 'false'}');
+    await configFile.writeAsString(buffer.toString(), flush: true);
+  }
+
+  /// Repoint this repo's default identity by appending a fresh `[user]`
+  /// section — git's last-occurrence-wins config semantics (see
+  /// [_writeIdentityConfig]'s doc) make the append equivalent to two
+  /// `git config` calls, with zero subprocess spawns.
+  Future<void> setIdentity(
+      {required String name, required String email}) async {
+    final configFile = File(p.join(dir.path, '.git', 'config'));
+    final existing = await configFile.readAsString();
+    final buffer = StringBuffer(existing);
+    if (!existing.endsWith('\n')) buffer.write('\n');
+    buffer
+      ..writeln('[user]')
+      ..writeln('\tname = $name')
+      ..writeln('\temail = $email');
     await configFile.writeAsString(buffer.toString(), flush: true);
   }
 
@@ -189,6 +247,24 @@ class ScratchRepo {
   Future<String> commitAll(String message) async {
     await stageAll();
     await gitOk(['commit', '-m', message]);
+    return gitOk(['rev-parse', 'HEAD']);
+  }
+
+  /// [commitAll] with a per-commit author/committer identity override
+  /// (`-c user.name/-c user.email` — sets BOTH author and committer),
+  /// leaving the repo's configured identity untouched. The multi-author
+  /// primitive the review lab's synthetic-team histories build on.
+  Future<String> commitAllAs({
+    required String name,
+    required String email,
+    required String message,
+  }) async {
+    await stageAll();
+    await gitOk([
+      '-c', 'user.name=$name',
+      '-c', 'user.email=$email',
+      'commit', '-m', message,
+    ]);
     return gitOk(['rev-parse', 'HEAD']);
   }
 

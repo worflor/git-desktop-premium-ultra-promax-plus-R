@@ -80,7 +80,7 @@ class _RaceRefs extends ManifoldRefs {
 
   @override
   Future<GitResult<void>> updateRef({
-    required LiveManifoldRef ref,
+    required WritableManifoldRef ref,
     required CommitOid newSha,
     Oid? oldSha,
   }) async {

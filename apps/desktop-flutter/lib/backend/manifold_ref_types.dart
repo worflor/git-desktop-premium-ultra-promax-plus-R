@@ -113,11 +113,48 @@ extension type const CommitOid._(String value) implements Oid {
       _isOid(raw) ? CommitOid._(raw) : null;
 }
 
+/// Any ref this app may write with `update-ref`: a live shared ref
+/// under `refs/manifold/` or a local-only ref under
+/// `refs/manifold-local/`. The supertype exists so the plumbing's
+/// write methods accept both while the SYNC machinery stays typed to
+/// [LiveManifoldRef] alone — local refs are unrepresentable there.
+extension type const WritableManifoldRef._(String value)
+    implements Commitish {}
+
+/// A local-only ref under `refs/manifold-local/` — private state
+/// (draft comments, unpublished reviews) that must NEVER enter the
+/// shared object graph. The namespace is excluded by construction:
+/// the only constructible fetch refspec maps `refs/manifold/*`, and
+/// [ManifoldNs.localRoot] is not under it (a `manifold-local` path
+/// component does not match the `manifold/` prefix), so no sync,
+/// fetch, or push ever carries these refs. Publishing is the only
+/// crossing point, and it is an explicit read-here/write-there.
+extension type const ManifoldLocalRef._(String value)
+    implements WritableManifoldRef {
+  factory ManifoldLocalRef.parse(String raw) {
+    if (!raw.startsWith(ManifoldNs.localRoot)) {
+      throw ArgumentError.value(raw, 'raw', 'not under ${ManifoldNs.localRoot}');
+    }
+    _checkRefWellFormed(raw);
+    return ManifoldLocalRef._(raw);
+  }
+
+  /// The draft store for the review of desk PR [deskId]:
+  /// `refs/manifold-local/review/<deskId>/drafts`.
+  factory ManifoldLocalRef.reviewDrafts(int deskId) {
+    if (deskId <= 0) {
+      throw ArgumentError.value(deskId, 'deskId', 'desk ids start at 1');
+    }
+    return ManifoldLocalRef._('${ManifoldNs.localRoot}review/$deskId/drafts');
+  }
+}
+
 /// A live metadata ref under `refs/manifold/` — the only refs the app
-/// ever mutates, and the only legal destination for `update-ref`.
+/// ever syncs, and the only kind the reconcile engine moves.
 /// Constructed via the grammar factories ([issue]/[desk]/[parse]) so a
 /// malformed or out-of-namespace name can never reach git.
-extension type const LiveManifoldRef._(String value) implements Commitish {
+extension type const LiveManifoldRef._(String value)
+    implements WritableManifoldRef {
   /// Wrap a refname already known to be live-namespace (e.g. read back
   /// from `for-each-ref refs/manifold/`). Validates namespace + git
   /// refname well-formedness.
@@ -143,6 +180,30 @@ extension type const LiveManifoldRef._(String value) implements Commitish {
     final ref = '${ManifoldNs.desksPrefix}$encodedBranchTail';
     _checkRefWellFormed(ref);
     return LiveManifoldRef._(ref);
+  }
+
+  /// The mutable review-state doc of desk PR [deskId]:
+  /// `refs/manifold/review/<deskId>/state`.
+  factory LiveManifoldRef.reviewState(int deskId) {
+    if (deskId <= 0) {
+      throw ArgumentError.value(deskId, 'deskId', 'desk ids start at 1');
+    }
+    return LiveManifoldRef._('${ManifoldNs.reviewPrefix}$deskId/state');
+  }
+
+  /// Round [n] of desk PR [deskId]'s review:
+  /// `refs/manifold/review/<deskId>/round/<n>`. Points at a REAL
+  /// commit of the reviewed branch (the pinned snapshot), not an
+  /// orphan metadata commit — the ref's whole job is keeping that
+  /// snapshot reachable and transferable, force-push-proof.
+  factory LiveManifoldRef.reviewRound(int deskId, int n) {
+    if (deskId <= 0) {
+      throw ArgumentError.value(deskId, 'deskId', 'desk ids start at 1');
+    }
+    if (n <= 0) {
+      throw ArgumentError.value(n, 'n', 'rounds start at 1');
+    }
+    return LiveManifoldRef._('${ManifoldNs.reviewPrefix}$deskId/round/$n');
   }
 
   /// The namespace-relative tail (`issues/7`, `desks/<encoded>`,
@@ -217,8 +278,38 @@ abstract final class ManifoldNs {
   /// Root of all per-remote staging namespaces.
   static const String stagingRoot = 'refs/manifold-remote/';
 
+  /// Root of the local-only namespace. NOT under [prefix] (the path
+  /// component is `manifold-local`, not `manifold`), so the fetch
+  /// refspec and the whole-namespace sync can never see it.
+  static const String localRoot = 'refs/manifold-local/';
+
   static const String issuesPrefix = '${prefix}issues/';
   static const String desksPrefix = '${prefix}desks/';
+
+  /// Review namespace: `refs/manifold/review/<deskId>/state` (mutable
+  /// doc) and `refs/manifold/review/<deskId>/round/<n>` (immutable
+  /// pins).
+  static const String reviewPrefix = '${prefix}review/';
+
+  static final RegExp _reviewStateRe =
+      RegExp(r'^refs/manifold/review/[1-9][0-9]*/state$');
+  static final RegExp _reviewRoundRe =
+      RegExp(r'^refs/manifold/review/[1-9][0-9]*/round/[1-9][0-9]*$');
+
+  /// True for a review-state doc ref — the record kind whose
+  /// divergence merge uses the DECLARED review schema instead of the
+  /// legacy shape-sniffing merge. EXACT shape, not substring sniffing:
+  /// with third-party writers a design goal, a foreign ref like
+  /// `review/x/state/extra` must fall to the generic path, never be
+  /// schema-merged by accident.
+  static bool isReviewStateRef(String ref) => _reviewStateRe.hasMatch(ref);
+
+  /// True for an immutable review-round pin. These point at real
+  /// branch commits, so the reconcile engine must never tree-merge or
+  /// fast-forward them: same-name divergence converges by
+  /// deterministic sha choice, nothing else. Exact shape for the same
+  /// interop reason as [isReviewStateRef].
+  static bool isReviewRoundRef(String ref) => _reviewRoundRe.hasMatch(ref);
 
   /// The shared id-counter ref — DeskPrStore and DeskIssueStore both
   /// allocate from it so PR-ids and issue-ids never collide.

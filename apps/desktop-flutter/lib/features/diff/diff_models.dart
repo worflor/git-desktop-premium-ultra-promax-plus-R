@@ -202,6 +202,15 @@ class ParsedLine {
   /// signalling the caller to skip the bigram stage (char-stage only).
   static int queryBigramBits(String lowerTerm) => _computeBigramBits(lowerTerm);
 
+  /// Public entry to the SimHash algorithm for callers outside the
+  /// diff parse (the review-comment anchoring layer fingerprints
+  /// arbitrary file lines with the SAME function, so anchor hashes and
+  /// diff-line hashes live in one comparable space). Deterministic —
+  /// no `hashCode` anywhere in the pipeline, so values are stable
+  /// across platforms, Dart versions, and app releases, which is what
+  /// makes them safe to PERSIST in review records.
+  static int simHashOf(String lowerText) => _computeSimHash(lowerText);
+
   /// SimHash computation. Implements the sign-of-weighted-sum projection:
   ///   1. For each character trigram `(c₀, c₁, c₂)` in lowerText, hash via
   ///      SplitMix64 to produce a 64-bit fingerprint.
