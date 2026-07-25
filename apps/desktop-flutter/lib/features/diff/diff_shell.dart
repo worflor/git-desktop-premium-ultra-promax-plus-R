@@ -275,6 +275,26 @@ class DiffShell extends StatefulWidget {
   /// explicit "this is what I'm looking at" signal.
   final ValueChanged<String>? onPinnedFileFocused;
 
+  /// Per-line markers for the review gutter overlay — painted in the
+  /// left reserve strip by a scroll-following layer that never enters
+  /// the hot row build path. Empty = no overlay work at all.
+  final List<DiffLineMark> lineMarks;
+
+  /// Tap on the review gutter strip. Fires with the side + 1-based
+  /// line number the tapped row resolves to (adds/context → new side,
+  /// deletions → old side, replacement pairs → their new line).
+  /// Non-null also enables the hover invite on markable rows. Ignored
+  /// while [enableStaging] is on — that surface owns the strip.
+  final void Function(bool oldSide, int line)? onGutterLineTap;
+
+  /// When true, pure-deletion rows offer no gutter target at all (no
+  /// invite, no tap). Hosts set this when the rendered diff's OLD side
+  /// is not the tree their old-side coordinates belong to — e.g. a
+  /// review lens comparing two later snapshots, whose left column is a
+  /// different tree than the PR's merge base. Anchoring there would
+  /// hash whatever text happened to sit at that line number.
+  final bool gutterNewSideOnly;
+
   /// When non-null, renders a `<` back button in the toolbar's
   /// leading slot (before the search toggle). Wired by parents that
   /// maintain a navigation stack — clicking it pops one layer. Null
@@ -306,6 +326,9 @@ class DiffShell extends StatefulWidget {
     this.logosSession,
     this.onOpenRelatedPath,
     this.onPinnedFileFocused,
+    this.lineMarks = const [],
+    this.onGutterLineTap,
+    this.gutterNewSideOnly = false,
     this.onNavigateBack,
     this.toolbarFilePath,
     this.toolbarLabel,
@@ -2215,6 +2238,99 @@ class _DiffShellState extends State<DiffShell> {
       cum += segH;
     }
     return _displayLines.isEmpty ? 0 : _displayLines.length - 1;
+  }
+
+  // ─── Review gutter overlay ────────────────────────────────────────
+  // Marks mapped into display-row space, cached against the exact
+  // (_displayLines, widget.lineMarks) PAIR. Both lists are replaced
+  // wholesale, never mutated in place, so identity is a sound
+  // invalidation key — the map recomputes only when the document
+  // re-derives its display list or the host hands in new marks.
+
+  List<ParsedLine>? _marksCacheLines;
+  List<DiffLineMark>? _marksCacheMarks;
+  Map<int, DiffLineMarkKind> _marksByDisplayIdxCache = const {};
+
+  /// The overlay mounts only when a host actually wired review data,
+  /// and never alongside staging — that surface owns the left strip.
+  bool get _gutterLayerActive =>
+      !widget.enableStaging &&
+      (widget.lineMarks.isNotEmpty || widget.onGutterLineTap != null);
+
+  Map<int, DiffLineMarkKind> get _marksByDisplayIdx {
+    if (identical(_marksCacheLines, _displayLines) &&
+        identical(_marksCacheMarks, widget.lineMarks)) {
+      return _marksByDisplayIdxCache;
+    }
+    final newSide = <int, DiffLineMarkKind>{};
+    final oldSide = <int, DiffLineMarkKind>{};
+    for (final m in widget.lineMarks) {
+      (m.oldSide ? oldSide : newSide)[m.line] = m.kind;
+    }
+    final out = <int, DiffLineMarkKind>{};
+    if (newSide.isNotEmpty || oldSide.isNotEmpty) {
+      for (var i = 0; i < _displayLines.length; i++) {
+        final l = _displayLines[i];
+        DiffLineMarkKind? k;
+        switch (l.kind) {
+          case LineKind.added:
+            if (l.lineNumNew != null) k = newSide[l.lineNumNew];
+            break;
+          case LineKind.deleted:
+            if (l.lineNumOld != null) k = oldSide[l.lineNumOld];
+            // A replacement-pair row answers for its add partner too —
+            // the add row itself was filtered out of display space.
+            if (k == null) {
+              final pairNew = _pairAddLineFor(l);
+              if (pairNew != null) k = newSide[pairNew];
+            }
+            break;
+          case LineKind.context:
+            if (l.lineNumNew != null) k = newSide[l.lineNumNew];
+            if (k == null && l.lineNumOld != null) {
+              k = oldSide[l.lineNumOld];
+            }
+            break;
+          case LineKind.hunk:
+          case LineKind.meta:
+            break;
+        }
+        if (k != null) out[i] = k;
+      }
+    }
+    _marksCacheLines = _displayLines;
+    _marksCacheMarks = widget.lineMarks;
+    return _marksByDisplayIdxCache = out;
+  }
+
+  int? _pairAddLineFor(ParsedLine l) {
+    final unit = _unitByFastKey[l.fastKey];
+    if (unit == null || unit.kind != EditKind.replace) return null;
+    if (unit.newLines.isEmpty) return null;
+    return unit.newLines.first.lineNumNew;
+  }
+
+  /// The (side, line) a gutter tap on display row [i] addresses, or
+  /// null when the row isn't commentable (hunk/meta rows). Replacement
+  /// pairs resolve to their NEW line — a comment on a changed line is
+  /// about what the code became.
+  (bool, int)? _gutterTapTargetFor(int i) {
+    if (i < 0 || i >= _displayLines.length) return null;
+    final l = _displayLines[i];
+    switch (l.kind) {
+      case LineKind.added:
+        return l.lineNumNew == null ? null : (false, l.lineNumNew!);
+      case LineKind.deleted:
+        final pairNew = _pairAddLineFor(l);
+        if (pairNew != null) return (false, pairNew);
+        if (widget.gutterNewSideOnly) return null;
+        return l.lineNumOld == null ? null : (true, l.lineNumOld!);
+      case LineKind.context:
+        return l.lineNumNew == null ? null : (false, l.lineNumNew!);
+      case LineKind.hunk:
+      case LineKind.meta:
+        return null;
+    }
   }
 
   /// Toggle staging on a single line (by its index in [_lines]). Optionally
@@ -4618,6 +4734,40 @@ class _DiffShellState extends State<DiffShell> {
                       ),
                     ),
                   ),
+                  // Review gutter — marker dots + comment invite in the
+                  // left reserve strip. A scroll-following sibling layer
+                  // (the _StickyHunkHeader pattern): position is pure
+                  // arithmetic off the scroll offsets, so the hot row
+                  // builder never learns review exists.
+                  //
+                  // Mounted BEFORE the sticky header so the header keeps
+                  // its own band: a tap on the pinned @@ label must jump
+                  // hunks, not open a composer on the row it covers.
+                  if (_gutterLayerActive)
+                    Positioned.fill(
+                      child: _ReviewGutterLayer(
+                        tokens: t,
+                        scrollCtrl: _scrollCtrl,
+                        // The strip is glued to the row's LEFT EDGE, which
+                        // scrolls horizontally with the rows (gutter
+                        // included — the whole sliver list lives inside the
+                        // horizontal viewport). Pinning it at x=0 would slide
+                        // it onto the code text the moment a long line
+                        // scrolls, painting dots over source and stealing
+                        // presses from text selection.
+                        hScrollCtrl: _hScrollCtrl,
+                        stripWidth: _kStageCellWidth,
+                        lineExtent: _lineItemExtent,
+                        displayCount: _displayLines.length,
+                        marksByIdx: _marksByDisplayIdx,
+                        tapTargetFor: widget.onGutterLineTap == null
+                            ? null
+                            : _gutterTapTargetFor,
+                        onTapLine: widget.onGutterLineTap,
+                        offsetForDisplayIndex: _offsetForDisplayIndex,
+                        displayIndexForOffset: _displayIndexForOffset,
+                      ),
+                    ),
                   // Sticky hunk header — pins the current @@ label at the top
                   // when you're scrolled deep inside a hunk. Suppressed during
                   // search (results are flat; hunks aren't meaningful).
@@ -4643,6 +4793,11 @@ class _DiffShellState extends State<DiffShell> {
                         onJump: _jumpToHunkIndex,
                       ),
                     ),
+                  // Review gutter — marker dots + comment invite in the
+                  // left reserve strip. A scroll-following sibling layer
+                  // (the _StickyHunkHeader pattern): position is pure
+                  // arithmetic off the scroll offset, so the hot row
+                  // builder never learns review exists.
                 ],
               ),
             ),
@@ -8796,4 +8951,236 @@ class _StickyHunkHeader extends StatelessWidget {
       },
     );
   }
+}
+
+/// Review gutter overlay — a scroll-following layer over the row's left
+/// strip that paints marker dots for review-marked rows and a quiet "+"
+/// invite under the pointer. Sibling of the scroll view (the
+/// _StickyHunkHeader pattern): every position is arithmetic off the
+/// scroll offsets and the fixed row extent, so nothing here ever runs
+/// inside the hot row builder.
+///
+/// The strip tracks BOTH axes. Vertically it follows the row list;
+/// horizontally it rides [hScrollCtrl] so it stays welded to the row's
+/// left edge — the same strip the row's own pointer handlers ignore (the
+/// pin guard's `dx < stage cell`), which is why claiming it costs the
+/// diff no interaction at all. Scrolled past that edge, the strip
+/// translates out of the viewport and stops hit-testing with it.
+class _ReviewGutterLayer extends StatefulWidget {
+  final AppTokens tokens;
+  final ScrollController scrollCtrl;
+  final ScrollController hScrollCtrl;
+  final double stripWidth;
+  final double lineExtent;
+  final int displayCount;
+  final Map<int, DiffLineMarkKind> marksByIdx;
+  final (bool, int)? Function(int displayIdx)? tapTargetFor;
+  final void Function(bool oldSide, int line)? onTapLine;
+  final double Function(int) offsetForDisplayIndex;
+  final int Function(double) displayIndexForOffset;
+
+  const _ReviewGutterLayer({
+    required this.tokens,
+    required this.scrollCtrl,
+    required this.hScrollCtrl,
+    required this.stripWidth,
+    required this.lineExtent,
+    required this.displayCount,
+    required this.marksByIdx,
+    required this.tapTargetFor,
+    required this.onTapLine,
+    required this.offsetForDisplayIndex,
+    required this.displayIndexForOffset,
+  });
+
+  @override
+  State<_ReviewGutterLayer> createState() => _ReviewGutterLayerState();
+}
+
+class _ReviewGutterLayerState extends State<_ReviewGutterLayer> {
+  int? _hoverIdx;
+  bool _hoverTappable = false;
+
+  int? _idxAtLocalY(double y) {
+    if (!widget.scrollCtrl.hasClients) return null;
+    final idx = widget.displayIndexForOffset(widget.scrollCtrl.offset + y);
+    if (idx < 0 || idx >= widget.displayCount) return null;
+    return idx;
+  }
+
+  void _updateHover(double y) {
+    final idx = _idxAtLocalY(y);
+    final tappable = idx != null && (widget.tapTargetFor?.call(idx) != null);
+    if (idx != _hoverIdx || tappable != _hoverTappable) {
+      setState(() {
+        _hoverIdx = idx;
+        _hoverTappable = tappable;
+      });
+    }
+  }
+
+  void _clearHover() {
+    if (_hoverIdx == null && !_hoverTappable) return;
+    setState(() {
+      _hoverIdx = null;
+      _hoverTappable = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final interactive = widget.onTapLine != null;
+    // Resolved once per build and compared BY VALUE in shouldRepaint. A
+    // closure would be a fresh identity every build (repaint every
+    // frame); reading tokens inside paint would silently keep the OLD
+    // theme's colors after a theme switch, since nothing else the
+    // painter compares changes.
+    final palette = <Color>[
+      for (final kind in DiffLineMarkKind.values)
+        switch (kind) {
+          DiffLineMarkKind.thread => t.accentBright,
+          DiffLineMarkKind.robot => t.hyperChromatic1,
+          DiffLineMarkKind.draft => t.textMuted,
+          DiffLineMarkKind.resolved => t.textFaint,
+          DiffLineMarkKind.outdated => t.textFaint,
+        },
+    ];
+
+    final strip = MouseRegion(
+      opaque: false,
+      cursor: interactive && _hoverTappable
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
+      onHover: interactive ? (e) => _updateHover(e.localPosition.dy) : null,
+      onExit: interactive ? (_) => _clearHover() : null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: interactive
+            ? (e) {
+                final idx = _idxAtLocalY(e.localPosition.dy);
+                if (idx == null) return;
+                final target = widget.tapTargetFor?.call(idx);
+                if (target == null) return;
+                widget.onTapLine!(target.$1, target.$2);
+              }
+            : null,
+        child: AnimatedBuilder(
+          animation: widget.scrollCtrl,
+          builder: (context, _) => CustomPaint(
+            size: Size.infinite,
+            painter: _GutterMarksPainter(
+              scrollOffset:
+                  widget.scrollCtrl.hasClients ? widget.scrollCtrl.offset : 0.0,
+              lineExtent: widget.lineExtent,
+              marksByIdx: widget.marksByIdx,
+              offsetForDisplayIndex: widget.offsetForDisplayIndex,
+              hoverIdx: _hoverTappable ? _hoverIdx : null,
+              palette: palette,
+              inviteColor: t.textMuted,
+              centerX: widget.stripWidth / 2,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return AnimatedBuilder(
+      animation: widget.hScrollCtrl,
+      // `child` hoists the strip out of the horizontal rebuild: sliding
+      // sideways only re-runs the translate, never the painter subtree.
+      child: SizedBox(width: widget.stripWidth, child: strip),
+      builder: (context, child) {
+        final dx =
+            widget.hScrollCtrl.hasClients ? widget.hScrollCtrl.offset : 0.0;
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Transform.translate(
+            // transformHitTests (default true) inverts this for pointers,
+            // so the tap zone slides out of reach exactly as it slides
+            // out of view.
+            offset: Offset(-dx, 0),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GutterMarksPainter extends CustomPainter {
+  final double scrollOffset;
+  final double lineExtent;
+  final Map<int, DiffLineMarkKind> marksByIdx;
+  final double Function(int) offsetForDisplayIndex;
+  final int? hoverIdx;
+
+  /// Resolved fill per [DiffLineMarkKind], indexed by `kind.index`.
+  final List<Color> palette;
+  final Color inviteColor;
+  final double centerX;
+
+  const _GutterMarksPainter({
+    required this.scrollOffset,
+    required this.lineExtent,
+    required this.marksByIdx,
+    required this.offsetForDisplayIndex,
+    required this.hoverIdx,
+    required this.palette,
+    required this.inviteColor,
+    required this.centerX,
+  });
+
+  /// Unpublished and dead anchors read as hollow — present, not asserted.
+  static const Set<DiffLineMarkKind> _hollow = {
+    DiffLineMarkKind.draft,
+    DiffLineMarkKind.outdated,
+  };
+
+  static const double _dotR = 2.5;
+
+  double? _rowCenterY(int idx, Size size) {
+    final y = offsetForDisplayIndex(idx) - scrollOffset;
+    if (y < -lineExtent || y > size.height) return null;
+    return y + lineExtent / 2;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final e in marksByIdx.entries) {
+      final cy = _rowCenterY(e.key, size);
+      if (cy == null) continue;
+      final paint = Paint()..color = palette[e.value.index];
+      if (_hollow.contains(e.value)) {
+        paint
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2;
+        canvas.drawCircle(Offset(centerX, cy), _dotR - 0.4, paint);
+      } else {
+        canvas.drawCircle(Offset(centerX, cy), _dotR, paint);
+      }
+    }
+    final h = hoverIdx;
+    if (h != null && !marksByIdx.containsKey(h)) {
+      final cy = _rowCenterY(h, size);
+      if (cy != null) {
+        final p = Paint()
+          ..color = inviteColor
+          ..strokeWidth = 1.2
+          ..strokeCap = StrokeCap.round;
+        const a = 3.5;
+        canvas.drawLine(Offset(centerX - a, cy), Offset(centerX + a, cy), p);
+        canvas.drawLine(Offset(centerX, cy - a), Offset(centerX, cy + a), p);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GutterMarksPainter old) =>
+      old.scrollOffset != scrollOffset ||
+      old.hoverIdx != hoverIdx ||
+      old.centerX != centerX ||
+      old.inviteColor != inviteColor ||
+      !identical(old.marksByIdx, marksByIdx) ||
+      !listEquals(old.palette, palette);
 }

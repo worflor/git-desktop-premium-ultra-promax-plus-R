@@ -789,3 +789,25 @@ class DiffStats {
 /// internal name is kept underscored so the symbol is module-private and
 /// this re-export documents the contract explicitly.
 int splitmix64(int z) => _splitmix64(z);
+
+/// Visual weight classes for per-line gutter markers. The diff layer is
+/// deliberately blind to what a marker MEANS (review thread, draft,
+/// engine finding) — hosts map their own semantics onto these classes
+/// and the overlay just paints them.
+enum DiffLineMarkKind { thread, draft, robot, resolved, outdated }
+
+/// One marked line for the gutter overlay: which side of the diff the
+/// 1-based [line] number lives on, and how to paint it. Lines that
+/// don't appear in the rendered diff (context trimmed away, other
+/// files) simply don't match a row — a mark is a request, not a
+/// guarantee.
+class DiffLineMark {
+  final bool oldSide;
+  final int line;
+  final DiffLineMarkKind kind;
+  const DiffLineMark({
+    required this.oldSide,
+    required this.line,
+    required this.kind,
+  });
+}
