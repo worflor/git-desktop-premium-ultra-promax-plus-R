@@ -91,12 +91,39 @@ void main() {
     r'AnimationController|AnimatedContainer|TweenAnimationBuilder|\.animate\(|curve:',
   );
 
-  int countViolatingFiles(RegExp pattern, {bool requireAnimationRef = false}) {
+  /// True when [source] contains a RAW use of [pattern] — one whose
+  /// argument does not reach for the token API.
+  ///
+  /// Line-level, because that is the granularity the distinction lives
+  /// at: `BorderRadius.circular(4)` is the smell this rule is named for,
+  /// while `BorderRadius.circular(geo.badgeRadius)` IS the token API and
+  /// the only way to spell it (a BorderRadius has to be built from the
+  /// double the theme hands you). Counting both identically would push
+  /// correct, per-theme-geometry code to hard-code a constant to get
+  /// quiet — the opposite of what this file is for.
+  bool hasRawUse(
+    String source,
+    RegExp pattern, {
+    RegExp? sanctioned,
+  }) {
+    for (final line in source.split('\n')) {
+      if (!pattern.hasMatch(line)) continue;
+      if (sanctioned != null && sanctioned.hasMatch(line)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  int countViolatingFiles(
+    RegExp pattern, {
+    bool requireAnimationRef = false,
+    RegExp? sanctioned,
+  }) {
     var count = 0;
     for (final f in dartFiles()) {
       if (isAllowlisted(f)) continue;
       final source = f.readAsStringSync();
-      if (!pattern.hasMatch(source)) continue;
+      if (!hasRawUse(source, pattern, sanctioned: sanctioned)) continue;
       if (requireAnimationRef && !animationRefPattern.hasMatch(source)) {
         continue;
       }
@@ -105,12 +132,16 @@ void main() {
     return count;
   }
 
-  List<String> offendersFor(RegExp pattern, {bool requireAnimationRef = false}) {
+  List<String> offendersFor(
+    RegExp pattern, {
+    bool requireAnimationRef = false,
+    RegExp? sanctioned,
+  }) {
     final offenders = <String>[];
     for (final f in dartFiles()) {
       if (isAllowlisted(f)) continue;
       final source = f.readAsStringSync();
-      if (!pattern.hasMatch(source)) continue;
+      if (!hasRawUse(source, pattern, sanctioned: sanctioned)) continue;
       if (requireAnimationRef && !animationRefPattern.hasMatch(source)) {
         continue;
       }
@@ -125,11 +156,12 @@ void main() {
     required RegExp pattern,
     required int baseline,
     bool requireAnimationRef = false,
+    RegExp? sanctioned,
   }) {
     test('$label: violating-file count must not exceed the pinned baseline',
         () {
-      final count =
-          countViolatingFiles(pattern, requireAnimationRef: requireAnimationRef);
+      final count = countViolatingFiles(pattern,
+          requireAnimationRef: requireAnimationRef, sanctioned: sanctioned);
       if (count < baseline) {
         // The ratchet just tightened — someone migrated a file to the
         // token API without lowering the pin. Nudge them (not fail them)
@@ -140,8 +172,8 @@ void main() {
             '$baseline) — lower the baseline constant in '
             'theme_compliance_ratchet_test.dart to lock in the improvement.');
       }
-      final offenders =
-          offendersFor(pattern, requireAnimationRef: requireAnimationRef);
+      final offenders = offendersFor(pattern,
+          requireAnimationRef: requireAnimationRef, sanctioned: sanctioned);
       expect(count, lessThanOrEqualTo(baseline),
           reason: '$label: found $count violating files, ceiling is '
               '$baseline. New violations in: ${offenders.take(5).toList()}');
@@ -157,7 +189,14 @@ void main() {
     label: 'rawCorners (BorderRadius.circular(...) / BorderRadius.all(...) '
         'instead of AppRadii / geometry.*Radius)',
     pattern: RegExp(r'BorderRadius\.circular\(|BorderRadius\.all\('),
-    baseline: 38, // measured 2026-07-09
+    // Reaching for the theme's geometry or the radius scale IS the token
+    // API; only a bare literal opts a widget out of the re-theming lever.
+    sanctioned: RegExp(r'AppRadii\.|geo(metry)?\.\w*[Rr]adius|resolvedRadius'),
+    // 36, re-measured 2026-07-25 when the rule started reading the
+    // ARGUMENT: two of the files it had been counting were reaching for
+    // the theme geometry all along. Tightened, not relaxed — the pin is
+    // below the old 38, so the debt it guards can only shrink from here.
+    baseline: 36,
   );
 
   ratchetTest(
@@ -183,6 +222,10 @@ void main() {
   ratchetTest(
     label: 'rawBorderAll (Border.all(...) instead of chromeBorder* tiers)',
     pattern: RegExp(r'Border\.all\('),
-    baseline: 37, // measured 2026-07-09
+    // A Border.all carrying a chromeBorder tier is the tier API being
+    // used; the rule is about borders that invent their own colour.
+    sanctioned: RegExp(r'chromeBorder'),
+    // 36, re-measured 2026-07-25 with the same argument-aware rule.
+    baseline: 36,
   );
 }

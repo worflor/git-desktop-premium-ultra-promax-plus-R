@@ -1963,8 +1963,16 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
     );
     final draftReview = _parseDraftReview(providerOutput.output!);
     if (draftReview == null) {
-      return const GitResult.err(
-        'Review output could not be parsed. Try again or use a stronger model.',
+      // Name what was actually missing. "Could not be parsed" alone
+      // sends the operator back for another full provider call — minutes
+      // and money — with nothing to change between attempts. The raw
+      // reply is already in the AI audit log, so point at it rather than
+      // leaving the evidence undiscoverable.
+      return GitResult.err(
+        'Review output could not be parsed '
+        '(${_describeDraftParseFailure(providerOutput.output!)}). '
+        'The raw reply is in the AI audit log. '
+        'Try again or use a stronger model.',
       );
     }
 
@@ -10657,6 +10665,32 @@ List<String> _buildCodexPiggybackArgs({
     if (mapped != null) ...['-c', 'model_reasoning_effort="$mapped"'],
     '--json', '-',
   ];
+}
+
+/// Why [_parseDraftReview] rejected a reply, in words. Failure path
+/// only — the happy path never pays for this second pass.
+///
+/// Distinguishes the two ways the triad can fail: absent tags (the
+/// model answered in some other shape) versus a `<score>` carrying no
+/// digits at all (it answered in the right shape but wrote prose where
+/// a number belongs). Those call for different responses, so they must
+/// not read identically.
+@visibleForTesting
+String describeDraftParseFailure(String raw) =>
+    _describeDraftParseFailure(raw);
+
+String _describeDraftParseFailure(String raw) {
+  final normalized = _normalizeModelMarkup(raw);
+  final missing = [
+    for (final tag in const ['verdict', 'score', 'summary'])
+      if (_extractTag(normalized, tag) == null) tag,
+  ];
+  if (missing.isNotEmpty) return 'missing ${missing.join(', ')}';
+  final scoreRaw = _extractTag(normalized, 'score') ?? '';
+  if (RegExp(r'\d').firstMatch(scoreRaw) == null) {
+    return 'the score carried no number';
+  }
+  return 'the reply did not match the expected shape';
 }
 
 _ParsedReviewResult? _parseDraftReview(String raw) {

@@ -77,19 +77,46 @@ import 'package:git_desktop/ui/tokens.dart';
 /// rather than throwing, so a font-path problem doesn't take down every
 /// widget test in the suite.
 Future<void> loadTestFonts() async {
-  final file = File('assets/fonts/DMSans-Variable.ttf');
-  if (!file.existsSync()) {
-    // ignore: avoid_print
-    print(
-      'widget_harness: assets/fonts/DMSans-Variable.ttf not found '
-      '(cwd=${Directory.current.path}) — skipping font load',
-    );
-    return;
+  // EVERY family the themes can resolve to, spaced and unspaced alike.
+  // Loading only the sans meant any mono run — all diff and code text —
+  // rendered as tofu boxes: measurements taken against fallback metrics
+  // and captured PNGs that could not be read. The spaced aliases are not
+  // optional: a theme asking for 'JetBrains Mono' does not match a
+  // family registered as 'JetBrainsMono'.
+  const families = <String, String>{
+    'DMSans': 'DMSans-Variable.ttf',
+    'DM Sans': 'DMSans-Variable.ttf',
+    'JetBrainsMono': 'JetBrainsMono-Variable.ttf',
+    'JetBrains Mono': 'JetBrainsMono-Variable.ttf',
+    'Playfair Display': 'PlayfairDisplay-Variable.ttf',
+    'Lora': 'Lora-Variable.ttf',
+    'VT323': 'VT323-Regular.ttf',
+  };
+  // Absent assets are NOT tolerated per family: skipping one silently
+  // restores exactly the tofu (and the fallback metrics behind it) this
+  // loader exists to prevent, and the tests that measure text would go
+  // on reporting numbers for glyphs nobody rendered. All of these ship
+  // in the repo, so a miss means the environment is wrong — say so.
+  final missing = <String>[];
+  for (final entry in families.entries) {
+    final file = File('assets/fonts/${entry.value}');
+    if (!file.existsSync()) {
+      missing.add(entry.value);
+      continue;
+    }
+    final bytes = file.readAsBytesSync();
+    final loader = FontLoader(entry.key)
+      ..addFont(Future.value(ByteData.view(bytes.buffer)));
+    await loader.load();
   }
-  final bytes = file.readAsBytesSync();
-  final loader = FontLoader('DMSans')
-    ..addFont(Future.value(ByteData.view(bytes.buffer)));
-  await loader.load();
+  if (missing.isNotEmpty) {
+    throw StateError(
+      'widget_harness: font assets missing from '
+      '${Directory.current.path}/assets/fonts — '
+      '${missing.toSet().join(', ')}. Text would render as fallback '
+      'glyphs and any measurement taken against it would be fiction.',
+    );
+  }
 }
 
 /// Installs an in-memory mock for the `shared_preferences` plugin channel.

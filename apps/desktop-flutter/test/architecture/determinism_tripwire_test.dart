@@ -285,11 +285,46 @@ void main() {
   // a `Set`/concurrent source, `.first` silently starts picking whichever
   // entry happened to land first instead of a deliberately-chosen one.
   // ---------------------------------------------------------------------
+  test('codeOnly strips comments without eating code behind a URL', () {
+    // The regression this exists for: a naive cut at the first `//`
+    // lets a string literal swallow the rest of its own line, so a real
+    // offence sitting after it is stripped from the scan and the rule
+    // reports green on a genuine violation.
+    const withUrl =
+        "final u = Uri.parse('https://x/a').queryParameters.entries.first;";
+    expect(codeOnly(withUrl), contains('.entries.first'),
+        reason: 'a URL is not a comment');
+
+    // Real trailing comments still go.
+    expect(codeOnly('final a = b; // .keys.first in prose'),
+        isNot(contains('.keys.first')));
+
+    // A `//` inside a string never starts a comment, whichever quote.
+    expect(codeOnly('final s = "a//b"; final x = m.keys.first;'),
+        contains('.keys.first'));
+
+    // An escaped quote must not end the string early and re-expose
+    // the rest of the line to comment-cutting.
+    const escaped =
+        "final s = 'it\\'s //not a comment'; final x = m.keys.first;";
+    expect(codeOnly(escaped), contains('.keys.first'));
+
+    // A block comment goes whole, taking its contents with it.
+    expect(codeOnly('a; /* .values.first */ b;'),
+        isNot(contains('.values.first')));
+  });
+
   test('no .keys.first / .values.first / .entries.first in lib/backend/', () {
     final pattern = RegExp(r'\.keys\.first|\.values\.first|\.entries\.first');
     final offenders = <String>[];
     for (final f in dartFilesIn(backendDir)) {
-      if (pattern.hasMatch(f.readAsStringSync())) offenders.add(relPath(f));
+      // Code only. A file that EXPLAINS why it stopped using `.first`
+      // was being counted as still using it, which taxes exactly the
+      // comment a future reader most needs — and a commented-out line
+      // is not a nondeterminism either, because it does not run.
+      if (pattern.hasMatch(codeOnly(f.readAsStringSync()))) {
+        offenders.add(relPath(f));
+      }
     }
     offenders.sort();
     const baseline = 7; // measured 2026-07-09
@@ -314,4 +349,55 @@ void main() {
           'in).',
     );
   });
+}
+
+/// Source with comments stripped, for rules that scan text for code
+/// shapes. Deliberately scoped to the rules that opt in: the others'
+/// baselines were measured against raw text, and silently re-measuring
+/// them here would let a real regression hide inside the drop.
+String codeOnly(String source) {
+  final withoutBlocks =
+      source.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), ' ');
+  final out = StringBuffer();
+  for (final line in withoutBlocks.split('\n')) {
+    out.writeln(stripLineComment(line));
+  }
+  return out.toString();
+}
+
+/// Truncate [line] at a REAL `//` — one outside a string literal.
+///
+/// Cutting at the first `//` blindly lets `Uri.parse('https://x')`
+/// swallow the remainder of its own line, so an offending call sitting
+/// after it would be stripped from the scan and the rule would report
+/// green on a genuine violation. Found by the manifold review, on a
+/// helper added the same day to fix a DIFFERENT false reading — the
+/// instrument is as easy to get quietly wrong as the code it guards.
+///
+/// Biased toward keeping too much: text inside a string is never code
+/// we care about, so a mis-strip THERE costs nothing, while a
+/// mis-strip of real code costs the whole guarantee.
+String stripLineComment(String line) {
+  var quote = 0;
+  for (var i = 0; i < line.length; i++) {
+    final c = line.codeUnitAt(i);
+    if (quote != 0) {
+      if (c == 0x5C) {
+        i++; // escaped character inside the string
+        continue;
+      }
+      if (c == quote) quote = 0;
+      continue;
+    }
+    if (c == 0x27 || c == 0x22) {
+      quote = c; // opening ' or "
+      continue;
+    }
+    if (c == 0x2F &&
+        i + 1 < line.length &&
+        line.codeUnitAt(i + 1) == 0x2F) {
+      return line.substring(0, i);
+    }
+  }
+  return line;
 }
