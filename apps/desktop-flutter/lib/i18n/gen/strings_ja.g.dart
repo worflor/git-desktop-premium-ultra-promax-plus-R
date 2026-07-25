@@ -93,6 +93,8 @@ class TranslationsJa extends Translations
   late final _Translations$repoSummary$ja repoSummary =
       _Translations$repoSummary$ja._(_root);
   @override
+  late final _Translations$review$ja review = _Translations$review$ja._(_root);
+  @override
   late final _Translations$settings$ja settings = _Translations$settings$ja._(
     _root,
   );
@@ -1834,6 +1836,98 @@ class _Translations$repoSummary$ja extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$ja shape =
       _Translations$repoSummary$shape$ja._(_root);
+}
+
+// Path: review
+class _Translations$review$ja extends Translations$review$en {
+  _Translations$review$ja._(TranslationsJa root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsJa _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => '未解決';
+  @override
+  String get done => '完了';
+  @override
+  String get ack => '了解';
+  @override
+  String get reply => '返信';
+  @override
+  String get pleaseFix => '要修正';
+  @override
+  String get draft => '下書き';
+  @override
+  String get engine => 'エンジン';
+  @override
+  String get moved => '移動';
+  @override
+  String get yourTurn => 'あなたの番';
+  @override
+  String get drafts => '下書き';
+  @override
+  String get publish => '公開';
+  @override
+  String get discard => '破棄';
+  @override
+  String get saveDraft => '下書きを保存';
+  @override
+  String get cancel => 'キャンセル';
+  @override
+  String get verdictApprove => '承認';
+  @override
+  String get verdictRequestChanges => '変更を要求';
+  @override
+  String get verdictComment => 'コメント';
+  @override
+  String get caughtUp => '最新';
+  @override
+  String get sinceLastLook => '前回の確認以降';
+  @override
+  String get fullDiff => '全差分';
+  @override
+  String get commentHint => 'コメントを書く';
+  @override
+  String outdatedLastSeen({required Object round}) => '古い · 最終確認 R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => '${who} 待ち';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '前回の確認以降 ${n} 件のファイル',
+        other: '前回の確認以降 ${n} 件のファイル',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '未解決 ${n} 件';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '下書き ${n} 件',
+        other: '下書き ${n} 件',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'レビューを開始できませんでした: ${error}';
+  @override
+  String get anchorUnavailable => 'その行はアンカーできません — ファイルが大きすぎるか利用できません。';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'レビュー操作に失敗しました: ${error}';
+  @override
+  String get lensTooLarge => 'この比較は大きすぎてここに表示できません — 全差分のままにします。';
+  @override
+  String get lensEmpty => 'これらのスナップショットの間に変更はありません。';
+  @override
+  String get reopen => '再オープン';
 }
 
 // Path: settings

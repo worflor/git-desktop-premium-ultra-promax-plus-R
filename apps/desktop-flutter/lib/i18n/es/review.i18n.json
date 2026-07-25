@@ -1,0 +1,43 @@
+{
+  "@@locale": "es",
+  "unresolved": "sin resolver",
+  "done": "listo",
+  "ack": "anotado",
+  "reply": "responder",
+  "pleaseFix": "por favor, corrige",
+  "draft": "borrador",
+  "engine": "motor",
+  "moved": "movido",
+  "yourTurn": "tu turno",
+  "drafts": "borradores",
+  "publish": "publicar",
+  "discard": "descartar",
+  "saveDraft": "guardar borrador",
+  "cancel": "cancelar",
+  "verdictApprove": "aprobar",
+  "verdictRequestChanges": "solicitar cambios",
+  "verdictComment": "comentar",
+  "caughtUp": "al día",
+  "sinceLastLook": "desde tu última mirada",
+  "fullDiff": "diff completo",
+  "commentHint": "escribe un comentario",
+  "outdatedLastSeen": "desactualizado · visto por última vez R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "esperando a {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 archivo desde tu última mirada",
+    "other": "{n} archivos desde tu última mirada"
+  },
+  "unresolvedCountFmt": "{n} sin resolver",
+  "draftCountFmt": {
+    "one": "1 borrador",
+    "other": "{n} borradores"
+  },
+  "startReviewFailed": "No se pudo iniciar la revisión: {error}",
+  "anchorUnavailable": "Esa línea no se puede anclar — el archivo es demasiado grande o no está disponible.",
+  "reviewActionFailed": "La acción de revisión falló: {error}",
+  "lensTooLarge": "Esa comparación es demasiado grande para mostrarla aquí — nos quedamos en el diff completo.",
+  "lensEmpty": "Nada cambió entre estas instantáneas.",
+  "reopen": "reabrir"
+}

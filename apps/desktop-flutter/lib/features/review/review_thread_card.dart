@@ -21,7 +21,6 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
-import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'review_chrome.dart';
 import 'review_view_model.dart';
@@ -38,6 +37,16 @@ class ReviewThreadCard extends StatelessWidget {
   final VoidCallback? onReply;
   final VoidCallback? onPleaseFix;
 
+  /// Undo a resolution. Rendered on the state chip itself rather than as
+  /// a verb, so a resolved card keeps receding (see [_ReopenableChip]).
+  final VoidCallback? onReopen;
+
+  /// Remove THIS draft, leaving the rest of the batch intact. Offered
+  /// only on draft-only cards: the batch bar's `discard` erases every
+  /// unpublished comment on the PR, which is the wrong instrument for
+  /// changing your mind about one line.
+  final VoidCallback? onDiscardDraft;
+
   const ReviewThreadCard({
     super.key,
     required this.thread,
@@ -47,6 +56,8 @@ class ReviewThreadCard extends StatelessWidget {
     this.onAck,
     this.onReply,
     this.onPleaseFix,
+    this.onReopen,
+    this.onDiscardDraft,
   });
 
   @override
@@ -110,6 +121,14 @@ class ReviewThreadCard extends StatelessWidget {
                 const SizedBox(height: AppSpacing.sm10),
                 _verbRow(context, t),
               ],
+              // The one verb an unpublished note gets: remove itself.
+              if (draftOnly && onDiscardDraft != null) ...[
+                const SizedBox(height: AppSpacing.sm10),
+                Row(children: [
+                  ReviewVerbPill(
+                      label: strings.discard, onTap: onDiscardDraft!),
+                ]),
+              ],
             ],
           ),
         ),
@@ -168,6 +187,12 @@ class ReviewThreadCard extends StatelessWidget {
         ),
     ];
 
+    // Only a published, resolved thread can be reopened; a draft-only
+    // card has no thread to reopen and an unresolved one nothing to undo.
+    final canReopen = onReopen != null &&
+        !thread.isDraftOnly &&
+        thread.state != ReviewThreadState.unresolved;
+
     return LayoutBuilder(builder: (context, constraints) {
       // Measure everything that is NOT the path, then fit the path into
       // what remains. The line number and the chips are never the
@@ -204,7 +229,16 @@ class ReviewThreadCard extends StatelessWidget {
             ]),
           ),
           const SizedBox(width: AppSpacing.sm),
-          ReviewLine([ChipSeg(stateChip)]),
+          // Measured from the SAME chip either way — the affordance
+          // wraps it without touching its geometry.
+          if (canReopen)
+            _ReopenableChip(
+              chip: stateChip,
+              tooltip: strings.reopen,
+              onTap: onReopen!,
+            )
+          else
+            ReviewLine([ChipSeg(stateChip)]),
         ],
       );
     });
@@ -262,20 +296,78 @@ class ReviewThreadCard extends StatelessWidget {
     return Row(
       children: [
         if (thread.isRobot && onPleaseFix != null) ...[
-          _VerbPill(
+          ReviewVerbPill(
               label: strings.pleaseFix, emphasis: true, onTap: onPleaseFix!),
           const SizedBox(width: AppSpacing.sm6),
         ],
         if (!thread.isRobot && onDone != null) ...[
-          _VerbPill(label: strings.done, emphasis: true, onTap: onDone!),
+          ReviewVerbPill(label: strings.done, emphasis: true, onTap: onDone!),
           const SizedBox(width: AppSpacing.sm6),
         ],
         if (!thread.isRobot && onAck != null) ...[
-          _VerbPill(label: strings.ack, onTap: onAck!),
+          ReviewVerbPill(label: strings.ack, onTap: onAck!),
           const SizedBox(width: AppSpacing.sm6),
         ],
-        if (onReply != null) _VerbPill(label: strings.reply, onTap: onReply!),
+        if (onReply != null) ReviewVerbPill(label: strings.reply, onTap: onReply!),
       ],
+    );
+  }
+}
+
+/// The resolved state chip, offered as its own undo.
+///
+/// Colour is the affordance and the tooltip is the meaning; the LABEL is
+/// deliberately fixed. Re-labelling on hover would change the chip's
+/// measured width, and the anchor row fits the file path against exactly
+/// that measurement — the path would reflow under the pointer.
+class _ReopenableChip extends StatefulWidget {
+  final ReviewChip chip;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _ReopenableChip({
+    required this.chip,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  State<_ReopenableChip> createState() => _ReopenableChipState();
+}
+
+class _ReopenableChipState extends State<_ReopenableChip> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final c = widget.chip;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Tooltip(
+          message: widget.tooltip,
+          waitDuration: const Duration(milliseconds: 400),
+          child: ReviewLine([
+            // Outline at REST, not just on hover: a control the user
+            // cannot see is a control they do not have, and hover-only
+            // discovery means finding this by accident. The outline
+            // variant deliberately shares `quiet`'s padding (the chips
+            // keep one text rail), so the box appears without the row
+            // re-measuring — the same reason the label never swaps.
+            ChipSeg(ReviewChip(
+              label: c.label,
+              color: _hover ? t.accentBright : c.color,
+              variant: ReviewChipVariant.outline,
+              weight: c.weight,
+              dot: c.dot,
+            )),
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -443,65 +535,3 @@ class _ReviewCommentBlock extends StatelessWidget {
 /// Small turn-verb pill. Hover brightens; emphasis marks the verb the
 /// turn most likely wants (Done on a human ask, Please fix on a robot
 /// finding). Fixed height so verb rows never wobble.
-class _VerbPill extends StatefulWidget {
-  final String label;
-  final bool emphasis;
-  final VoidCallback onTap;
-  const _VerbPill({
-    required this.label,
-    required this.onTap,
-    this.emphasis = false,
-  });
-
-  @override
-  State<_VerbPill> createState() => _VerbPillState();
-}
-
-class _VerbPillState extends State<_VerbPill> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final geo = context.surfaceShader.geometry;
-    final base = widget.emphasis ? t.textStrong : t.textMuted;
-    final color = _hover ? t.accentBright : base;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: context.motionRead(AppMotion.snap),
-          curve: AppMotion.snapCurve,
-          height: ReviewMetrics.verbHeight,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: _hover
-                ? t.accentBright.withValues(alpha: 0.10)
-                : t.bg0.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(geo.pillRadius),
-            border: Border.all(
-              color: _hover
-                  ? t.accentBright.withValues(alpha: 0.45)
-                  : t.chromeBorderSubtle,
-              width: AppBorderWidth.hairline,
-            ),
-          ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: color,
-              fontSize: ReviewType.ident,
-              height: 1,
-              fontWeight:
-                  widget.emphasis ? FontWeight.w700 : FontWeight.w500,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

@@ -1,0 +1,43 @@
+{
+  "@@locale": "id",
+  "unresolved": "belum selesai",
+  "done": "selesai",
+  "ack": "dicatat",
+  "reply": "balas",
+  "pleaseFix": "tolong perbaiki",
+  "draft": "draf",
+  "engine": "engine",
+  "moved": "dipindah",
+  "yourTurn": "giliranmu",
+  "drafts": "draf",
+  "publish": "publikasikan",
+  "discard": "buang",
+  "saveDraft": "simpan draf",
+  "cancel": "batal",
+  "verdictApprove": "setujui",
+  "verdictRequestChanges": "minta perubahan",
+  "verdictComment": "komentar",
+  "caughtUp": "sudah terkini",
+  "sinceLastLook": "sejak terakhir kamu lihat",
+  "fullDiff": "diff lengkap",
+  "commentHint": "tulis komentar",
+  "outdatedLastSeen": "usang · terakhir dilihat R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "menunggu {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 file sejak terakhir kamu lihat",
+    "other": "{n} file sejak terakhir kamu lihat"
+  },
+  "unresolvedCountFmt": "{n} belum selesai",
+  "draftCountFmt": {
+    "one": "1 draf",
+    "other": "{n} draf"
+  },
+  "startReviewFailed": "Tidak bisa memulai review: {error}",
+  "anchorUnavailable": "Baris itu tidak bisa ditambatkan — file terlalu besar atau tidak tersedia.",
+  "reviewActionFailed": "Aksi review gagal: {error}",
+  "lensTooLarge": "Perbandingan itu terlalu besar untuk ditampilkan di sini — tetap di diff lengkap.",
+  "lensEmpty": "Tidak ada yang berubah di antara snapshot ini.",
+  "reopen": "buka lagi"
+}

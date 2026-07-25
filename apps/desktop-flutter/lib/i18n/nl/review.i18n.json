@@ -1,0 +1,43 @@
+{
+  "@@locale": "nl",
+  "unresolved": "onopgelost",
+  "done": "klaar",
+  "ack": "genoteerd",
+  "reply": "antwoorden",
+  "pleaseFix": "graag fixen",
+  "draft": "concept",
+  "engine": "engine",
+  "moved": "verplaatst",
+  "yourTurn": "jouw beurt",
+  "drafts": "concepten",
+  "publish": "publiceren",
+  "discard": "verwerpen",
+  "saveDraft": "concept opslaan",
+  "cancel": "annuleren",
+  "verdictApprove": "goedkeuren",
+  "verdictRequestChanges": "wijzigingen vragen",
+  "verdictComment": "reageren",
+  "caughtUp": "helemaal bij",
+  "sinceLastLook": "sinds je laatste blik",
+  "fullDiff": "volledige diff",
+  "commentHint": "schrijf een reactie",
+  "outdatedLastSeen": "verouderd · laatst gezien R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "wacht op {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 bestand sinds je laatste blik",
+    "other": "{n} bestanden sinds je laatste blik"
+  },
+  "unresolvedCountFmt": "{n} onopgelost",
+  "draftCountFmt": {
+    "one": "1 concept",
+    "other": "{n} concepten"
+  },
+  "startReviewFailed": "Kon de review niet starten: {error}",
+  "anchorUnavailable": "Die regel kan niet worden verankerd — het bestand is te groot of niet beschikbaar.",
+  "reviewActionFailed": "Reviewactie mislukt: {error}",
+  "lensTooLarge": "Die vergelijking is te groot om hier te tonen — we blijven op de volledige diff.",
+  "lensEmpty": "Er is niets veranderd tussen deze snapshots.",
+  "reopen": "heropenen"
+}

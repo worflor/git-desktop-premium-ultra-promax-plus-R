@@ -1,0 +1,43 @@
+{
+  "@@locale": "pt-BR",
+  "unresolved": "não resolvido",
+  "done": "pronto",
+  "ack": "anotado",
+  "reply": "responder",
+  "pleaseFix": "por favor, corrija",
+  "draft": "rascunho",
+  "engine": "motor",
+  "moved": "movido",
+  "yourTurn": "sua vez",
+  "drafts": "rascunhos",
+  "publish": "publicar",
+  "discard": "descartar",
+  "saveDraft": "salvar rascunho",
+  "cancel": "cancelar",
+  "verdictApprove": "aprovar",
+  "verdictRequestChanges": "solicitar mudanças",
+  "verdictComment": "comentar",
+  "caughtUp": "em dia",
+  "sinceLastLook": "desde sua última olhada",
+  "fullDiff": "diff completo",
+  "commentHint": "escreva um comentário",
+  "outdatedLastSeen": "desatualizado · visto por último R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "aguardando {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 arquivo desde sua última olhada",
+    "other": "{n} arquivos desde sua última olhada"
+  },
+  "unresolvedCountFmt": "{n} não resolvidos",
+  "draftCountFmt": {
+    "one": "1 rascunho",
+    "other": "{n} rascunhos"
+  },
+  "startReviewFailed": "Não foi possível iniciar a revisão: {error}",
+  "anchorUnavailable": "Essa linha não pode ser ancorada — o arquivo é muito grande ou está indisponível.",
+  "reviewActionFailed": "A ação de revisão falhou: {error}",
+  "lensTooLarge": "Essa comparação é grande demais para mostrar aqui — ficamos no diff completo.",
+  "lensEmpty": "Nada mudou entre esses snapshots.",
+  "reopen": "reabrir"
+}

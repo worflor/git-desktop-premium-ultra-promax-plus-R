@@ -1,0 +1,43 @@
+{
+  "@@locale": "de",
+  "unresolved": "ungelöst",
+  "done": "fertig",
+  "ack": "notiert",
+  "reply": "antworten",
+  "pleaseFix": "bitte beheben",
+  "draft": "entwurf",
+  "engine": "engine",
+  "moved": "verschoben",
+  "yourTurn": "du bist dran",
+  "drafts": "entwürfe",
+  "publish": "veröffentlichen",
+  "discard": "verwerfen",
+  "saveDraft": "entwurf speichern",
+  "cancel": "abbrechen",
+  "verdictApprove": "freigeben",
+  "verdictRequestChanges": "änderungen anfordern",
+  "verdictComment": "kommentar",
+  "caughtUp": "auf dem stand",
+  "sinceLastLook": "seit deinem letzten blick",
+  "fullDiff": "voller diff",
+  "commentHint": "kommentar schreiben",
+  "outdatedLastSeen": "veraltet · zuletzt gesehen R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "wartet auf {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 Datei seit deinem letzten Blick",
+    "other": "{n} Dateien seit deinem letzten Blick"
+  },
+  "unresolvedCountFmt": "{n} ungelöst",
+  "draftCountFmt": {
+    "one": "1 Entwurf",
+    "other": "{n} Entwürfe"
+  },
+  "startReviewFailed": "Review konnte nicht gestartet werden: {error}",
+  "anchorUnavailable": "Diese Zeile kann nicht verankert werden — die Datei ist zu groß oder nicht verfügbar.",
+  "reviewActionFailed": "Review-Aktion fehlgeschlagen: {error}",
+  "lensTooLarge": "Dieser Vergleich ist zu groß für die Anzeige hier — es bleibt beim vollen Diff.",
+  "lensEmpty": "Zwischen diesen Schnappschüssen hat sich nichts geändert.",
+  "reopen": "erneut öffnen"
+}

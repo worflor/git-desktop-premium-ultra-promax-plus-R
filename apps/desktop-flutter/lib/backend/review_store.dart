@@ -23,7 +23,6 @@
 // injectable. No settings reads, no UI types.
 
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:meta/meta.dart';
 
@@ -53,7 +52,7 @@ class ReviewDraftEntry {
         'threadId': threadId,
         if (anchor != null) 'anchor': anchor!.toJson(),
         'body': body,
-        'at': at.toIso8601String(),
+        'at': isoUtc(at),
       };
 
   factory ReviewDraftEntry.fromJson(Map<String, dynamic> j) =>
@@ -74,10 +73,8 @@ class ReviewStore {
 
   final ManifoldRefs refs;
   final Clock clock;
-  final Random _rng;
 
-  ReviewStore(this.refs, {this.clock = const SystemClock(), Random? rng})
-      : _rng = rng ?? Random();
+  ReviewStore(this.refs, {this.clock = const SystemClock()});
 
   static LiveManifoldRef stateRefFor(int deskId) =>
       LiveManifoldRef.reviewState(deskId);
@@ -166,6 +163,43 @@ class ReviewStore {
     }
     return GitResult.err(
         lastError ?? 'updateRef failed after retries');
+  }
+
+  /// Desk ids that actually HAVE a review, from ONE ref listing.
+  ///
+  /// The gate every whole-repo sweep needs: reviews are far rarer than
+  /// desks, so anything that would otherwise read state per desk (turn
+  /// chips, post-sync round hygiene) asks this first and then touches
+  /// only the desks it names. A repo with fifty desks and no reviews
+  /// costs one spawn instead of fifty.
+  ///
+  /// The pattern selects state docs SERVER-SIDE (`.../*/state`) rather
+  /// than listing the namespace and filtering here: round pins are the
+  /// bulk of it — one ref per round, forever — so a plain prefix would
+  /// make this scale with review AGE instead of review count.
+  ///
+  /// That is a COST choice only. Correctness rests on the exact-shape
+  /// classifier below, which excludes pins whatever the listing returns,
+  /// so the two forms are observationally identical and no output test
+  /// can distinguish them. What the glob DOES rest on — that
+  /// for-each-ref matches without FNM_PATHNAME, so `*` spans the id
+  /// segment and a pin never matches `/state` — is pinned against the
+  /// real binary by review_store_test R9.
+  @useResult
+  Future<GitResult<Set<int>>> listReviewedDeskIds() async {
+    final listed =
+        await refs.listRefs('${ManifoldNs.reviewPrefix}*/state');
+    if (!listed.ok) return GitResult.err(listed.error ?? 'listRefs failed');
+    final out = <int>{};
+    for (final ref in listed.data!.keys) {
+      // Exact-shape classifier, not a substring sniff: a foreign
+      // `review/x/state/extra` must not be mistaken for a desk id.
+      if (!ManifoldNs.isReviewStateRef(ref)) continue;
+      final tail = ref.substring(ManifoldNs.reviewPrefix.length);
+      final id = int.tryParse(tail.substring(0, tail.indexOf('/')));
+      if (id != null) out.add(id);
+    }
+    return GitResult.ok(out);
   }
 
   // ─── Rounds ──────────────────────────────────────────────────────
@@ -320,7 +354,7 @@ class ReviewStore {
       if (!snap.ok) return GitResult.err(snap.error ?? 'read failed');
       final (existing, tip) = snap.data!;
       final payload = const JsonEncoder.withIndent('  ').convert({
-        'updatedAt': clock.now().toIso8601String(),
+        'updatedAt': isoUtc(clock.now()),
         'entries': [...existing.map((e) => e.toJson()), entry.toJson()],
       });
       final blobR = await refs.writeBlob(payload);
@@ -351,6 +385,72 @@ class ReviewStore {
   Future<GitResult<void>> discardDrafts(int deskId) =>
       refs.deleteRef(_draftsRef(deskId));
 
+  /// Drop ONE draft, leaving the rest of the batch alone.
+  ///
+  /// Without this the only eraser is [discardDrafts], which takes every
+  /// unpublished comment on the desk with it — so changing your mind
+  /// about one line meant destroying the other four. Same CAS shape as
+  /// [saveDraft]: re-read the tip each attempt, so a save landing
+  /// concurrently is never clobbered. Removing the last entry deletes
+  /// the ref outright rather than leaving an empty husk behind.
+  @useResult
+  Future<GitResult<void>> discardDraft(
+    int deskId,
+    ReviewDraftEntry entry, {
+    int maxAttempts = 5,
+  }) async {
+    final ref = _draftsRef(deskId);
+    String? lastError;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      final snap = await _draftsSnapshot(deskId);
+      if (!snap.ok) return GitResult.err(snap.error ?? 'read failed');
+      final (existing, tip) = snap.data!;
+      if (tip == null) return const GitResult.ok(null);
+      final keep = [
+        for (final e in existing)
+          if (!_sameDraft(e, entry)) e,
+      ];
+      // Already gone (a racing discard, or a replay): the caller's
+      // intent is satisfied.
+      if (keep.length == existing.length) return const GitResult.ok(null);
+      if (keep.isEmpty) {
+        final del = await refs.deleteRef(ref, expectedSha: tip);
+        if (del.ok) return const GitResult.ok(null);
+        lastError = del.error;
+        await Future<void>.delayed(Duration(milliseconds: 5 + attempt * 5));
+        continue;
+      }
+      final payload = const JsonEncoder.withIndent('  ').convert({
+        'updatedAt': isoUtc(clock.now()),
+        'entries': [...keep.map((e) => e.toJson())],
+      });
+      final blobR = await refs.writeBlob(payload);
+      if (!blobR.ok) return GitResult.err(blobR.error ?? 'writeBlob failed');
+      final treeR = await refs.mkTree({_draftsFilename: blobR.data!});
+      if (!treeR.ok) return GitResult.err(treeR.error ?? 'mkTree failed');
+      final commitR = await refs.commitTree(
+        treeSha: treeR.data!,
+        parentSha: tip,
+        message: 'discard draft',
+      );
+      if (!commitR.ok) return GitResult.err(commitR.error ?? 'commit failed');
+      final upd =
+          await refs.updateRef(ref: ref, newSha: commitR.data!, oldSha: tip);
+      if (upd.ok) return const GitResult.ok(null);
+      lastError = upd.error;
+      await Future<void>.delayed(Duration(milliseconds: 5 + attempt * 5));
+    }
+    return GitResult.err(lastError ?? 'discardDraft lost every CAS');
+  }
+
+  /// Draft identity for removal: the same (thread, when, text) triple
+  /// publish already treats as one comment, so a draft cannot be
+  /// mistaken for a different one that merely reads alike.
+  static bool _sameDraft(ReviewDraftEntry a, ReviewDraftEntry b) =>
+      a.threadId == b.threadId &&
+      isoUtc(a.at) == isoUtc(b.at) &&
+      a.body == b.body;
+
   /// Test seam: runs between the durable state write and the draft-ref
   /// cleanup, where the save-during-publish race lives.
   @visibleForTesting
@@ -358,13 +458,35 @@ class ReviewStore {
 
   // ─── Publish (the atomic batch) ──────────────────────────────────
 
-  String _mintThreadId(ReviewIdentity author, DateTime at) {
+  /// Thread id = time + author + a digest OF THE OPENER.
+  ///
+  /// The tiebreak is content, not chance. Two threads the same author
+  /// opens in the same millisecond still separate (their bodies differ),
+  /// two clients cannot collide (the digest carries the text), and the
+  /// whole store stays reproducible — an unseeded Random here would make
+  /// two runs of the same input diverge, which is precisely what the
+  /// determinism tripwire exists to prevent.
+  ///
+  /// The degenerate case is the RIGHT answer, not a hazard: an identical
+  /// (author, at, body) opener collapses onto one id, which is the same
+  /// call [publish]'s replay dedupe already makes when it refuses to
+  /// re-open a thread for a comment it has seen.
+  ///
+  /// 32 bits of digest, not the 16 the random suffix carried. A true
+  /// collision — same author, same millisecond, DIFFERENT bodies — would
+  /// not read as a clash: threads merge by id under the union policy, so
+  /// two unrelated conversations would silently fuse into one. Nothing
+  /// downstream can detect that, which is why the tiebreak is sized for
+  /// it to never happen rather than to be caught when it does.
+  String _mintThreadId(ReviewIdentity author, DateTime at, String body) {
     final slug = author.display
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
         .replaceAll(RegExp(r'^-+|-+$'), '');
-    final rand = _rng.nextInt(0x10000).toRadixString(16).padLeft(4, '0');
-    return 't-${at.millisecondsSinceEpoch.toRadixString(36)}-$slug-$rand';
+    final digest = hex64(lineContentHash(
+      '${author.display}\u0000${isoUtc(at)}\u0000$body',
+    )).substring(0, 8);
+    return 't-${at.millisecondsSinceEpoch.toRadixString(36)}-$slug-$digest';
   }
 
   /// Publish the viewer's drafts as ONE batch: new threads open,
@@ -411,7 +533,7 @@ class ReviewStore {
             threads = [
               ...threads,
               ReviewThreadRecord(
-                id: _mintThreadId(author, d.at),
+                id: _mintThreadId(author, d.at, d.body),
                 state: 'unresolved',
                 anchor: d.anchor!,
                 comments: [comment],
@@ -437,7 +559,7 @@ class ReviewStore {
           final already = verdicts.any((v) =>
               v.by.display == author.display &&
               v.verdict == verdict &&
-              v.at.toIso8601String() == batchAt.toIso8601String());
+              isoUtc(v.at) == isoUtc(batchAt));
           if (!already) {
             verdicts = [
               ...verdicts,
@@ -471,11 +593,21 @@ class ReviewStore {
           expectedSha: draftsTip);
       if (!del.ok) {
         final still = await refs.resolveRef(_draftsRef(deskId));
-        final moved = still.ok && still.data != null && still.data != draftsTip;
-        if (!moved) {
+        // The state write is already durable, so the ONLY real failure
+        // here is "the drafts we consumed are still sitting at the tip
+        // we consumed". Anything else means the private half already
+        // reached a correct place without us:
+        //   • moved  — a mid-publish save; leaving it is the fix
+        //   • gone   — a concurrent discard beat us to it
+        // Reporting either as a failure would tell the user their
+        // published review did not publish, which is the one lie a
+        // review tool must never tell (the discard case used to do
+        // exactly that: `moved` could only ever see a DIFFERENT sha,
+        // never an absent ref).
+        final stillOurs = still.ok && still.data == draftsTip;
+        if (stillOurs) {
           return GitResult.err(del.error ?? 'draft delete failed');
         }
-        // Moved = a mid-publish save won the race; leaving it is the fix.
       }
     }
     return GitResult.ok(result.data!);
@@ -483,7 +615,7 @@ class ReviewStore {
 
   static bool _sameComment(ReviewComment a, ReviewComment b) =>
       a.author.display == b.author.display &&
-      a.at.toIso8601String() == b.at.toIso8601String() &&
+      isoUtc(a.at) == isoUtc(b.at) &&
       a.body == b.body;
 
   static bool _hasComment(ReviewThreadRecord t, ReviewComment c) =>
@@ -519,6 +651,36 @@ class ReviewStore {
       message: (_) => '$how by ${by.display}',
     );
   }
+
+  /// Reopen a resolved thread — the inverse of [resolveThread].
+  ///
+  /// Resolution was a one-way door until this existed, which made a
+  /// premature `done` permanent and left a later round with no way to
+  /// say the fix did not hold. Convergence needs nothing special: a
+  /// thread's scalars are element-level LWW on `updatedAt`, so whichever
+  /// of reopen/resolve happened last wins on every clone.
+  @useResult
+  Future<GitResult<ReviewState>> reopenThread({
+    required int deskId,
+    required String threadId,
+    required ReviewIdentity by,
+  }) =>
+      _mutate(
+        deskId,
+        transform: (current) {
+          final i = current.threads.indexWhere((t) => t.id == threadId);
+          if (i < 0) return current;
+          if (current.threads[i].unresolved) return current;
+          final threads = [...current.threads];
+          threads[i] = threads[i].copyWith(
+            state: 'unresolved',
+            clearResolution: true,
+            updatedAt: clock.now(),
+          );
+          return current.copyWith(threads: threads, updatedAt: clock.now());
+        },
+        message: (_) => 'reopened by ${by.display}',
+      );
 
   /// Append a comment directly (robot findings, immediate replies that
   /// bypass the draft flow).
@@ -558,7 +720,7 @@ class ReviewStore {
           threads: [
             ...current.threads,
             ReviewThreadRecord(
-              id: _mintThreadId(opener.author, opener.at),
+              id: _mintThreadId(opener.author, opener.at, opener.body),
               state: 'unresolved',
               anchor: anchor,
               comments: [opener],

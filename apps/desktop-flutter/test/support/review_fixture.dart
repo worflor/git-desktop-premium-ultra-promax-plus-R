@@ -152,13 +152,3 @@ ReviewHeaderView syntheticHeaderTheirTurn() => const ReviewHeaderView(
       waitingOn: 'mira',
     );
 
-/// Every gutter state with a label, for the gutter strip preview.
-const List<(ReviewGutterState, int, String)> kGutterFixture = [
-  (ReviewGutterState.none, 1, 'none'),
-  (ReviewGutterState.invite, 1, 'invite'),
-  (ReviewGutterState.thread, 1, 'thread'),
-  (ReviewGutterState.thread, 3, 'thread x3'),
-  (ReviewGutterState.draft, 1, 'draft'),
-  (ReviewGutterState.robot, 1, 'robot'),
-  (ReviewGutterState.outdated, 1, 'outdated'),
-];

@@ -469,13 +469,23 @@ Float64List _densePhiFor(
   if (weights.isEmpty) return Float64List(n);
   final attr = engine.diffuseWithAttribution(
     weightsByPath: weights,
-    axisLabelByPath: {for (final k in weights.keys) k: '_claim'},
+    axisLabelByPath: {for (final k in weights.keys) k: _kClaimAxis},
     t: t,
   );
-  final perAxis = attr?.perAxisPhi;
-  if (perAxis == null || perAxis.isEmpty) return Float64List(n);
-  return perAxis.values.first;
+  // Ask for the axis BY NAME. Every path above is labelled with the same
+  // one, so the map holds exactly one entry today and `.values.first`
+  // read the same field — but it read it by luck of insertion order,
+  // which stops being the right answer the moment a second label
+  // appears, and says nothing about which axis was wanted.
+  final phi = attr?.perAxisPhi[_kClaimAxis];
+  if (phi == null) return Float64List(n);
+  return phi;
 }
+
+/// The single attribution axis this grounding pass diffuses over.
+/// Named once so the label written into `axisLabelByPath` and the
+/// key read back out can never drift apart.
+const String _kClaimAxis = '_claim';
 
 bool _hasMass(Float64List phi) {
   for (final v in phi) {

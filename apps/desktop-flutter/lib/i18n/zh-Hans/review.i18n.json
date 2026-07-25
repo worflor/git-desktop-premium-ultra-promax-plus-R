@@ -1,0 +1,43 @@
+{
+  "@@locale": "zh-Hans",
+  "unresolved": "未解决",
+  "done": "完成",
+  "ack": "确认",
+  "reply": "回复",
+  "pleaseFix": "请修复",
+  "draft": "草稿",
+  "engine": "引擎",
+  "moved": "已移动",
+  "yourTurn": "轮到你了",
+  "drafts": "草稿",
+  "publish": "发布",
+  "discard": "丢弃",
+  "saveDraft": "保存草稿",
+  "cancel": "取消",
+  "verdictApprove": "批准",
+  "verdictRequestChanges": "请求修改",
+  "verdictComment": "评论",
+  "caughtUp": "已看完",
+  "sinceLastLook": "自你上次查看以来",
+  "fullDiff": "完整差异",
+  "commentHint": "写评论",
+  "outdatedLastSeen": "已过时 · 最后查看 R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "等待 {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "自你上次查看以来 {n} 个文件",
+    "other": "自你上次查看以来 {n} 个文件"
+  },
+  "unresolvedCountFmt": "{n} 个未解决",
+  "draftCountFmt": {
+    "one": "{n} 个草稿",
+    "other": "{n} 个草稿"
+  },
+  "startReviewFailed": "无法开始审查：{error}",
+  "anchorUnavailable": "该行无法锚定 — 文件过大或不可用。",
+  "reviewActionFailed": "审查操作失败：{error}",
+  "lensTooLarge": "该比较过大，无法在此显示 — 继续显示完整差异。",
+  "lensEmpty": "这两个快照之间没有任何改动。",
+  "reopen": "重新打开"
+}

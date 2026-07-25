@@ -35,6 +35,16 @@ const int kReviewSchemaVersion = 1;
 /// intact — without this, a typed round-trip silently STRIPS foreign
 /// fields while keeping the newer schemaVersion, corrupting exactly
 /// the interop the format promises (caught by the manifold review).
+///
+/// WHAT THIS DOES NOT PROMISE, stated because the guarantee is easy to
+/// over-read: it protects a foreign field through OUR round-trip. It
+/// does not deep-merge one. A key both sides changed independently
+/// falls to the default whole-value LWW in the merge engine, so the
+/// loser's edit is dropped — the engine cannot union or reconcile a
+/// field whose meaning it does not know, and inventing a rule for it
+/// would be a worse failure than an honest last-writer-wins. Foreign
+/// extensions that need convergence have to declare a merge policy,
+/// not merely a key.
 Map<String, dynamic> _extrasOf(Map<String, dynamic> j, Set<String> known) =>
     {
       for (final e in j.entries)
@@ -83,7 +93,7 @@ class ReviewComment {
   Map<String, dynamic> toJson() => {
         ...extra,
         'author': author.toJson(),
-        'at': at.toIso8601String(),
+        'at': isoUtc(at),
         'body': body,
         'kind': kind,
       };
@@ -126,12 +136,17 @@ class ReviewThreadRecord {
 
   bool get unresolved => state == 'unresolved';
 
+  /// [clearResolution] exists because `?? this.x` cannot express
+  /// "unset": reopening has to drop resolvedBy/resolvedAt, and a thread
+  /// that says `unresolved` while still naming who resolved it is
+  /// incoherent to every reader of the format, ours or a third party's.
   ReviewThreadRecord copyWith({
     String? state,
     ReviewIdentity? resolvedBy,
     DateTime? resolvedAt,
     List<ReviewComment>? comments,
     DateTime? updatedAt,
+    bool clearResolution = false,
   }) =>
       ReviewThreadRecord(
         id: id,
@@ -139,8 +154,8 @@ class ReviewThreadRecord {
         anchor: anchor,
         comments: comments ?? this.comments,
         updatedAt: updatedAt ?? this.updatedAt,
-        resolvedBy: resolvedBy ?? this.resolvedBy,
-        resolvedAt: resolvedAt ?? this.resolvedAt,
+        resolvedBy: clearResolution ? null : (resolvedBy ?? this.resolvedBy),
+        resolvedAt: clearResolution ? null : (resolvedAt ?? this.resolvedAt),
         extra: extra,
       );
 
@@ -149,10 +164,10 @@ class ReviewThreadRecord {
         'id': id,
         'state': state,
         if (resolvedBy != null) 'resolvedBy': resolvedBy!.toJson(),
-        if (resolvedAt != null) 'resolvedAt': resolvedAt!.toIso8601String(),
+        if (resolvedAt != null) 'resolvedAt': isoUtc(resolvedAt!),
         'anchor': anchor.toJson(),
         'comments': comments.map((c) => c.toJson()).toList(),
-        'updatedAt': updatedAt.toIso8601String(),
+        'updatedAt': isoUtc(updatedAt),
       };
 
   factory ReviewThreadRecord.fromJson(Map<String, dynamic> j) =>
@@ -206,7 +221,7 @@ class ReviewRoundInfo {
         ...extra,
         'n': n,
         'commit': commit,
-        'cutAt': cutAt.toIso8601String(),
+        'cutAt': isoUtc(cutAt),
         'by': by.toJson(),
         'changeId': changeId,
       };
@@ -248,7 +263,7 @@ class ReviewVerdict {
         ...extra,
         'by': by.toJson(),
         'verdict': verdict,
-        'at': at.toIso8601String(),
+        'at': isoUtc(at),
         'round': round,
       };
 
@@ -332,7 +347,7 @@ class ReviewState {
         'reviewedFiles': reviewedFiles.map((reviewer, files) => MapEntry(
             reviewer,
             files.map((path, bit) => MapEntry(path, bit.toJson())))),
-        'updatedAt': updatedAt.toIso8601String(),
+        'updatedAt': isoUtc(updatedAt),
       };
 
   factory ReviewState.fromJson(Map<String, dynamic> j) => ReviewState(
@@ -392,7 +407,7 @@ class ReviewedFileBit {
         ...extra,
         'contentHash': contentHash,
         'round': round,
-        'at': at.toIso8601String(),
+        'at': isoUtc(at),
       };
 
   factory ReviewedFileBit.fromJson(Map<String, dynamic> j) => ReviewedFileBit(
@@ -405,6 +420,16 @@ class ReviewedFileBit {
 }
 
 // ─── The declared merge schema ────────────────────────────────────────
+
+/// THE serializer for every instant in the review format.
+///
+/// UTC, always. A zone-less local stamp makes last-writer-wins compare
+/// wall clocks instead of moments — a peer one timezone east wins a
+/// race it actually lost — and it breaks the raw-string dedup keys that
+/// make publish replay-safe across machines. Reading stays lenient:
+/// `DateTime.tryParse` accepts both forms, so docs stamped before this
+/// existed still load (they simply carry their old local reading).
+String isoUtc(DateTime t) => t.toUtc().toIso8601String();
 
 String _s(Object? v) => v is String ? v : (v?.toString() ?? '');
 
@@ -495,23 +520,40 @@ class ReviewTurnState {
   const ReviewTurnState({required this.yourTurn, required this.waitingOn});
 }
 
-/// Derive the turn from the event history. Rule v1 (Critique's
-/// essence, minus explicit hand-backs which arrive with the publish
-/// bar): the most recent event's actor flips the ball to the other
-/// party — author ↔ reviewers. A review with no reviewer activity yet
-/// waits on the reviewers.
+/// Derive the turn from the event history.
+///
+/// The rule (Critique's essence, minus explicit hand-backs): the most
+/// recent MOVE flips the ball to the other party — author ↔ reviewers.
+///
+/// A round cut is a move by the CODE, not by a person. It deliberately
+/// carries no actor into this fold: rounds are cut by whichever client
+/// first notices the head advanced, so attributing one would make the
+/// ball depend on whose app happened to sync first — a reviewer's
+/// background sync of the author's push would name the REVIEWER as the
+/// last actor and hand the ball back to the author who just delivered.
+/// New code simply awaits review, whoever pushed it.
+///
+/// Among reviewers the fold is per-person: someone who has already
+/// spoken since the current round is no longer being waited on, so a
+/// reviewer who approved stops being told it is their turn and the
+/// author's "waiting on" names only who is actually blocking.
 ReviewTurnState deriveTurn(
   ReviewState state, {
   required String authorDisplay,
   required String viewerDisplay,
 }) {
+  final epoch0 = DateTime.fromMillisecondsSinceEpoch(0);
   String? lastActor;
-  DateTime last = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime last = epoch0;
+  // When each person last moved — the per-reviewer half of the fold.
+  final lastMoveBy = <String, DateTime>{};
   void consider(String actor, DateTime at) {
     if (at.isAfter(last)) {
       last = at;
       lastActor = actor;
     }
+    final prior = lastMoveBy[actor];
+    if (prior == null || at.isAfter(prior)) lastMoveBy[actor] = at;
   }
 
   for (final t in state.threads) {
@@ -525,8 +567,10 @@ ReviewTurnState deriveTurn(
   for (final v in state.verdicts) {
     consider(v.by.display, v.at);
   }
+  // Rounds are timed but NOT attributed (see the doc comment).
+  var newestRound = epoch0;
   for (final r in state.rounds) {
-    consider(r.by.display, r.cutAt);
+    if (r.cutAt.isAfter(newestRound)) newestRound = r.cutAt;
   }
 
   final reviewers = <String>{};
@@ -551,17 +595,33 @@ ReviewTurnState deriveTurn(
     );
   }
 
-  final ballWithAuthor = lastActor != authorDisplay;
+  // Code that landed after the last human move puts the ball back with
+  // the reviewers regardless of who spoke last.
+  final codeMovedLast = newestRound.isAfter(last);
+  final ballWithAuthor = !codeMovedLast && lastActor != authorDisplay;
   if (ballWithAuthor) {
     return ReviewTurnState(
       yourTurn: viewerDisplay == authorDisplay,
       waitingOn: viewerDisplay == authorDisplay ? '' : authorDisplay,
     );
   }
-  // Ball with reviewers.
+
+  // Ball with reviewers, as a bloc.
+  //
+  // KNOWN LIMIT, stated rather than half-solved: this is a TWO-PARTY
+  // fold (author ↔ reviewers). With several reviewers it cannot express
+  // "carol still owes a look while alice is done", and the honest
+  // per-person version is a design question, not a missing line — does
+  // one reviewer's approval move the ball while another has not looked?
+  // does an author's reply re-obligate the reviewer who just commented?
+  // Answering those by guess would produce an attention model that is
+  // confidently wrong, which is worse for trust than one that is
+  // simple and understood. `lastMoveBy` is computed above and ready for
+  // whichever rule gets chosen.
   final viewerIsReviewer = viewerDisplay != authorDisplay;
+  final owing = reviewers.toList()..sort();
   return ReviewTurnState(
     yourTurn: viewerIsReviewer,
-    waitingOn: viewerIsReviewer ? '' : reviewers.join(', '),
+    waitingOn: viewerIsReviewer ? '' : owing.join(', '),
   );
 }

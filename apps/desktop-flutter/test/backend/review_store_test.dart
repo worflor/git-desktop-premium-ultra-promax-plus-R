@@ -15,9 +15,15 @@
 //  R4  resolveThread flips state with provenance.
 //  R5  anchors: exact-same content → anchored; content moved →
 //      re-anchored at the nearest line; content gone → outdated.
+//  R10 reopening a resolved thread is the exact inverse of resolving
+//      it — state back to unresolved AND the resolution provenance
+//      cleared, so no reader sees "unresolved, resolved by mira".
+//  R9  listReviewedDeskIds names exactly the desks with a state doc,
+//      even in a namespace thick with round pins — and the glob it hands
+//      git really does select only state refs (the claim its cost
+//      argument rests on).
 
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/clock.dart';
@@ -62,7 +68,6 @@ void main() {
         authorEmail: 'tester@manifold.local',
       ),
       clock: _TickClock(),
-      rng: Random(7),
     );
   });
 
@@ -415,5 +420,155 @@ void main() {
     r = resolveAnchor(anchor, v4);
     expect(r.status, AnchorStatus.reanchored);
     expect(r.line, 5, reason: 'line 5 is nearer to 4 than line 1');
+  });
+
+  test('R9: reviewed-desk listing selects state docs, not round pins',
+      () async {
+    // Two reviews, one thick with round pins.
+    //
+    // Read the two assertions below for what they each buy. The ids are
+    // CORRECTNESS, and they hold for a prefix listing too — the
+    // exact-shape classifier excludes pins either way, deliberately, so
+    // no output test can tell the two forms apart. The listRefs
+    // assertion is the one that pins the external contract the glob's
+    // COST argument rests on: that git selects state refs server-side,
+    // so round pins never cross the process boundary at all. That was
+    // verified by hand against the real binary once; this is what keeps
+    // it verified.
+    await ok(store.openThread(
+      deskId: 3,
+      anchor: anchorOn(const ['alpha'], 0),
+      opener: ReviewComment(author: _mira, at: DateTime.utc(2026), body: 'a'),
+    ));
+    await ok(store.openThread(
+      deskId: 11,
+      anchor: anchorOn(const ['beta'], 0),
+      opener: ReviewComment(author: _jun, at: DateTime.utc(2026), body: 'b'),
+    ));
+    await repo.writeFile('f.txt', 'one');
+    await repo.commitAll('r1');
+    await ok(store.cutRoundIfMoved(deskId: 3, branch: 'HEAD', by: _mira));
+    await repo.writeFile('f.txt', 'two');
+    await repo.commitAll('r2');
+    await ok(store.cutRoundIfMoved(deskId: 3, branch: 'HEAD', by: _mira));
+
+    // The pins really are there, so the selection below is choosing
+    // between shapes rather than finding an empty namespace either way.
+    final everything = await repo.gitOk(
+        ['for-each-ref', '--format=%(refname)', 'refs/manifold/review/']);
+    expect(everything, contains('/round/'));
+
+    // git's own selection: `*` spans the id segment (for-each-ref matches
+    // without FNM_PATHNAME) and a round pin cannot match a pattern ending
+    // in /state. If that ever stops being true, the cost argument in
+    // listReviewedDeskIds is void and this fails.
+    final plumbing = ManifoldRefs(
+      repoPath: repo.dir.path,
+      authorName: 'tester',
+      authorEmail: 'tester@manifold.local',
+    );
+    final selected = await ok<Map<String, CommitOid>>(
+        plumbing.listRefs('${ManifoldNs.reviewPrefix}*/state'));
+    expect(selected.keys.toSet(), {
+      '${ManifoldNs.reviewPrefix}3/state',
+      '${ManifoldNs.reviewPrefix}11/state',
+    });
+
+    final ids = await ok(store.listReviewedDeskIds());
+    expect(ids, {3, 11});
+  });
+
+  test('R10: reopen is the inverse of resolve', () async {
+    final anchor = anchorOn(const ['alpha', 'beta'], 0);
+    await ok(store.openThread(
+      deskId: 5,
+      anchor: anchor,
+      opener: ReviewComment(
+          author: _mira, at: DateTime.utc(2026), body: 'this leaks'),
+    ));
+    var state = (await ok(store.read(5)))!;
+    final id = state.threads.single.id;
+
+    await ok(store.resolveThread(
+        deskId: 5, threadId: id, by: _jun, how: 'done'));
+    state = (await ok(store.read(5)))!;
+    expect(state.threads.single.state, 'done');
+    expect(state.threads.single.resolvedBy?.display, 'jun');
+
+    await ok(store.reopenThread(deskId: 5, threadId: id, by: _mira));
+    state = (await ok(store.read(5)))!;
+    final t = state.threads.single;
+    expect(t.state, 'unresolved');
+    expect(t.unresolved, isTrue);
+    // Provenance goes with it: a thread claiming to be unresolved while
+    // still naming a resolver is incoherent to any reader of the format.
+    expect(t.resolvedBy, isNull);
+    expect(t.resolvedAt, isNull);
+    // The conversation itself is untouched — reopening is not undoing.
+    expect(t.comments.single.body, 'this leaks');
+
+    // Idempotent: reopening an already-open thread changes nothing.
+    await ok(store.reopenThread(deskId: 5, threadId: id, by: _mira));
+    state = (await ok(store.read(5)))!;
+    expect(state.threads.single.state, 'unresolved');
+  });
+
+  test('R11: a concurrent discard does not fail a landed publish', () async {
+    // The mirror of R7. R7 covers the drafts ref MOVING mid-publish (a
+    // concurrent save); this covers it VANISHING (a concurrent discard).
+    // The state write has already landed either way, so reporting
+    // failure would tell the user their published review did not
+    // publish — the one lie a review tool must not tell.
+    final anchor = anchorOn(const ['alpha'], 0);
+    await ok(store.saveDraft(
+      9,
+      ReviewDraftEntry(
+        threadId: '',
+        anchor: anchor,
+        body: 'ship it',
+        at: DateTime.utc(2026, 7, 24, 12),
+      ),
+    ));
+    store.beforePublishDiscard = () => store.discardDrafts(9);
+
+    final published = await store.publish(deskId: 9, author: _mira);
+    expect(published.ok, isTrue,
+        reason: 'state was written; a race on the private half is not a '
+            'publish failure: ${published.error}');
+
+    final state = (await ok(store.read(9)))!;
+    expect(state.threads.single.comments.single.body, 'ship it');
+  });
+
+  test('R12: one draft can be dropped without taking the batch', () async {
+    ReviewDraftEntry d(String body, int minute) => ReviewDraftEntry(
+          threadId: '',
+          anchor: anchorOn(const ['alpha', 'beta'], 0),
+          body: body,
+          at: DateTime.utc(2026, 7, 24, 12, minute),
+        );
+    await ok(store.saveDraft(4, d('keep one', 1)));
+    await ok(store.saveDraft(4, d('drop me', 2)));
+    await ok(store.saveDraft(4, d('keep two', 3)));
+
+    await ok(store.discardDraft(4, d('drop me', 2)));
+    var left = await ok(store.listDrafts(4));
+    expect(left.map((e) => e.body), ['keep one', 'keep two'],
+        reason: 'the other two survive — the whole point');
+
+    // Removing something already gone is a no-op, not an error: a
+    // replay or a racing discard has already satisfied the intent.
+    await ok(store.discardDraft(4, d('drop me', 2)));
+    left = await ok(store.listDrafts(4));
+    expect(left, hasLength(2));
+
+    // Emptying the batch removes the ref rather than leaving a husk,
+    // so the drafts namespace matches "no drafts exist".
+    await ok(store.discardDraft(4, d('keep one', 1)));
+    await ok(store.discardDraft(4, d('keep two', 3)));
+    expect(await ok(store.listDrafts(4)), isEmpty);
+    final refs = await repo.gitOk(
+        ['for-each-ref', '--format=%(refname)', 'refs/manifold-local/']);
+    expect(refs.contains('review/4/drafts'), isFalse);
   });
 }

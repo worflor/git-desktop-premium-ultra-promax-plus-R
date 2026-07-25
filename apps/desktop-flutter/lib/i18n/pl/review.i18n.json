@@ -1,0 +1,43 @@
+{
+  "@@locale": "pl",
+  "unresolved": "nierozwiązane",
+  "done": "gotowe",
+  "ack": "przyjęte",
+  "reply": "odpowiedz",
+  "pleaseFix": "do poprawy",
+  "draft": "szkic",
+  "engine": "silnik",
+  "moved": "przeniesione",
+  "yourTurn": "twoja kolej",
+  "drafts": "szkice",
+  "publish": "opublikuj",
+  "discard": "odrzuć",
+  "saveDraft": "zapisz szkic",
+  "cancel": "anuluj",
+  "verdictApprove": "zatwierdź",
+  "verdictRequestChanges": "poproś o zmiany",
+  "verdictComment": "komentarz",
+  "caughtUp": "na bieżąco",
+  "sinceLastLook": "od ostatniego spojrzenia",
+  "fullDiff": "pełny diff",
+  "commentHint": "napisz komentarz",
+  "outdatedLastSeen": "nieaktualne · ostatnio widziane R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "czeka na {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 plik od ostatniego spojrzenia",
+    "other": "{n} plików od ostatniego spojrzenia"
+  },
+  "unresolvedCountFmt": "{n} nierozwiązanych",
+  "draftCountFmt": {
+    "one": "1 szkic",
+    "other": "{n} szkiców"
+  },
+  "startReviewFailed": "Nie udało się rozpocząć recenzji: {error}",
+  "anchorUnavailable": "Tej linii nie można zakotwiczyć — plik jest zbyt duży lub niedostępny.",
+  "reviewActionFailed": "Akcja recenzji nie powiodła się: {error}",
+  "lensTooLarge": "To porównanie jest zbyt duże, aby je tu pokazać — zostajemy przy pełnym diffie.",
+  "lensEmpty": "Nic się nie zmieniło między tymi migawkami.",
+  "reopen": "otwórz ponownie"
+}

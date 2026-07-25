@@ -1,0 +1,43 @@
+{
+  "@@locale": "ja",
+  "unresolved": "未解決",
+  "done": "完了",
+  "ack": "了解",
+  "reply": "返信",
+  "pleaseFix": "要修正",
+  "draft": "下書き",
+  "engine": "エンジン",
+  "moved": "移動",
+  "yourTurn": "あなたの番",
+  "drafts": "下書き",
+  "publish": "公開",
+  "discard": "破棄",
+  "saveDraft": "下書きを保存",
+  "cancel": "キャンセル",
+  "verdictApprove": "承認",
+  "verdictRequestChanges": "変更を要求",
+  "verdictComment": "コメント",
+  "caughtUp": "最新",
+  "sinceLastLook": "前回の確認以降",
+  "fullDiff": "全差分",
+  "commentHint": "コメントを書く",
+  "outdatedLastSeen": "古い · 最終確認 R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "{who} 待ち",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "前回の確認以降 {n} 件のファイル",
+    "other": "前回の確認以降 {n} 件のファイル"
+  },
+  "unresolvedCountFmt": "未解決 {n} 件",
+  "draftCountFmt": {
+    "one": "下書き {n} 件",
+    "other": "下書き {n} 件"
+  },
+  "startReviewFailed": "レビューを開始できませんでした: {error}",
+  "anchorUnavailable": "その行はアンカーできません — ファイルが大きすぎるか利用できません。",
+  "reviewActionFailed": "レビュー操作に失敗しました: {error}",
+  "lensTooLarge": "この比較は大きすぎてここに表示できません — 全差分のままにします。",
+  "lensEmpty": "これらのスナップショットの間に変更はありません。",
+  "reopen": "再オープン"
+}

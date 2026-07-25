@@ -93,6 +93,8 @@ class TranslationsKo extends Translations
   late final _Translations$repoSummary$ko repoSummary =
       _Translations$repoSummary$ko._(_root);
   @override
+  late final _Translations$review$ko review = _Translations$review$ko._(_root);
+  @override
   late final _Translations$settings$ko settings = _Translations$settings$ko._(
     _root,
   );
@@ -1825,6 +1827,98 @@ class _Translations$repoSummary$ko extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$ko shape =
       _Translations$repoSummary$shape$ko._(_root);
+}
+
+// Path: review
+class _Translations$review$ko extends Translations$review$en {
+  _Translations$review$ko._(TranslationsKo root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsKo _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => '미해결';
+  @override
+  String get done => '완료';
+  @override
+  String get ack => '확인';
+  @override
+  String get reply => '답글';
+  @override
+  String get pleaseFix => '수정 필요';
+  @override
+  String get draft => '초안';
+  @override
+  String get engine => '엔진';
+  @override
+  String get moved => '이동됨';
+  @override
+  String get yourTurn => '당신 차례';
+  @override
+  String get drafts => '초안';
+  @override
+  String get publish => '게시';
+  @override
+  String get discard => '버리기';
+  @override
+  String get saveDraft => '초안 저장';
+  @override
+  String get cancel => '취소';
+  @override
+  String get verdictApprove => '승인';
+  @override
+  String get verdictRequestChanges => '변경 요청';
+  @override
+  String get verdictComment => '댓글';
+  @override
+  String get caughtUp => '최신';
+  @override
+  String get sinceLastLook => '마지막으로 본 이후';
+  @override
+  String get fullDiff => '전체 diff';
+  @override
+  String get commentHint => '댓글 작성';
+  @override
+  String outdatedLastSeen({required Object round}) => '오래됨 · 마지막 확인 R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => '${who} 대기 중';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '마지막으로 본 이후 파일 ${n}개',
+        other: '마지막으로 본 이후 파일 ${n}개',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '미해결 ${n}개';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '초안 ${n}개',
+        other: '초안 ${n}개',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      '리뷰를 시작할 수 없습니다: ${error}';
+  @override
+  String get anchorUnavailable => '해당 줄을 고정할 수 없습니다 — 파일이 너무 크거나 사용할 수 없습니다.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      '리뷰 작업에 실패했습니다: ${error}';
+  @override
+  String get lensTooLarge => '이 비교는 너무 커서 여기에 표시할 수 없습니다 — 전체 diff를 유지합니다.';
+  @override
+  String get lensEmpty => '이 스냅샷들 사이에 바뀐 것이 없습니다.';
+  @override
+  String get reopen => '다시 열기';
 }
 
 // Path: settings

@@ -1,0 +1,43 @@
+{
+  "@@locale": "fr",
+  "unresolved": "non résolu",
+  "done": "terminé",
+  "ack": "noté",
+  "reply": "répondre",
+  "pleaseFix": "à corriger",
+  "draft": "brouillon",
+  "engine": "moteur",
+  "moved": "déplacé",
+  "yourTurn": "à toi",
+  "drafts": "brouillons",
+  "publish": "publier",
+  "discard": "abandonner",
+  "saveDraft": "enregistrer le brouillon",
+  "cancel": "annuler",
+  "verdictApprove": "approuver",
+  "verdictRequestChanges": "demander des modifications",
+  "verdictComment": "commenter",
+  "caughtUp": "à jour",
+  "sinceLastLook": "depuis ton dernier coup d'œil",
+  "fullDiff": "diff complet",
+  "commentHint": "écrire un commentaire",
+  "outdatedLastSeen": "obsolète · vu pour la dernière fois R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "en attente de {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 fichier depuis ton dernier coup d'œil",
+    "other": "{n} fichiers depuis ton dernier coup d'œil"
+  },
+  "unresolvedCountFmt": "{n} non résolus",
+  "draftCountFmt": {
+    "one": "1 brouillon",
+    "other": "{n} brouillons"
+  },
+  "startReviewFailed": "Impossible de démarrer la relecture : {error}",
+  "anchorUnavailable": "Cette ligne ne peut pas être ancrée — le fichier est trop volumineux ou indisponible.",
+  "reviewActionFailed": "Échec de l'action de relecture : {error}",
+  "lensTooLarge": "Cette comparaison est trop grande pour être affichée ici — on reste sur le diff complet.",
+  "lensEmpty": "Rien n'a changé entre ces instantanés.",
+  "reopen": "rouvrir"
+}

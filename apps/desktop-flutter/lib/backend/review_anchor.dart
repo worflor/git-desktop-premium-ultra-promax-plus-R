@@ -58,7 +58,7 @@ int lineSimHash(String line) => ParsedLine.simHashOf(line.toLowerCase());
 /// `toRadixString` emits a MINUS-SIGNED string — round-trippable by our
 /// own parser but a format violation any third-party implementation
 /// would choke on (caught by the manifold review + empirical check).
-String _hex64(int v) {
+String hex64(int v) {
   final hi = (v >>> 32).toRadixString(16).padLeft(8, '0');
   final lo = (v & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
   return '$hi$lo';
@@ -169,7 +169,7 @@ ReviewAnchor captureAnchor({
     if (d == 0) continue;
     final i = lineIndex + d;
     if (i < 0 || i >= lines.length) continue;
-    ctx.add(_hex64(lineSimHash(lines[i])));
+    ctx.add(hex64(lineSimHash(lines[i])));
   }
   return ReviewAnchor(
     round: round,
@@ -177,8 +177,8 @@ ReviewAnchor captureAnchor({
     path: path,
     side: side,
     line: lineIndex + 1,
-    lineHash: _hex64(lineContentHash(text)),
-    simHash: _hex64(lineSimHash(text)),
+    lineHash: hex64(lineContentHash(text)),
+    simHash: hex64(lineSimHash(text)),
     ctx: ctx,
     excerpt: text,
   );

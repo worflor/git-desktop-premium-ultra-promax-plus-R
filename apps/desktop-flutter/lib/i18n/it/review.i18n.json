@@ -1,0 +1,43 @@
+{
+  "@@locale": "it",
+  "unresolved": "non risolto",
+  "done": "fatto",
+  "ack": "annotato",
+  "reply": "rispondi",
+  "pleaseFix": "da correggere",
+  "draft": "bozza",
+  "engine": "motore",
+  "moved": "spostato",
+  "yourTurn": "tocca a te",
+  "drafts": "bozze",
+  "publish": "pubblica",
+  "discard": "scarta",
+  "saveDraft": "salva bozza",
+  "cancel": "annulla",
+  "verdictApprove": "approva",
+  "verdictRequestChanges": "richiedi modifiche",
+  "verdictComment": "commenta",
+  "caughtUp": "in pari",
+  "sinceLastLook": "dall'ultima occhiata",
+  "fullDiff": "diff completo",
+  "commentHint": "scrivi un commento",
+  "outdatedLastSeen": "obsoleto · visto l'ultima volta R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "in attesa di {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 file dall'ultima occhiata",
+    "other": "{n} file dall'ultima occhiata"
+  },
+  "unresolvedCountFmt": "{n} non risolti",
+  "draftCountFmt": {
+    "one": "1 bozza",
+    "other": "{n} bozze"
+  },
+  "startReviewFailed": "Impossibile avviare la revisione: {error}",
+  "anchorUnavailable": "Quella riga non può essere ancorata — il file è troppo grande o non disponibile.",
+  "reviewActionFailed": "Azione di revisione non riuscita: {error}",
+  "lensTooLarge": "Quel confronto è troppo grande per essere mostrato qui — si resta sul diff completo.",
+  "lensEmpty": "Non è cambiato nulla tra questi snapshot.",
+  "reopen": "riapri"
+}

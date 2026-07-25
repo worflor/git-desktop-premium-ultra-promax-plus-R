@@ -93,6 +93,8 @@ class TranslationsRu extends Translations
   late final _Translations$repoSummary$ru repoSummary =
       _Translations$repoSummary$ru._(_root);
   @override
+  late final _Translations$review$ru review = _Translations$review$ru._(_root);
+  @override
   late final _Translations$settings$ru settings = _Translations$settings$ru._(
     _root,
   );
@@ -1951,6 +1953,101 @@ class _Translations$repoSummary$ru extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$ru shape =
       _Translations$repoSummary$shape$ru._(_root);
+}
+
+// Path: review
+class _Translations$review$ru extends Translations$review$en {
+  _Translations$review$ru._(TranslationsRu root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsRu _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => 'не решено';
+  @override
+  String get done => 'готово';
+  @override
+  String get ack => 'принято';
+  @override
+  String get reply => 'ответить';
+  @override
+  String get pleaseFix => 'нужно исправить';
+  @override
+  String get draft => 'черновик';
+  @override
+  String get engine => 'движок';
+  @override
+  String get moved => 'перемещено';
+  @override
+  String get yourTurn => 'ваш ход';
+  @override
+  String get drafts => 'черновики';
+  @override
+  String get publish => 'опубликовать';
+  @override
+  String get discard => 'отбросить';
+  @override
+  String get saveDraft => 'сохранить черновик';
+  @override
+  String get cancel => 'отмена';
+  @override
+  String get verdictApprove => 'одобрить';
+  @override
+  String get verdictRequestChanges => 'запросить правки';
+  @override
+  String get verdictComment => 'комментарий';
+  @override
+  String get caughtUp => 'актуально';
+  @override
+  String get sinceLastLook => 'с последнего просмотра';
+  @override
+  String get fullDiff => 'полный diff';
+  @override
+  String get commentHint => 'напишите комментарий';
+  @override
+  String outdatedLastSeen({required Object round}) =>
+      'устарело · последний просмотр R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => 'ждём ${who}';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '1 файл с последнего просмотра',
+        other: '${n} файлов с последнего просмотра',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} не решено';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '1 черновик',
+        other: '${n} черновиков',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'Не удалось начать ревью: ${error}';
+  @override
+  String get anchorUnavailable =>
+      'Эту строку нельзя закрепить — файл слишком большой или недоступен.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'Не удалось выполнить действие ревью: ${error}';
+  @override
+  String get lensTooLarge =>
+      'Это сравнение слишком большое, чтобы показать его здесь — остаёмся на полном diff.';
+  @override
+  String get lensEmpty => 'Между этими снимками ничего не изменилось.';
+  @override
+  String get reopen => 'переоткрыть';
 }
 
 // Path: settings

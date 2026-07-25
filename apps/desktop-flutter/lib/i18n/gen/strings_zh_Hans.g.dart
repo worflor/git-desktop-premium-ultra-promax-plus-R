@@ -91,6 +91,9 @@ class TranslationsZhHans extends Translations
   late final _Translations$repoSummary$zh_Hans repoSummary =
       _Translations$repoSummary$zh_Hans._(_root);
   @override
+  late final _Translations$review$zh_Hans review =
+      _Translations$review$zh_Hans._(_root);
+  @override
   late final _Translations$settings$zh_Hans settings =
       _Translations$settings$zh_Hans._(_root);
   @override
@@ -1803,6 +1806,96 @@ class _Translations$repoSummary$zh_Hans extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$zh_Hans shape =
       _Translations$repoSummary$shape$zh_Hans._(_root);
+}
+
+// Path: review
+class _Translations$review$zh_Hans extends Translations$review$en {
+  _Translations$review$zh_Hans._(TranslationsZhHans root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsZhHans _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => '未解决';
+  @override
+  String get done => '完成';
+  @override
+  String get ack => '确认';
+  @override
+  String get reply => '回复';
+  @override
+  String get pleaseFix => '请修复';
+  @override
+  String get draft => '草稿';
+  @override
+  String get engine => '引擎';
+  @override
+  String get moved => '已移动';
+  @override
+  String get yourTurn => '轮到你了';
+  @override
+  String get drafts => '草稿';
+  @override
+  String get publish => '发布';
+  @override
+  String get discard => '丢弃';
+  @override
+  String get saveDraft => '保存草稿';
+  @override
+  String get cancel => '取消';
+  @override
+  String get verdictApprove => '批准';
+  @override
+  String get verdictRequestChanges => '请求修改';
+  @override
+  String get verdictComment => '评论';
+  @override
+  String get caughtUp => '已看完';
+  @override
+  String get sinceLastLook => '自你上次查看以来';
+  @override
+  String get fullDiff => '完整差异';
+  @override
+  String get commentHint => '写评论';
+  @override
+  String outdatedLastSeen({required Object round}) => '已过时 · 最后查看 R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => '等待 ${who}';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '自你上次查看以来 ${n} 个文件',
+        other: '自你上次查看以来 ${n} 个文件',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} 个未解决';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '${n} 个草稿',
+        other: '${n} 个草稿',
+      );
+  @override
+  String startReviewFailed({required Object error}) => '无法开始审查：${error}';
+  @override
+  String get anchorUnavailable => '该行无法锚定 — 文件过大或不可用。';
+  @override
+  String reviewActionFailed({required Object error}) => '审查操作失败：${error}';
+  @override
+  String get lensTooLarge => '该比较过大，无法在此显示 — 继续显示完整差异。';
+  @override
+  String get lensEmpty => '这两个快照之间没有任何改动。';
+  @override
+  String get reopen => '重新打开';
 }
 
 // Path: settings

@@ -1,0 +1,675 @@
+// SPDX-FileCopyrightText: 2026 Woflo Labs
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
+
+// review_pane_controller.dart — production glue between ReviewStore and
+// the review surfaces.
+//
+// The widgets stay data-blind (they render ReviewViewBundle) and the
+// store stays UI-blind; this controller is the ONLY place that knows
+// both worlds. One instance per open desk-PR review pane, owned by the
+// branches page and rebuilt on repo switch. Everything here is
+// pull-based: the page calls a verb, then reload(), then setState —
+// the same evict-and-reload idiom the PR detail cache uses.
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:meta/meta.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../backend/clock.dart';
+import '../../backend/desk_pr_diff.dart' show parseNumstatZ;
+import '../../backend/git.dart' as git;
+import '../../backend/git_result.dart';
+import '../../backend/manifold_refs.dart';
+import '../../backend/remote_types.dart' show PrFile;
+import '../../backend/review_anchor.dart';
+import '../../backend/review_records.dart';
+import '../../backend/review_store.dart';
+import '../diff/diff_models.dart' show sliceDiffByFile;
+import 'review_adapter.dart';
+
+/// Byte gate for anchor-resolution blob reads. A review thread's file
+/// is read in full (head + merge-base versions) to resolve content
+/// anchors; a pathological blob must never become a giant Dart String
+/// on the UI's watch. Beyond the gate the file's anchors degrade to
+/// `outdated` and its gutter goes read-only — degrade, not die.
+const int kReviewFileByteCap = 4 << 20;
+
+/// Canonical blob → lines split for anchor capture AND resolution.
+/// One splitter, used by every anchor writer in the app, so a line's
+/// content hash can never disagree with itself across the capture site
+/// and the resolve site. Keeps `\r` (exact content identity — CRLF
+/// repos hash their real bytes) and drops only the phantom empty tail
+/// a trailing newline produces.
+List<String> splitBlobLines(String content) {
+  final lines = content.split('\n');
+  if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+  return lines;
+}
+
+/// A review LENS: a bounded, already-materialized diff between two
+/// review snapshots ("since your last look", or round N..M).
+///
+/// Deliberately NOT a [PullRequestDetail]. The PR's canonical detail
+/// feeds the collision map, the conflicts pill, the magnetic shape
+/// fingerprint, patch export and AI review — none of which may ever
+/// see a lens slice, so a lens can never be installed where one lives.
+/// Bounded by construction: a delta between two rounds of one PR that
+/// somehow exceeds the app's spill threshold is refused outright
+/// rather than spooled, so no lens owns a temp dir or a file handle.
+class ReviewLensDiff {
+  /// The two-dot spec this lens rendered (`<from>..<to>`).
+  final String spec;
+
+  /// Files that differ between the two snapshots. NOT a subset of the
+  /// PR's file list: a file changed in round 1 and reverted in round 2
+  /// is absent from `base...head` yet present in `R1..R2`.
+  final List<PrFile> files;
+
+  /// Per-path raw patch, pre-sliced once at fetch (never per build).
+  final Map<String, String> byPath;
+
+  const ReviewLensDiff({
+    required this.spec,
+    required this.files,
+    required this.byPath,
+  });
+
+  String diffFor(String path) => byPath[path] ?? '';
+}
+
+/// The turn signal a collapsed PR row needs — cheap enough to load for
+/// every desk PR in the list (one ref read each, no blob loads).
+class ReviewRowSummary {
+  final bool yourTurn;
+  final String waitingOn;
+  final int unresolvedCount;
+  const ReviewRowSummary({
+    required this.yourTurn,
+    required this.waitingOn,
+    required this.unresolvedCount,
+  });
+}
+
+/// Everything one open review pane renders from. Immutable snapshot;
+/// verbs go through the controller and produce a fresh one.
+class ReviewPaneData {
+  final ReviewViewBundle bundle;
+  final ReviewState? state;
+  final List<ReviewDraftEntry> drafts;
+
+  /// Latest round's number/commit — the round new anchors are captured
+  /// against. Round 0 = review exists but no round could be cut (head
+  /// branch unresolvable); anchor capture is disabled then.
+  final int latestRound;
+  final String latestRoundCommit;
+
+  /// The viewer's client-local "last look" pointer, and the pinned
+  /// commit it corresponds to (null when the pointer predates the
+  /// state doc or was never set).
+  final int? lastSeenRound;
+  final String? lastSeenCommit;
+
+  const ReviewPaneData({
+    required this.bundle,
+    required this.state,
+    required this.drafts,
+    required this.latestRound,
+    required this.latestRoundCommit,
+    this.lastSeenRound,
+    this.lastSeenCommit,
+  });
+
+  bool get hasReview => state != null;
+  int get draftCount => drafts.length;
+}
+
+class ReviewPaneController {
+  final String repoPath;
+  final int deskId;
+  final String headBranch;
+  final String baseRef;
+
+  /// The desk PR author's identity — the turn fold's "author" pole.
+  final String authorDisplay;
+
+  /// The person at this keyboard.
+  final String viewerDisplay;
+
+  final ReviewStore store;
+  final Clock clock;
+
+  ReviewPaneController({
+    required this.repoPath,
+    required this.deskId,
+    required this.headBranch,
+    required this.baseRef,
+    required this.authorDisplay,
+    required this.viewerDisplay,
+    required ManifoldRefs refs,
+    this.clock = const SystemClock(),
+  }) : store = ReviewStore(refs, clock: clock);
+
+  ReviewIdentity get _viewer => ReviewIdentity(viewerDisplay);
+
+  ReviewPaneData? data;
+
+  /// New-side file lines, cached for anchor capture at gutter-tap time.
+  /// Keyed by repo-relative path; a null value means "read, unavailable"
+  /// (over the byte cap, absent at this commit) — cached so a hover-heavy
+  /// session doesn't re-probe a huge file on every pass.
+  final Map<String, List<String>?> _headLines = {};
+
+  /// Merge-base file lines (the old side of the PR diff), for old-side
+  /// capture and old-side anchor resolution.
+  final Map<String, List<String>?> _baseLines = {};
+
+  /// The commit blob reads resolve against — the LATEST ROUND'S PIN, not
+  /// the branch tip. Load-bearing for anchor honesty: [captureAnchor]
+  /// records `commit: latestRoundCommit`, so the content it hashes has to
+  /// come from that exact commit. Reading `<branch>:<path>` instead would
+  /// mint anchors whose recorded commit and hashed bytes disagree the
+  /// moment a commit lands between the round cut and the tap — a peer
+  /// resolving against the pin would then see `outdated` for a line that
+  /// is perfectly present. Falls back to the branch only before any round
+  /// exists (where capture is refused anyway).
+  String _headSpec = '';
+  String? _mergeBase;
+
+  /// Cache identity: blobs stay valid while both endpoints hold.
+  String? _blobCacheKey;
+
+  // ─── Loading ─────────────────────────────────────────────────────
+
+  Future<List<String>?> _blobLines(String spec) async {
+    final size = await git.gitBlobSize(repoPath, spec);
+    if (size == null || size > kReviewFileByteCap) return null;
+    final bytes = await git.gitBlobBytes(repoPath, spec);
+    if (bytes == null) return null;
+    return splitBlobLines(utf8.decode(bytes, allowMalformed: true));
+  }
+
+  /// The old side of the PR diff. Mirrors [fetchLocalDeskPrDetail]'s
+  /// three-dot rule AND its degrade: with no merge base (unrelated
+  /// histories) the diff falls back to the two-dot `base..head`, whose
+  /// old side is [baseRef] itself — so old-side anchors follow it there
+  /// instead of going dark.
+  Future<String> _resolveOldSide() async {
+    final r = await git
+        .runGit(repoPath, ['merge-base', baseRef, headBranch]);
+    final oid =
+        r.exitCode == 0 ? (r.stdout as String).trim() : '';
+    return oid.isEmpty ? baseRef : oid;
+  }
+
+  Future<List<String>?> _ensureHeadLines(String path) async {
+    if (_headLines.containsKey(path)) return _headLines[path];
+    return _headLines[path] = await _blobLines('$_headSpec:$path');
+  }
+
+  Future<List<String>?> _ensureBaseLines(String path) async {
+    if (_baseLines.containsKey(path)) return _baseLines[path];
+    final mb = _mergeBase ??= await _resolveOldSide();
+    return _baseLines[path] = await _blobLines('$mb:$path');
+  }
+
+  /// Serializes [load]. Every verb reloads, so two quick actions put two
+  /// traversals in flight over the SAME mutable controller state
+  /// (`_headSpec`, the blob caches) — one clearing the cache the other
+  /// is mid-read of, and the slower one landing last with the older
+  /// snapshot. Queuing makes both hazards unrepresentable instead of
+  /// guarded: each load runs alone and starts AFTER the write that asked
+  /// for it, which coalescing could not promise.
+  Future<void> _loadGate = Future<void>.value();
+
+  /// Full pane refresh: cut a round if the head moved (the "look"
+  /// moment IS the round boundary), then read state + drafts, resolve
+  /// every anchored file's content, and fold it all into views.
+  Future<GitResult<ReviewPaneData>> load() {
+    final prior = _loadGate;
+    final mine = Completer<void>();
+    _loadGate = mine.future;
+    return prior
+        .then((_) => _load())
+        .whenComplete(mine.complete);
+  }
+
+  Future<GitResult<ReviewPaneData>> _load() async {
+    // Round hygiene is gated on the review EXISTING: merely opening a
+    // desk PR must not mint review refs (state doc + round pin) for
+    // every desk the viewer glances at. The first real intent — a
+    // gutter tap that needs an anchor round — goes through
+    // [ensureRound] instead.
+    var stateR = await store.read(deskId);
+    if (!stateR.ok) return GitResult.err(stateR.error ?? 'read failed');
+    if (stateR.data != null) {
+      // Advisory: a deleted/unborn head branch must not blank the
+      // pane — the review's history is still readable without a fresh
+      // round, so a cut failure degrades to "no new round".
+      final cut = await store.cutRoundIfMoved(
+          deskId: deskId, branch: headBranch, by: _viewer);
+      // Re-read ONLY when a round actually landed. The steady state (a
+      // pane reloading after every verb, head unmoved) is by far the
+      // common one, and it now costs one ref read instead of two.
+      if (cut.ok && cut.data != null) {
+        stateR = await store.read(deskId);
+        if (!stateR.ok) return GitResult.err(stateR.error ?? 'read failed');
+      }
+    }
+    final state = stateR.data;
+
+    final draftsR = await store.listDrafts(deskId);
+    if (!draftsR.ok) {
+      return GitResult.err(draftsR.error ?? 'drafts failed');
+    }
+    final drafts = draftsR.data!;
+
+    final latest = state?.latestRound;
+    _headSpec = latest?.commit.isNotEmpty == true
+        ? latest!.commit
+        : headBranch;
+    // Blobs are immutable at a pinned commit, so the cache survives every
+    // verb-then-reload cycle and only dies when an endpoint actually
+    // moves (a new round cut, or a rebased base). Clearing per load made
+    // each Done/reply/publish re-read every anchored file.
+    final cacheKey = '$_headSpec|$baseRef';
+    if (_blobCacheKey != cacheKey) {
+      _blobCacheKey = cacheKey;
+      _headLines.clear();
+      _baseLines.clear();
+      _mergeBase = null;
+    }
+
+    final newPaths = <String>{};
+    final oldPaths = <String>{};
+    void wantAnchor(ReviewAnchor a) =>
+        (a.side == 'old' ? oldPaths : newPaths).add(a.path);
+    for (final t in state?.threads ?? const <ReviewThreadRecord>[]) {
+      wantAnchor(t.anchor);
+    }
+    for (final d in drafts) {
+      if (d.anchor != null) wantAnchor(d.anchor!);
+    }
+    final currentFiles = <String, List<String>>{};
+    for (final p in newPaths) {
+      final lines = await _ensureHeadLines(p);
+      if (lines != null) currentFiles[p] = lines;
+    }
+    final oldFiles = <String, List<String>>{};
+    for (final p in oldPaths) {
+      final lines = await _ensureBaseLines(p);
+      if (lines != null) oldFiles[p] = lines;
+    }
+
+    final lastSeenN =
+        await ReviewLastSeen.read(repoPath: repoPath, deskId: deskId);
+    String? lastSeenCommit;
+    if (lastSeenN != null && state != null) {
+      for (final r in state.rounds) {
+        if (r.n == lastSeenN) lastSeenCommit = r.commit;
+      }
+    }
+
+    // Counted through the SAME spec the lens renders, so the header's
+    // "N files since your last look" can never disagree with what the
+    // lens actually shows.
+    var filesSince = 0;
+    final sinceSpec = _specSince(lastSeenCommit);
+    if (sinceSpec != null) filesSince = await _countChangedFiles(sinceSpec);
+
+    final bundle = buildReviewViews(
+      state ?? ReviewState.fresh(deskId, clock.now()),
+      viewerDisplay: viewerDisplay,
+      authorDisplay: authorDisplay,
+      now: clock.now(),
+      currentFiles: currentFiles,
+      oldFiles: oldFiles,
+      drafts: drafts,
+      filesSinceLastLook: filesSince,
+    );
+    data = ReviewPaneData(
+      bundle: bundle,
+      state: state,
+      drafts: drafts,
+      latestRound: latest?.n ?? 0,
+      latestRoundCommit: latest?.commit ?? '',
+      lastSeenRound: lastSeenN,
+      lastSeenCommit: lastSeenCommit,
+    );
+    return GitResult.ok(data!);
+  }
+
+  Future<int> _countChangedFiles(String spec) async {
+    final r = await git.getRangeNumstatZ(repoPath, spec, findRenames: true);
+    if (!r.ok) return 0;
+    // Through the canonical parser: hand-splitting the -z stream on NUL
+    // and counting TABs over-counts any path that contains a TAB (legal
+    // in git) and mis-walks rename triples.
+    return parseNumstatZ(r.data ?? '').length;
+  }
+
+  // ─── Lenses ──────────────────────────────────────────────────────
+
+  /// `<last-seen pin>..<head pin>`, or null when there's nothing behind
+  /// the viewer (never looked, or already caught up). TWO-dot on
+  /// purpose: the lens compares two trees the viewer knows — "what I
+  /// reviewed" against "what exists now". Three-dot (merge-base
+  /// scoping) is the PR-diff rule and would hide a rebase's
+  /// incorporated upstream from the very lens meant to surface it.
+  String? _specSince(String? lastSeenCommit) {
+    if (lastSeenCommit == null || lastSeenCommit.isEmpty) return null;
+    if (_headSpec.isEmpty || lastSeenCommit == _headSpec) return null;
+    return '$lastSeenCommit..$_headSpec';
+  }
+
+  String? get sinceLastLookSpec => _specSince(data?.lastSeenCommit);
+
+  /// `<pin(from)>..<pin(to)>` for a round comparison, or null when
+  /// either round has no recorded pin.
+  String? compareSpec(int from, int to) {
+    final rounds = data?.state?.rounds ?? const <ReviewRoundInfo>[];
+    String? pin(int n) {
+      for (final r in rounds) {
+        if (r.n == n) return r.commit.isEmpty ? null : r.commit;
+      }
+      return null;
+    }
+
+    final a = pin(from);
+    final b = pin(to);
+    if (a == null || b == null || a == b) return null;
+    return '$a..$b';
+  }
+
+  /// Materialize a lens for [spec]. Refused (ok(null)) when the delta
+  /// exceeds the app's spill threshold — a lens is a reading aid, not a
+  /// second machine-scale diff pipeline, and the caller falls back to
+  /// the full PR diff rather than holding a spool it would have to own.
+  @useResult
+  Future<GitResult<ReviewLensDiff?>> loadLens(String spec) async {
+    final numstat =
+        await git.getRangeNumstatZ(repoPath, spec, findRenames: true);
+    if (!numstat.ok) {
+      return GitResult.err(numstat.error ?? 'lens numstat failed');
+    }
+    final files = parseNumstatZ(numstat.data ?? '');
+    final spooled =
+        await git.spoolRangeDiff(repoPath, spec, findRenames: true);
+    if (!spooled.ok || spooled.data == null) {
+      return GitResult.err(spooled.error ?? 'lens diff failed');
+    }
+    final spool = spooled.data!;
+    try {
+      if (spool.byteLength > git.kDetailDiffSpillBytes) {
+        return const GitResult.ok(null);
+      }
+      final raw = spool.byteLength == 0
+          ? ''
+          : await git.readSpoolStringLenient(spool.path);
+      return GitResult.ok(ReviewLensDiff(
+        spec: spec,
+        files: files,
+        byPath: sliceDiffByFile(raw),
+      ));
+    } finally {
+      // The lens NEVER retains the spool — no temp dir outlives this
+      // call, so no lens participates in detail eviction at all.
+      await spool.dispose();
+    }
+  }
+
+  // ─── Bootstrap ───────────────────────────────────────────────────
+
+  /// First-intent bootstrap: make sure a round exists to anchor against
+  /// (cutting round 1 creates the state doc as a side effect). [load]
+  /// deliberately never does this — looking is free; intending to
+  /// comment is what starts a review.
+  @useResult
+  Future<GitResult<ReviewPaneData>> ensureRound() async {
+    final d = data;
+    if (d != null && d.latestRound > 0) return GitResult.ok(d);
+    final cut = await store.cutRoundIfMoved(
+        deskId: deskId, branch: headBranch, by: _viewer);
+    if (!cut.ok) return GitResult.err(cut.error ?? 'round cut failed');
+    return load();
+  }
+
+  // ─── Anchor capture (gutter taps) ────────────────────────────────
+
+  /// Capture a content anchor for [line] (1-based) on [side] of
+  /// [path]. Returns null when the file's content isn't available
+  /// (over the byte gate, binary-ish, or no round exists yet) — the
+  /// caller renders the affordance disabled, never a broken anchor.
+  /// Serialized against [load] for the same reason loads are serialized
+  /// against each other: both touch `_headSpec` and the blob caches. A
+  /// round cut landing mid-capture could otherwise let lines fetched
+  /// from the OLD commit be stamped with the NEW commit's id — an
+  /// anchor whose recorded commit does not contain the bytes it hashed,
+  /// which is precisely the dishonesty pinning reads to the round was
+  /// meant to prevent.
+  Future<ReviewAnchor?> captureAt({
+    required String path,
+    required String side,
+    required int line,
+  }) {
+    final prior = _loadGate;
+    final mine = Completer<void>();
+    _loadGate = mine.future;
+    return prior
+        .then((_) => _captureAt(path: path, side: side, line: line))
+        .whenComplete(mine.complete);
+  }
+
+  Future<ReviewAnchor?> _captureAt({
+    required String path,
+    required String side,
+    required int line,
+  }) async {
+    final d = data;
+    if (d == null || d.latestRound == 0) return null;
+    final lines = side == 'old'
+        ? await _ensureBaseLines(path)
+        : await _ensureHeadLines(path);
+    if (lines == null || line < 1 || line > lines.length) return null;
+    return captureAnchor(
+      lines: lines,
+      lineIndex: line - 1,
+      round: d.latestRound,
+      commit: d.latestRoundCommit,
+      path: path,
+      side: side,
+    );
+  }
+
+  // ─── Verbs (page idiom: null = ok, message = failure) ────────────
+
+  Future<String?> saveOpenerDraft({
+    required ReviewAnchor anchor,
+    required String body,
+  }) async {
+    final r = await store.saveDraft(
+      deskId,
+      ReviewDraftEntry(
+        threadId: '',
+        anchor: anchor,
+        body: body,
+        at: clock.now(),
+      ),
+    );
+    return r.ok ? null : (r.error ?? 'draft save failed');
+  }
+
+  Future<String?> saveReplyDraft({
+    required String threadId,
+    required String body,
+  }) async {
+    final r = await store.saveDraft(
+      deskId,
+      ReviewDraftEntry(
+        threadId: threadId,
+        anchor: null,
+        body: body,
+        at: clock.now(),
+      ),
+    );
+    return r.ok ? null : (r.error ?? 'draft save failed');
+  }
+
+  Future<String?> resolve(String threadId, {required String how}) async {
+    final r = await store.resolveThread(
+        deskId: deskId, threadId: threadId, by: _viewer, how: how);
+    return r.ok ? null : (r.error ?? 'resolve failed');
+  }
+
+  Future<String?> reopen(String threadId) async {
+    final r = await store.reopenThread(
+        deskId: deskId, threadId: threadId, by: _viewer);
+    return r.ok ? null : (r.error ?? 'reopen failed');
+  }
+
+  /// Drop one draft. [threadId] is '' for an opener draft.
+  Future<String?> discardOneDraft({
+    required String threadId,
+    required String body,
+    required DateTime at,
+  }) async {
+    final r = await store.discardDraft(
+      deskId,
+      ReviewDraftEntry(
+          threadId: threadId, anchor: null, body: body, at: at),
+    );
+    return r.ok ? null : (r.error ?? 'discard failed');
+  }
+
+  Future<String?> discardDrafts() async {
+    final r = await store.discardDrafts(deskId);
+    return r.ok ? null : (r.error ?? 'discard failed');
+  }
+
+  /// Publish the draft batch (and/or a verdict) as one turn, then move
+  /// the viewer's last-look pointer to the round they just spoke to —
+  /// publishing IS the "I have looked" event.
+  Future<String?> publish({String? verdict}) async {
+    final d = data;
+    final r = await store.publish(
+      deskId: deskId,
+      author: _viewer,
+      verdict: verdict,
+      verdictRound: d?.latestRound,
+    );
+    if (!r.ok) return r.error ?? 'publish failed';
+    final n = d?.latestRound ?? 0;
+    if (n > 0) {
+      await ReviewLastSeen.write(
+          repoPath: repoPath, deskId: deskId, round: n);
+    }
+    return null;
+  }
+
+  /// Explicit "caught up" — the header verb for a look that ends
+  /// without anything to say.
+  Future<void> markCaughtUp() async {
+    final n = data?.latestRound ?? 0;
+    if (n > 0) {
+      await ReviewLastSeen.write(
+          repoPath: repoPath, deskId: deskId, round: n);
+    }
+  }
+}
+
+/// Client-local "last look" pointers: {repoPath#deskId: round}. A
+/// display-law persistence (a fact about what the viewer has seen),
+/// not a task posture — deliberately NOT synced in this slice; the
+/// dossier's synced-attention bit replaces the storage, not the shape.
+class ReviewLastSeen {
+  static const _kKey = 'review.last_seen_round_v1';
+
+  /// Writes queue. Every desk's pointer lives in ONE prefs key, so two
+  /// desks advancing at once (publish here, caught-up there) would each
+  /// write back a whole map read before the other's change — last write
+  /// silently reverting the first. Same read-modify-write hazard the
+  /// git index has, same answer: serialize.
+  static Future<void> _writeGate = Future<void>.value();
+
+  // JSON-encoded pair, not '<path>#<id>': a repo path may itself contain
+  // '#', which would let two different repos collide on one pointer.
+  static String _entryKey(String repoPath, int deskId) =>
+      jsonEncode([repoPath, deskId]);
+
+  static Future<Map<String, int>> _readAll() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final j = jsonDecode(raw);
+      if (j is! Map) return {};
+      return {
+        for (final e in j.entries)
+          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<int?> read({
+    required String repoPath,
+    required int deskId,
+  }) async =>
+      (await _readAll())[_entryKey(repoPath, deskId)];
+
+  static Future<void> write({
+    required String repoPath,
+    required int deskId,
+    required int round,
+  }) {
+    final prior = _writeGate;
+    final mine = Completer<void>();
+    _writeGate = mine.future;
+    return prior.then((_) async {
+      final all = await _readAll();
+      all[_entryKey(repoPath, deskId)] = round;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kKey, jsonEncode(all));
+    }).whenComplete(mine.complete);
+  }
+}
+
+/// Collapsed-row turn chips for every desk that actually HAS a review.
+///
+/// One `for-each-ref` over the review namespace first, then a state read
+/// only for the desks it names: a repo with fifty desks and no reviews
+/// costs ONE git spawn, not fifty. (Reading blindly per desk also made
+/// the cost scale with desk count rather than with review count, which
+/// is backwards — reviews are the rarer thing.)
+Future<Map<int, ReviewRowSummary>> loadReviewRowSummaries({
+  required ManifoldRefs refs,
+  required Iterable<({int deskId, String author})> desks,
+  required String viewerDisplay,
+}) async {
+  final wanted = {for (final d in desks) d.deskId: d.author};
+  if (wanted.isEmpty) return const {};
+
+  final store = ReviewStore(refs);
+  final listed = await store.listReviewedDeskIds();
+  if (!listed.ok) return const {};
+  final reviewed = listed.data!.where(wanted.containsKey);
+  if (reviewed.isEmpty) return const {};
+
+  final out = <int, ReviewRowSummary>{};
+  for (final deskId in reviewed) {
+    final r = await store.read(deskId);
+    if (!r.ok || r.data == null) continue;
+    final state = r.data!;
+    final turn = deriveTurn(state,
+        authorDisplay: wanted[deskId]!, viewerDisplay: viewerDisplay);
+    out[deskId] = ReviewRowSummary(
+      yourTurn: turn.yourTurn,
+      waitingOn: turn.waitingOn,
+      unresolvedCount: state.unresolvedCount,
+    );
+  }
+  return out;
+}

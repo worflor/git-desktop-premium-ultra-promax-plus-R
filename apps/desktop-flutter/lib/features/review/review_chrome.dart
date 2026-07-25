@@ -25,6 +25,8 @@
 import 'package:flutter/material.dart';
 
 import '../../ui/design_primitives.dart';
+import '../../ui/material_surface.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 
 /// The review type scale. Three sizes, no exceptions:
@@ -349,4 +351,72 @@ String middleEllipsize(
     }
   }
   return ell + path.substring(lo.clamp(0, path.length));
+}
+
+/// The one review action pill: quiet chrome, snap-motion hover, an
+/// emphasis weight for the row's primary verb. Every clickable verb on
+/// a review surface is THIS widget — cards, publish bar, composers —
+/// so hover behaviour and hit-height can never drift apart.
+class ReviewVerbPill extends StatefulWidget {
+  final String label;
+  final bool emphasis;
+  final VoidCallback onTap;
+  const ReviewVerbPill({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.emphasis = false,
+  });
+
+  @override
+  State<ReviewVerbPill> createState() => _ReviewVerbPillState();
+}
+
+class _ReviewVerbPillState extends State<ReviewVerbPill> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final geo = context.surfaceShader.geometry;
+    final base = widget.emphasis ? t.textStrong : t.textMuted;
+    final color = _hover ? t.accentBright : base;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motionRead(AppMotion.snap),
+          curve: AppMotion.snapCurve,
+          height: ReviewMetrics.verbHeight,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _hover
+                ? t.accentBright.withValues(alpha: 0.10)
+                : t.bg0.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(geo.pillRadius),
+            border: Border.all(
+              color: _hover
+                  ? t.accentBright.withValues(alpha: 0.45)
+                  : t.chromeBorderSubtle,
+              width: AppBorderWidth.hairline,
+            ),
+          ),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: color,
+              fontSize: ReviewType.ident,
+              height: 1,
+              fontWeight:
+                  widget.emphasis ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

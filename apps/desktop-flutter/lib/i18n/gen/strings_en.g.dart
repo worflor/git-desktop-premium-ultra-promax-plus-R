@@ -80,6 +80,9 @@ class Translations with BaseTranslations<AppLocale, Translations> {
       Translations$releaseNotes$en.internal(_root);
   late final Translations$repoSummary$en repoSummary =
       Translations$repoSummary$en.internal(_root);
+  late final Translations$review$en review = Translations$review$en.internal(
+    _root,
+  );
   late final Translations$settings$en settings =
       Translations$settings$en.internal(_root);
   late final Translations$sync$en sync = Translations$sync$en.internal(_root);
@@ -2222,6 +2225,133 @@ class Translations$repoSummary$en {
       Translations$repoSummary$region$en.internal(_root);
   late final Translations$repoSummary$shape$en shape =
       Translations$repoSummary$shape$en.internal(_root);
+}
+
+// Path: review
+class Translations$review$en {
+  Translations$review$en.internal(this._root);
+
+  final Translations _root; // ignore: unused_field
+
+  // Translations
+
+  /// en: 'unresolved'
+  String get unresolved => 'unresolved';
+
+  /// en: 'done'
+  String get done => 'done';
+
+  /// en: 'ack'
+  String get ack => 'ack';
+
+  /// en: 'reply'
+  String get reply => 'reply';
+
+  /// en: 'please fix'
+  String get pleaseFix => 'please fix';
+
+  /// en: 'draft'
+  String get draft => 'draft';
+
+  /// en: 'engine'
+  String get engine => 'engine';
+
+  /// en: 'moved'
+  String get moved => 'moved';
+
+  /// en: 'your turn'
+  String get yourTurn => 'your turn';
+
+  /// en: 'drafts'
+  String get drafts => 'drafts';
+
+  /// en: 'publish'
+  String get publish => 'publish';
+
+  /// en: 'discard'
+  String get discard => 'discard';
+
+  /// en: 'save draft'
+  String get saveDraft => 'save draft';
+
+  /// en: 'cancel'
+  String get cancel => 'cancel';
+
+  /// en: 'approve'
+  String get verdictApprove => 'approve';
+
+  /// en: 'request changes'
+  String get verdictRequestChanges => 'request changes';
+
+  /// en: 'comment'
+  String get verdictComment => 'comment';
+
+  /// en: 'caught up'
+  String get caughtUp => 'caught up';
+
+  /// en: 'since your last look'
+  String get sinceLastLook => 'since your last look';
+
+  /// en: 'full diff'
+  String get fullDiff => 'full diff';
+
+  /// en: 'write a comment'
+  String get commentHint => 'write a comment';
+
+  /// en: 'outdated · last seen R{round}'
+  String outdatedLastSeen({required Object round}) =>
+      'outdated · last seen R${round}';
+
+  /// en: '{verb} · {who}'
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+
+  /// en: 'waiting on {who}'
+  String waitingOnFmt({required Object who}) => 'waiting on ${who}';
+
+  /// en: 'R{round}'
+  String roundChip({required Object round}) => 'R${round}';
+
+  /// en: '(one) {1 file since your last look} (other) {{n} files since your last look}'
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '1 file since your last look',
+        other: '${n} files since your last look',
+      );
+
+  /// en: '{n} unresolved'
+  String unresolvedCountFmt({required Object n}) => '${n} unresolved';
+
+  /// en: '(one) {1 draft} (other) {{n} drafts}'
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '1 draft',
+        other: '${n} drafts',
+      );
+
+  /// en: 'Couldn't start the review: {error}'
+  String startReviewFailed({required Object error}) =>
+      'Couldn\'t start the review: ${error}';
+
+  /// en: 'That line can't be anchored — the file is too large or unavailable.'
+  String get anchorUnavailable =>
+      'That line can\'t be anchored — the file is too large or unavailable.';
+
+  /// en: 'Review action failed: {error}'
+  String reviewActionFailed({required Object error}) =>
+      'Review action failed: ${error}';
+
+  /// en: 'That comparison is too large to show here — staying on the full diff.'
+  String get lensTooLarge =>
+      'That comparison is too large to show here — staying on the full diff.';
+
+  /// en: 'Nothing changed between these snapshots.'
+  String get lensEmpty => 'Nothing changed between these snapshots.';
+
+  /// en: 'reopen'
+  String get reopen => 'reopen';
 }
 
 // Path: settings

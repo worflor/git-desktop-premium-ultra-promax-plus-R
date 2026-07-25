@@ -21,12 +21,17 @@ import 'review_chrome.dart';
 class ReviewFileHeader extends StatelessWidget {
   final String filePath;
 
-  const ReviewFileHeader({super.key, required this.filePath});
+  /// Optional: the header becomes a quiet navigation target (the page
+  /// wires this to focus the diff on this file). No chrome change
+  /// beyond the cursor — the pane stays the quietest layer.
+  final VoidCallback? onTap;
+
+  const ReviewFileHeader({super.key, required this.filePath, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return SizedBox(
+    final row = SizedBox(
       height: ReviewMetrics.lineHeight,
       child: Row(
         children: [
@@ -52,6 +57,15 @@ class ReviewFileHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    if (onTap == null) return row;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: row,
       ),
     );
   }

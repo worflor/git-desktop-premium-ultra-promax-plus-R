@@ -1,0 +1,43 @@
+{
+  "@@locale": "ru",
+  "unresolved": "не решено",
+  "done": "готово",
+  "ack": "принято",
+  "reply": "ответить",
+  "pleaseFix": "нужно исправить",
+  "draft": "черновик",
+  "engine": "движок",
+  "moved": "перемещено",
+  "yourTurn": "ваш ход",
+  "drafts": "черновики",
+  "publish": "опубликовать",
+  "discard": "отбросить",
+  "saveDraft": "сохранить черновик",
+  "cancel": "отмена",
+  "verdictApprove": "одобрить",
+  "verdictRequestChanges": "запросить правки",
+  "verdictComment": "комментарий",
+  "caughtUp": "актуально",
+  "sinceLastLook": "с последнего просмотра",
+  "fullDiff": "полный diff",
+  "commentHint": "напишите комментарий",
+  "outdatedLastSeen": "устарело · последний просмотр R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "ждём {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 файл с последнего просмотра",
+    "other": "{n} файлов с последнего просмотра"
+  },
+  "unresolvedCountFmt": "{n} не решено",
+  "draftCountFmt": {
+    "one": "1 черновик",
+    "other": "{n} черновиков"
+  },
+  "startReviewFailed": "Не удалось начать ревью: {error}",
+  "anchorUnavailable": "Эту строку нельзя закрепить — файл слишком большой или недоступен.",
+  "reviewActionFailed": "Не удалось выполнить действие ревью: {error}",
+  "lensTooLarge": "Это сравнение слишком большое, чтобы показать его здесь — остаёмся на полном diff.",
+  "lensEmpty": "Между этими снимками ничего не изменилось.",
+  "reopen": "переоткрыть"
+}

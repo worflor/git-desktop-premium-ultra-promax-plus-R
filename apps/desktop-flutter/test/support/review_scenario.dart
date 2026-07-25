@@ -113,7 +113,6 @@ Future<ReviewScenarioResult> runReviewScenario({
           ),
           clock: _LogicalClock(
               DateTime.utc(2026, 7, 22, 12).add(Duration(seconds: skewSec))),
-          rng: Random(seed ^ who.hashCode),
         );
 
     final stores = {

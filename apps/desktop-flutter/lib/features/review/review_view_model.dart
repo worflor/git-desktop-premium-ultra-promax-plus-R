@@ -50,12 +50,18 @@ class ReviewCommentView {
   /// them until the batch publishes.
   final bool isDraft;
 
+  /// When an unpublished draft was written. Carried so a single draft
+  /// can be targeted for removal; meaningless (and unused) for
+  /// published comments, whose `when` is already a display string.
+  final DateTime? draftAt;
+
   const ReviewCommentView({
     required this.author,
     required this.when,
     required this.body,
     this.kind = ReviewAuthorKind.human,
     this.isDraft = false,
+    this.draftAt,
   });
 }
 
@@ -78,6 +84,14 @@ class ReviewThreadView {
   final String resolvedBy;
   final List<ReviewCommentView> comments;
 
+  /// 'new' | 'old' — which diff column the anchor pins to. Drives the
+  /// gutter-marker mapping (old-side threads mark deletion rows).
+  final String side;
+
+  /// Stable thread id for verb wiring; empty for unpublished opener
+  /// drafts (their verbs live on the batch bar, not the card).
+  final String threadId;
+
   const ReviewThreadView({
     required this.filePath,
     required this.line,
@@ -87,6 +101,8 @@ class ReviewThreadView {
     this.state = ReviewThreadState.unresolved,
     this.resolvedBy = '',
     this.comments = const [],
+    this.side = 'new',
+    this.threadId = '',
   });
 
   bool get isRobot =>
@@ -131,27 +147,6 @@ class ReviewHeaderView {
   });
 }
 
-/// One diff-gutter cell's affordance.
-enum ReviewGutterState {
-  /// Nothing on this line.
-  none,
-
-  /// Hover invite — the quiet "+" that a comment could start here.
-  invite,
-
-  /// A published thread lives here.
-  thread,
-
-  /// The viewer's own unpublished draft.
-  draft,
-
-  /// A robot thread (engine finding).
-  robot,
-
-  /// A thread whose anchor no longer resolves on this round.
-  outdated,
-}
-
 /// Display strings for the review surfaces, injected so the widgets are
 /// string-blind. English defaults for the preview lab; when the
 /// surfaces mount in the app this is populated from the slang tree
@@ -168,6 +163,18 @@ class ReviewStrings {
   final String moved;
   final String yourTurn;
   final String drafts;
+  final String publish;
+  final String discard;
+  final String saveDraft;
+  final String cancel;
+  final String verdictApprove;
+  final String verdictRequestChanges;
+  final String verdictComment;
+  final String caughtUp;
+  final String sinceLastLook;
+  final String fullDiff;
+  final String commentHint;
+  final String reopen;
 
   const ReviewStrings({
     this.unresolved = 'unresolved',
@@ -180,6 +187,18 @@ class ReviewStrings {
     this.moved = 'moved',
     this.yourTurn = 'your turn',
     this.drafts = 'drafts',
+    this.publish = 'publish',
+    this.discard = 'discard',
+    this.saveDraft = 'save draft',
+    this.cancel = 'cancel',
+    this.verdictApprove = 'approve',
+    this.verdictRequestChanges = 'request changes',
+    this.verdictComment = 'comment',
+    this.caughtUp = 'caught up',
+    this.sinceLastLook = 'since your last look',
+    this.fullDiff = 'full diff',
+    this.commentHint = 'write a comment',
+    this.reopen = 'reopen',
   });
 
   String outdatedLastSeen(int round) => 'outdated · last seen R$round';
@@ -189,4 +208,5 @@ class ReviewStrings {
   String filesSinceLastLook(int n) =>
       n == 1 ? '1 file since your last look' : '$n files since your last look';
   String unresolvedCount(int n) => '$n unresolved';
+  String draftCount(int n) => n == 1 ? '1 draft' : '$n drafts';
 }

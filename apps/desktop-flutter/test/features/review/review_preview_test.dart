@@ -21,8 +21,9 @@ import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/features/review/review_adapter.dart'
     show groupThreadsByFile;
 import 'package:git_desktop/features/review/review_file_header.dart';
-import 'package:git_desktop/features/review/review_gutter.dart';
 import 'package:git_desktop/features/review/review_header_strip.dart';
+import 'package:git_desktop/features/review/review_pane.dart'
+    show ReviewComposer, ReviewPublishBar;
 import 'package:git_desktop/features/review/review_thread_card.dart';
 import 'package:git_desktop/features/review/review_view_model.dart';
 import 'package:git_desktop/ui/material_surface.dart'
@@ -112,6 +113,12 @@ Widget _paneStory(AppTokens tokens) {
                   onAck: th.isRobot ? null : () {},
                   onReply: () {},
                   onPleaseFix: th.isRobot ? () {} : null,
+                  // Resolved cards ship WITH a reopen handler, so the
+                  // preview has to pass one — otherwise the state chip
+                  // renders in a mode the product never shows and the
+                  // look gets iterated against a surface nobody sees.
+                  onReopen:
+                      th.state == ReviewThreadState.unresolved ? null : () {},
                 ),
                 const SizedBox(height: 10),
               ],
@@ -126,6 +133,23 @@ Widget _paneStory(AppTokens tokens) {
                 const SizedBox(height: 10),
               ],
             ],
+            // Production pieces: the opener composer (as it mounts under
+            // the diff) and the atomic publish bar that ends the pane.
+            const SizedBox(height: 6),
+            ReviewComposer(
+              strings: const ReviewStrings(),
+              contextLabel: 'lib/engine/lattice.dart:214',
+              autofocus: false,
+              onSave: (_) async => true,
+              onCancel: () {},
+            ),
+            const SizedBox(height: 16),
+            ReviewPublishBar(
+              strings: const ReviewStrings(),
+              draftCount: 2,
+              onPublish: (_) async {},
+              onDiscard: () {},
+            ),
           ],
         ),
       ),
@@ -238,67 +262,6 @@ void main() {
         pixelRatio: 2);
   });
 
-  // Gutter states, zoomed, with labels.
-  testWidgets('review gutter states', (tester) async {
-    tester.view.physicalSize = const Size(900, 300);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-    final tokens = AppTokens.fromId(AppThemeId.nightwalker);
-    const key = ValueKey('gutter');
-
-    await tester.pumpWidget(_app(
-      tokens,
-      Scaffold(
-        backgroundColor: tokens.bg1,
-        body: Center(
-          child: RepaintBoundary(
-            key: key,
-            child: ColoredBox(
-              color: tokens.bg1,
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (final (state, count, label) in kGutterFixture)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            DecoratedBox(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: tokens.chromeBorder
-                                      .withValues(alpha: 0.2),
-                                ),
-                              ),
-                              child: ReviewGutterCell(
-                                  state: state, count: count),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              label,
-                              style: TextStyle(
-                                color: tokens.textMuted,
-                                fontSize: 8,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    ));
-    await tester.pump();
-    await _capture(tester, key, '.preview/review/gutter_states.png',
-        pixelRatio: 6);
-  });
 
   // Hover state on the Done verb — the interaction texture check.
   testWidgets('review verb hover', (tester) async {

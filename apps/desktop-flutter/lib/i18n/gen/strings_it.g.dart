@@ -93,6 +93,8 @@ class TranslationsIt extends Translations
   late final _Translations$repoSummary$it repoSummary =
       _Translations$repoSummary$it._(_root);
   @override
+  late final _Translations$review$it review = _Translations$review$it._(_root);
+  @override
   late final _Translations$settings$it settings = _Translations$settings$it._(
     _root,
   );
@@ -1915,6 +1917,101 @@ class _Translations$repoSummary$it extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$it shape =
       _Translations$repoSummary$shape$it._(_root);
+}
+
+// Path: review
+class _Translations$review$it extends Translations$review$en {
+  _Translations$review$it._(TranslationsIt root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsIt _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => 'non risolto';
+  @override
+  String get done => 'fatto';
+  @override
+  String get ack => 'annotato';
+  @override
+  String get reply => 'rispondi';
+  @override
+  String get pleaseFix => 'da correggere';
+  @override
+  String get draft => 'bozza';
+  @override
+  String get engine => 'motore';
+  @override
+  String get moved => 'spostato';
+  @override
+  String get yourTurn => 'tocca a te';
+  @override
+  String get drafts => 'bozze';
+  @override
+  String get publish => 'pubblica';
+  @override
+  String get discard => 'scarta';
+  @override
+  String get saveDraft => 'salva bozza';
+  @override
+  String get cancel => 'annulla';
+  @override
+  String get verdictApprove => 'approva';
+  @override
+  String get verdictRequestChanges => 'richiedi modifiche';
+  @override
+  String get verdictComment => 'commenta';
+  @override
+  String get caughtUp => 'in pari';
+  @override
+  String get sinceLastLook => 'dall\'ultima occhiata';
+  @override
+  String get fullDiff => 'diff completo';
+  @override
+  String get commentHint => 'scrivi un commento';
+  @override
+  String outdatedLastSeen({required Object round}) =>
+      'obsoleto · visto l\'ultima volta R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => 'in attesa di ${who}';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('it'))(
+        n,
+        one: '1 file dall\'ultima occhiata',
+        other: '${n} file dall\'ultima occhiata',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} non risolti';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('it'))(
+        n,
+        one: '1 bozza',
+        other: '${n} bozze',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'Impossibile avviare la revisione: ${error}';
+  @override
+  String get anchorUnavailable =>
+      'Quella riga non può essere ancorata — il file è troppo grande o non disponibile.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'Azione di revisione non riuscita: ${error}';
+  @override
+  String get lensTooLarge =>
+      'Quel confronto è troppo grande per essere mostrato qui — si resta sul diff completo.';
+  @override
+  String get lensEmpty => 'Non è cambiato nulla tra questi snapshot.';
+  @override
+  String get reopen => 'riapri';
 }
 
 // Path: settings

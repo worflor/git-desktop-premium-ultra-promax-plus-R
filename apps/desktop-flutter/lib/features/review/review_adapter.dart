@@ -86,21 +86,32 @@ ReviewViewBundle buildReviewViews(
   required String authorDisplay,
   required DateTime now,
   Map<String, List<String>> currentFiles = const {},
+  Map<String, List<String>> oldFiles = const {},
   List<ReviewDraftEntry> drafts = const [],
   int filesSinceLastLook = 0,
 }) {
+  // Side-aware resolution: a 'new'-side anchor asks "where is this
+  // content in the head version", an 'old'-side anchor (a comment on a
+  // deletion row) asks the same of the MERGE-BASE version — the old
+  // column only shifts when the base does, and resolving a deleted
+  // line against head would mark every deletion comment outdated the
+  // moment it was made.
+  AnchorResolution resolveSided(ReviewAnchor a) {
+    final lines = a.side == 'old' ? oldFiles[a.path] : currentFiles[a.path];
+    if (lines == null) {
+      return const AnchorResolution(AnchorStatus.outdated, null);
+    }
+    return resolveAnchor(a, lines);
+  }
+
   final threads = <ReviewThreadView>[];
 
   for (final t in state.threads) {
-    final lines = currentFiles[t.anchor.path];
-    AnchorResolution res;
-    if (lines == null) {
-      res = const AnchorResolution(AnchorStatus.outdated, null);
-    } else {
-      res = resolveAnchor(t.anchor, lines);
-    }
+    final res = resolveSided(t.anchor);
     final replyDrafts = drafts.where((d) => d.threadId == t.id);
     threads.add(ReviewThreadView(
+      threadId: t.id,
+      side: t.anchor.side,
       filePath: t.anchor.path,
       line: res.line ?? t.anchor.line,
       excerpt: t.anchor.excerpt,
@@ -132,6 +143,7 @@ ReviewViewBundle buildReviewViews(
             when: relativeLabel(now, d.at),
             body: d.body,
             isDraft: true,
+            draftAt: d.at,
           ),
       ],
     ));
@@ -142,11 +154,9 @@ ReviewViewBundle buildReviewViews(
   final draftThreads = <ReviewThreadView>[];
   for (final d in drafts) {
     if (d.threadId.isNotEmpty || d.anchor == null) continue;
-    final lines = currentFiles[d.anchor!.path];
-    final res = lines == null
-        ? const AnchorResolution(AnchorStatus.outdated, null)
-        : resolveAnchor(d.anchor!, lines);
+    final res = resolveSided(d.anchor!);
     draftThreads.add(ReviewThreadView(
+      side: d.anchor!.side,
       filePath: d.anchor!.path,
       line: res.line ?? d.anchor!.line,
       excerpt: d.anchor!.excerpt,
@@ -162,6 +172,7 @@ ReviewViewBundle buildReviewViews(
           when: relativeLabel(now, d.at),
           body: d.body,
           isDraft: true,
+          draftAt: d.at,
         ),
       ],
     ));
@@ -182,12 +193,24 @@ ReviewViewBundle buildReviewViews(
       .toList();
   final approving =
       standing.values.where((v) => v.verdict == 'APPROVED').toList();
+  // A verdict names the round it was given at once the code has moved
+  // past it. "approved · alice" sitting next to a live turn chip reads
+  // as a present-tense fact; if alice approved R1 and the branch is on
+  // R3 she has not seen the code being described, and the header should
+  // not let that pass unqualified. Round-tagging says it without a
+  // second concept or an alarm colour.
+  String stamp(ReviewVerdict v) {
+    final latest = state.latestRound?.n ?? 0;
+    return v.round > 0 && latest > v.round
+        ? '${v.by.display} · R${v.round}'
+        : v.by.display;
+  }
+
   if (blocking.isNotEmpty) {
     verdictNote =
-        'changes requested · ${blocking.map((v) => v.by.display).join(', ')}';
+        'changes requested · ${blocking.map(stamp).join(', ')}';
   } else if (approving.isNotEmpty) {
-    verdictNote =
-        'approved · ${approving.map((v) => v.by.display).join(', ')}';
+    verdictNote = 'approved · ${approving.map(stamp).join(', ')}';
   }
 
   // Reading order, not record order: the pane follows the code —

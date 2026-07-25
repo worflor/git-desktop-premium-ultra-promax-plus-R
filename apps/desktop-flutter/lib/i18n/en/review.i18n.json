@@ -1,0 +1,43 @@
+{
+  "@@locale": "en",
+  "unresolved": "unresolved",
+  "done": "done",
+  "ack": "ack",
+  "reply": "reply",
+  "pleaseFix": "please fix",
+  "draft": "draft",
+  "engine": "engine",
+  "moved": "moved",
+  "yourTurn": "your turn",
+  "drafts": "drafts",
+  "publish": "publish",
+  "discard": "discard",
+  "saveDraft": "save draft",
+  "cancel": "cancel",
+  "verdictApprove": "approve",
+  "verdictRequestChanges": "request changes",
+  "verdictComment": "comment",
+  "caughtUp": "caught up",
+  "sinceLastLook": "since your last look",
+  "fullDiff": "full diff",
+  "commentHint": "write a comment",
+  "outdatedLastSeen": "outdated · last seen R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "waiting on {who}",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "1 file since your last look",
+    "other": "{n} files since your last look"
+  },
+  "unresolvedCountFmt": "{n} unresolved",
+  "draftCountFmt": {
+    "one": "1 draft",
+    "other": "{n} drafts"
+  },
+  "startReviewFailed": "Couldn't start the review: {error}",
+  "anchorUnavailable": "That line can't be anchored — the file is too large or unavailable.",
+  "reviewActionFailed": "Review action failed: {error}",
+  "lensTooLarge": "That comparison is too large to show here — staying on the full diff.",
+  "lensEmpty": "Nothing changed between these snapshots.",
+  "reopen": "reopen"
+}

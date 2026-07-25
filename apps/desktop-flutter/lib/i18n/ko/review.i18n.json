@@ -1,0 +1,43 @@
+{
+  "@@locale": "ko",
+  "unresolved": "미해결",
+  "done": "완료",
+  "ack": "확인",
+  "reply": "답글",
+  "pleaseFix": "수정 필요",
+  "draft": "초안",
+  "engine": "엔진",
+  "moved": "이동됨",
+  "yourTurn": "당신 차례",
+  "drafts": "초안",
+  "publish": "게시",
+  "discard": "버리기",
+  "saveDraft": "초안 저장",
+  "cancel": "취소",
+  "verdictApprove": "승인",
+  "verdictRequestChanges": "변경 요청",
+  "verdictComment": "댓글",
+  "caughtUp": "최신",
+  "sinceLastLook": "마지막으로 본 이후",
+  "fullDiff": "전체 diff",
+  "commentHint": "댓글 작성",
+  "outdatedLastSeen": "오래됨 · 마지막 확인 R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "{who} 대기 중",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "마지막으로 본 이후 파일 {n}개",
+    "other": "마지막으로 본 이후 파일 {n}개"
+  },
+  "unresolvedCountFmt": "미해결 {n}개",
+  "draftCountFmt": {
+    "one": "초안 {n}개",
+    "other": "초안 {n}개"
+  },
+  "startReviewFailed": "리뷰를 시작할 수 없습니다: {error}",
+  "anchorUnavailable": "해당 줄을 고정할 수 없습니다 — 파일이 너무 크거나 사용할 수 없습니다.",
+  "reviewActionFailed": "리뷰 작업에 실패했습니다: {error}",
+  "lensTooLarge": "이 비교는 너무 커서 여기에 표시할 수 없습니다 — 전체 diff를 유지합니다.",
+  "lensEmpty": "이 스냅샷들 사이에 바뀐 것이 없습니다.",
+  "reopen": "다시 열기"
+}

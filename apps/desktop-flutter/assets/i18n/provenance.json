@@ -10,92 +10,92 @@
     },
     "de": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "es": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "fr": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "id": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "it": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "ja": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "ko": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "nl": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "pl": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "pt-BR": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "ru": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "tr": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     },
     "zh-Hans": {
       "source": "ai",
-      "model": "Claude Opus 4.8",
-      "generated": "2026-07-11",
+      "model": "Claude Opus 4.8 and Opus 5",
+      "generated": "2026-07-25",
       "reviewers": [],
       "humanReviewedPercent": 0
     }

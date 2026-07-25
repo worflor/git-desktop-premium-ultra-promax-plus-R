@@ -1,0 +1,43 @@
+{
+  "@@locale": "tr",
+  "unresolved": "çözülmedi",
+  "done": "tamam",
+  "ack": "kabul",
+  "reply": "yanıtla",
+  "pleaseFix": "lütfen düzelt",
+  "draft": "taslak",
+  "engine": "motor",
+  "moved": "taşındı",
+  "yourTurn": "sıra sende",
+  "drafts": "taslaklar",
+  "publish": "yayımla",
+  "discard": "vazgeç",
+  "saveDraft": "taslağı kaydet",
+  "cancel": "iptal",
+  "verdictApprove": "onayla",
+  "verdictRequestChanges": "değişiklik iste",
+  "verdictComment": "yorum",
+  "caughtUp": "güncel",
+  "sinceLastLook": "son bakışından beri",
+  "fullDiff": "tam diff",
+  "commentHint": "yorum yaz",
+  "outdatedLastSeen": "eskimiş · son görülme R{round}",
+  "resolvedByFmt": "{verb} · {who}",
+  "waitingOnFmt": "{who} bekleniyor",
+  "roundChip": "R{round}",
+  "filesSinceLastLook": {
+    "one": "son bakışından beri 1 dosya",
+    "other": "son bakışından beri {n} dosya"
+  },
+  "unresolvedCountFmt": "{n} çözülmedi",
+  "draftCountFmt": {
+    "one": "1 taslak",
+    "other": "{n} taslak"
+  },
+  "startReviewFailed": "İnceleme başlatılamadı: {error}",
+  "anchorUnavailable": "O satır sabitlenemiyor — dosya çok büyük veya kullanılamıyor.",
+  "reviewActionFailed": "İnceleme işlemi başarısız oldu: {error}",
+  "lensTooLarge": "Bu karşılaştırma burada gösterilemeyecek kadar büyük — tam diff'te kalıyoruz.",
+  "lensEmpty": "Bu anlık görüntüler arasında hiçbir şey değişmedi.",
+  "reopen": "yeniden aç"
+}

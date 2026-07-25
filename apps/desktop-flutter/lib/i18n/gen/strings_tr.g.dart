@@ -93,6 +93,8 @@ class TranslationsTr extends Translations
   late final _Translations$repoSummary$tr repoSummary =
       _Translations$repoSummary$tr._(_root);
   @override
+  late final _Translations$review$tr review = _Translations$review$tr._(_root);
+  @override
   late final _Translations$settings$tr settings = _Translations$settings$tr._(
     _root,
   );
@@ -1902,6 +1904,101 @@ class _Translations$repoSummary$tr extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$tr shape =
       _Translations$repoSummary$shape$tr._(_root);
+}
+
+// Path: review
+class _Translations$review$tr extends Translations$review$en {
+  _Translations$review$tr._(TranslationsTr root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsTr _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => 'çözülmedi';
+  @override
+  String get done => 'tamam';
+  @override
+  String get ack => 'kabul';
+  @override
+  String get reply => 'yanıtla';
+  @override
+  String get pleaseFix => 'lütfen düzelt';
+  @override
+  String get draft => 'taslak';
+  @override
+  String get engine => 'motor';
+  @override
+  String get moved => 'taşındı';
+  @override
+  String get yourTurn => 'sıra sende';
+  @override
+  String get drafts => 'taslaklar';
+  @override
+  String get publish => 'yayımla';
+  @override
+  String get discard => 'vazgeç';
+  @override
+  String get saveDraft => 'taslağı kaydet';
+  @override
+  String get cancel => 'iptal';
+  @override
+  String get verdictApprove => 'onayla';
+  @override
+  String get verdictRequestChanges => 'değişiklik iste';
+  @override
+  String get verdictComment => 'yorum';
+  @override
+  String get caughtUp => 'güncel';
+  @override
+  String get sinceLastLook => 'son bakışından beri';
+  @override
+  String get fullDiff => 'tam diff';
+  @override
+  String get commentHint => 'yorum yaz';
+  @override
+  String outdatedLastSeen({required Object round}) =>
+      'eskimiş · son görülme R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => '${who} bekleniyor';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('tr'))(
+        n,
+        one: 'son bakışından beri 1 dosya',
+        other: 'son bakışından beri ${n} dosya',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} çözülmedi';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('tr'))(
+        n,
+        one: '1 taslak',
+        other: '${n} taslak',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'İnceleme başlatılamadı: ${error}';
+  @override
+  String get anchorUnavailable =>
+      'O satır sabitlenemiyor — dosya çok büyük veya kullanılamıyor.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'İnceleme işlemi başarısız oldu: ${error}';
+  @override
+  String get lensTooLarge =>
+      'Bu karşılaştırma burada gösterilemeyecek kadar büyük — tam diff\'te kalıyoruz.';
+  @override
+  String get lensEmpty => 'Bu anlık görüntüler arasında hiçbir şey değişmedi.';
+  @override
+  String get reopen => 'yeniden aç';
 }
 
 // Path: settings

@@ -93,6 +93,8 @@ class TranslationsNl extends Translations
   late final _Translations$repoSummary$nl repoSummary =
       _Translations$repoSummary$nl._(_root);
   @override
+  late final _Translations$review$nl review = _Translations$review$nl._(_root);
+  @override
   late final _Translations$settings$nl settings = _Translations$settings$nl._(
     _root,
   );
@@ -1906,6 +1908,101 @@ class _Translations$repoSummary$nl extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$nl shape =
       _Translations$repoSummary$shape$nl._(_root);
+}
+
+// Path: review
+class _Translations$review$nl extends Translations$review$en {
+  _Translations$review$nl._(TranslationsNl root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsNl _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => 'onopgelost';
+  @override
+  String get done => 'klaar';
+  @override
+  String get ack => 'genoteerd';
+  @override
+  String get reply => 'antwoorden';
+  @override
+  String get pleaseFix => 'graag fixen';
+  @override
+  String get draft => 'concept';
+  @override
+  String get engine => 'engine';
+  @override
+  String get moved => 'verplaatst';
+  @override
+  String get yourTurn => 'jouw beurt';
+  @override
+  String get drafts => 'concepten';
+  @override
+  String get publish => 'publiceren';
+  @override
+  String get discard => 'verwerpen';
+  @override
+  String get saveDraft => 'concept opslaan';
+  @override
+  String get cancel => 'annuleren';
+  @override
+  String get verdictApprove => 'goedkeuren';
+  @override
+  String get verdictRequestChanges => 'wijzigingen vragen';
+  @override
+  String get verdictComment => 'reageren';
+  @override
+  String get caughtUp => 'helemaal bij';
+  @override
+  String get sinceLastLook => 'sinds je laatste blik';
+  @override
+  String get fullDiff => 'volledige diff';
+  @override
+  String get commentHint => 'schrijf een reactie';
+  @override
+  String outdatedLastSeen({required Object round}) =>
+      'verouderd · laatst gezien R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => 'wacht op ${who}';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('nl'))(
+        n,
+        one: '1 bestand sinds je laatste blik',
+        other: '${n} bestanden sinds je laatste blik',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} onopgelost';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('nl'))(
+        n,
+        one: '1 concept',
+        other: '${n} concepten',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'Kon de review niet starten: ${error}';
+  @override
+  String get anchorUnavailable =>
+      'Die regel kan niet worden verankerd — het bestand is te groot of niet beschikbaar.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'Reviewactie mislukt: ${error}';
+  @override
+  String get lensTooLarge =>
+      'Die vergelijking is te groot om hier te tonen — we blijven op de volledige diff.';
+  @override
+  String get lensEmpty => 'Er is niets veranderd tussen deze snapshots.';
+  @override
+  String get reopen => 'heropenen';
 }
 
 // Path: settings

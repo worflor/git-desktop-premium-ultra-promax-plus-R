@@ -93,6 +93,8 @@ class TranslationsId extends Translations
   late final _Translations$repoSummary$id repoSummary =
       _Translations$repoSummary$id._(_root);
   @override
+  late final _Translations$review$id review = _Translations$review$id._(_root);
+  @override
   late final _Translations$settings$id settings = _Translations$settings$id._(
     _root,
   );
@@ -1880,6 +1882,101 @@ class _Translations$repoSummary$id extends Translations$repoSummary$en {
   @override
   late final _Translations$repoSummary$shape$id shape =
       _Translations$repoSummary$shape$id._(_root);
+}
+
+// Path: review
+class _Translations$review$id extends Translations$review$en {
+  _Translations$review$id._(TranslationsId root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsId _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get unresolved => 'belum selesai';
+  @override
+  String get done => 'selesai';
+  @override
+  String get ack => 'dicatat';
+  @override
+  String get reply => 'balas';
+  @override
+  String get pleaseFix => 'tolong perbaiki';
+  @override
+  String get draft => 'draf';
+  @override
+  String get engine => 'engine';
+  @override
+  String get moved => 'dipindah';
+  @override
+  String get yourTurn => 'giliranmu';
+  @override
+  String get drafts => 'draf';
+  @override
+  String get publish => 'publikasikan';
+  @override
+  String get discard => 'buang';
+  @override
+  String get saveDraft => 'simpan draf';
+  @override
+  String get cancel => 'batal';
+  @override
+  String get verdictApprove => 'setujui';
+  @override
+  String get verdictRequestChanges => 'minta perubahan';
+  @override
+  String get verdictComment => 'komentar';
+  @override
+  String get caughtUp => 'sudah terkini';
+  @override
+  String get sinceLastLook => 'sejak terakhir kamu lihat';
+  @override
+  String get fullDiff => 'diff lengkap';
+  @override
+  String get commentHint => 'tulis komentar';
+  @override
+  String outdatedLastSeen({required Object round}) =>
+      'usang · terakhir dilihat R${round}';
+  @override
+  String resolvedByFmt({required Object verb, required Object who}) =>
+      '${verb} · ${who}';
+  @override
+  String waitingOnFmt({required Object who}) => 'menunggu ${who}';
+  @override
+  String roundChip({required Object round}) => 'R${round}';
+  @override
+  String filesSinceLastLook({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('id'))(
+        n,
+        one: '1 file sejak terakhir kamu lihat',
+        other: '${n} file sejak terakhir kamu lihat',
+      );
+  @override
+  String unresolvedCountFmt({required Object n}) => '${n} belum selesai';
+  @override
+  String draftCountFmt({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('id'))(
+        n,
+        one: '1 draf',
+        other: '${n} draf',
+      );
+  @override
+  String startReviewFailed({required Object error}) =>
+      'Tidak bisa memulai review: ${error}';
+  @override
+  String get anchorUnavailable =>
+      'Baris itu tidak bisa ditambatkan — file terlalu besar atau tidak tersedia.';
+  @override
+  String reviewActionFailed({required Object error}) =>
+      'Aksi review gagal: ${error}';
+  @override
+  String get lensTooLarge =>
+      'Perbandingan itu terlalu besar untuk ditampilkan di sini — tetap di diff lengkap.';
+  @override
+  String get lensEmpty => 'Tidak ada yang berubah di antara snapshot ini.';
+  @override
+  String get reopen => 'buka lagi';
 }
 
 // Path: settings
