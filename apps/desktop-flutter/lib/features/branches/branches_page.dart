@@ -62,6 +62,14 @@ import '../../app/logos_git_state.dart';
 import '../diff/diff_document.dart' show DiffDocument;
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
+import '../../backend/review_records.dart' show ReviewRoundInfo;
+import '../review/review_adapter.dart' show ReviewViewBundle;
+import '../review/review_chrome.dart'
+    show ReviewChip, ReviewChipVariant, ReviewVerbPill;
+import '../review/review_pane.dart';
+import '../review/review_pane_controller.dart';
+import '../review/review_strings_i18n.dart';
+import '../review/review_view_model.dart';
 import '../changes/merge_conflict_editor.dart'
     show MergeEditorPage, ConflictFile, enrichConflictFileWithLogos;
 import '../changes/patch_as_merge.dart' show reviewMergeFromPatch;
@@ -371,6 +379,73 @@ class _BranchesPageState extends State<BranchesPage> {
   // the entry is replaced or dropped, and its lazy document's file handle
   // must be closed BEFORE the dir goes (Windows can't delete open files).
   final Map<int, PullRequestDetail> _prDetails = {};
+
+  // ─── Review substrate (desk PRs) ───────────────────────────────────
+  // One controller + data snapshot per open desk-PR review, keyed by
+  // deskId (the same int namespace _prDetails uses for local PRs).
+  // Pull-based: verbs call the controller, then reload, then setState —
+  // the _runPrAction evict-and-reload idiom applied to review state.
+  /// Bumped every time the review caches are dropped (repo switch).
+  ///
+  /// Every cache below is keyed by deskId, and deskIds are small
+  /// PER-REPO sequential counters — repo A's desk 1 and repo B's desk 1
+  /// are different reviews with the same key. So an async load that
+  /// resolves after a switch must not write: it would land the old
+  /// repo's threads in the new repo's pane. `mounted` cannot catch this
+  /// (same widget, still mounted); currency has to be explicit. Same
+  /// idiom as DeskPrState._requestId.
+  int _reviewEpoch = 0;
+
+  final Map<int, ReviewPaneController> _reviewCtrls = {};
+  final Map<int, ReviewPaneData> _reviewData = {};
+  final Set<int> _reviewLoading = {};
+
+  /// Collapsed-row turn signals for every OPEN desk PR with a review.
+  Map<int, ReviewRowSummary> _reviewRowSummaries = {};
+  bool _reviewSummariesLoading = false;
+
+  /// The exact `byBranch` map the summaries were read for. Held by
+  /// REFERENCE and compared with `identical` — DeskPrState replaces the
+  /// map wholesale on every state move, so identity is the precise
+  /// signal, where an identityHashCode can silently repeat once the
+  /// original is collected and skip a refresh forever.
+  ///
+  /// Deliberately not a deep compare: `refreshFor` re-parses every desk
+  /// from git into FRESH [DeskPr] instances, and DeskPr carries no value
+  /// equality, so a deep compare would report "changed" on exactly the
+  /// same occasions this does — at O(desks) instead of O(1). Identity
+  /// also fails in the safe direction (a redundant sweep, never a stale
+  /// chip), and a sweep is now one ref listing when nothing is reviewed.
+  Object? _reviewSummariesFor;
+
+  /// Open opener-composer target per deskId: (path, oldSide, line).
+  final Map<int, (String, bool, int)> _reviewComposeAt = {};
+
+  /// deskIds whose diff is currently in the "since your last look"
+  /// lens (task posture — deliberately NOT persisted).
+  final Set<int> _reviewLensSince = {};
+
+  /// Active round-to-round snapshot comparison per deskId: (from, to)
+  /// round numbers. Mutually exclusive with [_reviewLensSince]; also a
+  /// task posture, never persisted.
+  final Map<int, (int, int)> _reviewCompare = {};
+
+  /// Materialized lens diffs, keyed by deskId.
+  ///
+  /// DELIBERATELY NOT `_prDetails`. That cache is the PR's canonical
+  /// truth and feeds the cross-PR collision map, the conflicts pill, the
+  /// magnetic-shape fingerprint, patch export and AI review — a lens
+  /// slice landing there would silently shrink another row's WILL FIGHT
+  /// list and export a partial patch under the PR's name. A lens is
+  /// bounded (refused above the spill threshold) and owns no spool, so
+  /// it needs none of that cache's eviction machinery.
+  final Map<int, ReviewLensDiff> _reviewLensDiffs = {};
+  final Set<int> _reviewLensLoading = {};
+
+  /// The spec each desk's lens SHOULD be showing. A fetch in flight
+  /// re-reads this when it lands, so spinning the round dropdown settles
+  /// on the last choice instead of dropping everything after the first.
+  final Map<int, String> _reviewLensWanted = {};
   final Set<int> _prDetailsLoading = {};
 
   // Lazy documents over PR-detail diffs that carry no cached per-file
@@ -2524,13 +2599,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // makes every per-file lookup (spool slice, cached slice, on-demand
     // slice) resolve empty and the pane renders as if the PR had no diff,
     // even though the detail loaded fine.
-    final files = detail.files;
-    final active = _activeFileByPr[key];
-    if (files.isEmpty) {
-      _activeFileByPr.remove(key);
-    } else if (active == null || !files.any((f) => f.path == active)) {
-      _activeFileByPr[key] = files.first.path;
-    }
+    _reconcileActiveFile(key, detail.files);
     final spool = detail.diffSpool;
     if (spool != null) {
       unawaited(_buildPrSpoolDoc(key, spool));
@@ -2617,10 +2686,47 @@ class _BranchesPageState extends State<BranchesPage> {
     if (spool != null) unawaited(spool.dispose());
   }
 
+  /// Keep the selected file pill valid against whatever list is being
+  /// rendered. Lens file sets are NOT a subset of the PR's: a file
+  /// changed in round 1 and reverted in round 2 is absent from
+  /// `base...head` yet present in `R1..R2`, so entering AND leaving a
+  /// lens both need this.
+  void _reconcileActiveFile(int key, List<PrFile> files) {
+    if (files.isEmpty) {
+      _activeFileByPr.remove(key);
+      return;
+    }
+    final active = _activeFileByPr[key];
+    if (active == null || !files.any((f) => f.path == active)) {
+      _activeFileByPr[key] = files.first.path;
+    }
+  }
+
   void _evictAllPrDetails() {
     for (final key in _prDetails.keys.toList()) {
       _evictPrDetail(key);
     }
+    // Review state is per-repo (controllers hold the old repo's refs):
+    // a full detail eviction is exactly the repo-switch moment, so the
+    // review caches go with it.
+    _reviewCtrls.clear();
+    _reviewData.clear();
+    _reviewComposeAt.clear();
+    _reviewLensSince.clear();
+    _reviewCompare.clear();
+    _reviewLensDiffs.clear();
+    _reviewLensWanted.clear();
+    _reviewMarksMemo.clear();
+    _reviewRowSummaries = {};
+    _reviewSummariesFor = null;
+    // Loop guards go too, or the new repo's load for a colliding deskId
+    // no-ops until the stale call's `finally` happens to run. Their
+    // owners check the epoch before releasing, so clearing here cannot
+    // let a stale call free a live one's slot.
+    _reviewLoading.clear();
+    _reviewLensLoading.clear();
+    _reviewSummariesLoading = false;
+    _reviewEpoch++;
   }
 
   /// The full diff text of [detail], reading a spooled diff back from disk
@@ -2715,6 +2821,477 @@ class _BranchesPageState extends State<BranchesPage> {
     } finally {
       _localDeskDiffsLoading.remove(pr.headRef);
     }
+  }
+
+  // ─── Review verbs + loading (desk PRs) ─────────────────────────────
+
+  /// True while [epoch]'s results still belong to the open repo. THE
+  /// gate for every async review write-back — it folds in `mounted` so
+  /// a call site can't remember one check and forget the other.
+  bool _reviewCurrent(int epoch) => mounted && epoch == _reviewEpoch;
+
+  /// Null until DeskPrState has resolved the MAIN repo path. Review refs
+  /// must be written through the common dir; guessing with a desk's own
+  /// worktree path would strand a review in a linked worktree, so this
+  /// declines to build a controller rather than write to the wrong repo.
+  ReviewPaneController? _reviewCtrlFor(DeskPr dp) {
+    final deskState = context.read<DeskPrState>();
+    final main = deskState.loadedForRepo;
+    if (main == null) return null;
+    return ReviewPaneController(
+      repoPath: main,
+      deskId: dp.deskId,
+      headBranch: dp.headRef,
+      baseRef: dp.baseRef,
+      authorDisplay: dp.authorIdentity,
+      viewerDisplay: deskState.viewerDisplay,
+      refs: deskState.refsFor(main),
+    );
+  }
+
+  /// Marks lists memoized per desk on (bundle, path) identity: DiffShell
+  /// caches its display-row map keyed on the marks LIST identity, so a
+  /// fresh list every page rebuild would recompute an O(rows) mapping on
+  /// every unrelated setState of a machine-scale diff.
+  final Map<int, (ReviewViewBundle, String, bool, List<DiffLineMark>)>
+      _reviewMarksMemo = {};
+
+  List<DiffLineMark> _reviewMarksFor(
+    int deskId,
+    ReviewViewBundle bundle,
+    String path, {
+    required bool includeOldSide,
+  }) {
+    final memo = _reviewMarksMemo[deskId];
+    if (memo != null &&
+        identical(memo.$1, bundle) &&
+        memo.$2 == path &&
+        memo.$3 == includeOldSide) {
+      return memo.$4;
+    }
+    final marks =
+        buildLineMarks(bundle, path, includeOldSide: includeOldSide);
+    _reviewMarksMemo[deskId] = (bundle, path, includeOldSide, marks);
+    return marks;
+  }
+
+  Future<void> _ensureReviewLoaded(String repoPath, DeskPr dp) async {
+    if (!mounted) return;
+    final id = dp.deskId;
+    if (_reviewLoading.contains(id)) return;
+    _reviewLoading.add(id);
+    final epoch = _reviewEpoch;
+    try {
+      var ctrl = _reviewCtrls[id];
+      // The controller bakes in the identity a comment will be authored
+      // under and the branch its rounds are cut from — a rename of
+      // either (settings, branch rename) has to mint a fresh one, or the
+      // pane would keep writing under a name the user no longer uses.
+      if (ctrl != null &&
+          (ctrl.headBranch != dp.headRef ||
+              ctrl.viewerDisplay != context.read<DeskPrState>().viewerDisplay)) {
+        ctrl = null;
+      }
+      if (ctrl == null) {
+        final fresh = _reviewCtrlFor(dp);
+        if (fresh == null) return;
+        ctrl = _reviewCtrls[id] = fresh;
+      }
+      final r = await ctrl.load();
+      if (!_reviewCurrent(epoch)) return;
+      if (r.ok) setState(() => _reviewData[id] = r.data!);
+      await _refreshReviewLens(id);
+    } finally {
+      // Only release what we still own: after a switch the set was
+      // already cleared and this id may belong to a live newer load.
+      if (epoch == _reviewEpoch) _reviewLoading.remove(id);
+    }
+  }
+
+  Future<void> _reloadReview(int deskId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final epoch = _reviewEpoch;
+    final r = await ctrl.load();
+    if (!_reviewCurrent(epoch)) return;
+    if (r.ok) setState(() => _reviewData[deskId] = r.data!);
+    await _refreshReviewLens(deskId);
+  }
+
+  /// A lens is derived from review state, so it has to move when that
+  /// state does. Publishing advances the last-look pointer, which is
+  /// exactly the moment `since your last look` becomes "nothing" — a
+  /// lens left standing there would keep showing the old delta under a
+  /// label that is no longer true. Re-derives the spec, re-fetches only
+  /// when it actually changed, and stands the lens down when the viewer
+  /// has caught up or a pin has gone.
+  Future<void> _refreshReviewLens(int deskId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final String? spec;
+    final cmp = _reviewCompare[deskId];
+    if (cmp != null) {
+      spec = ctrl.compareSpec(cmp.$1, cmp.$2);
+    } else if (_reviewLensSince.contains(deskId)) {
+      spec = ctrl.sinceLastLookSpec;
+    } else {
+      return; // no lens posture — nothing to track
+    }
+    if (spec == null) {
+      if (mounted) setState(() => _clearReviewLens(deskId));
+      return;
+    }
+    if (_reviewLensDiffs[deskId]?.spec == spec) return;
+    await _applyReviewLens(deskId, spec);
+  }
+
+  void _reviewErrorSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openReviewComposer(
+    int deskId,
+    String path,
+    bool oldSide,
+    int line,
+  ) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final epoch = _reviewEpoch;
+    if ((_reviewData[deskId]?.latestRound ?? 0) == 0) {
+      // First intent on this desk: cutting round 1 creates the review.
+      final r = await ctrl.ensureRound();
+      // Two checks, not one: `mounted` is what the analyzer can see for
+      // the context uses below, `_reviewCurrent` is what keeps another
+      // repo's result out of this cache.
+      if (!mounted || !_reviewCurrent(epoch)) return;
+      if (!r.ok) {
+        _reviewErrorSnack(
+          context.t.review.startReviewFailed(error: r.error ?? '?'),
+        );
+        return;
+      }
+      _reviewData[deskId] = r.data!;
+    }
+    // Prove the line can actually be anchored BEFORE opening a
+    // composer. The byte cap and missing-blob paths used to surface at
+    // SAVE time, so the invitation looked identical on a line that
+    // could take a comment and one that never could — and the user
+    // learned the difference only after writing the comment.
+    final anchor = await ctrl.captureAt(
+      path: path,
+      side: oldSide ? 'old' : 'new',
+      line: line,
+    );
+    if (!mounted) return;
+    if (anchor == null) {
+      _reviewErrorSnack(context.t.review.anchorUnavailable);
+      return;
+    }
+    setState(() => _reviewComposeAt[deskId] = (path, oldSide, line));
+  }
+
+  Future<bool> _saveReviewOpener(int deskId, String body) async {
+    final ctrl = _reviewCtrls[deskId];
+    final at = _reviewComposeAt[deskId];
+    if (ctrl == null || at == null) return false;
+    final anchor = await ctrl.captureAt(
+      path: at.$1,
+      side: at.$2 ? 'old' : 'new',
+      line: at.$3,
+    );
+    if (anchor == null) {
+      if (!mounted) return false;
+      _reviewErrorSnack(context.t.review.anchorUnavailable);
+      return false;
+    }
+    final err = await ctrl.saveOpenerDraft(anchor: anchor, body: body);
+    if (!mounted) return false;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+      return false;
+    }
+    // Close only the composer this save belongs to. The user can hit
+    // Cancel and open another one on a different line while the git
+    // round-trip is still in flight (Cancel is deliberately not
+    // busy-gated — backing out must always be possible), and an
+    // unconditional remove here would dispose THAT composer and take
+    // its unsaved text with it.
+    if (_reviewComposeAt[deskId] == at) {
+      setState(() => _reviewComposeAt.remove(deskId));
+    }
+    await _reloadReview(deskId);
+    return true;
+  }
+
+  Future<bool> _saveReviewReply(
+    int deskId,
+    String threadId,
+    String body,
+  ) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return false;
+    final err = await ctrl.saveReplyDraft(threadId: threadId, body: body);
+    if (!mounted) return false;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+      return false;
+    }
+    await _reloadReview(deskId);
+    return true;
+  }
+
+  Future<void> _resolveReviewThread(
+    int deskId,
+    String threadId,
+    String how,
+  ) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.resolve(threadId, how: how);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+  }
+
+  Future<void> _reopenReviewThread(int deskId, String threadId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.reopen(threadId);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+  }
+
+  Future<void> _discardOneReviewDraft(
+    int deskId,
+    String threadId,
+    String body,
+    DateTime at,
+  ) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err =
+        await ctrl.discardOneDraft(threadId: threadId, body: body, at: at);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+  }
+
+  Future<void> _publishReview(int deskId, String? verdict) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.publish(verdict: verdict);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+    unawaited(_loadReviewRowSummaries());
+  }
+
+  Future<void> _discardReviewDrafts(int deskId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.discardDrafts();
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+  }
+
+  /// Drop any lens and restore the canonical PR diff.
+  void _clearReviewLens(int deskId) {
+    _reviewLensSince.remove(deskId);
+    _reviewCompare.remove(deskId);
+    _reviewLensDiffs.remove(deskId);
+    _reviewLensWanted.remove(deskId);
+    _reconcileActiveFile(deskId, _prDetails[deskId]?.files ?? const []);
+  }
+
+  /// Install the lens described by [spec], or fall back to the full diff
+  /// when it can't be shown. The canonical detail is never touched, so
+  /// there is nothing to evict and nothing to restore on failure.
+  Future<void> _applyReviewLens(int deskId, String? spec) async {
+    if (spec == null) {
+      setState(() => _clearReviewLens(deskId));
+      return;
+    }
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    _reviewLensWanted[deskId] = spec;
+    // Coalesce rather than drop: whoever holds the slot loops until the
+    // installed lens matches the newest wanted spec.
+    if (!_reviewLensLoading.add(deskId)) return;
+    final epoch = _reviewEpoch;
+    try {
+      while (true) {
+        final want = _reviewLensWanted[deskId];
+        if (want == null) return; // cleared while we waited
+        if (_reviewLensDiffs[deskId]?.spec == want) return;
+        final r = await ctrl.loadLens(want);
+        if (!mounted || !_reviewCurrent(epoch)) return;
+        // The target moved under us — discard this result and fetch the
+        // one the user is actually asking for.
+        if (_reviewLensWanted[deskId] != want) continue;
+        if (!r.ok) {
+          setState(() => _clearReviewLens(deskId));
+          _reviewErrorSnack(
+            context.t.review.reviewActionFailed(error: r.error ?? '?'),
+          );
+          return;
+        }
+        final lens = r.data;
+        if (lens == null) {
+          // Refused as too large: say so and stay on the full diff rather
+          // than pretending the toggle did nothing.
+          setState(() => _clearReviewLens(deskId));
+          _reviewErrorSnack(context.t.review.lensTooLarge);
+          return;
+        }
+        setState(() {
+          _reviewLensDiffs[deskId] = lens;
+          _reconcileActiveFile(deskId, lens.files);
+        });
+        return;
+      }
+    } finally {
+      if (epoch == _reviewEpoch) _reviewLensLoading.remove(deskId);
+    }
+  }
+
+  Future<void> _setReviewLens(int deskId, bool since) async {
+    final ctrl = _reviewCtrls[deskId];
+    setState(() {
+      _reviewCompare.remove(deskId);
+      if (since) {
+        _reviewLensSince.add(deskId);
+      } else {
+        _clearReviewLens(deskId);
+      }
+    });
+    if (!since) return;
+    await _applyReviewLens(deskId, ctrl?.sinceLastLookSpec);
+  }
+
+  Future<void> _setReviewCompare(int deskId, (int, int)? cmp) async {
+    final ctrl = _reviewCtrls[deskId];
+    setState(() {
+      _reviewLensSince.remove(deskId);
+      if (cmp == null) {
+        _clearReviewLens(deskId);
+      } else {
+        _reviewCompare[deskId] = cmp;
+      }
+    });
+    if (cmp == null) return;
+    await _applyReviewLens(deskId, ctrl?.compareSpec(cmp.$1, cmp.$2));
+  }
+
+  /// The viewer has read this round without anything to say. Advances
+  /// the last-look pointer — otherwise "since your last look" would stay
+  /// unreachable forever for a reviewer who never publishes.
+  Future<void> _markReviewCaughtUp(int deskId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    await ctrl.markCaughtUp();
+    await _reloadReview(deskId);
+  }
+
+  Future<void> _loadReviewRowSummaries() async {
+    if (_reviewSummariesLoading) return;
+    final deskState = context.read<DeskPrState>();
+    final main = deskState.loadedForRepo;
+    if (main == null) return;
+    final desks = deskState.all
+        .where((d) => d.state == 'OPEN')
+        .map((d) => (deskId: d.deskId, author: d.authorIdentity))
+        .toList();
+    if (desks.isEmpty) {
+      if (_reviewRowSummaries.isNotEmpty && mounted) {
+        setState(() => _reviewRowSummaries = {});
+      }
+      return;
+    }
+    _reviewSummariesLoading = true;
+    final epoch = _reviewEpoch;
+    try {
+      final out = await loadReviewRowSummaries(
+        refs: deskState.refsFor(main),
+        desks: desks,
+        viewerDisplay: deskState.viewerDisplay,
+      );
+      if (_reviewCurrent(epoch)) setState(() => _reviewRowSummaries = out);
+    } finally {
+      if (epoch == _reviewEpoch) _reviewSummariesLoading = false;
+    }
+  }
+
+  ReviewStrings _reviewStringsOf(BuildContext context) =>
+      reviewStringsFrom(context.t);
+
+  ReviewPrHooks? _reviewHooksFor(PullRequestSummary pr) {
+    if (!_localPrNumbers.contains(pr.number)) return null;
+    final id = pr.number;
+    final data = _reviewData[id];
+    if (data == null) return null;
+    final lensReady = data.latestRound > 0 &&
+        data.lastSeenCommit != null &&
+        data.lastSeenCommit != data.latestRoundCommit;
+    final rounds = [
+      for (final r in data.state?.rounds ?? const <ReviewRoundInfo>[]) r.n,
+    ]..sort();
+    final compare = _reviewCompare[id];
+    return ReviewPrHooks(
+      data: data,
+      strings: _reviewStringsOf(context),
+      marksFor: (path, {bool includeOldSide = true}) => _reviewMarksFor(
+            id,
+            data.bundle,
+            path,
+            includeOldSide: includeOldSide,
+          ),
+      onGutterTap: (path, oldSide, line) =>
+          _openReviewComposer(id, path, oldSide, line),
+      composeAt: _reviewComposeAt[id],
+      onSaveOpener: (body) => _saveReviewOpener(id, body),
+      onCancelCompose: () => setState(() => _reviewComposeAt.remove(id)),
+      onSaveReply: (threadId, body) => _saveReviewReply(id, threadId, body),
+      onResolve: (threadId, how) => _resolveReviewThread(id, threadId, how),
+      onReopen: (threadId) => _reopenReviewThread(id, threadId),
+      onDiscardDraft: (threadId, body, at) =>
+          _discardOneReviewDraft(id, threadId, body, at),
+      onPublish: (verdict) => _publishReview(id, verdict),
+      onDiscardDrafts: () => _discardReviewDrafts(id),
+      onSelectFile: (path) =>
+          setState(() => _activeFileByPr[id] = path),
+      lensAvailable: lensReady || _reviewLensSince.contains(id),
+      lensSinceLastLook: _reviewLensSince.contains(id),
+      onSetLens: (since) => _setReviewLens(id, since),
+      rounds: rounds,
+      compare: compare,
+      onSetCompare: (cmp) => _setReviewCompare(id, cmp),
+      lens: _reviewLensDiffs[id],
+      lensLoading: _reviewLensLoading.contains(id),
+      // A compare whose right side is an older round is not the head:
+      // anchors resolve against head content, so markers stand down
+      // rather than label rows they don't belong to.
+      diffShowsHead: compare == null || compare.$2 == data.latestRound,
+      onCaughtUp: data.latestRound > 0 &&
+              data.lastSeenRound != data.latestRound
+          ? () => _markReviewCaughtUp(id)
+          : null,
+    );
   }
 
   /// Warm shapes for every PR whose detail is already cached. Called
@@ -3008,6 +3585,9 @@ class _BranchesPageState extends State<BranchesPage> {
       );
       if (dp.headRef.isEmpty) return;
       await _loadLocalDeskPrDetail(repoPath, dp);
+      // The review facet rides the same expand: one choke point covers
+      // row taps, cross-row jumps, and post-action reloads alike.
+      unawaited(_ensureReviewLoaded(repoPath, dp));
       return;
     }
     setState(() => _prDetailsLoading.add(prNumber));
@@ -3968,6 +4548,15 @@ class _BranchesPageState extends State<BranchesPage> {
           // expanded yet — same role as _prefetchPrDetails for remote PRs,
           // but the data source is `git diff baseRef..headRef`.
           _prefetchLocalDeskPrDetails(repoPath, deskPrs);
+          // Turn chips for collapsed rows — one state-doc read per OPEN
+          // desk. Token-guarded on the byBranch map identity (replaced
+          // wholesale on every state move) so a plain rebuild never
+          // re-issues the git reads.
+          final byBranch = context.read<DeskPrState>().byBranch;
+          if (!identical(byBranch, _reviewSummariesFor)) {
+            _reviewSummariesFor = byBranch;
+            unawaited(_loadReviewRowSummaries());
+          }
         });
       }
     } else {
@@ -4537,6 +5126,8 @@ class _BranchesPageState extends State<BranchesPage> {
               ),
             ),
       onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
+      review: expanded ? _reviewHooksFor(pr) : null,
+      reviewSummary: isLocalPr ? _reviewRowSummaries[pr.number] : null,
     );
   }
 
@@ -6323,6 +6914,13 @@ class _PullRequestRow extends StatefulWidget {
   final VoidCallback? onAiReview;
   final void Function(String method, bool deleteBranch) onMerge;
 
+  /// Git-native review wiring — non-null only for desk PRs whose
+  /// review pane data has loaded. See [ReviewPrHooks].
+  final ReviewPrHooks? review;
+
+  /// Collapsed-row turn signal for desk PRs with a live review.
+  final ReviewRowSummary? reviewSummary;
+
   const _PullRequestRow({
     required this.pr,
     required this.viewerLogin,
@@ -6369,6 +6967,8 @@ class _PullRequestRow extends StatefulWidget {
     required this.onMerge,
     this.onOpenAsDesk,
     this.onAiReview,
+    this.review,
+    this.reviewSummary,
   });
 
   @override
@@ -6615,6 +7215,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             isLocal: widget.isLocal,
                             forge: widget.forge,
                             reviewerQueueDepth: widget.reviewerQueueDepth,
+                            reviewSummary: widget.reviewSummary,
                           ),
                           const SizedBox(height: 4),
                           _PrMetricLine(
@@ -6670,6 +7271,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             onOpenAsDesk: widget.onOpenAsDesk,
                             onAiReview: widget.onAiReview,
                             onMerge: widget.onMerge,
+                            review: widget.review,
                           )
                         : const SizedBox.shrink(),
                   ),
@@ -6814,6 +7416,11 @@ class _PrHeader extends StatelessWidget {
   final RemoteForge forge;
 
   final Map<String, int> reviewerQueueDepth;
+
+  /// Turn signal from the desk PR's git-native review — renders the
+  /// one loud badge ("YOUR TURN") the accent-scarcity law allows.
+  final ReviewRowSummary? reviewSummary;
+
   const _PrHeader({
     required this.pr,
     required this.stateColor,
@@ -6824,6 +7431,7 @@ class _PrHeader extends StatelessWidget {
     required this.reviewerQueueDepth,
     this.isLocal = false,
     this.forge = RemoteForge.unknown,
+    this.reviewSummary,
   });
 
   @override
@@ -6964,6 +7572,31 @@ class _PrHeader extends StatelessWidget {
             ],
           ),
         ),
+        if (reviewSummary?.yourTurn ?? false)
+          Container(
+            margin: const EdgeInsets.only(left: 8, top: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: t.accentBright.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius,
+              ),
+              border: Border.all(
+                color: t.accentBright.withValues(alpha: 0.4),
+                width: 0.5,
+              ),
+            ),
+            child: Text(
+              context.t.review.yourTurn.toUpperCase(),
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 9,
+                fontFamily: AppFonts.mono,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
         if (isLocal)
           Container(
             margin: const EdgeInsets.only(left: 8, top: 1),
@@ -7834,6 +8467,135 @@ Future<void> _exportPrAsPatch(
   }
 }
 
+/// Two quiet chips swapping the desk PR's diff between the full
+/// base...head comparison and the "since your last look" lens (a
+/// tree-to-tree diff against the viewer's last-seen round pin).
+class _ReviewLensToggle extends StatelessWidget {
+  final ReviewPrHooks review;
+  const _ReviewLensToggle({required this.review});
+
+  Widget _chip(
+    AppTokens t, {
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: ReviewChip(
+          label: label,
+          color: selected ? t.accentBright : t.textMuted,
+          variant: selected
+              ? ReviewChipVariant.outline
+              : ReviewChipVariant.quiet,
+          weight: selected ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _chip(
+          t,
+          label: review.strings.fullDiff,
+          selected: !review.lensSinceLastLook && review.compare == null,
+          onTap: () => review.onSetLens?.call(false),
+        ),
+        if (review.lensAvailable) ...[
+          const SizedBox(width: 6),
+          _chip(
+            t,
+            label: review.strings.sinceLastLook,
+            selected: review.lensSinceLastLook,
+            onTap: () => review.onSetLens?.call(true),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Round snapshot comparison: collapsed, a quiet notation chip for the
+/// latest round pair; active, two compact round dropdowns. Language-
+/// neutral by construction (R-notation only). "Full diff" on the lens
+/// toggle stands the comparison down.
+class _ReviewRoundCompare extends StatelessWidget {
+  final ReviewPrHooks review;
+  const _ReviewRoundCompare({required this.review});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final rounds = review.rounds;
+    final cmp = review.compare;
+    if (rounds.length < 2) return const SizedBox.shrink();
+    if (cmp == null) {
+      final a = rounds[rounds.length - 2];
+      final b = rounds.last;
+      final label =
+          '${review.strings.roundChip(a)}..${review.strings.roundChip(b)}';
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => review.onSetCompare?.call((a, b)),
+          child: ReviewChip(
+            label: label,
+            color: t.textMuted,
+            variant: ReviewChipVariant.quiet,
+          ),
+        ),
+      );
+    }
+    Widget picker(int value, void Function(int) apply) => SizedBox(
+          width: 62,
+          child: AppDropdownField<int>(
+            value: value,
+            height: 22,
+            fontSize: 10,
+            items: [
+              for (final n in rounds)
+                DropdownMenuItem(
+                  value: n,
+                  child: Text(review.strings.roundChip(n)),
+                ),
+            ],
+            onChanged: (v) {
+              if (v != null) apply(v);
+            },
+          ),
+        );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        picker(cmp.$1, (v) => review.onSetCompare?.call((v, cmp.$2))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            '..',
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              height: 1,
+              fontFamily: AppFonts.mono,
+              fontFamilyFallback: AppFonts.monoFallback,
+            ),
+          ),
+        ),
+        picker(cmp.$2, (v) => review.onSetCompare?.call((cmp.$1, v))),
+      ],
+    );
+  }
+}
+
 class _PrExpanded extends StatelessWidget {
   final PullRequestSummary pr;
   final String viewerLogin;
@@ -7888,6 +8650,12 @@ class _PrExpanded extends StatelessWidget {
   final VoidCallback? onAiReview;
   final void Function(String method, bool deleteBranch) onMerge;
 
+  /// Git-native review wiring (desk PRs with loaded review data only).
+  /// Non-null swaps the REVIEW section from the legacy one-shot form
+  /// to the threaded pane, arms the diff's gutter overlay, and mounts
+  /// the opener composer under the diff.
+  final ReviewPrHooks? review;
+
   const _PrExpanded({
     required this.pr,
     required this.viewerLogin,
@@ -7918,6 +8686,7 @@ class _PrExpanded extends StatelessWidget {
     required this.onMerge,
     this.onOpenAsDesk,
     this.onAiReview,
+    this.review,
   });
 
   /// True when at least one geometric orbital partner exists for this
@@ -7955,6 +8724,7 @@ class _PrExpanded extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final lensFiles = review?.lens?.files;
     return Padding(
       padding: const EdgeInsets.only(top: 14),
       child: Column(
@@ -8003,8 +8773,13 @@ class _PrExpanded extends StatelessWidget {
           // by power users clicking the header). When wrapped, the
           // file pills below render as a wrap layout; when scrolled
           // (default), they're a horizontal strip.
+          // A lens re-scopes what "the files" means for navigation:
+          // the pills become the changed-since set so the reviewer walks
+          // exactly the delta. Everything DERIVED from the PR (conflict
+          // paths, collisions, shape) still reads the canonical detail —
+          // those are computed page-side and never see a lens.
           _FilesSectionHeader(
-            files: detail?.files ?? const [],
+            files: lensFiles ?? detail?.files ?? const [],
             matrix: couplingMatrix,
             isWrapped: filePillsWrap,
             onToggleWrap: onToggleFilePillsWrap,
@@ -8025,15 +8800,17 @@ class _PrExpanded extends StatelessWidget {
               context.t.branches.noDetailAvailable,
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
-          else if (detail!.files.isEmpty)
+          else if ((lensFiles ?? detail!.files).isEmpty)
             Text(
-              context.t.branches.noFilesReported,
+              lensFiles != null
+                  ? context.t.review.lensEmpty
+                  : context.t.branches.noFilesReported,
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
           else
             _FilePillStrip(
-              files: detail!.files,
-              activePath: activeFilePath ?? detail!.files.first.path,
+              files: lensFiles ?? detail!.files,
+              activePath: activeFilePath ?? (lensFiles ?? detail!.files).first.path,
               clusterByPath: _computeClusters(detail!.files, couplingMatrix),
               heatByPath: fileSignals?.heatByPath ?? const {},
               ghostPaths: _resonanceForecast(
@@ -8070,7 +8847,10 @@ class _PrExpanded extends StatelessWidget {
               onSelect: onSelectFile,
               wrapped: filePillsWrap,
             ),
-          if (detail != null && detail!.files.isNotEmpty) ...[
+          // Gated on the EFFECTIVE list: a PR whose net diff is empty
+          // (changed in one round, reverted in the next) still has a
+          // lens with files in it, and its pills must lead somewhere.
+          if (detail != null && (lensFiles ?? detail!.files).isNotEmpty) ...[
             const SizedBox(height: 8),
             // Pull the active file's cluster + stats from what we
             // already computed for the file pills so the diff header's
@@ -8078,7 +8858,9 @@ class _PrExpanded extends StatelessWidget {
             // when no pill is selected yet.
             Builder(
               builder: (ctx) {
-                final activePath = activeFilePath ?? detail!.files.first.path;
+                final files = lensFiles ?? detail!.files;
+                final activePath = activeFilePath ?? files.first.path;
+                final lens = review?.lens;
                 // Hand the active file's pre-sliced raw diff straight to
                 // DiffShell — the canonical review surface — so PR
                 // reviewers get the same affordances the Changes and
@@ -8108,6 +8890,53 @@ class _PrExpanded extends StatelessWidget {
                 // for exactly the machine-scale case. Show the loading
                 // state instead; the setState that installs the doc
                 // repaints this builder.
+                // The lens the chip already claims is still being cut:
+                // showing the previous comparison here would caption one
+                // diff with another's name for as long as the fetch takes.
+                if (review?.lensLoading ?? false) {
+                  return SizedBox(
+                    height: 60,
+                    child: Center(
+                      child: Text(
+                        context.t.branches.readingFiles,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                // A lens patch is materialized and bounded by
+                // construction (refused above the spill threshold), so it
+                // needs none of the spool/loading choreography below.
+                if (lens != null) {
+                  return SizedBox(
+                    height: 520,
+                    child: DiffShell(
+                      filePath: activePath,
+                      tokens: t,
+                      diffContent: lens.diffFor(activePath),
+                      repositoryPath: repo,
+                      showFileHeader: true,
+                      enableStaging: false,
+                      // A lens's LEFT column is another snapshot, not the
+                      // PR's merge base where old-side anchors live — so
+                      // deletion rows carry neither markers nor an invite
+                      // here rather than pointing at unrelated code.
+                      lineMarks: review!.diffShowsHead
+                          ? review!.marksFor(activePath,
+                              includeOldSide: false)
+                          : const [],
+                      gutterNewSideOnly: true,
+                      onGutterLineTap: review!.diffShowsHead
+                          ? (oldSide, line) =>
+                              review!.onGutterTap(activePath, oldSide, line)
+                          : null,
+                    ),
+                  );
+                }
                 if (detail!.diffSpool != null && spooled == null) {
                   return SizedBox(
                     height: 60,
@@ -8135,15 +8964,73 @@ class _PrExpanded extends StatelessWidget {
                     repositoryPath: repo,
                     showFileHeader: true,
                     enableStaging: false,
+                    lineMarks: review == null || !review!.diffShowsHead
+                        ? const []
+                        : review!.marksFor(activePath),
+                    onGutterLineTap: review == null || !review!.diffShowsHead
+                        ? null
+                        : (oldSide, line) =>
+                              review!.onGutterTap(activePath, oldSide, line),
                   ),
                 );
               },
             ),
+            // Opener composer — mounts directly under the diff the tap
+            // came from, labelled with its anchor position. Saving is a
+            // draft save; the batch bar in the pane below publishes.
+            if (review?.composeAt != null) ...[
+              const SizedBox(height: 8),
+              ReviewComposer(
+                strings: review!.strings,
+                contextLabel:
+                    '${review!.composeAt!.$1}:${review!.composeAt!.$3}',
+                onSave: review!.onSaveOpener,
+                onCancel: review!.onCancelCompose,
+              ),
+            ],
           ],
           const SizedBox(height: 16),
-          const _SectionLabel('REVIEW'),
-          const SizedBox(height: 6),
-          _ReviewForm(onSubmit: onSubmitReview),
+          if (review != null) ...[
+            Row(
+              children: [
+                const _SectionLabel('REVIEW'),
+                const Spacer(),
+                if (review!.rounds.length >= 2) ...[
+                  _ReviewRoundCompare(review: review!),
+                  const SizedBox(width: 6),
+                ],
+                // The toggle is also the way BACK to the full diff, so
+                // an active compare keeps it visible even without a
+                // last-look pointer.
+                if (review!.lensAvailable || review!.compare != null)
+                  _ReviewLensToggle(review: review!),
+                if (review!.onCaughtUp != null) ...[
+                  const SizedBox(width: 6),
+                  ReviewVerbPill(
+                    label: review!.strings.caughtUp,
+                    onTap: review!.onCaughtUp!,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 6),
+            ReviewPane(
+              bundle: review!.data.bundle,
+              strings: review!.strings,
+              draftCount: review!.data.draftCount,
+              onSaveReply: review!.onSaveReply,
+              onResolve: review!.onResolve,
+              onReopen: review!.onReopen,
+              onDiscardDraft: review!.onDiscardDraft,
+              onPublish: review!.onPublish,
+              onDiscardDrafts: review!.onDiscardDrafts,
+              onSelectFile: review!.onSelectFile,
+            ),
+          ] else ...[
+            const _SectionLabel('REVIEW'),
+            const SizedBox(height: 6),
+            _ReviewForm(onSubmit: onSubmitReview),
+          ],
           const SizedBox(height: 16),
           if (checks != null && checks!.isNotEmpty) ...[
             const _SectionLabel('CHECKS'),

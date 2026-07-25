@@ -10,6 +10,15 @@
 // module materialises that into the same PullRequestDetail shape the
 // existing renderer consumes for remote PRs, so the diff view, file
 // pills, magnetic field, etc. all light up identically for local PRs.
+//
+// It also owns the numstat→[PrFile] parse for ANY revision spec, not
+// just a desk PR's (see [parseNumstatZ]) — review lenses and
+// since-last-look counts walk records through it too. That parser lives
+// here rather than beside `getRangeNumstatZ` in git.dart because it
+// yields [PrFile]: git.dart is the exec layer and has no business
+// knowing remote-domain types, and splitting the walk into a neutral
+// record hop plus a mapping hop would buy nothing but a second place to
+// get rename triples wrong.
 
 import 'dart:async';
 
@@ -91,7 +100,7 @@ Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
       }
     }
 
-    final files = _parseNumstatZ(numstatRes.data ?? '');
+    final files = parseNumstatZ(numstatRes.data ?? '');
 
     if (!includeDiff) {
       return GitResult.ok(pr.toDetail(files: files, diff: ''));
@@ -143,6 +152,10 @@ Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
 }
 
 /// Parse `git diff --numstat -z --find-renames` output into [PrFile]s.
+/// THE numstat parser — every caller that needs a changed-file set for a
+/// spec (PR detail, review lenses, since-last-look counts) walks records
+/// through here rather than re-splitting the stream, so a path containing
+/// a TAB or a rename triple can never be miscounted twice differently.
 ///
 /// Records are separated implicitly by NUL boundaries rather than
 /// newlines. Each record begins with `adds \t dels \t`. What follows the
@@ -158,7 +171,7 @@ Future<GitResult<PullRequestDetail>> fetchLocalDeskPrDetail({
 /// so the new path is exactly what makes the file pill and its diff
 /// section line up. Binary files report `-`/`-` and become a 0/0 entry
 /// with the path preserved so callers can still name them.
-List<PrFile> _parseNumstatZ(String stdout) {
+List<PrFile> parseNumstatZ(String stdout) {
   final files = <PrFile>[];
   final tokens = stdout.split('\u0000');
   var i = 0;

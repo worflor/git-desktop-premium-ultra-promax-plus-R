@@ -24,6 +24,7 @@
 import 'dart:io';
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/law_corpus.dart';
@@ -399,6 +400,61 @@ void main() {
     );
   });
 
+  test('L16: async review-cache installs are epoch-guarded', () {
+    // The review caches are keyed by deskId, and deskIds are small
+    // PER-REPO sequential counters — repo A's desk 1 and repo B's desk 1
+    // are different reviews under the same key. So a load that resolves
+    // AFTER a repo switch must not install: it would render one repo's
+    // review conversation inside another's pane. `mounted` cannot catch
+    // it (same widget, still mounted), so currency is explicit:
+    // `_reviewCurrent(epoch)`, bumped wherever the caches are dropped.
+    //
+    // Found by the manifold review, and this is what keeps it found: a
+    // NEW async path that installs into one of these maps without the
+    // guard fails here rather than shipping a cross-repo leak.
+    //
+    // Scope note, so nobody over-trusts it: it flags INSTALLS (an
+    // assignment landing data) that sit textually after the method's
+    // first `await`. Clears and removes are excluded — dropping data
+    // from a cache the wrong repo already emptied is harmless — and a
+    // write hidden behind a helper call is invisible to it.
+    const caches = {
+      '_reviewData',
+      '_reviewLensDiffs',
+      '_reviewRowSummaries',
+      '_reviewComposeAt',
+    };
+    final file = corpus.files.firstWhere(
+      (f) => f.path == 'lib/features/branches/branches_page.dart',
+    );
+    final offenders = <String>[];
+    for (final decl in file.unit.declarations.whereType<ClassDeclaration>()) {
+      // Same accessor L13 keeps: analyzer 10 deprecates .members toward a
+      // ClassBody API that does not expose the member list yet.
+      // ignore: deprecated_member_use
+      for (final m in decl.members.whereType<MethodDeclaration>()) {
+        final body = m.body;
+        if (body is! BlockFunctionBody) continue;
+        final awaits = _AwaitOffsets()..visitBlock(body.block);
+        if (awaits.first == null) continue;
+        final installs = _CacheInstalls(caches)..visitBlock(body.block);
+        final late = installs.offsets.where((o) => o > awaits.first!);
+        if (late.isEmpty) continue;
+        final src = body.toSource();
+        if (src.contains('_reviewCurrent(')) continue;
+        offenders.add('${m.name.lexeme} (${late.length} install(s))');
+      }
+    }
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Capture `final epoch = _reviewEpoch;` before the await and '
+          'return unless `_reviewCurrent(epoch)` — otherwise a stale '
+          "repo's review lands in the open repo's pane: $offenders",
+    );
+  });
+
   test('L12: the zero oid is spelled once', () {
     // The 40-zero CAS sentinel lives as Oid.zero; a re-spelled literal is
     // one typo away from a 39-zero string that git rejects at runtime.
@@ -723,4 +779,40 @@ String _setLiteral(String name, Set<String> s) {
   }
   b.write('};');
   return b.toString();
+}
+
+/// Offset of the first `await` in a body — the line past which a result
+/// belongs to a different moment than the call that started it.
+class _AwaitOffsets extends RecursiveAstVisitor<void> {
+  int? first;
+
+  @override
+  void visitAwaitExpression(AwaitExpression node) {
+    final o = node.offset;
+    if (first == null || o < first!) first = o;
+    super.visitAwaitExpression(node);
+  }
+}
+
+/// Assignments that INSTALL into one of the named caches — `m[k] = v` or
+/// `m = v`. Reads, clears and removes are deliberately not installs.
+class _CacheInstalls extends RecursiveAstVisitor<void> {
+  _CacheInstalls(this.names);
+
+  final Set<String> names;
+  final List<int> offsets = [];
+
+  @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    final lhs = node.leftHandSide;
+    String? target;
+    if (lhs is IndexExpression) {
+      final t = lhs.target;
+      if (t is SimpleIdentifier) target = t.name;
+    } else if (lhs is SimpleIdentifier) {
+      target = lhs.name;
+    }
+    if (target != null && names.contains(target)) offsets.add(node.offset);
+    super.visitAssignmentExpression(node);
+  }
 }

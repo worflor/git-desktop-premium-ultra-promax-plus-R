@@ -22,6 +22,8 @@ import '../backend/desk_pr_store.dart';
 import '../backend/git.dart' as git;
 import '../backend/manifold_refs.dart';
 import '../backend/remote_pr_provider.dart' show detectPrProvider;
+import '../backend/review_records.dart';
+import '../backend/review_store.dart';
 import 'app_identity.dart';
 import 'repository_state.dart';
 
@@ -117,7 +119,11 @@ class DeskPrState extends ChangeNotifier {
     return null;
   }
 
-  ManifoldRefs _refsFor(String repoPath) {
+  /// The one place Manifold ref plumbing gets its identity — shared
+  /// with the review pane so desk-PR writes and review writes can
+  /// never diverge on author. [repoPath] should be the MAIN repo path
+  /// (see [_mainRepoOf]); [loadedForRepo] is that path after a load.
+  ManifoldRefs refsFor(String repoPath) {
     final id = _identity.identity;
     final author = id.shortName.isEmpty ? 'manifold' : id.shortName;
     return ManifoldRefs(
@@ -127,6 +133,12 @@ class DeskPrState extends ChangeNotifier {
     );
   }
 
+  /// The identity display name review records carry for this viewer.
+  String get viewerDisplay {
+    final short = _identity.identity.shortName;
+    return short.isEmpty ? 'manifold' : short;
+  }
+
   Future<void> refreshFor(String repoPath) async {
     final id = ++_requestId;
     _loading = true;
@@ -134,7 +146,7 @@ class DeskPrState extends ChangeNotifier {
     notifyListeners();
     try {
       final main = await _mainRepoOf(repoPath) ?? repoPath;
-      final store = DeskPrStore(_refsFor(main));
+      final store = DeskPrStore(refsFor(main));
       final r = await store.listAll();
       if (id != _requestId) return;
       if (r.ok) {
@@ -174,7 +186,7 @@ class DeskPrState extends ChangeNotifier {
       return "Couldn't determine the repository's default branch — "
           'pass a base ref explicitly.';
     }
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.create(
       branch: branch,
       title: (title?.trim().isNotEmpty ?? false) ? title!.trim() : branch,
@@ -194,7 +206,7 @@ class DeskPrState extends ChangeNotifier {
     required String body,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.addComment(
       branch: branch,
       author: _identity.identity.shortName,
@@ -212,7 +224,7 @@ class DeskPrState extends ChangeNotifier {
     required String body,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.addReview(
       branch: branch,
       author: _identity.identity.shortName,
@@ -230,7 +242,7 @@ class DeskPrState extends ChangeNotifier {
     required String state,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.setState(branch: branch, state: state);
     if (!r.ok) return r.error;
     await refreshFor(main);
@@ -246,7 +258,7 @@ class DeskPrState extends ChangeNotifier {
     List<String>? labels,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.editMeta(
       branch: branch,
       title: title,
@@ -271,7 +283,7 @@ class DeskPrState extends ChangeNotifier {
     required int changedFiles,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.refreshDiffStats(
       branch: branch,
       additions: additions,
@@ -320,7 +332,7 @@ class DeskPrState extends ChangeNotifier {
     required String branch,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.abandon(branch);
     if (!r.ok) return r.error;
     await refreshFor(main);
@@ -337,7 +349,7 @@ class DeskPrState extends ChangeNotifier {
     required bool isRemote,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final r = await store.toggleLinkedIssue(
       branch: branch,
       issueId: issueId,
@@ -359,7 +371,7 @@ class DeskPrState extends ChangeNotifier {
     }
     try {
       final main = await _mainRepoOf(repoPath) ?? repoPath;
-      final store = DeskPrStore(_refsFor(main));
+      final store = DeskPrStore(refsFor(main));
       final current = await store.read(branch);
       if (!current.ok || current.data == null) {
         return current.error ?? 'desk PR not found for $branch';
@@ -442,15 +454,65 @@ class DeskPrState extends ChangeNotifier {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
     if (!_syncing.add(main)) return 'sync already in progress';
     try {
-      final store = DeskPrStore(_refsFor(main));
+      final store = DeskPrStore(refsFor(main));
       final r = await store.syncWithRemote(
         remote: remote == null ? null : MetadataRemote(remote),
       );
       if (!r.ok) return r.error;
       await refreshFor(main);
+      await _cutReviewRoundsAfterSync(main);
       return null;
     } finally {
       _syncing.remove(main);
+    }
+  }
+
+  /// Post-sync round hygiene: for every OPEN desk PR that already HAS a
+  /// review, cut a new round if its head moved — a peer's push moves
+  /// heads exactly at sync time, and round pins are what keep their
+  /// comments honest about which code they saw. Deliberately gated on
+  /// the review existing: sync must never mint review refs for desks
+  /// nobody is reviewing.
+  ///
+  /// ONE ref listing decides who participates, so the cost scales with
+  /// the number of REVIEWS, not the number of desks — a repo full of
+  /// desks and no reviews leaves sync untouched. The survivors are cut
+  /// sequentially on purpose: these are CAS writes against the same
+  /// namespace, and racing them would just spend retries.
+  ///
+  /// Best-effort by design, and safe to be: this is an EAGER convenience
+  /// so a peer's new round shows up without anyone opening the pane —
+  /// [ReviewPaneController.load] cuts the same round on the next look.
+  /// So a failure here costs a little latency, never a lost round, and
+  /// must not turn a successful sync into a reported failure.
+  Future<void> _cutReviewRoundsAfterSync(String main) async {
+    final store = ReviewStore(refsFor(main));
+    final reviewed = await store.listReviewedDeskIds();
+    if (!reviewed.ok || reviewed.data!.isEmpty) return;
+    final open = {
+      for (final pr in _byBranch.values)
+        if (pr.state == 'OPEN' && reviewed.data!.contains(pr.deskId))
+          pr.deskId: pr.headRef,
+    };
+    for (final entry in open.entries) {
+      try {
+        // Best-effort, but never SILENT: an `ok: false` used to vanish
+        // here, so a review whose rounds stopped being cut looked
+        // identical to one with nothing to cut. The next pane load still
+        // recovers it; the log is what makes a persistent failure
+        // findable instead of invisible.
+        final cut = await store.cutRoundIfMoved(
+          deskId: entry.key,
+          branch: entry.value,
+          by: ReviewIdentity(viewerDisplay),
+        );
+        if (!cut.ok) {
+          debugPrint(
+              'review round cut #${entry.key}: ${cut.error ?? "failed"}');
+        }
+      } catch (e) {
+        debugPrint('review round cut #${entry.key}: $e');
+      }
     }
   }
 
@@ -469,7 +531,7 @@ class DeskPrState extends ChangeNotifier {
 
   Future<void> _reconcileRemoteStateImpl(String repoPath) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
-    final store = DeskPrStore(_refsFor(main));
+    final store = DeskPrStore(refsFor(main));
     final promoted = _byBranch.values
         .where((pr) => pr.remoteNumber != null && pr.state == 'OPEN')
         .toList();
