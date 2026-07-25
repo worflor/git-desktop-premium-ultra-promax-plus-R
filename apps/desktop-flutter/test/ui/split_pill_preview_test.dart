@@ -12,13 +12,14 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/features/changes/verdict_badge.dart';
 import 'package:git_desktop/ui/split_pill_button.dart';
 import 'package:git_desktop/ui/tokens.dart';
 import 'package:provider/provider.dart';
+
+import '../support/widget_harness.dart';
 
 Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       create: (_) => PreferencesState(),
@@ -32,12 +33,6 @@ Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       ),
     );
 
-Future<void> _loadFont() async {
-  final bytes = File('assets/fonts/DMSans-Variable.ttf').readAsBytesSync();
-  final loader = FontLoader('DMSans')
-    ..addFont(Future.value(ByteData.view(bytes.buffer)));
-  await loader.load();
-}
 
 Future<void> _capture(WidgetTester tester, Key key, String path) async {
   await tester.runAsync(() async {
@@ -54,7 +49,7 @@ Future<void> _capture(WidgetTester tester, Key key, String path) async {
 }
 
 void main() {
-  setUpAll(_loadFont);
+  setUpAll(loadTestFonts);
 
   // Every guardrail shape at a spread of fill levels, so each shape's geometry
   // AND its score fill can actually be inspected — not just one lucky value.

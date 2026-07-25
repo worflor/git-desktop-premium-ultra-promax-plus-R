@@ -16,7 +16,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/features/review/review_adapter.dart';
@@ -27,6 +26,7 @@ import 'package:git_desktop/ui/tokens.dart';
 import 'package:provider/provider.dart';
 
 import '../../support/review_scenario.dart';
+import '../../support/widget_harness.dart';
 
 Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       create: (_) => PreferencesState(),
@@ -40,22 +40,9 @@ Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       ),
     );
 
-Future<void> _loadFonts() async {
-  Future<void> load(String family, String file) async {
-    final bytes = File('assets/fonts/$file').readAsBytesSync();
-    final loader = FontLoader(family)
-      ..addFont(Future.value(ByteData.view(bytes.buffer)));
-    await loader.load();
-  }
-
-  await load('DMSans', 'DMSans-Variable.ttf');
-  await load('DM Sans', 'DMSans-Variable.ttf');
-  await load('JetBrainsMono', 'JetBrainsMono-Variable.ttf');
-  await load('JetBrains Mono', 'JetBrainsMono-Variable.ttf');
-}
 
 void main() {
-  setUpAll(_loadFonts);
+  setUpAll(loadTestFonts);
 
   testWidgets('real-pipeline pane — reviewer and author views',
       (tester) async {

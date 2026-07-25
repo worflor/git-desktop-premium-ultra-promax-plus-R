@@ -117,6 +117,61 @@ Future<void> loadTestFonts() async {
       'glyphs and any measurement taken against it would be fiction.',
     );
   }
+  await _loadMaterialIcons();
+}
+
+/// Loads `MaterialIcons` so `Icon(...)` renders its glyph rather than the
+/// notdef box.
+///
+/// Same doctrine as the text families above, one step further: icons were
+/// silently tofu in EVERY captured preview in this repo, which is worse
+/// than mismeasured text because a box still looks deliberate. A reviewed
+/// tick rendered as an empty square read as an unchecked checkbox — the
+/// preview showed a control the app does not have.
+///
+/// This font ships with the SDK rather than the repo, so it is located
+/// under FLUTTER_ROOT, falling back to deriving the root from the test
+/// runner's own path (always `<root>/bin/cache/artifacts/engine/...`).
+/// Not finding it is still an error: silently skipping restores exactly
+/// the fiction this loader exists to prevent.
+Future<void> _loadMaterialIcons() async {
+  final probes = <String>[];
+  final root = Platform.environment['FLUTTER_ROOT'];
+  if (root != null && root.isNotEmpty) probes.add(root);
+  // <root>/bin/cache/artifacts/engine/<platform>/flutter_tester
+  final exe = File(Platform.resolvedExecutable).absolute.path;
+  final marker = '${Platform.pathSeparator}bin${Platform.pathSeparator}cache'
+      '${Platform.pathSeparator}artifacts${Platform.pathSeparator}';
+  final cut = exe.indexOf(marker);
+  if (cut > 0) probes.add(exe.substring(0, cut));
+
+  for (final base in probes) {
+    final dir = Directory(
+      '$base${Platform.pathSeparator}bin${Platform.pathSeparator}cache'
+      '${Platform.pathSeparator}artifacts${Platform.pathSeparator}'
+      'material_fonts',
+    );
+    if (!dir.existsSync()) continue;
+    // Installs disagree on casing (MaterialIcons-Regular.otf on Linux,
+    // materialicons-regular.otf here), so match on shape, not spelling.
+    for (final f in dir.listSync().whereType<File>()) {
+      final name = f.uri.pathSegments.last.toLowerCase();
+      if (!name.startsWith('materialicons') || !name.endsWith('.otf')) {
+        continue;
+      }
+      final bytes = f.readAsBytesSync();
+      await (FontLoader('MaterialIcons')
+            ..addFont(Future.value(ByteData.view(bytes.buffer))))
+          .load();
+      return;
+    }
+  }
+  throw StateError(
+    'widget_harness: MaterialIcons not found under '
+    '${probes.isEmpty ? '<no FLUTTER_ROOT and unrecognised runner path>' : probes.join(', ')}'
+    '. Every Icon() would render as a notdef box, and a captured preview '
+    'showing boxes where the app shows glyphs is not evidence.',
+  );
 }
 
 /// Installs an in-memory mock for the `shared_preferences` plugin channel.

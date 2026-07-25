@@ -418,6 +418,11 @@ class _BranchesPageState extends State<BranchesPage> {
   /// chip), and a sweep is now one ref listing when nothing is reviewed.
   Object? _reviewSummariesFor;
 
+  /// Files the viewer has ticked, per desk, valid at the content shown.
+  /// Recomputed on every reload because a tick is only true while the
+  /// bytes behind it are.
+  final Map<int, Set<String>> _reviewedFiles = {};
+
   /// Open opener-composer target per deskId: (path, oldSide, line).
   final Map<int, (String, bool, int)> _reviewComposeAt = {};
 
@@ -2716,6 +2721,7 @@ class _BranchesPageState extends State<BranchesPage> {
     _reviewCompare.clear();
     _reviewLensDiffs.clear();
     _reviewLensWanted.clear();
+    _reviewedFiles.clear();
     _reviewMarksMemo.clear();
     _reviewRowSummaries = {};
     _reviewSummariesFor = null;
@@ -2900,7 +2906,7 @@ class _BranchesPageState extends State<BranchesPage> {
       final r = await ctrl.load();
       if (!_reviewCurrent(epoch)) return;
       if (r.ok) setState(() => _reviewData[id] = r.data!);
-      await _refreshReviewLens(id);
+      await _afterReviewLoad(id, epoch);
     } finally {
       // Only release what we still own: after a switch the set was
       // already cleared and this id may belong to a live newer load.
@@ -2915,7 +2921,40 @@ class _BranchesPageState extends State<BranchesPage> {
     final r = await ctrl.load();
     if (!_reviewCurrent(epoch)) return;
     if (r.ok) setState(() => _reviewData[deskId] = r.data!);
+    await _afterReviewLoad(deskId, epoch);
+  }
+
+  /// Everything derived from a freshly loaded review. Both load paths
+  /// (first open, and every verb's reload) share it: when they each
+  /// carried their own tail, first open silently skipped the reviewed
+  /// ticks and every file read as unread until you happened to press
+  /// something else.
+  Future<void> _afterReviewLoad(int deskId, int epoch) async {
+    await _refreshReviewTicks(deskId, epoch);
+    if (!_reviewCurrent(epoch)) return;
     await _refreshReviewLens(deskId);
+  }
+
+  /// Re-validate the viewer's reviewed marks against the content now on
+  /// screen. A tick is a claim about bytes, so it is recomputed rather
+  /// than remembered — that is what makes the author's next edit clear
+  /// it without anyone clearing it.
+  Future<void> _refreshReviewTicks(int deskId, int epoch) async {
+    final ctrl = _reviewCtrls[deskId];
+    final data = _reviewData[deskId];
+    if (ctrl == null || data == null) return;
+    final paths = {
+      for (final g in data.bundle.groups) g.filePath,
+    };
+    if (paths.isEmpty) {
+      if (_reviewCurrent(epoch) && _reviewedFiles.remove(deskId) != null) {
+        setState(() {});
+      }
+      return;
+    }
+    final ticked = await ctrl.reviewedNow(paths);
+    if (!_reviewCurrent(epoch)) return;
+    setState(() => _reviewedFiles[deskId] = ticked);
   }
 
   /// A lens is derived from review state, so it has to move when that
@@ -3057,6 +3096,45 @@ class _BranchesPageState extends State<BranchesPage> {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
     await _reloadReview(deskId);
+  }
+
+  Future<void> _setReviewFileReviewed(
+    int deskId,
+    String path,
+    bool reviewed,
+  ) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.setFileReviewed(path, reviewed: reviewed);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+  }
+
+  Future<void> _handReviewTo(int deskId, String display) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.handTo(display);
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+    unawaited(_loadReviewRowSummaries());
+  }
+
+  Future<void> _stepOutOfReviewAttention(int deskId) async {
+    final ctrl = _reviewCtrls[deskId];
+    if (ctrl == null) return;
+    final err = await ctrl.stepOutOfAttention();
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
+    await _reloadReview(deskId);
+    unawaited(_loadReviewRowSummaries());
   }
 
   Future<void> _reopenReviewThread(int deskId, String threadId) async {
@@ -3245,6 +3323,7 @@ class _BranchesPageState extends State<BranchesPage> {
     final id = pr.number;
     final data = _reviewData[id];
     if (data == null) return null;
+    final ctrl = _reviewCtrls[id];
     final lensReady = data.latestRound > 0 &&
         data.lastSeenCommit != null &&
         data.lastSeenCommit != data.latestRoundCommit;
@@ -3271,6 +3350,14 @@ class _BranchesPageState extends State<BranchesPage> {
       onReopen: (threadId) => _reopenReviewThread(id, threadId),
       onDiscardDraft: (threadId, body, at) =>
           _discardOneReviewDraft(id, threadId, body, at),
+      reviewedFiles: _reviewedFiles[id] ?? const {},
+      onToggleReviewed: (path, reviewed) =>
+          _setReviewFileReviewed(id, path, reviewed),
+      onStepOut: data.bundle.header.turn == ReviewTurn.yours
+          ? () => _stepOutOfReviewAttention(id)
+          : null,
+      handOffTo: ctrl?.handOffCandidates ?? const [],
+      onHandTo: (display) => _handReviewTo(id, display),
       onPublish: (verdict) => _publishReview(id, verdict),
       onDiscardDrafts: () => _discardReviewDrafts(id),
       onSelectFile: (path) =>
@@ -8992,25 +9079,50 @@ class _PrExpanded extends StatelessWidget {
           const SizedBox(height: 16),
           if (review != null) ...[
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const _SectionLabel('REVIEW'),
-                const Spacer(),
-                if (review!.rounds.length >= 2) ...[
-                  _ReviewRoundCompare(review: review!),
-                  const SizedBox(width: 6),
-                ],
-                // The toggle is also the way BACK to the full diff, so
-                // an active compare keeps it visible even without a
-                // last-look pointer.
-                if (review!.lensAvailable || review!.compare != null)
-                  _ReviewLensToggle(review: review!),
-                if (review!.onCaughtUp != null) ...[
-                  const SizedBox(width: 6),
-                  ReviewVerbPill(
-                    label: review!.strings.caughtUp,
-                    onTap: review!.onCaughtUp!,
+                const SizedBox(width: AppSpacing.sm),
+                // Wrap, not Row-with-Spacer: the hand-off adds one
+                // control per participant, and a Row would overflow the
+                // moment a third voice joined the conversation.
+                Expanded(
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      if (review!.rounds.length >= 2)
+                        _ReviewRoundCompare(review: review!),
+                      // The toggle is also the way BACK to the full
+                      // diff, so an active compare keeps it visible
+                      // even without a last-look pointer.
+                      if (review!.lensAvailable || review!.compare != null)
+                        _ReviewLensToggle(review: review!),
+                      if (review!.onCaughtUp != null)
+                        ReviewVerbPill(
+                          label: review!.strings.caughtUp,
+                          onTap: review!.onCaughtUp!,
+                        ),
+                      // The manual half of the attention set, both
+                      // directions: put it down, or pick someone up.
+                      // One quiet label carries the verb so the names
+                      // stay names — and so no locale has to inflect a
+                      // person's name into a sentence.
+                      if (review!.onStepOut != null)
+                        ReviewVerbPill(
+                          label: review!.strings.notBlocking,
+                          onTap: review!.onStepOut!,
+                        ),
+                      ReviewHandOff(
+                        label: review!.strings.handTo,
+                        to: review!.handOffTo,
+                        onHandTo: review!.onHandTo,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ],
             ),
             const SizedBox(height: 6),
@@ -9022,6 +9134,8 @@ class _PrExpanded extends StatelessWidget {
               onResolve: review!.onResolve,
               onReopen: review!.onReopen,
               onDiscardDraft: review!.onDiscardDraft,
+              reviewedFiles: review!.reviewedFiles,
+              onToggleReviewed: review!.onToggleReviewed,
               onPublish: review!.onPublish,
               onDiscardDrafts: review!.onDiscardDrafts,
               onSelectFile: review!.onSelectFile,

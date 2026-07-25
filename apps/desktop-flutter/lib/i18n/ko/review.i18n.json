@@ -39,5 +39,12 @@
   "reviewActionFailed": "리뷰 작업에 실패했습니다: {error}",
   "lensTooLarge": "이 비교는 너무 커서 여기에 표시할 수 없습니다 — 전체 diff를 유지합니다.",
   "lensEmpty": "이 스냅샷들 사이에 바뀐 것이 없습니다.",
-  "reopen": "다시 열기"
+  "reopen": "다시 열기",
+  "notBlocking": "내 대기 해제",
+  "markReviewed": "읽음",
+  "newComments": {
+    "one": "새 댓글 {n}개",
+    "other": "새 댓글 {n}개"
+  },
+  "handTo": "넘기기"
 }

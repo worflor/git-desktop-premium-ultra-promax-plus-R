@@ -43,6 +43,9 @@ class _SlangReviewStrings extends ReviewStrings {
           fullDiff: t.review.fullDiff,
           commentHint: t.review.commentHint,
           reopen: t.review.reopen,
+          notBlocking: t.review.notBlocking,
+          handTo: t.review.handTo,
+          markReviewed: t.review.markReviewed,
         );
 
   @override
@@ -67,4 +70,7 @@ class _SlangReviewStrings extends ReviewStrings {
 
   @override
   String draftCount(int n) => _t.review.draftCountFmt(n: n);
+
+  @override
+  String newComments(int n) => _t.review.newComments(n: n);
 }

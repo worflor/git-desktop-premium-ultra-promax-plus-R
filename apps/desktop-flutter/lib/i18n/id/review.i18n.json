@@ -39,5 +39,12 @@
   "reviewActionFailed": "Aksi review gagal: {error}",
   "lensTooLarge": "Perbandingan itu terlalu besar untuk ditampilkan di sini — tetap di diff lengkap.",
   "lensEmpty": "Tidak ada yang berubah di antara snapshot ini.",
-  "reopen": "buka lagi"
+  "reopen": "buka lagi",
+  "notBlocking": "jangan tunggu aku",
+  "markReviewed": "sudah direview",
+  "newComments": {
+    "one": "1 komentar baru",
+    "other": "{n} komentar baru"
+  },
+  "handTo": "serahkan ke"
 }

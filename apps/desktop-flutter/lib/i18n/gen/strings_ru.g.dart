@@ -2048,6 +2048,19 @@ class _Translations$review$ru extends Translations$review$en {
   String get lensEmpty => 'Между этими снимками ничего не изменилось.';
   @override
   String get reopen => 'переоткрыть';
+  @override
+  String get notBlocking => 'не ждите меня';
+  @override
+  String get markReviewed => 'прочитано';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ru'))(
+        n,
+        one: '1 новый комментарий',
+        other: '${n} новых комментариев',
+      );
+  @override
+  String get handTo => 'передать';
 }
 
 // Path: settings

@@ -1928,6 +1928,19 @@ class _Translations$review$ja extends Translations$review$en {
   String get lensEmpty => 'これらのスナップショットの間に変更はありません。';
   @override
   String get reopen => '再オープン';
+  @override
+  String get notBlocking => '自分待ちを解除';
+  @override
+  String get markReviewed => '確認済み';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ja'))(
+        n,
+        one: '新しいコメント ${n} 件',
+        other: '新しいコメント ${n} 件',
+      );
+  @override
+  String get handTo => '担当を渡す';
 }
 
 // Path: settings

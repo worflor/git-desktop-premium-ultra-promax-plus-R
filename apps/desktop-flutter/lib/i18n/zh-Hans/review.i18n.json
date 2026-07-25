@@ -39,5 +39,12 @@
   "reviewActionFailed": "审查操作失败：{error}",
   "lensTooLarge": "该比较过大，无法在此显示 — 继续显示完整差异。",
   "lensEmpty": "这两个快照之间没有任何改动。",
-  "reopen": "重新打开"
+  "reopen": "重新打开",
+  "notBlocking": "不用等我",
+  "markReviewed": "已查看",
+  "newComments": {
+    "one": "{n} 条新评论",
+    "other": "{n} 条新评论"
+  },
+  "handTo": "交给"
 }

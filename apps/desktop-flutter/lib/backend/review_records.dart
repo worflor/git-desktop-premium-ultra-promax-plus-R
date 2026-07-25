@@ -290,6 +290,10 @@ class ReviewState {
   /// keyed to CONTENT, so an edit auto-invalidates by comparison, not
   /// by event.
   final Map<String, Map<String, ReviewedFileBit>> reviewedFiles;
+
+  /// Who the change is blocked on, keyed by display name. Entries with
+  /// `inSet: false` are explicit removals and are kept, not pruned.
+  final Map<String, ReviewAttention> attention;
   final DateTime updatedAt;
   final Map<String, dynamic> extra;
 
@@ -300,6 +304,7 @@ class ReviewState {
     required this.threads,
     required this.verdicts,
     required this.reviewedFiles,
+    this.attention = const {},
     required this.updatedAt,
     this.extra = const {},
   });
@@ -311,6 +316,7 @@ class ReviewState {
         threads: const [],
         verdicts: const [],
         reviewedFiles: const {},
+        attention: const {},
         updatedAt: now,
       );
 
@@ -319,11 +325,22 @@ class ReviewState {
 
   int get unresolvedCount => threads.where((t) => t.unresolved).length;
 
+  /// The people currently blocking, in a stable order. Sorted because
+  /// this is rendered: map order is an implementation detail and the
+  /// same set must read identically on every clone.
+  List<String> get attentionOn => [
+        for (final e in attention.entries)
+          if (e.value.inSet) e.key,
+      ]..sort();
+
+  bool blockedOn(String display) => attention[display]?.inSet ?? false;
+
   ReviewState copyWith({
     List<ReviewRoundInfo>? rounds,
     List<ReviewThreadRecord>? threads,
     List<ReviewVerdict>? verdicts,
     Map<String, Map<String, ReviewedFileBit>>? reviewedFiles,
+    Map<String, ReviewAttention>? attention,
     DateTime? updatedAt,
   }) =>
       ReviewState(
@@ -333,6 +350,7 @@ class ReviewState {
         threads: threads ?? this.threads,
         verdicts: verdicts ?? this.verdicts,
         reviewedFiles: reviewedFiles ?? this.reviewedFiles,
+        attention: attention ?? this.attention,
         updatedAt: updatedAt ?? this.updatedAt,
         extra: extra,
       );
@@ -347,6 +365,8 @@ class ReviewState {
         'reviewedFiles': reviewedFiles.map((reviewer, files) => MapEntry(
             reviewer,
             files.map((path, bit) => MapEntry(path, bit.toJson())))),
+        'attention':
+            attention.map((who, a) => MapEntry(who, a.toJson())),
         'updatedAt': isoUtc(updatedAt),
       };
 
@@ -374,11 +394,17 @@ class ReviewState {
                         path,
                         ReviewedFileBit.fromJson(
                             (bit as Map).cast<String, dynamic>()))))),
+        attention: ((j['attention'] as Map?) ?? const {})
+            .cast<String, dynamic>()
+            .map((who, a) => MapEntry(
+                who,
+                ReviewAttention.fromJson(
+                    who, (a as Map).cast<String, dynamic>()))),
         updatedAt: DateTime.tryParse(j['updatedAt'] as String? ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
         extra: _extrasOf(j, const {
           'schemaVersion', 'deskId', 'rounds', 'threads', 'verdicts',
-          'reviewedFiles', 'updatedAt',
+          'reviewedFiles', 'attention', 'updatedAt',
         }),
       );
 
@@ -389,6 +415,53 @@ class ReviewState {
 }
 
 /// One per-file reviewed mark: which content the reviewer saw, when.
+/// One person's standing in the attention set — who the change is
+/// blocked on right now.
+///
+/// [inSet] false is a REMOVAL, carried explicitly rather than by
+/// dropping the key: a tombstone can win a merge, an absence cannot.
+/// That is what makes "I took myself out" survive a sync with a peer
+/// who still had me in.
+class ReviewAttention {
+  final String display;
+  final bool inSet;
+
+  /// When this standing was last set — the LWW field for merges.
+  final DateTime at;
+
+  /// Who set it. Self-removal and being handed the ball read
+  /// differently to a human, and the fold keeps the distinction.
+  final String by;
+
+  final Map<String, dynamic> extra;
+
+  const ReviewAttention({
+    required this.display,
+    required this.inSet,
+    required this.at,
+    required this.by,
+    this.extra = const {},
+  });
+
+  Map<String, dynamic> toJson() => {
+        ...extra,
+        'display': display,
+        'in': inSet,
+        'at': isoUtc(at),
+        'by': by,
+      };
+
+  factory ReviewAttention.fromJson(String display, Map<String, dynamic> j) =>
+      ReviewAttention(
+        display: display,
+        inSet: j['in'] as bool? ?? false,
+        at: DateTime.tryParse(j['at'] as String? ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+        by: j['by'] as String? ?? '',
+        extra: _extrasOf(j, const {'display', 'in', 'at', 'by'}),
+      );
+}
+
 class ReviewedFileBit {
   final String contentHash;
   final int round;
@@ -502,7 +575,45 @@ const RecordSchema kReviewStateSchema = RecordSchema(fields: {
   ),
   'verdicts': UnionList(keyOf: _verdictKey, compare: _byAtByVerdict),
   'reviewedFiles': PerKeyMap(PerKeyMap(LwwTs('at'))),
+  // Union with explicit removals, exactly as the dossier specifies: a
+  // person's standing is per-key LWW on `at`, and `in: false` is a
+  // tombstone that can WIN. Dropping the key on removal would make
+  // "alice took herself out" lose to any peer who still had her in,
+  // because absence carries no timestamp to compare.
+  'attention': PerKeyMap(LwwTs('at')),
 });
+
+// ─── Who is in this conversation ──────────────────────────────────────
+
+/// Everyone who has acted as a reviewer here — never the author.
+///
+/// Derived from the record, so every clone names the same set without
+/// coordinating: there is no reviewer ROSTER to fall out of sync, and
+/// nobody can be a reviewer without a verdict or a comment proving it.
+Set<String> reviewersOf(ReviewState s, String authorDisplay) {
+  final out = <String>{};
+  for (final v in s.verdicts) {
+    if (v.by.display != authorDisplay) out.add(v.by.display);
+  }
+  for (final t in s.threads) {
+    for (final c in t.comments) {
+      if (c.author.display != authorDisplay && c.kind == 'human') {
+        out.add(c.author.display);
+      }
+    }
+  }
+  return out;
+}
+
+/// Reviewers plus the author: everyone the review could be handed to.
+///
+/// Author first, then reviewers alphabetically. The order is fixed
+/// rather than by-appearance because this feeds a row of controls, and
+/// controls that reshuffle between reads are controls you misclick.
+List<String> participantsOf(ReviewState s, String authorDisplay) {
+  final reviewers = reviewersOf(s, authorDisplay).toList()..sort();
+  return [if (authorDisplay.isNotEmpty) authorDisplay, ...reviewers];
+}
 
 // ─── The turn fold ────────────────────────────────────────────────────
 
@@ -542,6 +653,29 @@ ReviewTurnState deriveTurn(
   required String authorDisplay,
   required String viewerDisplay,
 }) {
+  // The STORED attention set wins whenever it has been maintained.
+  //
+  // The fold below can only ever produce one answer for everybody, and
+  // it can never represent a person putting themselves in or taking
+  // themselves out — a decision no history of past events contains. The
+  // set holds a per-person answer and survives a hand-back, so once it
+  // exists it is the truth and the fold is merely how it got seeded.
+  //
+  // Absence is not emptiness: a doc written before attention existed,
+  // or one where everyone has been explicitly cleared, falls through to
+  // the fold rather than claiming the review waits on nobody.
+  final blocked = state.attentionOn;
+  if (blocked.isNotEmpty) {
+    final mine = blocked.contains(viewerDisplay);
+    return ReviewTurnState(
+      yourTurn: mine,
+      // Nothing to name when the ball is yours; otherwise name everyone
+      // holding it, whether the viewer is the author or a fellow
+      // reviewer — "waiting on carol" is the useful sentence in both
+      // seats.
+      waitingOn: mine ? '' : blocked.join(', '),
+    );
+  }
   final epoch0 = DateTime.fromMillisecondsSinceEpoch(0);
   String? lastActor;
   DateTime last = epoch0;

@@ -2352,6 +2352,23 @@ class Translations$review$en {
 
   /// en: 'reopen'
   String get reopen => 'reopen';
+
+  /// en: 'not blocking on me'
+  String get notBlocking => 'not blocking on me';
+
+  /// en: 'reviewed'
+  String get markReviewed => 'reviewed';
+
+  /// en: '(one) {1 new comment} (other) {{n} new comments}'
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('en'))(
+        n,
+        one: '1 new comment',
+        other: '${n} new comments',
+      );
+
+  /// en: 'hand to'
+  String get handTo => 'hand to';
 }
 
 // Path: settings

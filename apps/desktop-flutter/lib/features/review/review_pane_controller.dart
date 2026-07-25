@@ -37,6 +37,21 @@ import 'review_adapter.dart';
 /// `outdated` and its gutter goes read-only — degrade, not die.
 const int kReviewFileByteCap = 4 << 20;
 
+/// The content identity a reviewed-bit is ticked against.
+///
+/// Same FNV-1a and same line split the anchors use, so "this file's
+/// content" means exactly one thing across the feature — a second
+/// definition here would let a tick and an anchor disagree about
+/// whether the file moved.
+String fileContentHash(List<String> lines) {
+  var h = 0xcbf29ce484222325;
+  for (final line in lines) {
+    h ^= lineContentHash(line);
+    h = h * 0x100000001b3;
+  }
+  return hex64(h);
+}
+
 /// Canonical blob → lines split for anchor capture AND resolution.
 /// One splitter, used by every anchor writer in the app, so a line's
 /// content hash can never disagree with itself across the capture site
@@ -249,7 +264,11 @@ class ReviewPaneController {
       // pane — the review's history is still readable without a fresh
       // round, so a cut failure degrades to "no new round".
       final cut = await store.cutRoundIfMoved(
-          deskId: deskId, branch: headBranch, by: _viewer);
+        deskId: deskId,
+        branch: headBranch,
+        by: _viewer,
+        authorDisplay: authorDisplay,
+      );
       // Re-read ONLY when a round actually landed. The steady state (a
       // pane reloading after every verb, head unmoved) is by far the
       // common one, and it now costs one ref read instead of two.
@@ -306,9 +325,15 @@ class ReviewPaneController {
     final lastSeenN =
         await ReviewLastSeen.read(repoPath: repoPath, deskId: deskId);
     String? lastSeenCommit;
+    // The look MOMENT, not just the commit: when the round the viewer
+    // last saw was cut is the line between read and unread comments.
+    DateTime? lastLookAt;
     if (lastSeenN != null && state != null) {
       for (final r in state.rounds) {
-        if (r.n == lastSeenN) lastSeenCommit = r.commit;
+        if (r.n == lastSeenN) {
+          lastSeenCommit = r.commit;
+          lastLookAt = r.cutAt;
+        }
       }
     }
 
@@ -328,6 +353,7 @@ class ReviewPaneController {
       oldFiles: oldFiles,
       drafts: drafts,
       filesSinceLastLook: filesSince,
+      lastLookAt: lastLookAt,
     );
     data = ReviewPaneData(
       bundle: bundle,
@@ -431,7 +457,11 @@ class ReviewPaneController {
     final d = data;
     if (d != null && d.latestRound > 0) return GitResult.ok(d);
     final cut = await store.cutRoundIfMoved(
-        deskId: deskId, branch: headBranch, by: _viewer);
+      deskId: deskId,
+      branch: headBranch,
+      by: _viewer,
+      authorDisplay: authorDisplay,
+    );
     if (!cut.ok) return GitResult.err(cut.error ?? 'round cut failed');
     return load();
   }
@@ -556,6 +586,7 @@ class ReviewPaneController {
     final r = await store.publish(
       deskId: deskId,
       author: _viewer,
+      authorDisplay: authorDisplay,
       verdict: verdict,
       verdictRound: d?.latestRound,
     );
@@ -566,6 +597,86 @@ class ReviewPaneController {
           repoPath: repoPath, deskId: deskId, round: n);
     }
     return null;
+  }
+
+  /// Step out of the attention set without publishing — "not blocking
+  /// on me". The manual half of "auto-maintained, manually adjustable":
+  /// a rule that cannot be overridden has to be right every time, and
+  /// this one sometimes will not be.
+  Future<String?> stepOutOfAttention() async {
+    final r = await store.setAttention(
+      deskId: deskId,
+      display: viewerDisplay,
+      inSet: false,
+      by: _viewer,
+    );
+    return r.ok ? null : (r.error ?? 'attention update failed');
+  }
+
+  /// Everyone this review can be handed to right now: the people in
+  /// the conversation, minus the viewer (stepping out is its own verb)
+  /// and minus anyone already being waited on (handing someone the ball
+  /// they are already holding is a no-op that looks like a control).
+  List<String> get handOffCandidates {
+    final s = data?.state;
+    if (s == null) return const [];
+    final blocked = s.attentionOn;
+    return [
+      for (final p in participantsOf(s, authorDisplay))
+        if (p != viewerDisplay && !blocked.contains(p)) p,
+    ];
+  }
+
+  /// Hand the review to someone by name — the explicit hand-back the
+  /// turn fold was documented as waiting for.
+  Future<String?> handTo(String display) async {
+    final r = await store.setAttention(
+      deskId: deskId,
+      display: display,
+      inSet: true,
+      by: _viewer,
+    );
+    return r.ok ? null : (r.error ?? 'attention update failed');
+  }
+
+  /// Mark (or unmark) a file as reviewed at its CURRENT content.
+  ///
+  /// The hash is what makes the tick self-invalidating: it records what
+  /// was actually read, so the author's next edit to that file makes
+  /// the tick stale on every clone without anyone clearing it.
+  Future<String?> setFileReviewed(String path, {required bool reviewed}) async {
+    final d = data;
+    if (d == null) return null;
+    final lines = await _ensureHeadLines(path);
+    // A file we cannot read is a file we cannot honestly call reviewed.
+    if (lines == null && reviewed) return null;
+    final r = await store.setFileReviewed(
+      deskId: deskId,
+      reviewer: viewerDisplay,
+      path: path,
+      contentHash: reviewed ? fileContentHash(lines!) : '',
+      round: d.latestRound,
+    );
+    return r.ok ? null : (r.error ?? 'reviewed bit failed');
+  }
+
+  /// Which of [paths] the viewer has ticked AT THEIR CURRENT CONTENT.
+  ///
+  /// A tick whose recorded hash no longer matches the file is silently
+  /// absent rather than shown — the invalidation the research names as
+  /// the difference between this and GitHub's "viewed".
+  Future<Set<String>> reviewedNow(Iterable<String> paths) async {
+    final mine = data?.state?.reviewedFiles[viewerDisplay];
+    if (mine == null || mine.isEmpty) return const {};
+    final out = <String>{};
+    for (final path in paths) {
+      final bit = mine[path];
+      if (bit == null || bit.contentHash.isEmpty) continue;
+      final lines = await _ensureHeadLines(path);
+      if (lines == null) continue;
+      if (fileContentHash(lines) == bit.contentHash) out.add(path);
+    }
+    return out;
   }
 
   /// Explicit "caught up" — the header verb for a look that ends

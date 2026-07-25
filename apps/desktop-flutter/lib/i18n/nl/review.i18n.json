@@ -39,5 +39,12 @@
   "reviewActionFailed": "Reviewactie mislukt: {error}",
   "lensTooLarge": "Die vergelijking is te groot om hier te tonen — we blijven op de volledige diff.",
   "lensEmpty": "Er is niets veranderd tussen deze snapshots.",
-  "reopen": "heropenen"
+  "reopen": "heropenen",
+  "notBlocking": "wacht niet op mij",
+  "markReviewed": "gelezen",
+  "newComments": {
+    "one": "1 nieuwe reactie",
+    "other": "{n} nieuwe reacties"
+  },
+  "handTo": "doorgeven aan"
 }

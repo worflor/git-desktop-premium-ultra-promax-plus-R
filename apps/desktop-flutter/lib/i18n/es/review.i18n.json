@@ -39,5 +39,12 @@
   "reviewActionFailed": "La acción de revisión falló: {error}",
   "lensTooLarge": "Esa comparación es demasiado grande para mostrarla aquí — nos quedamos en el diff completo.",
   "lensEmpty": "Nada cambió entre estas instantáneas.",
-  "reopen": "reabrir"
+  "reopen": "reabrir",
+  "notBlocking": "no me esperen",
+  "markReviewed": "revisado",
+  "newComments": {
+    "one": "1 comentario nuevo",
+    "other": "{n} comentarios nuevos"
+  },
+  "handTo": "pasar a"
 }

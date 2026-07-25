@@ -20,8 +20,17 @@
 //  T4  a fresh review with no reviewer activity waits on the reviewers.
 //  T5  every instant the format writes is UTC — the ordering LWW and
 //      the dedup keys both rest on that.
+//  T6  the STORED attention set outranks the event fold, and names the
+//      individuals blocking rather than a party.
+//  T7  a removal is a tombstone, not an absence — it survives a merge
+//      against a peer who still had the person in.
+//  T8  an empty set falls through to the fold rather than claiming the
+//      review waits on nobody.
+
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/backend/merge_policy.dart';
 import 'package:git_desktop/backend/review_anchor.dart';
 import 'package:git_desktop/backend/review_records.dart';
 
@@ -36,6 +45,7 @@ ReviewState _state({
   List<ReviewThreadRecord> threads = const [],
   List<ReviewVerdict> verdicts = const [],
   List<ReviewRoundInfo> rounds = const [],
+  Map<String, ReviewAttention> attention = const {},
 }) =>
     ReviewState(
       schemaVersion: kReviewSchemaVersion,
@@ -44,6 +54,7 @@ ReviewState _state({
       threads: threads,
       verdicts: verdicts,
       reviewedFiles: const {},
+      attention: attention,
       updatedAt: _t(59),
     );
 
@@ -199,5 +210,94 @@ void main() {
     expect(round['cutAt'], endsWith('Z'));
     expect(verdict['at'], endsWith('Z'));
     expect(json['updatedAt'], endsWith('Z'));
+  });
+
+  ReviewAttention att(String who, bool inSet, int minute,
+          {String by = 'bob'}) =>
+      ReviewAttention(
+          display: who, inSet: inSet, at: _t(minute), by: by);
+
+  test('T6: the stored set outranks the fold and names individuals', () {
+    // The fold alone would say "ball with the reviewers" as a bloc.
+    // The set says carol, because alice already signed off.
+    final state = _state(
+      threads: [
+        _thread(id: 't1', author: _alice, at: _t(10)),
+        _thread(id: 't2', author: _carol, at: _t(11)),
+      ],
+      rounds: [_round(2, _t(20), _bob)],
+      attention: {'carol': att('carol', true, 21)},
+    );
+
+    expect(
+      deriveTurn(state, authorDisplay: _author, viewerDisplay: 'carol')
+          .yourTurn,
+      isTrue,
+    );
+    expect(
+      deriveTurn(state, authorDisplay: _author, viewerDisplay: 'alice')
+          .yourTurn,
+      isFalse,
+      reason: 'alice is out of the set, so it is not her turn — the '
+          'thing a two-party fold could never say',
+    );
+    expect(
+      deriveTurn(state, authorDisplay: _author, viewerDisplay: _author)
+          .waitingOn,
+      'carol',
+      reason: 'the author is told who is actually blocking',
+    );
+  });
+
+  test('T7: a removal beats a stale add on merge', () {
+    // Alice took herself out at :30. A peer that still had her in from
+    // :10 must not resurrect her.
+    final mine = _state(attention: {'alice': att('alice', false, 30)});
+    final theirs = _state(attention: {'alice': att('alice', true, 10)});
+
+    // Shas are the deterministic tiebreak; they are irrelevant here
+    // because the timestamps differ, which is the point.
+    final merged = mergeWithSchema(
+      kReviewStateSchema,
+      mine.toBlob(),
+      theirs.toBlob(),
+      'a' * 40,
+      'b' * 40,
+    );
+    final settled =
+        ReviewState.fromJson(jsonDecode(merged) as Map<String, dynamic>);
+    expect(settled.blockedOn('alice'), isFalse,
+        reason: 'an explicit removal carries a timestamp; an absence '
+            'would have carried nothing to compare');
+
+    // And the merge is symmetric — the same answer from either side.
+    final other = mergeWithSchema(
+      kReviewStateSchema,
+      theirs.toBlob(),
+      mine.toBlob(),
+      'b' * 40,
+      'a' * 40,
+    );
+    expect(
+      ReviewState.fromJson(jsonDecode(other) as Map<String, dynamic>)
+          .blockedOn('alice'),
+      isFalse,
+    );
+  });
+
+  test('T8: an empty set falls through to the fold', () {
+    // Everyone explicitly cleared: the review does not therefore wait
+    // on nobody — the fold still has an opinion.
+    final cleared = _state(
+      threads: [_thread(id: 't1', author: _alice, at: _t(10))],
+      rounds: [_round(2, _t(20), _bob)],
+      attention: {'alice': att('alice', false, 25)},
+    );
+    expect(
+      deriveTurn(cleared, authorDisplay: _author, viewerDisplay: 'alice')
+          .yourTurn,
+      isTrue,
+      reason: 'new code still awaits review',
+    );
   });
 }

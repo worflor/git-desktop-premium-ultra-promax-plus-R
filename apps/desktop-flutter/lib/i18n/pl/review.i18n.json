@@ -39,5 +39,12 @@
   "reviewActionFailed": "Akcja recenzji nie powiodła się: {error}",
   "lensTooLarge": "To porównanie jest zbyt duże, aby je tu pokazać — zostajemy przy pełnym diffie.",
   "lensEmpty": "Nic się nie zmieniło między tymi migawkami.",
-  "reopen": "otwórz ponownie"
+  "reopen": "otwórz ponownie",
+  "notBlocking": "nie czekajcie na mnie",
+  "markReviewed": "przeczytane",
+  "newComments": {
+    "one": "1 nowy komentarz",
+    "other": "{n} nowych komentarzy"
+  },
+  "handTo": "przekaż"
 }

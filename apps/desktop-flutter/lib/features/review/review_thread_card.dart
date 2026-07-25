@@ -421,9 +421,15 @@ class _ReviewCommentBlock extends StatelessWidget {
           const GapSeg(AppSpacing.sm),
           // textMuted, not faint: 9px faint timestamps sat at the
           // legibility edge on light themes.
+          //
+          // Accent when the comment is new to this viewer. Unseen work
+          // is a fact about the conversation, so it rides the timestamp
+          // the comment already shows rather than a badge invented for
+          // it — the eye finds a coloured "3h" without another chip
+          // competing for the row, and nothing re-measures.
           TextSeg(
             comment.when,
-            color: t.textMuted,
+            color: comment.isUnseen ? t.accentBright : t.textMuted,
             size: ReviewType.meta,
           ),
         ]),

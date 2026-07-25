@@ -392,7 +392,6 @@ class _ReviewVerbPillState extends State<ReviewVerbPill> {
           curve: AppMotion.snapCurve,
           height: ReviewMetrics.verbHeight,
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-          alignment: Alignment.center,
           decoration: BoxDecoration(
             color: _hover
                 ? t.accentBright.withValues(alpha: 0.10)
@@ -405,14 +404,23 @@ class _ReviewVerbPillState extends State<ReviewVerbPill> {
               width: AppBorderWidth.hairline,
             ),
           ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: color,
-              fontSize: ReviewType.ident,
-              height: 1,
-              fontWeight:
-                  widget.emphasis ? FontWeight.w700 : FontWeight.w500,
+          // widthFactor: 1 rather than the container's own `alignment`.
+          // A Container WITH alignment expands to fill whatever it is
+          // given, so this pill hugged its label inside a Row (which
+          // hands out unbounded width) and stretched to full width
+          // inside a Wrap — the same control, two sizes, depending on
+          // who held it. Sizing to the label is the invariant.
+          child: Align(
+            widthFactor: 1,
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: color,
+                fontSize: ReviewType.ident,
+                height: 1,
+                fontWeight:
+                    widget.emphasis ? FontWeight.w700 : FontWeight.w500,
+              ),
             ),
           ),
         ),

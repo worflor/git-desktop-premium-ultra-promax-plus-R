@@ -55,6 +55,9 @@ class ReviewCommentView {
   /// published comments, whose `when` is already a display string.
   final DateTime? draftAt;
 
+  /// Landed after the viewer's last look, and not written by them.
+  final bool isUnseen;
+
   const ReviewCommentView({
     required this.author,
     required this.when,
@@ -62,6 +65,7 @@ class ReviewCommentView {
     this.kind = ReviewAuthorKind.human,
     this.isDraft = false,
     this.draftAt,
+    this.isUnseen = false,
   });
 }
 
@@ -105,6 +109,10 @@ class ReviewThreadView {
     this.threadId = '',
   });
 
+  /// True when any comment here is new to the viewer — what lets the
+  /// pane say "these threads moved" without them opening each one.
+  bool get hasUnseen => comments.any((c) => c.isUnseen);
+
   bool get isRobot =>
       comments.isNotEmpty && comments.first.kind == ReviewAuthorKind.robot;
 
@@ -134,6 +142,9 @@ class ReviewHeaderView {
   /// Files with new changes since the viewer's last look (0 = caught up).
   final int filesSinceLastLook;
 
+  /// Comments that landed since that look and are not the viewer's own.
+  final int newCommentCount;
+
   /// Optional standing-verdict note ("changes requested · mira").
   final String verdictNote;
 
@@ -143,6 +154,7 @@ class ReviewHeaderView {
     this.waitingOn = '',
     this.unresolvedCount = 0,
     this.filesSinceLastLook = 0,
+    this.newCommentCount = 0,
     this.verdictNote = '',
   });
 }
@@ -175,6 +187,11 @@ class ReviewStrings {
   final String fullDiff;
   final String commentHint;
   final String reopen;
+  final String notBlocking;
+
+  /// Verb label for the hand-off controls; the names follow it.
+  final String handTo;
+  final String markReviewed;
 
   const ReviewStrings({
     this.unresolved = 'unresolved',
@@ -199,6 +216,9 @@ class ReviewStrings {
     this.fullDiff = 'full diff',
     this.commentHint = 'write a comment',
     this.reopen = 'reopen',
+    this.notBlocking = 'not blocking on me',
+    this.handTo = 'hand to',
+    this.markReviewed = 'reviewed',
   });
 
   String outdatedLastSeen(int round) => 'outdated · last seen R$round';
@@ -209,4 +229,5 @@ class ReviewStrings {
       n == 1 ? '1 file since your last look' : '$n files since your last look';
   String unresolvedCount(int n) => '$n unresolved';
   String draftCount(int n) => n == 1 ? '1 draft' : '$n drafts';
+  String newComments(int n) => n == 1 ? '1 new comment' : '$n new comments';
 }

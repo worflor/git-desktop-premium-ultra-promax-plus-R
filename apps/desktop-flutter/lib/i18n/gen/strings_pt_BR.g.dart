@@ -2001,6 +2001,19 @@ class _Translations$review$pt_BR extends Translations$review$en {
   String get lensEmpty => 'Nada mudou entre esses snapshots.';
   @override
   String get reopen => 'reabrir';
+  @override
+  String get notBlocking => 'não esperem por mim';
+  @override
+  String get markReviewed => 'revisado';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pt'))(
+        n,
+        one: '1 novo comentário',
+        other: '${n} novos comentários',
+      );
+  @override
+  String get handTo => 'passar para';
 }
 
 // Path: settings

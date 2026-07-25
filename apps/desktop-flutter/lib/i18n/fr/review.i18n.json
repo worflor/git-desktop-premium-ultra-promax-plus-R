@@ -39,5 +39,12 @@
   "reviewActionFailed": "Échec de l'action de relecture : {error}",
   "lensTooLarge": "Cette comparaison est trop grande pour être affichée ici — on reste sur le diff complet.",
   "lensEmpty": "Rien n'a changé entre ces instantanés.",
-  "reopen": "rouvrir"
+  "reopen": "rouvrir",
+  "notBlocking": "ne m'attendez pas",
+  "markReviewed": "relu",
+  "newComments": {
+    "one": "1 nouveau commentaire",
+    "other": "{n} nouveaux commentaires"
+  },
+  "handTo": "passer à"
 }

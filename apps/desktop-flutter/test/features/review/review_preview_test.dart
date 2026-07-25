@@ -15,15 +15,16 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/features/review/review_adapter.dart'
     show groupThreadsByFile;
+import 'package:git_desktop/features/review/review_chrome.dart'
+    show ReviewVerbPill;
 import 'package:git_desktop/features/review/review_file_header.dart';
 import 'package:git_desktop/features/review/review_header_strip.dart';
 import 'package:git_desktop/features/review/review_pane.dart'
-    show ReviewComposer, ReviewPublishBar;
+    show ReviewComposer, ReviewHandOff, ReviewPublishBar;
 import 'package:git_desktop/features/review/review_thread_card.dart';
 import 'package:git_desktop/features/review/review_view_model.dart';
 import 'package:git_desktop/ui/material_surface.dart'
@@ -32,6 +33,7 @@ import 'package:git_desktop/ui/tokens.dart';
 import 'package:provider/provider.dart';
 
 import '../../support/review_fixture.dart';
+import '../../support/widget_harness.dart';
 
 Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       create: (_) => PreferencesState(),
@@ -45,24 +47,6 @@ Widget _app(AppTokens tokens, Widget home) => ChangeNotifierProvider(
       ),
     );
 
-Future<void> _loadFonts() async {
-  Future<void> load(String family, String file) async {
-    final bytes = File('assets/fonts/$file').readAsBytesSync();
-    final loader = FontLoader(family)
-      ..addFont(Future.value(ByteData.view(bytes.buffer)));
-    await loader.load();
-  }
-
-  // Every family the themes' typography can resolve to, spaced and
-  // unspaced variants alike, so serif themes render their real faces.
-  await load('DMSans', 'DMSans-Variable.ttf');
-  await load('DM Sans', 'DMSans-Variable.ttf');
-  await load('JetBrainsMono', 'JetBrainsMono-Variable.ttf');
-  await load('JetBrains Mono', 'JetBrainsMono-Variable.ttf');
-  await load('Playfair Display', 'PlayfairDisplay-Variable.ttf');
-  await load('Lora', 'Lora-Variable.ttf');
-  await load('VT323', 'VT323-Regular.ttf');
-}
 
 Future<void> _capture(WidgetTester tester, Key key, String path,
     {double pixelRatio = 3}) async {
@@ -103,7 +87,14 @@ Widget _paneStory(AppTokens tokens) {
             ReviewHeaderStrip(header: syntheticHeaderTheirTurn()),
             const SizedBox(height: 16),
             for (final g in groups) ...[
-              ReviewFileHeader(filePath: g.filePath),
+              // The reviewed mark ships on these headers, so the story
+              // renders both states — a lab header without it would be
+              // iterating a surface the product does not have.
+              ReviewFileHeader(
+                filePath: g.filePath,
+                reviewed: groups.indexOf(g) == 0,
+                onToggleReviewed: (_) {},
+              ),
               const SizedBox(height: 6),
               for (final th in g.threads) ...[
                 ReviewThreadCard(
@@ -184,7 +175,7 @@ Widget _sectionLabel(AppTokens tokens, String label) => SizedBox(
     );
 
 void main() {
-  setUpAll(_loadFonts);
+  setUpAll(loadTestFonts);
 
   // The whole pane story per representative theme — a dark glass theme,
   // the plain one, and a light one, plus the sharp-pixel outlier.
@@ -307,6 +298,129 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await _capture(tester, key, '.preview/review/verb_hover.png',
         pixelRatio: 4);
+  });
+
+  // The hand-off row across themes: verb, then bare names. Captured
+  // because it is the one review control the pane preview never sees
+  // (it lives in the PR page's verb row), and an uncaptured control is
+  // a control nobody has looked at.
+  testWidgets('review hand-off row', (tester) async {
+    tester.view.physicalSize = const Size(900, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const key = ValueKey('handoff');
+
+    await tester.pumpWidget(_app(
+      AppTokens.fromId(AppThemeId.petrichor),
+      Builder(builder: (context) {
+        final tokens = context.tokens;
+        return Scaffold(
+          backgroundColor: tokens.bg1,
+          body: Center(
+            child: RepaintBoundary(
+              key: key,
+              child: ColoredBox(
+                color: tokens.bg1,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final id in [
+                        AppThemeId.nightwalker,
+                        AppThemeId.petrichor,
+                        AppThemeId.nacre,
+                        AppThemeId.crafty,
+                      ])
+                        Builder(builder: (context) {
+                          final t = AppTokens.fromId(id);
+                          return Theme(
+                            data: Theme.of(context).copyWith(
+                              extensions: <ThemeExtension<dynamic>>[
+                                AppThemeExtension(t)
+                              ],
+                            ),
+                            child: ColoredBox(
+                              color: t.bg1,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Wrap(
+                                        alignment: WrapAlignment.end,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        spacing: 6,
+                                        runSpacing: 6,
+                                        children: [
+                                          ReviewVerbPill(
+                                              label: 'caught up',
+                                              onTap: () {}),
+                                          ReviewVerbPill(
+                                              label: 'not blocking on me',
+                                              onTap: () {}),
+                                          ReviewHandOff(
+                                            label: 'hand to',
+                                            to: const ['mira', 'jun'],
+                                            onHandTo: (_) {},
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    ));
+    await tester.pump();
+    await _capture(tester, key, '.preview/review/handoff_row.png',
+        pixelRatio: 3);
+  });
+
+  // Nobody to hand to means no control at all, not a dead one.
+  testWidgets('hand-off with nobody to hand to renders nothing',
+      (tester) async {
+    await tester.pumpWidget(_app(
+      AppTokens.fromId(AppThemeId.petrichor),
+      Scaffold(
+        body: ReviewHandOff(label: 'hand to', to: const <String>[], onHandTo: (_) {}),
+      ),
+    ));
+    expect(find.text('hand to'), findsNothing);
+  });
+
+  // The name is the control: tapping one names that person, not an index.
+  testWidgets('hand-off taps name the person tapped', (tester) async {
+    final handed = <String>[];
+    await tester.pumpWidget(_app(
+      AppTokens.fromId(AppThemeId.petrichor),
+      Scaffold(
+        body: Align(
+          alignment: Alignment.topLeft,
+          child: ReviewHandOff(
+            label: 'hand to',
+            to: const ['mira', 'jun'],
+            onHandTo: handed.add,
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('jun'));
+    await tester.tap(find.text('mira'));
+    expect(handed, ['jun', 'mira']);
   });
 }
 

@@ -195,6 +195,63 @@ Widget _busyGate({required bool busy, required Widget child}) => busy
     ? Opacity(opacity: 0.45, child: IgnorePointer(child: child))
     : child;
 
+/// The other direction of the manually adjustable attention set: put
+/// the change into someone's hands without having anything to publish.
+///
+/// One quiet verb, then bare names. The names are controls and the verb
+/// is not, which is also why no locale has to inflect a person's name
+/// into a sentence — a hand-off to "mira" reads the same in every
+/// language the app speaks.
+///
+/// Renders nothing at all when there is nobody to hand to: an empty
+/// conversation has no hand-off, and a stub control that greys out
+/// would just be a promise the record cannot keep.
+class ReviewHandOff extends StatelessWidget {
+  final String label;
+  final List<String> to;
+  final void Function(String display) onHandTo;
+
+  const ReviewHandOff({
+    super.key,
+    required this.label,
+    required this.to,
+    required this.onHandTo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (to.isEmpty) return const SizedBox.shrink();
+    final t = context.tokens;
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        SizedBox(
+          height: ReviewMetrics.verbHeight,
+          // widthFactor: 1 — a bare Center fills the width it is
+          // offered, which inside a Wrap means the verb claims the
+          // whole run and the names it introduces fall to the next
+          // line, reading as two unrelated groups.
+          child: Align(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: ReviewType.meta,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
+        for (final who in to)
+          ReviewVerbPill(label: who, onTap: () => onHandTo(who)),
+      ],
+    );
+  }
+}
+
 /// The atomic batch bar: verdict choice + publish + discard. One
 /// gesture moves every draft (and the verdict) into the shared state —
 /// there is no per-comment send anywhere.
@@ -326,6 +383,13 @@ class ReviewPane extends StatefulWidget {
   /// Focus the diff on this file (file header tap).
   final ValueChanged<String>? onSelectFile;
 
+  /// Files the viewer has marked reviewed AT THEIR CURRENT CONTENT.
+  /// A tick whose file has since been edited is simply absent here.
+  final Set<String> reviewedFiles;
+
+  /// Toggle a file's reviewed mark. Null hides the mark entirely.
+  final void Function(String path, bool reviewed)? onToggleReviewed;
+
   const ReviewPane({
     super.key,
     required this.bundle,
@@ -338,6 +402,8 @@ class ReviewPane extends StatefulWidget {
     required this.onPublish,
     required this.onDiscardDrafts,
     this.onSelectFile,
+    this.reviewedFiles = const {},
+    this.onToggleReviewed,
   });
 
   @override
@@ -432,6 +498,12 @@ class _ReviewPaneState extends State<ReviewPane> {
             onTap: widget.onSelectFile == null
                 ? null
                 : () => widget.onSelectFile!(group.filePath),
+            reviewed: widget.onToggleReviewed == null
+                ? null
+                : widget.reviewedFiles.contains(group.filePath),
+            onToggleReviewed: widget.onToggleReviewed == null
+                ? null
+                : (v) => widget.onToggleReviewed!(group.filePath, v),
           ),
           for (final thread in group.threads) ...[
             const SizedBox(height: AppSpacing.sm6),
@@ -568,6 +640,19 @@ class ReviewPrHooks {
   /// viewer is already current — nothing to catch up on.
   final VoidCallback? onCaughtUp;
 
+  /// Step out of the attention set. Null when the change is not
+  /// currently blocked on the viewer — there is nothing to hand back.
+  final VoidCallback? onStepOut;
+
+  /// People the review can be handed to, and the verb. Empty when the
+  /// conversation has nobody else in it yet.
+  final List<String> handOffTo;
+  final void Function(String display) onHandTo;
+
+  /// Files ticked at their current content, and the toggle.
+  final Set<String> reviewedFiles;
+  final void Function(String path, bool reviewed) onToggleReviewed;
+
   /// Round numbers (ascending) with cut pins — the snapshot axis.
   final List<int> rounds;
 
@@ -603,6 +688,11 @@ class ReviewPrHooks {
     this.lens,
     this.lensLoading = false,
     this.onCaughtUp,
+    this.onStepOut,
+    this.handOffTo = const [],
+    required this.onHandTo,
+    this.reviewedFiles = const {},
+    required this.onToggleReviewed,
     this.rounds = const [],
     this.compare,
     this.onSetCompare,

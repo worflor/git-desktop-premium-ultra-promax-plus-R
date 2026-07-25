@@ -59,6 +59,19 @@ class ReviewHeaderStrip extends StatelessWidget {
                   color: t.textNormal,
                 ),
               ],
+              // The other half of "what's new since I looked": the code
+              // moved AND the conversation did. Accent, because unlike
+              // the file count this is someone waiting on a reply — and
+              // the matching accent on individual timestamps is what
+              // leads the eye from this number to the comments it
+              // counts.
+              if (header.newCommentCount > 0) ...[
+                const GapSeg(AppSpacing.sm10),
+                TextSeg(
+                  strings.newComments(header.newCommentCount),
+                  color: t.accentBright,
+                ),
+              ],
               // A verdict already given is a FACT, not an alarm —
               // muted, so it stops competing with the turn pill and
               // unresolved markers for attention (accent was carrying

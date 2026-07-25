@@ -2013,6 +2013,19 @@ class _Translations$review$fr extends Translations$review$en {
   String get lensEmpty => 'Rien n\'a changé entre ces instantanés.';
   @override
   String get reopen => 'rouvrir';
+  @override
+  String get notBlocking => 'ne m\'attendez pas';
+  @override
+  String get markReviewed => 'relu';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('fr'))(
+        n,
+        one: '1 nouveau commentaire',
+        other: '${n} nouveaux commentaires',
+      );
+  @override
+  String get handTo => 'passer à';
 }
 
 // Path: settings

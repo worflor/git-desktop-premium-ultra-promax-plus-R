@@ -2015,6 +2015,19 @@ class _Translations$review$es extends Translations$review$en {
   String get lensEmpty => 'Nada cambió entre estas instantáneas.';
   @override
   String get reopen => 'reabrir';
+  @override
+  String get notBlocking => 'no me esperen';
+  @override
+  String get markReviewed => 'revisado';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('es'))(
+        n,
+        one: '1 comentario nuevo',
+        other: '${n} comentarios nuevos',
+      );
+  @override
+  String get handTo => 'pasar a';
 }
 
 // Path: settings

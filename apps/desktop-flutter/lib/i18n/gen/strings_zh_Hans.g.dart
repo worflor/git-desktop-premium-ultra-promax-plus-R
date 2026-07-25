@@ -1896,6 +1896,19 @@ class _Translations$review$zh_Hans extends Translations$review$en {
   String get lensEmpty => '这两个快照之间没有任何改动。';
   @override
   String get reopen => '重新打开';
+  @override
+  String get notBlocking => '不用等我';
+  @override
+  String get markReviewed => '已查看';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('zh'))(
+        n,
+        one: '${n} 条新评论',
+        other: '${n} 条新评论',
+      );
+  @override
+  String get handTo => '交给';
 }
 
 // Path: settings

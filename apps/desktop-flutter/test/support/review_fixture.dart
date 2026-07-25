@@ -36,9 +36,13 @@ List<ReviewThreadView> syntheticReviewThreads() => [
                 'against absence on a ref that *does* exist remotely. '
                 "Shouldn't the fetch failure abort the push instead?",
           ),
+          // Unseen by the viewer: its timestamp carries the accent, and
+          // the header's "2 new comments" counts it. The preview must
+          // show the pair together — they lead the eye to each other.
           ReviewCommentView(
             author: 'jun',
             when: '1h',
+            isUnseen: true,
             body:
                 'The lease failing is the safety net there. Worst case the '
                 'push is rejected and we retry. But I can make the fetch '
@@ -142,6 +146,10 @@ ReviewHeaderView syntheticHeaderYourTurn() => const ReviewHeaderView(
       turn: ReviewTurn.yours,
       unresolvedCount: 3,
       filesSinceLastLook: 2,
+      // Both halves of "what's new since I looked" — the code moved AND
+      // the conversation did. They share a line and compete for the
+      // same eye, so the story has to show them together.
+      newCommentCount: 2,
       verdictNote: 'changes requested · mira',
     );
 

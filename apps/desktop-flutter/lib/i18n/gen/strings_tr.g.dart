@@ -1999,6 +1999,19 @@ class _Translations$review$tr extends Translations$review$en {
   String get lensEmpty => 'Bu anlık görüntüler arasında hiçbir şey değişmedi.';
   @override
   String get reopen => 'yeniden aç';
+  @override
+  String get notBlocking => 'beni beklemeyin';
+  @override
+  String get markReviewed => 'okundu';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('tr'))(
+        n,
+        one: '1 yeni yorum',
+        other: '${n} yeni yorum',
+      );
+  @override
+  String get handTo => 'devret';
 }
 
 // Path: settings

@@ -22,6 +22,15 @@
 //  C8  lens specs: since-last-look and round-compare both resolve to
 //      two-dot pin ranges, and a materialized lens carries the files
 //      that differ between exactly those two snapshots.
+//  C10 a reviewed mark is a claim about BYTES: it survives a reload,
+//      and the author's next edit to that file clears it without anyone
+//      clearing it — the invalidation GitHub's "viewed" lacks.
+//  C11 publishing hands the change over: the publisher steps out of the
+//      attention set and the other party steps in, computed from state
+//      so every clone agrees.
+//  C12 the hand-off offers only people it can honestly hand to: drawn
+//      from who has actually spoken, never the viewer, and never
+//      someone already being waited on.
 //  C9  concurrent loads serialize: every verb reloads, so two quick
 //      actions must not interleave over the controller's shared blob
 //      caches, and the LAST snapshot must be the newest.
@@ -293,5 +302,105 @@ void main() {
     await ctrl.markCaughtUp();
     await ctrl.load();
     expect(ctrl.sinceLastLookSpec, isNull);
+  });
+
+  test('C10: a reviewed mark clears when the file changes', () async {
+    await ctrl.load();
+    expect((await ctrl.ensureRound()).ok, isTrue);
+
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true), isNull);
+    await ctrl.load();
+    expect(await ctrl.reviewedNow(const ['lib/a.dart']), {'lib/a.dart'},
+        reason: 'ticked at the content just read');
+
+    // The author edits that very file and a new round is cut.
+    await repo.writeFile('lib/a.dart', 'alpha\nBETA\ngamma\ndelta\n');
+    await repo.commitAll('author edits the reviewed file');
+    await ctrl.load();
+
+    expect(await ctrl.reviewedNow(const ['lib/a.dart']), isEmpty,
+        reason: 'the bytes moved, so the claim is no longer true — and '
+            'nobody had to remember to clear it');
+
+    // Re-ticking at the new content is honest again.
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true), isNull);
+    await ctrl.load();
+    expect(await ctrl.reviewedNow(const ['lib/a.dart']), {'lib/a.dart'});
+
+    // Unticking is a first-class move, not an absence.
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: false), isNull);
+    await ctrl.load();
+    expect(await ctrl.reviewedNow(const ['lib/a.dart']), isEmpty);
+  });
+
+  test('C11: publishing hands the change to the other party', () async {
+    await ctrl.load();
+    expect((await ctrl.ensureRound()).ok, isTrue);
+    final anchor =
+        await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
+    await ctrl.saveOpenerDraft(anchor: anchor!, body: 'why beta2?');
+    expect(await ctrl.publish(verdict: 'CHANGES_REQUESTED'), isNull);
+
+    final d = (await ctrl.load()).data!;
+    final state = d.state!;
+    // mira reviewed; the change is now blocked on jun, its author.
+    expect(state.blockedOn('jun'), isTrue);
+    expect(state.blockedOn('mira'), isFalse,
+        reason: 'the publisher just spoke — they are not blocking');
+    expect(d.bundle.header.turn, ReviewTurn.theirs);
+    expect(d.bundle.header.waitingOn, 'jun');
+
+    // And mira can put herself back in by hand.
+    expect(await ctrl.handTo('mira'), isNull);
+    final after = (await ctrl.load()).data!;
+    expect(after.state!.blockedOn('mira'), isTrue);
+    expect(after.bundle.header.turn, ReviewTurn.yours);
+  });
+
+  test('C12: hand-off offers only the people it can honestly offer',
+      () async {
+    // The author's own view of the same review.
+    final jun = ReviewPaneController(
+      repoPath: repo.dir.path,
+      deskId: 42,
+      headBranch: 'feat',
+      baseRef: 'main',
+      authorDisplay: 'jun',
+      viewerDisplay: 'jun',
+      refs: refs(),
+    );
+
+    await jun.load();
+    expect(jun.handOffCandidates, isEmpty,
+        reason: 'nobody has spoken, so there is nobody to hand to — a '
+            'roster would have offered names the record cannot back');
+
+    // mira reviews. She becomes a participant BY ACTING.
+    await ctrl.load();
+    expect((await ctrl.ensureRound()).ok, isTrue);
+    final anchor =
+        await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
+    await ctrl.saveOpenerDraft(anchor: anchor!, body: 'why beta2?');
+    expect(await ctrl.publish(verdict: 'CHANGES_REQUESTED'), isNull);
+
+    // mira just spoke: the ball is jun's, so she has nobody to hand to.
+    await ctrl.load();
+    expect(ctrl.handOffCandidates, isEmpty,
+        reason: 'jun already holds it — offering to hand it to him would '
+            'be a control that does nothing');
+
+    // jun can hand it back to mira without publishing anything.
+    await jun.load();
+    expect(jun.handOffCandidates, ['mira']);
+    expect(await jun.handTo('mira'), isNull);
+
+    await jun.load();
+    expect(jun.data!.state!.blockedOn('mira'), isTrue);
+    expect(jun.handOffCandidates, isEmpty,
+        reason: 'she is holding it now');
+
+    // And mira sees the ball without either side publishing.
+    final after = (await ctrl.load()).data!;
+    expect(after.bundle.header.turn, ReviewTurn.yours);
   });
 }

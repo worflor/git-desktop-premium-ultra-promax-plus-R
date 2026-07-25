@@ -89,7 +89,16 @@ ReviewViewBundle buildReviewViews(
   Map<String, List<String>> oldFiles = const {},
   List<ReviewDraftEntry> drafts = const [],
   int filesSinceLastLook = 0,
+  DateTime? lastLookAt,
 }) {
+  // The boundary between read and unread: the moment the round the
+  // viewer last saw was cut. A comment newer than that is new TO THEM —
+  // their own words never are, since writing is looking.
+  bool unseen(ReviewComment c) =>
+      lastLookAt != null &&
+      c.author.display != viewerDisplay &&
+      c.at.isAfter(lastLookAt);
+  var newComments = 0;
   // Side-aware resolution: a 'new'-side anchor asks "where is this
   // content in the head version", an 'old'-side anchor (a comment on a
   // deletion row) asks the same of the MERGE-BASE version — the old
@@ -107,6 +116,9 @@ ReviewViewBundle buildReviewViews(
   final threads = <ReviewThreadView>[];
 
   for (final t in state.threads) {
+    for (final c in t.comments) {
+      if (unseen(c)) newComments++;
+    }
     final res = resolveSided(t.anchor);
     final replyDrafts = drafts.where((d) => d.threadId == t.id);
     threads.add(ReviewThreadView(
@@ -136,6 +148,7 @@ ReviewViewBundle buildReviewViews(
             kind: c.kind == 'robot'
                 ? ReviewAuthorKind.robot
                 : ReviewAuthorKind.human,
+            isUnseen: unseen(c),
           ),
         for (final d in replyDrafts)
           ReviewCommentView(
@@ -237,6 +250,7 @@ ReviewViewBundle buildReviewViews(
       waitingOn: turn.waitingOn,
       unresolvedCount: state.unresolvedCount,
       filesSinceLastLook: filesSinceLastLook,
+      newCommentCount: newComments,
       verdictNote: verdictNote,
     ),
     threads: threads,

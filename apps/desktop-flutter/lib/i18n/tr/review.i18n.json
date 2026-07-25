@@ -39,5 +39,12 @@
   "reviewActionFailed": "İnceleme işlemi başarısız oldu: {error}",
   "lensTooLarge": "Bu karşılaştırma burada gösterilemeyecek kadar büyük — tam diff'te kalıyoruz.",
   "lensEmpty": "Bu anlık görüntüler arasında hiçbir şey değişmedi.",
-  "reopen": "yeniden aç"
+  "reopen": "yeniden aç",
+  "notBlocking": "beni beklemeyin",
+  "markReviewed": "okundu",
+  "newComments": {
+    "one": "1 yeni yorum",
+    "other": "{n} yeni yorum"
+  },
+  "handTo": "devret"
 }

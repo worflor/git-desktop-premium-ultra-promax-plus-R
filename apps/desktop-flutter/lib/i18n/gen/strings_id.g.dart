@@ -1977,6 +1977,19 @@ class _Translations$review$id extends Translations$review$en {
   String get lensEmpty => 'Tidak ada yang berubah di antara snapshot ini.';
   @override
   String get reopen => 'buka lagi';
+  @override
+  String get notBlocking => 'jangan tunggu aku';
+  @override
+  String get markReviewed => 'sudah direview';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('id'))(
+        n,
+        one: '1 komentar baru',
+        other: '${n} komentar baru',
+      );
+  @override
+  String get handTo => 'serahkan ke';
 }
 
 // Path: settings

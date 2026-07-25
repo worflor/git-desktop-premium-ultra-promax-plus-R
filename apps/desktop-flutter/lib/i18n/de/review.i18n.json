@@ -39,5 +39,12 @@
   "reviewActionFailed": "Review-Aktion fehlgeschlagen: {error}",
   "lensTooLarge": "Dieser Vergleich ist zu groß für die Anzeige hier — es bleibt beim vollen Diff.",
   "lensEmpty": "Zwischen diesen Schnappschüssen hat sich nichts geändert.",
-  "reopen": "erneut öffnen"
+  "reopen": "erneut öffnen",
+  "notBlocking": "wartet nicht auf mich",
+  "markReviewed": "gelesen",
+  "newComments": {
+    "one": "1 neuer Kommentar",
+    "other": "{n} neue Kommentare"
+  },
+  "handTo": "übergeben an"
 }

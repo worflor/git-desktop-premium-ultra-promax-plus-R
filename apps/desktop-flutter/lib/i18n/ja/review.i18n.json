@@ -39,5 +39,12 @@
   "reviewActionFailed": "レビュー操作に失敗しました: {error}",
   "lensTooLarge": "この比較は大きすぎてここに表示できません — 全差分のままにします。",
   "lensEmpty": "これらのスナップショットの間に変更はありません。",
-  "reopen": "再オープン"
+  "reopen": "再オープン",
+  "notBlocking": "自分待ちを解除",
+  "markReviewed": "確認済み",
+  "newComments": {
+    "one": "新しいコメント {n} 件",
+    "other": "新しいコメント {n} 件"
+  },
+  "handTo": "担当を渡す"
 }

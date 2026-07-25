@@ -2058,6 +2058,19 @@ class _Translations$review$pl extends Translations$review$en {
   String get lensEmpty => 'Nic się nie zmieniło między tymi migawkami.';
   @override
   String get reopen => 'otwórz ponownie';
+  @override
+  String get notBlocking => 'nie czekajcie na mnie';
+  @override
+  String get markReviewed => 'przeczytane';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('pl'))(
+        n,
+        one: '1 nowy komentarz',
+        other: '${n} nowych komentarzy',
+      );
+  @override
+  String get handTo => 'przekaż';
 }
 
 // Path: settings

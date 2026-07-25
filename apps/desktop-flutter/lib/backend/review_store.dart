@@ -214,6 +214,7 @@ class ReviewStore {
     required int deskId,
     required String branch,
     required ReviewIdentity by,
+    String? authorDisplay,
     int maxAttempts = 5,
   }) async {
     final headR = await git.runGit(refs.repoPath,
@@ -287,8 +288,21 @@ class ReviewStore {
           // Re-check inside the transform: a racing cut that landed
           // this round first makes ours a no-op record.
           if (current.rounds.any((r) => r.n == n)) return current;
-          return current.copyWith(
-            rounds: [...current.rounds, info],
+          // New code is a fact about the branch: every reviewer is
+          // back in, the author steps out. Derived from state, so it
+          // does not matter whose client noticed the head move — the
+          // same mistake that used to make the turn indicator point
+          // backwards.
+          final withRound =
+              current.copyWith(rounds: [...current.rounds, info]);
+          final owner = authorDisplay ?? by.display;
+          final changes = <String, bool>{owner: false};
+          for (final r in _reviewersOf(withRound, owner)) {
+            changes[r] = true;
+          }
+          return withRound.copyWith(
+            attention:
+                _withAttention(current.attention, changes, by.display),
             updatedAt: clock.now(),
           );
         },
@@ -495,9 +509,14 @@ class ReviewStore {
   /// (author, at, body) union key, so a replay after a crash between
   /// state-write and draft-delete cannot duplicate anything.
   @useResult
+  /// [authorDisplay] is the desk PR's AUTHOR (not the publisher) — the
+  /// other pole of the hand-off. Defaults to the publisher, which makes
+  /// the attention update a no-op rather than a wrong guess when a
+  /// caller cannot say who owns the change.
   Future<GitResult<ReviewState>> publish({
     required int deskId,
     required ReviewIdentity author,
+    String? authorDisplay,
     String? verdict,
     int? verdictRound,
   }) async {
@@ -508,6 +527,7 @@ class ReviewStore {
       return const GitResult.err('nothing to publish');
     }
 
+    final ownerDisplay = authorDisplay ?? author.display;
     final result = await _mutate(
       deskId,
       transform: (current) {
@@ -572,9 +592,28 @@ class ReviewStore {
             ];
           }
         }
-        return current.copyWith(
-          threads: threads,
-          verdicts: verdicts,
+        // Hand-off. Publishing IS the turn ending, so the publisher
+        // steps out and whoever the change now blocks on steps in.
+        // Computed from the state we are about to write — not from who
+        // happens to be running this client — so every clone lands the
+        // same set.
+        final next = current.copyWith(threads: threads, verdicts: verdicts);
+        final reviewers = _reviewersOf(next, ownerDisplay);
+        final publisherIsAuthor = author.display == ownerDisplay;
+        final changes = <String, bool>{author.display: false};
+        if (publisherIsAuthor) {
+          // The author answered: back to the reviewers who have not
+          // signed off. A reviewer who approved and left nothing
+          // unresolved is NOT dragged back in.
+          for (final r in reviewers) {
+            if (!_settled(next, r)) changes[r] = true;
+          }
+        } else {
+          changes[ownerDisplay] = true;
+        }
+        return next.copyWith(
+          attention:
+              _withAttention(current.attention, changes, author.display),
           updatedAt: clock.now(),
         );
       },
@@ -620,6 +659,78 @@ class ReviewStore {
 
   static bool _hasComment(ReviewThreadRecord t, ReviewComment c) =>
       t.comments.any((e) => _sameComment(e, c));
+
+  // ─── Attention ───────────────────────────────────────────────────
+
+  /// Everyone who has acted as a reviewer on this review (never the
+  /// author). Lives in review_records beside the state it reads, so the
+  /// set the store maintains attention against and the set the UI
+  /// offers hand-offs to cannot drift apart.
+  static Set<String> _reviewersOf(ReviewState s, String author) =>
+      reviewersOf(s, author);
+
+  /// A reviewer is settled when their standing verdict approves and no
+  /// thread they opened is still unresolved. Settled reviewers are not
+  /// pulled back in by the author's next turn — that is the difference
+  /// between "waiting on the reviewers" as a bloc and naming the people
+  /// actually blocking.
+  static bool _settled(ReviewState s, String who) {
+    ReviewVerdict? standing;
+    for (final v in s.verdicts) {
+      if (v.by.display != who) continue;
+      if (v.verdict != 'APPROVED' && v.verdict != 'CHANGES_REQUESTED') {
+        continue;
+      }
+      if (standing == null || v.at.isAfter(standing.at)) standing = v;
+    }
+    if (standing == null || standing.verdict != 'APPROVED') return false;
+    for (final t in s.threads) {
+      if (!t.unresolved) continue;
+      if (t.comments.isNotEmpty && t.comments.first.author.display == who) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Map<String, ReviewAttention> _withAttention(
+    Map<String, ReviewAttention> current,
+    Map<String, bool> changes,
+    String by,
+  ) {
+    final next = Map<String, ReviewAttention>.from(current);
+    final now = clock.now();
+    for (final e in changes.entries) {
+      next[e.key] = ReviewAttention(
+        display: e.key,
+        inSet: e.value,
+        at: now,
+        by: by,
+      );
+    }
+    return next;
+  }
+
+  /// Put someone in, or take them out, by hand. The escape hatch the
+  /// automatic rules need in order to be safe: a rule that cannot be
+  /// overridden has to be right every time.
+  @useResult
+  Future<GitResult<ReviewState>> setAttention({
+    required int deskId,
+    required String display,
+    required bool inSet,
+    required ReviewIdentity by,
+  }) =>
+      _mutate(
+        deskId,
+        transform: (current) => current.copyWith(
+          attention: _withAttention(
+              current.attention, {display: inSet}, by.display),
+          updatedAt: clock.now(),
+        ),
+        message: (_) =>
+            inSet ? 'attention + $display' : 'attention - $display',
+      );
 
   // ─── Thread verbs ────────────────────────────────────────────────
 

@@ -1919,6 +1919,19 @@ class _Translations$review$ko extends Translations$review$en {
   String get lensEmpty => '이 스냅샷들 사이에 바뀐 것이 없습니다.';
   @override
   String get reopen => '다시 열기';
+  @override
+  String get notBlocking => '내 대기 해제';
+  @override
+  String get markReviewed => '읽음';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('ko'))(
+        n,
+        one: '새 댓글 ${n}개',
+        other: '새 댓글 ${n}개',
+      );
+  @override
+  String get handTo => '넘기기';
 }
 
 // Path: settings

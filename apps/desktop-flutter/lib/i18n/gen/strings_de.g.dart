@@ -2013,6 +2013,19 @@ class _Translations$review$de extends Translations$review$en {
       'Zwischen diesen Schnappschüssen hat sich nichts geändert.';
   @override
   String get reopen => 'erneut öffnen';
+  @override
+  String get notBlocking => 'wartet nicht auf mich';
+  @override
+  String get markReviewed => 'gelesen';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('de'))(
+        n,
+        one: '1 neuer Kommentar',
+        other: '${n} neue Kommentare',
+      );
+  @override
+  String get handTo => 'übergeben an';
 }
 
 // Path: settings

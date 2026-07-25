@@ -2003,6 +2003,19 @@ class _Translations$review$nl extends Translations$review$en {
   String get lensEmpty => 'Er is niets veranderd tussen deze snapshots.';
   @override
   String get reopen => 'heropenen';
+  @override
+  String get notBlocking => 'wacht niet op mij';
+  @override
+  String get markReviewed => 'gelezen';
+  @override
+  String newComments({required num n}) =>
+      (_root.$meta.cardinalResolver ?? PluralResolvers.cardinal('nl'))(
+        n,
+        one: '1 nieuwe reactie',
+        other: '${n} nieuwe reacties',
+      );
+  @override
+  String get handTo => 'doorgeven aan';
 }
 
 // Path: settings
