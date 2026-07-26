@@ -221,6 +221,7 @@ reads clumsy in your language; see [CONTRIBUTING.md](CONTRIBUTING.md). Just not 
 
 - Runs hot 👉👈 (hot math ayo)
 - Multi-gb single files work, but not to the standard I want yet. Proper investment is on the list.
+- The bundled semantic engram is a general-purpose research artifact, not something trained on code. It works, but a code-native one is the plan.
 
 ## License
 
