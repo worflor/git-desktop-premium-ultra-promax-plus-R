@@ -66,7 +66,8 @@ import '../../backend/review_records.dart' show ReviewRoundInfo;
 import '../review/review_adapter.dart' show ReviewViewBundle;
 import '../../backend/git_identity.dart' show kGitIdentityCommand;
 import '../review/review_chrome.dart'
-    show ReviewChip, ReviewChipVariant, ReviewType, ReviewVerbPill;
+    show ReviewChip, ReviewChipVariant, ReviewVerbPill;
+import '../review/review_identity_notice.dart';
 import '../review/review_pane.dart';
 import '../review/review_pane_controller.dart';
 import '../review/review_strings_i18n.dart';
@@ -10001,24 +10002,18 @@ class _ReviewIdentityNotice extends StatelessWidget {
     final missing = context.select<DeskPrState, bool>(
         (s) => s.viewerResolved && s.viewerIdentity == null);
     if (!missing) return const SizedBox.shrink();
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionLabel(context.t.review.heading),
         const SizedBox(height: 6),
-        Text(
-          context.t.review.identityNeeded,
-          style: TextStyle(color: t.textMuted, fontSize: ReviewType.body),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        SelectableText(
-          kGitIdentityCommand,
-          style: TextStyle(
-            color: t.textStrong,
-            fontSize: ReviewType.meta,
-            fontFamily: AppFonts.mono,
-          ),
+        // The notice itself is a review surface and lives with them, so
+        // it is string-blind, token-driven, and previewable like every
+        // other one. Only the decision to show it belongs to the page,
+        // because only the page knows the desk state.
+        ReviewIdentityNotice(
+          strings: reviewStringsFrom(context.t),
+          command: kGitIdentityCommand,
         ),
       ],
     );

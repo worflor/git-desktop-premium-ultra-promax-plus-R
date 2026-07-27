@@ -47,6 +47,7 @@ class _SlangReviewStrings extends ReviewStrings {
           handTo: t.review.handTo,
           markReviewed: t.review.markReviewed,
           timeNow: t.review.timeNow,
+          identityNeeded: t.review.identityNeeded,
           standingApproved: t.review.standingApproved,
           standingChangesRequested: t.review.standingChangesRequested,
         );

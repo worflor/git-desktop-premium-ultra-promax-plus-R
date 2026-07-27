@@ -23,6 +23,7 @@ import 'package:git_desktop/features/review/review_chrome.dart'
     show ReviewVerbPill;
 import 'package:git_desktop/features/review/review_file_header.dart';
 import 'package:git_desktop/features/review/review_header_strip.dart';
+import 'package:git_desktop/features/review/review_identity_notice.dart';
 import 'package:git_desktop/features/review/review_pane.dart'
     show ReviewComposer, ReviewHandOff, ReviewPublishBar;
 import 'package:git_desktop/features/review/review_thread_card.dart';
@@ -300,6 +301,75 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await _capture(tester, key, '.preview/review/verb_hover.png',
         pixelRatio: 4);
+  });
+
+  // The review section when git has no identity to sign writes with.
+  // Captured because it is the ONLY state in which the pane refuses to
+  // exist, so nothing else in the lab shows it — and an uncaptured
+  // surface is a surface nobody has looked at.
+  testWidgets('review identity notice', (tester) async {
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const key = ValueKey('identity');
+
+    await tester.pumpWidget(_app(
+      AppTokens.fromId(AppThemeId.petrichor),
+      Builder(builder: (context) {
+        final tokens = context.tokens;
+        return Scaffold(
+          backgroundColor: tokens.bg1,
+          body: Center(
+            child: RepaintBoundary(
+              key: key,
+              child: ColoredBox(
+                color: tokens.bg1,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final id in [
+                        AppThemeId.nightwalker,
+                        AppThemeId.petrichor,
+                        AppThemeId.nacre,
+                        AppThemeId.crafty,
+                      ])
+                        Builder(builder: (context) {
+                          final t = AppTokens.fromId(id);
+                          return Theme(
+                            data: Theme.of(context).copyWith(
+                              extensions: <ThemeExtension<dynamic>>[
+                                AppThemeExtension(t)
+                              ],
+                            ),
+                            child: ColoredBox(
+                              color: t.bg1,
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 14),
+                                child: ReviewIdentityNotice(
+                                  strings: ReviewStrings(),
+                                  command:
+                                      'git config --global user.name "Your Name"',
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    ));
+    await tester.pump();
+    await _capture(tester, key, '.preview/review/identity_notice.png',
+        pixelRatio: 3);
   });
 
   // The hand-off row across themes: verb, then bare names. Captured

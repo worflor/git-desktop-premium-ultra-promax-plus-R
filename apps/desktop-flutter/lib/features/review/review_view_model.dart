@@ -238,6 +238,10 @@ class ReviewStrings {
   /// units are methods below, following this class's own convention.
   final String timeNow;
 
+  /// Shown in place of the pane when git has no identity to sign
+  /// review writes with. See [ReviewIdentityNotice].
+  final String identityNeeded;
+
   /// Standing-verdict labels. Past tense on purpose: these describe
   /// where the review stands, not a button you can press, which is why
   /// they are not [verdictApprove] / [verdictRequestChanges].
@@ -271,6 +275,7 @@ class ReviewStrings {
     this.handTo = 'hand to',
     this.markReviewed = 'reviewed',
     this.timeNow = 'now',
+    this.identityNeeded = 'Set a git identity to review',
     this.standingApproved = 'approved',
     this.standingChangesRequested = 'changes requested',
   });
