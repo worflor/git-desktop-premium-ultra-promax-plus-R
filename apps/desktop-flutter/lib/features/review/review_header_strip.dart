@@ -47,11 +47,18 @@ class ReviewHeaderStrip extends StatelessWidget {
         children: [
           Expanded(
             child: ReviewLine([
-              ChipSeg(ReviewChip(
-                label: strings.roundChip(header.round),
-                color: t.textStrong,
-                mono: true,
-              )),
+              // Round 0 means no round was ever cut (the head branch is
+              // unresolvable), and anchoring is refused in that state.
+              // The chip used to read "R1" regardless, which claimed a
+              // live round while every gutter tap was being silently
+              // declined — the header asserting the exact thing the
+              // surface below it would not do.
+              if (header.round > 0)
+                ChipSeg(ReviewChip(
+                  label: strings.roundChip(header.round),
+                  color: t.textStrong,
+                  mono: true,
+                )),
               if (header.filesSinceLastLook > 0) ...[
                 const GapSeg(AppSpacing.sm10),
                 TextSeg(

@@ -101,7 +101,7 @@ void main() {
 
   test('R2: round cutting pins, records, no-ops, advances', () async {
     final first = await store.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _jun);
+        deskId: 7, branch: 'main', by: _jun, authorDisplay: 'jun');
     expect(first.ok, isTrue, reason: first.error ?? '');
     expect(first.data!.n, 1);
     expect(first.data!.changeId, isNotEmpty,
@@ -112,14 +112,14 @@ void main() {
         head1);
 
     final unmoved = await store.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _jun);
+        deskId: 7, branch: 'main', by: _jun, authorDisplay: 'jun');
     expect(unmoved.ok, isTrue);
     expect(unmoved.data, isNull, reason: 'unmoved head must not cut');
 
     await repo.writeFile('f.txt', 'x\n');
     final head2 = await repo.commitAll('advance');
     final second = await store.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _jun);
+        deskId: 7, branch: 'main', by: _jun, authorDisplay: 'jun');
     expect(second.data!.n, 2);
     expect(second.data!.commit, head2);
     final state = (await store.read(7)).data!;
@@ -138,7 +138,7 @@ void main() {
     final newHead = await repo.commitAll('advance past orphan');
 
     final cut = await store.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _jun);
+        deskId: 7, branch: 'main', by: _jun, authorDisplay: 'jun');
     expect(cut.ok, isTrue, reason: cut.error ?? '');
     expect(cut.data!.n, 2,
         reason: 'must skip the foreign pin at round/1');
@@ -156,7 +156,7 @@ void main() {
         .gitOk(['update-ref', 'refs/manifold/review/7/round/1', head]);
 
     final cut = await store.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _jun);
+        deskId: 7, branch: 'main', by: _jun, authorDisplay: 'jun');
     expect(cut.ok, isTrue, reason: cut.error ?? '');
     expect(cut.data!.n, 1, reason: 'adopt the orphan, do not mint round/2');
     expect(cut.data!.commit, head);
@@ -267,6 +267,52 @@ void main() {
     final bad = await store.resolveThread(
         deskId: 7, threadId: id, by: _jun, how: 'whatever');
     expect(bad.ok, isFalse);
+  });
+
+  test('R4b: answering a point hands it back to whoever raised it',
+      () async {
+    // Attention used to move ONLY on publish and round cut, which left
+    // the pane's most-used verb unable to change whose turn it is: an
+    // author could resolve every thread and still read "your turn"
+    // with nothing left to do, and the reviewer who asked the question
+    // was never told it had been answered.
+    final lines = ['x', 'y'];
+    await ok(store.openThread(
+      deskId: 7,
+      anchor: anchorOn(lines, 0),
+      opener: ReviewComment(
+          author: _mira, at: DateTime.utc(2026, 7, 22), body: 'fix?'),
+    ));
+    final id = (await store.read(7)).data!.threads.single.id;
+
+    final done = await store.resolveThread(
+        deskId: 7, threadId: id, by: _jun, how: 'done');
+    expect(done.data!.blockedOn('mira'), isTrue,
+        reason: 'mira raised it, so mira is who can say the fix holds');
+    expect(done.data!.blockedOn('jun'), isFalse,
+        reason: 'answering does not also put the answerer in — only '
+            'publishing ends a turn');
+
+    // The mirror: reopening says the answer did not hold, and the one
+    // who gave it is who can give another.
+    final again = await store.reopenThread(
+        deskId: 7, threadId: id, by: _mira);
+    expect(again.data!.blockedOn('jun'), isTrue);
+  });
+
+  test('R4c: settling your own thread tells nobody', () async {
+    // A reviewer withdrawing their own question has nobody to notify,
+    // so it must not manufacture a turn out of a self-resolve.
+    await ok(store.openThread(
+      deskId: 8,
+      anchor: anchorOn(const ['x'], 0),
+      opener: ReviewComment(
+          author: _mira, at: DateTime.utc(2026, 7, 22), body: 'never mind'),
+    ));
+    final id = (await store.read(8)).data!.threads.single.id;
+    final done = await store.resolveThread(
+        deskId: 8, threadId: id, by: _mira, how: 'done');
+    expect(done.data!.attentionOn, isEmpty);
   });
 
   test('R6: overlapping saves both survive (CAS retry, no silent loss)',
@@ -447,10 +493,12 @@ void main() {
     ));
     await repo.writeFile('f.txt', 'one');
     await repo.commitAll('r1');
-    await ok(store.cutRoundIfMoved(deskId: 3, branch: 'HEAD', by: _mira));
+    await ok(store.cutRoundIfMoved(
+        deskId: 3, branch: 'HEAD', by: _mira, authorDisplay: 'mira'));
     await repo.writeFile('f.txt', 'two');
     await repo.commitAll('r2');
-    await ok(store.cutRoundIfMoved(deskId: 3, branch: 'HEAD', by: _mira));
+    await ok(store.cutRoundIfMoved(
+        deskId: 3, branch: 'HEAD', by: _mira, authorDisplay: 'mira'));
 
     // The pins really are there, so the selection below is choosing
     // between shapes rather than finding an empty namespace either way.

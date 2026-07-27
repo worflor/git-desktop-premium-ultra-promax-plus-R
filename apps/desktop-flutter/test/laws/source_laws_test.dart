@@ -116,7 +116,10 @@ const _contentReadBaseline = <String, int>{
 /// they inherit fault injection, chaos scheduling, and telemetry for free.
 const _processSpawnBaseline = <String, int>{
   'lib/app/desk_issue_state.dart': 1,
-  'lib/app/desk_pr_state.dart': 1,
+  // desk_pr_state.dart ratcheted 1 -> 0 (2026-07-27): _mainRepoOf's raw
+  // `git rev-parse --git-common-dir` moved behind git.dart's runner. It
+  // runs on every refresh AND every desk-PR write, so it belongs inside
+  // the subprocess budget and the read-coalescing rather than beside it.
   'lib/backend/ai.dart': 4,
   'lib/backend/ai_api_keys_store.dart': 2,
   'lib/backend/aperture_sweep.dart': 4,

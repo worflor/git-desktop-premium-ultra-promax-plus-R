@@ -64,8 +64,9 @@ import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../../backend/review_records.dart' show ReviewRoundInfo;
 import '../review/review_adapter.dart' show ReviewViewBundle;
+import '../../backend/git_identity.dart' show kGitIdentityCommand;
 import '../review/review_chrome.dart'
-    show ReviewChip, ReviewChipVariant, ReviewVerbPill;
+    show ReviewChip, ReviewChipVariant, ReviewType, ReviewVerbPill;
 import '../review/review_pane.dart';
 import '../review/review_pane_controller.dart';
 import '../review/review_strings_i18n.dart';
@@ -403,6 +404,10 @@ class _BranchesPageState extends State<BranchesPage> {
   /// Collapsed-row turn signals for every OPEN desk PR with a review.
   Map<int, ReviewRowSummary> _reviewRowSummaries = {};
   bool _reviewSummariesLoading = false;
+
+  /// Monotonic "somebody asked for a fresh sweep" counter. See
+  /// [_loadReviewRowSummaries] for why a bail-if-busy guard lost writes.
+  int _reviewSummariesWant = 0;
 
   /// The exact `byBranch` map the summaries were read for. Held by
   /// REFERENCE and compared with `identical` — DeskPrState replaces the
@@ -2844,13 +2849,20 @@ class _BranchesPageState extends State<BranchesPage> {
     final deskState = context.read<DeskPrState>();
     final main = deskState.loadedForRepo;
     if (main == null) return null;
+    // No git identity, no controller. The gate lives HERE, once, rather
+    // than as a guard inside each of the dozen verbs: a review comment
+    // signed by nobody is not a degraded comment, it is a corrupt one,
+    // and it would sync to every peer that way. The section renders the
+    // remedy instead — see [_ReviewIdentityNotice].
+    final me = deskState.viewerReviewIdentity;
+    if (me == null) return null;
     return ReviewPaneController(
       repoPath: main,
       deskId: dp.deskId,
       headBranch: dp.headRef,
       baseRef: dp.baseRef,
       authorDisplay: dp.authorIdentity,
-      viewerDisplay: deskState.viewerDisplay,
+      viewer: me,
       refs: deskState.refsFor(main),
     );
   }
@@ -2904,8 +2916,18 @@ class _BranchesPageState extends State<BranchesPage> {
         ctrl = _reviewCtrls[id] = fresh;
       }
       final r = await ctrl.load();
-      if (!_reviewCurrent(epoch)) return;
-      if (r.ok) setState(() => _reviewData[id] = r.data!);
+      if (!mounted || !_reviewCurrent(epoch)) return;
+      if (!r.ok) {
+        // A failed load used to be silent, so a pane frozen on its last
+        // good bundle looked exactly like a pane with nothing new. The
+        // real cases are not obscure: a corrupt state doc, or a peer on
+        // a newer schema that the store REFUSES to rewrite rather than
+        // truncate. Both need saying out loud.
+        _reviewErrorSnack(
+            context.t.review.reviewActionFailed(error: r.error ?? '?'));
+        return;
+      }
+      setState(() => _reviewData[id] = r.data!);
       await _afterReviewLoad(id, epoch);
     } finally {
       // Only release what we still own: after a switch the set was
@@ -2920,7 +2942,17 @@ class _BranchesPageState extends State<BranchesPage> {
     final epoch = _reviewEpoch;
     final r = await ctrl.load();
     if (!_reviewCurrent(epoch)) return;
-    if (r.ok) setState(() => _reviewData[deskId] = r.data!);
+    if (!r.ok) {
+      // See [_ensureReviewLoaded]: the write may well have landed and
+      // only the read back failed, so the pane is now showing state
+      // that is stale rather than wrong. Say so instead of leaving the
+      // user to infer it from a verb that appeared to do nothing.
+      if (!mounted) return;
+      _reviewErrorSnack(
+          context.t.review.reviewActionFailed(error: r.error ?? '?'));
+      return;
+    }
+    setState(() => _reviewData[deskId] = r.data!);
     await _afterReviewLoad(deskId, epoch);
   }
 
@@ -2929,10 +2961,21 @@ class _BranchesPageState extends State<BranchesPage> {
   /// carried their own tail, first open silently skipped the reviewed
   /// ticks and every file read as unread until you happened to press
   /// something else.
+  ///
+  /// The collapsed row's turn badge belongs here for the same reason,
+  /// and used to be pasted onto three verbs by hand. The three were not
+  /// even the right three: LOADING can cut a round, and resolving a
+  /// thread now moves attention, so a reviewer could expand a row (which
+  /// puts them in the attention set), read, collapse, and see no badge
+  /// on the PR that was explicitly waiting for them. Anything that
+  /// reloads a review can change the turn, so the refresh lives with the
+  /// reload rather than with whoever remembered to ask for it.
   Future<void> _afterReviewLoad(int deskId, int epoch) async {
     await _refreshReviewTicks(deskId, epoch);
     if (!_reviewCurrent(epoch)) return;
     await _refreshReviewLens(deskId);
+    if (!_reviewCurrent(epoch)) return;
+    unawaited(_loadReviewRowSummaries());
   }
 
   /// Re-validate the viewer's reviewed marks against the content now on
@@ -3013,7 +3056,15 @@ class _BranchesPageState extends State<BranchesPage> {
         );
         return;
       }
-      _reviewData[deskId] = r.data!;
+      // Cutting round 1 CREATES the review: a state doc, a pin, and an
+      // attention set that already says whose turn it is. That is not a
+      // cache fill, so it does not get a bare map write — without the
+      // setState the header kept rendering the pre-review state, and
+      // without the shared tail the collapsed row showed no turn badge
+      // for a review that had just been started ON this viewer.
+      setState(() => _reviewData[deskId] = r.data!);
+      await _afterReviewLoad(deskId, epoch);
+      if (!mounted || !_reviewCurrent(epoch)) return;
     }
     // Prove the line can actually be anchored BEFORE opening a
     // composer. The byte cap and missing-blob paths used to surface at
@@ -3025,7 +3076,13 @@ class _BranchesPageState extends State<BranchesPage> {
       side: oldSide ? 'old' : 'new',
       line: line,
     );
-    if (!mounted) return;
+    // `mounted` alone was not enough here. Desk ids are per-repo
+    // sequentials, so #3 exists in every repo: switching repos while
+    // this blob read was in flight left the page mounted, the capture
+    // resolved, and repo B's desk #3 popped open a composer labelled
+    // with repo A's file and line — which a save would then anchor into
+    // the wrong repository's drafts.
+    if (!mounted || !_reviewCurrent(epoch)) return;
     if (anchor == null) {
       _reviewErrorSnack(context.t.review.anchorUnavailable);
       return;
@@ -3105,10 +3162,16 @@ class _BranchesPageState extends State<BranchesPage> {
   ) async {
     final ctrl = _reviewCtrls[deskId];
     if (ctrl == null) return;
-    final err = await ctrl.setFileReviewed(path, reviewed: reviewed);
+    final r = await ctrl.setFileReviewed(path, reviewed: reviewed);
     if (!mounted) return;
-    if (err != null) {
-      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    if (r.unreadable) {
+      // Not a failure of the write — the write was correctly refused,
+      // because a tick is a claim about bytes we could not read. Saying
+      // so is the difference between a control that declined and a
+      // control that appears broken.
+      _reviewErrorSnack(context.t.review.fileUnreadable);
+    } else if (r.error != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: r.error!));
     }
     await _reloadReview(deskId);
   }
@@ -3122,7 +3185,6 @@ class _BranchesPageState extends State<BranchesPage> {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
     await _reloadReview(deskId);
-    unawaited(_loadReviewRowSummaries());
   }
 
   Future<void> _stepOutOfReviewAttention(int deskId) async {
@@ -3134,7 +3196,6 @@ class _BranchesPageState extends State<BranchesPage> {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
     await _reloadReview(deskId);
-    unawaited(_loadReviewRowSummaries());
   }
 
   Future<void> _reopenReviewThread(int deskId, String threadId) async {
@@ -3174,7 +3235,6 @@ class _BranchesPageState extends State<BranchesPage> {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
     await _reloadReview(deskId);
-    unawaited(_loadReviewRowSummaries());
   }
 
   Future<void> _discardReviewDrafts(int deskId) async {
@@ -3282,34 +3342,60 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _markReviewCaughtUp(int deskId) async {
     final ctrl = _reviewCtrls[deskId];
     if (ctrl == null) return;
-    await ctrl.markCaughtUp();
+    final err = await ctrl.markCaughtUp();
+    if (!mounted) return;
+    if (err != null) {
+      _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
+    }
     await _reloadReview(deskId);
   }
 
+  /// Re-derive every collapsed row's turn badge.
+  ///
+  /// COALESCES rather than drops. The old form bailed out whenever a
+  /// sweep was already in flight, and every caller fires it unawaited,
+  /// so the bail was invisible: hand the review to someone and then
+  /// publish, and publish's refresh returned instantly because the
+  /// hand-off's sweep — which had read the refs BEFORE the publish
+  /// landed — was still walking the desks. That older read is the one
+  /// that called setState, so the row showed a turn that was already
+  /// superseded, and nothing was left to correct it.
+  ///
+  /// The want counter is the fix: a request that arrives mid-sweep
+  /// raises the bar the running loop has to clear, so the LAST caller
+  /// always gets a read that started after it asked. Same shape as
+  /// [_applyReviewLens]'s coalescing, for the same reason.
   Future<void> _loadReviewRowSummaries() async {
+    _reviewSummariesWant++;
     if (_reviewSummariesLoading) return;
-    final deskState = context.read<DeskPrState>();
-    final main = deskState.loadedForRepo;
-    if (main == null) return;
-    final desks = deskState.all
-        .where((d) => d.state == 'OPEN')
-        .map((d) => (deskId: d.deskId, author: d.authorIdentity))
-        .toList();
-    if (desks.isEmpty) {
-      if (_reviewRowSummaries.isNotEmpty && mounted) {
-        setState(() => _reviewRowSummaries = {});
-      }
-      return;
-    }
     _reviewSummariesLoading = true;
     final epoch = _reviewEpoch;
     try {
-      final out = await loadReviewRowSummaries(
-        refs: deskState.refsFor(main),
-        desks: desks,
-        viewerDisplay: deskState.viewerDisplay,
-      );
-      if (_reviewCurrent(epoch)) setState(() => _reviewRowSummaries = out);
+      var served = 0;
+      while (served != _reviewSummariesWant) {
+        served = _reviewSummariesWant;
+        if (!mounted || !_reviewCurrent(epoch)) return;
+        final deskState = context.read<DeskPrState>();
+        final main = deskState.loadedForRepo;
+        if (main == null) return;
+        final desks = deskState.all
+            .where((d) => d.state == 'OPEN')
+            .map((d) => (deskId: d.deskId, author: d.authorIdentity))
+            .toList();
+        if (desks.isEmpty) {
+          if (_reviewRowSummaries.isNotEmpty) {
+            setState(() => _reviewRowSummaries = {});
+          }
+          continue;
+        }
+        final out = await loadReviewRowSummaries(
+          refs: deskState.refsFor(main),
+          desks: desks,
+          viewerDisplay: deskState.viewerDisplay,
+        );
+        if (!mounted || !_reviewCurrent(epoch)) return;
+        setState(() => _reviewRowSummaries = out);
+      }
     } finally {
       if (epoch == _reviewEpoch) _reviewSummariesLoading = false;
     }
@@ -5215,6 +5301,7 @@ class _BranchesPageState extends State<BranchesPage> {
       onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
       review: expanded ? _reviewHooksFor(pr) : null,
       reviewSummary: isLocalPr ? _reviewRowSummaries[pr.number] : null,
+      isLocalPr: isLocalPr,
     );
   }
 
@@ -7008,10 +7095,17 @@ class _PullRequestRow extends StatefulWidget {
   /// Collapsed-row turn signal for desk PRs with a live review.
   final ReviewRowSummary? reviewSummary;
 
+  /// Whether this row is a desk PR rather than a forge PR. Review is a
+  /// facet of the desk object, so this decides whether an absent
+  /// [review] means "not a reviewable thing" or "reviewable, but
+  /// something is stopping it".
+  final bool isLocalPr;
+
   const _PullRequestRow({
     required this.pr,
     required this.viewerLogin,
     required this.expanded,
+    required this.isLocalPr,
     required this.focused,
     required this.checks,
     required this.checksLoading,
@@ -7355,6 +7449,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             onSelectFile: widget.onSelectFile,
                             onSubmitReview: widget.onSubmitReview,
                             onCheckout: widget.onCheckout,
+                            isLocalPr: widget.isLocalPr,
                             onOpenAsDesk: widget.onOpenAsDesk,
                             onAiReview: widget.onAiReview,
                             onMerge: widget.onMerge,
@@ -8743,6 +8838,9 @@ class _PrExpanded extends StatelessWidget {
   /// the opener composer under the diff.
   final ReviewPrHooks? review;
 
+  /// See [_PullRequestRow.isLocalPr].
+  final bool isLocalPr;
+
   const _PrExpanded({
     required this.pr,
     required this.viewerLogin,
@@ -8774,6 +8872,7 @@ class _PrExpanded extends StatelessWidget {
     this.onOpenAsDesk,
     this.onAiReview,
     this.review,
+    required this.isLocalPr,
   });
 
   /// True when at least one geometric orbital partner exists for this
@@ -9081,7 +9180,7 @@ class _PrExpanded extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const _SectionLabel('REVIEW'),
+                _SectionLabel(context.t.review.heading),
                 const SizedBox(width: AppSpacing.sm),
                 // Wrap, not Row-with-Spacer: the hand-off adds one
                 // control per participant, and a Row would overflow the
@@ -9140,14 +9239,23 @@ class _PrExpanded extends StatelessWidget {
               onDiscardDrafts: review!.onDiscardDrafts,
               onSelectFile: review!.onSelectFile,
             ),
+          ] else if (isLocalPr) ...[
+            // A desk PR whose review did not wire up. Two causes, and
+            // only one of them is the user's: an unconfigured git
+            // identity (review writes are signed, and the pane refuses
+            // to exist unsigned rather than minting records attributed
+            // to nobody) versus a load still in flight. The notice
+            // renders itself only for the first, so a slow load shows
+            // nothing rather than accusing a correctly-configured user.
+            const _ReviewIdentityNotice(),
           ] else ...[
-            const _SectionLabel('REVIEW'),
+            _SectionLabel(context.t.review.heading),
             const SizedBox(height: 6),
             _ReviewForm(onSubmit: onSubmitReview),
           ],
           const SizedBox(height: 16),
           if (checks != null && checks!.isNotEmpty) ...[
-            const _SectionLabel('CHECKS'),
+            _SectionLabel(context.t.branches.checksHeading),
             const SizedBox(height: 6),
             for (final c in checks!) _CheckLine(check: c),
             const SizedBox(height: 14),
@@ -9163,7 +9271,7 @@ class _PrExpanded extends StatelessWidget {
           if (pr.reviewers.isNotEmpty ||
               (fileSignals != null && fileSignals!.authors.isNotEmpty) ||
               fileSignalsLoading) ...[
-            const _SectionLabel('PEOPLE'),
+            _SectionLabel(context.t.branches.peopleHeading),
             const SizedBox(height: 6),
             _PeopleSection(
               reviewers: pr.reviewers,
@@ -9173,7 +9281,7 @@ class _PrExpanded extends StatelessWidget {
             const SizedBox(height: 14),
           ],
           if (detail != null && detail!.comments.isNotEmpty) ...[
-            const _SectionLabel('CONVERSATION'),
+            _SectionLabel(context.t.branches.conversationHeading),
             const SizedBox(height: 6),
             // Full thread, sorted chronologically (oldest first). Mixes
             // top-level PR comments with review submission bodies,
@@ -9838,6 +9946,44 @@ class _PrLinkChipState extends State<_PrLinkChip> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The REVIEW section when git has no identity to sign writes with.
+///
+/// Renders nothing until the question has actually been asked — see
+/// [DeskPrState.viewerResolved]. Carries the exact command rather than
+/// a description of it: this is a blocked action with one remedy, and
+/// the remedy is short enough to state.
+class _ReviewIdentityNotice extends StatelessWidget {
+  const _ReviewIdentityNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final missing = context.select<DeskPrState, bool>(
+        (s) => s.viewerResolved && s.viewerIdentity == null);
+    if (!missing) return const SizedBox.shrink();
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionLabel(context.t.review.heading),
+        const SizedBox(height: 6),
+        Text(
+          context.t.review.identityNeeded,
+          style: TextStyle(color: t.textMuted, fontSize: ReviewType.body),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        SelectableText(
+          kGitIdentityCommand,
+          style: TextStyle(
+            color: t.textStrong,
+            fontSize: ReviewType.meta,
+            fontFamily: AppFonts.mono,
+          ),
+        ),
+      ],
     );
   }
 }

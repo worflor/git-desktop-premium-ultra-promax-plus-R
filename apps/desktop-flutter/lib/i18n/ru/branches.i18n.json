@@ -342,5 +342,8 @@
   "patchBlocksNoCover": "модель вернула блоки патча, не покрывающие проблемные файлы",
   "applyFailed": "не удалось применить",
   "emptyOrUnparseablePatch": "модель вернула пустой или неразбираемый патч",
-  "noModelConfiguredFor": "для «{label}» модель не настроена"
+  "noModelConfiguredFor": "для «{label}» модель не настроена",
+  "checksHeading": "ПРОВЕРКИ",
+  "peopleHeading": "УЧАСТНИКИ",
+  "conversationHeading": "ОБСУЖДЕНИЕ"
 }

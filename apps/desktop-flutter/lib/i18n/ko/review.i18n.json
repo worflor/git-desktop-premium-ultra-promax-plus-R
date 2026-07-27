@@ -46,5 +46,8 @@
     "one": "새 댓글 {n}개",
     "other": "새 댓글 {n}개"
   },
-  "handTo": "넘기기"
+  "handTo": "넘기기",
+  "heading": "리뷰",
+  "identityNeeded": "리뷰하려면 git 신원을 설정하세요",
+  "fileUnreadable": "이 파일은 여기서 읽을 수 없습니다. 너무 크거나 이번 라운드에 없습니다."
 }

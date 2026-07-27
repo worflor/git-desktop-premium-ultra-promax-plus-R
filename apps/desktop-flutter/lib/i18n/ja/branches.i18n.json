@@ -315,5 +315,8 @@
   "patchBlocksNoCover": "モデルが返したパッチブロックは、失敗しているファイルをカバーしていませんでした",
   "applyFailed": "適用に失敗しました",
   "emptyOrUnparseablePatch": "モデルが空、または解析できないパッチを返しました",
-  "noModelConfiguredFor": "「{label}」に設定されたモデルがありません"
+  "noModelConfiguredFor": "「{label}」に設定されたモデルがありません",
+  "checksHeading": "チェック",
+  "peopleHeading": "メンバー",
+  "conversationHeading": "会話"
 }

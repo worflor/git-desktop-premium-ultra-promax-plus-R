@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "Modell lieferte Patch-Blöcke, die die fehlschlagenden Dateien nicht abdeckten",
   "applyFailed": "Anwenden fehlgeschlagen",
   "emptyOrUnparseablePatch": "Modell lieferte einen leeren oder nicht parsbaren Patch",
-  "noModelConfiguredFor": "kein Modell konfiguriert für \"{label}\""
+  "noModelConfiguredFor": "kein Modell konfiguriert für \"{label}\"",
+  "checksHeading": "PRÜFUNGEN",
+  "peopleHeading": "PERSONEN",
+  "conversationHeading": "KONVERSATION"
 }

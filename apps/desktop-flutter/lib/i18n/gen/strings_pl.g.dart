@@ -1288,6 +1288,12 @@ class _Translations$branches$pl extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       'brak skonfigurowanego modelu dla „${label}”';
+  @override
+  String get checksHeading => 'KONTROLE';
+  @override
+  String get peopleHeading => 'OSOBY';
+  @override
+  String get conversationHeading => 'ROZMOWA';
 }
 
 // Path: changes
@@ -2071,6 +2077,13 @@ class _Translations$review$pl extends Translations$review$en {
       );
   @override
   String get handTo => 'przekaż';
+  @override
+  String get heading => 'PRZEGLĄD';
+  @override
+  String get identityNeeded => 'Ustaw tożsamość git, aby recenzować';
+  @override
+  String get fileUnreadable =>
+      'Tego pliku nie można tu odczytać — jest za duży lub nie istnieje w tej rundzie.';
 }
 
 // Path: settings

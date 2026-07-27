@@ -315,5 +315,8 @@
   "patchBlocksNoCover": "model mengembalikan blok patch yang tidak mencakup file yang gagal",
   "applyFailed": "penerapan gagal",
   "emptyOrUnparseablePatch": "model mengembalikan patch kosong atau tidak bisa di-parse",
-  "noModelConfiguredFor": "tidak ada model dikonfigurasi untuk \"{label}\""
+  "noModelConfiguredFor": "tidak ada model dikonfigurasi untuk \"{label}\"",
+  "checksHeading": "PEMERIKSAAN",
+  "peopleHeading": "ORANG",
+  "conversationHeading": "PERCAKAPAN"
 }

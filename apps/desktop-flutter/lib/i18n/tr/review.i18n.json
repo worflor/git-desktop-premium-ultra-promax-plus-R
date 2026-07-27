@@ -46,5 +46,8 @@
     "one": "1 yeni yorum",
     "other": "{n} yeni yorum"
   },
-  "handTo": "devret"
+  "handTo": "devret",
+  "heading": "İNCELEME",
+  "identityNeeded": "İnceleme yapmak için bir git kimliği ayarlayın",
+  "fileUnreadable": "Bu dosya burada okunamıyor — çok büyük ya da bu turda mevcut değil."
 }

@@ -209,12 +209,23 @@ class ReviewStore {
   /// a crash between the two leaves an orphan pin the next cut
   /// adopts), then record the metadata. Returns the new round's info,
   /// or ok(null) when the head hasn't moved.
+  ///
+  /// [by] is provenance — whose client noticed the head move — and is
+  /// deliberately NOT the pole the attention flip is computed from.
+  /// [authorDisplay] is, and it is REQUIRED: it used to default to
+  /// `by.display`, which reads as a harmless convenience and is not.
+  /// The post-sync cut (DeskPrState) runs on the REVIEWER's machine, so
+  /// the default made the reviewer the "author", wrote
+  /// `{reviewer: false, author: true}`, and pointed the turn indicator
+  /// backwards on brand-new code — durably, because that attention set
+  /// syncs to every clone. An omitted author is not a thing this
+  /// function can be asked for any more.
   @useResult
   Future<GitResult<ReviewRoundInfo?>> cutRoundIfMoved({
     required int deskId,
     required String branch,
     required ReviewIdentity by,
-    String? authorDisplay,
+    required String authorDisplay,
     int maxAttempts = 5,
   }) async {
     final headR = await git.runGit(refs.repoPath,
@@ -295,9 +306,8 @@ class ReviewStore {
           // backwards.
           final withRound =
               current.copyWith(rounds: [...current.rounds, info]);
-          final owner = authorDisplay ?? by.display;
-          final changes = <String, bool>{owner: false};
-          for (final r in _reviewersOf(withRound, owner)) {
+          final changes = <String, bool>{authorDisplay: false};
+          for (final r in _reviewersOf(withRound, authorDisplay)) {
             changes[r] = true;
           }
           return withRound.copyWith(
@@ -751,13 +761,32 @@ class ReviewStore {
         final i = current.threads.indexWhere((t) => t.id == threadId);
         if (i < 0) return current;
         final threads = [...current.threads];
+        final opener = threads[i].comments.isEmpty
+            ? ''
+            : threads[i].comments.first.author.display;
         threads[i] = threads[i].copyWith(
           state: how,
           resolvedBy: by,
           resolvedAt: clock.now(),
           updatedAt: clock.now(),
         );
-        return current.copyWith(threads: threads, updatedAt: clock.now());
+        // Answering a point is a move, so it moves the ball. Attention
+        // used to change ONLY on publish and round cut, which meant the
+        // most-used verb in the pane left the turn indicator saying
+        // whatever the last publish had said — an author could resolve
+        // every thread and still read "your turn" with nothing left to
+        // do. The opener raised the point, so the opener is who can say
+        // the answer holds; resolving your OWN thread settles it with
+        // nobody to tell. Derived from the record, so every clone lands
+        // the same set no matter whose client did the resolving.
+        final attention = opener.isEmpty || opener == by.display
+            ? current.attention
+            : _withAttention(current.attention, {opener: true}, by.display);
+        return current.copyWith(
+          threads: threads,
+          attention: attention,
+          updatedAt: clock.now(),
+        );
       },
       message: (_) => '$how by ${by.display}',
     );
@@ -783,12 +812,25 @@ class ReviewStore {
           if (i < 0) return current;
           if (current.threads[i].unresolved) return current;
           final threads = [...current.threads];
+          // Read before the clear: this is the person who said it was
+          // handled. The mirror of [resolveThread]'s rule — reopening
+          // says the answer did not hold, and the one who gave it is
+          // who can give another.
+          final claimedDone = threads[i].resolvedBy?.display ?? '';
           threads[i] = threads[i].copyWith(
             state: 'unresolved',
             clearResolution: true,
             updatedAt: clock.now(),
           );
-          return current.copyWith(threads: threads, updatedAt: clock.now());
+          final attention = claimedDone.isEmpty || claimedDone == by.display
+              ? current.attention
+              : _withAttention(
+                  current.attention, {claimedDone: true}, by.display);
+          return current.copyWith(
+            threads: threads,
+            attention: attention,
+            updatedAt: clock.now(),
+          );
         },
         message: (_) => 'reopened by ${by.display}',
       );

@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "model gaf patch-blokken terug die de falende bestanden niet dekten",
   "applyFailed": "toepassen mislukt",
   "emptyOrUnparseablePatch": "model gaf een lege of niet te parsen patch terug",
-  "noModelConfiguredFor": "geen model geconfigureerd voor \"{label}\""
+  "noModelConfiguredFor": "geen model geconfigureerd voor \"{label}\"",
+  "checksHeading": "CONTROLES",
+  "peopleHeading": "PERSONEN",
+  "conversationHeading": "GESPREK"
 }

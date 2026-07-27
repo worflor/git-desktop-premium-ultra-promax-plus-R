@@ -212,7 +212,7 @@ void main() {
     await alice.commitAll('feature work');
     await alice.gitOk(['push', '-q', 'origin', 'main']);
     final cut = await aliceStore.cutRoundIfMoved(
-        deskId: 7, branch: 'main', by: _alice);
+        deskId: 7, branch: 'main', by: _alice, authorDisplay: _alice.display);
     expect(cut.ok, isTrue, reason: cut.error ?? '');
     final pinned = cut.data!.commit;
     await settle();

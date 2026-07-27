@@ -315,5 +315,8 @@
   "patchBlocksNoCover": "모델이 실패한 파일을 다루지 않는 패치 블록을 반환했습니다",
   "applyFailed": "적용 실패",
   "emptyOrUnparseablePatch": "모델이 비어 있거나 파싱할 수 없는 패치를 반환했습니다",
-  "noModelConfiguredFor": "\"{label}\"에 구성된 모델 없음"
+  "noModelConfiguredFor": "\"{label}\"에 구성된 모델 없음",
+  "checksHeading": "검사",
+  "peopleHeading": "사람",
+  "conversationHeading": "대화"
 }

@@ -46,5 +46,8 @@
     "one": "1 neuer Kommentar",
     "other": "{n} neue Kommentare"
   },
-  "handTo": "übergeben an"
+  "handTo": "übergeben an",
+  "heading": "REVIEW",
+  "identityNeeded": "Git-Identität festlegen, um zu reviewen",
+  "fileUnreadable": "Diese Datei kann hier nicht gelesen werden — zu groß oder in dieser Runde nicht vorhanden."
 }

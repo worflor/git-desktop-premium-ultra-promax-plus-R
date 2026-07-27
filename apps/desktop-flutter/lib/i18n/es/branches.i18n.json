@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "el modelo devolvió bloques de parche que no cubrían los archivos que fallaban",
   "applyFailed": "falló la aplicación",
   "emptyOrUnparseablePatch": "el modelo devolvió un parche vacío o que no se puede parsear",
-  "noModelConfiguredFor": "no hay modelo configurado para \"{label}\""
+  "noModelConfiguredFor": "no hay modelo configurado para \"{label}\"",
+  "checksHeading": "COMPROBACIONES",
+  "peopleHeading": "PERSONAS",
+  "conversationHeading": "CONVERSACIÓN"
 }

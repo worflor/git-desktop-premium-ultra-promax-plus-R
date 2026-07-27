@@ -1233,6 +1233,12 @@ class _Translations$branches$id extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       'tidak ada model dikonfigurasi untuk "${label}"';
+  @override
+  String get checksHeading => 'PEMERIKSAAN';
+  @override
+  String get peopleHeading => 'ORANG';
+  @override
+  String get conversationHeading => 'PERCAKAPAN';
 }
 
 // Path: changes
@@ -1990,6 +1996,13 @@ class _Translations$review$id extends Translations$review$en {
       );
   @override
   String get handTo => 'serahkan ke';
+  @override
+  String get heading => 'TINJAUAN';
+  @override
+  String get identityNeeded => 'Atur identitas git untuk meninjau';
+  @override
+  String get fileUnreadable =>
+      'File itu tidak dapat dibaca di sini — terlalu besar atau tidak ada di ronde ini.';
 }
 
 // Path: settings

@@ -43,6 +43,7 @@ library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
+import 'package:git_desktop/backend/review_records.dart';
 import 'package:git_desktop/features/review/review_pane_controller.dart';
 import 'package:git_desktop/features/review/review_view_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -76,7 +77,7 @@ void main() {
       headBranch: 'feat',
       baseRef: 'main',
       authorDisplay: 'jun',
-      viewerDisplay: 'mira',
+      viewer: const ReviewIdentity('mira', key: 'mira@example.com'),
       refs: refs(),
     );
   });
@@ -308,7 +309,8 @@ void main() {
     await ctrl.load();
     expect((await ctrl.ensureRound()).ok, isTrue);
 
-    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true), isNull);
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true),
+        (unreadable: false, error: null));
     await ctrl.load();
     expect(await ctrl.reviewedNow(const ['lib/a.dart']), {'lib/a.dart'},
         reason: 'ticked at the content just read');
@@ -323,12 +325,14 @@ void main() {
             'nobody had to remember to clear it');
 
     // Re-ticking at the new content is honest again.
-    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true), isNull);
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: true),
+        (unreadable: false, error: null));
     await ctrl.load();
     expect(await ctrl.reviewedNow(const ['lib/a.dart']), {'lib/a.dart'});
 
     // Unticking is a first-class move, not an absence.
-    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: false), isNull);
+    expect(await ctrl.setFileReviewed('lib/a.dart', reviewed: false),
+        (unreadable: false, error: null));
     await ctrl.load();
     expect(await ctrl.reviewedNow(const ['lib/a.dart']), isEmpty);
   });
@@ -366,7 +370,7 @@ void main() {
       headBranch: 'feat',
       baseRef: 'main',
       authorDisplay: 'jun',
-      viewerDisplay: 'jun',
+      viewer: const ReviewIdentity('jun', key: 'jun@example.com'),
       refs: refs(),
     );
 

@@ -315,5 +315,8 @@
   "patchBlocksNoCover": "模型返回的补丁块未覆盖失败的文件",
   "applyFailed": "应用失败",
   "emptyOrUnparseablePatch": "模型返回了空或无法解析的补丁",
-  "noModelConfiguredFor": "未为“{label}”配置模型"
+  "noModelConfiguredFor": "未为“{label}”配置模型",
+  "checksHeading": "检查",
+  "peopleHeading": "成员",
+  "conversationHeading": "对话"
 }

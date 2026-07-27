@@ -342,5 +342,8 @@
   "patchBlocksNoCover": "model zwrócił bloki patcha, które nie pokrywają problematycznych plików",
   "applyFailed": "nie udało się zastosować",
   "emptyOrUnparseablePatch": "model zwrócił pusty lub niemożliwy do sparsowania patch",
-  "noModelConfiguredFor": "brak skonfigurowanego modelu dla „{label}”"
+  "noModelConfiguredFor": "brak skonfigurowanego modelu dla „{label}”",
+  "checksHeading": "KONTROLE",
+  "peopleHeading": "OSOBY",
+  "conversationHeading": "ROZMOWA"
 }

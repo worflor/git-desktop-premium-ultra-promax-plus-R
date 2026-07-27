@@ -1249,6 +1249,12 @@ class _Translations$branches$nl extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       'geen model geconfigureerd voor "${label}"';
+  @override
+  String get checksHeading => 'CONTROLES';
+  @override
+  String get peopleHeading => 'PERSONEN';
+  @override
+  String get conversationHeading => 'GESPREK';
 }
 
 // Path: changes
@@ -2016,6 +2022,13 @@ class _Translations$review$nl extends Translations$review$en {
       );
   @override
   String get handTo => 'doorgeven aan';
+  @override
+  String get heading => 'REVIEW';
+  @override
+  String get identityNeeded => 'Stel een git-identiteit in om te reviewen';
+  @override
+  String get fileUnreadable =>
+      'Dit bestand kan hier niet gelezen worden — te groot of niet aanwezig in deze ronde.';
 }
 
 // Path: settings

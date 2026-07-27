@@ -1190,6 +1190,12 @@ class _Translations$branches$ja extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       '「${label}」に設定されたモデルがありません';
+  @override
+  String get checksHeading => 'チェック';
+  @override
+  String get peopleHeading => 'メンバー';
+  @override
+  String get conversationHeading => '会話';
 }
 
 // Path: changes
@@ -1941,6 +1947,12 @@ class _Translations$review$ja extends Translations$review$en {
       );
   @override
   String get handTo => '担当を渡す';
+  @override
+  String get heading => 'レビュー';
+  @override
+  String get identityNeeded => 'レビューするには git の識別情報を設定してください';
+  @override
+  String get fileUnreadable => 'このファイルはここでは読み取れません。サイズが大きすぎるか、このラウンドに存在しません。';
 }
 
 // Path: settings

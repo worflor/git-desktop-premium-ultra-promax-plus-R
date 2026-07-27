@@ -46,5 +46,8 @@
     "one": "1 comentario nuevo",
     "other": "{n} comentarios nuevos"
   },
-  "handTo": "pasar a"
+  "handTo": "pasar a",
+  "heading": "REVISIÓN",
+  "identityNeeded": "Configura una identidad de git para revisar",
+  "fileUnreadable": "Ese archivo no se puede leer aquí — es demasiado grande o no existe en esta ronda."
 }

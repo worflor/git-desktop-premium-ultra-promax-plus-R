@@ -46,5 +46,8 @@
     "one": "1 komentar baru",
     "other": "{n} komentar baru"
   },
-  "handTo": "serahkan ke"
+  "handTo": "serahkan ke",
+  "heading": "TINJAUAN",
+  "identityNeeded": "Atur identitas git untuk meninjau",
+  "fileUnreadable": "File itu tidak dapat dibaca di sini — terlalu besar atau tidak ada di ronde ini."
 }

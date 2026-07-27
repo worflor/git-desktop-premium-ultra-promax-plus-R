@@ -1668,6 +1668,15 @@ class Translations$branches$en {
   /// en: 'no model configured for "{label}"'
   String noModelConfiguredFor({required Object label}) =>
       'no model configured for "${label}"';
+
+  /// en: 'CHECKS'
+  String get checksHeading => 'CHECKS';
+
+  /// en: 'PEOPLE'
+  String get peopleHeading => 'PEOPLE';
+
+  /// en: 'CONVERSATION'
+  String get conversationHeading => 'CONVERSATION';
 }
 
 // Path: changes
@@ -2369,6 +2378,16 @@ class Translations$review$en {
 
   /// en: 'hand to'
   String get handTo => 'hand to';
+
+  /// en: 'REVIEW'
+  String get heading => 'REVIEW';
+
+  /// en: 'Set a git identity to review'
+  String get identityNeeded => 'Set a git identity to review';
+
+  /// en: 'That file can't be read here — it's too large or missing at this round.'
+  String get fileUnreadable =>
+      'That file can\'t be read here — it\'s too large or missing at this round.';
 }
 
 // Path: settings

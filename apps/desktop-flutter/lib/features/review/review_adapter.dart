@@ -245,7 +245,11 @@ ReviewViewBundle buildReviewViews(
 
   return ReviewViewBundle(
     header: ReviewHeaderView(
-      round: state.latestRound?.n ?? 1,
+      // 0, not 1: a state doc with no rounds is a real state (a
+      // verdict-only publish, or a head branch that stopped resolving),
+      // and reporting a round that was never cut made the header claim
+      // a snapshot nothing was anchored against.
+      round: state.latestRound?.n ?? 0,
       turn: turn.yourTurn ? ReviewTurn.yours : ReviewTurn.theirs,
       waitingOn: turn.waitingOn,
       unresolvedCount: state.unresolvedCount,

@@ -1181,6 +1181,12 @@ class _Translations$branches$ko extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       '"${label}"에 구성된 모델 없음';
+  @override
+  String get checksHeading => '검사';
+  @override
+  String get peopleHeading => '사람';
+  @override
+  String get conversationHeading => '대화';
 }
 
 // Path: changes
@@ -1932,6 +1938,12 @@ class _Translations$review$ko extends Translations$review$en {
       );
   @override
   String get handTo => '넘기기';
+  @override
+  String get heading => '리뷰';
+  @override
+  String get identityNeeded => '리뷰하려면 git 신원을 설정하세요';
+  @override
+  String get fileUnreadable => '이 파일은 여기서 읽을 수 없습니다. 너무 크거나 이번 라운드에 없습니다.';
 }
 
 // Path: settings

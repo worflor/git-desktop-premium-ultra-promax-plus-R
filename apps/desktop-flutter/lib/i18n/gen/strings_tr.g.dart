@@ -1246,6 +1246,12 @@ class _Translations$branches$tr extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       '"${label}" için model yapılandırılmadı';
+  @override
+  String get checksHeading => 'KONTROLLER';
+  @override
+  String get peopleHeading => 'KİŞİLER';
+  @override
+  String get conversationHeading => 'KONUŞMA';
 }
 
 // Path: changes
@@ -2012,6 +2018,13 @@ class _Translations$review$tr extends Translations$review$en {
       );
   @override
   String get handTo => 'devret';
+  @override
+  String get heading => 'İNCELEME';
+  @override
+  String get identityNeeded => 'İnceleme yapmak için bir git kimliği ayarlayın';
+  @override
+  String get fileUnreadable =>
+      'Bu dosya burada okunamıyor — çok büyük ya da bu turda mevcut değil.';
 }
 
 // Path: settings

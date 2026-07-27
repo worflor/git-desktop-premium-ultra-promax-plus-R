@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "le modèle a renvoyé des blocs de patch qui ne couvraient pas les fichiers en échec",
   "applyFailed": "échec de l'application",
   "emptyOrUnparseablePatch": "le modèle a renvoyé un patch vide ou impossible à analyser",
-  "noModelConfiguredFor": "aucun modèle configuré pour « {label} »"
+  "noModelConfiguredFor": "aucun modèle configuré pour « {label} »",
+  "checksHeading": "VÉRIFICATIONS",
+  "peopleHeading": "PERSONNES",
+  "conversationHeading": "CONVERSATION"
 }

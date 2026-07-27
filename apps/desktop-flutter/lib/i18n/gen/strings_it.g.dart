@@ -1258,6 +1258,12 @@ class _Translations$branches$it extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       'nessun modello configurato per "${label}"';
+  @override
+  String get checksHeading => 'CONTROLLI';
+  @override
+  String get peopleHeading => 'PERSONE';
+  @override
+  String get conversationHeading => 'CONVERSAZIONE';
 }
 
 // Path: changes
@@ -2025,6 +2031,13 @@ class _Translations$review$it extends Translations$review$en {
       );
   @override
   String get handTo => 'passa a';
+  @override
+  String get heading => 'REVISIONE';
+  @override
+  String get identityNeeded => 'Imposta un\'identità git per revisionare';
+  @override
+  String get fileUnreadable =>
+      'Questo file non può essere letto qui — troppo grande o assente in questo round.';
 }
 
 // Path: settings

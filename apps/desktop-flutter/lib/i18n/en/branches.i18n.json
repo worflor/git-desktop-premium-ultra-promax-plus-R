@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "model returned patch blocks that did not cover the failing files",
   "applyFailed": "apply failed",
   "emptyOrUnparseablePatch": "model returned an empty or unparseable patch",
-  "noModelConfiguredFor": "no model configured for \"{label}\""
+  "noModelConfiguredFor": "no model configured for \"{label}\"",
+  "checksHeading": "CHECKS",
+  "peopleHeading": "PEOPLE",
+  "conversationHeading": "CONVERSATION"
 }

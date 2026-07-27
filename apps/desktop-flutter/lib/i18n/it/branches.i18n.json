@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "il modello ha restituito blocchi di patch che non coprivano i file falliti",
   "applyFailed": "applicazione non riuscita",
   "emptyOrUnparseablePatch": "il modello ha restituito una patch vuota o non analizzabile",
-  "noModelConfiguredFor": "nessun modello configurato per \"{label}\""
+  "noModelConfiguredFor": "nessun modello configurato per \"{label}\"",
+  "checksHeading": "CONTROLLI",
+  "peopleHeading": "PERSONE",
+  "conversationHeading": "CONVERSAZIONE"
 }

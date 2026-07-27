@@ -1278,6 +1278,12 @@ class _Translations$branches$ru extends Translations$branches$en {
   @override
   String noModelConfiguredFor({required Object label}) =>
       'для «${label}» модель не настроена';
+  @override
+  String get checksHeading => 'ПРОВЕРКИ';
+  @override
+  String get peopleHeading => 'УЧАСТНИКИ';
+  @override
+  String get conversationHeading => 'ОБСУЖДЕНИЕ';
 }
 
 // Path: changes
@@ -2061,6 +2067,14 @@ class _Translations$review$ru extends Translations$review$en {
       );
   @override
   String get handTo => 'передать';
+  @override
+  String get heading => 'РЕВЬЮ';
+  @override
+  String get identityNeeded =>
+      'Укажите git-идентификацию, чтобы оставлять ревью';
+  @override
+  String get fileUnreadable =>
+      'Этот файл здесь не прочитать — он слишком большой или отсутствует в этом раунде.';
 }
 
 // Path: settings

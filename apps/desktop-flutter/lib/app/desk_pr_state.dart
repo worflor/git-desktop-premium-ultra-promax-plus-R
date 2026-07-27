@@ -9,8 +9,6 @@
 // DeskPrStore (refs/manifold/desks/<branch>) so the PR list is
 // always derived from git, never from a sidecar cache.
 
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
@@ -20,6 +18,7 @@ import '../backend/desk_pr.dart';
 import '../backend/desk_pr_diff.dart';
 import '../backend/desk_pr_store.dart';
 import '../backend/git.dart' as git;
+import '../backend/git_identity.dart';
 import '../backend/manifold_refs.dart';
 import '../backend/remote_pr_provider.dart' show detectPrProvider;
 import '../backend/review_records.dart';
@@ -94,11 +93,15 @@ class DeskPrState extends ChangeNotifier {
   /// pointer; the metadata refs live in the common dir.
   Future<String?> _mainRepoOf(String anyPath) async {
     try {
-      final r = await Process.run('git', [
+      // Through git.dart's runner, not a raw spawn: this runs on every
+      // refresh and every write, so it belongs inside the app-wide
+      // subprocess budget, the non-interactive environment, and the
+      // read-coalescing that makes the repeat calls free (L6).
+      final r = await git.runGit(anyPath, [
         'rev-parse',
         '--path-format=absolute',
         '--git-common-dir',
-      ], workingDirectory: anyPath);
+      ]);
       if (r.exitCode != 0) return null;
       final commonDir = (r.stdout as String).trim();
       if (commonDir.isEmpty) return null;
@@ -123,9 +126,19 @@ class DeskPrState extends ChangeNotifier {
   /// with the review pane so desk-PR writes and review writes can
   /// never diverge on author. [repoPath] should be the MAIN repo path
   /// (see [_mainRepoOf]); [loadedForRepo] is that path after a load.
+  ///
+  /// This is the TOOL's identity, deliberately: the git author of the
+  /// orphan metadata commits is Manifold-the-app, so the repo's own
+  /// user.name never leaks into metadata history. Who a record is ABOUT
+  /// is a different question, answered by [viewerIdentity] — see the
+  /// note there for why conflating the two was a bug.
   ManifoldRefs refsFor(String repoPath) {
-    final id = _identity.identity;
-    final author = id.shortName.isEmpty ? 'manifold' : id.shortName;
+    final short = _identity.identity.shortName;
+    // One literal, not two: this fallback and the branding default used
+    // to be independently spelled ('manifold' vs 'Manifold') in two
+    // files, which is a drift waiting to happen even though
+    // AppIdentityState never actually lets the name go empty.
+    final author = short.isEmpty ? defaultAppIdentity.shortName : short;
     return ManifoldRefs(
       repoPath: repoPath,
       authorName: author,
@@ -133,11 +146,80 @@ class DeskPrState extends ChangeNotifier {
     );
   }
 
-  /// The identity display name review records carry for this viewer.
-  String get viewerDisplay {
-    final short = _identity.identity.shortName;
-    return short.isEmpty ? 'manifold' : short;
+  /// Who git says the person at this keyboard is, for the loaded repo.
+  /// Null when git has no configured identity (see [GitIdentity]).
+  GitIdentity? _viewer;
+
+  /// The repo path [_viewer] was resolved against, so a repo switch
+  /// cannot serve the previous repo's identity.
+  String? _viewerFor;
+
+  /// Whether the viewer question has been ASKED yet for the loaded repo.
+  ///
+  /// Tri-state on purpose: "not resolved" and "resolved to nobody" look
+  /// identical through a nullable identity, and conflating them would
+  /// flash "set your git identity" at every correctly-configured user
+  /// for the frame before the config read lands.
+  bool get viewerResolved => _viewerFor != null;
+
+  /// The person at this keyboard, as review and desk-PR records name
+  /// them. Null when git has no `user.name`/`user.email` configured.
+  ///
+  /// This used to be [AppIdentity.shortName] — the APP's branding name,
+  /// the thing onboarding asks you to pick when it says "what is this
+  /// to you?". Every reviewer on every machine therefore wrote under
+  /// the same default string: one attention key, no hand-off
+  /// candidates, and `viewer == author` unconditionally true, which
+  /// silently made the turn fold treat everyone as the author of
+  /// everything. Identity in a review is the HUMAN, and git already
+  /// knows who that is.
+  GitIdentity? get viewerIdentity => _viewer;
+
+  /// The display review records carry for this viewer, or `''` when git
+  /// has no identity. Empty is deliberately propagated rather than
+  /// papered over with a placeholder: an invented name written into a
+  /// ref that SYNCS TO PEERS is worse than no name, and every derivation
+  /// that compares against it simply fails to match, which is honest.
+  /// Writers must gate on [viewerIdentity] being non-null instead.
+  String get viewerDisplay => _viewer?.display ?? '';
+
+  /// The identity object review records embed. Carries the git email as
+  /// the format's stable [ReviewIdentity.key] — recorded from day one so
+  /// it is already present when the merge engine starts interpreting it,
+  /// exactly as the format promises.
+  ReviewIdentity? get viewerReviewIdentity {
+    final v = _viewer;
+    if (v == null) return null;
+    return ReviewIdentity(v.display, key: v.key);
   }
+
+  /// Resolve (and cache) the viewer for [main]. Cheap on the hot path:
+  /// two `git config --get` reads that ride the shared runner's
+  /// read-coalescing, and only on a repo change.
+  Future<GitIdentity?> _ensureViewer(String main) async {
+    if (_viewerFor == main) return _viewer;
+    final resolved = await resolveGitIdentity(main);
+    _viewer = resolved;
+    _viewerFor = main;
+    return resolved;
+  }
+
+  /// Test-only: install a viewer without a git config read, mirroring
+  /// [debugSeed]'s contract for the PR map.
+  @visibleForTesting
+  void debugSeedViewer(GitIdentity? viewer, {String? forRepo}) {
+    _viewer = viewer;
+    _viewerFor = forRepo;
+    notifyListeners();
+  }
+
+  /// The refusal a write returns when git has no identity to sign it
+  /// with. Stated as the fix, not the complaint: this is the same
+  /// condition `git commit` refuses under, and the same remedy.
+  static const String identityUnsetMessage =
+      'Set your git identity before reviewing — '
+      'git config --global user.name "Your Name" '
+      'and user.email "you@example.com".';
 
   Future<void> refreshFor(String repoPath) async {
     final id = ++_requestId;
@@ -146,6 +228,10 @@ class DeskPrState extends ChangeNotifier {
     notifyListeners();
     try {
       final main = await _mainRepoOf(repoPath) ?? repoPath;
+      // Before the list read, so anything that renders off this refresh
+      // (the turn badge, the hand-off offer) already knows who you are
+      // rather than deriving one frame against an empty viewer.
+      await _ensureViewer(main);
       final store = DeskPrStore(refsFor(main));
       final r = await store.listAll();
       if (id != _requestId) return;
@@ -181,6 +267,8 @@ class DeskPrState extends ChangeNotifier {
     bool isDraft = true,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final me = await _ensureViewer(main);
+    if (me == null) return identityUnsetMessage;
     final resolvedBase = baseRef ?? await _resolveBaseRef(main);
     if (resolvedBase == null) {
       return "Couldn't determine the repository's default branch — "
@@ -192,7 +280,7 @@ class DeskPrState extends ChangeNotifier {
       title: (title?.trim().isNotEmpty ?? false) ? title!.trim() : branch,
       body: body ?? '',
       baseRef: resolvedBase,
-      authorIdentity: _identity.identity.shortName,
+      authorIdentity: me.display,
       isDraft: isDraft,
     );
     if (!r.ok) return r.error;
@@ -206,10 +294,12 @@ class DeskPrState extends ChangeNotifier {
     required String body,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final me = await _ensureViewer(main);
+    if (me == null) return identityUnsetMessage;
     final store = DeskPrStore(refsFor(main));
     final r = await store.addComment(
       branch: branch,
-      author: _identity.identity.shortName,
+      author: me.display,
       body: body,
     );
     if (!r.ok) return r.error;
@@ -224,10 +314,12 @@ class DeskPrState extends ChangeNotifier {
     required String body,
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final me = await _ensureViewer(main);
+    if (me == null) return identityUnsetMessage;
     final store = DeskPrStore(refsFor(main));
     final r = await store.addReview(
       branch: branch,
-      author: _identity.identity.shortName,
+      author: me.display,
       verdict: verdict,
       body: body,
     );
@@ -489,11 +581,21 @@ class DeskPrState extends ChangeNotifier {
     final store = ReviewStore(refsFor(main));
     final reviewed = await store.listReviewedDeskIds();
     if (!reviewed.ok || reviewed.data!.isEmpty) return;
+    // Carry the whole record, not just the head ref: the attention flip
+    // a round cut performs is computed from the PR's AUTHOR, and this
+    // loop runs on whichever machine happened to sync — usually the
+    // reviewer's. Handing the store a head ref and letting it guess the
+    // author from `by` is what pointed the turn backwards.
     final open = {
       for (final pr in _byBranch.values)
         if (pr.state == 'OPEN' && reviewed.data!.contains(pr.deskId))
-          pr.deskId: pr.headRef,
+          pr.deskId: pr,
     };
+    if (open.isEmpty) return;
+    // Provenance only. Unattributed when git has no identity, which is
+    // honest: nobody signed this cut. The attention math does not read
+    // it, so an unconfigured machine still keeps rounds honest.
+    final by = viewerReviewIdentity ?? const ReviewIdentity('');
     for (final entry in open.entries) {
       try {
         // Best-effort, but never SILENT: an `ok: false` used to vanish
@@ -503,8 +605,9 @@ class DeskPrState extends ChangeNotifier {
         // findable instead of invisible.
         final cut = await store.cutRoundIfMoved(
           deskId: entry.key,
-          branch: entry.value,
-          by: ReviewIdentity(viewerDisplay),
+          branch: entry.value.headRef,
+          by: by,
+          authorDisplay: entry.value.authorIdentity,
         );
         if (!cut.ok) {
           debugPrint(

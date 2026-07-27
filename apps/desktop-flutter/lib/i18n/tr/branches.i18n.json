@@ -324,5 +324,8 @@
   "patchBlocksNoCover": "model, başarısız dosyaları kapsamayan yama blokları döndürdü",
   "applyFailed": "uygulama başarısız",
   "emptyOrUnparseablePatch": "model boş ya da ayrıştırılamayan bir yama döndürdü",
-  "noModelConfiguredFor": "\"{label}\" için model yapılandırılmadı"
+  "noModelConfiguredFor": "\"{label}\" için model yapılandırılmadı",
+  "checksHeading": "KONTROLLER",
+  "peopleHeading": "KİŞİLER",
+  "conversationHeading": "KONUŞMA"
 }

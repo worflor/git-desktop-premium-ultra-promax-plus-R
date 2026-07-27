@@ -150,8 +150,19 @@ class ReviewPaneController {
   /// The desk PR author's identity — the turn fold's "author" pole.
   final String authorDisplay;
 
-  /// The person at this keyboard.
-  final String viewerDisplay;
+  /// The person at this keyboard, as an identity rather than a name.
+  ///
+  /// Non-null and non-empty by construction: a controller that exists is
+  /// one whose writes can be signed. The caller resolves the human from
+  /// git config and simply does not build a pane when git has no
+  /// identity to give, so there is no "unsigned write" branch anywhere
+  /// downstream to get wrong. Carrying the object (not the display
+  /// string) is also what puts the stable [ReviewIdentity.key] into
+  /// every record this controller writes.
+  final ReviewIdentity viewer;
+
+  /// The display the records and derivations compare on.
+  String get viewerDisplay => viewer.display;
 
   final ReviewStore store;
   final Clock clock;
@@ -162,12 +173,12 @@ class ReviewPaneController {
     required this.headBranch,
     required this.baseRef,
     required this.authorDisplay,
-    required this.viewerDisplay,
+    required this.viewer,
     required ManifoldRefs refs,
     this.clock = const SystemClock(),
-  }) : store = ReviewStore(refs, clock: clock);
-
-  ReviewIdentity get _viewer => ReviewIdentity(viewerDisplay);
+  })  : assert(viewer.display.trim().isNotEmpty,
+            'a review controller must be able to sign its writes'),
+        store = ReviewStore(refs, clock: clock);
 
   ReviewPaneData? data;
 
@@ -239,17 +250,24 @@ class ReviewPaneController {
   /// for it, which coalescing could not promise.
   Future<void> _loadGate = Future<void>.value();
 
-  /// Full pane refresh: cut a round if the head moved (the "look"
-  /// moment IS the round boundary), then read state + drafts, resolve
-  /// every anchored file's content, and fold it all into views.
-  Future<GitResult<ReviewPaneData>> load() {
+  /// Run [body] alone, after everything already queued on the gate.
+  ///
+  /// One helper rather than the three-line queue idiom pasted per verb:
+  /// the paste is why [setFileReviewed] and [reviewedNow] were outside
+  /// the gate at all while touching the very caches it exists to
+  /// protect. Callers must not nest — every gated entry point is called
+  /// from the page, never from inside another one.
+  Future<T> _gated<T>(Future<T> Function() body) {
     final prior = _loadGate;
     final mine = Completer<void>();
     _loadGate = mine.future;
-    return prior
-        .then((_) => _load())
-        .whenComplete(mine.complete);
+    return prior.then((_) => body()).whenComplete(mine.complete);
   }
+
+  /// Full pane refresh: cut a round if the head moved (the "look"
+  /// moment IS the round boundary), then read state + drafts, resolve
+  /// every anchored file's content, and fold it all into views.
+  Future<GitResult<ReviewPaneData>> load() => _gated(_load);
 
   Future<GitResult<ReviewPaneData>> _load() async {
     // Round hygiene is gated on the review EXISTING: merely opening a
@@ -266,7 +284,7 @@ class ReviewPaneController {
       final cut = await store.cutRoundIfMoved(
         deskId: deskId,
         branch: headBranch,
-        by: _viewer,
+        by: viewer,
         authorDisplay: authorDisplay,
       );
       // Re-read ONLY when a round actually landed. The steady state (a
@@ -459,7 +477,7 @@ class ReviewPaneController {
     final cut = await store.cutRoundIfMoved(
       deskId: deskId,
       branch: headBranch,
-      by: _viewer,
+      by: viewer,
       authorDisplay: authorDisplay,
     );
     if (!cut.ok) return GitResult.err(cut.error ?? 'round cut failed');
@@ -483,14 +501,8 @@ class ReviewPaneController {
     required String path,
     required String side,
     required int line,
-  }) {
-    final prior = _loadGate;
-    final mine = Completer<void>();
-    _loadGate = mine.future;
-    return prior
-        .then((_) => _captureAt(path: path, side: side, line: line))
-        .whenComplete(mine.complete);
-  }
+  }) =>
+      _gated(() => _captureAt(path: path, side: side, line: line));
 
   Future<ReviewAnchor?> _captureAt({
     required String path,
@@ -549,13 +561,13 @@ class ReviewPaneController {
 
   Future<String?> resolve(String threadId, {required String how}) async {
     final r = await store.resolveThread(
-        deskId: deskId, threadId: threadId, by: _viewer, how: how);
+        deskId: deskId, threadId: threadId, by: viewer, how: how);
     return r.ok ? null : (r.error ?? 'resolve failed');
   }
 
   Future<String?> reopen(String threadId) async {
     final r = await store.reopenThread(
-        deskId: deskId, threadId: threadId, by: _viewer);
+        deskId: deskId, threadId: threadId, by: viewer);
     return r.ok ? null : (r.error ?? 'reopen failed');
   }
 
@@ -585,7 +597,7 @@ class ReviewPaneController {
     final d = data;
     final r = await store.publish(
       deskId: deskId,
-      author: _viewer,
+      author: viewer,
       authorDisplay: authorDisplay,
       verdict: verdict,
       verdictRound: d?.latestRound,
@@ -608,7 +620,7 @@ class ReviewPaneController {
       deskId: deskId,
       display: viewerDisplay,
       inSet: false,
-      by: _viewer,
+      by: viewer,
     );
     return r.ok ? null : (r.error ?? 'attention update failed');
   }
@@ -634,7 +646,7 @@ class ReviewPaneController {
       deskId: deskId,
       display: display,
       inSet: true,
-      by: _viewer,
+      by: viewer,
     );
     return r.ok ? null : (r.error ?? 'attention update failed');
   }
@@ -644,12 +656,32 @@ class ReviewPaneController {
   /// The hash is what makes the tick self-invalidating: it records what
   /// was actually read, so the author's next edit to that file makes
   /// the tick stale on every clone without anyone clearing it.
-  Future<String?> setFileReviewed(String path, {required bool reviewed}) async {
+  /// Outcome of a reviewed-bit write.
+  ///
+  /// `unreadable` is its own answer rather than folded into success or
+  /// into an error string: the tick returned the page's "ok" sentinel
+  /// on a file it had refused to write, so tapping the checkbox on a
+  /// deleted, renamed, or over-cap file did nothing at all — no tick,
+  /// no message — while the identical control on the file beside it
+  /// worked. Distinguishing it is what lets the page say which.
+  Future<({bool unreadable, String? error})> setFileReviewed(
+    String path, {
+    required bool reviewed,
+  }) =>
+      _gated(() => _setFileReviewed(path, reviewed: reviewed));
+
+  Future<({bool unreadable, String? error})> _setFileReviewed(
+    String path, {
+    required bool reviewed,
+  }) async {
     final d = data;
-    if (d == null) return null;
+    if (d == null) return (unreadable: false, error: null);
     final lines = await _ensureHeadLines(path);
     // A file we cannot read is a file we cannot honestly call reviewed.
-    if (lines == null && reviewed) return null;
+    // Un-ticking never needs the content: it writes an empty hash.
+    if (lines == null && reviewed) {
+      return (unreadable: true, error: null);
+    }
     final r = await store.setFileReviewed(
       deskId: deskId,
       reviewer: viewerDisplay,
@@ -657,7 +689,10 @@ class ReviewPaneController {
       contentHash: reviewed ? fileContentHash(lines!) : '',
       round: d.latestRound,
     );
-    return r.ok ? null : (r.error ?? 'reviewed bit failed');
+    return (
+      unreadable: false,
+      error: r.ok ? null : (r.error ?? 'reviewed bit failed'),
+    );
   }
 
   /// Which of [paths] the viewer has ticked AT THEIR CURRENT CONTENT.
@@ -665,7 +700,10 @@ class ReviewPaneController {
   /// A tick whose recorded hash no longer matches the file is silently
   /// absent rather than shown — the invalidation the research names as
   /// the difference between this and GitHub's "viewed".
-  Future<Set<String>> reviewedNow(Iterable<String> paths) async {
+  Future<Set<String>> reviewedNow(Iterable<String> paths) =>
+      _gated(() => _reviewedNow(paths));
+
+  Future<Set<String>> _reviewedNow(Iterable<String> paths) async {
     final mine = data?.state?.reviewedFiles[viewerDisplay];
     if (mine == null || mine.isEmpty) return const {};
     final out = <String>{};
@@ -681,11 +719,24 @@ class ReviewPaneController {
 
   /// Explicit "caught up" — the header verb for a look that ends
   /// without anything to say.
-  Future<void> markCaughtUp() async {
+  ///
+  /// Page idiom: null is success, a message is failure. This used to
+  /// return `Future<void>`, which made it the one verb in the pane with
+  /// no way to fail out loud: a prefs write that threw escaped into an
+  /// unawaited callback, the pill stayed on screen, the lens kept
+  /// offering the same delta, and nothing said the pointer had not
+  /// moved.
+  Future<String?> markCaughtUp() async {
     final n = data?.latestRound ?? 0;
-    if (n > 0) {
+    // No round means no snapshot to be caught up TO. Nothing to write
+    // and nothing wrong, so the caller reloads and the pill goes away.
+    if (n <= 0) return null;
+    try {
       await ReviewLastSeen.write(
           repoPath: repoPath, deskId: deskId, round: n);
+      return null;
+    } catch (e) {
+      return '$e';
     }
   }
 }

@@ -46,5 +46,8 @@
     "one": "1 nouveau commentaire",
     "other": "{n} nouveaux commentaires"
   },
-  "handTo": "passer à"
+  "handTo": "passer à",
+  "heading": "REVUE",
+  "identityNeeded": "Définissez une identité git pour relire",
+  "fileUnreadable": "Ce fichier ne peut pas être lu ici — trop volumineux ou absent de ce tour."
 }

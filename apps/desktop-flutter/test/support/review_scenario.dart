@@ -305,7 +305,10 @@ Future<ReviewScenarioResult> runReviewScenario({
       await must(
           'cutRound',
           stores['alice']!.cutRoundIfMoved(
-              deskId: kScenarioDeskId, branch: 'main', by: author));
+              deskId: kScenarioDeskId,
+              branch: 'main',
+              by: author,
+              authorDisplay: author.display));
       settledSinceMutation = false;
     }
 

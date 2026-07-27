@@ -1164,6 +1164,12 @@ class _Translations$branches$zh_Hans extends Translations$branches$en {
   String get emptyOrUnparseablePatch => '模型返回了空或无法解析的补丁';
   @override
   String noModelConfiguredFor({required Object label}) => '未为“${label}”配置模型';
+  @override
+  String get checksHeading => '检查';
+  @override
+  String get peopleHeading => '成员';
+  @override
+  String get conversationHeading => '对话';
 }
 
 // Path: changes
@@ -1909,6 +1915,12 @@ class _Translations$review$zh_Hans extends Translations$review$en {
       );
   @override
   String get handTo => '交给';
+  @override
+  String get heading => '评审';
+  @override
+  String get identityNeeded => '设置 git 身份后即可评审';
+  @override
+  String get fileUnreadable => '此文件无法在此读取：过大或在本轮中不存在。';
 }
 
 // Path: settings

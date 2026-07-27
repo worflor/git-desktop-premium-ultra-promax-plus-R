@@ -46,5 +46,8 @@
     "one": "{n} 条新评论",
     "other": "{n} 条新评论"
   },
-  "handTo": "交给"
+  "handTo": "交给",
+  "heading": "评审",
+  "identityNeeded": "设置 git 身份后即可评审",
+  "fileUnreadable": "此文件无法在此读取：过大或在本轮中不存在。"
 }
