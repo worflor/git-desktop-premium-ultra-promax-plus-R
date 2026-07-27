@@ -2029,6 +2029,18 @@ class _Translations$review$nl extends Translations$review$en {
   @override
   String get fileUnreadable =>
       'Dit bestand kan hier niet gelezen worden — te groot of niet aanwezig in deze ronde.';
+  @override
+  String get timeNow => 'nu';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n} min';
+  @override
+  String timeHoursFmt({required Object n}) => '${n} u';
+  @override
+  String timeDaysFmt({required Object n}) => '${n} d';
+  @override
+  String get standingApproved => 'goedgekeurd';
+  @override
+  String get standingChangesRequested => 'wijzigingen gevraagd';
 }
 
 // Path: settings

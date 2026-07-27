@@ -2075,6 +2075,18 @@ class _Translations$review$ru extends Translations$review$en {
   @override
   String get fileUnreadable =>
       'Этот файл здесь не прочитать — он слишком большой или отсутствует в этом раунде.';
+  @override
+  String get timeNow => 'сейчас';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n} мин';
+  @override
+  String timeHoursFmt({required Object n}) => '${n} ч';
+  @override
+  String timeDaysFmt({required Object n}) => '${n} дн';
+  @override
+  String get standingApproved => 'одобрено';
+  @override
+  String get standingChangesRequested => 'запрошены правки';
 }
 
 // Path: settings

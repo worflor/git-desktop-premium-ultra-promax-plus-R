@@ -83,9 +83,9 @@ class ReviewHeaderStrip extends StatelessWidget {
               // muted, so it stops competing with the turn pill and
               // unresolved markers for attention (accent was carrying
               // five jobs at once).
-              if (header.verdictNote.isNotEmpty) ...[
+              if (header.standing != ReviewStanding.none) ...[
                 const GapSeg(AppSpacing.sm10),
-                TextSeg(header.verdictNote,
+                TextSeg(_standingLabel(strings, header),
                     color: t.textMuted, weight: FontWeight.w600),
               ],
             ]),
@@ -118,4 +118,21 @@ class ReviewHeaderStrip extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Compose the standing-verdict line: the verdict, then who holds it,
+/// each name tagged with the round it was given at when the code has
+/// moved past it.
+///
+/// Assembled here rather than in the adapter because this is where the
+/// injected strings are. It used to be built in English inside the view
+/// bundle, which meant every locale rendered "changes requested · mira"
+/// verbatim no matter what language the rest of the strip was in.
+String _standingLabel(ReviewStrings strings, ReviewHeaderView header) {
+  final who = [
+    for (final b in header.standingBy)
+      b.round > 0 ? '${b.display} · ${strings.roundChip(b.round)}' : b.display,
+  ].join(', ');
+  final verdict = strings.standingLabel(header.standing);
+  return who.isEmpty ? verdict : '$verdict · $who';
 }

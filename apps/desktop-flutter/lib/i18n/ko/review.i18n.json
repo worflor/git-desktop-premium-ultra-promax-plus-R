@@ -49,5 +49,11 @@
   "handTo": "넘기기",
   "heading": "리뷰",
   "identityNeeded": "리뷰하려면 git 신원을 설정하세요",
-  "fileUnreadable": "이 파일은 여기서 읽을 수 없습니다. 너무 크거나 이번 라운드에 없습니다."
+  "fileUnreadable": "이 파일은 여기서 읽을 수 없습니다. 너무 크거나 이번 라운드에 없습니다.",
+  "timeNow": "방금",
+  "timeMinutesFmt": "{n}분 전",
+  "timeHoursFmt": "{n}시간 전",
+  "timeDaysFmt": "{n}일 전",
+  "standingApproved": "승인됨",
+  "standingChangesRequested": "변경 요청됨"
 }

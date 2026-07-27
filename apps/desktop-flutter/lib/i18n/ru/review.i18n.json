@@ -49,5 +49,11 @@
   "handTo": "передать",
   "heading": "РЕВЬЮ",
   "identityNeeded": "Укажите git-идентификацию, чтобы оставлять ревью",
-  "fileUnreadable": "Этот файл здесь не прочитать — он слишком большой или отсутствует в этом раунде."
+  "fileUnreadable": "Этот файл здесь не прочитать — он слишком большой или отсутствует в этом раунде.",
+  "timeNow": "сейчас",
+  "timeMinutesFmt": "{n} мин",
+  "timeHoursFmt": "{n} ч",
+  "timeDaysFmt": "{n} дн",
+  "standingApproved": "одобрено",
+  "standingChangesRequested": "запрошены правки"
 }

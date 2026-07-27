@@ -49,5 +49,11 @@
   "handTo": "przekaż",
   "heading": "PRZEGLĄD",
   "identityNeeded": "Ustaw tożsamość git, aby recenzować",
-  "fileUnreadable": "Tego pliku nie można tu odczytać — jest za duży lub nie istnieje w tej rundzie."
+  "fileUnreadable": "Tego pliku nie można tu odczytać — jest za duży lub nie istnieje w tej rundzie.",
+  "timeNow": "teraz",
+  "timeMinutesFmt": "{n} min",
+  "timeHoursFmt": "{n} godz.",
+  "timeDaysFmt": "{n} dn.",
+  "standingApproved": "zatwierdzono",
+  "standingChangesRequested": "poproszono o zmiany"
 }

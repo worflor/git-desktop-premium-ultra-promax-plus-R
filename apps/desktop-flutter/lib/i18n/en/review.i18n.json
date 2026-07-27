@@ -49,5 +49,11 @@
   "handTo": "hand to",
   "heading": "REVIEW",
   "identityNeeded": "Set a git identity to review",
-  "fileUnreadable": "That file can't be read here — it's too large or missing at this round."
+  "fileUnreadable": "That file can't be read here — it's too large or missing at this round.",
+  "timeNow": "now",
+  "timeMinutesFmt": "{n}m",
+  "timeHoursFmt": "{n}h",
+  "timeDaysFmt": "{n}d",
+  "standingApproved": "approved",
+  "standingChangesRequested": "changes requested"
 }

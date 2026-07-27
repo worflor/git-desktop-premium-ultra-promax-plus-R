@@ -366,7 +366,6 @@ class ReviewPaneController {
       state ?? ReviewState.fresh(deskId, clock.now()),
       viewerDisplay: viewerDisplay,
       authorDisplay: authorDisplay,
-      now: clock.now(),
       currentFiles: currentFiles,
       oldFiles: oldFiles,
       drafts: drafts,

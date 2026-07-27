@@ -49,5 +49,11 @@
   "handTo": "pasar a",
   "heading": "REVISIÓN",
   "identityNeeded": "Configura una identidad de git para revisar",
-  "fileUnreadable": "Ese archivo no se puede leer aquí — es demasiado grande o no existe en esta ronda."
+  "fileUnreadable": "Ese archivo no se puede leer aquí — es demasiado grande o no existe en esta ronda.",
+  "timeNow": "ahora",
+  "timeMinutesFmt": "{n} min",
+  "timeHoursFmt": "{n} h",
+  "timeDaysFmt": "{n} d",
+  "standingApproved": "aprobado",
+  "standingChangesRequested": "cambios solicitados"
 }

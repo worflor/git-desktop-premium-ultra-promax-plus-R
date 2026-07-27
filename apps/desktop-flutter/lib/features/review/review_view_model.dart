@@ -10,9 +10,12 @@
 // blind to the substrate is what lets the look iterate in the preview
 // lab before a single ref exists.
 //
-// Time is carried as a display-ready string (`when`), not a DateTime:
-// the widgets never format dates, so previews are deterministic and the
-// eventual adapter owns locale-aware formatting.
+// Time is carried as a DateTime, and every label is composed from the
+// injected [ReviewStrings] at render. It used to arrive pre-formatted,
+// which read as "the widgets never format dates" but actually meant the
+// formatting happened once, in English, upstream of every locale.
+// Previews stay deterministic by passing a fixed clock to the formatter
+// rather than by freezing the string.
 
 /// Whose move the review is waiting on, from the viewer's seat.
 enum ReviewTurn { yours, theirs }
@@ -38,9 +41,14 @@ enum ReviewAuthorKind { human, robot }
 class ReviewCommentView {
   final String author;
 
-  /// Display-ready time label ("2h", "yesterday"). Formatting is the
-  /// adapter's job, never the widget's.
-  final String when;
+  /// When the comment was written, in UTC.
+  ///
+  /// A DateTime rather than a rendered label. It used to arrive
+  /// pre-formatted, which put "now" / "2h" — English, and only English
+  /// — inside a data structure every locale renders from. Formatting is
+  /// the widget's job for the same reason every other string is: that
+  /// is where the injected [ReviewStrings] are.
+  final DateTime at;
 
   /// Markdown body.
   final String body;
@@ -52,7 +60,7 @@ class ReviewCommentView {
 
   /// When an unpublished draft was written. Carried so a single draft
   /// can be targeted for removal; meaningless (and unused) for
-  /// published comments, whose `when` is already a display string.
+  /// published comments.
   final DateTime? draftAt;
 
   /// Landed after the viewer's last look, and not written by them.
@@ -60,7 +68,7 @@ class ReviewCommentView {
 
   const ReviewCommentView({
     required this.author,
-    required this.when,
+    required this.at,
     required this.body,
     this.kind = ReviewAuthorKind.human,
     this.isDraft = false,
@@ -145,8 +153,18 @@ class ReviewHeaderView {
   /// Comments that landed since that look and are not the viewer's own.
   final int newCommentCount;
 
-  /// Optional standing-verdict note ("changes requested · mira").
-  final String verdictNote;
+  /// The standing verdict across all reviewers, and who holds it.
+  ///
+  /// Structured rather than the pre-composed "changes requested · mira"
+  /// string this used to be: that string was assembled in English in
+  /// the adapter and rendered verbatim in all fourteen locales.
+  final ReviewStanding standing;
+
+  /// Who the [standing] belongs to. [ReviewStandingBy.round] is 0 when
+  /// the verdict is current, or the round it was given at once the code
+  /// has moved past it — a verdict that has not seen the code being
+  /// described says so rather than reading as present tense.
+  final List<ReviewStandingBy> standingBy;
 
   const ReviewHeaderView({
     required this.round,
@@ -155,8 +173,31 @@ class ReviewHeaderView {
     this.unresolvedCount = 0,
     this.filesSinceLastLook = 0,
     this.newCommentCount = 0,
-    this.verdictNote = '',
+    this.standing = ReviewStanding.none,
+    this.standingBy = const [],
   });
+}
+
+/// The decisive verdict a review currently stands at.
+enum ReviewStanding { none, approved, changesRequested }
+
+/// One reviewer's contribution to the standing verdict.
+class ReviewStandingBy {
+  final String display;
+
+  /// The round the verdict was given at, or 0 when it is current.
+  final int round;
+
+  const ReviewStandingBy(this.display, {this.round = 0});
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReviewStandingBy &&
+      other.display == display &&
+      other.round == round;
+
+  @override
+  int get hashCode => Object.hash(display, round);
 }
 
 /// Display strings for the review surfaces, injected so the widgets are
@@ -193,6 +234,16 @@ class ReviewStrings {
   final String handTo;
   final String markReviewed;
 
+  /// Compact relative time, for spans under a minute. The parameterised
+  /// units are methods below, following this class's own convention.
+  final String timeNow;
+
+  /// Standing-verdict labels. Past tense on purpose: these describe
+  /// where the review stands, not a button you can press, which is why
+  /// they are not [verdictApprove] / [verdictRequestChanges].
+  final String standingApproved;
+  final String standingChangesRequested;
+
   const ReviewStrings({
     this.unresolved = 'unresolved',
     this.done = 'done',
@@ -219,7 +270,26 @@ class ReviewStrings {
     this.notBlocking = 'not blocking on me',
     this.handTo = 'hand to',
     this.markReviewed = 'reviewed',
+    this.timeNow = 'now',
+    this.standingApproved = 'approved',
+    this.standingChangesRequested = 'changes requested',
   });
+
+  /// Compact relative time. Value-plus-unit, no prose, so the shape
+  /// survives translation; the unit still has to BE translated, which
+  /// it was not while these were literals inside the adapter.
+  String timeMinutes(int n) => '${n}m';
+  String timeHours(int n) => '${n}h';
+  String timeDays(int n) => '${n}d';
+
+  /// The standing verdict, named. Empty for [ReviewStanding.none] so a
+  /// caller can test it the same way it tests every other optional
+  /// segment.
+  String standingLabel(ReviewStanding s) => switch (s) {
+        ReviewStanding.none => '',
+        ReviewStanding.approved => standingApproved,
+        ReviewStanding.changesRequested => standingChangesRequested,
+      };
 
   String outdatedLastSeen(int round) => 'outdated · last seen R$round';
   String resolvedBy(String verb, String who) => '$verb · $who';
@@ -230,4 +300,20 @@ class ReviewStrings {
   String unresolvedCount(int n) => '$n unresolved';
   String draftCount(int n) => n == 1 ? '1 draft' : '$n drafts';
   String newComments(int n) => n == 1 ? '1 new comment' : '$n new comments';
+}
+
+/// Compact relative-time label. The shape (value+unit, no prose) is
+/// deliberately language-thin, but thin is not the same as absent: the
+/// units used to be English literals baked into the view bundle by the
+/// adapter, so all fourteen locales rendered "now" and "2h".
+///
+/// Lives here rather than in the adapter because this is the file that
+/// has the strings, and because a widget asking for it must not have to
+/// import the record layer to get it.
+String relativeLabel(ReviewStrings s, DateTime now, DateTime at) {
+  final d = now.difference(at);
+  if (d.inSeconds < 45) return s.timeNow;
+  if (d.inMinutes < 60) return s.timeMinutes(d.inMinutes);
+  if (d.inHours < 24) return s.timeHours(d.inHours);
+  return s.timeDays(d.inDays);
 }

@@ -47,10 +47,16 @@ class ReviewThreadCard extends StatelessWidget {
   /// changing your mind about one line.
   final VoidCallback? onDiscardDraft;
 
+  /// The clock relative timestamps are measured against. Null reads the
+  /// wall clock, which is what the app wants; the preview lab pins it so
+  /// a captured PNG says the same thing tomorrow.
+  final DateTime? now;
+
   const ReviewThreadCard({
     super.key,
     required this.thread,
     this.strings = const ReviewStrings(),
+    this.now,
     this.showPath = true,
     this.onDone,
     this.onAck,
@@ -112,6 +118,7 @@ class ReviewThreadCard extends StatelessWidget {
                   // the per-comment chip marks the unpublished one only
                   // when it sits among published comments.
                   showDraftChip: c.isDraft && !draftOnly,
+                  now: now,
                   dim: dim,
                 ),
                 if (c != thread.comments.last)
@@ -380,12 +387,16 @@ class _ReviewCommentBlock extends StatelessWidget {
   final ReviewStrings strings;
   final bool showDraftChip;
 
+  /// See [ReviewThreadCard.now].
+  final DateTime? now;
+
   /// Resolved-thread recede: all ink one contrast role down.
   final bool dim;
   const _ReviewCommentBlock({
     required this.comment,
     required this.strings,
     required this.showDraftChip,
+    required this.now,
     required this.dim,
   });
 
@@ -428,7 +439,7 @@ class _ReviewCommentBlock extends StatelessWidget {
           // it — the eye finds a coloured "3h" without another chip
           // competing for the row, and nothing re-measures.
           TextSeg(
-            comment.when,
+            relativeLabel(strings, now ?? DateTime.now(), comment.at),
             color: comment.isUnseen ? t.accentBright : t.textMuted,
             size: ReviewType.meta,
           ),

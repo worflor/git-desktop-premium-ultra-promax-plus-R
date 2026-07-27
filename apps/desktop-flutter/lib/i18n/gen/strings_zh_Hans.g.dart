@@ -1921,6 +1921,18 @@ class _Translations$review$zh_Hans extends Translations$review$en {
   String get identityNeeded => '设置 git 身份后即可评审';
   @override
   String get fileUnreadable => '此文件无法在此读取：过大或在本轮中不存在。';
+  @override
+  String get timeNow => '刚刚';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n} 分钟前';
+  @override
+  String timeHoursFmt({required Object n}) => '${n} 小时前';
+  @override
+  String timeDaysFmt({required Object n}) => '${n} 天前';
+  @override
+  String get standingApproved => '已批准';
+  @override
+  String get standingChangesRequested => '已请求修改';
 }
 
 // Path: settings

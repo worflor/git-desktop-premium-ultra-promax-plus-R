@@ -49,5 +49,11 @@
   "handTo": "serahkan ke",
   "heading": "TINJAUAN",
   "identityNeeded": "Atur identitas git untuk meninjau",
-  "fileUnreadable": "File itu tidak dapat dibaca di sini — terlalu besar atau tidak ada di ronde ini."
+  "fileUnreadable": "File itu tidak dapat dibaca di sini — terlalu besar atau tidak ada di ronde ini.",
+  "timeNow": "baru saja",
+  "timeMinutesFmt": "{n} mnt",
+  "timeHoursFmt": "{n} jam",
+  "timeDaysFmt": "{n} hr",
+  "standingApproved": "disetujui",
+  "standingChangesRequested": "perubahan diminta"
 }

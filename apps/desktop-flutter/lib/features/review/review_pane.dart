@@ -390,10 +390,16 @@ class ReviewPane extends StatefulWidget {
   /// Toggle a file's reviewed mark. Null hides the mark entirely.
   final void Function(String path, bool reviewed)? onToggleReviewed;
 
+  /// Clock relative timestamps are measured against; null reads the
+  /// wall clock. Pinned by the preview lab so a captured PNG says the
+  /// same thing tomorrow.
+  final DateTime? now;
+
   const ReviewPane({
     super.key,
     required this.bundle,
     required this.strings,
+    this.now,
     required this.draftCount,
     required this.onSaveReply,
     required this.onResolve,
@@ -418,12 +424,15 @@ class _ReviewPaneState extends State<ReviewPane> {
   /// the adapter did not stamp).
   VoidCallback? _draftRemover(ReviewThreadView thread) {
     if (widget.onDiscardDraft == null || !thread.isDraftOnly) return null;
-    final draft = thread.comments.singleWhere(
-      (c) => c.isDraft && c.draftAt != null,
-      orElse: () => const ReviewCommentView(author: '', when: '', body: ''),
-    );
-    final at = draft.draftAt;
-    if (at == null) return null;
+    // Exactly one, or there is nothing SINGLE to remove. This leaned on
+    // singleWhere with a const empty sentinel, which a comment carrying
+    // a real timestamp can no longer be — and the explicit count is
+    // honest anyway, where singleWhere would have thrown on two.
+    final drafts =
+        thread.comments.where((c) => c.isDraft && c.draftAt != null).toList();
+    if (drafts.length != 1) return null;
+    final draft = drafts.first;
+    final at = draft.draftAt!;
     return () => widget.onDiscardDraft!(thread.threadId, draft.body, at);
   }
 
@@ -443,6 +452,7 @@ class _ReviewPaneState extends State<ReviewPane> {
         ReviewThreadCard(
           thread: thread,
           strings: widget.strings,
+          now: widget.now,
           showPath: showPath,
           onDone: canVerb
               ? () => widget.onResolve(thread.threadId, 'done')

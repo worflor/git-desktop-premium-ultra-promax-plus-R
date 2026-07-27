@@ -2003,6 +2003,18 @@ class _Translations$review$id extends Translations$review$en {
   @override
   String get fileUnreadable =>
       'File itu tidak dapat dibaca di sini — terlalu besar atau tidak ada di ronde ini.';
+  @override
+  String get timeNow => 'baru saja';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n} mnt';
+  @override
+  String timeHoursFmt({required Object n}) => '${n} jam';
+  @override
+  String timeDaysFmt({required Object n}) => '${n} hr';
+  @override
+  String get standingApproved => 'disetujui';
+  @override
+  String get standingChangesRequested => 'perubahan diminta';
 }
 
 // Path: settings

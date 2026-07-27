@@ -2388,6 +2388,24 @@ class Translations$review$en {
   /// en: 'That file can't be read here — it's too large or missing at this round.'
   String get fileUnreadable =>
       'That file can\'t be read here — it\'s too large or missing at this round.';
+
+  /// en: 'now'
+  String get timeNow => 'now';
+
+  /// en: '{n}m'
+  String timeMinutesFmt({required Object n}) => '${n}m';
+
+  /// en: '{n}h'
+  String timeHoursFmt({required Object n}) => '${n}h';
+
+  /// en: '{n}d'
+  String timeDaysFmt({required Object n}) => '${n}d';
+
+  /// en: 'approved'
+  String get standingApproved => 'approved';
+
+  /// en: 'changes requested'
+  String get standingChangesRequested => 'changes requested';
 }
 
 // Path: settings

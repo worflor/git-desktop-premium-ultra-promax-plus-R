@@ -1953,6 +1953,18 @@ class _Translations$review$ja extends Translations$review$en {
   String get identityNeeded => 'レビューするには git の識別情報を設定してください';
   @override
   String get fileUnreadable => 'このファイルはここでは読み取れません。サイズが大きすぎるか、このラウンドに存在しません。';
+  @override
+  String get timeNow => 'たった今';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n}分前';
+  @override
+  String timeHoursFmt({required Object n}) => '${n}時間前';
+  @override
+  String timeDaysFmt({required Object n}) => '${n}日前';
+  @override
+  String get standingApproved => '承認済み';
+  @override
+  String get standingChangesRequested => '変更リクエスト済み';
 }
 
 // Path: settings

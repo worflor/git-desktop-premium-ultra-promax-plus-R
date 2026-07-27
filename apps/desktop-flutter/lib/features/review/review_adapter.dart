@@ -12,24 +12,16 @@
 //    ladder becomes the view's anchorState);
 //  * merging the viewer's private DRAFTS into the visible thread list
 //    (drafts render, but only for their author);
-//  * the turn fold and verdict fold into the header;
-//  * display-time formatting (relative labels) — injected `now`, so
-//    rendering is deterministic under test.
+//  * the turn fold and verdict fold into the header.
+//
+// It does NOT format for display. Formatting needs the injected
+// ReviewStrings, which live with the widgets; a label composed here
+// would be composed in exactly one language.
 
 import '../../backend/review_anchor.dart';
 import '../../backend/review_records.dart';
 import '../../backend/review_store.dart' show ReviewDraftEntry;
 import 'review_view_model.dart';
-
-/// Compact relative-time label. Slang-localizable later; the shape
-/// (value+unit, no prose) is deliberately language-thin.
-String relativeLabel(DateTime now, DateTime at) {
-  final d = now.difference(at);
-  if (d.inSeconds < 45) return 'now';
-  if (d.inMinutes < 60) return '${d.inMinutes}m';
-  if (d.inHours < 24) return '${d.inHours}h';
-  return '${d.inDays}d';
-}
 
 class ReviewViewBundle {
   final ReviewHeaderView header;
@@ -84,7 +76,6 @@ ReviewViewBundle buildReviewViews(
   ReviewState state, {
   required String viewerDisplay,
   required String authorDisplay,
-  required DateTime now,
   Map<String, List<String>> currentFiles = const {},
   Map<String, List<String>> oldFiles = const {},
   List<ReviewDraftEntry> drafts = const [],
@@ -143,7 +134,7 @@ ReviewViewBundle buildReviewViews(
         for (final c in t.comments)
           ReviewCommentView(
             author: c.author.display,
-            when: relativeLabel(now, c.at),
+            at: c.at,
             body: c.body,
             kind: c.kind == 'robot'
                 ? ReviewAuthorKind.robot
@@ -153,7 +144,7 @@ ReviewViewBundle buildReviewViews(
         for (final d in replyDrafts)
           ReviewCommentView(
             author: viewerDisplay,
-            when: relativeLabel(now, d.at),
+            at: d.at,
             body: d.body,
             isDraft: true,
             draftAt: d.at,
@@ -182,7 +173,7 @@ ReviewViewBundle buildReviewViews(
       comments: [
         ReviewCommentView(
           author: viewerDisplay,
-          when: relativeLabel(now, d.at),
+          at: d.at,
           body: d.body,
           isDraft: true,
           draftAt: d.at,
@@ -200,7 +191,6 @@ ReviewViewBundle buildReviewViews(
       standing[v.by.display] = v;
     }
   }
-  String verdictNote = '';
   final blocking = standing.values
       .where((v) => v.verdict == 'CHANGES_REQUESTED')
       .toList();
@@ -212,18 +202,26 @@ ReviewViewBundle buildReviewViews(
   // R3 she has not seen the code being described, and the header should
   // not let that pass unqualified. Round-tagging says it without a
   // second concept or an alarm colour.
-  String stamp(ReviewVerdict v) {
+  //
+  // The stamp is a NUMBER here, not "· R1": composing the label is the
+  // header's job now, because the header is where the strings are.
+  ReviewStandingBy stamp(ReviewVerdict v) {
     final latest = state.latestRound?.n ?? 0;
-    return v.round > 0 && latest > v.round
-        ? '${v.by.display} · R${v.round}'
-        : v.by.display;
+    final stale = v.round > 0 && latest > v.round;
+    return ReviewStandingBy(v.by.display, round: stale ? v.round : 0);
   }
 
+  final ReviewStanding verdictStanding;
+  final List<ReviewStandingBy> standingBy;
   if (blocking.isNotEmpty) {
-    verdictNote =
-        'changes requested · ${blocking.map(stamp).join(', ')}';
+    verdictStanding = ReviewStanding.changesRequested;
+    standingBy = blocking.map(stamp).toList();
   } else if (approving.isNotEmpty) {
-    verdictNote = 'approved · ${approving.map(stamp).join(', ')}';
+    verdictStanding = ReviewStanding.approved;
+    standingBy = approving.map(stamp).toList();
+  } else {
+    verdictStanding = ReviewStanding.none;
+    standingBy = const [];
   }
 
   // Reading order, not record order: the pane follows the code —
@@ -255,7 +253,8 @@ ReviewViewBundle buildReviewViews(
       unresolvedCount: state.unresolvedCount,
       filesSinceLastLook: filesSinceLastLook,
       newCommentCount: newComments,
-      verdictNote: verdictNote,
+      standing: verdictStanding,
+      standingBy: standingBy,
     ),
     threads: threads,
     groups: groupThreadsByFile(threads),

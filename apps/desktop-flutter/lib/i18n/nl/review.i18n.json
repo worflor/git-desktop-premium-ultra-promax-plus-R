@@ -49,5 +49,11 @@
   "handTo": "doorgeven aan",
   "heading": "REVIEW",
   "identityNeeded": "Stel een git-identiteit in om te reviewen",
-  "fileUnreadable": "Dit bestand kan hier niet gelezen worden — te groot of niet aanwezig in deze ronde."
+  "fileUnreadable": "Dit bestand kan hier niet gelezen worden — te groot of niet aanwezig in deze ronde.",
+  "timeNow": "nu",
+  "timeMinutesFmt": "{n} min",
+  "timeHoursFmt": "{n} u",
+  "timeDaysFmt": "{n} d",
+  "standingApproved": "goedgekeurd",
+  "standingChangesRequested": "wijzigingen gevraagd"
 }

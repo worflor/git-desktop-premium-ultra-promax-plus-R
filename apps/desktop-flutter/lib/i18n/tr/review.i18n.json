@@ -49,5 +49,11 @@
   "handTo": "devret",
   "heading": "İNCELEME",
   "identityNeeded": "İnceleme yapmak için bir git kimliği ayarlayın",
-  "fileUnreadable": "Bu dosya burada okunamıyor — çok büyük ya da bu turda mevcut değil."
+  "fileUnreadable": "Bu dosya burada okunamıyor — çok büyük ya da bu turda mevcut değil.",
+  "timeNow": "şimdi",
+  "timeMinutesFmt": "{n} dk",
+  "timeHoursFmt": "{n} sa",
+  "timeDaysFmt": "{n} g",
+  "standingApproved": "onaylandı",
+  "standingChangesRequested": "değişiklik istendi"
 }

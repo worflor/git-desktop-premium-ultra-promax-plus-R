@@ -54,7 +54,7 @@ ReviewThreadView _thread({
       comments: [
         ReviewCommentView(
           author: 'mira',
-          when: '2h',
+          at: DateTime.utc(2026, 7, 22, 10),
           body: 'why this?',
           isDraft: draftOnly,
         ),

@@ -17,10 +17,22 @@ import 'package:git_desktop/features/review/review_view_model.dart';
 /// The viewer of the fixture review (the author whose turn it is).
 const String kFixtureViewer = 'jun';
 
+/// The clock the fixture's relative timestamps are measured against.
+///
+/// Pinned so a captured preview says the same thing tomorrow. The view
+/// models carry real DateTimes now (the labels used to be baked-in
+/// English strings), so determinism comes from fixing the clock rather
+/// than from freezing the rendered text.
+final DateTime kFixtureNow = DateTime.utc(2026, 7, 22, 13);
+
+DateTime _ago({int days = 0, int hours = 0, int seconds = 0}) =>
+    kFixtureNow.subtract(
+        Duration(days: days, hours: hours, seconds: seconds));
+
 /// All six thread states, in the order a review pane would list them.
 List<ReviewThreadView> syntheticReviewThreads() => [
       // 1. Unresolved human thread, mid ping-pong.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/backend/git.dart',
         line: 214,
         excerpt:
@@ -29,7 +41,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: 'mira',
-            when: '3h',
+            at: _ago(hours: 3),
             body:
                 'This lease falls back to a zero oid sized off `commitR`, '
                 'but if the staging fetch failed silently above we lease '
@@ -41,7 +53,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
           // show the pair together — they lead the eye to each other.
           ReviewCommentView(
             author: 'jun',
-            when: '1h',
+            at: _ago(hours: 1),
             isUnseen: true,
             body:
                 'The lease failing is the safety net there. Worst case the '
@@ -51,7 +63,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         ],
       ),
       // 2. Resolved by Done — the code changed.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/backend/desk_pr_store.dart',
         line: 87,
         excerpt: '  static String encodeBranch(String branch) {',
@@ -60,7 +72,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: 'mira',
-            when: '1d',
+            at: _ago(days: 1),
             body:
                 'Missing the empty-string guard: `encodeBranch("")` would '
                 'mint an empty ref tail.',
@@ -68,7 +80,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         ],
       ),
       // 3. Resolved by Ack — noted, not changing.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/backend/manifold_refs.dart',
         line: 641,
         excerpt: '      await Future<void>.delayed(',
@@ -77,7 +89,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: 'mira',
-            when: '1d',
+            at: _ago(days: 1),
             body:
                 'Linear backoff here where the sync path uses jitter. '
                 'Fine for now, just noting the asymmetry.',
@@ -85,7 +97,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         ],
       ),
       // 4. Outdated anchor — the code this pointed at is gone.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/backend/manifold_refs.dart',
         line: 512,
         excerpt: '    final hasRemote = await _probeRemote(remote);',
@@ -95,7 +107,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: 'mira',
-            when: '2d',
+            at: _ago(days: 2),
             body:
                 '`_probeRemote` swallows the timeout distinctly from '
                 'unreachable. Collapse the two?',
@@ -104,7 +116,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
       ),
       // 5. Robot finding under the Tricorder contract: changed-lines
       // only, fix attached, promotable via Please fix.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/backend/review_store.dart',
         line: 142,
         excerpt: "  final now = DateTime.now();",
@@ -112,7 +124,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: 'varrho',
-            when: '4h',
+            at: _ago(hours: 4),
             kind: ReviewAuthorKind.robot,
             body:
                 'Direct `DateTime.now()` in a store. Every other store '
@@ -122,7 +134,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         ],
       ),
       // 6. The viewer's own unpublished draft.
-      const ReviewThreadView(
+      ReviewThreadView(
         filePath: 'lib/features/review/review_thread_card.dart',
         line: 58,
         excerpt: '        ? t.textFaint.withValues(alpha: 0.5)',
@@ -130,7 +142,7 @@ List<ReviewThreadView> syntheticReviewThreads() => [
         comments: [
           ReviewCommentView(
             author: kFixtureViewer,
-            when: 'now',
+            at: _ago(seconds: 5),
             isDraft: true,
             body:
                 'Note to self: the outdated rule reads too close to the '
@@ -150,7 +162,8 @@ ReviewHeaderView syntheticHeaderYourTurn() => const ReviewHeaderView(
       // the conversation did. They share a line and compete for the
       // same eye, so the story has to show them together.
       newCommentCount: 2,
-      verdictNote: 'changes requested · mira',
+      standing: ReviewStanding.changesRequested,
+      standingBy: [ReviewStandingBy('mira')],
     );
 
 /// Header variant: published, waiting on the reviewer, caught up.

@@ -46,6 +46,9 @@ class _SlangReviewStrings extends ReviewStrings {
           notBlocking: t.review.notBlocking,
           handTo: t.review.handTo,
           markReviewed: t.review.markReviewed,
+          timeNow: t.review.timeNow,
+          standingApproved: t.review.standingApproved,
+          standingChangesRequested: t.review.standingChangesRequested,
         );
 
   @override
@@ -73,4 +76,13 @@ class _SlangReviewStrings extends ReviewStrings {
 
   @override
   String newComments(int n) => _t.review.newComments(n: n);
+
+  @override
+  String timeMinutes(int n) => _t.review.timeMinutesFmt(n: n);
+
+  @override
+  String timeHours(int n) => _t.review.timeHoursFmt(n: n);
+
+  @override
+  String timeDays(int n) => _t.review.timeDaysFmt(n: n);
 }

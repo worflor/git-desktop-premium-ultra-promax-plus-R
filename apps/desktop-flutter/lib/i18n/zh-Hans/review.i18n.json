@@ -49,5 +49,11 @@
   "handTo": "交给",
   "heading": "评审",
   "identityNeeded": "设置 git 身份后即可评审",
-  "fileUnreadable": "此文件无法在此读取：过大或在本轮中不存在。"
+  "fileUnreadable": "此文件无法在此读取：过大或在本轮中不存在。",
+  "timeNow": "刚刚",
+  "timeMinutesFmt": "{n} 分钟前",
+  "timeHoursFmt": "{n} 小时前",
+  "timeDaysFmt": "{n} 天前",
+  "standingApproved": "已批准",
+  "standingChangesRequested": "已请求修改"
 }

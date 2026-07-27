@@ -65,7 +65,6 @@ void main() {
         result.finalState,
         viewerDisplay: viewer,
         authorDisplay: 'alice',
-        now: DateTime.utc(2026, 7, 22, 13),
         currentFiles: result.files,
       );
       final key = ValueKey('real-$viewer');

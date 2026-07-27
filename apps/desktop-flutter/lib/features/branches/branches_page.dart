@@ -586,6 +586,54 @@ class _BranchesPageState extends State<BranchesPage> {
   /// and risks cross-frame staleness in release. Reading fresh each
   /// access keeps the truth local to the call site; the underlying
   /// set is small (tens of entries at most) so the cost is nil.
+  /// The login the PR list attributes desk PRs to, so the MINE filter
+  /// recognises the user as the author of their own local PRs.
+  String get _effectiveViewerLogin => _viewerLogin.isNotEmpty
+      ? _viewerLogin
+      : context.read<AppIdentityState>().identity.shortName;
+
+  /// The PR rows exactly as the list renders them: remote PRs, then the
+  /// desk PRs no remote PR already claims for the same branch.
+  ///
+  /// ONE derivation, shared with the keyboard handler. The handler built
+  /// its own from `_prs` alone, so `j`/`k` walked a list that was not
+  /// the one on screen: with any desk PR present the focused index named
+  /// a different row than the one highlighted, and no desk PR could be
+  /// focused at all — which in turn made the review pane, whose only
+  /// mount point is an expanded desk PR, unreachable by keyboard.
+  List<PullRequestSummary> _mergedPrRows(
+      List<DeskPr> deskPrs, String viewerLogin) {
+    final remoteList = _prs ?? const <PullRequestSummary>[];
+    final remoteBranches = remoteList.map((p) => p.headRef).toSet();
+    final localSummaries = <PullRequestSummary>[];
+    for (final dp in deskPrs) {
+      if (remoteBranches.contains(dp.headRef)) continue;
+      final s = dp.toSummary();
+      localSummaries.add(
+        PullRequestSummary(
+          number: s.number,
+          title: s.title,
+          headRef: s.headRef,
+          baseRef: s.baseRef,
+          state: s.state,
+          isDraft: s.isDraft,
+          authorLogin: viewerLogin,
+          conversationCount: s.conversationCount,
+          updatedAt: s.updatedAt,
+          additions: s.additions,
+          deletions: s.deletions,
+          changedFiles: s.changedFiles,
+          mergeable: s.mergeable,
+          reviewers: s.reviewers,
+          labels: s.labels,
+          assignees: s.assignees,
+          reviewDecision: s.reviewDecision,
+        ),
+      );
+    }
+    return [...remoteList, ...localSummaries];
+  }
+
   Set<int> get _localPrNumbers {
     final deskPrs = context.read<DeskPrState>().all;
     // Same dedupe as `_buildPullRequestsBody` uses when materialising
@@ -4043,8 +4091,13 @@ class _BranchesPageState extends State<BranchesPage> {
     // `3` removed — issues are no longer a separate lens; they live
     // as a side panel inside the PR view.
 
-    if (_lens == _BranchesLens.prs && _prs != null) {
-      final visible = _prs!.where(_prMatchesFilters).toList();
+    if (_lens == _BranchesLens.prs) {
+      // The same merge the list renders, filtered the same way, so the
+      // focused index and the highlighted row are the same row.
+      final visible = _mergedPrRows(
+        context.read<DeskPrState>().all,
+        _effectiveViewerLogin,
+      ).where(_prMatchesFilters).toList();
       if (visible.isEmpty) return KeyEventResult.ignored;
       if (key == LogicalKeyboardKey.keyJ ||
           key == LogicalKeyboardKey.arrowDown) {
@@ -4084,7 +4137,17 @@ class _BranchesPageState extends State<BranchesPage> {
           _checkoutPr(repoPath, pr.number);
           return KeyEventResult.handled;
         }
+        // `a` / `r` are FORGE verdicts, and now that desk PRs are
+        // focusable they need saying so. A desk PR has no forge: on a
+        // repo with no provider this dereferenced null, and where a
+        // provider does exist it would have submitted a verdict against
+        // a PR number the forge has never heard of. A desk PR's verdict
+        // is the review pane's publish bar, which is a different thing
+        // in a different place, so these decline rather than guess.
+        final isForgePr =
+            _prProvider != null && !_localPrNumbers.contains(pr.number);
         if (key == LogicalKeyboardKey.keyA) {
+          if (!isForgePr) return KeyEventResult.ignored;
           _runPrAction(
             repoPath,
             pr.number,
@@ -4097,6 +4160,7 @@ class _BranchesPageState extends State<BranchesPage> {
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.keyR) {
+          if (!isForgePr) return KeyEventResult.ignored;
           _runPrAction(
             repoPath,
             pr.number,
@@ -4745,40 +4809,8 @@ class _BranchesPageState extends State<BranchesPage> {
     // it's the source of truth for collaboration; the local metadata
     // remains accessible via git refs but is hidden from the list to
     // avoid duplicate rows for the same branch.
-    final remoteList = _prs ?? const <PullRequestSummary>[];
-    final remoteBranches = remoteList.map((p) => p.headRef).toSet();
-    final viewerLogin = _viewerLogin.isNotEmpty
-        ? _viewerLogin
-        : context.read<AppIdentityState>().identity.shortName;
-    final localSummaries = <PullRequestSummary>[];
-    for (final dp in deskPrs) {
-      if (remoteBranches.contains(dp.headRef)) continue;
-      // Reauthor the summary with the effective viewer login so the
-      // MINE filter sees the user as the author of their own local PRs.
-      final s = dp.toSummary();
-      localSummaries.add(
-        PullRequestSummary(
-          number: s.number,
-          title: s.title,
-          headRef: s.headRef,
-          baseRef: s.baseRef,
-          state: s.state,
-          isDraft: s.isDraft,
-          authorLogin: viewerLogin,
-          conversationCount: s.conversationCount,
-          updatedAt: s.updatedAt,
-          additions: s.additions,
-          deletions: s.deletions,
-          changedFiles: s.changedFiles,
-          mergeable: s.mergeable,
-          reviewers: s.reviewers,
-          labels: s.labels,
-          assignees: s.assignees,
-          reviewDecision: s.reviewDecision,
-        ),
-      );
-    }
-    final allPrs = [...remoteList, ...localSummaries];
+    final viewerLogin = _effectiveViewerLogin;
+    final allPrs = _mergedPrRows(deskPrs, viewerLogin);
     if (allPrs.isEmpty) {
       return _LensEmptyNotice(
         primary: context.t.branches.noOpenPullRequests,
@@ -4804,9 +4836,11 @@ class _BranchesPageState extends State<BranchesPage> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: _bucketedPrChildren(repoPath, prs, t, {
-                for (final s in localSummaries) s.number,
-              }),
+              // Same set, one derivation: this used to be rebuilt from
+              // the local summaries inline, beside a getter computing
+              // exactly it.
+              children:
+                  _bucketedPrChildren(repoPath, prs, t, _localPrNumbers),
             ),
           );
     // Issues sidebar — same structural slot as the branches view's

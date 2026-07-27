@@ -137,7 +137,9 @@ void main() {
     expect(d.bundle.threads.single.state, ReviewThreadState.unresolved);
     expect(d.lastSeenRound, d.latestRound,
         reason: 'publishing IS the "I have looked" event');
-    expect(d.bundle.header.verdictNote, contains('mira'));
+    expect(d.bundle.header.standing, ReviewStanding.changesRequested);
+    expect(d.bundle.header.standingBy.map((b) => b.display),
+        contains('mira'));
     // Viewer just spoke: the ball is with the author now.
     expect(d.bundle.header.turn, ReviewTurn.theirs);
   });

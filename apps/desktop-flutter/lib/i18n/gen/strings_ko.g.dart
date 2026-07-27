@@ -1944,6 +1944,18 @@ class _Translations$review$ko extends Translations$review$en {
   String get identityNeeded => '리뷰하려면 git 신원을 설정하세요';
   @override
   String get fileUnreadable => '이 파일은 여기서 읽을 수 없습니다. 너무 크거나 이번 라운드에 없습니다.';
+  @override
+  String get timeNow => '방금';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n}분 전';
+  @override
+  String timeHoursFmt({required Object n}) => '${n}시간 전';
+  @override
+  String timeDaysFmt({required Object n}) => '${n}일 전';
+  @override
+  String get standingApproved => '승인됨';
+  @override
+  String get standingChangesRequested => '변경 요청됨';
 }
 
 // Path: settings

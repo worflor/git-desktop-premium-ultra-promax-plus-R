@@ -2025,6 +2025,18 @@ class _Translations$review$tr extends Translations$review$en {
   @override
   String get fileUnreadable =>
       'Bu dosya burada okunamıyor — çok büyük ya da bu turda mevcut değil.';
+  @override
+  String get timeNow => 'şimdi';
+  @override
+  String timeMinutesFmt({required Object n}) => '${n} dk';
+  @override
+  String timeHoursFmt({required Object n}) => '${n} sa';
+  @override
+  String timeDaysFmt({required Object n}) => '${n} g';
+  @override
+  String get standingApproved => 'onaylandı';
+  @override
+  String get standingChangesRequested => 'değişiklik istendi';
 }
 
 // Path: settings

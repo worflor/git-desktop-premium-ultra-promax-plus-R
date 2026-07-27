@@ -49,5 +49,11 @@
   "handTo": "passer à",
   "heading": "REVUE",
   "identityNeeded": "Définissez une identité git pour relire",
-  "fileUnreadable": "Ce fichier ne peut pas être lu ici — trop volumineux ou absent de ce tour."
+  "fileUnreadable": "Ce fichier ne peut pas être lu ici — trop volumineux ou absent de ce tour.",
+  "timeNow": "à l’instant",
+  "timeMinutesFmt": "{n} min",
+  "timeHoursFmt": "{n} h",
+  "timeDaysFmt": "{n} j",
+  "standingApproved": "approuvé",
+  "standingChangesRequested": "modifications demandées"
 }
