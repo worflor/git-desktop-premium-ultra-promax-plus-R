@@ -9262,6 +9262,9 @@ class _PrExpanded extends StatelessWidget {
             ReviewPane(
               bundle: review!.data.bundle,
               strings: review!.strings,
+              // The app's clock is the wall clock; naming it here is
+              // what lets the preview lab name a different one.
+              now: DateTime.now(),
               draftCount: review!.data.draftCount,
               onSaveReply: review!.onSaveReply,
               onResolve: review!.onResolve,

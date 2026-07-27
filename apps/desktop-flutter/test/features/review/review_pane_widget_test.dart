@@ -103,6 +103,7 @@ void main() {
           child: ReviewPane(
             bundle: bundle,
             strings: const ReviewStrings(),
+            now: DateTime.utc(2026, 7, 22, 13),
             draftCount: draftCount,
             onSaveReply: (threadId, body) async {
               replies?.add((threadId, body));

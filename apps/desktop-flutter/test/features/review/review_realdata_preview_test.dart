@@ -96,6 +96,7 @@ void main() {
                             for (final t in g.threads) ...[
                               ReviewThreadCard(
                                 thread: t,
+                                now: DateTime.utc(2026, 7, 22, 13),
                                 showPath: false,
                                 onDone: t.isRobot ? null : () {},
                                 onAck: t.isRobot ? null : () {},

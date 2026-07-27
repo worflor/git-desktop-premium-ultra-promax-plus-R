@@ -390,16 +390,16 @@ class ReviewPane extends StatefulWidget {
   /// Toggle a file's reviewed mark. Null hides the mark entirely.
   final void Function(String path, bool reviewed)? onToggleReviewed;
 
-  /// Clock relative timestamps are measured against; null reads the
-  /// wall clock. Pinned by the preview lab so a captured PNG says the
-  /// same thing tomorrow.
-  final DateTime? now;
+  /// Clock relative timestamps are measured against. Required for the
+  /// reason given on [ReviewThreadCard.now]: an omitted clock is a
+  /// preview that lies about how old every comment is.
+  final DateTime now;
 
   const ReviewPane({
     super.key,
     required this.bundle,
     required this.strings,
-    this.now,
+    required this.now,
     required this.draftCount,
     required this.onSaveReply,
     required this.onResolve,

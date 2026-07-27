@@ -99,6 +99,7 @@ Widget _paneStory(AppTokens tokens) {
               for (final th in g.threads) ...[
                 ReviewThreadCard(
                   thread: th,
+                  now: kFixtureNow,
                   showPath: false,
                   onDone: th.isRobot ? null : () {},
                   onAck: th.isRobot ? null : () {},
@@ -120,7 +121,7 @@ Widget _paneStory(AppTokens tokens) {
               _sectionLabel(tokens, 'drafts'),
               const SizedBox(height: 6),
               for (final th in drafts) ...[
-                ReviewThreadCard(thread: th, onReply: () {}),
+                ReviewThreadCard(thread: th, now: kFixtureNow, onReply: () {}),
                 const SizedBox(height: 10),
               ],
             ],
@@ -278,6 +279,7 @@ void main() {
                   width: 620,
                   child: ReviewThreadCard(
                     thread: thread,
+                    now: kFixtureNow,
                     onDone: () {},
                     onAck: () {},
                     onReply: () {},
@@ -446,7 +448,12 @@ Widget _themedCell(AppThemeId theme, ReviewThreadView card) {
               style: TextStyle(color: tokens.textMuted, fontSize: 9),
             ),
             const SizedBox(height: 4),
-            ReviewThreadCard(thread: card, onDone: () {}, onAck: () {}, onReply: () {}),
+            ReviewThreadCard(
+                thread: card,
+                now: kFixtureNow,
+                onDone: () {},
+                onAck: () {},
+                onReply: () {}),
           ],
         ),
       ),

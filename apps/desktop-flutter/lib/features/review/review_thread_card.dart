@@ -47,16 +47,20 @@ class ReviewThreadCard extends StatelessWidget {
   /// changing your mind about one line.
   final VoidCallback? onDiscardDraft;
 
-  /// The clock relative timestamps are measured against. Null reads the
-  /// wall clock, which is what the app wants; the preview lab pins it so
-  /// a captured PNG says the same thing tomorrow.
-  final DateTime? now;
+  /// The clock relative timestamps are measured against.
+  ///
+  /// REQUIRED, and deliberately not defaulted to the wall clock. It was
+  /// nullable for one revision and the preview lab promptly forgot to
+  /// pass it, so every captured PNG relabelled a "3h" comment as "5d"
+  /// and would have drifted again every day after. A caller that has to
+  /// name its clock cannot silently inherit the wrong one.
+  final DateTime now;
 
   const ReviewThreadCard({
     super.key,
     required this.thread,
     this.strings = const ReviewStrings(),
-    this.now,
+    required this.now,
     this.showPath = true,
     this.onDone,
     this.onAck,
@@ -388,7 +392,7 @@ class _ReviewCommentBlock extends StatelessWidget {
   final bool showDraftChip;
 
   /// See [ReviewThreadCard.now].
-  final DateTime? now;
+  final DateTime now;
 
   /// Resolved-thread recede: all ink one contrast role down.
   final bool dim;
@@ -439,7 +443,7 @@ class _ReviewCommentBlock extends StatelessWidget {
           // it — the eye finds a coloured "3h" without another chip
           // competing for the row, and nothing re-measures.
           TextSeg(
-            relativeLabel(strings, now ?? DateTime.now(), comment.at),
+            relativeLabel(strings, now, comment.at),
             color: comment.isUnseen ? t.accentBright : t.textMuted,
             size: ReviewType.meta,
           ),
