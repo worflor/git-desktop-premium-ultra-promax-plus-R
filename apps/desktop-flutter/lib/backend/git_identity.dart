@@ -51,12 +51,13 @@ class GitIdentity {
 
   const GitIdentity({required this.display, this.key});
 
-  @override
-  bool operator ==(Object other) =>
-      other is GitIdentity && other.display == display && other.key == key;
-
-  @override
-  int get hashCode => Object.hash(display, key);
+  // Deliberately NO operator== / hashCode. Nothing in the app compares
+  // two GitIdentity objects — records carry the display and the key as
+  // fields, and THOSE are what merge and compare. The pair existed only
+  // to let one test say `expect(a, b)`, and a Dart hashCode is not a
+  // stable content hash: shipping one on an identity type invites
+  // exactly the misuse the determinism tripwire watches for, on the one
+  // class whose `key` field is meant to be the stable handle.
 
   @override
   String toString() => key == null ? display : '$display <$key>';

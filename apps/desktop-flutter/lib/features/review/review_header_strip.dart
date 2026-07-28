@@ -156,8 +156,13 @@ class _ReviewHeaderStripState extends State<ReviewHeaderStrip> {
           ),
           // The verbs for the state the chip above just reported.
           AnimatedSize(
-            duration: context.motion(const Duration(milliseconds: 110)),
-            curve: Curves.easeOutCubic,
+            // AppMotion.snap is the toggle tier, which is what this is.
+            // It was a hand-typed 110ms: wrapping a number you invented
+            // in context.motion() scales it with the user's motion rate
+            // but still opts this one control out of the shared scale,
+            // which is the whole point of having one.
+            duration: context.motionRead(AppMotion.snap),
+            curve: AppMotion.snapCurve,
             alignment: Alignment.topCenter,
             child: _open && _actionable
                 ? Padding(

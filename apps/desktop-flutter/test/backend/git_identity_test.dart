@@ -91,13 +91,16 @@ void main() {
       expect(id!.display, 'Weird <Angle> Name');
     });
 
-    test('I10: identity equality is by both fields', () {
-      const a = GitIdentity(display: 'mira', key: 'mira@example.com');
-      const b = GitIdentity(display: 'mira', key: 'mira@example.com');
-      const c = GitIdentity(display: 'mira');
-      expect(a, b);
-      expect(a.hashCode, b.hashCode);
-      expect(a, isNot(c), reason: 'same name, different account');
+    test('I10: display and key are independent fields', () {
+      // Asserted field by field rather than through operator==, which
+      // this type deliberately does not have: two people can share a
+      // display and be told apart only by the key, and the records that
+      // merge them compare those fields directly.
+      const named = GitIdentity(display: 'mira', key: 'mira@example.com');
+      const anonymous = GitIdentity(display: 'mira');
+      expect(named.display, anonymous.display);
+      expect(named.key, 'mira@example.com');
+      expect(anonymous.key, isNull, reason: 'same name, no account');
     });
   });
 
