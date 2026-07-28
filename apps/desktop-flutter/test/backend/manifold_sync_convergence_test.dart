@@ -1628,14 +1628,23 @@ void main() {
 
     test(
         'LWW tie-break determinism: equal updatedAt resolves to the '
-        'lexicographically larger tip sha, in both sync directions',
+        'a content-determined winner, identical in both sync directions',
         () async {
       // Constructs a genuine divergence where BOTH sides carry the same
-      // updatedAt, so `_mergeJsonRecords`'s tie-break
-      // (`localSha.compareTo(stagedSha) >= 0`) is the only thing that
-      // decides the winner. Verified independently with the reconcile
-      // initiated from each side, so the outcome cannot depend on who
-      // happens to call syncWithRemote first.
+      // updatedAt, so the tie-break is the only thing deciding the
+      // winner. Verified independently with the reconcile initiated from
+      // each side, so the outcome cannot depend on who happens to call
+      // syncWithRemote first.
+      //
+      // This used to assert the winner was the lexicographically larger
+      // TIP SHA. That was pinning the mechanism, and the mechanism was
+      // wrong: a sha describes the commit a blob was read from, not the
+      // blob, so a merged record (a new commit, unrelated sha) settles
+      // the same tie the other way when it meets a third peer. The
+      // property worth pinning is the one the anti-ping-pong design
+      // actually rests on — both directions agree — plus the winner
+      // being decided by CONTENT, which is what makes it survive a
+      // third peer at all. See merge_policy_test's M9.
       Future<({String aSha, String bSha, String winnerTitle})> setupAndSync(
           {required bool aInitiates}) async {
         final remote = await _bareRemote('tie-$aInitiates');
@@ -1694,19 +1703,22 @@ void main() {
         }
       }
 
+      // 'title-B' > 'title-A' as canonical JSON, and the tie-break is a
+      // max over content, so B's title is the winner on both runs. The
+      // shas differ between the two runs (different clones, different
+      // commits) and no longer influence the outcome — which is the
+      // whole point.
       final r1 = await setupAndSync(aInitiates: true);
-      final expected1 =
-          r1.aSha.compareTo(r1.bSha) >= 0 ? 'title-A' : 'title-B';
-      expect(r1.winnerTitle, expected1,
-          reason: 'tie-break must pick the lexicographically larger sha '
-              '(A initiating): a=${r1.aSha} b=${r1.bSha}');
+      expect(r1.winnerTitle, 'title-B',
+          reason: 'the greater canonical content must win (A initiating)');
 
       final r2 = await setupAndSync(aInitiates: false);
-      final expected2 =
-          r2.aSha.compareTo(r2.bSha) >= 0 ? 'title-A' : 'title-B';
-      expect(r2.winnerTitle, expected2,
-          reason: 'tie-break must pick the lexicographically larger sha '
-              '(B initiating): a=${r2.aSha} b=${r2.bSha}');
+      expect(r2.winnerTitle, 'title-B',
+          reason: 'the greater canonical content must win (B initiating)');
+
+      expect(r1.winnerTitle, r2.winnerTitle,
+          reason: 'both sync directions must land on the same record — '
+              'the anti-ping-pong design rests on exactly this');
     });
   });
 }

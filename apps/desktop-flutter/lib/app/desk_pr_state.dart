@@ -43,6 +43,17 @@ class DeskPrState extends ChangeNotifier {
   @visibleForTesting
   static bool debugSuppressAutoRefresh = false;
 
+  /// Test-only: pin whatever [debugSeedViewer] installed instead of
+  /// resolving from git config.
+  ///
+  /// Separate from seeding a path because the key [_ensureViewer] caches
+  /// against is the MAIN repo path as git normalises it, which a test
+  /// cannot predict (symlinks, drive-letter case) — seeding with a
+  /// guessed path silently missed and the real `user.name` answered, so
+  /// the gate under test never engaged.
+  @visibleForTesting
+  static bool debugSuppressViewerResolve = false;
+
   DeskPrState(this._repo, this._identity) {
     _repo.addListener(_onRepoChanged);
     if (!debugSuppressAutoRefresh && _repo.activePath != null) {
@@ -197,6 +208,7 @@ class DeskPrState extends ChangeNotifier {
   /// two `git config --get` reads that ride the shared runner's
   /// read-coalescing, and only on a repo change.
   Future<GitIdentity?> _ensureViewer(String main) async {
+    if (debugSuppressViewerResolve) return _viewer;
     if (_viewerFor == main) return _viewer;
     final resolved = await resolveGitIdentity(main);
     _viewer = resolved;
@@ -216,8 +228,20 @@ class DeskPrState extends ChangeNotifier {
   /// The refusal a write returns when git has no identity to sign it
   /// with. Stated as the fix, not the complaint: this is the same
   /// condition `git commit` refuses under, and the same remedy.
+  ///
+  /// Deliberately NOT phrased "before reviewing". It guards the three
+  /// writes that STAMP AN AUTHOR into a record that syncs to peers —
+  /// promote, addComment, addReview — and promoting a branch to a desk
+  /// PR is not a review. A message naming the wrong activity sends
+  /// someone looking for a review setting that does not exist.
+  ///
+  /// The writes that carry no author (setStateFor, editMeta, abandon,
+  /// toggleLinkedIssue) are deliberately NOT gated: they mutate a
+  /// record that already exists and names its author, so refusing them
+  /// would block a user from closing their own desk PR over a field
+  /// they are not writing.
   static const String identityUnsetMessage =
-      'Set your git identity before reviewing — '
+      'Set your git identity before creating shared items — '
       'git config --global user.name "Your Name" '
       'and user.email "you@example.com".';
 

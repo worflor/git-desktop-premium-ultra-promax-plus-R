@@ -68,7 +68,7 @@ Map<String, dynamic> _base({
 
 String _m(Map<String, dynamic> a, Map<String, dynamic> b) =>
     mergeWithSchema(
-        kReviewStateSchema, jsonEncode(a), jsonEncode(b), _shaA, _shaB);
+        kReviewStateSchema, jsonEncode(a), jsonEncode(b));
 
 void main() {
   test('M1+M2: commutative and idempotent on a rich divergent pair', () {
@@ -88,7 +88,7 @@ void main() {
     );
     final ab = _m(a, b);
     final ba = mergeWithSchema(
-        kReviewStateSchema, jsonEncode(b), jsonEncode(a), _shaB, _shaA);
+        kReviewStateSchema, jsonEncode(b), jsonEncode(a));
     expect(ab, ba, reason: 'both peers must produce identical bytes');
 
     final aa = _m(a, a);
@@ -205,7 +205,7 @@ void main() {
         updatedAt: '2026-07-22T12:00:00.000'); // smaller commit, WINNER record
     final ab = jsonDecode(_m(a, b)) as Map<String, dynamic>;
     final ba = jsonDecode(mergeWithSchema(kReviewStateSchema, jsonEncode(b),
-        jsonEncode(a), _shaB, _shaA)) as Map<String, dynamic>;
+        jsonEncode(a))) as Map<String, dynamic>;
     for (final m in [ab, ba]) {
       final rounds = m['rounds'] as List;
       expect(rounds.length, 1);
@@ -242,10 +242,83 @@ void main() {
       final b = randomState();
       final ab = _m(a, b);
       final ba = mergeWithSchema(
-          kReviewStateSchema, jsonEncode(b), jsonEncode(a), _shaB, _shaA);
+          kReviewStateSchema, jsonEncode(b), jsonEncode(a));
       expect(ab, ba, reason: 'fuzz iteration $i not commutative');
       final absorbed = _m(jsonDecode(ab) as Map<String, dynamic>, a);
       expect(absorbed, ab, reason: 'fuzz iteration $i not absorbing');
+    }
+  });
+
+  test('M9: three peers converge regardless of who syncs first', () {
+    // Commutativity is a TWO-party law. Three clones is a different
+    // claim: whichever pair happens to sync first produces a merged doc
+    // that then meets the third, so convergence needs ASSOCIATIVITY as
+    // well. Without it two teammates can sit on permanently different
+    // review state having seen exactly the same three writes, and
+    // nothing in the system would ever notice — every pairwise merge
+    // would look correct.
+    //
+    // The intermediate carries its own sha because in production it is
+    // a fresh commit: the same sha for every order, since what varies
+    // is which pair merged first, not what a merged doc is.
+    const shaC = 'cccccccccccccccccccccccccccccccccccccccc';
+    const shaM = 'dddddddddddddddddddddddddddddddddddddddd';
+    String merge2(Map<String, dynamic> x, String sx,
+            Map<String, dynamic> y, String sy) =>
+        mergeWithSchema(
+            kReviewStateSchema, jsonEncode(x), jsonEncode(y));
+
+    final rng = Random(20260727);
+    String iso(int m) =>
+        DateTime.fromMillisecondsSinceEpoch(1700000000000 + m * 60000)
+            .toIso8601String();
+    // A deliberately SMALL timestamp space, so equal-timestamp ties —
+    // the case where the sha tie-break decides and associativity is
+    // most at risk — actually occur instead of being a rounding
+    // curiosity nobody generated.
+    // Thread ids are UNIQUE within a document — the store mints them
+    // and a doc with the same id twice is not a state any peer can
+    // reach. Generating one would test the merge against an input the
+    // system cannot produce, and the ids still overlap ACROSS peers,
+    // which is where the interesting collisions live.
+    Map<String, dynamic> randomState(String who) {
+      final threads = <Map<String, dynamic>>[];
+      final ids = <String>{};
+      for (var t = 0; t < 1 + rng.nextInt(3); t++) {
+        if (!ids.add('t${rng.nextInt(3)}')) continue;
+        final comments = <Map<String, dynamic>>[];
+        for (var c = 0; c < rng.nextInt(3); c++) {
+          comments.add(_comment(who, iso(rng.nextInt(6)), 'c${rng.nextInt(4)}'));
+        }
+        threads.add(_thread(ids.last,
+            state: ['unresolved', 'done', 'acked'][rng.nextInt(3)],
+            comments: comments,
+            updatedAt: iso(rng.nextInt(6))));
+      }
+      return _base(threads: threads, updatedAt: iso(rng.nextInt(6)));
+    }
+
+    for (var i = 0; i < 120; i++) {
+      final a = randomState('mira');
+      final b = randomState('jun');
+      final c = randomState('varrho');
+
+      final abThenC = merge2(
+          jsonDecode(merge2(a, _shaA, b, _shaB)) as Map<String, dynamic>,
+          shaM, c, shaC);
+      final acThenB = merge2(
+          jsonDecode(merge2(a, _shaA, c, shaC)) as Map<String, dynamic>,
+          shaM, b, _shaB);
+      final bcThenA = merge2(
+          jsonDecode(merge2(b, _shaB, c, shaC)) as Map<String, dynamic>,
+          shaM, a, _shaA);
+
+      expect(abThenC, acThenB,
+          reason: 'iteration $i: (a+b)+c diverged from (a+c)+b — two '
+              'teammates who saw the same three writes now hold '
+              'different review state');
+      expect(abThenC, bcThenA,
+          reason: 'iteration $i: (a+b)+c diverged from (b+c)+a');
     }
   });
 }

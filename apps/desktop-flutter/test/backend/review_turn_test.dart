@@ -255,14 +255,13 @@ void main() {
     final mine = _state(attention: {'alice': att('alice', false, 30)});
     final theirs = _state(attention: {'alice': att('alice', true, 10)});
 
-    // Shas are the deterministic tiebreak; they are irrelevant here
-    // because the timestamps differ, which is the point.
+    // The merge is a pure function of the two documents — no commit
+    // shas involved. Here the timestamps differ anyway, which is the
+    // point: an explicit removal has one and an absence does not.
     final merged = mergeWithSchema(
       kReviewStateSchema,
       mine.toBlob(),
       theirs.toBlob(),
-      'a' * 40,
-      'b' * 40,
     );
     final settled =
         ReviewState.fromJson(jsonDecode(merged) as Map<String, dynamic>);
@@ -275,8 +274,6 @@ void main() {
       kReviewStateSchema,
       theirs.toBlob(),
       mine.toBlob(),
-      'b' * 40,
-      'a' * 40,
     );
     expect(
       ReviewState.fromJson(jsonDecode(other) as Map<String, dynamic>)

@@ -1237,9 +1237,8 @@ class ManifoldRefs {
     final String merged;
     try {
       merged = ManifoldNs.isReviewStateRef(ref)
-          ? mergeWithSchema(
-              kReviewStateSchema, lc.content, sc.content, localSha, stagedSha)
-          : _mergeJsonRecords(lc.content, sc.content, localSha, stagedSha);
+          ? mergeWithSchema(kReviewStateSchema, lc.content, sc.content)
+          : _mergeJsonRecords(lc.content, sc.content);
     } catch (e) {
       return GitResult.err('merge of $ref failed: $e');
     }
@@ -1375,15 +1374,23 @@ class ManifoldRefs {
   ///    both sides land on the same ordering.
   ///  * every other field (scalars and non-comment lists: title, body,
   ///    state, labels, assignees, linked lists, reviewers, remoteNumber,
-  ///    diff stats, …) is last-writer-wins: taken wholesale from the
-  ///    record with the larger `updatedAt`; a tie resolves to the
-  ///    lexicographically larger tip [localSha]/[stagedSha] so both
-  ///    machines pick the same winner.
+  ///    diff stats, …) is last-writer-wins: taken PER FIELD from the
+  ///    record with the larger `updatedAt`; a tie resolves to that
+  ///    field's larger canonical encoding, so both machines pick the
+  ///    same winner from the content alone.
+  ///
+  /// Takes NO commit shas. The tie used to resolve to the larger tip
+  /// sha, which is a property of the COMMIT a blob was read from rather
+  /// than of the blob: a merged record is a new commit with an
+  /// unrelated sha, so the same tie settled the other way when that
+  /// result met a third peer, and two teammates who saw identical
+  /// writes diverged permanently. Ordering on content makes each field
+  /// a max over (timestamp, canonical bytes), and max is associative —
+  /// which is what three-way convergence needs. See merge_policy_test's
+  /// M9, which is where this was caught.
   static String _mergeJsonRecords(
     String localBlob,
-    String stagedBlob,
-    String localSha,
-    String stagedSha, {
+    String stagedBlob, {
     bool checkContracts = true,
   }) {
     final local = jsonDecode(localBlob) as Map<String, dynamic>;
@@ -1392,10 +1399,6 @@ class ManifoldRefs {
     final stagedT = _parseTs(staged['updatedAt']);
 
     final int cmp = localT.compareTo(stagedT);
-    final bool localWins =
-        cmp > 0 || (cmp == 0 && localSha.compareTo(stagedSha) >= 0);
-    final winner = localWins ? local : staged;
-    final loser = localWins ? staged : local;
 
     final merged = <String, dynamic>{};
     final keys = <String>{...local.keys, ...staged.keys};
@@ -1404,9 +1407,37 @@ class ManifoldRefs {
       final sv = staged[k];
       if (_isCommentList(lv) || _isCommentList(sv)) {
         merged[k] = _unionComments(lv, sv);
-      } else {
-        merged[k] = winner.containsKey(k) ? winner[k] : loser[k];
+        continue;
       }
+      if (!local.containsKey(k)) {
+        merged[k] = sv;
+        continue;
+      }
+      if (!staged.containsKey(k)) {
+        merged[k] = lv;
+        continue;
+      }
+      // The record timestamp decides while it differs. On a TIE the
+      // winner is the field's own greater canonical encoding — NOT the
+      // sha of the commit the blob was read from.
+      //
+      // The sha is a property of the CONTAINER. It settles a single
+      // pairwise merge fine and breaks the moment a third peer exists:
+      // the merged record is a NEW commit with an unrelated sha, so the
+      // same tie resolves the other way when that result meets peer C,
+      // and two teammates who saw identical writes hold different state
+      // forever with every pairwise merge looking correct. Ordering on
+      // content makes each field a max over (timestamp, canonical
+      // bytes), and max is associative — which is what three-way
+      // convergence actually requires. Same defect and same fix as
+      // merge_policy.dart's engine; found there by law M9.
+      merged[k] = cmp != 0
+          ? (cmp > 0 ? lv : sv)
+          : (_canonicalJson(jsonEncode(lv))
+                      .compareTo(_canonicalJson(jsonEncode(sv))) >=
+                  0
+              ? lv
+              : sv);
     }
     // updatedAt is always the max, regardless of which record "won".
     merged['updatedAt'] =
@@ -1426,9 +1457,7 @@ class ManifoldRefs {
       if (!checkContracts) return true;
       assert(out == _canonicalJson(out),
           '_mergeJsonRecords output not canonical');
-      final swapped = _mergeJsonRecords(
-          stagedBlob, localBlob, stagedSha, localSha,
-          checkContracts: false);
+      final swapped = _mergeJsonRecords(stagedBlob, localBlob, checkContracts: false);
       assert(out == swapped,
           '_mergeJsonRecords is not commutative for this record pair');
       return true;

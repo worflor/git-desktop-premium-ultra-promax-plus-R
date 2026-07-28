@@ -98,20 +98,42 @@ class RecordSchema {
   const RecordSchema({required this.fields, this.tsField = 'updatedAt'});
 }
 
+/// Total order on VALUES, used to settle every timestamp tie.
+///
+/// Compares the canonical encodings, so it depends only on what the two
+/// sides actually say. The tiebreak used to be `aSha.compareTo(bSha)` —
+/// the commit each blob was READ FROM — which is a property of the
+/// container, not the content. That is fine for a single pairwise merge
+/// and wrong the moment there are three peers: the merged doc is a NEW
+/// commit with an unrelated sha, so a tie settled one way while merging
+/// (a,b) settles the other way when that result meets c. Two teammates
+/// who saw exactly the same three writes then hold different state
+/// forever, and every pairwise merge along the way looks correct.
+///
+/// Ordering on content makes each field a MAX over `(timestamp,
+/// canonical bytes)`, and max is associative — which is precisely the
+/// property three-way convergence needs. Caught by M9.
+int _contentCompare(Object? a, Object? b) =>
+    _canonicalEncode(a).compareTo(_canonicalEncode(b));
+
 DateTime _ts(Object? v) =>
     DateTime.tryParse(v is String ? v : '') ??
     DateTime.fromMillisecondsSinceEpoch(0);
 
-/// Merge two serialized records under [schema]. [aSha]/[bSha] are the
-/// tips the blobs came from — the deterministic tiebreak both machines
-/// share. Returns canonical JSON (sorted keys, two-space indent, same
-/// shape the reconcile engine's convergence equality expects).
+/// Merge two serialized records under [schema]. Returns canonical JSON
+/// (sorted keys, two-space indent, same shape the reconcile engine's
+/// convergence equality expects).
+///
+/// Takes NO commit shas. It used to take the two tips as the
+/// deterministic tiebreak, which made the result depend on which
+/// commits the blobs happened to be read from — see [_contentCompare]
+/// for why that cannot survive a third peer. The merge is now a pure
+/// function of the two documents, which is also what lets a caller
+/// merge an already-merged doc without having to invent a sha for it.
 String mergeWithSchema(
   RecordSchema schema,
   String aBlob,
-  String bBlob,
-  String aSha,
-  String bSha, {
+  String bBlob, {
   bool checkContracts = true,
 }) {
   final a = jsonDecode(aBlob) as Map<String, dynamic>;
@@ -119,9 +141,8 @@ String mergeWithSchema(
   final ta = _ts(a[schema.tsField]);
   final tb = _ts(b[schema.tsField]);
   final cmp = ta.compareTo(tb);
-  final aWins = cmp > 0 || (cmp == 0 && aSha.compareTo(bSha) >= 0);
 
-  final merged = _mergeRecord(schema, a, b, aWins: aWins);
+  final merged = _mergeRecord(schema, a, b, recordCmp: cmp);
   merged[schema.tsField] =
       (ta.isAfter(tb) ? ta : tb).toIso8601String();
   final out = _canonicalEncode(merged);
@@ -133,8 +154,8 @@ String mergeWithSchema(
     if (!checkContracts) return true;
     assert(out == _canonicalEncode(jsonDecode(out)),
         'mergeWithSchema output not canonical');
-    final swapped = mergeWithSchema(schema, bBlob, aBlob, bSha, aSha,
-        checkContracts: false);
+    final swapped =
+        mergeWithSchema(schema, bBlob, aBlob, checkContracts: false);
     assert(out == swapped, 'mergeWithSchema is not commutative');
     return true;
   }());
@@ -145,7 +166,7 @@ Map<String, dynamic> _mergeRecord(
   RecordSchema schema,
   Map<String, dynamic> a,
   Map<String, dynamic> b, {
-  required bool aWins,
+  required int recordCmp,
 }) {
   final out = <String, dynamic>{};
   for (final k in <String>{...a.keys, ...b.keys}) {
@@ -159,7 +180,7 @@ Map<String, dynamic> _mergeRecord(
     }
     out[k] = _mergeValue(
         schema.fields[k] ?? const Lww(), a[k], b[k],
-        aWins: aWins);
+        recordCmp: recordCmp);
   }
   return out;
 }
@@ -168,18 +189,25 @@ Object? _mergeValue(
   FieldPolicy policy,
   Object? av,
   Object? bv, {
-  required bool aWins,
+  required int recordCmp,
 }) {
   switch (policy) {
     case Lww():
-      return aWins ? av : bv;
+      // The record's own timestamp still decides when it differs — a
+      // later write to the record IS later for every plain field on it.
+      // Only the tie falls to content.
+      if (recordCmp != 0) return recordCmp > 0 ? av : bv;
+      return _contentCompare(av, bv) >= 0 ? av : bv;
 
     case LwwTs(:final tsField):
       if (av is Map<String, dynamic> && bv is Map<String, dynamic>) {
         final c = _ts(av[tsField]).compareTo(_ts(bv[tsField]));
         if (c != 0) return c > 0 ? av : bv;
       }
-      return aWins ? av : bv;
+      // Element-level ties settle on element CONTENT, never on the
+      // record around it: an element carried into a merged doc keeps
+      // its own identity, while the doc's sha does not survive.
+      return _contentCompare(av, bv) >= 0 ? av : bv;
 
     case MaxNum():
       final an = av is num ? av : null;
@@ -195,12 +223,17 @@ Object? _mergeValue(
         :final collideBy
       ):
       // Fold this call's A side first, then B. On a cross-side key
-      // collision, `prior` is therefore the A-side entry and `e` the
-      // B-side one, and the element winner falls back to this call's
-      // record-level `aWins` on timestamp ties. That pairing is what
-      // makes the swapped call (roles AND aWins both flipped) land on
-      // byte-identical output — the commutativity contract asserts it
-      // on every merge.
+      // collision `prior` is therefore the A-side entry and `e` the
+      // B-side one — but NOTHING downstream depends on which side an
+      // entry came from. Every resolution here is a max over content,
+      // or a per-field merge whose own ties are maxes over content, so
+      // the swapped call lands on byte-identical output no matter which
+      // side folded first. That is what the commutativity contract
+      // asserts on every merge, and it is also why there is no
+      // record-level winner threaded through this closure any more:
+      // deciding a collision by the containing record is exactly the
+      // container-over-content mistake that broke three-peer
+      // convergence (see [_contentCompare]).
       final byKey = <String, Map<String, dynamic>>{};
       void fold(Object? side) {
         if (side is! List) return;
@@ -223,22 +256,28 @@ Object? _mergeValue(
               byKey[k] = c > 0 ? prior : e;
               continue;
             }
-            // Same collideBy value, differing elsewhere → record winner.
-            byKey[k] = aWins ? prior : e;
+            // Same collideBy value, differing elsewhere → content.
+            byKey[k] = _contentCompare(prior, e) >= 0 ? prior : e;
             continue;
           }
           if (element != null) {
             final eTa = _ts(prior[element.tsField]);
             final eTb = _ts(e[element.tsField]);
             final c = eTa.compareTo(eTb);
-            final priorWins = c > 0 || (c == 0 && aWins);
-            final mergedE =
-                _mergeRecord(element, prior, e, aWins: priorWins);
+            // Pass the element timestamps' comparison and NOTHING else.
+            // Feeding a whole-element content compare in on a tie would
+            // re-introduce the container problem one level down: the
+            // merged element's bytes are neither side's, so a third
+            // peer meeting it settles the same tie differently. Letting
+            // c stay 0 lets each FIELD break its own tie by its own
+            // content, which is a per-field max and therefore
+            // associative.
+            final mergedE = _mergeRecord(element, prior, e, recordCmp: c);
             mergedE[element.tsField] =
                 (eTa.isAfter(eTb) ? eTa : eTb).toIso8601String();
             byKey[k] = mergedE;
           } else {
-            byKey[k] = aWins ? prior : e;
+            byKey[k] = _contentCompare(prior, e) >= 0 ? prior : e;
           }
         }
       }
@@ -258,7 +297,7 @@ Object? _mergeValue(
         } else if (!bm.containsKey(k)) {
           out[k] = am[k];
         } else {
-          out[k] = _mergeValue(value, am[k], bm[k], aWins: aWins);
+          out[k] = _mergeValue(value, am[k], bm[k], recordCmp: recordCmp);
         }
       }
       return out;
