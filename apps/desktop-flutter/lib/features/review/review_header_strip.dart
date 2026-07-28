@@ -11,28 +11,74 @@
 // everything else stays quiet. Both sides are [ReviewLine] paragraphs,
 // so the round chip, the facts, the count, and the turn indicator all
 // sit on one derived baseline.
+//
+// THE TURN CHIP IS ALSO THE CONTROL. It used to only DISPLAY who the
+// change was blocked on, while the two verbs that change that
+// ("not blocking on me", "hand to <name>") lived in a separate row of
+// unrelated controls above the pane. Display in one room, control in
+// another, for the single most important state the surface carries.
+// Pressing the chip now expands the verbs inline underneath it.
+//
+// Expansion is on TAP, never on hover: a hover that resized this row
+// would move the very control the pointer was travelling toward.
 
 import 'package:flutter/material.dart';
 
 import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'review_chrome.dart';
 import 'review_view_model.dart';
 
-class ReviewHeaderStrip extends StatelessWidget {
+class ReviewHeaderStrip extends StatefulWidget {
   final ReviewHeaderView header;
   final ReviewStrings strings;
+
+  /// People this review can be handed to. Empty hides the hand-off.
+  final List<String> handOffTo;
+  final void Function(String display)? onHandTo;
+
+  /// Take yourself out of the attention set. Null when you are not in
+  /// it, which is also when the verb would be meaningless.
+  final VoidCallback? onStepOut;
 
   const ReviewHeaderStrip({
     super.key,
     required this.header,
     this.strings = const ReviewStrings(),
+    this.handOffTo = const [],
+    this.onHandTo,
+    this.onStepOut,
   });
+
+  @override
+  State<ReviewHeaderStrip> createState() => _ReviewHeaderStripState();
+}
+
+class _ReviewHeaderStripState extends State<ReviewHeaderStrip> {
+  bool _open = false;
+
+  /// Whether pressing the turn chip has anything to offer. A chip that
+  /// expands to an empty strip is worse than a chip that does not
+  /// expand, so it simply is not a button then.
+  bool get _actionable =>
+      widget.onStepOut != null ||
+      (widget.handOffTo.isNotEmpty && widget.onHandTo != null);
+
+  @override
+  void didUpdateWidget(ReviewHeaderStrip old) {
+    super.didUpdateWidget(old);
+    // A reload that removes every verb must not leave an empty drawer
+    // hanging open — the state it was showing is gone.
+    if (_open && !_actionable) _open = false;
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final header = widget.header;
+    final strings = widget.strings;
     // elevated: false — same reasoning as the thread card: the
     // down-offset elevation shadow bleeds through the translucent
     // panel fill as a lighter top band that fakes misalignment.
@@ -43,80 +89,137 @@ class ReviewHeaderStrip extends StatelessWidget {
       elevated: false,
       padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: ReviewLine([
-              // Round 0 means no round was ever cut (the head branch is
-              // unresolvable), and anchoring is refused in that state.
-              // The chip used to read "R1" regardless, which claimed a
-              // live round while every gutter tap was being silently
-              // declined — the header asserting the exact thing the
-              // surface below it would not do.
-              if (header.round > 0)
-                ChipSeg(ReviewChip(
-                  label: strings.roundChip(header.round),
-                  color: t.textStrong,
-                  mono: true,
-                )),
-              if (header.filesSinceLastLook > 0) ...[
-                const GapSeg(AppSpacing.sm10),
-                TextSeg(
-                  strings.filesSinceLastLook(header.filesSinceLastLook),
-                  color: t.textNormal,
-                ),
-              ],
-              // The other half of "what's new since I looked": the code
-              // moved AND the conversation did. Accent, because unlike
-              // the file count this is someone waiting on a reply — and
-              // the matching accent on individual timestamps is what
-              // leads the eye from this number to the comments it
-              // counts.
-              if (header.newCommentCount > 0) ...[
-                const GapSeg(AppSpacing.sm10),
-                TextSeg(
-                  strings.newComments(header.newCommentCount),
-                  color: t.accentBright,
-                ),
-              ],
-              // A verdict already given is a FACT, not an alarm —
-              // muted, so it stops competing with the turn pill and
-              // unresolved markers for attention (accent was carrying
-              // five jobs at once).
-              if (header.standing != ReviewStanding.none) ...[
-                const GapSeg(AppSpacing.sm10),
-                TextSeg(_standingLabel(strings, header),
-                    color: t.textMuted, weight: FontWeight.w600),
-              ],
-            ]),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          ReviewLine([
-            if (header.unresolvedCount > 0) ...[
-              TextSeg(
-                strings.unresolvedCount(header.unresolvedCount),
-                color: t.textMuted,
-                weight: FontWeight.w600,
+          Row(
+            children: [
+              Expanded(
+                child: ReviewLine([
+                  // Round 0 means no round was ever cut (the head branch
+                  // is unresolvable), and anchoring is refused in that
+                  // state. The chip used to read "R1" regardless, which
+                  // claimed a live round while every gutter tap was
+                  // being silently declined — the header asserting the
+                  // exact thing the surface below it would not do.
+                  if (header.round > 0)
+                    ChipSeg(ReviewChip(
+                      label: strings.roundChip(header.round),
+                      color: t.textStrong,
+                      mono: true,
+                    )),
+                  if (header.filesSinceLastLook > 0) ...[
+                    const GapSeg(AppSpacing.sm10),
+                    TextSeg(
+                      strings.filesSinceLastLook(header.filesSinceLastLook),
+                      color: t.textNormal,
+                    ),
+                  ],
+                  // The other half of "what's new since I looked": the
+                  // code moved AND the conversation did. Accent, because
+                  // unlike the file count this is someone waiting on a
+                  // reply — and the matching accent on individual
+                  // timestamps is what leads the eye from this number to
+                  // the comments it counts.
+                  if (header.newCommentCount > 0) ...[
+                    const GapSeg(AppSpacing.sm10),
+                    TextSeg(
+                      strings.newComments(header.newCommentCount),
+                      color: t.accentBright,
+                    ),
+                  ],
+                  // A verdict already given is a FACT, not an alarm —
+                  // muted, so it stops competing with the turn pill and
+                  // unresolved markers for attention (accent was
+                  // carrying five jobs at once).
+                  if (header.standing != ReviewStanding.none) ...[
+                    const GapSeg(AppSpacing.sm10),
+                    TextSeg(_standingLabel(strings, header),
+                        color: t.textMuted, weight: FontWeight.w600),
+                  ],
+                ]),
               ),
-              const GapSeg(AppSpacing.sm10),
+              const SizedBox(width: AppSpacing.sm),
+              ReviewLine([
+                if (header.unresolvedCount > 0) ...[
+                  TextSeg(
+                    strings.unresolvedCount(header.unresolvedCount),
+                    color: t.textMuted,
+                    weight: FontWeight.w600,
+                  ),
+                  const GapSeg(AppSpacing.sm10),
+                ],
+                ChipSeg(_turnChip(t)),
+              ]),
             ],
-            if (header.turn == ReviewTurn.yours)
-              ChipSeg(ReviewChip(
-                label: strings.yourTurn,
-                color: t.accentBright,
-                variant: ReviewChipVariant.accent,
-              ))
-            else
-              ChipSeg(ReviewChip(
-                label: strings.waitingOn(header.waitingOn),
-                color: t.textMuted,
-                variant: ReviewChipVariant.quiet,
-                weight: FontWeight.w400,
-              )),
-          ]),
+          ),
+          // The verbs for the state the chip above just reported.
+          AnimatedSize(
+            duration: context.motion(const Duration(milliseconds: 110)),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _open && _actionable
+                ? Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.sm),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: AppSpacing.sm6,
+                            runSpacing: AppSpacing.sm6,
+                            children: [
+                              if (widget.onStepOut != null)
+                                ReviewVerbPill(
+                                  label: strings.notBlocking,
+                                  onTap: () {
+                                    setState(() => _open = false);
+                                    widget.onStepOut!();
+                                  },
+                                ),
+                              if (widget.onHandTo != null)
+                                ReviewHandOff(
+                                  label: strings.handTo,
+                                  to: widget.handOffTo,
+                                  onHandTo: (who) {
+                                    setState(() => _open = false);
+                                    widget.onHandTo!(who);
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
         ],
       ),
     );
+  }
+
+  ReviewChip _turnChip(AppTokens t) {
+    final strings = widget.strings;
+    final yours = widget.header.turn == ReviewTurn.yours;
+    final press =
+        _actionable ? () => setState(() => _open = !_open) : null;
+    return yours
+        ? ReviewChip(
+            label: strings.yourTurn,
+            color: t.accentBright,
+            variant: ReviewChipVariant.accent,
+            onTap: press,
+          )
+        : ReviewChip(
+            label: strings.waitingOn(widget.header.waitingOn),
+            color: t.textMuted,
+            variant: ReviewChipVariant.quiet,
+            weight: FontWeight.w400,
+            onTap: press,
+          );
   }
 }
 

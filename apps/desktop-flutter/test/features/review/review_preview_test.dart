@@ -20,12 +20,12 @@ import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/features/review/review_adapter.dart'
     show groupThreadsByFile;
 import 'package:git_desktop/features/review/review_chrome.dart'
-    show ReviewVerbPill;
+    show ReviewHandOff, ReviewVerbPill;
 import 'package:git_desktop/features/review/review_file_header.dart';
 import 'package:git_desktop/features/review/review_header_strip.dart';
 import 'package:git_desktop/features/review/review_identity_notice.dart';
 import 'package:git_desktop/features/review/review_pane.dart'
-    show ReviewComposer, ReviewHandOff, ReviewPublishBar;
+    show ReviewComposer, ReviewPublishBar;
 import 'package:git_desktop/features/review/review_thread_card.dart';
 import 'package:git_desktop/features/review/review_view_model.dart';
 import 'package:git_desktop/ui/material_surface.dart'

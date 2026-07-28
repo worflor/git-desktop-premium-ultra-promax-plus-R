@@ -81,7 +81,7 @@ enum ReviewChipVariant {
   accent,
 }
 
-class ReviewChip extends StatelessWidget {
+class ReviewChip extends StatefulWidget {
   final String label;
   final Color color;
   final ReviewChipVariant variant;
@@ -94,6 +94,14 @@ class ReviewChip extends StatelessWidget {
   /// (quiet/accent → w700, outline/fill → w600).
   final FontWeight? weight;
 
+  /// Makes the chip pressable. A chip is the right home for this when
+  /// the action changes the very state the chip reports — the turn
+  /// indicator and its hand-off verbs, say. It stays a [ReviewChip] so
+  /// it still travels inside a [ChipSeg] and keeps the line's baseline;
+  /// nothing about the resting appearance changes, so a pressable chip
+  /// never resizes the row it sits in.
+  final VoidCallback? onTap;
+
   const ReviewChip({
     super.key,
     required this.label,
@@ -102,7 +110,11 @@ class ReviewChip extends StatelessWidget {
     this.dot = false,
     this.mono = false,
     this.weight,
+    this.onTap,
   });
+
+  @override
+  State<ReviewChip> createState() => _ReviewChipState();
 
   FontWeight get _weight =>
       weight ??
@@ -130,23 +142,50 @@ class ReviewChip extends StatelessWidget {
     return text + dotW + 2 * ReviewMetrics.chipPadX;
   }
 
+}
+
+class _ReviewChipState extends State<ReviewChip> {
+  bool _hover = false;
+
+  /// Hover styling applies only to a chip that can actually be pressed.
+  bool get _lit => _hover && widget.onTap != null;
+
   @override
   Widget build(BuildContext context) {
+    final body = _body(context);
+    if (widget.onTap == null) return body;
+    // Hover feedback matching ReviewVerbPill's: a pressable thing that
+    // does not answer the pointer reads as decoration. DECORATION ONLY —
+    // height and padding are untouched, so hovering never resizes the
+    // row and never moves the control the pointer is travelling toward.
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: body,
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context) {
     final geo = context.surfaceShader.geometry;
     final text = Text(
-      label,
+      widget.label,
       style: TextStyle(
-        color: color,
+        color: widget.color,
         fontSize: ReviewType.meta,
         height: 1,
-        fontWeight: _weight,
+        fontWeight: widget._weight,
         letterSpacing: 0.2,
-        fontFamily: mono ? AppFonts.mono : null,
-        fontFamilyFallback: mono ? AppFonts.monoFallback : null,
+        fontFamily: widget.mono ? AppFonts.mono : null,
+        fontFamilyFallback: widget.mono ? AppFonts.monoFallback : null,
       ),
     );
 
-    final child = dot
+    final child = widget.dot
         ? Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -155,7 +194,7 @@ class ReviewChip extends StatelessWidget {
                 width: 5,
                 height: 5,
                 decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle),
+                    BoxDecoration(color: widget.color, shape: BoxShape.circle),
               ),
               const SizedBox(width: AppSpacing.xs),
               text,
@@ -163,35 +202,64 @@ class ReviewChip extends StatelessWidget {
           )
         : text;
 
-    // NOT `alignment:` on the Container — a Container with alignment
+    // Hover only lifts the alphas; the geometry below is identical in
+    // both states, which is what keeps a hover from resizing the row.
+    final decoration = switch (widget.variant) {
+      ReviewChipVariant.quiet => _lit
+          ? BoxDecoration(
+              color: widget.color.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(geo.badgeRadius),
+            )
+          : null,
+      ReviewChipVariant.outline => BoxDecoration(
+          borderRadius: BorderRadius.circular(geo.badgeRadius),
+          border: Border.all(
+              color: widget.color.withValues(alpha: _lit ? 0.75 : 0.45),
+              width: AppBorderWidth.hairline),
+        ),
+      ReviewChipVariant.fill => BoxDecoration(
+          color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
+          borderRadius: BorderRadius.circular(geo.badgeRadius),
+        ),
+      ReviewChipVariant.accent => BoxDecoration(
+          color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
+          borderRadius: BorderRadius.circular(geo.badgeRadius),
+          border: Border.all(
+              color: widget.color.withValues(alpha: _lit ? 0.7 : 0.4),
+              width: AppBorderWidth.hairline),
+        ),
+    };
+
+    // NOT `alignment:` on the container — a Container with alignment
     // expands to its max width constraint, and inside a paragraph
     // (WidgetSpan) that constraint is the whole line: the chip would
     // stretch across it (caught in preview). Align with widthFactor: 1
     // centers vertically while shrink-wrapping horizontally.
-    return Container(
+    // ANIMATED ONLY WHEN PRESSABLE. Every chip in the app is a
+    // ReviewChip and most are pure status; giving all of them an
+    // implicit decoration animation means a static chip interpolates on
+    // any token change, which is motion nobody asked for plus a ticker
+    // per chip in dense lists.
+    if (widget.onTap == null) {
+      return Container(
+        height: ReviewMetrics.chipHeight,
+        padding:
+            const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
+        decoration: decoration,
+        child: Align(
+          alignment: Alignment.center,
+          widthFactor: 1,
+          child: child,
+        ),
+      );
+    }
+    return AnimatedContainer(
+      duration: context.motionRead(AppMotion.snap),
+      curve: AppMotion.snapCurve,
       height: ReviewMetrics.chipHeight,
       padding:
           const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
-      decoration: switch (variant) {
-        ReviewChipVariant.quiet => null,
-        ReviewChipVariant.outline => BoxDecoration(
-            borderRadius: BorderRadius.circular(geo.badgeRadius),
-            border: Border.all(
-                color: color.withValues(alpha: 0.45),
-                width: AppBorderWidth.hairline),
-          ),
-        ReviewChipVariant.fill => BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(geo.badgeRadius),
-          ),
-        ReviewChipVariant.accent => BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(geo.badgeRadius),
-            border: Border.all(
-                color: color.withValues(alpha: 0.4),
-                width: AppBorderWidth.hairline),
-          ),
-      },
+      decoration: decoration,
       child: Align(
         alignment: Alignment.center,
         widthFactor: 1,
@@ -425,6 +493,63 @@ class _ReviewVerbPillState extends State<ReviewVerbPill> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The other direction of the manually adjustable attention set: put
+/// the change into someone's hands without having anything to publish.
+///
+/// One quiet verb, then bare names. The names are controls and the verb
+/// is not, which is also why no locale has to inflect a person's name
+/// into a sentence — a hand-off to "mira" reads the same in every
+/// language the app speaks.
+///
+/// Renders nothing at all when there is nobody to hand to: an empty
+/// conversation has no hand-off, and a stub control that greys out
+/// would just be a promise the record cannot keep.
+class ReviewHandOff extends StatelessWidget {
+  final String label;
+  final List<String> to;
+  final void Function(String display) onHandTo;
+
+  const ReviewHandOff({
+    super.key,
+    required this.label,
+    required this.to,
+    required this.onHandTo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (to.isEmpty) return const SizedBox.shrink();
+    final t = context.tokens;
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        SizedBox(
+          height: ReviewMetrics.verbHeight,
+          // widthFactor: 1 — a bare Center fills the width it is
+          // offered, which inside a Wrap means the verb claims the
+          // whole run and the names it introduces fall to the next
+          // line, reading as two unrelated groups.
+          child: Align(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: ReviewType.meta,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
+        for (final who in to)
+          ReviewVerbPill(label: who, onTap: () => onHandTo(who)),
+      ],
     );
   }
 }

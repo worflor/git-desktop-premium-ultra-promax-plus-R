@@ -195,62 +195,6 @@ Widget _busyGate({required bool busy, required Widget child}) => busy
     ? Opacity(opacity: 0.45, child: IgnorePointer(child: child))
     : child;
 
-/// The other direction of the manually adjustable attention set: put
-/// the change into someone's hands without having anything to publish.
-///
-/// One quiet verb, then bare names. The names are controls and the verb
-/// is not, which is also why no locale has to inflect a person's name
-/// into a sentence — a hand-off to "mira" reads the same in every
-/// language the app speaks.
-///
-/// Renders nothing at all when there is nobody to hand to: an empty
-/// conversation has no hand-off, and a stub control that greys out
-/// would just be a promise the record cannot keep.
-class ReviewHandOff extends StatelessWidget {
-  final String label;
-  final List<String> to;
-  final void Function(String display) onHandTo;
-
-  const ReviewHandOff({
-    super.key,
-    required this.label,
-    required this.to,
-    required this.onHandTo,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (to.isEmpty) return const SizedBox.shrink();
-    final t = context.tokens;
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        SizedBox(
-          height: ReviewMetrics.verbHeight,
-          // widthFactor: 1 — a bare Center fills the width it is
-          // offered, which inside a Wrap means the verb claims the
-          // whole run and the names it introduces fall to the next
-          // line, reading as two unrelated groups.
-          child: Align(
-            widthFactor: 1,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: ReviewType.meta,
-                height: 1,
-              ),
-            ),
-          ),
-        ),
-        for (final who in to)
-          ReviewVerbPill(label: who, onTap: () => onHandTo(who)),
-      ],
-    );
-  }
-}
 
 /// The atomic batch bar: verdict choice + publish + discard. One
 /// gesture moves every draft (and the verdict) into the shared state —
@@ -390,6 +334,13 @@ class ReviewPane extends StatefulWidget {
   /// Toggle a file's reviewed mark. Null hides the mark entirely.
   final void Function(String path, bool reviewed)? onToggleReviewed;
 
+  /// The attention verbs, rendered by the header strip's turn chip —
+  /// the state they change is the state that chip reports, so they live
+  /// on it rather than in a row of unrelated controls elsewhere.
+  final List<String> handOffTo;
+  final void Function(String display)? onHandTo;
+  final VoidCallback? onStepOut;
+
   /// Clock relative timestamps are measured against. Required for the
   /// reason given on [ReviewThreadCard.now]: an omitted clock is a
   /// preview that lies about how old every comment is.
@@ -400,6 +351,9 @@ class ReviewPane extends StatefulWidget {
     required this.bundle,
     required this.strings,
     required this.now,
+    this.handOffTo = const [],
+    this.onHandTo,
+    this.onStepOut,
     required this.draftCount,
     required this.onSaveReply,
     required this.onResolve,
@@ -500,7 +454,13 @@ class _ReviewPaneState extends State<ReviewPane> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ReviewHeaderStrip(header: b.header, strings: widget.strings),
+        ReviewHeaderStrip(
+          header: b.header,
+          strings: widget.strings,
+          handOffTo: widget.handOffTo,
+          onHandTo: widget.onHandTo,
+          onStepOut: widget.onStepOut,
+        ),
         for (final group in b.groups) ...[
           const SizedBox(height: AppSpacing.md),
           ReviewFileHeader(

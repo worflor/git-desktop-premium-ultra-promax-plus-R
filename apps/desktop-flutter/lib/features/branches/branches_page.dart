@@ -9239,21 +9239,15 @@ class _PrExpanded extends StatelessWidget {
                           label: review!.strings.caughtUp,
                           onTap: review!.onCaughtUp!,
                         ),
-                      // The manual half of the attention set, both
-                      // directions: put it down, or pick someone up.
-                      // One quiet label carries the verb so the names
-                      // stay names — and so no locale has to inflect a
-                      // person's name into a sentence.
-                      if (review!.onStepOut != null)
-                        ReviewVerbPill(
-                          label: review!.strings.notBlocking,
-                          onTap: review!.onStepOut!,
-                        ),
-                      ReviewHandOff(
-                        label: review!.strings.handTo,
-                        to: review!.handOffTo,
-                        onHandTo: review!.onHandTo,
-                      ),
+                      // The attention verbs used to sit HERE, in a row
+                      // of otherwise unrelated controls, while the chip
+                      // that reports the attention state sat inside the
+                      // pane below. They live on that chip now: press
+                      // "your turn" / "waiting on mira" to put the
+                      // change down or hand it on. What is left in this
+                      // row is only view state — which diff am I
+                      // looking at — which is a different question with
+                      // a different answer.
                     ],
                   ),
                 ),
@@ -9273,6 +9267,9 @@ class _PrExpanded extends StatelessWidget {
               onDiscardDraft: review!.onDiscardDraft,
               reviewedFiles: review!.reviewedFiles,
               onToggleReviewed: review!.onToggleReviewed,
+              handOffTo: review!.handOffTo,
+              onHandTo: review!.onHandTo,
+              onStepOut: review!.onStepOut,
               onPublish: review!.onPublish,
               onDiscardDrafts: review!.onDiscardDrafts,
               onSelectFile: review!.onSelectFile,
