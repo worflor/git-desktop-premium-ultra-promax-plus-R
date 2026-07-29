@@ -5,7 +5,7 @@
 name: git_desktop
 description: Your Personal Git Client
 publish_to: 'none'
-version: 0.1.6
+version: 0.2.0
 repository: https://github.com/worflor/git-desktop-premium-ultra-promax-plus-R
 
 environment:
