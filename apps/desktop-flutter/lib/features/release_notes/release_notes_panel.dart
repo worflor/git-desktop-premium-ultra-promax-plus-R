@@ -443,7 +443,7 @@ const _changelog = <_ReleaseNote>[
       '(the other big one) ai gets all the love these days. what about humans? if you\'ve worked at Google you know Critique, and sources say it\'s the thing people miss most after they leave. so Manifold has one now. threads pinned to lines, drafts nobody sees until you publish them, turns, verdicts, per-file reviewed bits. it lives in git itself and syncs over plain git, so no forge, no account, no server, and comments anchor to what a line IS instead of what number it sits on. move the line and the comment follows and says so. this is for the local repos that matter to more than one human.',
       'Whisper Protocol is where this goes next: p2p, end to end, n-party, my own encrypted transport with physics-based codecs under it. the slot is already cut, it\'s just not ready enough to promise a date. Manifold is a playground, so my protocols get to move in. they\'re better.',
       'offline PRs and issues are more consistent in wilder situations.',
-      'commits can keep their name across amends and rebases now. jj-style change ids, optional in settings.',
+      'commits can keep their name across amends, and across rebases done in Manifold. jj-style change ids, optional in settings. (a bare `git rebase` outside the app still drops them — git itself does that.)',
       'diff and git handling got tougher where it was quietly wrong. a few staging bugs that could drop or mangle lines are dead.',
       'Manifold has a real license now. GPL-3.0 under Woflo Labs, with a carve-out for the research bits. there\'s a little legal footer down here now. hi.',
       'the release notes are still in english though. baby steps.',

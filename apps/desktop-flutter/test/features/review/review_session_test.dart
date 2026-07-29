@@ -17,8 +17,12 @@
 //      state; dropping the posture takes the lens down with it. The
 //      posture is ONE sealed field, so "since last look AND compare
 //      R2..R4 at once" is not a state a caller can construct.
-//  S4  reloads serialize, so the last one to be asked for is the one
-//      whose snapshot survives.
+//  S4  concurrent reloads complete without error and release the gate.
+//      (The ORDERING claim — last-asked snapshot survives — has no
+//      witness here: three identical reloads cannot distinguish a
+//      serialized gate from a free-for-all. Pinning it needs a
+//      controller seam that can hold one traversal open while another
+//      finishes; until then this test claims only what it can falsify.)
 //  S5  a lens fetch reports itself busy while it is in flight — the
 //      signal the page draws a spinner from, and the one a refactor
 //      silently dropped by deriving it from the wrong flag.
@@ -30,6 +34,11 @@
 //  S8  and none of it crosses a BRANCH change, where an anchor names a
 //      line in a diff that is no longer on screen and a round pair
 //      names rounds the new branch may not have.
+//  S9  a lens dismissed while its fetch is in flight stays dismissed.
+//      The body re-reads the posture after its await and loops instead
+//      of installing; deleting that one line left every S-test green
+//      (the mutation audit's finding), so the race it guards had no
+//      witness until this one.
 //  S6  a lens result is DATA, never an effect. The session calls
 //      nothing back, so a fetch that lands after the page has dropped
 //      the session writes only where nothing reads. Desk ids are
@@ -146,6 +155,48 @@ void main() {
     expect(next.posture, isNull);
     expect(next.composeAt, isNull,
         reason: 'the anchor names a line in a diff that is gone');
+  });
+
+  test('S9: clearing the lens mid-fetch wins over the fetch', () async {
+    await seedThread();
+    await session.reload();
+
+    // A real compare needs two DISTINCT pins — compareSpec refuses a
+    // degenerate pair outright, which is exactly how the first cut of
+    // this test ended up vacuous: CompareRounds(1, 1) never fetches at
+    // all, so the race it staged had nothing to race.
+    await repo.writeFile('lib/a.dart', body(2));
+    await repo.commitAll('round two moves the branch');
+    expect((await session.controller.ensureRound()).ok, isTrue,
+        reason: 'a second round must pin the moved head');
+    expect((await session.reload()).isOk, isTrue);
+
+    // CONTROL: prove the spec actually produces a lens, or the race
+    // assertion below is vacuously satisfiable by a failing fetch.
+    session.posture = const CompareRounds(1, 2);
+    final control = await session.refreshLens();
+    expect(control.isOk, isTrue, reason: control.detail ?? '');
+    expect(session.lens, isNotNull,
+        reason: 'the control fetch must install a lens, else this test '
+            'cannot distinguish "dismissed" from "failed"');
+    session.clearLens();
+    expect(session.lens, isNull);
+
+    // The race: ask again, then dismiss while the git round-trip is in
+    // flight. The dismissal is the LAST decision, so it must be the one
+    // standing when the dust settles — without the post-await re-read,
+    // the fetched lens lands over a posture the viewer already threw
+    // away.
+    session.posture = const CompareRounds(1, 2);
+    final fetch = session.refreshLens();
+    session.clearLens();
+    final r = await fetch;
+
+    expect(r.isOk, isTrue);
+    expect(session.lens, isNull,
+        reason: 'the fetch resolved AFTER the viewer dismissed the lens; '
+            'installing it anyway shows content they explicitly closed');
+    expect(session.posture, isNull);
   });
 
   test('S1: one reload brings data and ticks together', () async {

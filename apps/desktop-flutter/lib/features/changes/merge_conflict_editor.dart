@@ -69,8 +69,11 @@ class ConflictBlock {
   /// mid-line grew a newline the moment a block at its end was resolved.
   /// Only patch_as_merge.dart's `_spliceConflictMarkers` can know better,
   /// because the marker document it builds is spliced into OURS and so
-  /// cannot speak for theirs; it records both sides explicitly on
-  /// whichever block ends up last.
+  /// cannot speak for theirs. It stamps both flags on whichever block
+  /// ends up last UNCONDITIONALLY, with values gated to be true only at
+  /// genuine end-of-file — when unchanged lines trail the block the
+  /// values are false AND [ConflictFile.buildResult] never reads them,
+  /// because the block does not end the file.
   bool? oursNoTrailingNewline;
 
   /// Same as [oursNoTrailingNewline] but for the `theirs` side. The two
@@ -85,9 +88,10 @@ class ConflictBlock {
     String? baseText,
     this.resolution = ConflictSide.unresolved,
     this.customText,
-  })  : oursLines = _linesOf(oursText),
-        theirsLines = _linesOf(theirsText),
-        baseLines = baseText == null ? null : _linesOf(baseText);
+  })  : oursLines = List.unmodifiable(_linesOf(oursText)),
+        theirsLines = List.unmodifiable(_linesOf(theirsText)),
+        baseLines =
+            baseText == null ? null : List.unmodifiable(_linesOf(baseText));
 
   /// The parser's constructor: it read the lines out of the marker
   /// document and must not round-trip them through a text that cannot
@@ -209,6 +213,9 @@ class ConflictFile {
     // The document was spliced into ours, so it can only ever speak for
     // ours; when theirs disagrees, that one bit is what
     // oursNoTrailingNewline / theirsNoTrailingNewline carry.
+    // Total over any hand-built ConflictFile: the parser always yields at
+    // least one segment, but nothing forces a caller to.
+    if (segmentLines.isEmpty) return out.join(String.fromCharCode(0x0A));
     final tail = segmentLines.last;
     final tailIsDocumentTerminator = tail.length == 1 && tail.single.isEmpty;
     final lastBlockEndsFile =
@@ -984,12 +991,18 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
     );
 
     for (var i = 0; i < _file.segmentLines.length; i++) {
-      // Context run. Read as lines: the file's own trailing newline
-      // arrives as a final empty element that is a terminator, not a
-      // line anyone should see a row for.
+      // Context run, read as lines. ONLY the document's final segment
+      // can end in a terminator artifact (the empty element a trailing
+      // newline produces); in every other segment a trailing '' is a
+      // REAL blank line — the marker on the next line consumed its
+      // terminator, not its existence. Trimming those (as this used to)
+      // ate genuine blank lines before conflicts and pushed every gutter
+      // number after them off by one, while a file ending `>>>>>>> x\n`
+      // (final segment of exactly ['']) drew a phantom blank row.
       final segLines = _file.segmentLines[i];
+      final isFinalSegment = i == _file.segmentLines.length - 1;
       if (segLines.isNotEmpty) {
-        final trimmed = segLines.last.isEmpty && segLines.length > 1
+        final trimmed = isFinalSegment && segLines.last.isEmpty
             ? segLines.sublist(0, segLines.length - 1)
             : segLines;
         for (final line in trimmed) {

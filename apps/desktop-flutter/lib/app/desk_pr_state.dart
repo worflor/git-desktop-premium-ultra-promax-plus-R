@@ -240,9 +240,12 @@ class DeskPrState extends ChangeNotifier {
   /// record that already exists and names its author, so refusing them
   /// would block a user from closing their own desk PR over a field
   /// they are not writing.
+  // Built FROM [kGitIdentityCommand] so the remedy really is spelled
+  // once — the audit caught this hardcoding its own second copy while
+  // git_identity.dart claimed singularity.
   static const String identityUnsetMessage =
       'Set your git identity before creating shared items — '
-      'git config --global user.name "Your Name" '
+      '$kGitIdentityCommand '
       'and user.email "you@example.com".';
 
   Future<void> refreshFor(String repoPath) async {

@@ -91,7 +91,12 @@ void main() {
         kReviewStateSchema, jsonEncode(b), jsonEncode(a));
     expect(ab, ba, reason: 'both peers must produce identical bytes');
 
+    // Idempotence is BYTE equality, not a count. The count-only version
+    // passed a merge that deduplicated threads while mangling any field
+    // inside them — the audit flagged M2 as a claim without a witness.
     final aa = _m(a, a);
+    expect(aa, _m(a, jsonDecode(aa) as Map<String, dynamic>),
+        reason: 'merge(a, a) must be a fixpoint byte-for-byte');
     final decodedAa = jsonDecode(aa) as Map<String, dynamic>;
     expect((decodedAa['threads'] as List).length, 2,
         reason: 'self-merge must not duplicate');
@@ -214,7 +219,7 @@ void main() {
     }
   });
 
-  test('M7: seeded fuzz upholds commutativity + absorption', () {
+  test('M7: seeded fuzz upholds commutativity + idempotence + absorption', () {
     final rng = Random(20260722);
     String iso(int m) =>
         DateTime.fromMillisecondsSinceEpoch(1700000000000 + m * 60000)
@@ -246,6 +251,11 @@ void main() {
       expect(ab, ba, reason: 'fuzz iteration $i not commutative');
       final absorbed = _m(jsonDecode(ab) as Map<String, dynamic>, a);
       expect(absorbed, ab, reason: 'fuzz iteration $i not absorbing');
+      // Idempotence, which this loop silently dropped while the header
+      // promised M1-M3: a self-merge is a byte-for-byte fixpoint.
+      final aa = _m(a, a);
+      expect(_m(jsonDecode(aa) as Map<String, dynamic>, a), aa,
+          reason: 'fuzz iteration $i not idempotent');
     }
   });
 

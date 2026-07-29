@@ -1288,7 +1288,7 @@ void main() {
     });
   });
 
-  // ─── 3b. Metadata remote resolution (non-'origin' forge remotes) ──────
+  // ─── 3d. Metadata remote resolution (non-'origin' forge remotes) ──────
   //
   // Regression coverage for the finding that DeskIssueStore/DeskPrStore's
   // _allocId() used to call ManifoldRefs.allocSequentialId with no remote

@@ -15,7 +15,9 @@
 // side of the line each verb sits on.
 //
 //  G1  the author-stamping writes refuse without an identity.
-//  G2  the writes that stamp no author are NOT gated.
+//  G2  the writes that stamp no author are NOT gated (setStateFor —
+//      closing your own PR must not hinge on user.name).
+//  G2b the refusal message names what it guards and carries its remedy.
 //  G3  a resolved identity lets the same writes through.
 
 import 'package:flutter_test/flutter_test.dart';
@@ -77,7 +79,35 @@ void main() {
     expect(reviewed, DeskPrState.identityUnsetMessage);
   });
 
-  test('G2: the message names what it guards, not the review flow',
+  test('G2: a write that stamps no author is not gated', () async {
+    // The gate exists for records whose author name is the merge key.
+    // Closing a desk PR touches no author field, so an unset identity
+    // must not block it — that would punish the user over a field the
+    // write does not carry. The PR itself is created signed (nothing
+    // can exist without that), and THEN the identity goes away.
+    state.debugSeedViewer(
+      const GitIdentity(display: 'mira', key: 'mira@example.com'),
+    );
+    expect(
+        await state.promote(
+          repoPath: repo.dir.path,
+          branch: 'feat',
+          title: 'a change',
+        ),
+        isNull);
+
+    state.debugSeedViewer(null);
+    final closed = await state.setStateFor(
+      repoPath: repo.dir.path,
+      branch: 'feat',
+      state: 'CLOSED',
+    );
+    expect(closed, isNull,
+        reason: 'no author is stamped, so no signature is demanded');
+    expect(state.prFor('feat')?.state, 'CLOSED');
+  });
+
+  test('G2b: the message names what it guards, not the review flow',
       () async {
     // promote is not a review. A refusal that says "before reviewing"
     // sends someone hunting for a review setting that does not exist.

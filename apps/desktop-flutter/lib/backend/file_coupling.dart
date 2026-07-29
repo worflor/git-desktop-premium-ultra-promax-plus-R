@@ -1234,13 +1234,21 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   // true Jaccard in that geometry, bounded by Cauchy-Schwarz with
   // nothing to clamp, and strictly local. It is also WORSE at the only
   // thing this score exists for. Held-out co-change AUC
-  // (test/perf/coupling_holdout_jury_test.dart, holdout 120):
+  // (test/perf/coupling_holdout_jury_test.dart, holdout 120; measured at
+  // HEAD 604c733-era history with the PRE-fix lag numerator — the audit
+  // caught the first draft of this table labeling that row "this code".
+  // Single-window AUC carries a ±0.03 interval on ~235 judged pairs, so
+  // read the ORDERING, which is paired and monotone, not the digits):
   //
   //     normalization                     MANIFOLD   worflor.github.io
-  //     raw mass (this code)               0.8545         0.8829
-  //     cosine  co/sqrt(Sa·Sb)             0.8408           —
-  //     K-norm Jaccard (full)              0.8291         0.8729
-  //     K-norm Jaccard, old numerator      0.8189           —
+  //     raw mass (pre-fix numerator)       0.85           0.88
+  //     cosine  co/sqrt(Sa·Sb)             0.84            —
+  //     K-norm Jaccard (full)              0.83           0.87
+  //     K-norm Jaccard, old numerator      0.82            —
+  //
+  // The shipped numerator repair moved raw mass by less than the
+  // interval (0.8531/0.8865 at that HEAD), which is what a convention
+  // repair should do.
   //
   // Monotone in how much of a file's OWN activity gets divided out, and
   // pointing the wrong way. The reason is that the target is future

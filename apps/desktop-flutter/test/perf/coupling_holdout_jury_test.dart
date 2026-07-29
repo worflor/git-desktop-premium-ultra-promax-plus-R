@@ -7,30 +7,45 @@
 //
 // docs/architecture/coupling-axis-audit.md judges a coupling signal on one
 // question: trained on the past, does it rank pairs that ACTUALLY co-change
-// next above random pairs? Every signal in that dossier faced this. The
-// jaccard(+lag) history baseline scored 0.672 on MANIFOLD.
+// next above random pairs? This runs that trial against
+// `computeFileCoupling` so a change to the score's ALGEBRA can be measured
+// rather than argued. Train on a clone whose tip precedes the held-out
+// window; test on pairs co-occurring in >= 2 commits of that window; report
+// AUC with ties at half — which is what stops "score everything 0" from
+// looking like a win (an all-zero scorer lands at exactly 0.500).
 //
-// This runs the same trial against `computeFileCoupling` so a change to the
-// score's ALGEBRA can be measured rather than argued. Train on a clone reset
-// to HEAD~holdout, so the engine sees only history preceding the window it is
-// judged on; test on pairs co-occurring in >= 2 commits of that window;
-// report AUC with ties at half — which is what stops "score everything 0"
-// from looking like a win.
+// WHAT THE NUMBER MEANS, exactly: P(a pair that co-changes >=2 times in the
+// window outranks a random never-co-changed pair). It is NOT general
+// ranking quality — with hard negatives (pairs that co-changed exactly
+// once) the same matrix scores ~0.68 where this reads ~0.87 — and it says
+// nothing about files born inside the window (those positives are dropped
+// for lacking a training-side endpoint; roughly half of them at holdout
+// 120 on this repo).
 //
-// FINDINGS (grids of holdout 60/90/120/150/180 x both local repos, paired
-// per window; seed noise is ±0.002 while WINDOW choice swings ±0.03, so a
-// single-window comparison of this axis is meaningless — always run the
-// grid, always paired, never across different HEADs):
-//   lag window     8/10 windows positive, losses ≤0.002, wins to +0.035.
-//                  The one component that robustly earns its place.
-//   recency decay  7/10 positive; costs at short holdouts, pays at long
+// UNCERTAINTY, measured not assumed: the binding sample is `judged`
+// (distinct positive pairs), not `comparisons` (resamples of them). At
+// ~235 judged pairs the Hanley-McNeil 95% interval is about ±0.03; the
+// oft-quoted seed-to-seed ±0.002 is Monte Carlo error on a FIXED positive
+// set and must never be read as the uncertainty of a window's AUC. Windows
+// are NESTED (a >=2-co-change pair at holdout 60 is one at 180 too), so a
+// 5-window grid on one repo is one dataset resampled at five depths — the
+// independent replicates are the REPOS. Quote deltas only when paired per
+// window at one HEAD, and treat |delta| < 0.02 as unresolved.
+//
+// FINDINGS (grids of holdout 90/120/150/180 x both local repos, paired per
+// window — holdout 60 is excluded: ~15 judged pairs on this repo, SE ±0.1):
+//   lag window     positive in most windows, wins to +0.035 against losses
+//                  at the seed-noise floor. Suggestive on 2 repos; the
+//                  5-repo jury would settle it.
+//   recency decay  leans positive; costs at short holdouts, pays at long
 //                  ones, both repos. Modest.
-//   meaningfulness 6/10, tiny deltas, one outlier — indistinguishable
-//                  from noise. An earlier single-window read that it
-//                  "hurts on both repos" was window luck; withdrawn.
-//   softKnee(60)   no measurable effect either way.
-//   K-norm denom   loses by 0.02-0.04, LARGER than window noise, both
-//                  repos: that rejection stands.
+//   meaningfulness indistinguishable from noise. An earlier single-window
+//                  read that it "hurts on both repos" was window luck;
+//                  withdrawn.
+//   softKnee(60)   |effect| below this instrument's ~0.02 resolution.
+//   K-norm denom   loses by 0.02-0.04 on BOTH repos, paired — the one
+//                  component verdict sized above every noise source here.
+//                  That rejection stands.
 //
 // Manual: it clones the repo and reads real history.
 //   flutter test --run-skipped -t manual test/perf/coupling_holdout_jury_test.dart
@@ -47,24 +62,29 @@ const _sep = '\u0001';
 
 String _key(String a, String b) => a.compareTo(b) < 0 ? '$a $b' : '$b $a';
 
-List<List<String>> _holdoutCommits(String repo, int holdout) {
+/// The held-out window: newest [holdout] non-merge commits, each as
+/// (sha, files).
+List<({String sha, List<String> files})> _holdoutCommits(
+    String repo, int holdout) {
   final r = Process.runSync('git', [
     '-C', repo,
     'log', '-n', '$holdout', '--no-merges', '--name-only',
-    '--pretty=format:%x01',
+    '--pretty=format:$_sep%H',
   ]);
   if (r.exitCode != 0) throw StateError('git log failed: ${r.stderr}');
-  final out = <List<String>>[];
+  final out = <({String sha, List<String> files})>[];
+  String? sha;
   var current = <String>[];
   for (final line in (r.stdout as String).split(RegExp(r'\r?\n'))) {
     if (line.startsWith(_sep)) {
-      if (current.isNotEmpty) out.add(current);
+      if (sha != null) out.add((sha: sha, files: current));
+      sha = line.substring(1).trim();
       current = <String>[];
     } else if (line.trim().isNotEmpty) {
       current.add(line.trim());
     }
   }
-  if (current.isNotEmpty) out.add(current);
+  if (sha != null) out.add((sha: sha, files: current));
   return out;
 }
 
@@ -77,9 +97,13 @@ void main() {
     final samples =
         int.tryParse(Platform.environment['JURY_SAMPLES'] ?? '') ?? 60000;
 
-    final future = _holdoutCommits(repo, holdout);
+    final window = _holdoutCommits(repo, holdout);
+    expect(window.length, holdout,
+        reason: 'need at least $holdout non-merge commits');
+
     final coCount = <String, int>{};
-    for (final files in future) {
+    for (final commit in window) {
+      final files = commit.files;
       // A sweeping commit says little about any particular pair.
       if (files.length < 2 || files.length > 40) continue;
       for (var i = 0; i < files.length; i++) {
@@ -92,18 +116,69 @@ void main() {
     final positives =
         coCount.entries.where((e) => e.value >= 2).map((e) => e.key).toList();
 
-    final base =
-        Process.runSync('git', ['-C', repo, 'rev-parse', 'HEAD~$holdout']);
-    expect(base.exitCode, 0, reason: 'need at least $holdout commits');
+    // The training base is the PARENT OF THE OLDEST HELD-OUT COMMIT, not
+    // HEAD~holdout. The window is "newest N non-merge commits" while ~N
+    // walks first-parent ancestry INCLUDING merges — two different
+    // countings that agree only on merge-light history. Deriving the base
+    // from the window itself makes disagreement unrepresentable; the
+    // containment assert below is the belt to this suspenders.
+    final base = Process.runSync(
+        'git', ['-C', repo, 'rev-parse', '${window.last.sha}^']);
+    expect(base.exitCode, 0,
+        reason: 'oldest held-out commit has no parent — window spans the '
+            'whole history');
     final baseSha = (base.stdout as String).trim();
+    final tip = (Process.runSync('git', ['-C', repo, 'rev-parse', 'HEAD'])
+            .stdout as String)
+        .trim();
 
-    final tmp = Directory.systemTemp.createTempSync('coupling_jury_');
-    final clone = '${tmp.path}${Platform.pathSeparator}train';
+    final tmp = Directory.systemTemp.createTempSync('cj_');
+    final clone = '${tmp.path}${Platform.pathSeparator}t';
     final c = Process.runSync(
         'git', ['clone', '--quiet', '--no-checkout', '--local', repo, clone]);
     expect(c.exitCode, 0, reason: 'clone failed: ${c.stderr}');
-    Process.runSync(
+
+    // FAIL CLOSED. A failed reset leaves the clone at the FULL history —
+    // the engine then trains on every commit it is about to be judged on
+    // and the run prints a healthy-looking number. This exact failure was
+    // reproduced on this machine (Windows MAX_PATH on the deep
+    // Runner.xcodeproj paths, dependent on TMPDIR length), which is also
+    // why the temp names above are short.
+    final reset = Process.runSync(
         'git', ['-C', clone, 'reset', '--hard', '--quiet', baseSha]);
+    expect(reset.exitCode, 0,
+        reason: 'reset to $baseSha failed — a clone left at full history '
+            'trains on the held-out window: ${reset.stderr}');
+
+    // Strip every ref except the training branch so the future is not
+    // merely un-walked but GONE from the ref space: today
+    // computeFileCoupling reads a single plain `git log` from HEAD, and
+    // this keeps a future `--all`, `--tags`, or a stray `log.all=true`
+    // from silently training on the answer key. Old release tags sit on
+    // side lineages, which is why the leak test below intersects with
+    // the WINDOW rather than demanding base-ancestry of everything.
+    Process.runSync('git', ['-C', clone, 'remote', 'remove', 'origin']);
+    final tags = (Process.runSync('git', ['-C', clone, 'tag', '-l']).stdout
+            as String)
+        .split(RegExp('[\r\n]+'))
+        .where((t) => t.trim().isNotEmpty);
+    for (final t in tags) {
+      Process.runSync('git', ['-C', clone, 'tag', '-d', t.trim()]);
+    }
+
+    // THE leakage invariant: no ref in the training clone reaches any
+    // held-out commit. Checked as a set intersection so a future ref
+    // source cannot dodge it the way tags dodged a base-ancestry check.
+    final reachable = (Process.runSync(
+            'git', ['-C', clone, 'rev-list', '--all']).stdout as String)
+        .split(RegExp('[\r\n]+'))
+        .map((l) => l.trim())
+        .toSet();
+    final leaked =
+        window.where((c) => reachable.contains(c.sha)).length;
+    expect(leaked, 0,
+        reason: '$leaked held-out commits are reachable from the training '
+            'clone — the AUC would be measured on its own training data');
 
     // Knobs, so the jury can score the COMPONENTS of the axis and not
     // just the axis. Each of these multiplies every term in the score
@@ -158,16 +233,25 @@ void main() {
     }
 
     final auc = n == 0 ? double.nan : wins / n;
+    // Tip and base printed so a recorded number can be reproduced — or
+    // falsified — after the fact. A result without its HEAD is the exact
+    // cross-HEAD comparison the methodology note forbids.
     // ignore: avoid_print
-    print('JURY repo=$repo holdout=$holdout positives=${positives.length} '
-        'judged=${judged.length} comparisons=$n '
-        'AUC=${auc.toStringAsFixed(4)}');
+    print('JURY repo=$repo tip=${tip.substring(0, 12)} '
+        'base=${baseSha.substring(0, 12)} holdout=$holdout '
+        'positives=${positives.length} judged=${judged.length} '
+        'comparisons=$n AUC=${auc.toStringAsFixed(4)}');
 
     try {
       tmp.deleteSync(recursive: true);
     } catch (_) {}
 
-    expect(n, greaterThan(1000), reason: 'the trial needs comparisons to mean '
-        'anything');
+    // The evidence floor is DISTINCT POSITIVE PAIRS. The old guard
+    // (`comparisons > 1000`) counted resamples and could not fail for
+    // lack of data — holdout 60 sailed through it on 15 pairs.
+    expect(judged.length, greaterThanOrEqualTo(100),
+        reason: 'only ${judged.length} judged pairs — the Hanley-McNeil '
+            'interval is wider than the effects being measured; use a '
+            'longer holdout');
   }, timeout: const Timeout(Duration(minutes: 15)));
 }

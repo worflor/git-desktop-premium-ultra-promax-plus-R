@@ -2926,16 +2926,23 @@ class _BranchesPageState extends State<BranchesPage> {
     if (load == null) return;
     try {
       var session = _reviewSessions[id];
-      // The controller bakes in the identity a comment will be authored
-      // under and the branch its rounds are cut from — a rename of
-      // either (settings, branch rename) has to mint a fresh one, or the
-      // pane would keep writing under a name the user no longer uses.
+      // The controller bakes in everything a write is signed with and
+      // everything the rounds are cut from — a change to ANY of it has
+      // to mint a fresh one, or the pane keeps writing under facts that
+      // are no longer true. Comparing only the viewer's DISPLAY was a
+      // hole: `user.email` alone changing kept the pane stamping records
+      // with the stale identity key, and a desk retargeted to a new base
+      // or a PR whose author changed kept a controller pinned to the old
+      // ones indefinitely.
       final retired = session;
       final ctrl0 = session?.controller;
+      final viewerNow = context.read<DeskPrState>().viewerReviewIdentity;
       if (ctrl0 != null &&
           (ctrl0.headBranch != dp.headRef ||
-              ctrl0.viewerDisplay !=
-                  context.read<DeskPrState>().viewerDisplay)) {
+              ctrl0.baseRef != dp.baseRef ||
+              ctrl0.authorDisplay != dp.authorIdentity ||
+              ctrl0.viewer.display != (viewerNow?.display ?? '') ||
+              ctrl0.viewer.key != viewerNow?.key)) {
         session = null;
         // Evict as well as invalidate. Leaving the retired session in
         // the map meant that when no replacement could be built (git
@@ -3169,8 +3176,9 @@ class _BranchesPageState extends State<BranchesPage> {
   ) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final r = await ctrl.setFileReviewed(path, reviewed: reviewed);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (r.unreadable) {
       // Not a failure of the write — the write was correctly refused,
       // because a tick is a claim about bytes we could not read. Saying
@@ -3186,8 +3194,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _handReviewTo(int deskId, String display) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.handTo(display);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3197,8 +3206,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _stepOutOfReviewAttention(int deskId) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.stepOutOfAttention();
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3208,8 +3218,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _reopenReviewThread(int deskId, String threadId) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.reopen(threadId);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3224,9 +3235,10 @@ class _BranchesPageState extends State<BranchesPage> {
   ) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err =
         await ctrl.discardOneDraft(threadId: threadId, body: body, at: at);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3236,8 +3248,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _publishReview(int deskId, String? verdict) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.publish(verdict: verdict);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3247,8 +3260,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _discardReviewDrafts(int deskId) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.discardDrafts();
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3320,8 +3334,9 @@ class _BranchesPageState extends State<BranchesPage> {
   Future<void> _markReviewCaughtUp(int deskId) async {
     final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.markCaughtUp();
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }

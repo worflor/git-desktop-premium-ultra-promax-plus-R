@@ -1753,6 +1753,7 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
   Map<String, String> environment = const {},
   Duration? stallTimeout,
   void Function(ProviderGaveUp reason)? onGiveUp,
+  bool Function(String stdoutSoFar)? isBusy,
 }) async {
   final r = await _runObservedProcess(
     commandLabel: 'test.$command',
@@ -1762,6 +1763,7 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
     timeout: timeout,
     stallTimeout: stallTimeout,
     onGiveUp: onGiveUp,
+    isBusy: isBusy,
     stdinPayload: stdinPayload,
     environment: environment,
   );
@@ -10487,6 +10489,15 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       environment: _providerEnvironment(provider.kind),
       stallTimeout: _stallFor(attemptTimeout),
       onGiveUp: (gave) => gaveUp = gave,
+      // Busy detection exists only where the event schema is VERIFIED:
+      // codex's JSONL. The audit mapped the rest of the fleet — opencode
+      // and copilot also stream events mid-run (so a long announced step
+      // can still read as a stall for them), while claude and cursor
+      // emit one terminal object and are covered by the first-byte grace
+      // instead. Extending this to another CLI means verifying its event
+      // schema against the real binary first, not guessing at one — and
+      // codex's own plainText fallback shape stays null here because
+      // without --json there are no events to read.
       isBusy: attempt.outputMode == _ProviderOutputMode.codexJsonl
           ? agentAwaitingCommand
           : null,
@@ -12629,10 +12640,17 @@ String _humanDuration(Duration d) {
 /// long-running default, means every provider gets a stall signal that
 /// can actually trip while still leaving room for a legitimately quiet
 /// stretch of thinking.
-Duration _stallFor(Duration total) {
+// @visibleForTesting under a public name: the derivation itself needs a
+// witness. W5 drives the runner with an EXPLICIT stallTimeout, so a
+// regression here (a flat budget again, unreachable for the 3-minute
+// providers) would ship with W5 green — the mutation audit proved it.
+@visibleForTesting
+Duration stallBudgetFor(Duration total) {
   final half = Duration(microseconds: total.inMicroseconds ~/ 2);
   return half < _kProviderStall ? half : _kProviderStall;
 }
+
+Duration _stallFor(Duration total) => stallBudgetFor(total);
 
 /// How long a provider may say NOTHING before we call it dead.
 ///
@@ -12831,8 +12849,15 @@ Future<_CommandResult?> _runObservedProcess({
     // Arrival time belongs here too — it is when the child spoke, not
     // when a decoder got round to it.
     Stream<List<int>> heard(Stream<List<int>> raw) => raw.map((bytes) {
-          lastActivity = DateTime.now();
-          bytesHeard += bytes.length;
+          // An empty chunk is not speech. Letting it arm the clock would
+          // make `stalled` reachable with zero bytes heard — a state the
+          // give-up message renders as a contradiction ("it was stuck (it
+          // never sent anything at all)") and one the first-byte grace in
+          // _awaitExit exists to rule out.
+          if (bytes.isNotEmpty) {
+            lastActivity = DateTime.now();
+            bytesHeard += bytes.length;
+          }
           return bytes;
         });
 

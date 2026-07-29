@@ -85,6 +85,16 @@
 //      `flutter test test/backend/provider_stall_test.dart` — this very
 //      file, whose job is to wait out timeouts — and was killed four
 //      minutes in with the command still running.
+// W16  a provider that ANNOUNCED a command may be silent for as long as
+//      the command runs — the busy predicate restarts the silence
+//      budget. This is the end-to-end witness for the restart path in
+//      _awaitExit, which W15 (the pure parser) cannot see: the mutation
+//      audit found runObservedProcessForTesting did not even expose the
+//      predicate, so the wiring had no test at all.
+// W17  the derivation of the silence budget from the total cap has its
+//      own witness. W5 drives the runner with an explicit stallTimeout,
+//      so a flat-budget regression in stallBudgetFor shipped with W5
+//      green — proven by mutation.
 //  W5  the budget is reachable for a SHORT total cap. antigravity and
 //      copilot are capped at 3 minutes total exactly because their
 //      headless paths hang; a flat 4-minute stall budget could never
@@ -476,6 +486,62 @@ Future<void> main() async {
     test('empty output claims nothing', () {
       expect(agentAwaitingCommand(''), isFalse);
     });
+  });
+
+  test('W16: an announced command excuses the silence it causes',
+      () async {
+    // Speaks once — a codex-style item.started for a command — then goes
+    // silent well past the stall budget, then completes the command and
+    // exits. With the busy predicate wired the runner must wait; the
+    // same child WITHOUT the predicate is killed as a wedge, which is
+    // the pair of outcomes that proves the restart path is live.
+    final script = File('${tmp.path}${Platform.pathSeparator}announce.dart');
+    await script.writeAsString('''
+import 'dart:io';
+Future<void> main() async {
+  stdout.writeln('{"type":"item.started","item":{"id":"item_1",'
+      '"type":"command_execution","command":"flutter test"}}');
+  await stdout.flush();
+  await Future<void>.delayed(const Duration(seconds: 25));
+  stdout.writeln('{"type":"item.completed","item":{"id":"item_1",'
+      '"type":"command_execution","exit_code":0}}');
+}
+''');
+    final busy = await runObservedProcessForTesting(
+      dart,
+      ['run', script.path],
+      timeout: const Duration(seconds: 90),
+      stallTimeout: const Duration(seconds: 10),
+      isBusy: agentAwaitingCommand,
+    );
+    expect(busy, isNotNull,
+        reason: 'the child told us exactly what it was waiting on — '
+            'killing it is the codex-review misdiagnosis replayed');
+    expect(busy!.stdout, contains('item.completed'));
+
+    final unaware = await runObservedProcessForTesting(
+      dart,
+      ['run', script.path],
+      timeout: const Duration(seconds: 90),
+      stallTimeout: const Duration(seconds: 10),
+    );
+    expect(unaware, isNull,
+        reason: 'without the predicate the same silence is a stall — '
+            'if this survives, the stall budget itself has stopped '
+            'working and W16 is passing vacuously');
+  });
+
+  test('W17: the silence budget derives from the total cap', () {
+    expect(stallBudgetFor(const Duration(minutes: 3)),
+        const Duration(seconds: 90),
+        reason: 'the 3-minute-capped providers exist BECAUSE their '
+            'headless paths hang; a budget they cannot reach is no '
+            'budget');
+    expect(stallBudgetFor(const Duration(minutes: 20)),
+        const Duration(minutes: 4),
+        reason: 'long caps saturate at the flat ceiling');
+    expect(stallBudgetFor(const Duration(seconds: 30)),
+        const Duration(seconds: 15));
   });
 
   test('W1: a process that keeps talking is left alone', () async {

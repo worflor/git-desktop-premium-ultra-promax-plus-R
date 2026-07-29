@@ -252,7 +252,7 @@ void main() {
     // where a side's text ending in a newline was read as "already
     // terminated" — true for a side whose last line is simply blank, so
     // those files rebuilt a byte short. The line-shaped model cannot
-    // express the confusion, and these are the four shapes that proved it.
+    // express the confusion, and these are the shapes that proved it.
 
     test('a block whose last line is blank keeps its terminator', () {
       final cf = parseConflictFile(

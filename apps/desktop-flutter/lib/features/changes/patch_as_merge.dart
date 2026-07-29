@@ -75,8 +75,9 @@ List<ConflictFile>? reviewMergeFromPatch(
 /// independently — either can lack a trailing newline while the other has
 /// one) has no trailing newline. Both flags are only ever meaningful when
 /// the differing region reaches the file's true end-of-content (no
-/// unchanged tail lines follow it) — see [_spliceConflictMarkers]'s
-/// `idx >= ours.length` check.
+/// unchanged tail lines follow it) — the `hasTrailingTail` computation in
+/// [_spliceConflictMarkers], which measures against `effectiveOursLength`
+/// so the split-artifact terminator element is not mistaken for content.
 typedef _SplicedConflict = ({
   String text,
   bool oursNoTrailingNewline,
@@ -98,9 +99,11 @@ _SplicedConflict? _spliceConflictMarkers(
   var idx = 0; // next unread line in `ours`
   final oursRun = <String>[];
   final theirsRun = <String>[];
-  // Tracks noNewlineAtEof from the most recently seen line touching each
-  // side. Only the LAST update of each survives to the end of the loop —
-  // exactly the line git considers that side's true final line, if any.
+  // Tracks noNewlineAtEof from the most recently seen line touching the
+  // THEIRS side; only the last update survives the loop — exactly the
+  // line git considers that side's true final line. Ours needs no such
+  // tracking: the full original `oursText` is in hand, so its trailing
+  // newline is read off the string directly at the end.
   var theirsNoNewlineAtEof = false;
 
   void flush() {

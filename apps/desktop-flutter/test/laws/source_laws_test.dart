@@ -425,12 +425,18 @@ void main() {
     // failing when the mechanism is refactored away, which is exactly
     // when it should speak up.
     //
-    // Scope note, so nobody over-trusts it: it flags INSTALLS (an
-    // assignment landing data) that sit textually after the method's
-    // first `await`, including one made through a local read out of the
-    // cache. Clears and removes are excluded — dropping data from a
-    // cache the wrong repo already emptied is harmless — and a write
-    // hidden behind a helper call is still invisible to it.
+    // Scope note, so nobody over-trusts it. It flags INSTALLS — an
+    // assignment, cascade section, or putIfAbsent/update/addAll/
+    // addEntries landing data — that sit textually after the method's
+    // first `await`, including through a local aliased from the cache
+    // by initializer or by assignment. Still CONCEDED, by choice: a
+    // write hidden behind a helper call or reached through a parameter,
+    // an install inside a callback declared before the await it runs
+    // after, an expression-bodied async method, an extension on the
+    // state class, and a second await after a correct guard. This is a
+    // tripwire on the shapes this file actually uses, not an escape
+    // analysis; clears and removes stay excluded because dropping data
+    // from a cache the wrong repo already emptied is harmless.
     const caches = {
       '_reviewSessions',
       '_reviewRowSummaries',
@@ -614,14 +620,14 @@ void main() {
     );
   });
 
-  test('L12 (ratchet): whole-content file reads only shrink', () {
+  test('L17 (ratchet): whole-content file reads only shrink', () {
     // The unbudgeted-ingestion surface (the marble repo-switch system OOM):
     // every readAsString/readAsBytes over repo content is a site that can be
     // handed a multi-hundred-MB working-tree file. Each existing site either
     // carries a bound, runs inside a worker isolate, or routes through
     // AnalysisAdmission — a NEW site must too, and this ratchet is what asks.
     _expectRatchet(
-      law: 'L12 content-read',
+      law: 'L17 content-read',
       constName: '_contentReadBaseline',
       baseline: _contentReadBaseline,
       actual: {
@@ -638,15 +644,15 @@ void main() {
     );
   });
 
-  test('L13 (ratchet): unbounded git-stdout reads only shrink', () {
-    // The ingestion vector L12 cannot see: no file is read, yet
+  test('L18 (ratchet): unbounded git-stdout reads only shrink', () {
+    // The ingestion vector L17 cannot see: no file is read, yet
     // `runGit(repo, ['diff', ...])` returns a whole working tree's patch as
     // a String. Hand-gating call sites is what let this class survive — the
     // commit-composer dream was gated while its unscoped twin in the branch
     // composer was not, and stayed a live OOM path. New sites belong behind
     // `admitGitDiffText` (backend/admitted_git.dart) or a spool transport.
     _expectRatchet(
-      law: 'L13 unbounded-git',
+      law: 'L18 unbounded-git',
       constName: '_unboundedGitBaseline',
       baseline: _unboundedGitBaseline,
       actual: {
@@ -839,13 +845,52 @@ class _CacheInstalls extends RecursiveAstVisitor<void> {
     super.visitVariableDeclaration(node);
   }
 
+  bool _tracked(String? root) =>
+      root != null && (names.contains(root) || _aliases.contains(root));
+
   @override
   void visitAssignmentExpression(AssignmentExpression node) {
-    final target = _rootCacheName(node.leftHandSide);
-    if (target != null && (names.contains(target) || _aliases.contains(target))) {
+    if (_tracked(_rootCacheName(node.leftHandSide))) {
       offsets.add(node.offset);
     }
+    // An alias born from an assignment rather than an initializer:
+    // `s = _reviewSessions[id];` in a second statement used to escape
+    // the initializer-only tracking below.
+    final lhs = node.leftHandSide;
+    if (lhs is SimpleIdentifier &&
+        _tracked(_rootCacheName(node.rightHandSide))) {
+      _aliases.add(lhs.name);
+    }
     super.visitAssignmentExpression(node);
+  }
+
+  @override
+  void visitCascadeExpression(CascadeExpression node) {
+    // `_reviewSessions[id]?..composeAt = x..posture = y` — cascade
+    // sections have a null target in the AST, so the root walk from a
+    // section sees nothing. Root the whole cascade instead and count
+    // each assigning section at its own offset.
+    if (_tracked(_rootCacheName(node.target))) {
+      for (final section in node.cascadeSections) {
+        if (section is AssignmentExpression) offsets.add(section.offset);
+      }
+    }
+    super.visitCascadeExpression(node);
+  }
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    // Installs that are calls, not assignments: putIfAbsent / update /
+    // addAll / addEntries land data exactly like `m[k] = v` and were
+    // invisible to an assignment-only visitor.
+    const installing = {'putIfAbsent', 'update', 'addAll', 'addEntries'};
+    final target = node.target;
+    if (installing.contains(node.methodName.name) &&
+        target != null &&
+        _tracked(_rootCacheName(target))) {
+      offsets.add(node.offset);
+    }
+    super.visitMethodInvocation(node);
   }
 
   /// The cache a write ultimately lands in, however deep the access.
