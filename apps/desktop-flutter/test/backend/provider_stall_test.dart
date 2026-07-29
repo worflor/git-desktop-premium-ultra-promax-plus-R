@@ -66,6 +66,25 @@
 //      killed mid-prefill — the expensive runs, the ones a user most
 //      wants to finish. Silence only means something once the child has
 //      shown it can speak; before that the total ceiling governs.
+// W12  the give-up message counts BYTES. It counted decoded chunk
+//      length, which is UTF-16 code units, and called them bytes — a
+//      number that silently lies the moment a provider says anything
+//      non-ASCII, which is most of them.
+// W13  a child that never speaks says so. The evidence clause hung off
+//      the stall branch, and a stall can only fire after the child has
+//      spoken, so the one case the clause was written for — "it never
+//      sent anything at all" — could not be reached.
+// W14  a provider still streaming when its TOTAL budget expires is not
+//      described as having gone quiet. The evidence clause was worded
+//      for the stall case and then reused on both ceilings, which
+//      invented a symptom: a run that was merely long read as a wedge.
+// W15  a provider waiting on a command it ANNOUNCED is not a wedge.
+//      codex exec reports each command as item.started/item.completed
+//      and says nothing while one runs, so a slow command outlasts the
+//      silence budget. Traced from a real run: a review ran
+//      `flutter test test/backend/provider_stall_test.dart` — this very
+//      file, whose job is to wait out timeouts — and was killed four
+//      minutes in with the command still running.
 //  W5  the budget is reachable for a SHORT total cap. antigravity and
 //      copilot are capped at 3 minutes total exactly because their
 //      headless paths hang; a flat 4-minute stall budget could never
@@ -78,6 +97,7 @@
 @Timeout(Duration(minutes: 10))
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -304,6 +324,158 @@ Future<void> main() async {
         reason: 'a long prefill is not a wedge — killing it here is how '
             'a cold-cache review died at four minutes');
     expect(r!.stdout, contains('first token at last'));
+  });
+
+  test('W12: the byte count is bytes, not code units', () async {
+    // Two lines of decidedly non-ASCII, then silence. Every character
+    // here costs more UTF-8 bytes than UTF-16 code units, so the two
+    // readings cannot be confused for each other.
+    const line = 'héllo → 世界';
+    final script = File('${tmp.path}${Platform.pathSeparator}utf8.dart');
+    await script.writeAsString('''
+import 'dart:io';
+Future<void> main() async {
+  stdout.writeln('$line');
+  await stdout.flush();
+  await Future<void>.delayed(const Duration(seconds: 120));
+}
+''');
+    String? reason;
+    final r = await runObservedProcessForTesting(
+      dart,
+      ['run', script.path],
+      timeout: const Duration(seconds: 150),
+      stallTimeout: const Duration(seconds: 20),
+      onGiveUp: (gave) => reason = gave.message,
+    );
+    expect(r, isNull);
+    final wrote = utf8.encode('$line\n').length;
+    const codeUnits = '$line\n'.length;
+    expect(wrote, greaterThan(codeUnits), reason: 'the fixture must be able '
+        'to tell the two readings apart');
+    expect(reason, contains('$wrote bytes'),
+        reason: 'the number has to mean what the sentence says it means');
+    expect(reason, isNot(contains('$codeUnits bytes')));
+  });
+
+  test('W13: a child that never speaks says exactly that', () async {
+    // Silent from birth, so the STALL can never fire — only the total
+    // ceiling can. That branch has to carry the evidence too, or the
+    // one case worth distinguishing is the one nobody is told about.
+    final script = File('${tmp.path}${Platform.pathSeparator}mute.dart');
+    await script.writeAsString('''
+import 'dart:io';
+Future<void> main() async {
+  await Future<void>.delayed(const Duration(seconds: 120));
+}
+''');
+    String? reason;
+    final r = await runObservedProcessForTesting(
+      dart,
+      ['run', script.path],
+      timeout: const Duration(seconds: 25),
+      stallTimeout: const Duration(seconds: 10),
+      onGiveUp: (gave) => reason = gave.message,
+    );
+    expect(r, isNull);
+    expect(reason, contains('never sent anything at all'));
+    expect(reason, contains('budget'),
+        reason: 'the total ceiling is what tripped, and it must say so');
+    expect(reason, isNot(contains('no output for')),
+        reason: 'silence from a child that never started talking is not a '
+            'stall — it is simply a child that never answered');
+  });
+
+  test('W14: a talker that outlives its total budget did not go quiet',
+      () async {
+    // Talks every second and never stops, so the STALL can never fire
+    // and the total ceiling is what ends it. It was streaming at the
+    // moment we gave up, and the message must not say otherwise.
+    final script = await chatterScript(tmp, 60, 0);
+    String? reason;
+    final r = await runObservedProcessForTesting(
+      dart,
+      ['run', script.path],
+      timeout: const Duration(seconds: 25),
+      stallTimeout: const Duration(seconds: 20),
+      onGiveUp: (gave) => reason = gave.message,
+    );
+    expect(r, isNull);
+    expect(reason, contains('budget'),
+        reason: 'the total ceiling is what tripped');
+    expect(reason, contains('bytes by then'),
+        reason: 'it had plenty to say, right up to the end');
+    expect(reason, isNot(contains('going quiet')),
+        reason: 'inventing a symptom sends the reader hunting a wedge '
+            'that never happened');
+    expect(reason, isNot(contains('no output for')));
+  });
+
+  group('W15: an announced command is work, not silence', () {
+    String started(String id) =>
+        '{"type":"item.started","item":{"id":"$id",'
+        '"type":"command_execution","command":"flutter test"}}';
+    String completed(String id) =>
+        '{"type":"item.completed","item":{"id":"$id",'
+        '"type":"command_execution","exit_code":0}}';
+
+    test('an unmatched start means a command is still running', () {
+      expect(agentAwaitingCommand(started('item_7')), isTrue);
+    });
+
+    test('a matched pair means it finished', () {
+      expect(
+          agentAwaitingCommand(
+              '${started('item_7')}\n${completed('item_7')}'),
+          isFalse);
+    });
+
+    test('the LAST command is the one that counts', () {
+      final stream = [
+        started('item_1'),
+        completed('item_1'),
+        started('item_2'),
+      ].join('\n');
+      expect(agentAwaitingCommand(stream), isTrue,
+          reason: 'an earlier command finishing says nothing about the one '
+              'running now');
+    });
+
+    test('an overlapping command is still tracked', () {
+      // A starts, B starts, B finishes. A is still running, and only a
+      // set can say so — tracking the newest id alone reported idle and
+      // got the provider killed mid-command.
+      final stream = [
+        started('item_1'),
+        started('item_2'),
+        completed('item_2'),
+      ].join('\n');
+      expect(agentAwaitingCommand(stream), isTrue);
+
+      final both = '$stream\n${completed('item_1')}';
+      expect(agentAwaitingCommand(both), isFalse,
+          reason: 'and idle once every announced command has reported');
+    });
+
+    test('a torn tail is not mistaken for a running command', () {
+      final stream =
+          '${started('item_1')}\n${completed('item_1')}\n'
+          '{"type":"item.star';
+      expect(agentAwaitingCommand(stream), isFalse,
+          reason: 'the stream arrives in chunks; half a line is not '
+              'evidence of anything');
+    });
+
+    test('a plain message is not a command', () {
+      const msg = '{"type":"item.started","item":{"id":"item_3",'
+          '"type":"agent_message"}}';
+      expect(agentAwaitingCommand(msg), isFalse,
+          reason: 'only a command execution explains a long silence');
+    });
+
+    test('empty output claims nothing', () {
+      expect(agentAwaitingCommand(''), isFalse);
+    });
   });
 
   test('W1: a process that keeps talking is left alone', () async {

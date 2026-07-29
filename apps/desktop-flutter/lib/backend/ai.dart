@@ -10217,6 +10217,16 @@ String _buildReviewWakeBlock(
   buffer.writeln(profile.primaryFear);
   buffer.writeln(profile.silenceRule);
   buffer.writeln(profile.verdictBar);
+  // This review is open-book by design: the packet already carries the
+  // diff, the surrounding code, and the engine's own reading of both.
+  // Said plainly because an agentic CLI will otherwise go find things
+  // out for itself — one run spent four minutes inside `flutter test`
+  // on a suite whose job is to wait out timeouts, said nothing while it
+  // waited, and looked exactly like a wedge.
+  buffer.writeln(
+    'Everything you need is in this packet. Read it closely and reason '
+    'from what is here rather than going out to the repository.',
+  );
   buffer.writeln('</wake>');
   return buffer.toString();
 }
@@ -10477,6 +10487,9 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       environment: _providerEnvironment(provider.kind),
       stallTimeout: _stallFor(attemptTimeout),
       onGiveUp: (gave) => gaveUp = gave,
+      isBusy: attempt.outputMode == _ProviderOutputMode.codexJsonl
+          ? agentAwaitingCommand
+          : null,
     );
 
     if (result == null) {
@@ -10641,6 +10654,7 @@ Future<_ProviderPromptResult?> _runCodexPiggyback({
         },
         stallTimeout: _stallFor(_runtimeTimeoutFor(_ProviderKind.codex)),
         onGiveUp: onGiveUp,
+        isBusy: agentAwaitingCommand,
       );
       // A null result already reported itself through onGiveUp (the
       // runner gave up on a ceiling). A non-zero exit has not: codex has
@@ -12421,6 +12435,7 @@ class GiveUp {
     required this.stall,
     required this.total,
     required this.terminated,
+    this.bytesHeard = 0,
   });
 
   /// True when SILENCE tripped, false when the total ceiling did.
@@ -12437,14 +12452,41 @@ class GiveUp {
   /// opposite of.
   final bool terminated;
 
+  /// How much the child said before it went quiet.
+  ///
+  /// A stall report without this is unfalsifiable: "it stopped talking"
+  /// reads the same whether the provider wedged mid-answer or never
+  /// reached us at all, and those have opposite fixes. The number turns
+  /// the message into evidence — and it is the number that separates a
+  /// provider stuck on its own from one whose output nobody was reading.
+  final int bytesHeard;
+
   String get _fate =>
       terminated ? 'was stopped' : 'could not be confirmed stopped';
+
+  /// What was heard before we gave up.
+  ///
+  /// Reads on both ceilings, because they carry different halves of the
+  /// story: a stall can only happen after the child has spoken, so a
+  /// child that never says a word reaches the TOTAL ceiling instead —
+  /// and "never sent anything at all" is exactly the case a reader needs
+  /// to tell apart from "wedged mid-answer".
+  String get _heard {
+    if (bytesHeard == 0) return ' (it never sent anything at all)';
+    // Only a STALL means the output stopped. The total ceiling can
+    // expire while the provider is still streaming happily, and telling
+    // the reader it "went quiet" there would invent a symptom: they
+    // would go looking for a wedge in a run that was merely long.
+    return stalled
+        ? ' (it had sent $bytesHeard bytes before going quiet)'
+        : ' (it had sent $bytesHeard bytes by then)';
+  }
 
   /// The event, worded once.
   String get cause => stalled
       ? 'produced no output for ${_humanDuration(stall ?? Duration.zero)} '
-            'and $_fate — it was not working, it was stuck'
-      : 'exceeded its ${_humanDuration(total)} budget and $_fate';
+            'and $_fate — it was not working, it was stuck$_heard'
+      : 'exceeded its ${_humanDuration(total)} budget and $_fate$_heard';
 
   /// For telemetry, which has nobody to advise.
   String get diagnostics => 'Process $cause.';
@@ -12496,6 +12538,53 @@ class ProviderGaveUp {
 
   /// True when the process started and then stopped speaking.
   final bool stalled;
+}
+
+/// True when the last thing the agent ANNOUNCED is still running.
+///
+/// `codex exec` is an agent: it runs commands and reports each one as an
+/// `item.started` / `item.completed` pair on its JSONL stream. While a
+/// command runs it says nothing at all, and a slow one — a test suite,
+/// a full build — easily outlasts a silence budget. Killing there
+/// reports a wedge for a provider that is working exactly as designed,
+/// and it was doing so on this repo: a review ran
+/// `flutter test test/backend/provider_stall_test.dart`, a suite whose
+/// own job is to wait out timeouts, and got shot four minutes in.
+///
+/// An unmatched `item.started` is evidence of work, so it counts as
+/// activity. The TOTAL ceiling still bounds a command that never
+/// returns; this only stops the silence budget from claiming a wedge it
+/// cannot see.
+@visibleForTesting
+bool agentAwaitingCommand(String jsonl) {
+  // A SET, not a single id. Commands can overlap, and tracking only the
+  // newest one let `started(A), started(B), completed(B)` read as idle
+  // while A was still running — the provider would then be killed for
+  // the very silence this rule exists to excuse.
+  final pending = <String>{};
+  for (final line in const LineSplitter().convert(jsonl)) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || !trimmed.startsWith('{')) continue;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(trimmed);
+    } catch (_) {
+      // A torn tail is normal — the stream is read in chunks.
+      continue;
+    }
+    if (decoded is! Map) continue;
+    final type = decoded['type'];
+    final item = decoded['item'];
+    if (item is! Map) continue;
+    final id = item['id'];
+    if (id is! String) continue;
+    if (type == 'item.started' && item['type'] == 'command_execution') {
+      pending.add(id);
+    } else if (type == 'item.completed') {
+      pending.remove(id);
+    }
+  }
+  return pending.isNotEmpty;
 }
 
 /// How long the next invocation shape may run, given a call [deadline].
@@ -12561,6 +12650,7 @@ Future<int> _awaitExit(
   required Duration? stall,
   required DateTime? Function() lastActivity,
   required void Function() onStalled,
+  bool Function()? busy,
 }) async {
   if (stall == null) return process.exitCode.timeout(total);
   final deadline = DateTime.now().add(total);
@@ -12575,10 +12665,18 @@ Future<int> _awaitExit(
     // the user most wants to finish. A provider that never speaks at all
     // is still bounded, by the total ceiling below (and the CLIs with
     // known-hanging headless paths carry tight totals for that reason).
-    final quietSince = lastActivity();
+    var quietSince = lastActivity();
     if (quietSince != null && now.difference(quietSince) >= stall) {
-      onStalled();
-      throw TimeoutException('no provider output for ${stall.inSeconds}s');
+      // Quiet, but is it idle? A provider waiting on a command it
+      // announced is working, and the wait is as long as that command
+      // takes. Treat the announcement as activity and start the budget
+      // again from now.
+      if (busy?.call() ?? false) {
+        quietSince = now;
+      } else {
+        onStalled();
+        throw TimeoutException('no provider output for ${stall.inSeconds}s');
+      }
     }
     if (!now.isBefore(deadline)) {
       throw TimeoutException('exceeded ${total.inSeconds}s');
@@ -12617,6 +12715,11 @@ Future<_CommandResult?> _runObservedProcess({
   Map<String, String> environment = const {},
   Duration? stallTimeout,
   void Function(ProviderGaveUp reason)? onGiveUp,
+
+  /// Given everything the child has said so far, is it busy rather than
+  /// wedged? Consulted only when the silence budget would otherwise
+  /// fire.
+  bool Function(String stdoutSoFar)? isBusy,
 }) async {
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -12712,6 +12815,7 @@ Future<_CommandResult?> _runObservedProcess({
     // nothing. Without this the only signal is the total ceiling, so
     // both look identical until it fires.
     DateTime? lastActivity;
+    var bytesHeard = 0;
     final outBuf = StringBuffer();
     final errBuf = StringBuffer();
     final outDone = Completer<void>();
@@ -12720,23 +12824,29 @@ Future<_CommandResult?> _runObservedProcess({
       if (!c.isCompleted) c.complete();
     }
 
-    process.stdout
+    // Count and timestamp on the RAW stream, before decoding. A decoded
+    // chunk's `length` is UTF-16 code units, which is neither what the
+    // child wrote nor what the word "bytes" means to whoever reads the
+    // give-up message; any non-ASCII output made the number a fiction.
+    // Arrival time belongs here too — it is when the child spoke, not
+    // when a decoder got round to it.
+    Stream<List<int>> heard(Stream<List<int>> raw) => raw.map((bytes) {
+          lastActivity = DateTime.now();
+          bytesHeard += bytes.length;
+          return bytes;
+        });
+
+    heard(process.stdout)
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen(
-          (chunk) {
-            lastActivity = DateTime.now();
-            outBuf.write(chunk);
-          },
+          outBuf.write,
           onDone: () => seal(outDone),
           onError: (_) => seal(outDone),
         );
-    process.stderr
+    heard(process.stderr)
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen(
-          (chunk) {
-            lastActivity = DateTime.now();
-            errBuf.write(chunk);
-          },
+          errBuf.write,
           onDone: () => seal(errDone),
           onError: (_) => seal(errDone),
         );
@@ -12752,8 +12862,16 @@ Future<_CommandResult?> _runObservedProcess({
         stall: stallTimeout,
         lastActivity: () => lastActivity,
         onStalled: () => stalled = true,
+        busy: isBusy == null ? null : () => isBusy(outBuf.toString()),
       );
     } on TimeoutException {
+      // Snapshot BEFORE killing. The listeners stay live through the
+      // kill, which waits for the child to actually exit, so a shutdown
+      // message from a signal handler would land in the count and
+      // describe the wrong moment — turning "never sent anything at all"
+      // into a positive number for output that arrived after we had
+      // already given up.
+      final heardAtCeiling = bytesHeard;
       final killed = await killProcessTree(
         process,
         timeout: defaultProcessKillTimeout,
@@ -12765,6 +12883,7 @@ Future<_CommandResult?> _runObservedProcess({
         stall: stallTimeout,
         total: timeout,
         terminated: killed,
+        bytesHeard: heardAtCeiling,
       );
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'failure',
