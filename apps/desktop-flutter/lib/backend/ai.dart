@@ -1751,6 +1751,8 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
   Duration timeout = const Duration(seconds: 10),
   String? stdinPayload,
   Map<String, String> environment = const {},
+  Duration? stallTimeout,
+  void Function(ProviderGaveUp reason)? onGiveUp,
 }) async {
   final r = await _runObservedProcess(
     commandLabel: 'test.$command',
@@ -1758,6 +1760,8 @@ Future<({int exitCode, String stdout, String stderr})?> runObservedProcessForTes
     command: command,
     args: args,
     timeout: timeout,
+    stallTimeout: stallTimeout,
+    onGiveUp: onGiveUp,
     stdinPayload: stdinPayload,
     environment: environment,
   );
@@ -10345,6 +10349,9 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     final effectiveEffort =
         fastMode || !supportsReasoning ? null : reasoningEffort;
 
+    // Why the piggyback gave up, if it was tried and did.
+    String? piggybackGaveUp;
+
     if (allowPiggyback &&
         _piggybackCliSnapshot == 'codex' &&
         provider.apiProvider is OpenAiCompatibleApiProvider) {
@@ -10357,12 +10364,15 @@ Future<_ProviderPromptResult> _runProviderPrompt({
         repositoryPath: repositoryPath,
         commandLabelPrefix: commandLabelPrefix,
         reasoningEffort: effectiveEffort,
+        onGiveUp: (gave) => piggybackGaveUp = gave.message,
       );
       if (piggybacked != null) return piggybacked;
       // Any failure on the piggyback path (codex not installed, proxy
       // startup failure, malformed/empty output, timeout, ...) falls
-      // through silently to the direct HTTP call below — the user is
-      // never worse off than with piggybacking off.
+      // through to the direct HTTP call below — the user is never worse
+      // off than with piggybacking off. A STALL is the one failure that
+      // is not free: it costs the whole silence budget first, so the
+      // reason is carried down and reported if the fallback fails too.
     }
 
     final apiResult = await provider.apiProvider!.complete(AiApiRequest(
@@ -10373,11 +10383,17 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       maxTokens: maxTokens,
     ));
     if (apiResult.text == null) {
+      final direct = apiResult.error ??
+          '${provider.apiProvider!.displayName} returned no response.';
+      // Name the upstream hang rather than letting HTTP take the blame
+      // for time it did not spend.
+      final full = piggybackGaveUp == null
+          ? direct
+          : '$direct (the codex piggyback was tried first and gave up: '
+              '$piggybackGaveUp)';
       return _ProviderPromptResult(
         ok: false,
-        error: _scrubSecrets(
-          apiResult.error ?? '${provider.apiProvider!.displayName} returned no response.',
-        ),
+        error: _scrubSecrets(full),
         outputPreview: _scrubSecrets(apiResult.error ?? ''),
         effectiveModelId: effectiveModelId,
       );
@@ -10404,7 +10420,49 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   String? providerOutput;
   AiUsage providerUsage = AiUsage.empty;
   String? lastError;
+  // Why the runner gave up, when it did. Reset per attempt so a later
+  // attempt's failure cannot inherit an earlier one's explanation.
+  ProviderGaveUp? gaveUp;
+
+  // Stdin modes already proven to wedge. A stall means the process
+  // started and then went quiet, and the remaining shapes differ in
+  // flags and in how we PARSE what comes back — only how the prompt is
+  // DELIVERED can change whether the child speaks at all. opencode's two
+  // shapes, for instance, both write the prompt to stdin and differ only
+  // in `--format json`, so the second wedges exactly like the first and
+  // spends another stall budget proving it.
+  final wedgedStdinModes = <bool>{};
+
+  // ONE budget for the call, shared by every invocation shape.
+  //
+  // The attempts are argv shapes for the SAME binary (prompt on stdin
+  // vs positionally, and so on), tried until one is accepted. Each used
+  // to get the full timeout of its own, so a provider that wedges — the
+  // case the shapes cannot fix, because the process starts fine and
+  // then goes quiet — cost the timeout MULTIPLIED by the number of
+  // shapes. Measured: a stalled provider took 17m46s to report a stall
+  // that was detected at 4 minutes, four times over. The configured cap
+  // is meant to bound the operation the user is waiting on, not each
+  // shape the dispatch happens to try.
+  //
+  // A shape still gets to run when time remains, so the recovery the
+  // attempts exist for is intact; it just cannot mint new budget.
+  final callBudget = _runtimeTimeoutFor(provider.kind);
+  final callDeadline = DateTime.now().add(callBudget);
   for (final attempt in attempts) {
+    gaveUp = null;
+    if (wedgedStdinModes.contains(attempt.useStdinForPrompt)) continue;
+    final slice = attemptSlice(
+      deadline: callDeadline,
+      now: DateTime.now(),
+      cap: callBudget,
+    );
+    if (slice == null) {
+      // Out of time, and saying so beats a shape that could only fail.
+      lastError ??= 'Provider command timed out.';
+      break;
+    }
+    final attemptTimeout = slice;
     final effectiveArgs =
         attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
     final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
@@ -10413,14 +10471,20 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       scope: 'ai',
       command: resolution.command,
       args: effectiveArgs,
-      timeout: _runtimeTimeoutFor(provider.kind),
+      timeout: attemptTimeout,
       workingDirectory: repositoryPath,
       stdinPayload: effectiveStdin,
       environment: _providerEnvironment(provider.kind),
+      stallTimeout: _stallFor(attemptTimeout),
+      onGiveUp: (gave) => gaveUp = gave,
     );
 
     if (result == null) {
-      lastError = 'Provider command timed out.';
+      final gave = gaveUp;
+      lastError = gave?.message ?? 'Provider command timed out.';
+      if (gave?.stalled ?? false) {
+        wedgedStdinModes.add(attempt.useStdinForPrompt);
+      }
       continue;
     }
 
@@ -10518,6 +10582,16 @@ Future<_ProviderPromptResult?> _runCodexPiggyback({
   required String repositoryPath,
   required String commandLabelPrefix,
   String? reasoningEffort,
+
+  /// Told why this path gave up, when it does.
+  ///
+  /// A stall here is not free even though the caller falls through to a
+  /// direct HTTP call: the fallthrough happens only AFTER the whole
+  /// silence budget has been spent, so the user waits minutes longer
+  /// and, without this, never learns why. The caller decides what to do
+  /// with it — today, it makes the error honest when the fallback fails
+  /// too, instead of blaming HTTP for a hang that happened upstream.
+  void Function(ProviderGaveUp reason)? onGiveUp,
 }) async {
   try {
     final codexSpec =
@@ -10565,8 +10639,26 @@ Future<_ProviderPromptResult?> _runCodexPiggyback({
           ..._providerEnvironment(_ProviderKind.codex),
           'MANIFOLD_PROXY_TOKEN': proxy.token,
         },
+        stallTimeout: _stallFor(_runtimeTimeoutFor(_ProviderKind.codex)),
+        onGiveUp: onGiveUp,
       );
-      if (result == null || result.exitCode != 0) return null;
+      // A null result already reported itself through onGiveUp (the
+      // runner gave up on a ceiling). A non-zero exit has not: codex has
+      // just told us exactly what is wrong, and dropping it here is what
+      // made an expired `codex login` surface as an unrelated HTTP
+      // complaint from the fallback.
+      if (result == null) return null;
+      if (result.exitCode != 0) {
+        final why = meaningfulErrorLine(result.stderr);
+        onGiveUp?.call(
+          ProviderGaveUp(
+            why == null
+                ? 'codex exec exited ${result.exitCode}'
+                : 'codex exec exited ${result.exitCode}: ${_scrubSecrets(why)}',
+          ),
+        );
+        return null;
+      }
 
       final formatted = _formatProviderOutput(
         _ProviderOutputMode.codexJsonl,
@@ -10577,6 +10669,17 @@ Future<_ProviderPromptResult?> _runCodexPiggyback({
       if (text == null ||
           text.trim().isEmpty ||
           _looksLikeProviderError(_ProviderKind.codex, text)) {
+        // Exited cleanly with nothing usable — still a reason, and still
+        // one the caller would otherwise have to guess at.
+        final why = meaningfulErrorLine(text ?? result.stderr);
+        onGiveUp?.call(
+          ProviderGaveUp(
+            why == null
+                ? 'codex exec returned no usable output'
+                : 'codex exec returned no usable output: '
+                    '${_scrubSecrets(why)}',
+          ),
+        );
         return null;
       }
 
@@ -12285,6 +12388,224 @@ Future<_CommandResult?> _runCommandWithTimeout(
   }
 }
 
+/// Wait for [process] to exit, giving up on a TOTAL ceiling or on
+/// SILENCE, whichever comes first.
+///
+/// Two ceilings because they catch different failures. The total one
+/// bounds a provider that keeps talking forever; the silence one catches
+/// the provider that died holding the pipe open — and only the second
+/// can tell a five-minute agentic run apart from a wedge, which is the
+/// distinction the whole review path was missing. A run that is still
+/// streaming events is still working, however long it takes.
+///
+/// Polls rather than racing a timer per chunk: the check is cheap, the
+/// resolution only has to be coarse enough to beat a human's patience,
+/// and a poll cannot leak a pending timer if the process exits first.
+/// Why a run was given up on, and what became of the process.
+///
+/// Both facts, in one value, because they were two. Diagnostics and the
+/// user were told the same event in separately maintained sentences —
+/// two places for the wording to drift, two places to forget a fix (the
+/// "0 minutes" truncation had to be repaired in both). Worse, the fate
+/// of the process was stapled on afterwards at one of those sites while
+/// the cause had already claimed "and was stopped", so an unconfirmed
+/// kill on the total ceiling read "was stopped; termination was not
+/// confirmed" in a single breath, and the caller-facing sentence claimed
+/// a stop that may never have landed. A sentence assembled from
+/// independent booleans can always contradict itself; one that words the
+/// outcome as part of the event cannot.
+@visibleForTesting
+class GiveUp {
+  const GiveUp({
+    required this.stalled,
+    required this.stall,
+    required this.total,
+    required this.terminated,
+  });
+
+  /// True when SILENCE tripped, false when the total ceiling did.
+  final bool stalled;
+
+  /// The silence budget, when there was one.
+  final Duration? stall;
+
+  /// The total ceiling.
+  final Duration total;
+
+  /// Whether the kill was CONFIRMED. False means the process may still
+  /// be running, which is the one thing a reader must not be told the
+  /// opposite of.
+  final bool terminated;
+
+  String get _fate =>
+      terminated ? 'was stopped' : 'could not be confirmed stopped';
+
+  /// The event, worded once.
+  String get cause => stalled
+      ? 'produced no output for ${_humanDuration(stall ?? Duration.zero)} '
+            'and $_fate — it was not working, it was stuck'
+      : 'exceeded its ${_humanDuration(total)} budget and $_fate';
+
+  /// For telemetry, which has nobody to advise.
+  String get diagnostics => 'Process $cause.';
+
+  /// For the person waiting, who does.
+  String get advice =>
+      'The AI provider $cause.'
+      '${stalled ? ' Retry; if it keeps happening, restart Manifold.' : ''}';
+}
+
+/// The line of [stderr] worth showing a person, or null when there is
+/// nothing.
+///
+/// A failed provider run usually explains itself in one line — an expired
+/// login, a bad flag, a missing binary — and that line is the difference
+/// between "something went wrong" and something the user can act on. The
+/// piggyback used to drop the whole stream on the floor and let the HTTP
+/// fallback's error stand in for it, so an expired `codex login` surfaced
+/// as an unrelated upstream complaint.
+///
+/// Prefers a line the tool itself marked as an error, falls back to the
+/// last line with content, and truncates: this goes into a message, not a
+/// log file.
+@visibleForTesting
+String? meaningfulErrorLine(String stderr, {int maxLength = 200}) {
+  final lines = stderr
+      .split(RegExp('\r?\n'))
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) return null;
+  final flagged = lines.where((l) => l.contains('ERROR') || l.contains('error:'));
+  final pick = flagged.isNotEmpty ? flagged.last : lines.last;
+  if (pick.length <= maxLength) return pick;
+  return '${pick.substring(0, maxLength)}…';
+}
+
+/// Why a provider run produced nothing, for a caller that has to decide
+/// what to do next.
+///
+/// The message alone was not enough: the dispatch needs to know whether
+/// the process went SILENT, because that is the one failure another
+/// invocation shape cannot fix.
+class ProviderGaveUp {
+  const ProviderGaveUp(this.message, {this.stalled = false});
+
+  /// What to tell the person waiting.
+  final String message;
+
+  /// True when the process started and then stopped speaking.
+  final bool stalled;
+}
+
+/// How long the next invocation shape may run, given a call [deadline].
+///
+/// Null when the budget is spent. The shapes are argv variants of one
+/// binary, so they share the user's configured cap rather than each
+/// taking it in full — see the call site for what that cost when they
+/// did not.
+@visibleForTesting
+Duration? attemptSlice({
+  required DateTime deadline,
+  required DateTime now,
+  required Duration cap,
+}) {
+  final remaining = deadline.difference(now);
+  if (remaining <= Duration.zero) return null;
+  return remaining < cap ? remaining : cap;
+}
+
+/// A duration a human can read, at any scale this code produces.
+///
+/// `Duration.inMinutes` integer-truncates, and the CLI timeout is
+/// user-settable down to 30 seconds — which makes the stall budget 15s
+/// and rendered every give-up message as "0 minutes". A message whose
+/// number is nonsense is worse than one with no number: it is the same
+/// ambiguity these messages exist to remove, wearing a digit.
+String _humanDuration(Duration d) {
+  if (d.inSeconds < 60) return '${d.inSeconds} seconds';
+  final mins = d.inMinutes;
+  final rem = d.inSeconds - mins * 60;
+  final head = '$mins minute${mins == 1 ? '' : 's'}';
+  return rem == 0 ? head : '$head $rem seconds';
+}
+
+/// The silence budget for a provider whose total cap is [total].
+///
+/// Derived, not flat. A flat 4 minutes was unreachable for the two CLIs
+/// that need it most: antigravity and copilot are capped at 3 minutes
+/// TOTAL precisely because their headless paths are known to hang, so a
+/// 4-minute stall check could never fire and those hangs were reported
+/// as plain timeouts with no explanation. Half the total, capped at the
+/// long-running default, means every provider gets a stall signal that
+/// can actually trip while still leaving room for a legitimately quiet
+/// stretch of thinking.
+Duration _stallFor(Duration total) {
+  final half = Duration(microseconds: total.inMicroseconds ~/ 2);
+  return half < _kProviderStall ? half : _kProviderStall;
+}
+
+/// How long a provider may say NOTHING before we call it dead.
+///
+/// Not a limit on how long a review may take — an agentic provider
+/// legitimately runs for many minutes, streaming tool calls the whole
+/// time, and this never fires while it does. It bounds SILENCE, which
+/// is the only shape a wedge has. Generous enough to cover a long model
+/// think between events, short enough that a hang surfaces while the
+/// user is still in the room rather than 22 minutes later.
+const Duration _kProviderStall = Duration(minutes: 4);
+
+Future<int> _awaitExit(
+  Process process, {
+  required Duration total,
+  required Duration? stall,
+  required DateTime? Function() lastActivity,
+  required void Function() onStalled,
+}) async {
+  if (stall == null) return process.exitCode.timeout(total);
+  final deadline = DateTime.now().add(total);
+  while (true) {
+    final now = DateTime.now();
+    // Null until the child says ANYTHING. Silence before the first byte
+    // is not evidence of a wedge: it is a provider still reading the
+    // prompt. That distinction is load-bearing here — a cold-cache
+    // review ships around a million tokens of context, and prefilling
+    // them legitimately takes minutes with nothing on the wire, so a
+    // silence budget started at spawn kills exactly the expensive runs
+    // the user most wants to finish. A provider that never speaks at all
+    // is still bounded, by the total ceiling below (and the CLIs with
+    // known-hanging headless paths carry tight totals for that reason).
+    final quietSince = lastActivity();
+    if (quietSince != null && now.difference(quietSince) >= stall) {
+      onStalled();
+      throw TimeoutException('no provider output for ${stall.inSeconds}s');
+    }
+    if (!now.isBefore(deadline)) {
+      throw TimeoutException('exceeded ${total.inSeconds}s');
+    }
+    // Wake exactly at whichever ceiling comes first rather than on a
+    // fixed poll. A poll interval is a third budget nobody chose: it
+    // overshoots both real ones by up to its own length, and on a
+    // user-settable timeout it can be longer than what is left. The
+    // ceilings are known instants, so wait for them.
+    // With a first byte in hand there is an instant to wake at. Without
+    // one there is nothing to aim for, so sample instead — one stall
+    // budget at a time, purely to notice the child starting to speak.
+    // Waiting straight through to the deadline here was wrong in the
+    // quiet way: the first byte would arrive mid-sleep, nobody would
+    // look, and a provider that spoke and THEN died ran to its total
+    // ceiling with the silence budget never applied.
+    final stallAt = (quietSince ?? now).add(stall);
+    final next = stallAt.isBefore(deadline) ? stallAt : deadline;
+    try {
+      return await process.exitCode.timeout(next.difference(now));
+    } on TimeoutException {
+      // Output may have arrived while waiting, moving the silence line
+      // forward — the next pass reads it fresh.
+    }
+  }
+}
+
 Future<_CommandResult?> _runObservedProcess({
   required String commandLabel,
   required String scope,
@@ -12294,6 +12615,8 @@ Future<_CommandResult?> _runObservedProcess({
   String? workingDirectory,
   String? stdinPayload,
   Map<String, String> environment = const {},
+  Duration? stallTimeout,
+  void Function(ProviderGaveUp reason)? onGiveUp,
 }) async {
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -12382,16 +12705,54 @@ Future<_CommandResult?> _runObservedProcess({
       _registerCliPid(process.pid);
     }
 
-    final stdoutFuture = process.stdout
+    // Accumulate AND timestamp. `.join()` gives the bytes but throws
+    // away WHEN they arrived, which is the one fact separating a
+    // provider still working from one that died holding the pipe open.
+    // An agentic model streams events for minutes; a wedged one streams
+    // nothing. Without this the only signal is the total ceiling, so
+    // both look identical until it fires.
+    DateTime? lastActivity;
+    final outBuf = StringBuffer();
+    final errBuf = StringBuffer();
+    final outDone = Completer<void>();
+    final errDone = Completer<void>();
+    void seal(Completer<void> c) {
+      if (!c.isCompleted) c.complete();
+    }
+
+    process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
-        .join();
-    final stderrFuture = process.stderr
+        .listen(
+          (chunk) {
+            lastActivity = DateTime.now();
+            outBuf.write(chunk);
+          },
+          onDone: () => seal(outDone),
+          onError: (_) => seal(outDone),
+        );
+    process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
-        .join();
+        .listen(
+          (chunk) {
+            lastActivity = DateTime.now();
+            errBuf.write(chunk);
+          },
+          onDone: () => seal(errDone),
+          onError: (_) => seal(errDone),
+        );
+    final stdoutFuture = outDone.future.then((_) => outBuf.toString());
+    final stderrFuture = errDone.future.then((_) => errBuf.toString());
 
     int exitCode;
+    var stalled = false;
     try {
-      exitCode = await process.exitCode.timeout(timeout);
+      exitCode = await _awaitExit(
+        process,
+        total: timeout,
+        stall: stallTimeout,
+        lastActivity: () => lastActivity,
+        onStalled: () => stalled = true,
+      );
     } on TimeoutException {
       final killed = await killProcessTree(
         process,
@@ -12399,14 +12760,18 @@ Future<_CommandResult?> _runObservedProcess({
       );
       stopwatch.stop();
       final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
+      final gaveUp = GiveUp(
+        stalled: stalled,
+        stall: stallTimeout,
+        total: timeout,
+        terminated: killed,
+      );
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'failure',
         command: commandLabel,
         durationMs: elapsedMs,
-        errorCode: '$scope.timeout',
-        message: killed
-            ? 'Process timed out and was terminated.'
-            : 'Process timed out; termination was not confirmed.',
+        errorCode: stalled ? '$scope.stalled' : '$scope.timeout',
+        message: gaveUp.diagnostics,
       );
       unawaited(
         DiagnosticsState.instance.recordCommandLatency(
@@ -12415,9 +12780,15 @@ Future<_CommandResult?> _runObservedProcess({
           scope: scope,
           roundTripMs: elapsedMs,
           backendDurationMs: elapsedMs,
-          errorCode: '$scope.timeout',
+          errorCode: stalled ? '$scope.stalled' : '$scope.timeout',
         ),
       );
+      // Hand the CALLER the distinction too, not just diagnostics. A
+      // user staring at "Provider command timed out." cannot tell a
+      // wedge from a long job, which is the same ambiguity the stall
+      // budget exists to remove — surfacing it only in telemetry would
+      // fix the timing and keep the confusion.
+      onGiveUp?.call(ProviderGaveUp(gaveUp.advice, stalled: stalled));
       return null;
     }
 
