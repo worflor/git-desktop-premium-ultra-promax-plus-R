@@ -17,6 +17,21 @@
 // report AUC with ties at half — which is what stops "score everything 0"
 // from looking like a win.
 //
+// FINDINGS (grids of holdout 60/90/120/150/180 x both local repos, paired
+// per window; seed noise is ±0.002 while WINDOW choice swings ±0.03, so a
+// single-window comparison of this axis is meaningless — always run the
+// grid, always paired, never across different HEADs):
+//   lag window     8/10 windows positive, losses ≤0.002, wins to +0.035.
+//                  The one component that robustly earns its place.
+//   recency decay  7/10 positive; costs at short holdouts, pays at long
+//                  ones, both repos. Modest.
+//   meaningfulness 6/10, tiny deltas, one outlier — indistinguishable
+//                  from noise. An earlier single-window read that it
+//                  "hurts on both repos" was window luck; withdrawn.
+//   softKnee(60)   no measurable effect either way.
+//   K-norm denom   loses by 0.02-0.04, LARGER than window noise, both
+//                  repos: that rejection stands.
+//
 // Manual: it clones the repo and reads real history.
 //   flutter test --run-skipped -t manual test/perf/coupling_holdout_jury_test.dart
 @Tags(['manual'])
@@ -122,7 +137,9 @@ void main() {
       return m.jaccardScoreOf(p[0], p[1]);
     }
 
-    final rng = math.Random(0x5EED);
+    final seed =
+        int.tryParse(Platform.environment['JURY_SEED'] ?? '') ?? 0x5EED;
+    final rng = math.Random(seed);
     var wins = 0.0;
     var n = 0;
     for (var i = 0; i < samples && judged.isNotEmpty; i++) {
