@@ -214,12 +214,22 @@ class AiSettingsState extends ChangeNotifier {
 
     for (final category in categories) {
       _modelCategoryLabels.putIfAbsent(category.id, () => category.label);
-      final allowedValues = category.models.map((model) => model.value).toSet();
       final currentValue = _modelSelections[category.id] ?? '';
-      final providerIds = category.models.map((m) => m.providerId).toSet();
-      final isCustomValue = currentValue.contains(':') &&
-          providerIds.contains(currentValue.split(':').first);
-      final resolvedValue = allowedValues.contains(currentValue) || isCustomValue
+      // A choice already made SURVIVES a discovery pass that cannot see
+      // it. Discovery is a live probe of CLIs and API providers, so a
+      // model goes missing whenever its provider is offline, logged out,
+      // rate-limited, or simply slower than this pass — none of which
+      // are the user retracting a decision. This used to overwrite the
+      // pick with whatever model sorted first and persist that, so a
+      // provider hiccup silently and permanently reassigned the model
+      // behind reviews and commit messages, and the original choice did
+      // not come back when the provider did.
+      //
+      // Nothing downstream needs the rewrite: every read site already
+      // resolves an unavailable selection to an available model for that
+      // run (`.where(value == selection).firstOrNull ?? models.first`),
+      // which is the right scope for a transient absence.
+      final resolvedValue = currentValue.isNotEmpty
           ? currentValue
           : (category.models.isNotEmpty ? category.models.first.value : '');
       if (resolvedValue.isNotEmpty) {
