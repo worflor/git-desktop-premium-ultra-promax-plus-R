@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Woflo Labs
-// SPDX-License-Identifier: LicenseRef-WLCSL-1.0
-// See repository-root LICENSE.md and LICENSES/WLCSL-1.0.md.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Additional permission: Manifold-Woflo Research Components Exception 1.0; see repository-root LICENSE.md.
 
 // coupling_holdout_jury_test.dart — the temporal-holdout jury, aimed at the
 // history axis itself.
