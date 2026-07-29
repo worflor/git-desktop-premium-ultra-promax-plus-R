@@ -1132,6 +1132,10 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
 
   final fileCommits = <String, double>{};
   final pairCount = <String, Map<String, double>>{};
+  // The weight commit `rank` actually got, so the lag terms can be built
+  // from the SAME number as the same-commit terms. They were built from
+  // a different one — see the lag loop.
+  final commitW = List<double>.filled(commits.length, 0);
   var semanticAge = 0.0;
   for (var rank = 0; rank < commits.length; rank++) {
     final commit = commits[rank];
@@ -1147,6 +1151,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     final step = m.weight.clamp(0.0, 1.0);
     final w = commitWeight(semanticAge) * step * softKnee(files.length);
     semanticAge += step;
+    commitW[rank] = w;
     if (w <= 0) continue;
     for (final f in files) {
       fileCommits[f.path] = (fileCommits[f.path] ?? 0) + w * f.lines;
@@ -1179,10 +1184,17 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     for (var rank = 0; rank < commits.length - lag; rank++) {
       final here = commits[rank];
       final there = commits[rank + lag];
-      final wHere = commitWeight(rank.toDouble());
-      final wThere = commitWeight((rank + lag).toDouble());
-      final w = math.sqrt(wHere * wThere) * lagDiscount
-          * softKnee(here.files.length) * softKnee(there.files.length);
+      // The same per-commit weight the same-commit terms use, geometric
+      // mean of the two ends. It used to be `commitWeight(rank)`, which
+      // differed three ways, none of them chosen: a different decay
+      // CLOCK (semanticAge advances by each commit's meaningfulness,
+      // rank advances by one, so on a repo full of trivial commits the
+      // lag terms decayed faster than the same-commit terms), no `step`
+      // at all (a commit discounted as noise for co-change counted in
+      // full at a distance), and softKnee applied a second time on top
+      // of the copy already inside the weight (charging a sweeping
+      // commit twice for being sweeping, but only in lag terms).
+      final w = math.sqrt(commitW[rank] * commitW[rank + lag]) * lagDiscount;
       if (w <= 1e-9) continue;
       for (final fHere in here.files) {
         for (final fThere in there.files) {
@@ -1211,6 +1223,32 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   // non-positive union is the same extreme — dropping it (the old
   // `union > 0` guard's behavior) would silently delete exactly the
   // strongest-coupled pairs from the matrix.
+  //
+  // That asymmetry is REAL and it is DELIBERATE, which is worth writing
+  // down because the algebra begs you to "fix" it. Every mass above
+  // factors as nu_a(r)·nu_b(s) for nu_f(r) = sqrt(w_r·lines), so `co` is
+  // exactly <K nu_a, nu_b> under the Toeplitz kernel K = (1, ½, ⅓, ¼) by
+  // commit distance. K is positive semidefinite (symbol bottoms out at
+  // +1/6), so normalizing by the matching K-norm — S_f = <K nu_f, nu_f>,
+  // this file's own mass plus its own lag self-coupling — would be a
+  // true Jaccard in that geometry, bounded by Cauchy-Schwarz with
+  // nothing to clamp, and strictly local. It is also WORSE at the only
+  // thing this score exists for. Held-out co-change AUC
+  // (test/perf/coupling_holdout_jury_test.dart, holdout 120):
+  //
+  //     normalization                     MANIFOLD   worflor.github.io
+  //     raw mass (this code)               0.8545         0.8829
+  //     cosine  co/sqrt(Sa·Sb)             0.8408           —
+  //     K-norm Jaccard (full)              0.8291         0.8729
+  //     K-norm Jaccard, old numerator      0.8189           —
+  //
+  // Monotone in how much of a file's OWN activity gets divided out, and
+  // pointing the wrong way. The reason is that the target is future
+  // co-change: a file that changes in bursts is more likely to change
+  // again, self-coupling is exactly that self-excitation, and dividing
+  // it out throws away a term the prediction depends on. The score is an
+  // inner product deliberately NOT normalized by its own induced metric.
+  // Run the jury before touching this.
   final jaccard = <String, Map<String, double>>{};
   pairCount.forEach((a, row) {
     final na = fileCommits[a] ?? 0;
