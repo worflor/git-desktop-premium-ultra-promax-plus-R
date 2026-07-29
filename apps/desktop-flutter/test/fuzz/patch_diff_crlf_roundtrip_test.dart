@@ -716,8 +716,10 @@ void main() {
           }
           final cf = parseConflictFile('f.dart', text);
           expect(cf.blocks, isEmpty);
-          expect(cf.segments.length, 1);
-          expect(cf.segments.single, text);
+          expect(cf.segmentLines.length, 1);
+          expect(cf.segmentLines.single.join('\n'), text,
+              reason: 'a conflict-free document is one run of lines '
+                  'that rejoins to exactly what came in');
           expect(cf.fullText, text);
         },
       );
@@ -734,7 +736,7 @@ void main() {
           expect(() {
             cf = parseConflictFile('f.dart', t.truncated);
           }, returnsNormally);
-          expect(cf.segments, isNotEmpty);
+          expect(cf.segmentLines, isNotEmpty);
           expect(() => cf.buildResult(), returnsNormally);
         },
       );

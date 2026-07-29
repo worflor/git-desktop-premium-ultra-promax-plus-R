@@ -24,21 +24,23 @@ void main() {
       expect(cf.blocks[0].theirsText, 'b');
       expect(cf.blocks[1].oursText, 'c');
       expect(cf.blocks[1].theirsText, 'd');
-      expect(cf.segments.length, 3);
+      expect(cf.segmentLines.length, 3);
     });
 
     test('adjacent conflicts with no clean text between', () {
       final cf = parseConflictFile('a.dart',
           '<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n<<<<<<< HEAD\nc\n=======\nd\n>>>>>>> x\n');
       expect(cf.blocks.length, 2);
-      expect(cf.segments[1], '');
+      expect(cf.segmentLines[1], isEmpty,
+          reason: 'nothing at all between the two blocks — not a blank '
+              'line, which would be a line the rebuild has to write');
     });
 
     test('clean text before and after', () {
       final cf = parseConflictFile('a.dart',
           'before\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\nafter\n');
-      expect(cf.segments[0], 'before\n');
-      expect(cf.segments[1].contains('after'), isTrue);
+      expect(cf.segmentLines[0], ['before']);
+      expect(cf.segmentLines[1], contains('after'));
       expect(cf.blocks[0].oursText, 'ours');
     });
   });
@@ -116,13 +118,13 @@ void main() {
           'var s = "<<<<<<< not a marker";\n<<<<<<< HEAD\nreal\n=======\nconflict\n>>>>>>> x\n');
       expect(cf.blocks.length, 1);
       expect(cf.blocks[0].oursText, 'real');
-      expect(cf.segments[0], contains('not a marker'));
+      expect(cf.segmentLines[0].single, contains('not a marker'));
     });
 
     test('file with no conflicts produces zero blocks', () {
       final cf = parseConflictFile('a.dart', 'just normal\ncode\nhere\n');
       expect(cf.blocks, isEmpty);
-      expect(cf.segments.length, 1);
+      expect(cf.segmentLines.length, 1);
     });
 
     test('truncated conflict (missing >>>>>>>) flushes partial block', () {
@@ -242,6 +244,88 @@ void main() {
       cf.blocks[1].resolution = ConflictSide.theirs;
       final result = cf.buildResult();
       expect(result, 'A\nmid\nD\n');
+    });
+  });
+
+  group('rebuild counts lines, it does not guess terminators', () {
+    // Every case here was unrepresentable in the old string-shaped model,
+    // where a side's text ending in a newline was read as "already
+    // terminated" — true for a side whose last line is simply blank, so
+    // those files rebuilt a byte short. The line-shaped model cannot
+    // express the confusion, and these are the four shapes that proved it.
+
+    test('a block whose last line is blank keeps its terminator', () {
+      final cf = parseConflictFile(
+        'a.dart',
+        '<<<<<<< HEAD\nx\n\n=======\ny\n>>>>>>> b\ntail\n',
+      );
+      cf.blocks.single.resolution = ConflictSide.ours;
+      expect(cf.buildResult(), 'x\n\ntail\n',
+          reason: 'ours is the two lines "x" and "", and "tail" follows on '
+              'its own line');
+    });
+
+    test('a side of exactly one blank line is a line, not nothing', () {
+      final cf = parseConflictFile(
+        'a.dart',
+        '<<<<<<< HEAD\n\n=======\nz\n>>>>>>> b\n',
+      );
+      cf.blocks.single.resolution = ConflictSide.ours;
+      expect(cf.buildResult(), '\n',
+          reason: 'one empty line, terminated — the shape that used to '
+              'rebuild as an empty file');
+    });
+
+    test('an unresolved block contributes nothing at all', () {
+      final cf = parseConflictFile(
+        'a.dart',
+        'head\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b\n',
+      );
+      expect(cf.buildResult(), 'head\n',
+          reason: 'no resolution means no lines, and no terminator of its '
+              'own to add');
+    });
+
+    test('deleting the final block leaves what precedes it terminated',
+        () {
+      // The block IS the file's tail and the chosen side is empty, so the
+      // block goes away entirely. The line before it was terminated in
+      // the document — a marker line sat on the next line — and only the
+      // block's own terminator left with it.
+      final cf = parseConflictFile(
+        'a.dart',
+        'head\n<<<<<<< HEAD\nx\n=======\n>>>>>>> b',
+      );
+      cf.blocks.single.resolution = ConflictSide.theirs;
+      expect(cf.buildResult(), 'head\n',
+          reason: 'accepting an empty side must not eat the newline of a '
+              'line it never touched');
+
+      cf.blocks.single.resolution = ConflictSide.ours;
+      expect(cf.buildResult(), 'head\nx',
+          reason: 'and keeping the block still ends where the document '
+              'ended, with no terminator of its own');
+    });
+
+    test('the resolved side owns the final terminator, not the document',
+        () {
+      final cf = parseConflictFile(
+        'a.dart',
+        'head\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b\n',
+      );
+      // What patch_as_merge records when ours ends the file with a
+      // newline and theirs does not.
+      cf.blocks.single
+        ..oursNoTrailingNewline = false
+        ..theirsNoTrailingNewline = true;
+
+      cf.blocks.single.resolution = ConflictSide.ours;
+      expect(cf.buildResult(), 'head\nx\n');
+
+      cf.blocks.single.resolution = ConflictSide.theirs;
+      expect(cf.buildResult(), 'head\ny',
+          reason: 'the document says "ends with a newline" because it was '
+              'spliced into ours; theirs gets to disagree');
     });
   });
 

@@ -150,52 +150,21 @@ _SplicedConflict? _spliceConflictMarkers(
       idx++;
     }
   }
-  // `ours` carries a trailing '' sentinel element whenever oursText itself
-  // ends with '\n' (split('\n') convention) — that sentinel isn't a real
-  // unconsumed line, just the split-artifact representing the file's own
-  // trailing newline. Excluding it from the "is there real trailing
-  // content" check is required: otherwise a full-file replacement whose
-  // OLD content happened to end with a newline always looks like it has a
-  // trailing tail (idx never "reaches" the sentinel, since no diff line
-  // corresponds to it), permanently defeating the no-newline handling below.
+  // `ours` carries a trailing '' element whenever oursText itself ends
+  // with a newline (the split('\n') convention) — not a real unconsumed
+  // line, just the artifact standing for the file's own terminator.
+  // Excluding it from the "is there real trailing content" check is
+  // required: otherwise a full-file replacement whose OLD content
+  // happened to end with a newline always looks like it has a trailing
+  // tail (idx never reaches that element, since no diff line
+  // corresponds to it), permanently defeating the no-newline handling.
   final oursEndsWithNewline = oursText.isNotEmpty && oursText.endsWith('\n');
   final effectiveOursLength =
       oursEndsWithNewline ? ours.length - 1 : ours.length;
   final hasTrailingTail = idx < effectiveOursLength;
-  if (!hasTrailingTail && oursEndsWithNewline && oursRun.isNotEmpty) {
-    // The diffed region reaches ours's true end, and `oursText` itself
-    // ends with a newline — a fact git's diff never represents as an
-    // explicit "-" line (only real content lines are shown; a file's own
-    // trailing newline is implicit). We already have the FULL original
-    // `oursText` in hand, so encode it directly here: one more (empty)
-    // element makes the eventual `oursLines.join('\n')` in
-    // parseConflictFile reconstruct that trailing newline exactly,
-    // instead of depending on ConflictFile.buildResult's generic
-    // "add a newline unless one is already there" default (which can't
-    // tell "add one" from "one is already present" on its own). Guarded
-    // on oursRun.isNotEmpty: a pure-addition hunk (nothing deleted) has no
-    // "ours" replacement content here at all — appending would fabricate
-    // a phantom blank line reject-all never had.
-    oursRun.add('');
-  }
-  // The mirror of the ours sentinel, for the theirs side. `theirsRun` holds
-  // the added lines verbatim; `theirsRun.join('\n')` therefore represents
-  // "N-1 terminated lines plus an unterminated last one". That is correct
-  // UNLESS theirs genuinely ends on a *terminated empty line* — an added
-  // line whose content is '' with no `\ No newline` marker after it. Then
-  // the join collapses that final empty terminated line into a bare trailing
-  // '\n' that buildResult reads as "already terminated, nothing to add", and
-  // the file loses its true final newline (accept-all drops a byte). One
-  // more empty element encodes that terminator explicitly, exactly as the
-  // ours branch above does. Guarded identically: only at true EOF, only when
-  // theirs actually has a trailing newline, and only when its last line is
-  // the empty one that makes the representation ambiguous.
-  if (!hasTrailingTail &&
-      !theirsNoNewlineAtEof &&
-      theirsRun.isNotEmpty &&
-      theirsRun.last.isEmpty) {
-    theirsRun.add('');
-  }
+  // Nothing to fake here: both sides reach the rebuild as lines, and the
+  // terminator that rejoins a block with what follows it is the
+  // rebuild's job.
   flush();
   while (idx < ours.length) {
     out.add(ours[idx]);
@@ -205,10 +174,9 @@ _SplicedConflict? _spliceConflictMarkers(
   // the diffed region — otherwise the tail (plain `ours` content,
   // reproduced verbatim above) is the file's real final content and
   // theirs doesn't actually end where the diff's last touched line does.
-  // oursNoTrailingNewline needs no such flag at all: since we hold the
-  // full original `oursText`, "does the block's own text end with a
-  // newline" is decidable directly from it (and is exactly what the
-  // sentinel-append above already encodes when true).
+  // oursNoTrailingNewline needs no such flag at all: we hold the full
+  // original `oursText`, so whether it ends with a newline is decidable
+  // directly.
   return (
     text: out.join('\n'),
     oursNoTrailingNewline: !hasTrailingTail && !oursEndsWithNewline,

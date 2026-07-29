@@ -25,41 +25,83 @@ import '../../ui/tokens.dart';
 
 enum ConflictSide { ours, theirs, both, bothReversed, custom, unresolved }
 
+/// A block side, as LINES.
+///
+/// The flattened string cannot say what a line list can: `''` is both
+/// "no lines at all" and "one empty line", and those rebuild into
+/// different files. Splitting on that convention here keeps one answer
+/// in one place — an empty text is no lines, anything else is its split.
+List<String> _linesOf(String text) =>
+    text.isEmpty ? const <String>[] : text.split('\n');
+
 class ConflictBlock {
   final int index;
-  final String oursText;
-  final String theirsText;
-  final String? baseText;
+
+  /// Each side as the LINES it occupies, which is what a block actually
+  /// is. Held as lines rather than as text because the rebuild needs to
+  /// know how many lines a side has, and the text form loses exactly
+  /// that at the boundary that matters: one empty line and no lines at
+  /// all both flatten to `''`, and rebuilding them alike drops a line
+  /// from the file.
+  final List<String> oursLines;
+  final List<String> theirsLines;
+  final List<String>? baseLines;
+
   ConflictSide resolution;
   String? customText;
+
+  /// The sides as text, for display and editing.
+  String get oursText => oursLines.join('\n');
+  String get theirsText => theirsLines.join('\n');
+  String? get baseText => baseLines?.join('\n');
 
   // Logos coherence signal: positive favors ours, negative favors theirs.
   // Null when no engine is available.
   double? coherenceBias;
 
-  /// True when the `ours` side of THIS block is the file's genuine final
-  /// content and that content has no trailing newline. Only ever set (by
-  /// patch_as_merge.dart's `_spliceConflictMarkers`, the sole producer) on
-  /// whichever block ends up last in a [ConflictFile] whose diff reaches
-  /// true end-of-file with no unchanged trailing lines — the one shape
-  /// [ConflictFile.buildResult] cannot recover from the marker text alone,
-  /// since that text round-trips identically whether or not the original
-  /// had a trailing newline.
-  bool oursNoTrailingNewline = false;
+  /// Whether the `ours` side ends the file WITHOUT a trailing newline —
+  /// or null when nobody knows.
+  ///
+  /// Null is the honest default and not the same as false. A conflict
+  /// file parsed from disk carries its own answer (the document either
+  /// ends with a terminator or it does not), and the editor must not
+  /// invent one: defaulting to false meant a file that genuinely ended
+  /// mid-line grew a newline the moment a block at its end was resolved.
+  /// Only patch_as_merge.dart's `_spliceConflictMarkers` can know better,
+  /// because the marker document it builds is spliced into OURS and so
+  /// cannot speak for theirs; it records both sides explicitly on
+  /// whichever block ends up last.
+  bool? oursNoTrailingNewline;
 
-  /// Same as [oursNoTrailingNewline] but for the `theirs` side. Ours and
-  /// theirs are tracked independently because only one side's edit may
-  /// actually be "drop the trailing newline" while the other still has one.
-  bool theirsNoTrailingNewline = false;
+  /// Same as [oursNoTrailingNewline] but for the `theirs` side. The two
+  /// are independent because only one side's edit may actually be "drop
+  /// the trailing newline" while the other still has one.
+  bool? theirsNoTrailingNewline;
 
   ConflictBlock({
     required this.index,
-    required this.oursText,
-    required this.theirsText,
-    this.baseText,
+    required String oursText,
+    required String theirsText,
+    String? baseText,
     this.resolution = ConflictSide.unresolved,
     this.customText,
-  });
+  })  : oursLines = _linesOf(oursText),
+        theirsLines = _linesOf(theirsText),
+        baseLines = baseText == null ? null : _linesOf(baseText);
+
+  /// The parser's constructor: it read the lines out of the marker
+  /// document and must not round-trip them through a text that cannot
+  /// hold the difference.
+  ConflictBlock.fromLines({
+    required this.index,
+    required List<String> oursLines,
+    required List<String> theirsLines,
+    List<String>? baseLines,
+    this.resolution = ConflictSide.unresolved,
+    this.customText,
+  })  : oursLines = List.unmodifiable(oursLines),
+        theirsLines = List.unmodifiable(theirsLines),
+        baseLines = baseLines == null ? null : List.unmodifiable(baseLines);
 
   bool get isResolved => resolution != ConflictSide.unresolved;
 
@@ -68,10 +110,8 @@ class ConflictBlock {
   double get heat {
     if (oursText == theirsText) return 0;
     // Textual similarity — identical lines / max lines
-    final oLines = oursText.split('\n');
-    final tLines = theirsText.split('\n');
-    final shared = oLines.toSet().intersection(tLines.toSet()).length;
-    final maxLen = math.max(oLines.length, tLines.length);
+    final shared = oursLines.toSet().intersection(theirsLines.toSet()).length;
+    final maxLen = math.max(oursLines.length, theirsLines.length);
     final similarity = maxLen > 0 ? shared / maxLen : 0.0;
     // Bias strength — strong bias = low heat
     final biasStrength = (coherenceBias ?? 0).abs().clamp(0.0, 0.3) / 0.3;
@@ -80,16 +120,17 @@ class ConflictBlock {
         .clamp(0.0, 1.0);
   }
 
-  String get resolvedText {
-    return switch (resolution) {
-      ConflictSide.ours => oursText,
-      ConflictSide.theirs => theirsText,
-      ConflictSide.both => '$oursText\n$theirsText',
-      ConflictSide.bothReversed => '$theirsText\n$oursText',
-      ConflictSide.custom => customText ?? '',
-      ConflictSide.unresolved => '',
-    };
-  }
+  /// The resolution as LINES — what the rebuild writes.
+  List<String> get resolvedLines => switch (resolution) {
+        ConflictSide.ours => oursLines,
+        ConflictSide.theirs => theirsLines,
+        ConflictSide.both => [...oursLines, ...theirsLines],
+        ConflictSide.bothReversed => [...theirsLines, ...oursLines],
+        ConflictSide.custom => _linesOf(customText ?? ''),
+        ConflictSide.unresolved => const [],
+      };
+
+  String get resolvedText => resolvedLines.join('\n');
 
   String get resolutionLabel {
     return switch (resolution) {
@@ -107,7 +148,12 @@ class ConflictFile {
   final String path;
   final String fullText;
   final List<ConflictBlock> blocks;
-  final List<String> segments;
+
+  /// The unchanged runs around the blocks, as LINES — same reason the
+  /// blocks hold lines. A run of one blank line and a run of nothing at
+  /// all are different documents that flatten to the same `''`.
+  final List<List<String>> segmentLines;
+
   final String oursBranch;
   final String theirsBranch;
 
@@ -125,7 +171,7 @@ class ConflictFile {
     required this.path,
     required this.fullText,
     required this.blocks,
-    required this.segments,
+    required this.segmentLines,
     this.oursBranch = 'ours',
     this.theirsBranch = 'theirs',
     this.lastReviewer,
@@ -141,48 +187,58 @@ class ConflictFile {
   int get resolvedCount => blocks.where((b) => b.isResolved).length;
   bool get allResolved => blocks.every((b) => b.isResolved);
 
+  /// Rebuild the file from the resolutions.
+  ///
+  /// Everything here is LINES until the last step. The old rebuild
+  /// concatenated strings and re-added terminators by asking whether a
+  /// piece already ended in one, which cannot tell a side that ends on a
+  /// blank line from a side that carries its own terminator — so files
+  /// whose blocks ended blank came back a byte short, in both
+  /// directions.
   String buildResult() {
-    final buf = StringBuffer();
-    for (var i = 0; i < segments.length; i++) {
-      buf.write(segments[i]);
-      if (i < blocks.length) {
-        final resolved = blocks[i].resolvedText;
-        buf.write(resolved);
-        // The original conflict markers occupied their own lines, so
-        // the resolved text needs a trailing newline to rejoin with the
-        // next segment — unless the resolved text is empty or already
-        // ends with a newline.
-        if (resolved.isNotEmpty && !resolved.endsWith('\n')) {
-          buf.write('\n');
-        }
-      }
+    final out = <String>[];
+    for (var i = 0; i < segmentLines.length; i++) {
+      out.addAll(segmentLines[i]);
+      if (i < blocks.length) out.addAll(blocks[i].resolvedLines);
     }
-    var result = buf.toString();
-    // The loop above always re-adds the newline the conflict markers
-    // consumed, even for the LAST block — correct when more content
-    // follows, wrong when that block IS the file's genuine end and the
-    // chosen side never had a trailing newline. oursNoTrailingNewline /
-    // theirsNoTrailingNewline (populated by patch_as_merge.dart, the only
-    // producer with the information needed to know this) carry the one
-    // bit the marker text itself can't represent. Guarded on the LAST
-    // block's own resolvedText being non-empty — an empty resolution
-    // (e.g. reject-all on a pure-addition hunk) contributes nothing of
-    // its own, so any trailing '\n' in `result` came from earlier
-    // content and must not be touched.
-    if (blocks.isNotEmpty &&
-        result.endsWith('\n') &&
-        blocks.last.resolvedText.isNotEmpty) {
+
+    // What follows the last block is either nothing, or only the empty
+    // element standing for the document's own trailing newline. Both
+    // mean the block is the file's final content — and then the
+    // terminator that counts is the RESOLVED SIDE's, not the document's.
+    // The document was spliced into ours, so it can only ever speak for
+    // ours; when theirs disagrees, that one bit is what
+    // oursNoTrailingNewline / theirsNoTrailingNewline carry.
+    final tail = segmentLines.last;
+    final tailIsDocumentTerminator = tail.length == 1 && tail.single.isEmpty;
+    final lastBlockEndsFile =
+        blocks.isNotEmpty && (tail.isEmpty || tailIsDocumentTerminator);
+    if (lastBlockEndsFile && blocks.last.resolvedLines.isEmpty) {
+      // The block WAS the file's tail and the resolution deletes it.
+      // Whatever now ends the file was terminated in the document — a
+      // marker line sat on the line after it — so that terminator is
+      // still owed. Only the deleted block's own terminator went away
+      // with it.
+      if (out.isNotEmpty && out.last.isNotEmpty) out.add('');
+    } else if (lastBlockEndsFile) {
       final last = blocks.last;
-      final suppressTrailingNewline = switch (last.resolution) {
+      // Null anywhere here — an unrecorded side, or a merged/hand-edited
+      // resolution that has no such fact at all — leaves the document's
+      // own terminator standing.
+      final sideHasNoTerminator = switch (last.resolution) {
         ConflictSide.ours => last.oursNoTrailingNewline,
         ConflictSide.theirs => last.theirsNoTrailingNewline,
-        _ => false,
+        _ => null,
       };
-      if (suppressTrailingNewline) {
-        result = result.substring(0, result.length - 1);
+      if (sideHasNoTerminator != null) {
+        // Take the document's terminator off (it is the last element the
+        // loop appended) and put the side's own back.
+        if (tailIsDocumentTerminator) out.removeLast();
+        if (!sideHasNoTerminator) out.add('');
       }
     }
-    return result;
+
+    return out.join('\n');
   }
 }
 
@@ -199,9 +255,9 @@ ConflictFile parseConflictFile(
   var detectedOurs = oursBranch;
   var detectedTheirs = theirsBranch;
   final lines = content.split('\n');
-  final segments = <String>[];
+  final segmentLines = <List<String>>[];
   final blocks = <ConflictBlock>[];
-  final clean = StringBuffer();
+  var clean = <String>[];
   final oursLines = <String>[];
   final theirsLines = <String>[];
   final baseLines = <String>[];
@@ -209,14 +265,11 @@ ConflictFile parseConflictFile(
   var inTheirs = false;
   var inBase = false;
   var blockIdx = 0;
-  var cleanNeedsSep = false;
 
   for (final line in lines) {
     if (line.startsWith('<<<<<<<')) {
-      final seg = clean.toString();
-      segments.add(seg.isNotEmpty && cleanNeedsSep ? '$seg\n' : seg);
-      clean.clear();
-      cleanNeedsSep = false;
+      segmentLines.add(clean);
+      clean = <String>[];
       oursLines.clear();
       theirsLines.clear();
       baseLines.clear();
@@ -241,11 +294,11 @@ ConflictFile parseConflictFile(
     if (line.startsWith('>>>>>>>') && inTheirs) {
       final marker = line.substring(7).trim();
       if (marker.isNotEmpty) detectedTheirs = marker;
-      blocks.add(ConflictBlock(
+      blocks.add(ConflictBlock.fromLines(
         index: blockIdx++,
-        oursText: oursLines.join('\n'),
-        theirsText: theirsLines.join('\n'),
-        baseText: baseLines.isEmpty ? null : baseLines.join('\n'),
+        oursLines: [...oursLines],
+        theirsLines: [...theirsLines],
+        baseLines: baseLines.isEmpty ? null : [...baseLines],
       ));
       inTheirs = false;
       continue;
@@ -258,28 +311,26 @@ ConflictFile parseConflictFile(
     } else if (inTheirs) {
       theirsLines.add(line);
     } else {
-      if (cleanNeedsSep) clean.write('\n');
-      clean.write(line);
-      cleanNeedsSep = true;
+      clean.add(line);
     }
   }
   // If the file ended mid-conflict (truncated/corrupt marker), flush
   // the partial block so it's visible rather than silently dropped.
   if (inOurs || inBase || inTheirs) {
-    blocks.add(ConflictBlock(
+    blocks.add(ConflictBlock.fromLines(
       index: blockIdx++,
-      oursText: oursLines.join('\n'),
-      theirsText: theirsLines.join('\n'),
-      baseText: baseLines.isEmpty ? null : baseLines.join('\n'),
+      oursLines: [...oursLines],
+      theirsLines: [...theirsLines],
+      baseLines: baseLines.isEmpty ? null : [...baseLines],
     ));
   }
-  segments.add(clean.toString());
+  segmentLines.add(clean);
 
   return ConflictFile(
     path: path,
     fullText: content,
     blocks: blocks,
-    segments: segments,
+    segmentLines: segmentLines,
     oursBranch: detectedOurs,
     theirsBranch: detectedTheirs,
   );
@@ -932,12 +983,12 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
       height: 1.55,
     );
 
-    for (var i = 0; i < _file.segments.length; i++) {
-      // Context segment
-      final seg = _file.segments[i];
-      if (seg.isNotEmpty) {
-        final segLines = seg.split('\n');
-        // Trim trailing empty line from writeln
+    for (var i = 0; i < _file.segmentLines.length; i++) {
+      // Context run. Read as lines: the file's own trailing newline
+      // arrives as a final empty element that is a terminator, not a
+      // line anyone should see a row for.
+      final segLines = _file.segmentLines[i];
+      if (segLines.isNotEmpty) {
         final trimmed = segLines.last.isEmpty && segLines.length > 1
             ? segLines.sublist(0, segLines.length - 1)
             : segLines;
@@ -965,10 +1016,10 @@ class _MergeConflictEditorState extends State<MergeConflictEditor> {
       if (i < _blocks.length) {
         final block = _blocks[i];
         final isFocused = i == _focusIndex;
-        final oursLines = block.oursText.split('\n');
-        // Count ours lines for line numbering
+        // Ours occupies these lines in the file, so the gutter advances
+        // by that many.
         final blockStartLine = lineNum;
-        lineNum += oursLines.length;
+        lineNum += block.oursLines.length;
 
         fileChildren.add(
           _InlineConflictRegion(
