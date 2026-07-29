@@ -368,16 +368,48 @@ void main() {
             // whatever was touched just before it, so the engine's OWN 1-3
             // commit lag window (a deliberate feature — see law 6's header
             // note) gives it a small nonzero coupling to files it never
-            // shared a commit with. That is by design, not a bug. The real,
-            // stronger law: that lag coupling must stay STRICTLY BELOW a
-            // genuine same-commit coupling — the lag window must never let a
-            // never-co-changed pair outrank or match a truly-co-changed one,
-            // which is what would actually mislead the user. `core` files all
-            // co-changed with each other; assert every isolated/core lag
-            // score is strictly less than the weakest genuine core/core pair.
+            // shared a commit with. That is by design, not a bug. The
+            // question worth asking is whether that faint signal can rival a
+            // real one.
+            //
+            // The baseline has to be GENUINE, and this used to assume it:
+            // the generator draws `rng.intBetween(1, coreCount)` files per
+            // commit, so plenty of cases produce core pairs that never share
+            // a commit at all, and the assertion then compared one lag-only
+            // pair against another lag-only pair. Both sides were the same
+            // kind of thing, so the strict inequality it demanded was not
+            // merely unproven — it was arithmetically unreachable, and the
+            // shrinker duly found the tie. Only pairs that actually shared a
+            // commit count as the baseline now.
+            //
+            // The comparison is also bounded ABOVE rather than strict: two
+            // pairs with different histories are not comparable on this axis
+            // by design. Recency weighting is deliberate, so a single
+            // co-change far enough in the past decays below a fresh
+            // adjacency — a strict ordering across unrelated histories would
+            // contradict the engine's own physics. What must never happen is
+            // the lag signal EXCEEDING a genuine one, and the controlled
+            // version of the question ("same pair, same mass, only adjacency
+            // differs") is law 2b below, where strictness IS derivable from
+            // the kernel.
+            final coChanged = <String>{};
+            for (final files in commitFileSets) {
+              for (var i = 0; i < files.length; i++) {
+                for (var j = i + 1; j < files.length; j++) {
+                  final lo = files[i].compareTo(files[j]) < 0
+                      ? '${files[i]}|${files[j]}'
+                      : '${files[j]}|${files[i]}';
+                  coChanged.add(lo);
+                }
+              }
+            }
             var weakestCorePair = double.infinity;
             for (var i = 0; i < core.length; i++) {
               for (var j = i + 1; j < core.length; j++) {
+                final key = core[i].compareTo(core[j]) < 0
+                    ? '${core[i]}|${core[j]}'
+                    : '${core[j]}|${core[i]}';
+                if (!coChanged.contains(key)) continue;
                 final s = after.jaccardScoreOf(core[i], core[j]);
                 if (s < weakestCorePair) weakestCorePair = s;
               }
@@ -386,12 +418,12 @@ void main() {
               for (final iso in isolated) {
                 for (final c in core) {
                   expect(after.jaccardScoreOf(iso, c),
-                      lessThan(weakestCorePair),
+                      lessThanOrEqualTo(weakestCorePair),
                       reason: 'lag coupling for never-co-changed $iso/$c '
-                          '(${after.jaccardScoreOf(iso, c)}) must stay below '
+                          '(${after.jaccardScoreOf(iso, c)}) must not exceed '
                           'the weakest genuine co-change coupling '
                           '($weakestCorePair) — the lag window may add a faint '
-                          'signal but must never rival a real one.');
+                          'signal but must never outrank a real one.');
                 }
               }
             }
@@ -400,6 +432,49 @@ void main() {
           }
         },
       );
+    });
+  });
+
+  group('law 2b — same-commit beats adjacency', () {
+    test('one shared commit outranks the same two files in neighbouring '
+        'commits', () async {
+      // The controlled form of law 2's question. Same two files, same
+      // number of commits, same masses: the ONLY difference is whether
+      // their changes land together or one apart. The kernel weights
+      // distance 0 at 1 and distance 1 at 1/2, and the score normalizes
+      // both sides in that same geometry, so together must win. This is
+      // the part of "a faint signal must never rival a real one" that
+      // follows from the operator rather than from hope.
+      final together = await ScratchRepo.create(name: 'law2b_together');
+      final apart = await ScratchRepo.create(name: 'law2b_apart');
+      try {
+        final w1 = _AppendWriter();
+        await _commitTouching(together, w1, ['lib/a.dart', 'lib/b.dart'],
+            message: 'together');
+        await _commitTouching(together, w1, ['lib/filler.dart'],
+            message: 'filler');
+
+        final w2 = _AppendWriter();
+        await _commitTouching(apart, w2, ['lib/a.dart'], message: 'a');
+        await _commitTouching(apart, w2, ['lib/b.dart'], message: 'b');
+
+        final mTogether = await _computeCoupling(together);
+        final mApart = await _computeCoupling(apart);
+
+        final sTogether = mTogether.jaccardScoreOf('lib/a.dart', 'lib/b.dart');
+        final sApart = mApart.jaccardScoreOf('lib/a.dart', 'lib/b.dart');
+
+        expect(sTogether, greaterThan(sApart),
+            reason: 'changing together is stronger evidence than changing '
+                'next to each other; got together=$sTogether '
+                'apart=$sApart');
+        expect(sApart, greaterThan(0),
+            reason: 'the lag window is a feature — adjacency still counts '
+                'for something, or there would be nothing to rank');
+      } finally {
+        await together.dispose();
+        await apart.dispose();
+      }
     });
   });
 
