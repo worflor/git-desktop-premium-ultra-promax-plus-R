@@ -63,13 +63,14 @@ import '../diff/diff_document.dart' show DiffDocument;
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../../backend/review_records.dart' show ReviewRoundInfo;
-import '../review/review_adapter.dart' show ReviewViewBundle;
 import '../../backend/git_identity.dart' show kGitIdentityCommand;
 import '../review/review_chrome.dart'
     show ReviewChip, ReviewChipVariant, ReviewVerbPill;
 import '../review/review_identity_notice.dart';
 import '../review/review_pane.dart';
 import '../review/review_pane_controller.dart';
+import '../review/review_currency.dart';
+import '../review/review_session.dart';
 import '../review/review_strings_i18n.dart';
 import '../review/review_view_model.dart';
 import '../changes/merge_conflict_editor.dart'
@@ -316,6 +317,25 @@ class _PrAiReviewDialog extends StatelessWidget {
   }
 }
 
+/// A [ReviewClaim] plus this page's own liveness.
+///
+/// The invalidation RULES live in [ReviewCurrency], which knows nothing
+/// about widgets and is tested directly. All this adds is `mounted`,
+/// which only the page can answer.
+class _ReviewWork {
+  final _BranchesPageState _page;
+  final ReviewClaim _claim;
+
+  _ReviewWork(this._page, this._claim);
+
+  /// The claim a running load carries, which [ReviewLoad.renew]
+  /// replaces — read through the load rather than captured, or a
+  /// renewal would leave the caller checking the claim it just retired.
+  _ReviewWork.of(this._page, ReviewLoad load) : _claim = load.claim;
+
+  bool get isCurrent => _page.mounted && _claim.isCurrent;
+}
+
 class _BranchesPageState extends State<BranchesPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
   List<BranchInfo> _branches = [];
@@ -396,13 +416,35 @@ class _BranchesPageState extends State<BranchesPage> {
   /// repo's threads in the new repo's pane. `mounted` cannot catch this
   /// (same widget, still mounted); currency has to be explicit. Same
   /// idiom as DeskPrState._requestId.
-  int _reviewEpoch = 0;
 
-  final Map<int, ReviewPaneController> _reviewCtrls = {};
-  final Map<int, ReviewPaneData> _reviewData = {};
-  final Set<int> _reviewLoading = {};
+  /// One live review per desk: the controller AND every value derived
+  /// from it — data, reviewed ticks, compose anchor, lens posture, lens
+  /// diff, compare pair, marks memo — behind a single atomic reload.
+  ///
+  /// This was TEN parallel collections keyed by deskId. Parallel maps
+  /// keyed by one id are a missing object, and the bill came due as a
+  /// family of bugs with one shape, two of the maps disagreeing: first
+  /// open refreshed data but not ticks so every file read as unreviewed;
+  /// three verbs refreshed the collapsed row's badge and nine did not; a
+  /// gutter tap wrote data with no reload at all. Each was fixed where
+  /// it was found, which left nothing stopping the eleventh verb from
+  /// forgetting the eleventh map. See [ReviewSession].
+  final Map<int, ReviewSession> _reviewSessions = {};
+
+  /// What is still wanted, and which load owns each desk. See
+  /// [ReviewCurrency] — the rules live there so they can be tested
+  /// without a widget tree.
+  final ReviewCurrency _currency = ReviewCurrency();
+
+  /// Claim the right to write back one desk's async review result.
+  /// Capture BEFORE the await, ask [_ReviewWork.isCurrent] after it.
+  _ReviewWork _reviewWork(int deskId) =>
+      _ReviewWork(this, _currency.claim(deskId));
 
   /// Collapsed-row turn signals for every OPEN desk PR with a review.
+  ///
+  /// Stays a page-level map on purpose: it covers desks whose row was
+  /// never opened, so there is no session to hang it on.
   Map<int, ReviewRowSummary> _reviewRowSummaries = {};
   bool _reviewSummariesLoading = false;
 
@@ -424,39 +466,6 @@ class _BranchesPageState extends State<BranchesPage> {
   /// chip), and a sweep is now one ref listing when nothing is reviewed.
   Object? _reviewSummariesFor;
 
-  /// Files the viewer has ticked, per desk, valid at the content shown.
-  /// Recomputed on every reload because a tick is only true while the
-  /// bytes behind it are.
-  final Map<int, Set<String>> _reviewedFiles = {};
-
-  /// Open opener-composer target per deskId: (path, oldSide, line).
-  final Map<int, (String, bool, int)> _reviewComposeAt = {};
-
-  /// deskIds whose diff is currently in the "since your last look"
-  /// lens (task posture — deliberately NOT persisted).
-  final Set<int> _reviewLensSince = {};
-
-  /// Active round-to-round snapshot comparison per deskId: (from, to)
-  /// round numbers. Mutually exclusive with [_reviewLensSince]; also a
-  /// task posture, never persisted.
-  final Map<int, (int, int)> _reviewCompare = {};
-
-  /// Materialized lens diffs, keyed by deskId.
-  ///
-  /// DELIBERATELY NOT `_prDetails`. That cache is the PR's canonical
-  /// truth and feeds the cross-PR collision map, the conflicts pill, the
-  /// magnetic-shape fingerprint, patch export and AI review — a lens
-  /// slice landing there would silently shrink another row's WILL FIGHT
-  /// list and export a partial patch under the PR's name. A lens is
-  /// bounded (refused above the spill threshold) and owns no spool, so
-  /// it needs none of that cache's eviction machinery.
-  final Map<int, ReviewLensDiff> _reviewLensDiffs = {};
-  final Set<int> _reviewLensLoading = {};
-
-  /// The spec each desk's lens SHOULD be showing. A fetch in flight
-  /// re-reads this when it lands, so spinning the round dropdown settles
-  /// on the last choice instead of dropping everything after the first.
-  final Map<int, String> _reviewLensWanted = {};
   final Set<int> _prDetailsLoading = {};
 
   // Lazy documents over PR-detail diffs that carry no cached per-file
@@ -2768,25 +2777,17 @@ class _BranchesPageState extends State<BranchesPage> {
     // Review state is per-repo (controllers hold the old repo's refs):
     // a full detail eviction is exactly the repo-switch moment, so the
     // review caches go with it.
-    _reviewCtrls.clear();
-    _reviewData.clear();
-    _reviewComposeAt.clear();
-    _reviewLensSince.clear();
-    _reviewCompare.clear();
-    _reviewLensDiffs.clear();
-    _reviewLensWanted.clear();
-    _reviewedFiles.clear();
-    _reviewMarksMemo.clear();
+    // Dropping the map is enough. A lens fetch still in flight writes
+    // only into a session nothing reads any more — the session calls
+    // nothing back, which is what keeps a late result from touching the
+    // repo the user just switched TO (desk ids are per-repo
+    // sequentials, so the same number exists in both).
+    _reviewSessions.clear();
     _reviewRowSummaries = {};
     _reviewSummariesFor = null;
-    // Loop guards go too, or the new repo's load for a colliding deskId
-    // no-ops until the stale call's `finally` happens to run. Their
-    // owners check the epoch before releasing, so clearing here cannot
-    // let a stale call free a live one's slot.
-    _reviewLoading.clear();
-    _reviewLensLoading.clear();
+
     _reviewSummariesLoading = false;
-    _reviewEpoch++;
+    _currency.invalidateAll();
   }
 
   /// The full diff text of [detail], reading a spooled diff back from disk
@@ -2885,10 +2886,10 @@ class _BranchesPageState extends State<BranchesPage> {
 
   // ─── Review verbs + loading (desk PRs) ─────────────────────────────
 
-  /// True while [epoch]'s results still belong to the open repo. THE
-  /// gate for every async review write-back — it folds in `mounted` so
-  /// a call site can't remember one check and forget the other.
-  bool _reviewCurrent(int epoch) => mounted && epoch == _reviewEpoch;
+  /// Page-wide currency for work that belongs to no single desk (the
+  /// row-summary sweep). A desk-scoped claim would be meaningless there.
+  _ReviewWork _reviewWorkPageWide() =>
+      _ReviewWork(this, _currency.claimPageWide());
 
   /// Null until DeskPrState has resolved the MAIN repo path. Review refs
   /// must be written through the common dir; guessing with a desk's own
@@ -2916,114 +2917,100 @@ class _BranchesPageState extends State<BranchesPage> {
     );
   }
 
-  /// Marks lists memoized per desk on (bundle, path) identity: DiffShell
-  /// caches its display-row map keyed on the marks LIST identity, so a
-  /// fresh list every page rebuild would recompute an O(rows) mapping on
-  /// every unrelated setState of a machine-scale diff.
-  final Map<int, (ReviewViewBundle, String, bool, List<DiffLineMark>)>
-      _reviewMarksMemo = {};
-
-  List<DiffLineMark> _reviewMarksFor(
-    int deskId,
-    ReviewViewBundle bundle,
-    String path, {
-    required bool includeOldSide,
-  }) {
-    final memo = _reviewMarksMemo[deskId];
-    if (memo != null &&
-        identical(memo.$1, bundle) &&
-        memo.$2 == path &&
-        memo.$3 == includeOldSide) {
-      return memo.$4;
-    }
-    final marks =
-        buildLineMarks(bundle, path, includeOldSide: includeOldSide);
-    _reviewMarksMemo[deskId] = (bundle, path, includeOldSide, marks);
-    return marks;
-  }
-
   Future<void> _ensureReviewLoaded(String repoPath, DeskPr dp) async {
     if (!mounted) return;
     final id = dp.deskId;
-    if (_reviewLoading.contains(id)) return;
-    _reviewLoading.add(id);
-    final epoch = _reviewEpoch;
+    final load = _currency.beginLoad(id);
+    // Another load already owns this desk; two at once would race to
+    // publish the same session.
+    if (load == null) return;
     try {
-      var ctrl = _reviewCtrls[id];
+      var session = _reviewSessions[id];
       // The controller bakes in the identity a comment will be authored
       // under and the branch its rounds are cut from — a rename of
       // either (settings, branch rename) has to mint a fresh one, or the
       // pane would keep writing under a name the user no longer uses.
-      if (ctrl != null &&
-          (ctrl.headBranch != dp.headRef ||
-              ctrl.viewerDisplay != context.read<DeskPrState>().viewerDisplay)) {
-        ctrl = null;
+      final retired = session;
+      final ctrl0 = session?.controller;
+      if (ctrl0 != null &&
+          (ctrl0.headBranch != dp.headRef ||
+              ctrl0.viewerDisplay !=
+                  context.read<DeskPrState>().viewerDisplay)) {
+        session = null;
+        // Evict as well as invalidate. Leaving the retired session in
+        // the map meant that when no replacement could be built (git
+        // identity unset), every other path kept reading a session
+        // pinned to the OLD branch or the OLD author — retired for the
+        // purpose of this load, live for everyone else's.
+        _reviewSessions.remove(id);
+        // A reload already in flight holds the OLD session in its
+        // closure and would setState with it after the swap. Renewing
+        // stales exactly that work while this load, which IS the new
+        // work, carries on under a fresh claim.
+        load.renew();
       }
-      if (ctrl == null) {
-        final fresh = _reviewCtrlFor(dp);
-        if (fresh == null) return;
-        ctrl = _reviewCtrls[id] = fresh;
+      session ??= _newSession(dp);
+      if (session == null) return;
+      // Carry the viewer's place across a same-branch replacement. The
+      // session itself decides when that is meaningful.
+      if (retired != null && !identical(retired, session)) {
+        session.adoptPostureFrom(retired);
       }
-      final r = await ctrl.load();
-      if (!mounted || !_reviewCurrent(epoch)) return;
-      if (!r.ok) {
-        // A failed load used to be silent, so a pane frozen on its last
-        // good bundle looked exactly like a pane with nothing new. The
-        // real cases are not obscure: a corrupt state doc, or a peer on
-        // a newer schema that the store REFUSES to rewrite rather than
-        // truncate. Both need saying out loud.
-        _reviewErrorSnack(
-            context.t.review.reviewActionFailed(error: r.error ?? '?'));
-        return;
-      }
-      setState(() => _reviewData[id] = r.data!);
-      await _afterReviewLoad(id, epoch);
+      _reviewSessions[id] = session;
+      final outcome = await session.reload();
+      if (!_ReviewWork.of(this, load).isCurrent) return;
+      _reportReload(outcome);
+      setState(() => _reconcileLensFiles(id, session!));
+      if (!_ReviewWork.of(this, load).isCurrent) return;
+      unawaited(_loadReviewRowSummaries());
     } finally {
-      // Only release what we still own: after a switch the set was
-      // already cleared and this id may belong to a live newer load.
-      if (epoch == _reviewEpoch) _reviewLoading.remove(id);
+      load.end();
     }
   }
 
-  Future<void> _reloadReview(int deskId) async {
-    final ctrl = _reviewCtrls[deskId];
-    if (ctrl == null) return;
-    final epoch = _reviewEpoch;
-    final r = await ctrl.load();
-    if (!_reviewCurrent(epoch)) return;
-    if (!r.ok) {
-      // See [_ensureReviewLoaded]: the write may well have landed and
-      // only the read back failed, so the pane is now showing state
-      // that is stale rather than wrong. Say so instead of leaving the
-      // user to infer it from a verb that appeared to do nothing.
-      if (!mounted) return;
-      _reviewErrorSnack(
-          context.t.review.reviewActionFailed(error: r.error ?? '?'));
-      return;
-    }
-    setState(() => _reviewData[deskId] = r.data!);
-    await _afterReviewLoad(deskId, epoch);
+  /// Build a session for [dp], or null when there is no identity to sign
+  /// its writes with. See [_reviewCtrlFor].
+  ReviewSession? _newSession(DeskPr dp) {
+    final ctrl = _reviewCtrlFor(dp);
+    if (ctrl == null) return null;
+    return ReviewSession(controller: ctrl);
   }
 
-  /// Everything derived from a freshly loaded review. Both load paths
-  /// (first open, and every verb's reload) share it: when they each
-  /// carried their own tail, first open silently skipped the reviewed
-  /// ticks and every file read as unread until you happened to press
-  /// something else.
+  /// Say what a reload could not do. The session returns a typed fault
+  /// and never a string, so the wording lives here with the strings.
+  void _reportReload(ReviewReloadResult r) {
+    switch (r.fault) {
+      case null:
+        return;
+      case ReviewReloadFault.loadFailed:
+        // The write may well have landed and only the read back failed,
+        // so the pane is showing state that is stale rather than wrong.
+        _reviewErrorSnack(
+            context.t.review.reviewActionFailed(error: r.detail ?? '?'));
+      case ReviewReloadFault.lensFailed:
+        _reviewErrorSnack(
+            context.t.review.reviewActionFailed(error: r.detail ?? '?'));
+      case ReviewReloadFault.lensTooLarge:
+        // Refused as too large: say so and stay on the full diff rather
+        // than pretending the toggle did nothing.
+        _reviewErrorSnack(context.t.review.lensTooLarge);
+    }
+  }
+
+  /// Reload one desk's review and everything derived from it.
   ///
-  /// The collapsed row's turn badge belongs here for the same reason,
-  /// and used to be pasted onto three verbs by hand. The three were not
-  /// even the right three: LOADING can cut a round, and resolving a
-  /// thread now moves attention, so a reviewer could expand a row (which
-  /// puts them in the attention set), read, collapse, and see no badge
-  /// on the PR that was explicitly waiting for them. Anything that
-  /// reloads a review can change the turn, so the refresh lives with the
-  /// reload rather than with whoever remembered to ask for it.
-  Future<void> _afterReviewLoad(int deskId, int epoch) async {
-    await _refreshReviewTicks(deskId, epoch);
-    if (!_reviewCurrent(epoch)) return;
-    await _refreshReviewLens(deskId);
-    if (!_reviewCurrent(epoch)) return;
+  /// One call, because they are one thing. This used to be a load plus a
+  /// tail the page had to remember to run, and the verbs that remembered
+  /// it were never the verbs that changed what it refreshed.
+  Future<void> _reloadReview(int deskId) async {
+    final session = _reviewSessions[deskId];
+    if (session == null) return;
+    final work = _reviewWork(deskId);
+    final outcome = await session.reload();
+    if (!work.isCurrent) return;
+    _reportReload(outcome);
+    setState(() => _reconcileLensFiles(deskId, session));
+    if (!work.isCurrent) return;
     unawaited(_loadReviewRowSummaries());
   }
 
@@ -3031,51 +3018,6 @@ class _BranchesPageState extends State<BranchesPage> {
   /// screen. A tick is a claim about bytes, so it is recomputed rather
   /// than remembered — that is what makes the author's next edit clear
   /// it without anyone clearing it.
-  Future<void> _refreshReviewTicks(int deskId, int epoch) async {
-    final ctrl = _reviewCtrls[deskId];
-    final data = _reviewData[deskId];
-    if (ctrl == null || data == null) return;
-    final paths = {
-      for (final g in data.bundle.groups) g.filePath,
-    };
-    if (paths.isEmpty) {
-      if (_reviewCurrent(epoch) && _reviewedFiles.remove(deskId) != null) {
-        setState(() {});
-      }
-      return;
-    }
-    final ticked = await ctrl.reviewedNow(paths);
-    if (!_reviewCurrent(epoch)) return;
-    setState(() => _reviewedFiles[deskId] = ticked);
-  }
-
-  /// A lens is derived from review state, so it has to move when that
-  /// state does. Publishing advances the last-look pointer, which is
-  /// exactly the moment `since your last look` becomes "nothing" — a
-  /// lens left standing there would keep showing the old delta under a
-  /// label that is no longer true. Re-derives the spec, re-fetches only
-  /// when it actually changed, and stands the lens down when the viewer
-  /// has caught up or a pin has gone.
-  Future<void> _refreshReviewLens(int deskId) async {
-    final ctrl = _reviewCtrls[deskId];
-    if (ctrl == null) return;
-    final String? spec;
-    final cmp = _reviewCompare[deskId];
-    if (cmp != null) {
-      spec = ctrl.compareSpec(cmp.$1, cmp.$2);
-    } else if (_reviewLensSince.contains(deskId)) {
-      spec = ctrl.sinceLastLookSpec;
-    } else {
-      return; // no lens posture — nothing to track
-    }
-    if (spec == null) {
-      if (mounted) setState(() => _clearReviewLens(deskId));
-      return;
-    }
-    if (_reviewLensDiffs[deskId]?.spec == spec) return;
-    await _applyReviewLens(deskId, spec);
-  }
-
   void _reviewErrorSnack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -3089,16 +3031,19 @@ class _BranchesPageState extends State<BranchesPage> {
     bool oldSide,
     int line,
   ) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
-    final epoch = _reviewEpoch;
-    if ((_reviewData[deskId]?.latestRound ?? 0) == 0) {
+    final work = _reviewWork(deskId);
+    if ((_reviewSessions[deskId]?.data?.latestRound ?? 0) == 0) {
       // First intent on this desk: cutting round 1 creates the review.
       final r = await ctrl.ensureRound();
-      // Two checks, not one: `mounted` is what the analyzer can see for
-      // the context uses below, `_reviewCurrent` is what keeps another
-      // repo's result out of this cache.
-      if (!mounted || !_reviewCurrent(epoch)) return;
+      // The literal `mounted` is for the ANALYZER, which cannot see
+      // inside [_ReviewWork.isCurrent]; the claim is what actually keeps
+      // another repo's or another session's result out of this cache.
+      // Writing both is not redundancy — omitting the first is a
+      // compile error before any context use, which is the strongest
+      // guard available here.
+      if (!mounted || !work.isCurrent) return;
       if (!r.ok) {
         _reviewErrorSnack(
           context.t.review.startReviewFailed(error: r.error ?? '?'),
@@ -3111,9 +3056,8 @@ class _BranchesPageState extends State<BranchesPage> {
       // setState the header kept rendering the pre-review state, and
       // without the shared tail the collapsed row showed no turn badge
       // for a review that had just been started ON this viewer.
-      setState(() => _reviewData[deskId] = r.data!);
-      await _afterReviewLoad(deskId, epoch);
-      if (!mounted || !_reviewCurrent(epoch)) return;
+      await _reloadReview(deskId);
+      if (!work.isCurrent) return;
     }
     // Prove the line can actually be anchored BEFORE opening a
     // composer. The byte cap and missing-blob paths used to surface at
@@ -3131,30 +3075,42 @@ class _BranchesPageState extends State<BranchesPage> {
     // resolved, and repo B's desk #3 popped open a composer labelled
     // with repo A's file and line — which a save would then anchor into
     // the wrong repository's drafts.
-    if (!mounted || !_reviewCurrent(epoch)) return;
+    if (!mounted || !work.isCurrent) return;
     if (anchor == null) {
       _reviewErrorSnack(context.t.review.anchorUnavailable);
       return;
     }
-    setState(() => _reviewComposeAt[deskId] = (path, oldSide, line));
+    setState(() => _reviewSessions[deskId]?.composeAt = (path, oldSide, line));
   }
 
   Future<bool> _saveReviewOpener(int deskId, String body) async {
-    final ctrl = _reviewCtrls[deskId];
-    final at = _reviewComposeAt[deskId];
-    if (ctrl == null || at == null) return false;
+    // Hold the SESSION, not just its controller. Two git round-trips
+    // happen below, and the composer this save is closing belongs to
+    // the session that opened it — writing through
+    // `_reviewSessions[deskId]` afterwards would find whatever occupies
+    // that desk id by then.
+    final session = _reviewSessions[deskId];
+    final ctrl = session?.controller;
+    final at = session?.composeAt;
+    if (session == null || ctrl == null || at == null) return false;
+    final work = _reviewWork(deskId);
     final anchor = await ctrl.captureAt(
       path: at.$1,
       side: at.$2 ? 'old' : 'new',
       line: at.$3,
     );
+    if (!mounted || !work.isCurrent) return false;
     if (anchor == null) {
-      if (!mounted) return false;
       _reviewErrorSnack(context.t.review.anchorUnavailable);
       return false;
     }
     final err = await ctrl.saveOpenerDraft(anchor: anchor, body: body);
-    if (!mounted) return false;
+    // A repo switch leaves this page mounted and desk ids are per-repo
+    // sequentials, so `mounted` alone let a completed save from the old
+    // repository close a composer just opened in the new one — same desk
+    // id, same (path, side, line), different review entirely, and the
+    // user's unsaved text went with it.
+    if (!mounted || !work.isCurrent) return false;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
       return false;
@@ -3165,8 +3121,8 @@ class _BranchesPageState extends State<BranchesPage> {
     // busy-gated — backing out must always be possible), and an
     // unconditional remove here would dispose THAT composer and take
     // its unsaved text with it.
-    if (_reviewComposeAt[deskId] == at) {
-      setState(() => _reviewComposeAt.remove(deskId));
+    if (session.composeAt == at) {
+      setState(() => session.composeAt = null);
     }
     await _reloadReview(deskId);
     return true;
@@ -3177,10 +3133,11 @@ class _BranchesPageState extends State<BranchesPage> {
     String threadId,
     String body,
   ) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return false;
+    final work = _reviewWork(deskId);
     final err = await ctrl.saveReplyDraft(threadId: threadId, body: body);
-    if (!mounted) return false;
+    if (!mounted || !work.isCurrent) return false;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
       return false;
@@ -3194,10 +3151,11 @@ class _BranchesPageState extends State<BranchesPage> {
     String threadId,
     String how,
   ) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
+    final work = _reviewWork(deskId);
     final err = await ctrl.resolve(threadId, how: how);
-    if (!mounted) return;
+    if (!mounted || !work.isCurrent) return;
     if (err != null) {
       _reviewErrorSnack(context.t.review.reviewActionFailed(error: err));
     }
@@ -3209,7 +3167,7 @@ class _BranchesPageState extends State<BranchesPage> {
     String path,
     bool reviewed,
   ) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final r = await ctrl.setFileReviewed(path, reviewed: reviewed);
     if (!mounted) return;
@@ -3226,7 +3184,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _handReviewTo(int deskId, String display) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.handTo(display);
     if (!mounted) return;
@@ -3237,7 +3195,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _stepOutOfReviewAttention(int deskId) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.stepOutOfAttention();
     if (!mounted) return;
@@ -3248,7 +3206,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _reopenReviewThread(int deskId, String threadId) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.reopen(threadId);
     if (!mounted) return;
@@ -3264,7 +3222,7 @@ class _BranchesPageState extends State<BranchesPage> {
     String body,
     DateTime at,
   ) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err =
         await ctrl.discardOneDraft(threadId: threadId, body: body, at: at);
@@ -3276,7 +3234,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _publishReview(int deskId, String? verdict) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.publish(verdict: verdict);
     if (!mounted) return;
@@ -3287,7 +3245,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _discardReviewDrafts(int deskId) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.discardDrafts();
     if (!mounted) return;
@@ -3297,99 +3255,70 @@ class _BranchesPageState extends State<BranchesPage> {
     await _reloadReview(deskId);
   }
 
-  /// Drop any lens and restore the canonical PR diff.
-  void _clearReviewLens(int deskId) {
-    _reviewLensSince.remove(deskId);
-    _reviewCompare.remove(deskId);
-    _reviewLensDiffs.remove(deskId);
-    _reviewLensWanted.remove(deskId);
-    _reconcileActiveFile(deskId, _prDetails[deskId]?.files ?? const []);
-  }
-
-  /// Install the lens described by [spec], or fall back to the full diff
-  /// when it can't be shown. The canonical detail is never touched, so
-  /// there is nothing to evict and nothing to restore on failure.
-  Future<void> _applyReviewLens(int deskId, String? spec) async {
-    if (spec == null) {
-      setState(() => _clearReviewLens(deskId));
-      return;
-    }
-    final ctrl = _reviewCtrls[deskId];
-    if (ctrl == null) return;
-    _reviewLensWanted[deskId] = spec;
-    // Coalesce rather than drop: whoever holds the slot loops until the
-    // installed lens matches the newest wanted spec.
-    if (!_reviewLensLoading.add(deskId)) return;
-    final epoch = _reviewEpoch;
-    try {
-      while (true) {
-        final want = _reviewLensWanted[deskId];
-        if (want == null) return; // cleared while we waited
-        if (_reviewLensDiffs[deskId]?.spec == want) return;
-        final r = await ctrl.loadLens(want);
-        if (!mounted || !_reviewCurrent(epoch)) return;
-        // The target moved under us — discard this result and fetch the
-        // one the user is actually asking for.
-        if (_reviewLensWanted[deskId] != want) continue;
-        if (!r.ok) {
-          setState(() => _clearReviewLens(deskId));
-          _reviewErrorSnack(
-            context.t.review.reviewActionFailed(error: r.error ?? '?'),
-          );
-          return;
-        }
-        final lens = r.data;
-        if (lens == null) {
-          // Refused as too large: say so and stay on the full diff rather
-          // than pretending the toggle did nothing.
-          setState(() => _clearReviewLens(deskId));
-          _reviewErrorSnack(context.t.review.lensTooLarge);
-          return;
-        }
-        setState(() {
-          _reviewLensDiffs[deskId] = lens;
-          _reconcileActiveFile(deskId, lens.files);
-        });
-        return;
-      }
-    } finally {
-      if (epoch == _reviewEpoch) _reviewLensLoading.remove(deskId);
-    }
-  }
-
+  /// The two lens postures are mutually exclusive: setting one clears
+  /// the other, and the session derives the spec from whichever stands.
   Future<void> _setReviewLens(int deskId, bool since) async {
-    final ctrl = _reviewCtrls[deskId];
+    final session = _reviewSessions[deskId];
+    if (session == null) return;
     setState(() {
-      _reviewCompare.remove(deskId);
+      // One posture, so choosing this one cannot leave the other set.
       if (since) {
-        _reviewLensSince.add(deskId);
+        session.posture = const SinceLastLook();
       } else {
-        _clearReviewLens(deskId);
+        session.clearLens();
       }
+      // Reconcile on the way DOWN as well: the selected file may exist
+      // only inside the lens, and returning early left the selection
+      // pointing at a file the restored full diff does not contain.
+      _reconcileLensFiles(deskId, session);
     });
     if (!since) return;
-    await _applyReviewLens(deskId, ctrl?.sinceLastLookSpec);
+    await _installLens(deskId, session);
   }
 
   Future<void> _setReviewCompare(int deskId, (int, int)? cmp) async {
-    final ctrl = _reviewCtrls[deskId];
+    final session = _reviewSessions[deskId];
+    if (session == null) return;
     setState(() {
-      _reviewLensSince.remove(deskId);
       if (cmp == null) {
-        _clearReviewLens(deskId);
+        session.clearLens();
       } else {
-        _reviewCompare[deskId] = cmp;
+        session.posture = CompareRounds(cmp.$1, cmp.$2);
       }
+      _reconcileLensFiles(deskId, session);
     });
     if (cmp == null) return;
-    await _applyReviewLens(deskId, ctrl?.compareSpec(cmp.$1, cmp.$2));
+    await _installLens(deskId, session);
+  }
+
+  /// Bring the lens in line with the posture just set. No spec is
+  /// passed: the session derives it from the posture on every pass, so
+  /// a dismissal mid-fetch cannot be overtaken by a stale request.
+  Future<void> _installLens(int deskId, ReviewSession session) async {
+    final work = _reviewWork(deskId);
+    final outcome = await session.refreshLens();
+    if (!work.isCurrent) return;
+    _reportReload(outcome);
+    setState(() => _reconcileLensFiles(deskId, session));
+  }
+
+  /// Point the active-file selection at whatever the diff now shows.
+  ///
+  /// Reads the session rather than being told by it: the currency check
+  /// above is what makes this safe, and it can only do that if the page
+  /// is the one deciding when to look.
+  void _reconcileLensFiles(int deskId, ReviewSession session) {
+    _reconcileActiveFile(
+      deskId,
+      session.lens?.files ?? (_prDetails[deskId]?.files ?? const []),
+    );
   }
 
   /// The viewer has read this round without anything to say. Advances
   /// the last-look pointer — otherwise "since your last look" would stay
   /// unreachable forever for a reviewer who never publishes.
   Future<void> _markReviewCaughtUp(int deskId) async {
-    final ctrl = _reviewCtrls[deskId];
+    final ctrl = _reviewSessions[deskId]?.controller;
     if (ctrl == null) return;
     final err = await ctrl.markCaughtUp();
     if (!mounted) return;
@@ -3413,17 +3342,19 @@ class _BranchesPageState extends State<BranchesPage> {
   /// The want counter is the fix: a request that arrives mid-sweep
   /// raises the bar the running loop has to clear, so the LAST caller
   /// always gets a read that started after it asked. Same shape as
-  /// [_applyReviewLens]'s coalescing, for the same reason.
+  /// [ReviewSession.refreshLens]'s coalescing, for the same reason.
   Future<void> _loadReviewRowSummaries() async {
     _reviewSummariesWant++;
     if (_reviewSummariesLoading) return;
     _reviewSummariesLoading = true;
-    final epoch = _reviewEpoch;
+    final work = _reviewWorkPageWide();
     try {
       var served = 0;
       while (served != _reviewSummariesWant) {
         served = _reviewSummariesWant;
-        if (!mounted || !_reviewCurrent(epoch)) return;
+        // Literal `mounted` for the analyzer, which cannot see inside
+        // the claim; the claim is what actually decides.
+        if (!mounted || !work.isCurrent) return;
         final deskState = context.read<DeskPrState>();
         final main = deskState.loadedForRepo;
         if (main == null) return;
@@ -3442,11 +3373,11 @@ class _BranchesPageState extends State<BranchesPage> {
           desks: desks,
           viewerDisplay: deskState.viewerDisplay,
         );
-        if (!mounted || !_reviewCurrent(epoch)) return;
+        if (!work.isCurrent) return;
         setState(() => _reviewRowSummaries = out);
       }
     } finally {
-      if (epoch == _reviewEpoch) _reviewSummariesLoading = false;
+      if (work.isCurrent) _reviewSummariesLoading = false;
     }
   }
 
@@ -3456,36 +3387,48 @@ class _BranchesPageState extends State<BranchesPage> {
   ReviewPrHooks? _reviewHooksFor(PullRequestSummary pr) {
     if (!_localPrNumbers.contains(pr.number)) return null;
     final id = pr.number;
-    final data = _reviewData[id];
+    final data = _reviewSessions[id]?.data;
     if (data == null) return null;
-    final ctrl = _reviewCtrls[id];
+    final ctrl = _reviewSessions[id]?.controller;
     final lensReady = data.latestRound > 0 &&
         data.lastSeenCommit != null &&
         data.lastSeenCommit != data.latestRoundCommit;
     final rounds = [
       for (final r in data.state?.rounds ?? const <ReviewRoundInfo>[]) r.n,
     ]..sort();
-    final compare = _reviewCompare[id];
+    final compare = _reviewSessions[id]?.compare;
     return ReviewPrHooks(
       data: data,
       strings: _reviewStringsOf(context),
-      marksFor: (path, {bool includeOldSide = true}) => _reviewMarksFor(
-            id,
+      // Memoized on the session, which is where the bundle it is keyed
+      // against lives — a page-level memo keyed by deskId outlived the
+      // data it described every time a repo switch reused the number.
+      //
+      // Null-safe, and the fallback is the point: a repo switch clears
+      // the sessions, and a child diff widget can still hold this
+      // closure for a frame. Forcing the lookup would turn that frame
+      // into a crash, where the memo's whole job is to be a speed-up
+      // that can always be skipped.
+      marksFor: (path, {bool includeOldSide = true}) =>
+          _reviewSessions[id]?.marksFor(
             data.bundle,
             path,
             includeOldSide: includeOldSide,
-          ),
+          ) ??
+          buildLineMarks(data.bundle, path,
+              includeOldSide: includeOldSide),
       onGutterTap: (path, oldSide, line) =>
           _openReviewComposer(id, path, oldSide, line),
-      composeAt: _reviewComposeAt[id],
+      composeAt: _reviewSessions[id]?.composeAt,
       onSaveOpener: (body) => _saveReviewOpener(id, body),
-      onCancelCompose: () => setState(() => _reviewComposeAt.remove(id)),
+      onCancelCompose: () =>
+          setState(() => _reviewSessions[id]?.composeAt = null),
       onSaveReply: (threadId, body) => _saveReviewReply(id, threadId, body),
       onResolve: (threadId, how) => _resolveReviewThread(id, threadId, how),
       onReopen: (threadId) => _reopenReviewThread(id, threadId),
       onDiscardDraft: (threadId, body, at) =>
           _discardOneReviewDraft(id, threadId, body, at),
-      reviewedFiles: _reviewedFiles[id] ?? const {},
+      reviewedFiles: _reviewSessions[id]?.reviewedFiles ?? const {},
       onToggleReviewed: (path, reviewed) =>
           _setReviewFileReviewed(id, path, reviewed),
       onStepOut: data.bundle.header.turn == ReviewTurn.yours
@@ -3497,14 +3440,14 @@ class _BranchesPageState extends State<BranchesPage> {
       onDiscardDrafts: () => _discardReviewDrafts(id),
       onSelectFile: (path) =>
           setState(() => _activeFileByPr[id] = path),
-      lensAvailable: lensReady || _reviewLensSince.contains(id),
-      lensSinceLastLook: _reviewLensSince.contains(id),
+      lensAvailable: lensReady || (_reviewSessions[id]?.lensSince ?? false),
+      lensSinceLastLook: (_reviewSessions[id]?.lensSince ?? false),
       onSetLens: (since) => _setReviewLens(id, since),
       rounds: rounds,
       compare: compare,
       onSetCompare: (cmp) => _setReviewCompare(id, cmp),
-      lens: _reviewLensDiffs[id],
-      lensLoading: _reviewLensLoading.contains(id),
+      lens: _reviewSessions[id]?.lens,
+      lensLoading: _reviewSessions[id]?.lensLoading ?? false,
       // A compare whose right side is an older round is not the head:
       // anchors resolve against head content, so markers stand down
       // rather than label rows they don't belong to.

@@ -403,29 +403,37 @@ void main() {
     );
   });
 
-  test('L16: async review-cache installs are epoch-guarded', () {
+  test('L16: async review-cache installs are currency-guarded', () {
     // The review caches are keyed by deskId, and deskIds are small
     // PER-REPO sequential counters — repo A's desk 1 and repo B's desk 1
     // are different reviews under the same key. So a load that resolves
     // AFTER a repo switch must not install: it would render one repo's
     // review conversation inside another's pane. `mounted` cannot catch
-    // it (same widget, still mounted), so currency is explicit:
-    // `_reviewCurrent(epoch)`, bumped wherever the caches are dropped.
+    // it (same widget, still mounted), so currency is explicit: claim
+    // before the await, ask the claim after it.
     //
     // Found by the manifold review, and this is what keeps it found: a
     // NEW async path that installs into one of these maps without the
     // guard fails here rather than shipping a cross-repo leak.
     //
+    // The guard used to be a page-wide `_reviewCurrent(epoch)` and the
+    // caches were nine parallel maps; both are now one object each
+    // ([ReviewSession] holding a desk's state, [ReviewCurrency] holding
+    // what is still wanted), so this law tracks the shapes that replaced
+    // them. It deliberately names the CURRENT spelling rather than
+    // accepting any guard-looking call: a law that matches loosely stops
+    // failing when the mechanism is refactored away, which is exactly
+    // when it should speak up.
+    //
     // Scope note, so nobody over-trusts it: it flags INSTALLS (an
     // assignment landing data) that sit textually after the method's
-    // first `await`. Clears and removes are excluded — dropping data
-    // from a cache the wrong repo already emptied is harmless — and a
-    // write hidden behind a helper call is invisible to it.
+    // first `await`, including one made through a local read out of the
+    // cache. Clears and removes are excluded — dropping data from a
+    // cache the wrong repo already emptied is harmless — and a write
+    // hidden behind a helper call is still invisible to it.
     const caches = {
-      '_reviewData',
-      '_reviewLensDiffs',
+      '_reviewSessions',
       '_reviewRowSummaries',
-      '_reviewComposeAt',
     };
     final file = corpus.files.firstWhere(
       (f) => f.path == 'lib/features/branches/branches_page.dart',
@@ -444,7 +452,7 @@ void main() {
         final late = installs.offsets.where((o) => o > awaits.first!);
         if (late.isEmpty) continue;
         final src = body.toSource();
-        if (src.contains('_reviewCurrent(')) continue;
+        if (src.contains('.isCurrent')) continue;
         offenders.add('${m.name.lexeme} (${late.length} install(s))');
       }
     }
@@ -452,9 +460,10 @@ void main() {
       offenders,
       isEmpty,
       reason:
-          'Capture `final epoch = _reviewEpoch;` before the await and '
-          'return unless `_reviewCurrent(epoch)` — otherwise a stale '
-          "repo's review lands in the open repo's pane: $offenders",
+          'Take a claim (`_reviewWork(deskId)`, or the load\'s own via '
+          '`_ReviewWork.of`) BEFORE the await and return unless '
+          '`isCurrent` after it — otherwise a stale repo\'s review lands '
+          'in the open repo\'s pane: $offenders',
     );
   });
 
@@ -797,25 +806,75 @@ class _AwaitOffsets extends RecursiveAstVisitor<void> {
   }
 }
 
-/// Assignments that INSTALL into one of the named caches — `m[k] = v` or
-/// `m = v`. Reads, clears and removes are deliberately not installs.
+/// Assignments that INSTALL into one of the named caches — `m[k] = v`,
+/// `m = v`, `m[k]?.field = v`, or the same through a local that was read
+/// out of the cache. Reads, clears and removes are deliberately not
+/// installs.
 class _CacheInstalls extends RecursiveAstVisitor<void> {
   _CacheInstalls(this.names);
 
   final Set<String> names;
   final List<int> offsets = [];
 
+  /// Locals holding something read out of a cache.
+  ///
+  /// `final s = _reviewSessions[id]; ... s.composeAt = null;` installs
+  /// into the cache as surely as writing through the subscript does —
+  /// the object is the same object. Holding the entry in a local is in
+  /// fact the SAFER way to write these methods (a stale completion then
+  /// cannot land on a replacement), so the law has to recognise it, or
+  /// it would quietly stop covering the code the moment someone fixed
+  /// it properly.
+  final Set<String> _aliases = {};
+
+  @override
+  void visitVariableDeclaration(VariableDeclaration node) {
+    final init = node.initializer;
+    if (init != null) {
+      final root = _rootCacheName(init);
+      if (root != null && (names.contains(root) || _aliases.contains(root))) {
+        _aliases.add(node.name.lexeme);
+      }
+    }
+    super.visitVariableDeclaration(node);
+  }
+
   @override
   void visitAssignmentExpression(AssignmentExpression node) {
-    final lhs = node.leftHandSide;
-    String? target;
-    if (lhs is IndexExpression) {
-      final t = lhs.target;
-      if (t is SimpleIdentifier) target = t.name;
-    } else if (lhs is SimpleIdentifier) {
-      target = lhs.name;
+    final target = _rootCacheName(node.leftHandSide);
+    if (target != null && (names.contains(target) || _aliases.contains(target))) {
+      offsets.add(node.offset);
     }
-    if (target != null && names.contains(target)) offsets.add(node.offset);
     super.visitAssignmentExpression(node);
+  }
+
+  /// The cache a write ultimately lands in, however deep the access.
+  ///
+  /// `_reviewSessions[id] = x` and `_reviewSessions[id]?.composeAt = x`
+  /// are the same event — data installed into a per-desk cache — but
+  /// only the first is an assignment to an index expression. Walking to
+  /// the root is what makes the second visible, and the second is the
+  /// shape a real bug had: a save that outlived its repository cleared
+  /// the composer of whichever session held that desk id afterwards.
+  static String? _rootCacheName(Expression node) {
+    var current = node;
+    while (true) {
+      switch (current) {
+        case SimpleIdentifier(:final name):
+          return name;
+        case IndexExpression(:final target?):
+          current = target;
+        case PrefixedIdentifier(:final prefix):
+          return prefix.name;
+        case PropertyAccess(:final target?):
+          current = target;
+        case PostfixExpression(:final operand):
+          current = operand;
+        case ParenthesizedExpression(:final expression):
+          current = expression;
+        default:
+          return null;
+      }
+    }
   }
 }
