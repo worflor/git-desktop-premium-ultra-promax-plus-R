@@ -90,7 +90,17 @@ void main() {
     Process.runSync(
         'git', ['-C', clone, 'reset', '--hard', '--quiet', baseSha]);
 
-    final matrix = await computeFileCoupling(clone, commitLimit: 1000);
+    // Knobs, so the jury can score the COMPONENTS of the axis and not
+    // just the axis. Each of these multiplies every term in the score
+    // and none had ever been scored on its own.
+    final knee = int.tryParse(Platform.environment['JURY_KNEE'] ?? '') ?? 60;
+    final halfRaw = Platform.environment['JURY_HALFLIFE'];
+    final matrix = await computeFileCoupling(
+      clone,
+      commitLimit: 1000,
+      largeCommitSoftKnee: knee,
+      halfLifeCommits: halfRaw == null ? null : double.parse(halfRaw),
+    );
     expect(matrix.ok && matrix.data != null, isTrue,
         reason: 'coupling failed: ${matrix.error}');
     final m = matrix.data!;
