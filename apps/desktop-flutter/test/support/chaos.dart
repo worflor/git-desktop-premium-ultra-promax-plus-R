@@ -154,12 +154,23 @@ Iterable<Err<T>> errorsOf<T>(Iterable<ChaosOutcome<T>> outcomes) =>
 List<T> valuesOf<T>(Iterable<ChaosOutcome<T>> outcomes) =>
     outcomes.whereType<Ok<T>>().map((o) => o.value).toList();
 
-/// Repetitions to run a racy scenario per fuzz case: `3 × fuzzScale()`. One
-/// race is one sample of one interleaving; a bug that manifests on a fraction
-/// of interleavings needs several draws before it shows, so every racy law
-/// loops this many times (each rep drawing a fresh jitter tape from the same
-/// [Rng]) within a single case.
-int chaosReps() => 3 * fuzzScale();
+/// Interleavings to sample per CASE, for a law that draws cases through
+/// [forAllAsync]. One race is one sample of one interleaving, and a bug
+/// that shows on a fraction of interleavings needs several draws before
+/// it appears — but the case count already carries [fuzzScale], so this
+/// stays CONSTANT.
+///
+/// It used to be `3 × fuzzScale()`, which multiplied the same knob into
+/// both dimensions: at `MANIFOLD_FUZZ=8` a law ran 64× the work against
+/// a deadline that grew 8×, so the deep run could not finish no matter
+/// how healthy the code was. A deep run that always times out is worse
+/// than no deep run — it teaches you to ignore the suite.
+const int chaosReps = 3;
+
+/// Interleavings for a law that samples no cases at all — one fixed
+/// scenario, repeated. Here the fuzz knob is the only dimension there
+/// is, so it carries the depth.
+int chaosRepsStandalone() => 3 * fuzzScale();
 
 // ---------------------------------------------------------------------------
 // Invariant oracle

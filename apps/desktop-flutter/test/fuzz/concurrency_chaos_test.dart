@@ -58,11 +58,15 @@
 //      expected content, repo stays sane (the sequential-equivalence floor
 //      for commuting ops).
 //
-// SCALING: reads MANIFOLD_FUZZ via fuzzScale(); each racy law loops
-// `chaosReps()` = 3×scale interleavings per case. Default wall-clock stays
-// under ~2 minutes; keep concurrency modest (N ≤ 8 subprocess-spawning
-// thunks). Corpus persistence is disabled everywhere (persistCorpus: false)
-// — this file owns no corpus artifacts.
+// SCALING: reads MANIFOLD_FUZZ via fuzzScale(), in ONE dimension per law.
+// A law that draws cases scales its case COUNT and runs [chaosReps]
+// interleavings of each; a law with a single fixed scenario scales its
+// REPETITIONS via [chaosRepsStandalone]. Scaling both at once made a deep
+// run quadratic against a linear deadline, so it timed out however
+// healthy the code was. Default wall-clock stays under ~2 minutes; keep
+// concurrency modest (N ≤ 8 subprocess-spawning thunks). Corpus
+// persistence is disabled everywhere (persistCorpus: false) — this file
+// owns no corpus artifacts.
 
 import 'dart:io';
 
@@ -90,8 +94,9 @@ const bool _knownFindingStagingInterleaveSkip =
 const bool _knownFindingShadowRegressSkip = false; // law 8 (C3) — save-as-merge
 
 // Per-test wall-clock ceiling (an upper bound only — it never slows a fast
-// default-scale run). The reps scale with MANIFOLD_FUZZ (see [chaosReps]), so
-// the ceiling scales with it too: the git-heaviest PR-store laws (2, 3) run
+// default-scale run). The work scales linearly with MANIFOLD_FUZZ (see the
+// SCALING note above), so the ceiling scales with it too and stays a
+// ceiling rather than a cliff: the git-heaviest PR-store laws (2, 3) run
 // rounds of real, CAS-retrying git racing that legitimately need several
 // minutes at depth on Windows. The retries are bounded (DeskPrStore._mutate
 // maxAttempts / _commit single-shot), so this guards against a genuine hang
@@ -234,7 +239,7 @@ void main() {
               );
               final store = DeskPrStore(refs);
 
-              for (var rep = 0; rep < chaosReps(); rep++) {
+              for (var rep = 0; rep < chaosReps; rep++) {
                 final branch = 'feature/law2-$rep';
                 final created = await store.create(
                   branch: branch,
@@ -322,7 +327,7 @@ void main() {
           );
           final store = DeskPrStore(refs);
 
-          for (var rep = 0; rep < chaosReps(); rep++) {
+          for (var rep = 0; rep < chaosRepsStandalone(); rep++) {
             final branch = 'feature/law3-$rep';
             final thunks = <Future<GitResult<DeskPr>> Function()>[
               for (var i = 0; i < 2; i++)
@@ -392,7 +397,7 @@ void main() {
           check: (rng) async {
             final repo = await ScratchRepo.create(name: 'law4_alloc');
             try {
-              for (var rep = 0; rep < chaosReps(); rep++) {
+              for (var rep = 0; rep < chaosReps; rep++) {
                 // A fresh counter ref per rep so each rep expects a clean 1..N.
                 final counterRef = LiveManifoldRef.parse(
                   'refs/manifold/_law4-counter-$rep',
@@ -461,7 +466,7 @@ void main() {
           await repo.writeFile('fileB.txt', 'baseB\n');
           await repo.commitAll('law5 base');
 
-          for (var rep = 0; rep < chaosReps() * 2; rep++) {
+          for (var rep = 0; rep < chaosRepsStandalone() * 2; rep++) {
             final stagedA = 'stagedA-$rep';
             final stagedB = 'stagedB-$rep';
             // applyFileStaging resets each file's index entry to HEAD before
@@ -547,7 +552,7 @@ void main() {
           check: (rng) async {
             final repo = await ScratchRepo.create(name: 'law6_applystage');
             try {
-              for (var rep = 0; rep < chaosReps(); rep++) {
+              for (var rep = 0; rep < chaosReps; rep++) {
                 final appliedPath = 'applied-$rep.txt';
                 final addedPath = 'added-$rep.txt';
                 await repo.writeFile(addedPath, 'added content $rep\n');
@@ -632,7 +637,7 @@ void main() {
           await repo.writeFile('a.txt', 'x\n');
           await repo.commitAll('law7 seed');
 
-          for (var rep = 0; rep < chaosReps(); rep++) {
+          for (var rep = 0; rep < chaosRepsStandalone(); rep++) {
             resetGitSubprocessPeakForTesting();
             // maxJitterMs: 0 so all 20 land on the same turn and truly pile up
             // against the semaphore (a staggered start would never contend).
@@ -700,7 +705,7 @@ void main() {
       'two concurrent load→mergeWith→save cycles keep BOTH edge sets',
       () async {
         final rng = Rng(0x5EED);
-        for (var rep = 0; rep < chaosReps(); rep++) {
+        for (var rep = 0; rep < chaosRepsStandalone(); rep++) {
           // Distinct repo key per rep so each starts from an empty cache — the
           // regression only shows on a load that raced another's save.
           final repoKey = '/virtual/law8/repo-$rep';
@@ -781,7 +786,7 @@ void main() {
           check: (rng) async {
             final repo = await ScratchRepo.create(name: 'law9_disjoint');
             try {
-              for (var rep = 0; rep < chaosReps(); rep++) {
+              for (var rep = 0; rep < chaosReps; rep++) {
                 // Pre-draw both halves' file sets + contents sequentially, so
                 // the racing thunks make no Rng draws.
                 final countA = rng.intBetween(2, 5);
