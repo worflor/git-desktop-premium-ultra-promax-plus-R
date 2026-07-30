@@ -60,6 +60,13 @@ import 'package:git_desktop/backend/file_coupling.dart';
 
 const _sep = '\u0001';
 
+/// One spelling of a line break for every split in this file. Two of
+/// these were briefly `[CRLF]+`, which COLLAPSES runs of blank lines:
+/// a different parse, adopted to dodge a shell-escaping problem
+/// rather than because it was right. Named once so the two spellings
+/// cannot drift apart again.
+final RegExp _lineBreak = RegExp(r'\r?\n');
+
 String _key(String a, String b) => a.compareTo(b) < 0 ? '$a $b' : '$b $a';
 
 /// The held-out window: newest [holdout] non-merge commits, each as
@@ -75,7 +82,7 @@ List<({String sha, List<String> files})> _holdoutCommits(
   final out = <({String sha, List<String> files})>[];
   String? sha;
   var current = <String>[];
-  for (final line in (r.stdout as String).split(RegExp(r'\r?\n'))) {
+  for (final line in (r.stdout as String).split(_lineBreak)) {
     if (line.startsWith(_sep)) {
       if (sha != null) out.add((sha: sha, files: current));
       sha = line.substring(1).trim();
@@ -160,7 +167,7 @@ void main() {
     Process.runSync('git', ['-C', clone, 'remote', 'remove', 'origin']);
     final tags = (Process.runSync('git', ['-C', clone, 'tag', '-l']).stdout
             as String)
-        .split(RegExp('[\r\n]+'))
+        .split(_lineBreak)
         .where((t) => t.trim().isNotEmpty);
     for (final t in tags) {
       Process.runSync('git', ['-C', clone, 'tag', '-d', t.trim()]);
@@ -171,7 +178,7 @@ void main() {
     // source cannot dodge it the way tags dodged a base-ancestry check.
     final reachable = (Process.runSync(
             'git', ['-C', clone, 'rev-list', '--all']).stdout as String)
-        .split(RegExp('[\r\n]+'))
+        .split(_lineBreak)
         .map((l) => l.trim())
         .toSet();
     final leaked =
@@ -197,7 +204,7 @@ void main() {
 
     final known = (Process.runSync('git', ['-C', clone, 'ls-files']).stdout
             as String)
-        .split(RegExp(r'\r?\n'))
+        .split(_lineBreak)
         .where((l) => l.trim().isNotEmpty)
         .map((l) => l.trim())
         .toList();

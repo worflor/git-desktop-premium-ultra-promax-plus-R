@@ -78,6 +78,26 @@ double _newMaxMapPass(FileCouplingMatrix m, List<String> paths) {
   return sink;
 }
 
+/// Fastest of [reps] runs, in microseconds.
+///
+/// A single wall-clock sample cannot support a tight ratio: the scheduler
+/// can steal time from either side, and this suite runs alongside real
+/// git subprocesses and (in a full-tree run) a release build. Theft only
+/// ever ADDS time, so the MINIMUM is the estimator that survives it —
+/// taking the min of both sides cancels most of the contention instead
+/// of comparing one unlucky sample against one lucky one.
+int _bestOfMicros(int reps, void Function() body) {
+  var best = -1;
+  for (var i = 0; i < reps; i++) {
+    final sw = Stopwatch()..start();
+    body();
+    sw.stop();
+    final us = sw.elapsedMicroseconds;
+    if (best < 0 || us < best) best = us;
+  }
+  return best < 1 ? 1 : best;
+}
+
 void main() {
   group('Perf 1: jaccardMaxNeighborMap vs per-path fullJaccardRowOf', () {
     test('parity + no regression on a realistic matrix', () {
@@ -95,34 +115,39 @@ void main() {
       expect(warmOld, closeTo(warmNew, 1e-9),
           reason: 'Both paths must produce the same aggregate sum.');
 
-      const iterations = 3;
-      final stopOld = Stopwatch()..start();
       var sinkOld = 0.0;
-      for (var i = 0; i < iterations; i++) {
-        sinkOld += _oldMaxPerPathLoop(matrix, subset);
-      }
-      stopOld.stop();
-
-      final stopNew = Stopwatch()..start();
       var sinkNew = 0.0;
-      for (var i = 0; i < iterations; i++) {
-        sinkNew += _newMaxMapPass(matrix, subset);
-      }
-      stopNew.stop();
+      final bestOld =
+          _bestOfMicros(5, () => sinkOld = _oldMaxPerPathLoop(matrix, subset));
+      final bestNew =
+          _bestOfMicros(5, () => sinkNew = _newMaxMapPass(matrix, subset));
 
       expect(sinkOld, closeTo(sinkNew, 1e-6));
-      final ratio = stopOld.elapsedMicroseconds /
-          math.max(stopNew.elapsedMicroseconds, 1);
+      final ratio = bestOld / bestNew;
       // ignore: avoid_print
-      print('Perf 1: old=${stopOld.elapsedMilliseconds}ms, '
-          'new=${stopNew.elapsedMilliseconds}ms, '
-          'ratio=${ratio.toStringAsFixed(2)}× (expect ≥1×)');
-      // We just require the new path isn't a regression — both are
-      // now O(nnz). If someone accidentally turns `jaccardMaxNeighborMap`
-      // back into a per-path loop without the mirror, this will
-      // collapse to <1× and the test will fail.
-      expect(ratio, greaterThanOrEqualTo(0.9),
-          reason: 'New path must not be more than 10% slower than old.');
+      print('Perf 1: old=${bestOld}us, new=${bestNew}us, '
+          'ratio=${ratio.toStringAsFixed(2)}x (best of 5 each)');
+      // The threshold sits in the GAP BETWEEN TWO MEASURED POPULATIONS,
+      // which is the only way a timing bound is worth anything:
+      //
+      //   healthy, idle machine     5.7x
+      //   healthy, under a full-tree run + release build   5.9x - 9.7x
+      //   direct-CSR path removed (new = old, simulated)   1.2x
+      //
+      // So 2x passes every healthy run measured, including contended
+      // ones, and fails the regression this test exists to catch. The
+      // old form asserted >=0.9 on a SINGLE sample: flaky (it went red
+      // during a contended full-tree run on code it had just passed)
+      // AND blind (the simulated collapse scores 1.17x, which >=0.9
+      // happily accepts). A first pass at this fix used >=0.5, which
+      // fixed the flake and kept the blindness — worth stating, because
+      // loosening a bound to silence noise without checking where the
+      // BROKEN population lands is how a guard turns into decoration.
+      expect(ratio, greaterThanOrEqualTo(2.0),
+          reason: 'the direct-CSR path collapsed toward per-path scanning '
+              '(old=${bestOld}us new=${bestNew}us, ratio '
+              '${ratio.toStringAsFixed(2)}x): healthy runs measure 5.7x+ '
+              'even under load, a removed fast path measures ~1.2x');
     });
   });
 
@@ -132,34 +157,46 @@ void main() {
       final matrix = _syntheticMatrix(n: n, seed: 0xBEEF);
       final probePath = _padPath(n - 1, n); // lex-late → worst case
 
-      // First call triggers the O(nnz) mirror build.
+      // First call triggers the O(nnz) mirror build — inherently a
+      // one-shot measurement, since it can only happen once per matrix.
       final stopFirst = Stopwatch()..start();
       final firstCount = matrix.fullJaccardRowOf(probePath).length;
       stopFirst.stop();
 
-      // Second call uses the cached mirror.
-      final stopSecond = Stopwatch()..start();
-      final secondCount = matrix.fullJaccardRowOf(probePath).length;
-      stopSecond.stop();
+      // The cached walk CAN be repeated, so take its best of 5: that is
+      // what keeps a stolen timeslice on one cached call from inverting
+      // the comparison.
+      var secondCount = 0;
+      final bestCached = _bestOfMicros(
+          5, () => secondCount = matrix.fullJaccardRowOf(probePath).length);
 
       expect(firstCount, equals(secondCount),
           reason: 'Row iteration must yield the same set.');
 
-      // First call dominates second by at least 3× — the mirror build
-      // is O(nnz) while the cached walk is O(rowLen). The exact ratio
-      // varies per run; 3× is conservative.
-      final ratio = stopFirst.elapsedMicroseconds /
-          math.max(stopSecond.elapsedMicroseconds, 1);
+      final ratio = stopFirst.elapsedMicroseconds / bestCached;
       // ignore: avoid_print
-      print('Perf 2: first=${stopFirst.elapsedMicroseconds}µs, '
-          'cached=${stopSecond.elapsedMicroseconds}µs, '
-          'ratio=${ratio.toStringAsFixed(2)}×');
-      // Loose bound — the cached call on its own can be microseconds;
-      // integer division can float the ratio. We just want to catch
-      // "did we accidentally turn the cache off" regressions.
-      expect(stopSecond.elapsedMicroseconds,
-          lessThanOrEqualTo(stopFirst.elapsedMicroseconds),
-          reason: 'Cached call should not cost more than the build.');
+      print('Perf 2: first=${stopFirst.elapsedMicroseconds}us, '
+          'cached=${bestCached}us, ratio=${ratio.toStringAsFixed(2)}x');
+      // Threshold from the two measured populations, same method as
+      // Perf 1:
+      //
+      //   mirror cache live      ~830x (build ~3300us, cached ~4us)
+      //   cache disabled         ~1x   (every call rebuilds O(nnz))
+      //
+      // `cached <= build` — what this asserted before — is satisfied by
+      // the BROKEN state: if every call rebuilds, both numbers measure
+      // the same work and best-of-5 on the cached side lands it under a
+      // single build sample almost every time. The review caught that
+      // the claim ("the mirror cache is off") could not fail, which is
+      // the same defect Perf 1 had: an assertion that accepts the thing
+      // it names. 20x sits three orders of magnitude clear of the
+      // disabled case and forty-fold clear of the live one.
+      expect(ratio, greaterThanOrEqualTo(20.0),
+          reason: 'repeated fullJaccardRowOf is no longer amortised '
+              '(build=${stopFirst.elapsedMicroseconds}us '
+              'cached=${bestCached}us, ratio ${ratio.toStringAsFixed(2)}x): '
+              'a live mirror measures hundreds of x, a rebuild-every-call '
+              'measures ~1x');
     });
   });
 

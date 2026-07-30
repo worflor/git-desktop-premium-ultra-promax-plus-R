@@ -620,6 +620,60 @@ void main() {
     );
   });
 
+  test('L20: a review verb that awaits git takes a currency claim', () {
+    // The shape L16 cannot see. These verbs (publish, hand-to, reopen,
+    // discard, ticks, caught-up, step-out) capture a controller, await a
+    // git write, then touch page state and call _reloadReview — the
+    // INSTALL happens inside that helper, so L16's textual scan finds
+    // nothing to flag. The audit found eight of them checking only
+    // `mounted` while their siblings held claims; the damage is a stale
+    // repo's error snack rendered against the repo now open, and a
+    // reload kicked for a session that no longer exists.
+    //
+    // Stated positively so it cannot be satisfied by accident: a method
+    // in the review family that awaits anything must MENTION a currency
+    // claim. `mounted` alone is not enough — desk ids are per-repo
+    // sequentials, so the widget is still mounted and #3 still exists.
+    //
+    // Honest about what this is: a TRIPWIRE on mentioning the mechanism,
+    // not proof of using it correctly. A method that takes a claim and
+    // never asks it, or asks it before the await instead of after,
+    // satisfies this law and is still wrong. Those are what the review
+    // suites and L16 cover; this exists because eight verbs drifted
+    // without a single test noticing, and the cheapest guarantee against
+    // a ninth is that the mechanism has to appear at all.
+    final file = corpus.files.firstWhere(
+      (f) => f.path == 'lib/features/branches/branches_page.dart',
+    );
+    final offenders = <String>[];
+    for (final decl in file.unit.declarations.whereType<ClassDeclaration>()) {
+      // ignore: deprecated_member_use
+      for (final m in decl.members.whereType<MethodDeclaration>()) {
+        final name = m.name.lexeme;
+        // The review verbs, by the name they all share.
+        if (!name.contains('Review') && !name.contains('review')) continue;
+        final body = m.body;
+        if (body is! BlockFunctionBody) continue;
+        final src = body.toSource();
+        // Only methods that actually round-trip through the controller.
+        if (!src.contains('await ctrl.') &&
+            !src.contains('await _reloadReview') &&
+            !src.contains('await session.')) {
+          continue;
+        }
+        if (src.contains('.isCurrent') || src.contains('_reviewWork') ||
+            src.contains('_ReviewWork')) {
+          continue;
+        }
+        offenders.add(name);
+      }
+    }
+    expect(offenders, isEmpty,
+        reason: 'these review verbs await a git write and then touch page '
+            'state without a currency claim, so a repo switch mid-write '
+            'lands their outcome on the wrong repo: $offenders');
+  });
+
   test('L19: the machine-scale diff-load path imports no Flutter', () {
     // A headless tool cannot run against a graph that reaches
     // package:flutter — `dart run` compiles flutter's own sources, hits
