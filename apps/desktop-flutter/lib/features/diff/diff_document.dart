@@ -5,7 +5,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../../backend/git.dart' show SpooledDiff;
+// The TYPE only — deliberately not git.dart, whose transitive graph
+// reaches package:flutter and would make this whole machine-scale
+// path unrunnable from a headless tool.
+import '../../backend/spooled_diff.dart';
 import 'byte_store.dart';
 import 'diff_models.dart';
 import 'edit_units.dart';

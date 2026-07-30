@@ -15,6 +15,8 @@ import 'change_id.dart';
 import 'dtos.dart';
 import 'git_diff_paths.dart' show unCQuoteGitPath;
 import 'git_result.dart';
+export 'spooled_diff.dart' show SpooledDiff;
+import 'spooled_diff.dart';
 import 'merge_session.dart';
 import 'process_utils.dart';
 import 'win_job_object.dart';
@@ -2908,27 +2910,6 @@ Future<GitResult<String>> getSelectionDiff(
   }
 
   return GitResult.ok(parts.join('\n'));
-}
-
-/// A combined diff streamed straight to a temp spool file — its bytes never all
-/// resided in RAM. Feed [path] to `DiffDocument.lazyFromSpool` for a disk-backed
-/// document whose resident memory is independent of diff size. The owner MUST
-/// call [dispose] when done to delete the spool.
-class SpooledDiff {
-  final String path;
-  final String _dir;
-  final int byteLength;
-  const SpooledDiff(this.path, this._dir, this.byteLength);
-
-  /// The owning temp directory — hand to `DiffDocument.lazyFromSpool`'s
-  /// `ownedTempDir` so the document deletes it on dispose (single owner).
-  String get dir => _dir;
-
-  Future<void> dispose() async {
-    try {
-      await Directory(_dir).delete(recursive: true);
-    } catch (_) {}
-  }
 }
 
 /// Read a spool file back as text with the SAME leniency as the exec

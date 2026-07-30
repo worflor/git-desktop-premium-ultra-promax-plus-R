@@ -620,6 +620,86 @@ void main() {
     );
   });
 
+  test('L19: the machine-scale diff-load path imports no Flutter', () {
+    // A headless tool cannot run against a graph that reaches
+    // package:flutter — `dart run` compiles flutter's own sources, hits
+    // dart:ui, and dies. tool/diff_load_profiler.dart is the growth-law
+    // guard the marble OOM bought us, and it broke exactly this way:
+    // diff_document.dart imported git.dart for ONE value type
+    // (SpooledDiff), and git.dart reaches Flutter through
+    // diagnostics_state. A 12-file graph had become a 75-file one, and
+    // nothing said so until the manual-tagged test was run by hand
+    // months later.
+    //
+    // The type lives in spooled_diff.dart now. This law is what keeps a
+    // future convenience import from quietly re-attaching the runtime:
+    // it walks the REAL transitive closure, so it fails on the import
+    // that reintroduces it rather than on the tool that dies from it.
+    //
+    // Scope, stated so nobody reads it as a full dependency analysis: it
+    // follows `import` directives only. An `export` chain, a conditional
+    // `if (dart.library.io)` import, or a part file that imports on its
+    // own behalf would slip past. Those shapes do not occur on this path
+    // today; the tool run in diff_load_growth_test is the end-to-end
+    // check that actually proves the graph loads under a bare Dart VM,
+    // and this law is the fast one that says WHICH import broke it.
+    const roots = [
+      'lib/features/diff/diff_document.dart',
+      'lib/features/diff/diff_models.dart',
+      'lib/features/diff/byte_store.dart',
+      'lib/features/diff/predictive_diff_index.dart',
+      'lib/backend/spooled_diff.dart',
+    ];
+    final byPath = {for (final f in corpus.files) f.path: f};
+    for (final r in roots) {
+      expect(byPath.containsKey(r), isTrue,
+          reason: '$r moved — update law L19 to follow it');
+    }
+
+    String? resolve(String imp, String from) {
+      if (imp.startsWith('package:git_desktop/')) {
+        return 'lib/${imp.substring('package:git_desktop/'.length)}';
+      }
+      if (imp.startsWith('package:') || imp.startsWith('dart:')) return null;
+      final segments = from.split('/')..removeLast();
+      for (final part in imp.split('/')) {
+        if (part == '..') {
+          if (segments.isEmpty) return null;
+          segments.removeLast();
+        } else if (part != '.') {
+          segments.add(part);
+        }
+      }
+      return segments.join('/');
+    }
+
+    final seen = <String>{};
+    final queue = [...roots];
+    final offenders = <String>[];
+    while (queue.isNotEmpty) {
+      final path = queue.removeLast();
+      if (!seen.add(path)) continue;
+      final file = byPath[path];
+      if (file == null) continue;
+      for (final directive in file.unit.directives) {
+        if (directive is! ImportDirective) continue;
+        final uri = directive.uri.stringValue;
+        if (uri == null) continue;
+        if (uri.startsWith('package:flutter')) {
+          offenders.add('$path imports $uri');
+          continue;
+        }
+        final next = resolve(uri, path);
+        if (next != null) queue.add(next);
+      }
+    }
+
+    expect(offenders, isEmpty,
+        reason: 'the diff-load path reached package:flutter, which makes '
+            'tool/diff_load_profiler.dart (and any other headless '
+            'harness over this path) unrunnable: $offenders');
+  });
+
   test('L17 (ratchet): whole-content file reads only shrink', () {
     // The unbudgeted-ingestion surface (the marble repo-switch system OOM):
     // every readAsString/readAsBytes over repo content is a site that can be
