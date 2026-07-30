@@ -67,7 +67,7 @@ ReviewThreadRecord _thread({
     ReviewThreadRecord(
       id: id,
       state: 'unresolved',
-      anchor: const ReviewAnchor(
+      scope: const LineScope(ReviewAnchor(
         round: 1,
         commit: 'c',
         path: 'a.dart',
@@ -77,7 +77,7 @@ ReviewThreadRecord _thread({
         simHash: '0000000000000000',
         ctx: <String>[],
         excerpt: 'x',
-      ),
+      )),
       comments: [ReviewComment(author: author, at: at, body: body)],
       updatedAt: at,
     );

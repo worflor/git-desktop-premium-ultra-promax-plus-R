@@ -43,6 +43,14 @@ class ReviewHeaderStrip extends StatefulWidget {
   /// it, which is also when the verb would be meaningless.
   final VoidCallback? onStepOut;
 
+  /// Start a comment about the change itself. Null hides the verb.
+  ///
+  /// On the change's own row, by the same rule the attention verbs
+  /// follow: a verb lives on the thing whose state it changes. The
+  /// summary conversation is the change's state, so its verb is here and
+  /// not in a row of unrelated controls elsewhere.
+  final VoidCallback? onComment;
+
   const ReviewHeaderStrip({
     super.key,
     required this.header,
@@ -50,6 +58,7 @@ class ReviewHeaderStrip extends StatefulWidget {
     this.handOffTo = const [],
     this.onHandTo,
     this.onStepOut,
+    this.onComment,
   });
 
   @override
@@ -140,6 +149,14 @@ class _ReviewHeaderStripState extends State<ReviewHeaderStrip> {
                   ],
                 ]),
               ),
+              if (widget.onComment != null) ...[
+                const SizedBox(width: AppSpacing.sm10),
+                ReviewQuietGlyph(
+                  icon: Icons.mode_comment_outlined,
+                  label: widget.strings.commentOnChange,
+                  onTap: widget.onComment,
+                ),
+              ],
               const SizedBox(width: AppSpacing.sm),
               ReviewLine([
                 if (header.unresolvedCount > 0) ...[
@@ -219,7 +236,14 @@ class _ReviewHeaderStripState extends State<ReviewHeaderStrip> {
             onTap: press,
           )
         : ReviewChip(
-            label: strings.waitingOn(widget.header.waitingOn),
+            // Nobody named means nobody is blocked — a finished review,
+            // which the previous author-vs-reviewers fold could never
+            // produce and so never needed to say. Rendering the empty
+            // name left the chip reading "waiting on " with a trailing
+            // space in exactly the moment the work is done.
+            label: widget.header.waitingOn.isEmpty
+                ? strings.nothingBlocking
+                : strings.waitingOn(widget.header.waitingOn),
             color: t.textMuted,
             variant: ReviewChipVariant.quiet,
             weight: FontWeight.w400,

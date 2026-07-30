@@ -2406,6 +2406,18 @@ class Translations$review$en {
 
   /// en: 'changes requested'
   String get standingChangesRequested => 'changes requested';
+
+  /// en: 'comment on this change'
+  String get commentOnChange => 'comment on this change';
+
+  /// en: 'comment on this file'
+  String get commentOnFile => 'comment on this file';
+
+  /// en: 'image not loaded'
+  String get imageNotLoaded => 'image not loaded';
+
+  /// en: 'nothing blocking'
+  String get nothingBlocking => 'nothing blocking';
 }
 
 // Path: settings

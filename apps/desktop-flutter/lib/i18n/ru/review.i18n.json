@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n} ч",
   "timeDaysFmt": "{n} дн",
   "standingApproved": "одобрено",
-  "standingChangesRequested": "запрошены правки"
+  "standingChangesRequested": "запрошены правки",
+  "commentOnChange": "Прокомментировать это изменение",
+  "commentOnFile": "Прокомментировать этот файл",
+  "imageNotLoaded": "изображение не загружено",
+  "nothingBlocking": "ничего не блокирует"
 }

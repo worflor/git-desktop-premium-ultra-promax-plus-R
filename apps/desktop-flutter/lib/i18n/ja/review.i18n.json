@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n}時間前",
   "timeDaysFmt": "{n}日前",
   "standingApproved": "承認済み",
-  "standingChangesRequested": "変更リクエスト済み"
+  "standingChangesRequested": "変更リクエスト済み",
+  "commentOnChange": "この変更にコメント",
+  "commentOnFile": "このファイルにコメント",
+  "imageNotLoaded": "画像は読み込まれていません",
+  "nothingBlocking": "保留中の項目はありません"
 }

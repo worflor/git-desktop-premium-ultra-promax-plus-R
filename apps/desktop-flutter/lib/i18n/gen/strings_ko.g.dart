@@ -1956,6 +1956,14 @@ class _Translations$review$ko extends Translations$review$en {
   String get standingApproved => '승인됨';
   @override
   String get standingChangesRequested => '변경 요청됨';
+  @override
+  String get commentOnChange => '이 변경에 댓글';
+  @override
+  String get commentOnFile => '이 파일에 댓글';
+  @override
+  String get imageNotLoaded => '이미지를 불러오지 않음';
+  @override
+  String get nothingBlocking => '대기 중인 항목 없음';
 }
 
 // Path: settings

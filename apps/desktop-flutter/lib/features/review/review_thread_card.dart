@@ -21,6 +21,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/prose_markdown.dart';
 import '../../ui/tokens.dart';
 import 'review_chrome.dart';
 import 'review_view_model.dart';
@@ -112,8 +113,14 @@ class ReviewThreadCard extends StatelessWidget {
             children: [
               _anchorRow(context, t, dim: dim),
               const SizedBox(height: AppSpacing.sm6),
-              _excerpt(context, t, dim: dim),
-              const SizedBox(height: AppSpacing.sm),
+              // No excerpt above a line: a file-scoped thread has no line
+              // to quote and the change itself has no text at all. An
+              // empty excerpt box would read as a failure to load the
+              // code rather than as a comment that was never about code.
+              if (thread.scope == ReviewThreadScope.line) ...[
+                _excerpt(context, t, dim: dim),
+                const SizedBox(height: AppSpacing.sm),
+              ],
               for (final c in thread.comments) ...[
                 _ReviewCommentBlock(
                   comment: c,
@@ -208,7 +215,17 @@ class ReviewThreadCard extends StatelessWidget {
       // Measure everything that is NOT the path, then fit the path into
       // what remains. The line number and the chips are never the
       // casualty; directory prefix is.
-      final lineLabel = ':${thread.line}';
+      // The subject, in as few glyphs as it takes:
+      //   line   lib/a.dart:12
+      //   file   lib/a.dart
+      //   review (nothing — the card IS the change, and the header
+      //          directly above already says which review this is)
+      //
+      // Deliberately no word like "general" or "summary" in the empty
+      // case. A label would be there to explain the absence of a label,
+      // and the position already carries the meaning.
+      final lineLabel =
+          thread.scope == ReviewThreadScope.line ? ':${thread.line}' : '';
       var reserved = measureTextWidth(lineLabel, pathStyle, scaler) +
           AppSpacing.sm +
           stateChip.estimateWidth(scaler);
@@ -486,11 +503,14 @@ class _ReviewCommentBlock extends StatelessWidget {
 
   Widget _markdown(BuildContext context, AppTokens t) {
     final geo = context.surfaceShader.geometry;
-    return MarkdownBody(
+    // proseMarkdown, never MarkdownBody: a comment body is written by
+    // another machine, and the default image builder would fetch
+    // whatever URL it names. See lib/ui/prose_markdown.dart.
+    return proseMarkdown(
       data: comment.body,
+      tokens: t,
+      imageNotLoadedLabel: strings.imageNotLoaded,
       selectable: false,
-      shrinkWrap: true,
-      fitContent: true,
       styleSheet: MarkdownStyleSheet(
         p: TextStyle(
           color: dim ? t.textMuted : t.textNormal,

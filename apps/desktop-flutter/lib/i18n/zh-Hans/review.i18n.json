@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n} 小时前",
   "timeDaysFmt": "{n} 天前",
   "standingApproved": "已批准",
-  "standingChangesRequested": "已请求修改"
+  "standingChangesRequested": "已请求修改",
+  "commentOnChange": "评论此变更",
+  "commentOnFile": "评论此文件",
+  "imageNotLoaded": "未加载图片",
+  "nothingBlocking": "没有待处理项"
 }

@@ -28,6 +28,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/features/review/review_adapter.dart';
+import 'package:git_desktop/features/review/review_header_strip.dart';
 import 'package:git_desktop/features/review/review_pane.dart';
 import 'package:git_desktop/features/review/review_view_model.dart';
 import 'package:git_desktop/ui/tokens.dart';
@@ -124,6 +125,68 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('publish and discard are reachable without a pointer',
+      (tester) async {
+    // These chips are the review's consequential controls — publish, the
+    // verdict choices, and the destructive discard — and they were a
+    // MouseRegion over a GestureDetector, so none of them could be
+    // focused, activated by keyboard, or even named by a screen reader.
+    var published = 0;
+    await pumpHarness(
+      tester,
+      Scaffold(
+        body: ReviewPublishBar(
+          strings: const ReviewStrings(),
+          draftCount: 1,
+          onPublish: (_) async => published++,
+          onDiscard: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The SEMANTICS tree, not the widget tree — that is what assistive
+    // technology actually walks.
+    expect(find.semantics.byLabel('publish'), findsOneWidget,
+        reason: 'a screen reader cannot name the publish control');
+    expect(find.semantics.byLabel('discard'), findsOneWidget,
+        reason: 'the DESTRUCTIVE control is the one that most needs to '
+            'be announceable');
+
+    // And it can be driven without a pointer at all.
+    tester.semantics.tap(find.semantics.byLabel('publish'));
+    await tester.pumpAndSettle();
+    expect(published, 1,
+        reason: 'publish did not fire from a semantics activation, so '
+            'assistive technology cannot complete a review');
+  });
+
+  testWidgets('a review blocked on nobody says so, not "waiting on "',
+      (tester) async {
+    // Reachable only since the turn fold became per-person: the fold it
+    // replaced always named somebody, so an empty `waitingOn` could not
+    // happen and had no words. Rendering it anyway left the chip reading
+    // "waiting on " — with a trailing space — in the one moment the work
+    // is actually finished.
+    await pumpHarness(
+      tester,
+      const Scaffold(
+        body: ReviewHeaderStrip(
+          header: ReviewHeaderView(
+            round: 2,
+            turn: ReviewTurn.theirs,
+            waitingOn: '',
+            unresolvedCount: 0,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('nothing blocking'), findsOneWidget);
+    expect(find.textContaining('waiting on'), findsNothing,
+        reason: 'the chip named nobody and still said it was waiting');
+  });
 
   testWidgets('P1: verbs carry their own thread id', (tester) async {
     tester.view.physicalSize = const Size(900, 1400);

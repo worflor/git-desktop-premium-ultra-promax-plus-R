@@ -24,9 +24,11 @@ import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/prose_markdown.dart';
 import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../backend/review_anchor.dart';
 import '../../backend/admitted_git.dart';
 import '../../backend/git.dart';
 import '../../backend/ai.dart';
@@ -66,6 +68,7 @@ import '../../backend/review_records.dart' show ReviewRoundInfo;
 import '../../backend/git_identity.dart' show kGitIdentityCommand;
 import '../review/review_chrome.dart'
     show ReviewChip, ReviewChipVariant, ReviewVerbPill;
+import '../review/review_file_header.dart';
 import '../review/review_identity_notice.dart';
 import '../review/review_pane.dart';
 import '../review/review_pane_controller.dart';
@@ -3087,7 +3090,64 @@ class _BranchesPageState extends State<BranchesPage> {
       _reviewErrorSnack(context.t.review.anchorUnavailable);
       return;
     }
-    setState(() => _reviewSessions[deskId]?.composeAt = (path, oldSide, line));
+    setState(() {
+      final session = _reviewSessions[deskId];
+      if (session == null) return;
+      session.composeAt = LineScope(anchor);
+      session.composeToken++;
+    });
+  }
+
+  /// Open the composer for a file or the change itself.
+  ///
+  /// Open the composer for a file or the change itself.
+  ///
+  /// Cuts round 1 first when there is no review yet, exactly as a gutter
+  /// tap does. Without that these two subjects were second-class: their
+  /// affordances were hidden until some OTHER action had bootstrapped the
+  /// review, and on a PR whose only changes are binary or oversized there
+  /// is no gutter to tap at all — so a review of it could never be
+  /// started.
+  ///
+  /// [capture] runs AFTER the bootstrap because the scope pins the round,
+  /// and before the bootstrap there is no round to pin.
+  ///
+  /// The `work.isCurrent` claim is not decoration and `mounted` alone
+  /// would not do: desk ids are per-repo sequentials, so #3 exists in
+  /// every repo, and a repo switch during the round cut or the side probe
+  /// leaves this page mounted with a different repository's desk #3
+  /// underneath. Same rule as every other review verb here (law L20).
+  Future<void> _openReviewScopeComposer(
+    int deskId,
+    Future<ReviewScope?> Function(ReviewPaneController ctrl) capture,
+  ) async {
+    final ctrl = _reviewSessions[deskId]?.controller;
+    if (ctrl == null) return;
+    final work = _reviewWork(deskId);
+    if ((_reviewSessions[deskId]?.data?.latestRound ?? 0) == 0) {
+      final r = await ctrl.ensureRound();
+      if (!mounted || !work.isCurrent) return;
+      if (!r.ok) {
+        _reviewErrorSnack(
+          context.t.review.startReviewFailed(error: r.error ?? '?'),
+        );
+        return;
+      }
+      await _reloadReview(deskId);
+      if (!mounted || !work.isCurrent) return;
+    }
+    final scope = await capture(ctrl);
+    if (!mounted || !work.isCurrent) return;
+    if (scope == null) {
+      _reviewErrorSnack(context.t.review.anchorUnavailable);
+      return;
+    }
+    setState(() {
+      final session = _reviewSessions[deskId];
+      if (session == null) return;
+      session.composeAt = scope;
+      session.composeToken++;
+    });
   }
 
   Future<bool> _saveReviewOpener(int deskId, String body) async {
@@ -3100,18 +3160,38 @@ class _BranchesPageState extends State<BranchesPage> {
     final ctrl = session?.controller;
     final at = session?.composeAt;
     if (session == null || ctrl == null || at == null) return false;
+    // WHICH composer this save belongs to. Captured before the writes
+    // below so a late completion cannot close a composer opened since.
+    final token = session.composeToken;
     final work = _reviewWork(deskId);
-    final anchor = await ctrl.captureAt(
-      path: at.$1,
-      side: at.$2 ? 'old' : 'new',
-      line: at.$3,
-    );
+    // RE-captured at save time, not reused from open time, so the draft
+    // pins to the round in effect when the words were committed to —
+    // a round cut while the composer was open must not leave a comment
+    // claiming to describe a snapshot the author never saw. Only a line
+    // scope costs I/O to re-take; the other two are pure reads of the
+    // controller's current pin.
+    final ReviewScope? scope;
+    switch (at) {
+      case LineScope(anchor: final was):
+        final anchor = await ctrl.captureAt(
+          path: was.path,
+          side: was.side,
+          line: was.line,
+        );
+        scope = anchor == null ? null : LineScope(anchor);
+      case FileScope(path: final path):
+        // Side is re-discovered, not carried over: the file may have been
+        // deleted since the composer opened.
+        scope = await ctrl.captureFile(path: path);
+      case WholeScope():
+        scope = ctrl.captureReview();
+    }
     if (!mounted || !work.isCurrent) return false;
-    if (anchor == null) {
+    if (scope == null) {
       _reviewErrorSnack(context.t.review.anchorUnavailable);
       return false;
     }
-    final err = await ctrl.saveOpenerDraft(anchor: anchor, body: body);
+    final err = await ctrl.saveOpenerDraft(scope: scope, body: body);
     // A repo switch leaves this page mounted and desk ids are per-repo
     // sequentials, so `mounted` alone let a completed save from the old
     // repository close a composer just opened in the new one — same desk
@@ -3128,7 +3208,15 @@ class _BranchesPageState extends State<BranchesPage> {
     // busy-gated — backing out must always be possible), and an
     // unconditional remove here would dispose THAT composer and take
     // its unsaved text with it.
-    if (session.composeAt == at) {
+    // The composer this save opened, and only that one.
+    //
+    // Not the scope: it was re-captured above, so object identity never
+    // matches, and comparing SUBJECTS cannot tell "still the composer I
+    // started" from "a new composer on the same line" — the user can
+    // cancel and reopen while the write is in flight, and closing that
+    // replacement discards text they are still typing. The token is the
+    // only thing that answers the question actually being asked.
+    if (session.composeToken == token) {
       setState(() => session.composeAt = null);
     }
     await _reloadReview(deskId);
@@ -3434,6 +3522,19 @@ class _BranchesPageState extends State<BranchesPage> {
               includeOldSide: includeOldSide),
       onGutterTap: (path, oldSide, line) =>
           _openReviewComposer(id, path, oldSide, line),
+      // Offered whenever there is a controller — NOT only once a round
+      // exists. Opening one of these IS the first intent that creates the
+      // review, the same way a gutter tap is; gating them on a round that
+      // does not exist yet made them unreachable on a change nobody had
+      // reviewed, which is every change at the moment it matters most.
+      onCommentOnChange: ctrl == null
+          ? null
+          : () => _openReviewScopeComposer(
+              id, (c) async => c.captureReview()),
+      onCommentOnFile: ctrl == null
+          ? null
+          : (path) => _openReviewScopeComposer(
+              id, (c) => c.captureFile(path: path)),
       composeAt: _reviewSessions[id]?.composeAt,
       onSaveOpener: (body) => _saveReviewOpener(id, body),
       onCancelCompose: () =>
@@ -9031,6 +9132,27 @@ class _PrExpanded extends StatelessWidget {
           // lens with files in it, and its pills must lead somewhere.
           if (detail != null && (lensFiles ?? detail!.files).isNotEmpty) ...[
             const SizedBox(height: 8),
+            // The active file's own row, carrying the "comment on this
+            // file" verb.
+            //
+            // Above the diff, because that is what a file header is and
+            // the diff below it is the file. The verb started as a lone
+            // right-aligned glyph floating under the diff, acting on a
+            // file it never named — and before that on the review pane's
+            // group headers, which only exist for files that ALREADY
+            // have a thread, so the first file comment could never be
+            // made on the binary and oversized files this scope was
+            // built for. Same widget the pane uses, so one row idiom
+            // covers both places.
+            if (review?.onCommentOnFile != null)
+              ReviewFileHeader(
+                filePath:
+                    activeFilePath ?? (lensFiles ?? detail!.files).first.path,
+                strings: review!.strings,
+                onComment: () => review!.onCommentOnFile!(
+                  activeFilePath ?? (lensFiles ?? detail!.files).first.path,
+                ),
+              ),
             // Pull the active file's cluster + stats from what we
             // already computed for the file pills so the diff header's
             // identity matches exactly. Defaults to the first file
@@ -9154,15 +9276,19 @@ class _PrExpanded extends StatelessWidget {
                 );
               },
             ),
-            // Opener composer — mounts directly under the diff the tap
-            // came from, labelled with its anchor position. Saving is a
-            // draft save; the batch bar in the pane below publishes.
-            if (review?.composeAt != null) ...[
+            // Opener composer — mounts directly under the diff, labelled
+            // with what it is about. Saving is a draft save; the batch
+            // bar in the pane below publishes.
+            //
+            // LINE and FILE, both of which are about the code on screen.
+            // The CHANGE's composer mounts in the pane under the header
+            // strip, because that is where its subject is.
+            if (review?.composeAt is LineScope ||
+                review?.composeAt is FileScope) ...[
               const SizedBox(height: 8),
               ReviewComposer(
                 strings: review!.strings,
-                contextLabel:
-                    '${review!.composeAt!.$1}:${review!.composeAt!.$3}',
+                contextLabel: reviewSubjectLabel(review!.composeAt!),
                 onSave: review!.onSaveOpener,
                 onCancel: review!.onCancelCompose,
               ),
@@ -9231,6 +9357,15 @@ class _PrExpanded extends StatelessWidget {
               onPublish: review!.onPublish,
               onDiscardDrafts: review!.onDiscardDrafts,
               onSelectFile: review!.onSelectFile,
+              // Only the CHANGE's composer belongs to the pane; the
+              // line and file ones mount beside the code they are about.
+              composeScope: review!.composeAt is WholeScope
+                  ? ReviewThreadScope.review
+                  : null,
+              composeLabel: '',
+              onSaveOpener: review!.onSaveOpener,
+              onCancelCompose: review!.onCancelCompose,
+              onCommentOnChange: review!.onCommentOnChange,
             ),
           ] else if (isLocalPr) ...[
             // A desk PR whose review did not wire up. Two causes, and
@@ -11441,11 +11576,14 @@ class _CommentBlock extends StatelessWidget {
           // JetBrainsMono, headings shrink one step from the page chrome
           // so they don't dominate the row, links use accentBright. All
           // colors / spacings pulled from [tokens] so themes carry.
-          MarkdownBody(
+          // proseMarkdown, never MarkdownBody: this body is whatever an
+          // account on the forge typed, and the default image builder
+          // would fetch the URLs in it. See lib/ui/prose_markdown.dart.
+          proseMarkdown(
             data: _scrub(comment.body),
+            tokens: t,
+            imageNotLoadedLabel: context.t.review.imageNotLoaded,
             selectable: true,
-            shrinkWrap: true,
-            fitContent: true,
             styleSheet: MarkdownStyleSheet(
               // Prose styles inherit the theme's typography family so
               // serif themes (Halo's Playfair, Blackboard's Lora) get

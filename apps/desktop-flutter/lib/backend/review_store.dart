@@ -37,20 +37,25 @@ import 'review_records.dart';
 /// at publish; non-empty → a reply to that thread.
 class ReviewDraftEntry {
   final String threadId;
-  final ReviewAnchor? anchor;
+
+  /// What an OPENER draft is about. Null on a reply draft, where the
+  /// thread it joins already carries the subject — that is the only
+  /// meaning of null here, which is why the scope itself is sealed
+  /// rather than nullable-with-three-meanings.
+  final ReviewScope? scope;
   final String body;
   final DateTime at;
 
   const ReviewDraftEntry({
     required this.threadId,
-    required this.anchor,
+    required this.scope,
     required this.body,
     required this.at,
   });
 
   Map<String, dynamic> toJson() => {
         'threadId': threadId,
-        if (anchor != null) 'anchor': anchor!.toJson(),
+        if (scope != null) ...scope!.toJson(),
         'body': body,
         'at': isoUtc(at),
       };
@@ -58,8 +63,11 @@ class ReviewDraftEntry {
   factory ReviewDraftEntry.fromJson(Map<String, dynamic> j) =>
       ReviewDraftEntry(
         threadId: j['threadId'] as String? ?? '',
-        anchor: j['anchor'] is Map
-            ? ReviewAnchor.fromJson((j['anchor'] as Map).cast<String, dynamic>())
+        // Same both-shapes read as threads: a drafts blob written before
+        // scopes existed carries a bare `anchor`, and a reply carries
+        // neither.
+        scope: (j['scope'] is Map || j['anchor'] is Map)
+            ? ReviewScope.fromJson(j)
             : null,
         body: j['body'] as String? ?? '',
         at: DateTime.tryParse(j['at'] as String? ?? '') ??
@@ -311,8 +319,8 @@ class ReviewStore {
             changes[r] = true;
           }
           return withRound.copyWith(
-            attention:
-                _withAttention(current.attention, changes, by.display),
+            attention: _withAttention(current.attention, changes, by.display,
+                round: withRound.latestRound?.n ?? 0),
             updatedAt: clock.now(),
           );
         },
@@ -542,11 +550,45 @@ class ReviewStore {
       deskId,
       transform: (current) {
         var threads = [...current.threads];
+        // Reset per attempt: _mutate retries on CAS failure and must
+        // renumber against whatever it re-read, never against the losing
+        // attempt's view.
+        var roundSeq = 0;
         for (final d in drafts) {
+          // Stamped with the round this batch is being published at, so
+          // the turn fold can ask "has this person spoken at the current
+          // round" without comparing two machines' wall clocks. The
+          // dedup keys deliberately do NOT include it: a replayed
+          // publish after a round cut is the SAME comment, and letting
+          // the round into the key would duplicate it.
+          // seq is per THREAD, so it needs the thread first. An opener
+          // starts its own thread at 1.
+          final targetIndex = d.threadId.isEmpty
+              ? -1
+              : threads.indexWhere((t) => t.id == d.threadId);
+          // Number any unstamped comments first, so the reply lands
+          // after them rather than being compared against a scheme they
+          // never used.
+          if (targetIndex >= 0) {
+            threads[targetIndex] = threads[targetIndex]
+                .copyWith(comments: _sequenced(threads[targetIndex].comments));
+          }
+          final round = current.latestRound?.n ?? 0;
+          // Across the whole ROUND, and rising as this batch is applied,
+          // so two drafts published together do not collide.
+          if (roundSeq == 0) {
+            roundSeq = maxCommentSeq(
+                current.copyWith(threads: threads), round);
+          }
           final comment = ReviewComment(
-              author: author, at: d.at, body: d.body);
+            author: author,
+            at: d.at,
+            body: d.body,
+            round: round,
+            seq: ++roundSeq,
+          );
           if (d.threadId.isNotEmpty) {
-            final i = threads.indexWhere((t) => t.id == d.threadId);
+            final i = targetIndex;
             if (i < 0) continue;
             if (_hasComment(threads[i], comment)) continue;
             threads[i] = threads[i].copyWith(
@@ -554,7 +596,7 @@ class ReviewStore {
               updatedAt: clock.now(),
             );
           } else {
-            if (d.anchor == null) continue;
+            if (d.scope == null) continue;
             // Idempotent replay guard: an identical opener (same
             // author/at/body) already published opens nothing new.
             final dup = threads.any((t) =>
@@ -565,7 +607,7 @@ class ReviewStore {
               ReviewThreadRecord(
                 id: _mintThreadId(author, d.at, d.body),
                 state: 'unresolved',
-                anchor: d.anchor!,
+                scope: d.scope!,
                 comments: [comment],
                 updatedAt: clock.now(),
               ),
@@ -591,11 +633,18 @@ class ReviewStore {
               v.verdict == verdict &&
               isoUtc(v.at) == isoUtc(batchAt));
           if (!already) {
+            // seq counts THIS reviewer's prior verdicts, so a second
+            // opinion in the same round beats the first regardless of
+            // which machine each was written on.
+            final priorSeq = verdicts
+                .where((v) => v.by.display == author.display)
+                .fold<int>(0, (m, v) => v.seq > m ? v.seq : m);
             verdicts = [
               ...verdicts,
               ReviewVerdict(
                 by: author,
                 verdict: verdict,
+                seq: priorSeq + 1,
                 at: batchAt,
                 round: verdictRound ?? (current.latestRound?.n ?? 0),
               ),
@@ -622,8 +671,8 @@ class ReviewStore {
           changes[ownerDisplay] = true;
         }
         return next.copyWith(
-          attention:
-              _withAttention(current.attention, changes, author.display),
+          attention: _withAttention(current.attention, changes, author.display,
+              round: next.latestRound?.n ?? 0),
           updatedAt: clock.now(),
         );
       },
@@ -662,6 +711,53 @@ class ReviewStore {
     return GitResult.ok(result.data!);
   }
 
+  /// The highest comment sequence anywhere in [state] at [round].
+  ///
+  /// Per ROUND rather than per thread. Within a thread the numbers still
+  /// rise in publish order, so every ordering use is unchanged; across
+  /// threads they now compare, which is what lets a viewer's cursor say
+  /// "I have seen everything up to here in this round" instead of
+  /// falling back to comparing two machines' clocks.
+  static int maxCommentSeq(ReviewState state, int round) {
+    var n = 0;
+    for (final t in state.threads) {
+      for (final c in t.comments) {
+        if (c.round == round && c.seq > n) n = c.seq;
+      }
+    }
+    return n;
+  }
+
+  /// Fill in missing comment sequences, in the order the thread is
+  /// already stored in.
+  ///
+  /// Ordering across clients that never shared a sequencing scheme is
+  /// best-effort by timestamp, and this is how a thread STOPS being one
+  /// of those: the first time a current client publishes into a thread
+  /// whose comments predate sequences, it numbers them. From then on the
+  /// thread orders causally forever, and the ambiguous "one side has a
+  /// seq" comparison simply stops arising for it.
+  ///
+  /// Deterministic on every machine: the stored order is canonical (the
+  /// union sorts it), existing sequences are preserved, and only gaps are
+  /// filled. seq is not part of a comment's identity — the dedup key is
+  /// (author, at, body) — so numbering one changes no record's identity
+  /// and cannot duplicate anything.
+  static List<ReviewComment> _sequenced(List<ReviewComment> cs) {
+    if (cs.every((c) => c.seq > 0)) return cs;
+    var n = 0;
+    return [
+      for (final c in cs)
+        if (c.seq > 0)
+          () {
+            if (c.seq > n) n = c.seq;
+            return c;
+          }()
+        else
+          c.stamped(round: c.round, seq: ++n),
+    ];
+  }
+
   static bool _sameComment(ReviewComment a, ReviewComment b) =>
       a.author.display == b.author.display &&
       isoUtc(a.at) == isoUtc(b.at) &&
@@ -684,6 +780,25 @@ class ReviewStore {
   /// pulled back in by the author's next turn — that is the difference
   /// between "waiting on the reviewers" as a bloc and naming the people
   /// actually blocking.
+  /// Is [a] the later standing than [b] for the same reviewer?
+  ///
+  /// Ranks the way every other causal comparison in this format does,
+  /// because a wall clock belongs to whichever machine wrote the record
+  /// and two machines' clocks are not comparable.
+  static bool _outranks(ReviewVerdict a, ReviewVerdict b) {
+    if (a.round != b.round) return a.round > b.round;
+    if (a.seq != b.seq) return a.seq > b.seq;
+    // A tie is one reviewer writing from two machines that had not seen
+    // each other. Nothing orders them, so the blocking verdict wins —
+    // the same reading the header's standing fold takes, and for the
+    // same reason: not knowing whether someone approved or objected must
+    // not resolve to "approved".
+    final aBlocks = a.verdict == 'CHANGES_REQUESTED';
+    final bBlocks = b.verdict == 'CHANGES_REQUESTED';
+    if (aBlocks != bBlocks) return aBlocks;
+    return a.at.isAfter(b.at);
+  }
+
   static bool _settled(ReviewState s, String who) {
     ReviewVerdict? standing;
     for (final v in s.verdicts) {
@@ -691,7 +806,13 @@ class ReviewStore {
       if (v.verdict != 'APPROVED' && v.verdict != 'CHANGES_REQUESTED') {
         continue;
       }
-      if (standing == null || v.at.isAfter(standing.at)) standing = v;
+      // round, then seq, then the clock — the same ranking the record
+      // carries majors for and that the adapter's standing fold uses.
+      // This compared wall clocks alone, so a reviewer who approved
+      // newer code from a slower machine could still read as blocking
+      // and be dragged back into the attention set by their own older
+      // opinion.
+      if (standing == null || _outranks(v, standing)) standing = v;
     }
     if (standing == null || standing.verdict != 'APPROVED') return false;
     for (final t in s.threads) {
@@ -703,19 +824,34 @@ class ReviewStore {
     return true;
   }
 
+  /// Apply [changes] to the attention set, stamped with [round].
+  ///
+  /// [round] is the MAJOR merge key and the reason a step-out sticks: the
+  /// set merges per person by (round, then at), and without the round a
+  /// peer's earlier "you are blocking" written on a fast clock beat the
+  /// author's later "not blocking on me" written on a slow one. Callers
+  /// pass the state's own latest round, which every machine reads the
+  /// same way because it comes from the ref rather than from a clock.
   Map<String, ReviewAttention> _withAttention(
     Map<String, ReviewAttention> current,
     Map<String, bool> changes,
-    String by,
-  ) {
+    String by, {
+    required int round,
+  }) {
     final next = Map<String, ReviewAttention>.from(current);
     final now = clock.now();
     for (final e in changes.entries) {
+      // seq + 1 over the entry we are REPLACING: this write is made in
+      // full knowledge of that one, so it must win the merge regardless
+      // of whose wall clock looks later. See [ReviewAttention.seq].
+      final prior = current[e.key];
       next[e.key] = ReviewAttention(
         display: e.key,
         inSet: e.value,
         at: now,
         by: by,
+        round: round,
+        seq: (prior?.seq ?? 0) + 1,
       );
     }
     return next;
@@ -735,7 +871,8 @@ class ReviewStore {
         deskId,
         transform: (current) => current.copyWith(
           attention: _withAttention(
-              current.attention, {display: inSet}, by.display),
+              current.attention, {display: inSet}, by.display,
+              round: current.latestRound?.n ?? 0),
           updatedAt: clock.now(),
         ),
         message: (_) =>
@@ -781,7 +918,8 @@ class ReviewStore {
         // the same set no matter whose client did the resolving.
         final attention = opener.isEmpty || opener == by.display
             ? current.attention
-            : _withAttention(current.attention, {opener: true}, by.display);
+            : _withAttention(current.attention, {opener: true}, by.display,
+                round: current.latestRound?.n ?? 0);
         return current.copyWith(
           threads: threads,
           attention: attention,
@@ -825,7 +963,8 @@ class ReviewStore {
           final attention = claimedDone.isEmpty || claimedDone == by.display
               ? current.attention
               : _withAttention(
-                  current.attention, {claimedDone: true}, by.display);
+                  current.attention, {claimedDone: true}, by.display,
+                  round: current.latestRound?.n ?? 0);
           return current.copyWith(
             threads: threads,
             attention: attention,
@@ -835,8 +974,49 @@ class ReviewStore {
         message: (_) => 'reopened by ${by.display}',
       );
 
+  /// Tear a review down: its state doc, every round pin, and the local
+  /// drafts that were never anyone else's business.
+  ///
+  /// Called when the desk PR it hangs off is abandoned. Without this,
+  /// abandoning left the whole review behind — a state doc, a pin per
+  /// round holding its commit's objects alive forever, and the viewer's
+  /// unpublished half-thoughts sitting in a local ref for a review that
+  /// no longer exists.
+  ///
+  /// LOCAL deletion only, exactly as [DeskPrStore.abandon] does for the
+  /// desk ref itself. Removing the shared refs from the remote is a
+  /// different and outward-facing act, and doing it as a side effect of
+  /// a local abandon would delete other people's comments without
+  /// asking.
+  ///
+  /// Best-effort: a ref that is already gone is a success, and one that
+  /// refuses must not strand the rest. The caller's abandon has already
+  /// happened either way.
+  Future<GitResult<void>> deleteReview(int deskId) async {
+    final rounds = await refs.listRefs('${ManifoldNs.reviewPrefix}$deskId/round/');
+    if (rounds.ok) {
+      for (final name in rounds.data!.keys) {
+        final n = int.tryParse(name.split('/').last);
+        if (n == null) continue;
+        // ignore: unused_result
+        await refs.deleteRef(LiveManifoldRef.reviewRound(deskId, n));
+      }
+    }
+    // ignore: unused_result
+    await refs.deleteRef(stateRefFor(deskId));
+    // ignore: unused_result
+    await refs.deleteRef(_draftsRef(deskId));
+    return const GitResult.ok(null);
+  }
+
   /// Append a comment directly (robot findings, immediate replies that
   /// bypass the draft flow).
+  ///
+  /// The round and thread position are stamped HERE rather than taken
+  /// from the caller, for the same reason [publish] does it: they are
+  /// facts about the document being written, and a caller that guessed
+  /// them would produce a comment the turn fold reads as belonging to a
+  /// round it does not, or one that sorts before the comment it answers.
   @useResult
   Future<GitResult<ReviewState>> addComment({
     required int deskId,
@@ -850,8 +1030,15 @@ class ReviewStore {
           if (i < 0) return current;
           if (_hasComment(current.threads[i], comment)) return current;
           final threads = [...current.threads];
+          final existing = _sequenced(threads[i].comments);
+          threads[i] = threads[i].copyWith(comments: existing);
+          final round = current.latestRound?.n ?? 0;
+          final stamped = comment.stamped(
+            round: round,
+            seq: maxCommentSeq(current.copyWith(threads: threads), round) + 1,
+          );
           threads[i] = threads[i].copyWith(
-            comments: [...threads[i].comments, comment],
+            comments: [...existing, stamped],
             updatedAt: clock.now(),
           );
           return current.copyWith(threads: threads, updatedAt: clock.now());
@@ -864,7 +1051,7 @@ class ReviewStore {
   @useResult
   Future<GitResult<ReviewState>> openThread({
     required int deskId,
-    required ReviewAnchor anchor,
+    required ReviewScope scope,
     required ReviewComment opener,
   }) =>
       _mutate(
@@ -875,8 +1062,18 @@ class ReviewStore {
             ReviewThreadRecord(
               id: _mintThreadId(opener.author, opener.at, opener.body),
               state: 'unresolved',
-              anchor: anchor,
-              comments: [opener],
+              scope: scope,
+              // Allocated from the ROUND, not from the new thread. Seq
+              // counts the round so that it orders ACROSS threads; two
+              // threads opened in one round both stamped 1 would collide,
+              // and a viewer whose cursor sat at 1 would never be told
+              // about the second one.
+              comments: [
+                opener.stamped(
+                  round: current.latestRound?.n ?? 0,
+                  seq: maxCommentSeq(current, current.latestRound?.n ?? 0) + 1,
+                ),
+              ],
               updatedAt: clock.now(),
             ),
           ],

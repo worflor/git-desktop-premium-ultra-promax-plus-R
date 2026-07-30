@@ -50,6 +50,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/backend/review_anchor.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
 import 'package:git_desktop/backend/review_records.dart';
 import 'package:git_desktop/features/review/review_pane_controller.dart';
@@ -105,7 +106,7 @@ void main() {
     expect(anchor, isNotNull, reason: 'line 8 must be anchorable');
     expect(
         await session.controller
-            .saveOpenerDraft(anchor: anchor!, body: 'why v1?'),
+            .saveOpenerDraft(scope: LineScope(anchor!), body: 'why v1?'),
         isNull);
     expect(await session.controller.publish(), isNull);
   }
@@ -122,10 +123,23 @@ void main() {
         ),
       );
 
+  /// A real line scope, captured the way the app captures one — the
+  /// composer target is a sealed scope now, not a (path, side, line)
+  /// tuple, because it also has to be able to name a file or the change.
+  LineScope lineScopeAt(String path, int line) => LineScope(captureAnchor(
+        lines: const ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'],
+        lineIndex: line - 1,
+        round: 1,
+        commit: 'c' * 40,
+        path: path,
+        side: 'new',
+      ));
+
   test('S7: a same-branch replacement inherits where the viewer was',
       () async {
     session.posture = const CompareRounds(1, 2);
-    session.composeAt = ('lib/a.dart', false, 8);
+    final composing = lineScopeAt('lib/a.dart', 8);
+    session.composeAt = composing;
     session.reviewedFiles = const {'lib/a.dart'};
 
     // The swap an identity change makes: same branch, new signer.
@@ -134,7 +148,7 @@ void main() {
 
     expect(next.compare, (1, 2),
         reason: 'the lens the viewer chose is still the lens they want');
-    expect(next.composeAt, ('lib/a.dart', false, 8),
+    expect(next.composeAt?.sameSubject(composing), isTrue,
         reason: 'an open composer must not close under them');
     expect(next.reviewedFiles, isEmpty,
         reason: 'ticks are the OLD controller reading disk — the reload '
@@ -145,9 +159,31 @@ void main() {
         reason: 'the materialized lens is derived; the posture is not');
   });
 
+  test('S7b: a late save closes ITS composer, not a replacement', () {
+    // The user cancels and reopens on the same line while a draft save
+    // is still in flight. A subject comparison says "same composer" and
+    // closes the replacement, taking text they are still typing. The
+    // token says otherwise, which is the only thing that can.
+    session.composeAt = lineScopeAt('lib/a.dart', 8);
+    final tokenAtSaveStart = session.composeToken;
+
+    // ...the save is in flight; the user reopens on the same line.
+    session.composeAt = lineScopeAt('lib/a.dart', 8);
+    session.composeToken++;
+
+    expect(session.composeToken == tokenAtSaveStart, isFalse,
+        reason: 'the replacement composer is indistinguishable from the '
+            'original by subject, so only an identity can tell the late '
+            'save it no longer owns what is on screen');
+    expect(session.composeAt!.sameSubject(lineScopeAt('lib/a.dart', 8)),
+        isTrue,
+        reason: 'and they really are the same subject — which is exactly '
+            'why the subject cannot be the test');
+  });
+
   test('S8: nothing crosses a branch change', () async {
     session.posture = const CompareRounds(1, 2);
-    session.composeAt = ('lib/a.dart', false, 8);
+    session.composeAt = lineScopeAt('lib/a.dart', 8);
 
     final next = sessionOn('other-feature', 'mira');
     next.adoptPostureFrom(session);

@@ -2015,6 +2015,14 @@ class _Translations$review$id extends Translations$review$en {
   String get standingApproved => 'disetujui';
   @override
   String get standingChangesRequested => 'perubahan diminta';
+  @override
+  String get commentOnChange => 'Komentari perubahan ini';
+  @override
+  String get commentOnFile => 'Komentari berkas ini';
+  @override
+  String get imageNotLoaded => 'gambar tidak dimuat';
+  @override
+  String get nothingBlocking => 'tidak ada yang menghambat';
 }
 
 // Path: settings

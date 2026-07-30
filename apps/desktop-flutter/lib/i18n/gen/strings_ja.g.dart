@@ -1965,6 +1965,14 @@ class _Translations$review$ja extends Translations$review$en {
   String get standingApproved => '承認済み';
   @override
   String get standingChangesRequested => '変更リクエスト済み';
+  @override
+  String get commentOnChange => 'この変更にコメント';
+  @override
+  String get commentOnFile => 'このファイルにコメント';
+  @override
+  String get imageNotLoaded => '画像は読み込まれていません';
+  @override
+  String get nothingBlocking => '保留中の項目はありません';
 }
 
 // Path: settings

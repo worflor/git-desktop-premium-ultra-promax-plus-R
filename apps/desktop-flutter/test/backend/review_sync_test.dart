@@ -116,7 +116,7 @@ void main() {
   test('Y1: a published review arrives on the peer', () async {
     final open = await aliceStore.openThread(
       deskId: 7,
-      anchor: _anchor(),
+      scope: LineScope(_anchor()),
       opener: ReviewComment(
           author: _alice,
           at: DateTime.utc(2026, 7, 22, 9),
@@ -128,13 +128,13 @@ void main() {
     final onBob = (await bobStore.read(7)).data;
     expect(onBob, isNotNull, reason: 'review must arrive via sync');
     expect(onBob!.threads.single.comments.single.body, 'why run() here?');
-    expect(onBob.threads.single.anchor.excerpt, '  run();');
+    expect(onBob.threads.single.lineAnchor!.excerpt, '  run();');
   });
 
   test('Y2: concurrent mutations converge, then go quiet', () async {
     await ok(aliceStore.openThread(
       deskId: 7,
-      anchor: _anchor(),
+      scope: LineScope(_anchor()),
       opener: ReviewComment(
           author: _alice,
           at: DateTime.utc(2026, 7, 22, 9),
@@ -189,7 +189,7 @@ void main() {
         7,
         ReviewDraftEntry(
             threadId: '',
-            anchor: _anchor(),
+            scope: LineScope(_anchor()),
             body: 'private half-thought',
             at: DateTime.utc(2026, 7, 22, 9))));
     final sync = await bobStore.syncWithRemote();
@@ -233,7 +233,7 @@ void main() {
       () async {
     await ok(aliceStore.openThread(
       deskId: 7,
-      anchor: _anchor(),
+      scope: LineScope(_anchor()),
       opener: ReviewComment(
           author: _alice, at: DateTime.utc(2026, 7, 22, 9), body: 'base'),
     ));
@@ -291,7 +291,7 @@ void main() {
     // ball with bob everywhere.
     await ok(aliceStore.openThread(
       deskId: 7,
-      anchor: _anchor(),
+      scope: LineScope(_anchor()),
       opener: ReviewComment(
           author: _alice,
           at: DateTime.utc(2026, 7, 22, 9),

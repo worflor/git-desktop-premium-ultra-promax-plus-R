@@ -106,6 +106,11 @@ class FileFacts {
   /// pass an `onEvict:` argument — every evicted value then leaks its
   /// native resources. Each entry is the value type name, for the message.
   final List<String> lruDisposableNoEvict = [];
+
+  /// Every type name this file CONSTRUCTS, from either AST shape (see
+  /// `_noteConstruction`). For laws that forbid a constructor outright
+  /// rather than inspecting its arguments.
+  final Set<String> constructedTypes = <String>{};
 }
 
 /// dart:ui-ish handles that own native resources freed only by an explicit
@@ -223,8 +228,13 @@ class _FactsVisitor extends RecursiveAstVisitor<void> {
     if (_gitRunNames.contains(name)) _countUnboundedGit(node);
     if (name == 'openWrite') facts.openWrites++;
     if (name == 'now' && targetSource == 'DateTime') facts.wallClock++;
-    if (name == 'Random' && node.argumentList.arguments.isEmpty) {
-      facts.wallClock++;
+    // An unresolved `Foo(...)` is indistinguishable from a call, so a
+    // capitalized target-less invocation is treated as a construction.
+    // Over-counting a same-named function is the safe direction: these
+    // laws must never miss a construction.
+    if (target == null && name.isNotEmpty && name[0].toUpperCase() == name[0]) {
+      _noteConstruction(
+          name, node.typeArguments?.arguments, node.argumentList);
     }
     if (name == 'writeFileAtomic' || name == 'writeFileAtomicString') {
       facts.callsWriteFileAtomic = true;
@@ -237,15 +247,40 @@ class _FactsVisitor extends RecursiveAstVisitor<void> {
   void visitInstanceCreationExpression(InstanceCreationExpression node) {
     final ctor = node.constructorName;
     final typeName = ctor.type.name.lexeme;
-    if (typeName == 'Random' && node.argumentList.arguments.isEmpty) {
-      facts.wallClock++;
-    }
     if (typeName == 'DateTime' && ctor.name?.name == 'now') {
       facts.wallClock++;
     }
+    _noteConstruction(
+      typeName,
+      ctor.type.typeArguments?.arguments,
+      node.argumentList,
+    );
+    super.visitInstanceCreationExpression(node);
+  }
+
+  /// Construction facts, from EITHER AST shape.
+  ///
+  /// The corpus is parsed, not resolved (see [_parse]), so `Foo(...)`
+  /// without `new` — which is every construction written this decade —
+  /// arrives as a [MethodInvocation] and never reaches
+  /// [visitInstanceCreationExpression] at all. The LruCache check used to
+  /// live only there, which made its law blind to all fourteen caches in
+  /// lib/: vacuously green, and green is exactly what it would have
+  /// stayed the day someone cached a TextPainter. `Random()` escaped the
+  /// same fate only because it was independently duplicated into the
+  /// method-invocation path.
+  ///
+  /// So: one place, both shapes, and new construction laws inherit the
+  /// coverage instead of re-earning it.
+  void _noteConstruction(
+    String typeName,
+    List<TypeAnnotation>? typeArgs,
+    ArgumentList args,
+  ) {
+    if (typeName == 'Random' && args.arguments.isEmpty) facts.wallClock++;
+    facts.constructedTypes.add(typeName);
     if (typeName == 'LruCache') {
       // Second type argument is the value type: LruCache<K, V>.
-      final typeArgs = ctor.type.typeArguments?.arguments;
       if (typeArgs != null && typeArgs.length == 2) {
         final valueType = typeArgs[1];
         // Unwrap a bare named type; anything else (a nested generic like
@@ -253,14 +288,13 @@ class _FactsVisitor extends RecursiveAstVisitor<void> {
         // of scope for this law.
         final vName = valueType is NamedType ? valueType.name.lexeme : null;
         if (vName != null && _disposableValueTypes.contains(vName)) {
-          final hasOnEvict = node.argumentList.arguments
+          final hasOnEvict = args.arguments
               .whereType<NamedExpression>()
               .any((a) => a.name.label.name == 'onEvict');
           if (!hasOnEvict) facts.lruDisposableNoEvict.add(vName);
         }
       }
     }
-    super.visitInstanceCreationExpression(node);
   }
 
   @override

@@ -30,8 +30,17 @@ class ReviewViewBundle {
   /// the flat list; the pane renders [groups]).
   final List<ReviewThreadView> threads;
 
-  /// Published threads grouped per file, reading order within.
+  /// Published threads grouped per file, reading order within. File-
+  /// scoped threads lead their group; review-scoped ones are NOT here.
   final List<ReviewFileGroupView> groups;
+
+  /// Published threads about the change itself — no file, no line.
+  ///
+  /// Their own list rather than a group with a blank heading: a comment
+  /// on the change is not a comment on a file called "", and the pane
+  /// opens with them because that is the order a reviewer thinks in
+  /// (what is this, then what is in it).
+  final List<ReviewThreadView> reviewThreads;
 
   /// The viewer's unpublished opener drafts — a separate SECTION, not
   /// interleaved with public threads: a private half-thought is a
@@ -43,8 +52,19 @@ class ReviewViewBundle {
     required this.threads,
     required this.groups,
     required this.draftThreads,
+    this.reviewThreads = const [],
   });
 }
+
+/// A draft row's own save time, for ordering rows that share a subject
+/// and have no thread id to separate them.
+DateTime _firstDraftAt(ReviewThreadView v) =>
+    v.comments.isEmpty
+        ? DateTime.fromMillisecondsSinceEpoch(0)
+        : (v.comments.first.draftAt ?? v.comments.first.at);
+
+String _firstBody(ReviewThreadView v) =>
+    v.comments.isEmpty ? '' : v.comments.first.body;
 
 /// Group [threads] by file, preserving the incoming order (which is
 /// already the reading order). Shared with the preview lab so fixture
@@ -78,17 +98,63 @@ ReviewViewBundle buildReviewViews(
   required String authorDisplay,
   Map<String, List<String>> currentFiles = const {},
   Map<String, List<String>> oldFiles = const {},
+
+  /// Paths still IN THE CHANGE — what a file-scoped thread is about.
+  ///
+  /// Membership, not existence: a file reverted to its base content is
+  /// still in both trees and no longer in the diff, and a thread saying
+  /// "this file should not be in this change" about it has been answered
+  /// rather than being current.
+  ///
+  /// Not sided — membership belongs to the path, and the side only tells
+  /// content resolution which tree to read.
+  ///
+  /// NULL MEANS UNKNOWN, not empty: a caller that could not determine the
+  /// change set (a fixture, or a git call that failed) leaves file scopes
+  /// as they are instead of marking every one of them outdated.
+  Set<String>? changedPaths,
   List<ReviewDraftEntry> drafts = const [],
   int filesSinceLastLook = 0,
-  DateTime? lastLookAt,
+
+  /// Identities of the comments this viewer has already been shown.
+  ///
+  /// The ONLY unread input. A round pointer and a look timestamp used to
+  /// sit beside this and were left behind when the ladder collapsed —
+  /// still accepted, no longer read. A parameter that looks like it
+  /// configures unread behaviour and silently does nothing is worse than
+  /// no parameter, so they are gone: a caller with only a legacy cursor
+  /// now fails to compile instead of quietly reporting every historical
+  /// comment as new. (The controller seeds this set from that cursor on
+  /// the first load after upgrading — see ReviewLastSeen.seedSeen.)
+  ///
+  /// Exact, and the reason there is no ladder here any more: a round's
+  /// comments are a PARTIAL order (concurrent peers are incomparable),
+  /// and a read frontier over a partial order is a set rather than a
+  /// point. Every scalar cursor this replaced had to guess at ties in
+  /// one direction or the other, and both directions were wrong in a
+  /// case that actually happens.
+  Set<String> seenComments = const {},
 }) {
   // The boundary between read and unread: the moment the round the
   // viewer last saw was cut. A comment newer than that is new TO THEM —
   // their own words never are, since writing is looking.
+
+  /// Is this comment new to the viewer?
+  ///
+  /// Two cases, and there is no third: your own words are never new to
+  /// you, and everything else is new until you have been shown it.
+  ///
+  /// This replaced a six-rung ladder over rounds, sequences and wall
+  /// clocks. The ladder existed because a scalar cursor cannot describe
+  /// a read frontier over a PARTIAL order — concurrent peers publishing
+  /// into one round are incomparable — so it had to guess at ties, and
+  /// each guess was wrong in a case that happens. Set membership asks
+  /// the question directly and needs no ordering, no clock, and no
+  /// migration of the document format.
   bool unseen(ReviewComment c) =>
-      lastLookAt != null &&
       c.author.display != viewerDisplay &&
-      c.at.isAfter(lastLookAt);
+      !seenComments.contains(reviewCommentIdentity(c));
+
   var newComments = 0;
   // Side-aware resolution: a 'new'-side anchor asks "where is this
   // content in the head version", an 'old'-side anchor (a comment on a
@@ -104,26 +170,74 @@ ReviewViewBundle buildReviewViews(
     return resolveAnchor(a, lines);
   }
 
+  /// The honesty ladder, one rung per kind of subject.
+  ///
+  /// A line can slip and be re-found. A FILE can only be there or gone —
+  /// which is worth saying, because "this file should not exist" against
+  /// a file that no longer exists is a thread that got what it asked
+  /// for. The change itself cannot go stale at all, so a review-scoped
+  /// thread is never marked moved or outdated; claiming otherwise would
+  /// put a decayed chip on the one thread that cannot decay.
+  ///
+  /// Exhaustive over the sealed scope: a fourth kind of subject cannot
+  /// be added without the compiler stopping here first.
+  (ReviewAnchorState, int, String) resolveScope(ReviewScope scope) {
+    switch (scope) {
+      case LineScope(anchor: final a):
+        final res = resolveSided(a);
+        return (
+          switch (res.status) {
+            AnchorStatus.anchored => ReviewAnchorState.anchored,
+            AnchorStatus.reanchored => ReviewAnchorState.reanchored,
+            AnchorStatus.outdated => ReviewAnchorState.outdated,
+          },
+          res.line ?? a.line,
+          a.excerpt,
+        );
+      case FileScope(path: final path):
+        // MEMBERSHIP, not content and not existence: see the controller's
+        // note for why a file scope must never pull a blob in, why "is it
+        // still in the tree" was the wrong question, and why an unknown
+        // change set must not decay anything.
+        return (
+          changedPaths == null || changedPaths.contains(path)
+              ? ReviewAnchorState.anchored
+              : ReviewAnchorState.outdated,
+          0,
+          '',
+        );
+      case WholeScope():
+        return (ReviewAnchorState.anchored, 0, '');
+    }
+  }
+
+  ReviewThreadScope kindOf(ReviewScope scope) => switch (scope) {
+        LineScope() => ReviewThreadScope.line,
+        FileScope() => ReviewThreadScope.file,
+        WholeScope() => ReviewThreadScope.review,
+      };
+
   final threads = <ReviewThreadView>[];
 
   for (final t in state.threads) {
     for (final c in t.comments) {
       if (unseen(c)) newComments++;
     }
-    final res = resolveSided(t.anchor);
+    final (state_, line, excerpt) = resolveScope(t.scope);
     final replyDrafts = drafts.where((d) => d.threadId == t.id);
     threads.add(ReviewThreadView(
       threadId: t.id,
-      side: t.anchor.side,
-      filePath: t.anchor.path,
-      line: res.line ?? t.anchor.line,
-      excerpt: t.anchor.excerpt,
-      anchorState: switch (res.status) {
-        AnchorStatus.anchored => ReviewAnchorState.anchored,
-        AnchorStatus.reanchored => ReviewAnchorState.reanchored,
-        AnchorStatus.outdated => ReviewAnchorState.outdated,
+      scope: kindOf(t.scope),
+      side: switch (t.scope) {
+        LineScope(anchor: final a) => a.side,
+        FileScope(side: final side) => side,
+        WholeScope() => 'new',
       },
-      lastSeenRound: t.anchor.round,
+      filePath: t.scope.path,
+      line: line,
+      excerpt: excerpt,
+      anchorState: state_,
+      lastSeenRound: t.scope.round,
       state: switch (t.state) {
         'done' => ReviewThreadState.done,
         'acked' => ReviewThreadState.acked,
@@ -157,19 +271,21 @@ ReviewViewBundle buildReviewViews(
   // own section, never interleaved with published discussion.
   final draftThreads = <ReviewThreadView>[];
   for (final d in drafts) {
-    if (d.threadId.isNotEmpty || d.anchor == null) continue;
-    final res = resolveSided(d.anchor!);
+    final scope = d.scope;
+    if (d.threadId.isNotEmpty || scope == null) continue;
+    final (state_, line, excerpt) = resolveScope(scope);
     draftThreads.add(ReviewThreadView(
-      side: d.anchor!.side,
-      filePath: d.anchor!.path,
-      line: res.line ?? d.anchor!.line,
-      excerpt: d.anchor!.excerpt,
-      anchorState: switch (res.status) {
-        AnchorStatus.anchored => ReviewAnchorState.anchored,
-        AnchorStatus.reanchored => ReviewAnchorState.reanchored,
-        AnchorStatus.outdated => ReviewAnchorState.outdated,
+      scope: kindOf(scope),
+      side: switch (scope) {
+        LineScope(anchor: final a) => a.side,
+        FileScope(side: final side) => side,
+        WholeScope() => 'new',
       },
-      lastSeenRound: d.anchor!.round,
+      filePath: scope.path,
+      line: line,
+      excerpt: excerpt,
+      anchorState: state_,
+      lastSeenRound: scope.round,
       comments: [
         ReviewCommentView(
           author: viewerDisplay,
@@ -185,7 +301,45 @@ ReviewViewBundle buildReviewViews(
   // Standing verdict note: per-reviewer-latest decisive verdict, the
   // same fold desk PRs use. CHANGES_REQUESTED outranks APPROVED.
   final standing = <String, ReviewVerdict>{};
-  final ordered = [...state.verdicts]..sort((a, b) => a.at.compareTo(b.at));
+  // ROUND first, then the clock. The last write per reviewer wins the
+  // standing, so the order this sorts in decides what the header claims —
+  // and `at` alone compares two machines' wall clocks. A reviewer who
+  // asked for changes at round 1 from a fast machine and approved round 3
+  // from a slow one would have had the header still reporting
+  // "changes requested" about code they had already signed off.
+  final ordered = [...state.verdicts]
+    ..sort((a, b) {
+      final byRound = a.round.compareTo(b.round);
+      if (byRound != 0) return byRound;
+      // Then the causal counter, and only then the clock — the same
+      // ranking the attention set and thread comments use. Round alone
+      // still left two verdicts from one reviewer in ONE round decided by
+      // whose machine was ahead.
+      final bySeq = a.seq.compareTo(b.seq);
+      if (bySeq != 0) return bySeq;
+      // TIED: one reviewer, two machines, neither having seen the other
+      // when they wrote. There is no causal information linking them and
+      // the clocks belong to different computers, so "later" has no
+      // answer — and the previous fallback let skew decide whether a
+      // reviewer had approved or objected.
+      //
+      // An unresolvable tie is not "later", it is "we do not know", and
+      // the safe reading of not knowing is the BLOCKING one. Reporting
+      // "changes requested" when they approved is friction; reporting
+      // "approved" when they objected can let unwanted code through.
+      // This also matches the rule already applied ACROSS reviewers,
+      // where any blocking verdict outranks every approval.
+      final aBlocks = a.verdict == 'CHANGES_REQUESTED';
+      final bBlocks = b.verdict == 'CHANGES_REQUESTED';
+      if (aBlocks != bBlocks) return aBlocks ? 1 : -1;
+      final byAt = a.at.compareTo(b.at);
+      if (byAt != 0) return byAt;
+      // Total, so an exact tie cannot depend on sort stability. The
+      // input order is already canonical (the union sorts it), but a
+      // comparator that returns 0 for distinguishable values leaves the
+      // outcome to the sort implementation rather than to the data.
+      return a.verdict.compareTo(b.verdict);
+    });
   for (final v in ordered) {
     if (v.verdict == 'APPROVED' || v.verdict == 'CHANGES_REQUESTED') {
       standing[v.by.display] = v;
@@ -227,16 +381,45 @@ ReviewViewBundle buildReviewViews(
   // Reading order, not record order: the pane follows the code —
   // by file, then by the line the thread currently resolves to.
   // Deterministic (path, line, excerpt) so re-renders never shuffle.
+  //
+  // A file-scoped thread carries line 0, which sorts it to the head of
+  // its own file's group for free — "about this file" before "about line
+  // 12 of it" — with no special case in the comparator.
   int readingOrder(ReviewThreadView a, ReviewThreadView b) {
     var c = a.filePath.compareTo(b.filePath);
     if (c != 0) return c;
     c = a.line.compareTo(b.line);
     if (c != 0) return c;
-    return a.excerpt.compareTo(b.excerpt);
+    c = a.excerpt.compareTo(b.excerpt);
+    if (c != 0) return c;
+    // TOTAL, because the new scopes made ties reachable: two file-scoped
+    // threads on one path, or two threads about the change itself, agree
+    // on (path, line, excerpt) — all three of which are empty or zero for
+    // them. A comparator that returns 0 for distinguishable rows leaves
+    // their order to the sort implementation, so the pane could shuffle
+    // two comments between rebuilds.
+    final byId = a.threadId.compareTo(b.threadId);
+    if (byId != 0) return byId;
+    // Drafts have no thread id yet — they are unpublished — so two of
+    // them on one subject were still tied after all of the above. Their
+    // own save time and text are what distinguishes them, and both are
+    // stable for the life of the draft.
+    final at = _firstDraftAt(a).compareTo(_firstDraftAt(b));
+    if (at != 0) return at;
+    return _firstBody(a).compareTo(_firstBody(b));
   }
 
   threads.sort(readingOrder);
   draftThreads.sort(readingOrder);
+
+  // Review-scoped threads leave the file list. They keep their place in
+  // `threads` (the flat list is every published thread, which is what
+  // its consumers count) and are pulled out of `groups`, so no caller
+  // can accidentally render a file heading for the change itself.
+  bool aboutTheChange(ReviewThreadView v) =>
+      v.scope == ReviewThreadScope.review;
+  final reviewThreads = threads.where(aboutTheChange).toList();
+  final filed = threads.where((v) => !aboutTheChange(v)).toList();
 
   final turn = deriveTurn(state,
       authorDisplay: authorDisplay, viewerDisplay: viewerDisplay);
@@ -257,7 +440,8 @@ ReviewViewBundle buildReviewViews(
       standingBy: standingBy,
     ),
     threads: threads,
-    groups: groupThreadsByFile(threads),
+    groups: groupThreadsByFile(filed),
     draftThreads: draftThreads,
+    reviewThreads: reviewThreads,
   );
 }

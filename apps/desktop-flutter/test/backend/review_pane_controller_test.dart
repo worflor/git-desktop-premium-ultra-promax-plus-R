@@ -42,6 +42,7 @@
 library;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/backend/review_anchor.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
 import 'package:git_desktop/backend/review_records.dart';
 import 'package:git_desktop/features/review/review_pane_controller.dart';
@@ -118,7 +119,7 @@ void main() {
         await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
     expect(anchor, isNotNull);
     expect(anchor!.excerpt, 'beta2');
-    expect(await ctrl.saveOpenerDraft(anchor: anchor, body: 'why beta2?'),
+    expect(await ctrl.saveOpenerDraft(scope: LineScope(anchor), body: 'why beta2?'),
         isNull);
 
     var d = (await ctrl.load()).data!;
@@ -155,7 +156,7 @@ void main() {
     expect(anchor!.excerpt, 'beta');
     expect(anchor.side, 'old');
     expect(
-        await ctrl.saveOpenerDraft(anchor: anchor, body: 'why remove beta?'),
+        await ctrl.saveOpenerDraft(scope: LineScope(anchor), body: 'why remove beta?'),
         isNull);
     expect(await ctrl.publish(), isNull);
     final d = (await ctrl.load()).data!;
@@ -181,7 +182,7 @@ void main() {
     expect((await ctrl.ensureRound()).ok, isTrue);
     final anchor =
         await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 1);
-    await ctrl.saveOpenerDraft(anchor: anchor!, body: 'nit: naming');
+    await ctrl.saveOpenerDraft(scope: LineScope(anchor!), body: 'nit: naming');
     await ctrl.publish();
 
     var d = (await ctrl.load()).data!;
@@ -220,7 +221,7 @@ void main() {
     await ctrl.load();
     expect((await ctrl.ensureRound()).ok, isTrue);
     final a = await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 1);
-    await ctrl.saveOpenerDraft(anchor: a!, body: 'first');
+    await ctrl.saveOpenerDraft(scope: LineScope(a!), body: 'first');
     await ctrl.publish();
 
     // Fire the traversals a rapid pair of verbs would: they share the
@@ -273,7 +274,7 @@ void main() {
 
     // Publishing marks the look; then the head moves.
     final a1 = await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
-    await ctrl.saveOpenerDraft(anchor: a1!, body: 'first pass');
+    await ctrl.saveOpenerDraft(scope: LineScope(a1!), body: 'first pass');
     expect(await ctrl.publish(), isNull);
     var d = (await ctrl.load()).data!;
     final r1Commit = d.latestRoundCommit;
@@ -344,7 +345,7 @@ void main() {
     expect((await ctrl.ensureRound()).ok, isTrue);
     final anchor =
         await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
-    await ctrl.saveOpenerDraft(anchor: anchor!, body: 'why beta2?');
+    await ctrl.saveOpenerDraft(scope: LineScope(anchor!), body: 'why beta2?');
     expect(await ctrl.publish(verdict: 'CHANGES_REQUESTED'), isNull);
 
     final d = (await ctrl.load()).data!;
@@ -386,7 +387,7 @@ void main() {
     expect((await ctrl.ensureRound()).ok, isTrue);
     final anchor =
         await ctrl.captureAt(path: 'lib/a.dart', side: 'new', line: 2);
-    await ctrl.saveOpenerDraft(anchor: anchor!, body: 'why beta2?');
+    await ctrl.saveOpenerDraft(scope: LineScope(anchor!), body: 'why beta2?');
     expect(await ctrl.publish(verdict: 'CHANGES_REQUESTED'), isNull);
 
     // mira just spoke: the ball is jun's, so she has nobody to hand to.

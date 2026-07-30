@@ -22,6 +22,7 @@ import '../backend/git_identity.dart';
 import '../backend/manifold_refs.dart';
 import '../backend/remote_pr_provider.dart' show detectPrProvider;
 import '../backend/review_records.dart';
+import '../backend/review_last_seen.dart';
 import '../backend/review_store.dart';
 import 'app_identity.dart';
 import 'repository_state.dart';
@@ -452,8 +453,27 @@ class DeskPrState extends ChangeNotifier {
   }) async {
     final main = await _mainRepoOf(repoPath) ?? repoPath;
     final store = DeskPrStore(refsFor(main));
+    // Read the desk id BEFORE the ref goes away — it is the only handle
+    // to everything hanging off this PR.
+    final existing = await store.read(branch);
+    final deskId = existing.ok ? existing.data?.deskId : null;
     final r = await store.abandon(branch);
     if (!r.ok) return r.error;
+    // The review dies with the PR it hung off. Abandoning used to leave
+    // the whole thing behind: a state doc, one pin per round keeping its
+    // commit's objects alive indefinitely, the viewer's unpublished
+    // drafts in a local ref, and a local read-pointer that would have
+    // been inherited by whatever desk reused the number.
+    //
+    // After the abandon, not before: the desk ref is the thing whose
+    // deletion can fail, and a review torn down for a PR that then
+    // refused to go away would be the worse outcome.
+    if (deskId != null) {
+      final reviews = ReviewStore(refsFor(main));
+      // ignore: unused_result
+      await reviews.deleteReview(deskId);
+      await ReviewLastSeen.forget(repoPath: main, deskId: deskId);
+    }
     await refreshFor(main);
     return null;
   }

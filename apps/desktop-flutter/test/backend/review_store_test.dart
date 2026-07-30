@@ -86,7 +86,7 @@ void main() {
     final lines = ['void main() {', '  run();', '}'];
     final r = await store.openThread(
       deskId: 7,
-      anchor: anchorOn(lines, 1),
+      scope: LineScope(anchorOn(lines, 1)),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026, 7, 22), body: 'why run?'),
     );
@@ -96,7 +96,7 @@ void main() {
     final state = (await store.read(7)).data!;
     expect(state.deskId, 7);
     expect(state.threads.single.comments.single.body, 'why run?');
-    expect(state.threads.single.anchor.excerpt, '  run();');
+    expect(state.threads.single.lineAnchor!.excerpt, '  run();');
   });
 
   test('R2: round cutting pins, records, no-ops, advances', () async {
@@ -176,14 +176,14 @@ void main() {
         7,
         ReviewDraftEntry(
             threadId: '',
-            anchor: anchorOn(lines, 2),
+            scope: LineScope(anchorOn(lines, 2)),
             body: 'first draft',
             at: at)));
     await ok<void>(store.saveDraft(
         7,
         ReviewDraftEntry(
             threadId: '',
-            anchor: anchorOn(lines, 4),
+            scope: LineScope(anchorOn(lines, 4)),
             body: 'second draft',
             at: at.add(const Duration(minutes: 1)))));
 
@@ -211,14 +211,14 @@ void main() {
         7,
         ReviewDraftEntry(
             threadId: '',
-            anchor: anchorOn(lines, 2),
+            scope: LineScope(anchorOn(lines, 2)),
             body: 'first draft',
             at: at)));
     await ok<void>(store.saveDraft(
         7,
         ReviewDraftEntry(
             threadId: '',
-            anchor: anchorOn(lines, 4),
+            scope: LineScope(anchorOn(lines, 4)),
             body: 'second draft',
             at: at.add(const Duration(minutes: 1)))));
     final replay = await store.publish(
@@ -235,7 +235,7 @@ void main() {
         7,
         ReviewDraftEntry(
             threadId: threadId,
-            anchor: null,
+            scope: null,
             body: 'a reply',
             at: at.add(const Duration(minutes: 5)))));
     final withReply = await store.publish(deskId: 7, author: _jun);
@@ -251,7 +251,7 @@ void main() {
     final lines = ['x', 'y'];
     await ok(store.openThread(
       deskId: 7,
-      anchor: anchorOn(lines, 0),
+      scope: LineScope(anchorOn(lines, 0)),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026, 7, 22), body: 'fix?'),
     ));
@@ -279,7 +279,7 @@ void main() {
     final lines = ['x', 'y'];
     await ok(store.openThread(
       deskId: 7,
-      anchor: anchorOn(lines, 0),
+      scope: LineScope(anchorOn(lines, 0)),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026, 7, 22), body: 'fix?'),
     ));
@@ -305,7 +305,7 @@ void main() {
     // so it must not manufacture a turn out of a self-resolve.
     await ok(store.openThread(
       deskId: 8,
-      anchor: anchorOn(const ['x'], 0),
+      scope: LineScope(anchorOn(const ['x'], 0)),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026, 7, 22), body: 'never mind'),
     ));
@@ -325,7 +325,7 @@ void main() {
             7,
             ReviewDraftEntry(
                 threadId: '',
-                anchor: anchorOn(lines, i % 3),
+                scope: LineScope(anchorOn(lines, i % 3)),
                 body: 'racer $i',
                 at: at.add(Duration(seconds: i)))),
     ]).then((rs) {
@@ -346,7 +346,7 @@ void main() {
     await ok<void>(store.saveDraft(
         7,
         ReviewDraftEntry(
-            threadId: '', anchor: anchorOn(lines, 0), body: 'batched', at: at)));
+            threadId: '', scope: LineScope(anchorOn(lines, 0)), body: 'batched', at: at)));
     // The race: a new draft lands between the durable state write and
     // the draft-ref cleanup.
     store.beforePublishDiscard = () async {
@@ -354,7 +354,7 @@ void main() {
           7,
           ReviewDraftEntry(
               threadId: '',
-              anchor: anchorOn(lines, 2),
+              scope: LineScope(anchorOn(lines, 2)),
               body: 'mid-publish arrival',
               at: at.add(const Duration(minutes: 1)))));
     };
@@ -372,7 +372,7 @@ void main() {
     final lines = ['m', 'n'];
     await ok(store.openThread(
       deskId: 7,
-      anchor: anchorOn(lines, 0),
+      scope: LineScope(anchorOn(lines, 0)),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026, 7, 22), body: 'q'),
     ));
@@ -483,12 +483,12 @@ void main() {
     // it verified.
     await ok(store.openThread(
       deskId: 3,
-      anchor: anchorOn(const ['alpha'], 0),
+      scope: LineScope(anchorOn(const ['alpha'], 0)),
       opener: ReviewComment(author: _mira, at: DateTime.utc(2026), body: 'a'),
     ));
     await ok(store.openThread(
       deskId: 11,
-      anchor: anchorOn(const ['beta'], 0),
+      scope: LineScope(anchorOn(const ['beta'], 0)),
       opener: ReviewComment(author: _jun, at: DateTime.utc(2026), body: 'b'),
     ));
     await repo.writeFile('f.txt', 'one');
@@ -530,7 +530,7 @@ void main() {
     final anchor = anchorOn(const ['alpha', 'beta'], 0);
     await ok(store.openThread(
       deskId: 5,
-      anchor: anchor,
+      scope: LineScope(anchor),
       opener: ReviewComment(
           author: _mira, at: DateTime.utc(2026), body: 'this leaks'),
     ));
@@ -572,7 +572,7 @@ void main() {
       9,
       ReviewDraftEntry(
         threadId: '',
-        anchor: anchor,
+        scope: LineScope(anchor),
         body: 'ship it',
         at: DateTime.utc(2026, 7, 24, 12),
       ),
@@ -591,7 +591,7 @@ void main() {
   test('R12: one draft can be dropped without taking the batch', () async {
     ReviewDraftEntry d(String body, int minute) => ReviewDraftEntry(
           threadId: '',
-          anchor: anchorOn(const ['alpha', 'beta'], 0),
+          scope: LineScope(anchorOn(const ['alpha', 'beta'], 0)),
           body: body,
           at: DateTime.utc(2026, 7, 24, 12, minute),
         );

@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n} h",
   "timeDaysFmt": "{n} d",
   "standingApproved": "aprovado",
-  "standingChangesRequested": "alterações solicitadas"
+  "standingChangesRequested": "alterações solicitadas",
+  "commentOnChange": "Comentar esta alteração",
+  "commentOnFile": "Comentar este arquivo",
+  "imageNotLoaded": "imagem não carregada",
+  "nothingBlocking": "nada pendente"
 }

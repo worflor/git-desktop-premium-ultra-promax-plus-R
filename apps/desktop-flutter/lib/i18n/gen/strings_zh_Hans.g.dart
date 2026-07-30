@@ -1933,6 +1933,14 @@ class _Translations$review$zh_Hans extends Translations$review$en {
   String get standingApproved => '已批准';
   @override
   String get standingChangesRequested => '已请求修改';
+  @override
+  String get commentOnChange => '评论此变更';
+  @override
+  String get commentOnFile => '评论此文件';
+  @override
+  String get imageNotLoaded => '未加载图片';
+  @override
+  String get nothingBlocking => '没有待处理项';
 }
 
 // Path: settings

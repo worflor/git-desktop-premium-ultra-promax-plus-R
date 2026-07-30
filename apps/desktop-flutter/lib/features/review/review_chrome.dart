@@ -118,8 +118,7 @@ class ReviewChip extends StatefulWidget {
 
   FontWeight get _weight =>
       weight ??
-      (variant == ReviewChipVariant.accent ||
-              variant == ReviewChipVariant.quiet
+      (variant == ReviewChipVariant.accent || variant == ReviewChipVariant.quiet
           ? FontWeight.w700
           : FontWeight.w600);
 
@@ -141,14 +140,17 @@ class ReviewChip extends StatefulWidget {
     final dotW = dot ? 5 + AppSpacing.xs : 0;
     return text + dotW + 2 * ReviewMetrics.chipPadX;
   }
-
 }
 
 class _ReviewChipState extends State<ReviewChip> {
   bool _hover = false;
+  bool _focused = false;
 
   /// Hover styling applies only to a chip that can actually be pressed.
-  bool get _lit => _hover && widget.onTap != null;
+  /// Keyboard focus lights it the same way, so arriving by tab looks
+  /// like arriving by pointer instead of inventing a second language for
+  /// the same state.
+  bool get _lit => (_hover || _focused) && widget.onTap != null;
 
   @override
   Widget build(BuildContext context) {
@@ -158,14 +160,41 @@ class _ReviewChipState extends State<ReviewChip> {
     // does not answer the pointer reads as decoration. DECORATION ONLY —
     // height and padding are untouched, so hovering never resizes the
     // row and never moves the control the pointer is travelling toward.
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: body,
+    // Reachable by keyboard and named to a screen reader.
+    //
+    // This is what renders `publish`, the verdict choices and `discard` —
+    // the whole review flow's consequential controls, including the
+    // destructive one — and it was a MouseRegion over a GestureDetector,
+    // so none of them could be reached or even announced without a
+    // pointer. The label is already here, so the semantics cost nothing.
+    return Semantics(
+      button: true,
+      enabled: true,
+      label: widget.label,
+      onTap: widget.onTap,
+      // ONE node, not a button wrapping a separate text node: the label
+      // is already on this node, and leaving the child's own semantics
+      // in place makes a screen reader announce the same word twice and
+      // gives the accessibility tree two things where the user sees one
+      // control.
+      excludeSemantics: true,
+      child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focused = v),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap!();
+              return null;
+            },
+          ),
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: body,
+        ),
       ),
     );
   }
@@ -193,8 +222,10 @@ class _ReviewChipState extends State<ReviewChip> {
               Container(
                 width: 5,
                 height: 5,
-                decoration:
-                    BoxDecoration(color: widget.color, shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: widget.color,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: AppSpacing.xs),
               text,
@@ -205,29 +236,32 @@ class _ReviewChipState extends State<ReviewChip> {
     // Hover only lifts the alphas; the geometry below is identical in
     // both states, which is what keeps a hover from resizing the row.
     final decoration = switch (widget.variant) {
-      ReviewChipVariant.quiet => _lit
-          ? BoxDecoration(
-              color: widget.color.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(geo.badgeRadius),
-            )
-          : null,
+      ReviewChipVariant.quiet =>
+        _lit
+            ? BoxDecoration(
+                color: widget.color.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(geo.badgeRadius),
+              )
+            : null,
       ReviewChipVariant.outline => BoxDecoration(
-          borderRadius: BorderRadius.circular(geo.badgeRadius),
-          border: Border.all(
-              color: widget.color.withValues(alpha: _lit ? 0.75 : 0.45),
-              width: AppBorderWidth.hairline),
+        borderRadius: BorderRadius.circular(geo.badgeRadius),
+        border: Border.all(
+          color: widget.color.withValues(alpha: _lit ? 0.75 : 0.45),
+          width: AppBorderWidth.hairline,
         ),
+      ),
       ReviewChipVariant.fill => BoxDecoration(
-          color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
-          borderRadius: BorderRadius.circular(geo.badgeRadius),
-        ),
+        color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
+        borderRadius: BorderRadius.circular(geo.badgeRadius),
+      ),
       ReviewChipVariant.accent => BoxDecoration(
-          color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
-          borderRadius: BorderRadius.circular(geo.badgeRadius),
-          border: Border.all(
-              color: widget.color.withValues(alpha: _lit ? 0.7 : 0.4),
-              width: AppBorderWidth.hairline),
+        color: widget.color.withValues(alpha: _lit ? 0.22 : 0.14),
+        borderRadius: BorderRadius.circular(geo.badgeRadius),
+        border: Border.all(
+          color: widget.color.withValues(alpha: _lit ? 0.7 : 0.4),
+          width: AppBorderWidth.hairline,
         ),
+      ),
     };
 
     // NOT `alignment:` on the container — a Container with alignment
@@ -243,28 +277,18 @@ class _ReviewChipState extends State<ReviewChip> {
     if (widget.onTap == null) {
       return Container(
         height: ReviewMetrics.chipHeight,
-        padding:
-            const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
+        padding: const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
         decoration: decoration,
-        child: Align(
-          alignment: Alignment.center,
-          widthFactor: 1,
-          child: child,
-        ),
+        child: Align(alignment: Alignment.center, widthFactor: 1, child: child),
       );
     }
     return AnimatedContainer(
       duration: context.motionRead(AppMotion.snap),
       curve: AppMotion.snapCurve,
       height: ReviewMetrics.chipHeight,
-      padding:
-          const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
+      padding: const EdgeInsets.symmetric(horizontal: ReviewMetrics.chipPadX),
       decoration: decoration,
-      child: Align(
-        alignment: Alignment.center,
-        widthFactor: 1,
-        child: child,
-      ),
+      child: Align(alignment: Alignment.center, widthFactor: 1, child: child),
     );
   }
 }
@@ -291,13 +315,13 @@ class TextSeg extends ReviewSeg {
   });
 
   TextStyle get style => TextStyle(
-        color: color,
-        fontSize: size,
-        height: 1,
-        fontWeight: weight,
-        fontFamily: mono ? AppFonts.mono : null,
-        fontFamilyFallback: mono ? AppFonts.monoFallback : null,
-      );
+    color: color,
+    fontSize: size,
+    height: 1,
+    fontWeight: weight,
+    fontFamily: mono ? AppFonts.mono : null,
+    fontFamilyFallback: mono ? AppFonts.monoFallback : null,
+  );
 }
 
 class ChipSeg extends ReviewSeg {
@@ -359,15 +383,15 @@ class ReviewLine extends StatelessWidget {
                 switch (s) {
                   TextSeg() => TextSpan(text: s.text, style: s.style),
                   ChipSeg() => WidgetSpan(
-                      alignment: PlaceholderAlignment.baseline,
-                      baseline: TextBaseline.alphabetic,
-                      child: s.chip,
-                    ),
+                    alignment: PlaceholderAlignment.baseline,
+                    baseline: TextBaseline.alphabetic,
+                    child: s.chip,
+                  ),
                   GapSeg() => WidgetSpan(
-                      alignment: PlaceholderAlignment.baseline,
-                      baseline: TextBaseline.alphabetic,
-                      child: SizedBox(width: s.width),
-                    ),
+                    alignment: PlaceholderAlignment.baseline,
+                    baseline: TextBaseline.alphabetic,
+                    child: SizedBox(width: s.width),
+                  ),
                 },
             ],
           ),
@@ -401,7 +425,11 @@ double measureTextWidth(String text, TextStyle style, TextScaler scaler) {
 /// prefix is the expendable part. Falls back to the bare filename when
 /// even that barely fits (the paragraph clips as a last resort).
 String middleEllipsize(
-    String path, TextStyle style, double maxWidth, TextScaler scaler) {
+  String path,
+  TextStyle style,
+  double maxWidth,
+  TextScaler scaler,
+) {
   if (maxWidth <= 0) return path;
   if (measureTextWidth(path, style, scaler) <= maxWidth) return path;
   const ell = '…';
@@ -410,8 +438,7 @@ String middleEllipsize(
   while (lo < hi) {
     final mid = (lo + hi) ~/ 2; // candidate suffix start index
     final fits =
-        measureTextWidth(ell + path.substring(mid), style, scaler) <=
-            maxWidth;
+        measureTextWidth(ell + path.substring(mid), style, scaler) <= maxWidth;
     if (fits) {
       hi = mid;
     } else {
@@ -442,52 +469,77 @@ class ReviewVerbPill extends StatefulWidget {
 
 class _ReviewVerbPillState extends State<ReviewVerbPill> {
   bool _hover = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final geo = context.surfaceShader.geometry;
     final base = widget.emphasis ? t.textStrong : t.textMuted;
-    final color = _hover ? t.accentBright : base;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: context.motionRead(AppMotion.snap),
-          curve: AppMotion.snapCurve,
-          height: ReviewMetrics.verbHeight,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-          decoration: BoxDecoration(
-            color: _hover
-                ? t.accentBright.withValues(alpha: 0.10)
-                : t.bg0.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(geo.pillRadius),
-            border: Border.all(
-              color: _hover
-                  ? t.accentBright.withValues(alpha: 0.45)
-                  : t.chromeBorderSubtle,
-              width: AppBorderWidth.hairline,
-            ),
+    final lit = _hover || _focused;
+    final color = lit ? t.accentBright : base;
+    // done / ack / reply — same reasoning as ReviewChip: a verb only a
+    // pointer can reach is a verb half the people reviewing cannot use.
+    return Semantics(
+      button: true,
+      enabled: true,
+      label: widget.label,
+      onTap: widget.onTap,
+      // ONE node, not a button wrapping a separate text node: the label
+      // is already on this node, and leaving the child's own semantics
+      // in place makes a screen reader announce the same word twice and
+      // gives the accessibility tree two things where the user sees one
+      // control.
+      excludeSemantics: true,
+      child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focused = v),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap();
+              return null;
+            },
           ),
-          // widthFactor: 1 rather than the container's own `alignment`.
-          // A Container WITH alignment expands to fill whatever it is
-          // given, so this pill hugged its label inside a Row (which
-          // hands out unbounded width) and stretched to full width
-          // inside a Wrap — the same control, two sizes, depending on
-          // who held it. Sizing to the label is the invariant.
-          child: Align(
-            widthFactor: 1,
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: color,
-                fontSize: ReviewType.ident,
-                height: 1,
-                fontWeight:
-                    widget.emphasis ? FontWeight.w700 : FontWeight.w500,
+        },
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: context.motionRead(AppMotion.snap),
+            curve: AppMotion.snapCurve,
+            height: ReviewMetrics.verbHeight,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: _hover
+                  ? t.accentBright.withValues(alpha: 0.10)
+                  : t.bg0.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(geo.pillRadius),
+              border: Border.all(
+                color: _hover
+                    ? t.accentBright.withValues(alpha: 0.45)
+                    : t.chromeBorderSubtle,
+                width: AppBorderWidth.hairline,
+              ),
+            ),
+            // widthFactor: 1 rather than the container's own `alignment`.
+            // A Container WITH alignment expands to fill whatever it is
+            // given, so this pill hugged its label inside a Row (which
+            // hands out unbounded width) and stretched to full width
+            // inside a Wrap — the same control, two sizes, depending on
+            // who held it. Sizing to the label is the invariant.
+            child: Align(
+              widthFactor: 1,
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: ReviewType.ident,
+                  height: 1,
+                  fontWeight: widget.emphasis
+                      ? FontWeight.w700
+                      : FontWeight.w500,
+                ),
               ),
             ),
           ),
@@ -550,6 +602,115 @@ class ReviewHandOff extends StatelessWidget {
         for (final who in to)
           ReviewVerbPill(label: who, onTap: () => onHandTo(who)),
       ],
+    );
+  }
+}
+
+/// A single faint glyph that brightens on hover, at row height and
+/// fixed width.
+///
+/// Extracted from the file header's reviewed mark when the change row
+/// and the file row both needed the same affordance: a verb that lives
+/// ON the thing whose state it changes.
+///
+/// Two properties carried over from that mark, both load-bearing:
+///
+///   Present or faint, never appearing and disappearing. A glyph that
+///   occupies space only when set would make finishing a file nudge the
+///   hairline beside it, and an affordance that appears on hover moves
+///   everything next to it. Faint reads as "not yet", not as disabled.
+///
+///   A Material icon, never a text glyph. U+2713 is absent from the
+///   themes' font families, so a `Text` tick renders as tofu on every
+///   theme — the same class of gap that had the test harness drawing
+///   mono code as boxes.
+class ReviewQuietGlyph extends StatefulWidget {
+  const ReviewQuietGlyph({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
+
+  final IconData icon;
+
+  /// What this verb does, in words. REQUIRED, and both the tooltip and
+  /// the semantic label.
+  ///
+  /// Required rather than optional because optional is how it went
+  /// missing: an icon with no label is a control only a sighted mouse
+  /// user can find, and two of these are the only entry points to
+  /// whole-file and whole-change comments. Localized by the caller —
+  /// this widget takes words, never keys.
+  final String label;
+
+  final VoidCallback? onTap;
+
+  /// Accent rather than faint. For a glyph that reports state as well as
+  /// offering the verb.
+  final bool active;
+
+  @override
+  State<ReviewQuietGlyph> createState() => _ReviewQuietGlyphState();
+}
+
+class _ReviewQuietGlyphState extends State<ReviewQuietGlyph> {
+  bool _hover = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    // Focus reads like hover: the same one step up in contrast, so
+    // arriving by keyboard looks like arriving by pointer rather than
+    // introducing a second visual language for the same state.
+    final lit = _hover || _focused;
+    final shown = widget.active
+        ? t.accentBright
+        : (lit ? t.textMuted : t.chromeBorderStrong);
+    Widget glyph = SizedBox(
+      height: ReviewMetrics.lineHeight,
+      width: ReviewMetrics.lineHeight,
+      child: Center(
+        child: Icon(widget.icon, size: ReviewType.body, color: shown),
+      ),
+    );
+    if (widget.onTap == null) {
+      // Still labelled: a disabled verb a screen reader cannot name is
+      // indistinguishable from no verb at all.
+      return Semantics(label: widget.label, child: glyph);
+    }
+    glyph = Tooltip(message: widget.label, child: glyph);
+    return Semantics(
+      button: true,
+      enabled: true,
+      label: widget.label,
+      onTap: widget.onTap,
+      // ONE node, not a button wrapping a separate text node: the label
+      // is already on this node, and leaving the child's own semantics
+      // in place makes a screen reader announce the same word twice and
+      // gives the accessibility tree two things where the user sees one
+      // control.
+      excludeSemantics: true,
+      child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focused = v),
+        actions: <Type, Action<Intent>>{
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onTap!();
+              return null;
+            },
+          ),
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: glyph,
+        ),
+      ),
     );
   }
 }

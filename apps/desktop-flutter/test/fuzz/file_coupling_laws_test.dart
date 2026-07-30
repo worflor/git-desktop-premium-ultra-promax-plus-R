@@ -483,7 +483,7 @@ void main() {
         final baselineCentrality = before.jaccardCentralityMap();
         for (var i = 0; i < vocab.length; i++) {
           for (var j = i + 1; j < vocab.length; j++) {
-            final key = '${vocab[i]} ${vocab[j]}';
+            final key = '${vocab[i]}\u0000${vocab[j]}';
             baselineScore[key] = before.score(vocab[i], vocab[j]);
             baselineJ[key] = before.jaccardScoreOf(vocab[i], vocab[j]);
           }
@@ -497,7 +497,7 @@ void main() {
 
         for (var i = 0; i < vocab.length; i++) {
           for (var j = i + 1; j < vocab.length; j++) {
-            final key = '${vocab[i]} ${vocab[j]}';
+            final key = '${vocab[i]}\u0000${vocab[j]}';
             expect(after.score(vocab[i], vocab[j]), equals(baselineScore[key]),
                 reason: 'adding an isolated file must not change '
                     'score(${vocab[i]}, ${vocab[j]})');

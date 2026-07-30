@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n}시간 전",
   "timeDaysFmt": "{n}일 전",
   "standingApproved": "승인됨",
-  "standingChangesRequested": "변경 요청됨"
+  "standingChangesRequested": "변경 요청됨",
+  "commentOnChange": "이 변경에 댓글",
+  "commentOnFile": "이 파일에 댓글",
+  "imageNotLoaded": "이미지를 불러오지 않음",
+  "nothingBlocking": "대기 중인 항목 없음"
 }

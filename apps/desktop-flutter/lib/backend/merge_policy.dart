@@ -48,7 +48,39 @@ class Lww extends FieldPolicy {
 /// ties). A non-conforming value degrades to record-level [Lww].
 class LwwTs extends FieldPolicy {
   final String tsField;
-  const LwwTs(this.tsField);
+
+  /// Integer fields compared BEFORE [tsField], in order, higher wins.
+  ///
+  /// A LIST because the review's attention set needs two of them and they
+  /// are not interchangeable. `round` is the shared epoch — it comes from
+  /// the ref, so every machine compares the same integers, and a decision
+  /// from a later round must beat one from an earlier round outright.
+  /// `seq` is a per-person causal counter, only meaningful WITHIN a round:
+  /// ranking on it alone let a stale-round entry with a longer local
+  /// toggle history resurrect obsolete attention, which is the trade the
+  /// first version of this made without noticing.
+  ///
+  /// So: round, then seq, then the timestamp for genuinely concurrent
+  /// writes, where "who was later" has no answer anyone can trust.
+  ///
+  /// Exists because a bare timestamp is not comparable across machines.
+  /// Two clones stamp their writes from their own wall clocks, so a peer
+  /// whose clock runs fast wins races it lost — and for the review's
+  /// attention set that meant a reviewer's stale "the author is blocking"
+  /// overwrote the author's later "not blocking on me", silently undoing
+  /// a button the human had just pressed. Observed, not theorized: the
+  /// review lab reproduced it the first time a fold test tried to empty
+  /// the set.
+  ///
+  /// A round number IS comparable across machines — it comes from the
+  /// shared ref, not from anyone's clock — so ranking on it first makes
+  /// a decision from a later round beat one from an earlier round no
+  /// matter whose clock said what. The timestamp still settles writes
+  /// from within the same round, where the machines are at least
+  /// arguing about the same moment in the review.
+  final List<String> majors;
+
+  const LwwTs(this.tsField, {this.majors = const []});
 }
 
 /// Numeric maximum — monotone, never regresses.
@@ -199,8 +231,28 @@ Object? _mergeValue(
       if (recordCmp != 0) return recordCmp > 0 ? av : bv;
       return _contentCompare(av, bv) >= 0 ? av : bv;
 
-    case LwwTs(:final tsField):
+    case LwwTs(:final tsField, :final majors):
       if (av is Map<String, dynamic> && bv is Map<String, dynamic>) {
+        for (final field in majors) {
+          final am = av[field];
+          final bm = bv[field];
+          // ABSENT IS NOT ZERO. A side that does not carry the field is
+          // unrankable by it, not lowest-ranked by it — so the
+          // comparison falls through to the next signal both sides do
+          // have, which is ultimately the timestamp.
+          //
+          // Coercing absent to 0 made this a one-way ratchet across
+          // versions: once any peer wrote an entry carrying a round, a
+          // client too old to stamp one could never clear, reclaim or
+          // hand off attention again, because its writes ranked below
+          // every new entry no matter how much later they were made.
+          // Ranking only decides between two entries that can both be
+          // ranked; everything else is the pre-existing behaviour, which
+          // is the most an older peer can participate in.
+          if (am is! num || bm is! num) continue;
+          final major = am.compareTo(bm);
+          if (major != 0) return major > 0 ? av : bv;
+        }
         final c = _ts(av[tsField]).compareTo(_ts(bv[tsField]));
         if (c != 0) return c > 0 ? av : bv;
       }

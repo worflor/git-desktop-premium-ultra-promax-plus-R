@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n} sa",
   "timeDaysFmt": "{n} g",
   "standingApproved": "onaylandı",
-  "standingChangesRequested": "değişiklik istendi"
+  "standingChangesRequested": "değişiklik istendi",
+  "commentOnChange": "Bu değişikliğe yorum yap",
+  "commentOnFile": "Bu dosyaya yorum yap",
+  "imageNotLoaded": "görsel yüklenmedi",
+  "nothingBlocking": "bekleyen bir şey yok"
 }

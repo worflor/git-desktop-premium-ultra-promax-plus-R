@@ -2041,6 +2041,14 @@ class _Translations$review$nl extends Translations$review$en {
   String get standingApproved => 'goedgekeurd';
   @override
   String get standingChangesRequested => 'wijzigingen gevraagd';
+  @override
+  String get commentOnChange => 'Reageer op deze wijziging';
+  @override
+  String get commentOnFile => 'Reageer op dit bestand';
+  @override
+  String get imageNotLoaded => 'afbeelding niet geladen';
+  @override
+  String get nothingBlocking => 'niets blokkeert';
 }
 
 // Path: settings

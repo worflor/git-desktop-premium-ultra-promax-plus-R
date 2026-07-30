@@ -15,6 +15,7 @@
 // viewer's turn. Draft-only threads carry no per-card verbs by design;
 // their verbs are the bar's publish/discard.
 
+import '../../backend/review_anchor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -108,6 +109,12 @@ class _ReviewComposerState extends State<ReviewComposer> {
                 height: ReviewMetrics.lineHeight,
                 child: Row(
                   children: [
+                    // No subject, no gap. A change-wide composer has
+                    // nothing to name — it sits under the change's own
+                    // header — and rendering an empty label still left
+                    // its draft chip pushed in by the spacing meant to
+                    // separate it from words that were not there.
+                    if (widget.contextLabel.isNotEmpty) ...[
                     Flexible(
                       child: Text(
                         widget.contextLabel,
@@ -122,6 +129,7 @@ class _ReviewComposerState extends State<ReviewComposer> {
                       ),
                     ),
                     const SizedBox(width: AppSpacing.sm),
+                    ],
                     ReviewChip(
                       label: widget.strings.draft,
                       color: t.accentBright,
@@ -308,6 +316,18 @@ class _ReviewPublishBarState extends State<ReviewPublishBar> {
 /// The whole review section under a PR's diff: header strip, threads
 /// grouped by file, the viewer's unpublished drafts, and the publish
 /// bar. Pure composition — every verb is a callback.
+/// How a compose target addresses itself, in as few glyphs as it takes.
+///
+/// `lib/a.dart:12` for a line, `lib/a.dart` for a file, and NOTHING for
+/// the change itself — that composer sits under the change's own header,
+/// so a word there would be labelling the obvious. Carries no language,
+/// only a path and a number, which is why it is not localized.
+String reviewSubjectLabel(ReviewScope scope) => switch (scope) {
+      LineScope(anchor: final a) => '${a.path}:${a.line}',
+      FileScope(path: final path) => path,
+      WholeScope() => '',
+    };
+
 class ReviewPane extends StatefulWidget {
   final ReviewViewBundle bundle;
   final ReviewStrings strings;
@@ -346,6 +366,31 @@ class ReviewPane extends StatefulWidget {
   /// preview that lies about how old every comment is.
   final DateTime now;
 
+  /// What the open opener composer is about, or null when none is open.
+  ///
+  /// A presentation pair, not the substrate's `ReviewScope`: this widget
+  /// renders view models by the same rule every other widget here
+  /// follows, and taking the sealed record would have pulled the backend
+  /// into the widget layer to answer a question about where a text box
+  /// goes. [composeFilePath] is the file for [ReviewThreadScope.file] and
+  /// ignored otherwise.
+  ///
+  /// The pane renders the composer for a FILE or the CHANGE, because
+  /// those subjects live here. A LINE's composer mounts under the diff
+  /// the tap came from — beside the code it is about, which the pane
+  /// cannot see — so [ReviewThreadScope.line] renders nothing here and
+  /// the host keeps that job.
+  final ReviewThreadScope? composeScope;
+
+  /// What the composer says it is about. Composed by the host, which is
+  /// the only place that holds the round-pinned subject.
+  final String composeLabel;
+  final Future<bool> Function(String body)? onSaveOpener;
+  final VoidCallback? onCancelCompose;
+
+  /// Start a comment about the change itself. Null hides the verb.
+  final VoidCallback? onCommentOnChange;
+
   const ReviewPane({
     super.key,
     required this.bundle,
@@ -364,6 +409,11 @@ class ReviewPane extends StatefulWidget {
     this.onSelectFile,
     this.reviewedFiles = const {},
     this.onToggleReviewed,
+    this.composeScope,
+    this.composeLabel = '',
+    this.onSaveOpener,
+    this.onCancelCompose,
+    this.onCommentOnChange,
   });
 
   @override
@@ -372,6 +422,42 @@ class ReviewPane extends StatefulWidget {
 
 class _ReviewPaneState extends State<ReviewPane> {
   String? _replyThreadId;
+
+  /// The opener composer when the open one is about [scope] (and
+  /// [path], for a file), else null.
+  ///
+  /// One builder for both placements: the composer under the change's
+  /// header and the one under a file's header are the same widget with
+  /// the same save, differing only in where they mount and what they say
+  /// they are about.
+  ///
+  /// Matched on scope and path rather than by comparing against a
+  /// fabricated subject — the first version built a throwaway
+  /// `FileScope(side: 'new', ...)` to compare with, which quietly could
+  /// never match a comment on a DELETED file's old side.
+  Widget? _openerComposer(ReviewThreadScope scope) {
+    final onSave = widget.onSaveOpener;
+    if (onSave == null || widget.composeScope != scope) return null;
+    return Padding(
+      padding: const EdgeInsets.only(top: AppSpacing.sm6),
+      child: ReviewComposer(
+        strings: widget.strings,
+        contextLabel: widget.composeLabel,
+        onSave: onSave,
+        onCancel: widget.onCancelCompose ?? () {},
+      ),
+    );
+  }
+
+  /// What a composer says it is replying to. Composed here rather than
+  /// in the adapter because it is a label, and labels need the injected
+  /// strings — except that all three cases turn out to need no words at
+  /// all, only the right amount of address.
+  String _subjectOf(ReviewThreadView thread) => switch (thread.scope) {
+        ReviewThreadScope.line => '${thread.filePath}:${thread.line}',
+        ReviewThreadScope.file => thread.filePath,
+        ReviewThreadScope.review => '',
+      };
 
   /// The remover for a draft-only card, or null when there is nothing
   /// single to remove (a published thread, or a draft whose identity
@@ -427,7 +513,7 @@ class _ReviewPaneState extends State<ReviewPane> {
           const SizedBox(height: AppSpacing.sm6),
           ReviewComposer(
             strings: widget.strings,
-            contextLabel: '${thread.filePath}:${thread.line}',
+            contextLabel: _subjectOf(thread),
             onSave: (body) async {
               final id = thread.threadId;
               final ok = await widget.onSaveReply(id, body);
@@ -460,11 +546,28 @@ class _ReviewPaneState extends State<ReviewPane> {
           handOffTo: widget.handOffTo,
           onHandTo: widget.onHandTo,
           onStepOut: widget.onStepOut,
+          onComment: widget.onCommentOnChange,
         ),
+        // The change's own conversation, directly under the header and
+        // above the files. No heading: a reviewer reading top-down meets
+        // "what is this change" before "what is in it", which is the
+        // order they were already thinking in, and a section title would
+        // only be explaining the layout to them.
+        // Composing comes before the existing conversation, not after
+        // it: the composer opened from the row directly above should
+        // appear directly below that row, not past however many threads
+        // happen to be there already.
+        ?_openerComposer(ReviewThreadScope.review),
+        for (final thread in b.reviewThreads) ...[
+          const SizedBox(height: AppSpacing.sm6),
+          _threadCard(thread, showPath: false),
+        ],
         for (final group in b.groups) ...[
           const SizedBox(height: AppSpacing.md),
           ReviewFileHeader(
             filePath: group.filePath,
+            strings: widget.strings,
+            hasUnseen: group.threads.any((t) => t.hasUnseen),
             onTap: widget.onSelectFile == null
                 ? null
                 : () => widget.onSelectFile!(group.filePath),
@@ -575,8 +678,13 @@ class ReviewPrHooks {
   /// A gutter tap on the active file: open the opener composer there.
   final void Function(String path, bool oldSide, int line) onGutterTap;
 
-  /// Active opener-composer target, or null when closed.
-  final (String path, bool oldSide, int line)? composeAt;
+  /// Open the opener composer for the change itself, or for one file.
+  /// Null when the host does not offer that subject.
+  final VoidCallback? onCommentOnChange;
+  final void Function(String path)? onCommentOnFile;
+
+  /// What the open opener composer is about, or null when closed.
+  final ReviewScope? composeAt;
   final Future<bool> Function(String body) onSaveOpener;
   final VoidCallback onCancelCompose;
 
@@ -642,6 +750,8 @@ class ReviewPrHooks {
     required this.strings,
     required this.marksFor,
     required this.onGutterTap,
+    this.onCommentOnChange,
+    this.onCommentOnFile,
     required this.composeAt,
     required this.onSaveOpener,
     required this.onCancelCompose,

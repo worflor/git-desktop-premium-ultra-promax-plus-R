@@ -2096,6 +2096,14 @@ class _Translations$review$pl extends Translations$review$en {
   String get standingApproved => 'zatwierdzono';
   @override
   String get standingChangesRequested => 'poproszono o zmiany';
+  @override
+  String get commentOnChange => 'Skomentuj tę zmianę';
+  @override
+  String get commentOnFile => 'Skomentuj ten plik';
+  @override
+  String get imageNotLoaded => 'obraz nie został wczytany';
+  @override
+  String get nothingBlocking => 'nic nie blokuje';
 }
 
 // Path: settings

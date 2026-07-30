@@ -55,5 +55,9 @@
   "timeHoursFmt": "{n} jam",
   "timeDaysFmt": "{n} hr",
   "standingApproved": "disetujui",
-  "standingChangesRequested": "perubahan diminta"
+  "standingChangesRequested": "perubahan diminta",
+  "commentOnChange": "Komentari perubahan ini",
+  "commentOnFile": "Komentari berkas ini",
+  "imageNotLoaded": "gambar tidak dimuat",
+  "nothingBlocking": "tidak ada yang menghambat"
 }

@@ -2037,6 +2037,14 @@ class _Translations$review$tr extends Translations$review$en {
   String get standingApproved => 'onaylandı';
   @override
   String get standingChangesRequested => 'değişiklik istendi';
+  @override
+  String get commentOnChange => 'Bu değişikliğe yorum yap';
+  @override
+  String get commentOnFile => 'Bu dosyaya yorum yap';
+  @override
+  String get imageNotLoaded => 'görsel yüklenmedi';
+  @override
+  String get nothingBlocking => 'bekleyen bir şey yok';
 }
 
 // Path: settings

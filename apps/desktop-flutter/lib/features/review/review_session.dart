@@ -48,6 +48,7 @@
 
 import 'dart:async';
 
+import '../../backend/review_anchor.dart';
 import '../diff/diff_models.dart' show DiffLineMark;
 import 'review_adapter.dart';
 import 'review_pane.dart' show buildLineMarks;
@@ -120,8 +121,25 @@ class ReviewSession {
   /// edit clear a tick on every clone with nobody clearing it.
   Set<String> reviewedFiles = const {};
 
-  /// Where an opener composer is open: (path, oldSide, line).
-  (String, bool, int)? composeAt;
+  /// What an open opener composer is ABOUT, or null when none is open.
+  ///
+  /// The sealed scope rather than a `(path, oldSide, line)` tuple: the
+  /// composer for "this line", "this file" and "this change" is one
+  /// composer, and a tuple could only describe the first of them. Its
+  /// identity is also what lets a save close the composer it belongs to
+  /// rather than whichever one is open when the git round-trip returns —
+  /// so the value is compared by [ReviewScope.sameSubject], not by `==`.
+  ReviewScope? composeAt;
+
+  /// Which composer is open, as an identity rather than a description.
+  ///
+  /// Bumped every time one opens. A save that lands late must close the
+  /// composer it BELONGS to, and no description can establish that: the
+  /// user can cancel and reopen on the same line while the write is in
+  /// flight, and a subject comparison then closes the replacement and
+  /// takes its unsaved text with it. (The tuple this replaced compared
+  /// equal for the same reason, so the hazard predates scopes.)
+  int composeToken = 0;
 
   /// Which lens the viewer asked for, or null for the full diff.
   ReviewLensPosture? posture;

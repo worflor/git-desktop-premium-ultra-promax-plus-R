@@ -245,16 +245,24 @@ Future<ReviewScenarioResult> runReviewScenario({
             'turn fold disagrees for $viewer');
       }
       // I6 anchor soundness against the author's current file.
+      //
+      // LINE scopes only, stated rather than assumed. A file or
+      // whole-change thread pins no line and has nothing to resolve —
+      // its freshness is membership in the change, which is a different
+      // question checked elsewhere. This loop used to reach for every
+      // thread's anchor unconditionally, which was correct exactly while
+      // a line was the only thing a thread could be about.
       for (final t in a.threads) {
-        if (t.anchor.path != path) continue;
-        final res = resolveAnchor(t.anchor, lines);
+        final anchor = t.lineAnchor;
+        if (anchor == null || anchor.path != path) continue;
+        final res = resolveAnchor(anchor, lines);
         if (res.status != AnchorStatus.outdated) {
           final actual = lines[res.line! - 1];
           check(
-              resolveAnchor(t.anchor, [actual]).status !=
+              resolveAnchor(anchor, [actual]).status !=
                   AnchorStatus.outdated,
               'anchor resolved to non-matching content: "$actual" for '
-              '"${t.anchor.excerpt}"');
+              '"${anchor.excerpt}"');
         }
       }
       // I7 provenance.
@@ -312,6 +320,32 @@ Future<ReviewScenarioResult> runReviewScenario({
       settledSinceMutation = false;
     }
 
+    /// A subject for a new thread — a line most of the time, and
+    /// sometimes the file or the change itself.
+    ///
+    /// The scenario used to open line threads exclusively, which meant
+    /// every invariant it proves (convergence, no-loss, turn agreement,
+    /// resolution provenance) was proven for ONE of the three kinds of
+    /// thread the format now carries. The seeded mix keeps the same
+    /// determinism while letting a lifecycle actually contain the other
+    /// two.
+    ReviewScope randomScope(int li) {
+      switch (rng.nextInt(6)) {
+        case 0:
+          return WholeScope(round: 1, commit: 'c' * 40);
+        case 1:
+          return FileScope(
+              path: path, side: 'new', round: 1, commit: 'c' * 40);
+        default:
+          return LineScope(captureAnchor(
+              lines: lines,
+              lineIndex: li,
+              round: 1,
+              commit: 'c' * 40,
+              path: path));
+      }
+    }
+
     Future<void> opDraft() async {
       final li = rng.nextInt(lines.length);
       final at = nextAt();
@@ -323,12 +357,7 @@ Future<ReviewScenarioResult> runReviewScenario({
               kScenarioDeskId,
               ReviewDraftEntry(
                 threadId: '',
-                anchor: captureAnchor(
-                    lines: lines,
-                    lineIndex: li,
-                    round: 1,
-                    commit: 'c' * 40,
-                    path: path),
+                scope: randomScope(li),
                 body: body,
                 at: at,
               )));
@@ -370,12 +399,7 @@ Future<ReviewScenarioResult> runReviewScenario({
           'openThread(robot)',
           stores['bob']!.openThread(
             deskId: kScenarioDeskId,
-            anchor: captureAnchor(
-                lines: lines,
-                lineIndex: li,
-                round: 1,
-                commit: 'c' * 40,
-                path: path),
+            scope: randomScope(li),
             opener: ReviewComment(
                 author: robot, at: at, body: body, kind: 'robot'),
           ));

@@ -29,6 +29,15 @@ enum ReviewTurn { yours, theirs }
 /// thread pins to its last-seen round instead of guessing.
 enum ReviewAnchorState { anchored, reanchored, outdated }
 
+/// What a thread is about, for the surfaces that render it.
+///
+/// Mirrors the substrate's sealed `ReviewScope` as a plain enum: the
+/// widgets need to know which of the three shapes they are drawing (a
+/// line reference, a bare file, or nothing at all) and must not be
+/// handed the anchor to figure it out — that is the adapter's job, and a
+/// widget that could read the anchor would start resolving it.
+enum ReviewThreadScope { line, file, review }
+
 /// A thread's lifecycle state. Unresolved blocks; the two resolved
 /// flavors keep WHO closed it and with what intent (Critique's Done =
 /// "I changed the code", Ack = "noted, not changing").
@@ -78,6 +87,10 @@ class ReviewCommentView {
 }
 
 class ReviewThreadView {
+  /// Which kind of subject this thread has. [line] keeps every existing
+  /// caller and fixture rendering exactly as before.
+  final ReviewThreadScope scope;
+
   final String filePath;
 
   /// Display line number in the round the thread currently binds to.
@@ -105,6 +118,7 @@ class ReviewThreadView {
   final String threadId;
 
   const ReviewThreadView({
+    this.scope = ReviewThreadScope.line,
     required this.filePath,
     required this.line,
     required this.excerpt,
@@ -234,6 +248,20 @@ class ReviewStrings {
   final String handTo;
   final String markReviewed;
 
+  /// The two whole-subject verbs, and what replaces an image we refuse
+  /// to fetch. All three are read aloud by a screen reader, so none of
+  /// them may be a hardcoded English constant sitting in a widget.
+  /// What the turn chip says when the change is blocked on nobody.
+  ///
+  /// A state the per-person turn fold made reachable for the first time:
+  /// the bloc fold it replaced always named somebody, so "waiting on"
+  /// with an empty name could not happen and had no words.
+  final String nothingBlocking;
+
+  final String commentOnChange;
+  final String commentOnFile;
+  final String imageNotLoaded;
+
   /// Compact relative time, for spans under a minute. The parameterised
   /// units are methods below, following this class's own convention.
   final String timeNow;
@@ -274,6 +302,10 @@ class ReviewStrings {
     this.notBlocking = 'not blocking on me',
     this.handTo = 'hand to',
     this.markReviewed = 'reviewed',
+    this.nothingBlocking = 'nothing blocking',
+    this.commentOnChange = 'comment on this change',
+    this.commentOnFile = 'comment on this file',
+    this.imageNotLoaded = 'image not loaded',
     this.timeNow = 'now',
     this.identityNeeded = 'Set a git identity to review',
     this.standingApproved = 'approved',

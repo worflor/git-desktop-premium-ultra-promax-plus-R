@@ -16,7 +16,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:meta/meta.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../backend/clock.dart';
 import '../../backend/desk_pr_diff.dart' show parseNumstatZ;
@@ -25,6 +24,7 @@ import '../../backend/git_result.dart';
 import '../../backend/manifold_refs.dart';
 import '../../backend/remote_types.dart' show PrFile;
 import '../../backend/review_anchor.dart';
+import '../../backend/review_last_seen.dart';
 import '../../backend/review_records.dart';
 import '../../backend/review_store.dart';
 import '../diff/diff_models.dart' show sliceDiffByFile;
@@ -321,13 +321,30 @@ class ReviewPaneController {
 
     final newPaths = <String>{};
     final oldPaths = <String>{};
-    void wantAnchor(ReviewAnchor a) =>
-        (a.side == 'old' ? oldPaths : newPaths).add(a.path);
+    // Content is needed ONLY to resolve a line anchor. Reading a blob to
+    // decide anything about a FILE scope would defeat the reason
+    // captureFile exists: it is available on files a line anchor refuses,
+    // which is to say the huge ones and the binary ones, and pulling
+    // those through the content path on every pane load is exactly the
+    // unbudgeted ingestion this codebase has been burned by.
+    var wantsFileScopes = false;
+    void want(ReviewScope scope) {
+      switch (scope) {
+        case LineScope(anchor: final a):
+          (a.side == 'old' ? oldPaths : newPaths).add(a.path);
+        case FileScope():
+          wantsFileScopes = true;
+        case WholeScope():
+          break;
+      }
+    }
+
     for (final t in state?.threads ?? const <ReviewThreadRecord>[]) {
-      wantAnchor(t.anchor);
+      want(t.scope);
     }
     for (final d in drafts) {
-      if (d.anchor != null) wantAnchor(d.anchor!);
+      final scope = d.scope;
+      if (scope != null) want(scope);
     }
     final currentFiles = <String, List<String>>{};
     for (final p in newPaths) {
@@ -340,17 +357,64 @@ class ReviewPaneController {
       if (lines != null) oldFiles[p] = lines;
     }
 
+    // What a file-scoped thread is still about: MEMBERSHIP IN THE
+    // CHANGE, not existence in a tree.
+    //
+    // The distinction is the finding. "This file should not be in this
+    // change" is a claim about the diff, and a file the author reverted
+    // to its base content still exists in HEAD and in the base while
+    // having left the diff completely — so an existence probe reported
+    // the thread as current about code the change no longer touches.
+    //
+    // NOT SIDED, and that is the correction to the first version of this.
+    // Membership is a property of the PATH: if it is in the diff, a
+    // thread about it is live, whichever version the thread names. The
+    // side exists so content resolution knows which tree to read, and
+    // borrowing it to classify membership meant inferring status from
+    // line counts — where a file that only DELETES lines is
+    // indistinguishable from a DELETED file, and a binary file is
+    // indistinguishable from anything, which is exactly the case this
+    // scope was built to serve.
+    //
+    // Null means COULD NOT DETERMINE, and the adapter leaves such threads
+    // alone rather than decaying them. A transient git failure must not
+    // quietly restate itself as "none of these files are in the change
+    // any more", which is a lie with the shape of a fact.
+    Set<String>? changedPaths;
+    if (wantsFileScopes) {
+      final r = await git.getRangeNumstatZ(
+          repoPath, '$baseRef...$headBranch',
+          findRenames: true);
+      if (r.ok) {
+        changedPaths = {for (final f in parseNumstatZ(r.data ?? '')) f.path};
+      }
+    }
+
     final lastSeenN =
         await ReviewLastSeen.read(repoPath: repoPath, deskId: deskId);
+    // What this viewer has already been shown. Seeded once from the
+    // legacy (round, seq) pointer on the first load after upgrading, so
+    // an in-flight review does not re-announce its whole history.
+    var seen = await ReviewLastSeen.readSeen(
+        repoPath: repoPath, deskId: deskId);
+    if (seen.isEmpty && lastSeenN != null && state != null) {
+      seen = await ReviewLastSeen.seedSeen(
+        repoPath: repoPath,
+        deskId: deskId,
+        state: state,
+        lastSeenRound: lastSeenN,
+        lastSeenSeq: await ReviewLastSeen.readSeq(
+            repoPath: repoPath, deskId: deskId, round: lastSeenN),
+      );
+    }
+    // The commit the viewer's last-seen round pinned. Drives the
+    // "since last look" DIFF lens; unread comments are answered by the
+    // seen set and no longer by a moment in time.
     String? lastSeenCommit;
-    // The look MOMENT, not just the commit: when the round the viewer
-    // last saw was cut is the line between read and unread comments.
-    DateTime? lastLookAt;
     if (lastSeenN != null && state != null) {
       for (final r in state.rounds) {
         if (r.n == lastSeenN) {
           lastSeenCommit = r.commit;
-          lastLookAt = r.cutAt;
         }
       }
     }
@@ -368,9 +432,10 @@ class ReviewPaneController {
       authorDisplay: authorDisplay,
       currentFiles: currentFiles,
       oldFiles: oldFiles,
+      changedPaths: changedPaths,
       drafts: drafts,
       filesSinceLastLook: filesSince,
-      lastLookAt: lastLookAt,
+      seenComments: seen,
     );
     data = ReviewPaneData(
       bundle: bundle,
@@ -503,6 +568,67 @@ class ReviewPaneController {
   }) =>
       _gated(() => _captureAt(path: path, side: side, line: line));
 
+  /// The scope for a comment on [path] as a whole, or null when no round
+  /// has been cut and nothing when the path is on neither side.
+  ///
+  /// Reads no file CONTENT: a file scope makes no claim about any line,
+  /// so there is nothing to hash and nothing to slip. Two size probes,
+  /// which is why it is available on files [captureAt] refuses — one over
+  /// the byte gate, or binary — exactly where "this file should not be in
+  /// this change" is most likely to be the comment.
+  ///
+  /// SERIALIZED against [load], for the same reason [captureAt] is. This
+  /// began as a synchronous read of the cached pin and genuinely had no
+  /// in-flight window; discovering the side added two awaits, and with
+  /// them exactly the hazard the gate exists for — a round cut landing
+  /// between the snapshot and the probes would stamp the scope with one
+  /// round while deciding its side from another's tree. A scope whose
+  /// recorded commit is not the tree it was captured against is the same
+  /// dishonesty pinning reads to the round was meant to prevent.
+  ///
+  /// The SIDE is discovered here rather than taken from the caller. No
+  /// caller can know it: the changed-file records carry additions and
+  /// deletions and no status, so the UI was passing 'new' unconditionally
+  /// and a comment on a deleted file was born outdated — about the one
+  /// file most likely to deserve a whole-file comment. Head first, then
+  /// the merge base, so a file the change deleted resolves against the
+  /// version that still contains it.
+  Future<FileScope?> captureFile({required String path}) =>
+      _gated(() => _captureFile(path: path));
+
+  Future<FileScope?> _captureFile({required String path}) async {
+    final d = data;
+    if (d == null || d.latestRound == 0) return null;
+    FileScope at(String side) => FileScope(
+          path: path,
+          side: side,
+          round: d.latestRound,
+          commit: d.latestRoundCommit,
+        );
+    if (await git.gitBlobSize(repoPath, '$_headSpec:$path') != null) {
+      return at('new');
+    }
+    final mb = _mergeBase ??= await _resolveOldSide();
+    if (await git.gitBlobSize(repoPath, '$mb:$path') != null) {
+      return at('old');
+    }
+    // On neither side: there is no file here to be about.
+    return null;
+  }
+
+  /// The scope for a comment on the change itself, or null when no round
+  /// has been cut.
+  ///
+  /// Still round-pinned. "This is two changes in one branch" is a claim
+  /// about a particular state of the branch, and a reader three rounds
+  /// later deserves to know which one — the same honesty a line anchor
+  /// gets from its commit.
+  WholeScope? captureReview() {
+    final d = data;
+    if (d == null || d.latestRound == 0) return null;
+    return WholeScope(round: d.latestRound, commit: d.latestRoundCommit);
+  }
+
   Future<ReviewAnchor?> _captureAt({
     required String path,
     required String side,
@@ -526,15 +652,22 @@ class ReviewPaneController {
 
   // ─── Verbs (page idiom: null = ok, message = failure) ────────────
 
+  /// Draft a new thread about [scope].
+  ///
+  /// Takes the sealed scope rather than an anchor, so "comment on this
+  /// line", "comment on this file" and "comment on this change" are one
+  /// verb with one draft batch, one publish, and one set of merge rules —
+  /// rather than three code paths that would each have to be taught
+  /// privacy, resolution and turn-taking separately.
   Future<String?> saveOpenerDraft({
-    required ReviewAnchor anchor,
+    required ReviewScope scope,
     required String body,
   }) async {
     final r = await store.saveDraft(
       deskId,
       ReviewDraftEntry(
         threadId: '',
-        anchor: anchor,
+        scope: scope,
         body: body,
         at: clock.now(),
       ),
@@ -550,7 +683,7 @@ class ReviewPaneController {
       deskId,
       ReviewDraftEntry(
         threadId: threadId,
-        anchor: null,
+        scope: null,
         body: body,
         at: clock.now(),
       ),
@@ -579,7 +712,7 @@ class ReviewPaneController {
     final r = await store.discardDraft(
       deskId,
       ReviewDraftEntry(
-          threadId: threadId, anchor: null, body: body, at: at),
+          threadId: threadId, scope: null, body: body, at: at),
     );
     return r.ok ? null : (r.error ?? 'discard failed');
   }
@@ -604,8 +737,22 @@ class ReviewPaneController {
     if (!r.ok) return r.error ?? 'publish failed';
     final n = d?.latestRound ?? 0;
     if (n > 0) {
+      // The sequence the viewer had actually SEEN — the state they were
+      // looking at when they published, not the state that came back.
+      //
+      // Publishing merges: a peer's reply can land in the same write, and
+      // taking the post-merge maximum would mark their words read before
+      // this viewer had been shown a single one of them. Their own new
+      // comments need no cursor (rung 1 of the unread ladder: your own
+      // words are never new to you), so the loaded state is exactly the
+      // right high-water mark and nothing is lost by stopping there.
       await ReviewLastSeen.write(
           repoPath: repoPath, deskId: deskId, round: n);
+      // Everything the viewer was LOOKING AT when they published — the
+      // state they had loaded, not the one that came back. Publishing
+      // merges, and a peer's reply landing in the same write has never
+      // been on this screen.
+      await _recordSeen(d?.state);
     }
     return null;
   }
@@ -716,6 +863,22 @@ class ReviewPaneController {
     return out;
   }
 
+  /// Mark every comment in [state] as shown to this viewer.
+  ///
+  /// Takes the state the viewer HAD, so a caller must pass its loaded
+  /// snapshot rather than a fresher one — the whole point is that a
+  /// comment which arrived during the write was never on screen.
+  Future<void> _recordSeen(ReviewState? state) async {
+    if (state == null) return;
+    final ids = <String>{
+      for (final t in state.threads)
+        for (final c in t.comments) reviewCommentIdentity(c),
+    };
+    if (ids.isEmpty) return;
+    await ReviewLastSeen.addSeen(
+        repoPath: repoPath, deskId: deskId, identities: ids);
+  }
+
   /// Explicit "caught up" — the header verb for a look that ends
   /// without anything to say.
   ///
@@ -733,6 +896,7 @@ class ReviewPaneController {
     try {
       await ReviewLastSeen.write(
           repoPath: repoPath, deskId: deskId, round: n);
+      await _recordSeen(data?.state);
       return null;
     } catch (e) {
       return '$e';
@@ -740,63 +904,6 @@ class ReviewPaneController {
   }
 }
 
-/// Client-local "last look" pointers: {repoPath#deskId: round}. A
-/// display-law persistence (a fact about what the viewer has seen),
-/// not a task posture — deliberately NOT synced in this slice; the
-/// dossier's synced-attention bit replaces the storage, not the shape.
-class ReviewLastSeen {
-  static const _kKey = 'review.last_seen_round_v1';
-
-  /// Writes queue. Every desk's pointer lives in ONE prefs key, so two
-  /// desks advancing at once (publish here, caught-up there) would each
-  /// write back a whole map read before the other's change — last write
-  /// silently reverting the first. Same read-modify-write hazard the
-  /// git index has, same answer: serialize.
-  static Future<void> _writeGate = Future<void>.value();
-
-  // JSON-encoded pair, not '<path>#<id>': a repo path may itself contain
-  // '#', which would let two different repos collide on one pointer.
-  static String _entryKey(String repoPath, int deskId) =>
-      jsonEncode([repoPath, deskId]);
-
-  static Future<Map<String, int>> _readAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kKey);
-    if (raw == null || raw.isEmpty) return {};
-    try {
-      final j = jsonDecode(raw);
-      if (j is! Map) return {};
-      return {
-        for (final e in j.entries)
-          if (e.value is num) e.key.toString(): (e.value as num).toInt(),
-      };
-    } catch (_) {
-      return {};
-    }
-  }
-
-  static Future<int?> read({
-    required String repoPath,
-    required int deskId,
-  }) async =>
-      (await _readAll())[_entryKey(repoPath, deskId)];
-
-  static Future<void> write({
-    required String repoPath,
-    required int deskId,
-    required int round,
-  }) {
-    final prior = _writeGate;
-    final mine = Completer<void>();
-    _writeGate = mine.future;
-    return prior.then((_) async {
-      final all = await _readAll();
-      all[_entryKey(repoPath, deskId)] = round;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kKey, jsonEncode(all));
-    }).whenComplete(mine.complete);
-  }
-}
 
 /// Collapsed-row turn chips for every desk that actually HAS a review.
 ///

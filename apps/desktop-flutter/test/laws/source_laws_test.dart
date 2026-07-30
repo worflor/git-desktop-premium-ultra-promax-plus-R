@@ -291,12 +291,34 @@ void main() {
     // The NUL-in-string-literal incident: invisible in diffs, turns the file
     // binary for grep. Raw C0 control bytes (except \t \n \r) never belong in
     // source — escape them (`\x00`) so they are visible and diffable.
+    //
+    // TEST SOURCES TOO, and not for completeness' sake: the incident
+    // recurred in review_corpus_render_test.dart, where a test ABOUT NUL
+    // handling acquired four literal NULs — one inside a sentence
+    // describing the separator. git marked the file binary, which is the
+    // only reason it surfaced. lib/ was covered and test/ was not, so this
+    // law was watching the half of the tree where the bug had already been
+    // fixed.
+    //
+    // Bytes off disk rather than the AST corpus: a control byte is a
+    // property of the file, and catching it must not depend on the file
+    // parsing.
     const allowed = {0x09, 0x0A, 0x0D};
+    final sources = <MapEntry<String, List<int>>>[
+      for (final f in corpus.files) MapEntry(f.path, f.bytes),
+      for (final f in (Directory('test')
+              .listSync(recursive: true, followLinks: false)
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.dart'))
+              .toList()
+            ..sort((a, b) => a.path.compareTo(b.path))))
+        MapEntry(f.path.replaceAll(r'\', '/'), f.readAsBytesSync()),
+    ];
     final offenders = [
-      for (final f in corpus.files)
-        for (var i = 0; i < f.bytes.length; i++)
-          if (f.bytes[i] < 0x20 && !allowed.contains(f.bytes[i]))
-            '${f.path}: raw byte 0x${f.bytes[i].toRadixString(16).padLeft(2, '0')} at offset $i',
+      for (final f in sources)
+        for (var i = 0; i < f.value.length; i++)
+          if (f.value[i] < 0x20 && !allowed.contains(f.value[i]))
+            '${f.key}: raw byte 0x${f.value[i].toRadixString(16).padLeft(2, '0')} at offset $i',
     ];
     expect(
       offenders,
@@ -618,6 +640,45 @@ void main() {
           'a clock/seed from the caller instead (timestamps at store/telemetry '
           'seams are fine; they live outside these files).',
     );
+  });
+
+  test('L21: untrusted markdown is never handed to a bare MarkdownBody',
+      () {
+    // flutter_markdown's default image builder FETCHES: http/https go to
+    // Image.network, everything else to Image.file. Every markdown body
+    // this app renders was written by somebody else — review comments
+    // arrive over refs/manifold/review/<id>/state from whoever shares
+    // the remote, PR comments from any account on the forge — and both
+    // render the instant a pane opens.
+    //
+    // So `![](https://x/p.png)` in a comment is a read receipt on every
+    // reviewer (who opened it, when, from which IP, on a private repo,
+    // with no reply needed), and `![](file:///…/id_rsa)` is a local read
+    // probe reached from remote text. Both call sites shipped this way;
+    // neither needed a bug in our code, only the widget's default.
+    //
+    // lib/ui/prose_markdown.dart is the one constructor that suppresses
+    // images instead of fetching them. This law is why a third call site
+    // cannot quietly reintroduce the leak.
+    final offenders = <String>[];
+    for (final f in corpus.files) {
+      if (f.path == 'lib/ui/prose_markdown.dart') continue;
+      // facts.constructedTypes, not an InstanceCreationExpression walk:
+      // the corpus is parsed and NOT resolved, so `MarkdownBody(...)`
+      // written without `new` arrives as a MethodInvocation. This law's
+      // first version walked only the creation-expression form and stayed
+      // green with the vulnerable call site restored — the mutation run
+      // caught it, and the same hole had already made the LruCache law
+      // blind to every cache in lib/.
+      if (f.facts.constructedTypes.contains('MarkdownBody')) {
+        offenders.add(f.path);
+      }
+    }
+    expect(offenders, isEmpty,
+        reason: 'these construct MarkdownBody directly, so the default '
+            'image builder will fetch whatever URL the untrusted body '
+            'names. Use proseMarkdown() from lib/ui/prose_markdown.dart: '
+            '$offenders');
   });
 
   test('L20: a review verb that awaits git takes a currency claim', () {

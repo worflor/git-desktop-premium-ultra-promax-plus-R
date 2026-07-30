@@ -33,6 +33,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:git_desktop/backend/review_anchor.dart';
 import 'package:git_desktop/backend/manifold_refs.dart';
 import 'package:git_desktop/backend/review_records.dart';
 import 'package:git_desktop/features/review/review_pane_controller.dart';
@@ -259,7 +260,7 @@ void main() {
           final a = await session.controller.captureAt(
               path: 'lib/a.dart', side: 'new', line: line);
           if (a != null) {
-            await session.controller.saveOpenerDraft(anchor: a, body: 'q$i on $line');
+            await session.controller.saveOpenerDraft(scope: LineScope(a), body: 'q$i on $line');
           }
           await assertConsistent('openerDraft @$i');
 

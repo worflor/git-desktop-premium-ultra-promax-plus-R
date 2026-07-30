@@ -17,6 +17,7 @@ import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart' show AppTokenSurfaceTones;
 import '../../ui/tokens.dart';
 import 'review_chrome.dart';
+import 'review_view_model.dart';
 
 class ReviewFileHeader extends StatelessWidget {
   final String filePath;
@@ -36,10 +37,38 @@ class ReviewFileHeader extends StatelessWidget {
   /// beyond the cursor — the pane stays the quietest layer.
   final VoidCallback? onTap;
 
+  /// Words for the two glyphs on this row. Injected like every other
+  /// string a review surface renders.
+  final ReviewStrings strings;
+
+  /// True when this file holds a comment the viewer has not been shown.
+  ///
+  /// The path takes the accent. Nothing is added to the row: the file
+  /// header is already the navigational unit — it is what you tap to
+  /// focus the diff — so the eye that is scanning for "where did the
+  /// conversation move" is looking at exactly these rows anyway.
+  ///
+  /// Without it the header's "3 new" was a number with no direction: the
+  /// only other unread signal is an accent on an individual comment's
+  /// timestamp, which you have to already be reading the card to see.
+  final bool hasUnseen;
+
+  /// Start a comment about this file as a whole. Null hides the verb.
+  ///
+  /// It belongs here rather than in the diff gutter because it is not
+  /// about a line — and because a file over the byte gate, or a binary
+  /// one, has no gutter to tap while still being exactly the kind of
+  /// file somebody wants to say "this should not be in this change"
+  /// about.
+  final VoidCallback? onComment;
+
   const ReviewFileHeader({
     super.key,
     required this.filePath,
+    this.strings = const ReviewStrings(),
+    this.hasUnseen = false,
     this.onTap,
+    this.onComment,
     this.reviewed,
     this.onToggleReviewed,
   });
@@ -56,7 +85,7 @@ class ReviewFileHeader extends StatelessWidget {
               filePath,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: t.textMuted,
+                color: hasUnseen ? t.accentBright : t.textMuted,
                 fontSize: ReviewType.ident,
                 height: 1,
                 fontFamily: AppFonts.mono,
@@ -72,10 +101,24 @@ class ReviewFileHeader extends StatelessWidget {
               color: t.chromeBorderFaint,
             ),
           ),
+          if (onComment != null) ...[
+            const SizedBox(width: AppSpacing.sm10),
+            ReviewQuietGlyph(
+              icon: Icons.mode_comment_outlined,
+              label: strings.commentOnFile,
+              onTap: onComment,
+            ),
+          ],
           if (reviewed != null) ...[
             const SizedBox(width: AppSpacing.sm10),
-            _ReviewedMark(
-              on: reviewed!,
+            // The reviewed mark IS a quiet glyph — it is what the shared
+            // one was extracted from. Leaving the original beside the
+            // extraction is how two implementations of one affordance
+            // start drifting apart.
+            ReviewQuietGlyph(
+              icon: Icons.check,
+              label: strings.markReviewed,
+              active: reviewed!,
               onTap: onToggleReviewed == null
                   ? null
                   : () => onToggleReviewed!(!reviewed!),
@@ -91,59 +134,6 @@ class ReviewFileHeader extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: row,
-      ),
-    );
-  }
-}
-
-/// The per-file reviewed mark.
-///
-/// Present or faint, never appearing and disappearing: a mark that
-/// occupies space only when set would make finishing a file nudge the
-/// hairline beside it. Faint reads as "not yet", not as disabled.
-class _ReviewedMark extends StatefulWidget {
-  final bool on;
-  final VoidCallback? onTap;
-
-  const _ReviewedMark({required this.on, required this.onTap});
-
-  @override
-  State<_ReviewedMark> createState() => _ReviewedMarkState();
-}
-
-class _ReviewedMarkState extends State<_ReviewedMark> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final color = widget.on
-        ? t.accentBright
-        : (_hover ? t.textMuted : t.chromeBorderStrong);
-    // Material's check, not a text glyph: U+2713 is absent from the
-    // themes' font families, so a Text tick renders as tofu on every
-    // theme — caught in the preview, and the same class of gap that
-    // had the test harness rendering mono code as boxes.
-    final mark = SizedBox(
-      height: ReviewMetrics.lineHeight,
-      width: ReviewMetrics.lineHeight,
-      child: Center(
-        child: Icon(
-          Icons.check,
-          size: ReviewType.body,
-          color: color,
-        ),
-      ),
-    );
-    if (widget.onTap == null) return mark;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: mark,
       ),
     );
   }
