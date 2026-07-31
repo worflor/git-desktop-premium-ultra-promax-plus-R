@@ -40,6 +40,7 @@ What that looks like in practice:
 - Manifold can map your diff to external file context automatically using repo history, the spectral graph, and an experimental execution flow engine; Filament.
   - It feeds LLM-powered Code Review, Muse Brainstorming, and Generate Message, all with *logos-backed* context. The one-shot gather stays cheap and fast, and a new optional read-only agentic harness explores outward from what Logos surfaces. It piggybacks Codex, so Codex and API models can go agentic (Claude Code can't host the harness, so it stays one-shot there).
   - There's a long-running debate in AI about whether the model matters more than the harness around it. Manifold takes the harness side literally: Logos and the evidence gather are the harness, the model is a guest. Not my first one either; my [college capstone](https://woflo.dev/blog/wdym/) put an LLM inside a live Minecraft JVM with real-time bytecode patching. This is that idea, pointed at git.
+- Review with humans, not just models: Critique-style, git-native, human-to-human code review (preview) living right next to the AI one.
 - Open any file. The client already knows what it connects to, how tightly, and through which channels.
 - View changes by *geometric Atlas* (preview) rather than by file.
 - PRs, worktrees, and branches get **Orbits**, orbital shapes drawn from the coupling graph, so related branches surface as merge risk even when they aren't touching the same files.
