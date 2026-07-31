@@ -105,6 +105,7 @@ import 'package:git_desktop/backend/command_telemetry_store.dart';
 import 'package:git_desktop/backend/engram_file_index_cache.dart';
 import 'package:git_desktop/backend/engram_hunk_encoder.dart' show HunkKVector;
 import 'package:git_desktop/backend/local_telemetry_store.dart';
+import 'package:git_desktop/backend/shake_ledger.dart';
 import 'package:git_desktop/backend/logos_core.dart' show SpectralBasis;
 import 'package:git_desktop/backend/nudge_ledger.dart';
 import 'package:git_desktop/backend/review_ratchet.dart';
@@ -748,6 +749,27 @@ void main() {
         allowed: (s1, s2) => {
           'S1': _settingsSig(s1),
           'S2': _settingsSig(s2),
+        },
+      );
+    });
+
+    test('ShakeLedger', () async {
+      // The sweep's memory of what has been examined. A torn write here
+      // would either lose coverage (files re-audited, merely wasteful) or
+      // FABRICATE it (files reported examined that never were), and the
+      // second is the one that matters: a ledger is only worth keeping if
+      // it cannot lie about what was covered.
+      await runFloor<ShakeLedger>(
+        describe: 'floor shake-ledger',
+        genS1: (r) => _genShakeLedger(r, 's1'),
+        genS2: (r) => _genShakeLedger(r, 's2'),
+        persist: (l) => ShakeLedgerStore.save('/repo/under/test', l),
+        loadSig: () async =>
+            _shakeLedgerSig(await ShakeLedgerStore.load('/repo/under/test')),
+        invalidate: () {},
+        allowed: (s1, s2) => {
+          'S1': _shakeLedgerSig(s1),
+          'S2': _shakeLedgerSig(s2),
         },
       );
     });
@@ -1459,4 +1481,34 @@ bool _snapEquals(Map<String, List<int>> a, Map<String, List<int>> b) {
     if (bv == null || !_bytesEqual(a[key]!, bv)) return false;
   }
   return true;
+}
+
+/// A ledger with deterministic contents, distinguishable per variant.
+ShakeLedger _genShakeLedger(Rng rng, String tag) {
+  final l = ShakeLedger.empty();
+  final n = 1 + rng.nextInt(6);
+  for (var i = 0; i < n; i++) {
+    l.mark(
+      'lib/$tag/file_$i.dart',
+      '${tag}oid${i.toString().padLeft(38, '0')}',
+      '2026-01-0${1 + i}T00:00:00Z',
+      findings: i,
+    );
+  }
+  return l;
+}
+
+/// Signature over every field that would matter if a write tore: a partial
+/// record must never read back as a whole one.
+String _shakeLedgerSig(ShakeLedger l) {
+  final paths = <String>[];
+  for (var i = 0; i < 64; i++) {
+    for (final tag in const ['s1', 's2']) {
+      final p = 'lib/$tag/file_$i.dart';
+      final rec = l.recordFor(p);
+      if (rec != null) paths.add('$p=${rec.blobOid}@${rec.at}#${rec.findings}');
+    }
+  }
+  paths.sort();
+  return '${l.examinedCount}|${paths.join(',')}';
 }

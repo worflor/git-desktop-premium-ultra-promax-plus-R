@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:io' show File, Process, pid;
 import 'dart:isolate';
 
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 
 import '../admitted_git.dart';
@@ -18,6 +19,9 @@ import '../git.dart';
 import '../logos_dream.dart';
 import '../logos_git.dart';
 import '../logos_git_probe.dart';
+import '../review_target.dart';
+import '../shake_ledger.dart';
+import '../shake_plan.dart';
 import 'bridge_context.dart';
 
 typedef CommandHandler = Future<Map<String, dynamic>> Function(
@@ -48,7 +52,145 @@ final Map<String, CommandHandler> commands = {
   'review-evidence': _reviewEvidence,
   'muse': _muse,
   'deadcode': _deadCode,
+  'index': _index,
+  'shake': _shake,
+  'state': _state,
+  'commit-message': _commitMessage,
 };
+
+// ── What the app is configured to do ─────────────────────────────
+
+/// The settings an agent needs in order to know what it is about to get.
+///
+/// Every AI command answers with this alongside its result, and `state`
+/// returns it alone. That is the point: an agent driving Manifold should not
+/// have to infer which model ran, which strands the muse was carrying, or
+/// whether double-check was on — it should be told, in the same breath as the
+/// answer those settings produced.
+///
+/// Reports what is CONFIGURED, and never forces provider discovery to find
+/// out. `modelSelections` already holds the user's chosen model per category,
+/// so the question "what will run" is answered from local state; a `state`
+/// call that spun up a network probe would be a poor thing to put in front of
+/// every other command.
+Map<String, dynamic> settingsSnapshot(ManifoldBridgeContext ctx) {
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+
+  Map<String, dynamic> slot(String categoryId) {
+    final model = ai.modelSelections[categoryId] ?? '';
+    final effort = ai.resolveEffort(categoryId, model);
+    return {
+      'category': categoryId,
+      'categoryLabel': ai.labelForCategory(categoryId, categoryId),
+      'model': model,
+      if (effort.effort != null) 'effort': effort.effort,
+      'fast': effort.fast,
+    };
+  }
+
+  return {
+    'ai': {
+      // False means no provider discovery has run yet in this session, NOT
+      // that AI is unavailable — the first command that needs it will warm it.
+      'categoriesLoaded': ai.runtimeModelCategories.isNotEmpty,
+      'readOnly': prefs.aiReadOnlyDefault,
+      'guardrailStage': prefs.guardrailStage,
+      'hidden': prefs.hideAiFeatures,
+    },
+    'commitMessage': {
+      ...slot(ai.commitMessageModelCategoryId),
+      'customPrompt': ai.commitMessagePrompt.trim().isNotEmpty,
+      if (ai.commitMessagePromptPath.isNotEmpty)
+        'promptPath': ai.commitMessagePromptPath,
+      'structure': prefs.commitStructure.name,
+      'voice': prefs.commitVoice.name,
+      'coverage': prefs.commitCoverage.name,
+    },
+    'review': {
+      ...slot(ai.reviewCommitModelCategoryId),
+      'doubleCheck': ai.reviewCommitDoubleCheckEnabled,
+      'customPrompt': ai.reviewCommitPrompt.trim().isNotEmpty,
+      if (ai.reviewCommitPromptPath.isNotEmpty)
+        'promptPath': ai.reviewCommitPromptPath,
+    },
+    // The sweep is a review of settled code, so it runs on the review slot.
+    // Said explicitly rather than left to be inferred.
+    'shake': {
+      ...slot(ai.reviewCommitModelCategoryId),
+      'sharesReviewSettings': true,
+    },
+    'muse': {
+      'brainstorm': slot(ai.museBrainstormModelCategoryId),
+      'synthesis': slot(ai.museSynthesisModelCategoryId),
+      'strands': [
+        for (final e in ai.museQuiver)
+          {'kind': museStrandLabel(e.kind), 'count': e.count},
+      ],
+      'strandOrder': [
+        for (final k in ai.museStrandOrder) museStrandLabel(k),
+      ],
+      'customPrompt': ai.musePrompt.trim().isNotEmpty,
+      if (ai.musePromptPath.isNotEmpty) 'promptPath': ai.musePromptPath,
+    },
+  };
+}
+
+/// Every strand the muse knows, for a caller that wants to choose.
+List<String> get allStrandNames =>
+    [for (final k in kMuseStrandDisplayOrder) museStrandLabel(k)];
+
+/// Parse `--strands spark,fever` into a quiver.
+///
+/// Returns null when the flag was absent, which is the signal to use the
+/// user's configured quiver. THROWS on an unrecognised name rather than
+/// dropping it: a caller who asks for a strand that does not exist has a typo
+/// or a stale idea of the vocabulary, and silently running a smaller muse
+/// would look exactly like success.
+List<MuseQuiverEntry>? parseStrandOverride(Object? raw) {
+  if (raw == null) return null;
+  final text = raw is String ? raw : '$raw';
+  if (text.trim().isEmpty) return null;
+
+  final entries = <MuseQuiverEntry>[];
+  final seen = <MuseStrandKind>{};
+  for (final piece in text.split(',')) {
+    final token = piece.trim();
+    if (token.isEmpty) continue;
+    // `spark:3` asks for three of that strand; a bare name means one.
+    final colon = token.indexOf(':');
+    final name = colon < 0 ? token : token.substring(0, colon);
+    final countText = colon < 0 ? '' : token.substring(colon + 1);
+    final kind = parseMuseStrand(name);
+    if (kind == null) {
+      throw ArgumentError(
+        'Unknown muse strand "$name". Known strands: '
+        '${allStrandNames.join(', ')}.',
+      );
+    }
+    final count = int.tryParse(countText) ?? 1;
+    if (count < 1) {
+      throw ArgumentError('Strand "$name" needs a count of at least 1.');
+    }
+    if (!seen.add(kind)) {
+      throw ArgumentError('Strand "$name" was named twice.');
+    }
+    entries.add(MuseQuiverEntry(kind: kind, count: count));
+  }
+  if (entries.isEmpty) return null;
+  return entries;
+}
+
+Future<Map<String, dynamic>> _state(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  return {
+    ...settingsSnapshot(ctx),
+    'strandVocabulary': allStrandNames,
+    'activeRepo': ctx.repoState.activePath,
+  };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -211,6 +353,281 @@ Future<Map<String, dynamic>> _deadCode(
   };
 }
 
+/// Validate a repository, report what Manifold can see in it, and (unless
+/// `--check`) register it so it shows up as a project.
+///
+/// One command for adding, checking and validating, because they are the same
+/// question asked with different intentions: "can Manifold work with this, and
+/// what does it know about it?". Registering is the only side effect, and it
+/// is the one the flag turns off.
+///
+/// Nothing here requires the repo to have been added first — the engine
+/// resolver is keyed by path, not by membership in the project list. That is
+/// what makes every other command usable ephemerally, and this one is how you
+/// check that before spending an AI call.
+Future<Map<String, dynamic>> _index(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final repo = _requireRepo(params, ctx);
+  final checkOnly = params['check'] == 'true' || params['check'] == true;
+
+  final opened = await openRepository(repo);
+  if (!opened.ok) {
+    throw StateError('$repo is not a usable git repository: '
+        '${opened.error ?? 'unknown error'}');
+  }
+  // Normalized once, here, and used for everything after: `_resolveCommonRoot`
+  // derives its answer from git's output, which on Windows comes back with
+  // forward slashes while the rest of the app stores native separators.
+  final root = p.normalize(await _resolveCommonRoot(repo));
+
+  _progress('probe');
+  Future<String> probe(List<String> args) async {
+    final r = await runGit(root, args);
+    return r.exitCode == 0 ? (r.stdout as String).trim() : '';
+  }
+
+  final branch = await probe(['rev-parse', '--abbrev-ref', 'HEAD']);
+  final head = await probe(['rev-parse', 'HEAD']);
+  final shallow = (await probe(['rev-parse', '--is-shallow-repository'])) == 'true';
+  final bare = (await probe(['rev-parse', '--is-bare-repository'])) == 'true';
+  final commitCount = int.tryParse(await probe(['rev-list', '--count', 'HEAD'])) ?? 0;
+  final trackedRaw = await probe(['ls-files']);
+  final trackedFiles =
+      trackedRaw.isEmpty ? 0 : trackedRaw.split('\n').where((l) => l.trim().isNotEmpty).length;
+
+  final known = ctx.repoState.knowsRecent(root);
+  var registered = known;
+  if (!checkOnly && !known) {
+    registered = await ctx.repoState.rememberRecent(root);
+  }
+
+  // Warm the engine so the FIRST real command is not the one that pays for
+  // the cold build. Bounded: an unreachable or enormous repo reports what it
+  // managed rather than hanging the CLI.
+  _progress('index', 'building engine');
+  final engineSw = Stopwatch()..start();
+  LogosGit? engine;
+  String? engineError;
+  try {
+    engine = await ctx.logosGitState
+        .freshEngineFor(root, timeout: const Duration(seconds: 60));
+    if (engine == null) engineError = ctx.logosGitState.errorFor(root);
+  } catch (e) {
+    engineError = '$e';
+  }
+  final engineMs = engineSw.elapsedMilliseconds;
+
+  final couplingWarm = await _awaitCoupling(root, ctx);
+  final axis = engine?.stats.commitAxis;
+
+  return {
+    'repo': root,
+    'valid': true,
+    'registered': registered,
+    'alreadyKnown': known,
+    'checkOnly': checkOnly,
+    'branch': branch,
+    'head': head.isEmpty ? null : head,
+    'commits': commitCount,
+    'trackedFiles': trackedFiles,
+    'bare': bare,
+    // Surfaced because it is the one repository property that makes reviewing
+    // history impossible: a shallow clone has no parent for its oldest
+    // commits, so there is nothing to diff them against.
+    'shallow': shallow,
+    'engine': {
+      'ready': engine != null,
+      'ms': engineMs,
+      'error': engineError,
+      'graphFiles': engine?.nodePaths.length ?? 0,
+      'commitsOnAxis': axis?.length ?? 0,
+      'reviewableFrom': axis == null || axis.isEmpty ? null : axis.hashes.first,
+    },
+    'coupling': {
+      'ready': couplingWarm.data != null,
+      'ms': couplingWarm.ms,
+    },
+  };
+}
+
+/// Audit the repository itself, region by region, resuming where the last run
+/// stopped.
+///
+/// The whole-codebase counterpart to `review`. `review` asks whether a CHANGE
+/// is right; this asks what is wrong with the code that is already there —
+/// which is a different question, and the only one that can reach code
+/// nothing has edited in years.
+///
+/// A run is bounded (`--regions`, default 1) and the sweep is not: what a run
+/// does not reach stays pending in the ledger with its place in the order, so
+/// repeated runs converge on having examined everything. `--plan` shows the
+/// order and the honest coverage without spending a single model call.
+Future<Map<String, dynamic>> _shake(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final repo = _requireRepo(params, ctx);
+  final root = p.normalize(await _resolveCommonRoot(repo));
+  final planOnly = params['plan'] == 'true' || params['plan'] == true;
+  final reset = params['reset'] == 'true' || params['reset'] == true;
+  final budget = _int(params['regions']) ?? 1;
+
+  if (reset) await ShakeLedgerStore.forget(root);
+
+  _progress('plan', 'reading the tree');
+  final ledger = await ShakeLedgerStore.load(root);
+  // Best-effort: a cold engine costs the spectral partition and the churn
+  // ordering, never the coverage. Directory locality still reaches every
+  // file, which is the guarantee that matters.
+  final engine = await ctx.logosGitState
+      .freshEngineFor(root, timeout: const Duration(seconds: 60));
+
+  final planned = await planShake(
+    repositoryPath: root,
+    ledger: ledger,
+    engine: engine,
+  );
+  if (!planned.ok) throw StateError(planned.error!);
+  final plan = planned.data!;
+
+  Map<String, dynamic> planJson() => {
+        'repo': root,
+        'complete': plan.isComplete,
+        'domainFiles': plan.domainFiles,
+        'examinedFiles': plan.freshFiles,
+        'pendingFiles': plan.pendingFiles,
+        'pendingRegions': plan.pending.length,
+        'commonPrefix': plan.commonPrefix,
+        'engineReady': engine != null,
+        'excluded': {
+          for (final e in plan.excluded.entries)
+            e.key.name: {
+              'count': e.value.length,
+              'sample': e.value.take(5).toList(),
+            },
+        },
+        'regions': [
+          for (final r in plan.pending.take(40))
+            {
+              'label': r.label,
+              'files': r.files.length,
+              'bytes': r.bytes,
+              'unexamined': r.unexamined,
+              'neverHumanReviewed': r.neverHumanReviewed,
+            },
+        ],
+      };
+
+  if (planOnly) return {...planJson(), 'planOnly': true};
+  if (plan.isComplete) {
+    return {...planJson(), 'audited': const <Map<String, dynamic>>[]};
+  }
+
+  final categories = await _ensureCategories(ctx);
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+  final model = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.reviewCommitModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+  final couplingWarm = await _awaitCoupling(root, ctx);
+  final stamp = DateTime.now().toUtc().toIso8601String();
+
+  final audited = <Map<String, dynamic>>[];
+  for (final region in plan.pending.take(budget)) {
+    _progress('shake', region.label);
+    final result = await _boundedAi(
+      'shake',
+      reviewCommit(
+        repositoryPath: root,
+        modelValue: model.modelValue,
+        modelCategoryLabel: model.categoryLabel,
+        scopeLabel: region.label,
+        reasoningEffort: model.effort,
+        fastMode: model.fast,
+        supportsReasoning: model.supportsReasoning,
+        target: region.toTarget(),
+        customPrompt: ai.reviewCommitPrompt,
+        guardrailStage: prefs.guardrailStage,
+        doubleCheckEnabled: ai.reviewCommitDoubleCheckEnabled,
+        readOnly: true,
+        couplingMatrix: couplingWarm.data,
+      ),
+      calls: ai.reviewCommitDoubleCheckEnabled ? 2 : 1,
+    );
+    if (!result.ok || result.data == null) {
+      // A region that could not be audited must NOT be marked examined —
+      // that would retire it from the sweep having looked at nothing.
+      audited.add({
+        'region': region.label,
+        'error': result.error ?? 'audit failed',
+      });
+      continue;
+    }
+    final d = result.data!;
+    for (final f in region.files) {
+      ledger.mark(f.path, f.blobOid, stamp, findings: d.findings.length);
+    }
+    audited.add({
+      'region': region.label,
+      'files': region.files.length,
+      'score': d.score,
+      'verdict': d.verdict,
+      'summary': d.summary,
+      'findings': [
+        for (final f in d.findings)
+          {
+            'title': f.title,
+            'severity': f.severity,
+            'file': f.filePath,
+            'evidence': f.evidence,
+            'why': f.whyItMatters,
+          },
+      ],
+      'observations': [
+        for (final o in d.observations) {'title': o.title, 'file': o.filePath},
+      ],
+    });
+  }
+
+  // Against the whole live domain, not just what was pending: pruning by
+  // the pending set would retire the very files this run just examined.
+  ledger.prune(plan.livePaths);
+  await ShakeLedgerStore.save(root, ledger);
+
+  // Re-planned AFTER the run so the counts reported are the ones a reader
+  // would get by asking again — a report of what is left must not describe
+  // the world before the work.
+  final after = await planShake(
+    repositoryPath: root,
+    ledger: ledger,
+    engine: engine,
+  );
+  final remaining = after.ok ? after.data! : plan;
+
+  return {
+    'repo': root,
+    'complete': remaining.isComplete,
+    'domainFiles': remaining.domainFiles,
+    'examinedFiles': remaining.freshFiles,
+    'pendingFiles': remaining.pendingFiles,
+    'pendingRegions': remaining.pending.length,
+    'engineReady': engine != null,
+    'excluded': {
+      for (final e in remaining.excluded.entries)
+        e.key.name: {
+          'count': e.value.length,
+          'sample': e.value.take(5).toList(),
+        },
+    },
+    'audited': audited,
+    'settings': settingsSnapshot(ctx),
+  };
+}
+
 class _WarmResult<T> {
   final T? data;
   final int ms;
@@ -335,7 +752,15 @@ Future<Map<String, dynamic>> _help(
           'Find files by path-token matching. Params: query.',
       'dream': 'Logos commit phrase for current diff.',
       'impact': 'Predicted ripple of a diff. Params: diff.',
-      'review': 'AI code review of current changes. Params: files (optional), model (optional).',
+      'index':
+          'Validate a repo, report what the engine sees in it, and register '
+              'it as a project. Params: repo (optional), check (skip '
+              'registering). Works on repos that were never added.',
+      'review':
+          'AI code review. Reviews the working tree by default; --commit '
+              '<rev>, --range <A..B> (endpoints) or <A...B> (from the merge '
+              'base), or --last for the newest commit. Params: files '
+              '(optional, scopes the diff), model (optional).',
       'muse': 'AI brainstorm on current changes. Params: files (optional), model (optional).',
       'deadcode':
           'Files no live surface imports (fully-dead + test-zombies) plus '
@@ -1067,16 +1492,75 @@ _ResolvedModel _pickModel(
 typedef _ScopeResult = (
   List<String> paths,
   String label,
-  bool hasStaged,
-  bool hasUnstaged,
+  ReviewTarget target,
   List<RepositoryStatusFile> statusFiles,
 );
+
+/// The review subject named by `--commit` / `--range`, or null for the
+/// working tree.
+///
+/// `--last` is the shorthand for "the commit I just made", which is the whole
+/// reason this exists: reviewing work that has already landed, from a
+/// terminal, without touching the app.
+///
+/// Conflicting flags are REFUSED rather than ranked. A precedence rule would
+/// let `--last --commit abc` succeed and print an ordinary-looking review of
+/// something the caller did not ask for, and nothing downstream could tell —
+/// which is worse than any error. There is no ordering here to get wrong
+/// because there is no ordering.
+///
+/// Visible for testing because this is the CLI's contract, and a review of
+/// the wrong revision looks exactly like a review of the right one.
+@visibleForTesting
+ReviewTarget? historyTargetFrom(Map<String, dynamic> params) {
+  final last = params['last'] == 'true' || params['last'] == true;
+  final commit = (params['commit'] as String?)?.trim() ?? '';
+  final range = (params['range'] as String?)?.trim() ?? '';
+
+  final named = <String>[
+    if (last) '--last',
+    if (commit.isNotEmpty) '--commit',
+    if (range.isNotEmpty) '--range',
+  ];
+  if (named.length > 1) {
+    throw ArgumentError(
+      '${named.join(' and ')} name different revisions. Pass exactly one.',
+    );
+  }
+
+  if (last) return const CommitTarget('HEAD');
+  return parseReviewTargetSpec(commit: commit, range: range);
+}
 
 Future<_ScopeResult> _resolveScope(
   Map<String, dynamic> params,
   ManifoldBridgeContext ctx,
 ) async {
   final repo = _requireRepo(params, ctx);
+
+  // A history target needs no working-tree status at all: what changed is a
+  // property of the commits, and the resolver reads it from them. Asking
+  // `git status` here would describe the developer's current mess, not the
+  // subject. Paths, when given, SCOPE the revision diff rather than select
+  // dirty files.
+  final history = historyTargetFrom(params);
+  if (history != null) {
+    final scoped = _resolveFilesOptional(params) ?? const <String>[];
+    return (
+      scoped,
+      // Provisional: the resolver replaces this with what it actually found
+      // ("commit a1b2c3d - subject") once the diff is derived.
+      switch (history) {
+        CommitTarget(:final revspec) => 'commit $revspec',
+        RangeTarget(:final base, :final tip, :final mergeBase) =>
+          '$base${mergeBase ? '...' : '..'}$tip',
+        _ => 'revision',
+      },
+      history,
+      const <RepositoryStatusFile>[],
+    );
+  }
+
   final statusResult = await getRepositoryStatus(repo);
   final statusFiles = statusResult.data?.files ?? [];
 
@@ -1088,8 +1572,12 @@ Future<_ScopeResult> _resolveScope(
     return (
       explicit,
       '${explicit.length} file${explicit.length == 1 ? '' : 's'}',
-      explicitStatus.isEmpty || explicitStatus.any((f) => f.hasStagedChange),
-      explicitStatus.isEmpty || explicitStatus.any((f) => f.hasUnstagedChange),
+      WorkingTreeTarget(
+        includeStaged:
+            explicitStatus.isEmpty || explicitStatus.any((f) => f.hasStagedChange),
+        includeUnstaged: explicitStatus.isEmpty ||
+            explicitStatus.any((f) => f.hasUnstagedChange),
+      ),
       statusFiles,
     );
   }
@@ -1103,15 +1591,15 @@ Future<_ScopeResult> _resolveScope(
   if (paths.isEmpty) {
     throw StateError('No dirty files to review in $repo');
   }
-  final hasStaged = statusFiles.any((f) => f.hasStagedChange);
-  final hasUnstaged = statusFiles.any((f) => f.hasUnstagedChange);
   return (
     paths,
     paths.length == statusFiles.length
         ? 'all included files'
         : '${paths.length} file${paths.length == 1 ? '' : 's'}',
-    hasStaged,
-    hasUnstaged,
+    WorkingTreeTarget(
+      includeStaged: statusFiles.any((f) => f.hasStagedChange),
+      includeUnstaged: statusFiles.any((f) => f.hasUnstagedChange),
+    ),
     statusFiles,
   );
 }
@@ -1162,10 +1650,11 @@ Future<Map<String, dynamic>> _review(
 
   _progress('scope');
   final scopeSw = Stopwatch()..start();
-  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
+  final (scopeFiles, scopeLabel, target, statusFiles) =
       await _resolveScope(params, ctx);
   final scopeMs = scopeSw.elapsedMilliseconds;
-  _progress('scope', '${scopeFiles.length} files');
+  _progress('scope',
+      target is WorkingTreeTarget ? '${scopeFiles.length} files' : scopeLabel);
 
   _progress('warmup');
   final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
@@ -1185,8 +1674,7 @@ Future<Map<String, dynamic>> _review(
     reasoningEffort: model.effort,
     fastMode: model.fast,
     supportsReasoning: model.supportsReasoning,
-    includeStaged: hasStaged,
-    includeUnstaged: hasUnstaged,
+    target: target,
     scopedPaths: scopeFiles,
     customPrompt: ai.reviewCommitPrompt,
     guardrailStage: prefs.guardrailStage,
@@ -1219,24 +1707,35 @@ Future<Map<String, dynamic>> _review(
       'couplingMs': couplingWarm.ms,
       'couplingTimedOut': couplingWarm.timedOut,
     },
-    'files': {
-      'reviewed': scopeFiles.length,
-      'total': statusFiles.length,
-      'paths': [
-        for (final p in scopeFiles)
-          {
-            'path': p,
-            'staged': statusFiles
-                .where((f) => f.path == p)
-                .firstOrNull
-                ?.hasStagedChange ?? false,
-            'unstaged': statusFiles
-                .where((f) => f.path == p)
-                .firstOrNull
-                ?.hasUnstagedChange ?? true,
+    // For history, the file list comes from the REVISION — the working
+    // tree's status describes today's uncommitted work and would report
+    // "0/0 files" for a perfectly good commit review.
+    'files': target is WorkingTreeTarget
+        ? {
+            'reviewed': scopeFiles.length,
+            'total': statusFiles.length,
+            'paths': [
+              for (final p in scopeFiles)
+                {
+                  'path': p,
+                  'staged': statusFiles
+                      .where((f) => f.path == p)
+                      .firstOrNull
+                      ?.hasStagedChange ?? false,
+                  'unstaged': statusFiles
+                      .where((f) => f.path == p)
+                      .firstOrNull
+                      ?.hasUnstagedChange ?? true,
+                },
+            ],
+          }
+        : {
+            'reviewed': d.reviewedPaths.length,
+            'total': d.reviewedPaths.length,
+            'paths': [
+              for (final p in d.reviewedPaths) {'path': p},
+            ],
           },
-      ],
-    },
     'timing': {
       'totalMs': totalSw.elapsedMilliseconds,
       'scopeMs': scopeMs,
@@ -1267,6 +1766,97 @@ Future<Map<String, dynamic>> _review(
           'file': o.filePath,
         },
     ],
+    'settings': settingsSnapshot(ctx),
+  };
+}
+
+/// Write the commit message for the current change.
+///
+/// The plainest thing in the CLI on purpose: an agent that has just finished
+/// editing asks for the message and gets it. It uses the user's OWN settings
+/// — their model slot, their custom prompt, their chosen structure, voice and
+/// coverage — because a message generated to somebody else's taste is a
+/// message they have to rewrite.
+///
+/// Returns the message as one string. `--json` yields it alongside the
+/// settings that produced it, so a caller can tell whether it got what the
+/// user configured or a fallback.
+Future<Map<String, dynamic>> _commitMessage(
+  Map<String, dynamic> params,
+  ManifoldBridgeContext ctx,
+) async {
+  final totalSw = Stopwatch()..start();
+  final repo = _requireRepo(params, ctx);
+  final cacheRoot = await _resolveCommonRoot(repo);
+  final categories = await _ensureCategories(ctx);
+  final ai = ctx.aiSettingsState;
+  final prefs = ctx.preferencesState;
+  final model = _pickModel(
+    categories, ctx,
+    preferredCategoryId: ai.commitMessageModelCategoryId,
+    modelOverride: params['model'] as String?,
+  );
+
+  _progress('scope');
+  final (scopeFiles, scopeLabel, target, statusFiles) =
+      await _resolveScope(params, ctx);
+  // A commit message describes work about to be committed. There is no such
+  // thing as a message for a commit that already exists — that message was
+  // written when it was made.
+  if (target is! WorkingTreeTarget) {
+    throw StateError(
+        'A commit message describes work not yet committed. Drop --commit / '
+        '--range; to read an existing commit\'s message use `git log`.');
+  }
+  _progress('scope', '${scopeFiles.length} files');
+
+  _progress('warmup');
+  final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
+
+  _progress('ai', model.modelValue.split('/').last);
+  final result = await _boundedAi(
+    'commit-message',
+    generateCommitMessage(
+      repositoryPath: repo,
+      modelValue: model.modelValue,
+      modelCategoryLabel: model.categoryLabel,
+      scopeLabel: scopeLabel,
+      reasoningEffort: model.effort,
+      fastMode: model.fast,
+      supportsReasoning: model.supportsReasoning,
+      includeStaged: target.includeStaged,
+      includeUnstaged: target.includeUnstaged,
+      scopedPaths: scopeFiles,
+      customPrompt: ai.commitMessagePrompt,
+      existingMessage: params['existing'] as String? ?? '',
+      readOnly: true,
+      structure: prefs.commitStructure,
+      voice: prefs.commitVoice,
+      coverage: prefs.commitCoverage,
+      couplingMatrix: couplingWarm.data,
+    ),
+  );
+  totalSw.stop();
+
+  if (!result.ok || result.data == null) {
+    throw StateError(result.error ?? 'Commit message generation failed.');
+  }
+  final d = result.data!;
+  return {
+    'repo': repo,
+    'message': d.message,
+    'model': '${d.providerId}/${d.modelId}',
+    'scope': d.scopeLabel,
+    'files': {
+      'reviewed': scopeFiles.length,
+      'total': statusFiles.length,
+    },
+    'promptChars': d.promptCharacters,
+    'diffChars': d.diffCharacters,
+    'inputTokens': d.inputTokens,
+    'outputTokens': d.outputTokens,
+    'timing': {'totalMs': totalSw.elapsedMilliseconds},
+    'settings': settingsSnapshot(ctx),
   };
 }
 
@@ -1282,6 +1872,19 @@ Future<Map<String, dynamic>> _reviewEvidence(
   final totalSw = Stopwatch()..start();
   final repo = _requireRepo(params, ctx);
   final cacheRoot = await _resolveCommonRoot(repo);
+
+  // The CHEAP, LOCAL checks first. Configuring an AI provider is neither, and
+  // doing it first meant a mistyped `--diff` path reported "No models in any
+  // category" — an error about the wrong thing entirely, sending the reader
+  // to look at their model settings over a typo. Validate what the caller
+  // typed before demanding the machinery to act on it.
+  final diffPathEarly = params['diff'] as String?;
+  if (diffPathEarly != null &&
+      diffPathEarly.isNotEmpty &&
+      !await File(diffPathEarly).exists()) {
+    throw StateError('No frozen diff at $diffPathEarly.');
+  }
+
   final categories = await _ensureCategories(ctx);
   final ai = ctx.aiSettingsState;
   final prefs = ctx.preferencesState;
@@ -1291,35 +1894,62 @@ Future<Map<String, dynamic>> _reviewEvidence(
     modelOverride: params['model'] as String?,
   );
 
+  // Frozen-diff replay (`--diff <path>`) for clean A/B across rebuilds: the
+  // same bytes measured again as the engine changes under them.
+  //
+  // Resolved FIRST, and short-circuiting the working-tree scope entirely. A
+  // supplied patch IS the whole review subject, so asking `git status` what
+  // is dirty answers a question nobody posed — and `_resolveScope` throws on
+  // a clean checkout, which made the documented A/B replay impossible to run
+  // from exactly the clean tree it is meant to be run from.
   _progress('scope');
-  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
-      await _resolveScope(params, ctx);
-  _progress('scope', '${scopeFiles.length} files');
+  final diffPath = params['diff'] as String?;
+  PreparedDiffTarget? frozen;
+  if (diffPath != null && diffPath.isNotEmpty) {
+    final f = File(diffPath);
+    if (!await f.exists()) {
+      throw StateError('No frozen diff at $diffPath.');
+    }
+    frozen = PreparedDiffTarget(
+      diffText: await f.readAsString(),
+      label: 'frozen diff ${p.basename(diffPath)}',
+      branchName: 'ab-frozen',
+    );
+  }
+
+  final List<String> scopeFiles;
+  final String scopeLabel;
+  final ReviewTarget evidenceTarget;
+  final List<RepositoryStatusFile> statusFiles;
+  if (frozen != null) {
+    scopeFiles = const [];
+    scopeLabel = frozen.label;
+    evidenceTarget = frozen;
+    statusFiles = const [];
+  } else {
+    (scopeFiles, scopeLabel, evidenceTarget, statusFiles) =
+        await _resolveScope(params, ctx);
+  }
+  _progress(
+      'scope',
+      evidenceTarget is WorkingTreeTarget
+          ? '${scopeFiles.length} files'
+          : scopeLabel);
 
   _progress('warmup');
   final couplingWarm = await _awaitCoupling(cacheRoot, ctx);
   _progress('warmup', 'coupling ${couplingWarm.data != null ? '✓' : '–'}');
 
-  // Optional frozen-diff replay (--diff <path>) for clean A/B across rebuilds.
-  final diffPath = params['diff'] as String?;
-  var rawDiffOverride = '';
-  if (diffPath != null && diffPath.isNotEmpty) {
-    final f = File(diffPath);
-    if (await f.exists()) rawDiffOverride = await f.readAsString();
-  }
-
   _progress('gather');
   final result = await gatherReviewEvidence(
     repositoryPath: repo,
     modelCategoryLabel: model.categoryLabel,
-    scopeLabel: scopeLabel,
-    includeStaged: hasStaged,
-    includeUnstaged: hasUnstaged,
+    requestedScopeLabel: scopeLabel,
+    target: evidenceTarget,
     scopedPaths: scopeFiles,
     customPrompt: ai.reviewCommitPrompt,
     guardrailStage: prefs.guardrailStage,
     couplingMatrix: couplingWarm.data,
-    rawDiffOverride: rawDiffOverride,
   );
   totalSw.stop();
 
@@ -1366,8 +1996,21 @@ Future<Map<String, dynamic>> _muse(
 
   _progress('scope');
   final scopeSw = Stopwatch()..start();
-  final (scopeFiles, scopeLabel, hasStaged, hasUnstaged, statusFiles) =
+  // Parsed BEFORE any model work: an unknown strand name is the caller's
+  // typo, and finding out after a provider spin-up wastes their time.
+  final strandOverride = parseStrandOverride(params['strands']);
+
+  final (scopeFiles, scopeLabel, rawMuseTarget, statusFiles) =
       await _resolveScope(params, ctx);
+  // Muse brainstorms about work in progress. Pointing it at a commit would
+  // silently hand it the working tree instead, so it refuses rather than
+  // answering a question it was not asked.
+  if (rawMuseTarget is! WorkingTreeTarget) {
+    throw StateError(
+        'muse works on the current change, not on history. Drop --commit / '
+        '--range, or use `manifold review` for a revision.');
+  }
+  final museTarget = rawMuseTarget;
   final scopeMs = scopeSw.elapsedMilliseconds;
   _progress('scope', '${scopeFiles.length} files');
 
@@ -1392,9 +2035,14 @@ Future<Map<String, dynamic>> _muse(
     synthesisReasoningEffort: synthesisModel.effort,
     synthesisFastMode: synthesisModel.fast,
     synthesisSupportsReasoning: synthesisModel.supportsReasoning,
-    includeStaged: hasStaged,
-    includeUnstaged: hasUnstaged,
+    includeStaged: museTarget.includeStaged,
+    includeUnstaged: museTarget.includeUnstaged,
     scopedPaths: scopeFiles,
+    // The user's own loadout unless the caller named strands. This was
+    // passed as nothing at all before, so `manifold muse` silently ran the
+    // default four regardless of what the settings said — the CLI answering
+    // a different question than the app for the same repository.
+    quiver: strandOverride ?? ai.museQuiver,
     customPrompt: ai.musePrompt,
     guardrailStage: prefs.guardrailStage,
     readOnly: true,
@@ -1471,6 +2119,14 @@ Future<Map<String, dynamic>> _muse(
       ],
     if (d.parseWarnings.isNotEmpty)
       'warnings': d.parseWarnings,
+    'settings': settingsSnapshot(ctx),
+    // What the muse actually carried this run, which is NOT the configured
+    // loadout when the caller named strands.
+    'strandsUsed': [
+      for (final e in (strandOverride ?? ai.museQuiver))
+        {'kind': museStrandLabel(e.kind), 'count': e.count},
+    ],
+    'strandsOverridden': strandOverride != null,
   };
 }
 

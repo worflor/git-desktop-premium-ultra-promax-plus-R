@@ -65,18 +65,55 @@ Uint8List frameMessage(String json) {
   return out;
 }
 
-String? extractFrame(List<int> buffer) {
-  if (buffer.length < 4) return null;
-  final len = ByteData.sublistView(Uint8List.fromList(buffer.sublist(0, 4)))
-      .getUint32(0, Endian.big);
-  if (len > 10 * 1024 * 1024) return null;
-  if (buffer.length < 4 + len) return null;
-  return utf8.decode(buffer.sublist(4, 4 + len), allowMalformed: true);
+/// Largest frame the server will ever buffer. A request is a JSON-RPC call;
+/// 10 MiB is far past any legitimate one.
+const int kMaxFrameBytes = 10 * 1024 * 1024;
+
+/// The result of trying to read one frame off the head of a buffer.
+///
+/// Sealed, and replacing a PAIR of functions — one that computed `4 + len`
+/// with no limit, and one that enforced a limit the first had already
+/// ignored. The caller consulted the unbounded one to decide whether to keep
+/// buffering, so a peer that declared a 4 GiB frame made the server wait for
+/// bytes that would never fit, growing its buffer without bound. The 10 MiB
+/// guard was unreachable in precisely the case it existed for.
+///
+/// One read, one decision, exhaustively switched: a limit that the length
+/// calculation cannot disagree with, because there is no second calculation.
+sealed class FrameRead {
+  const FrameRead();
 }
 
-int frameTotalLength(List<int> buffer) {
-  if (buffer.length < 4) return -1;
+/// Not all here yet — keep buffering.
+final class FrameIncomplete extends FrameRead {
+  const FrameIncomplete();
+}
+
+/// A complete frame. [totalBytes] includes the 4-byte header.
+final class FrameReady extends FrameRead {
+  final String json;
+  final int totalBytes;
+  const FrameReady(this.json, this.totalBytes);
+}
+
+/// The peer declared a frame larger than [kMaxFrameBytes].
+///
+/// Not recoverable by skipping: the declared length is the only thing that
+/// says where the next frame starts, so a stream that lies about it can no
+/// longer be resynchronized. The connection has to go.
+final class FrameTooLarge extends FrameRead {
+  final int declaredBytes;
+  const FrameTooLarge(this.declaredBytes);
+}
+
+FrameRead readFrame(List<int> buffer) {
+  if (buffer.length < 4) return const FrameIncomplete();
   final len = ByteData.sublistView(Uint8List.fromList(buffer.sublist(0, 4)))
       .getUint32(0, Endian.big);
-  return 4 + len;
+  if (len > kMaxFrameBytes) return FrameTooLarge(len);
+  if (buffer.length < 4 + len) return const FrameIncomplete();
+  return FrameReady(
+    utf8.decode(buffer.sublist(4, 4 + len), allowMalformed: true),
+    4 + len,
+  );
 }

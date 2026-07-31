@@ -24,7 +24,7 @@
 import 'dart:io';
 
 import 'analysis_admission.dart';
-import 'git.dart' show gitBlobSize;
+import 'git.dart' show gitBlobSize, gitBlobSizesBatch;
 
 /// Resident expansion of diff TEXT over the on-disk bytes it covers: git
 /// prints both sides of a modification (~2×), plus per-line sigils and
@@ -89,6 +89,58 @@ Future<Admitted<T>> admitGitDiffText<T>(
   );
   return AnalysisAdmission.instance.run(
     onDisk * kDiffTextResidentExpansion,
+    work,
+    scope: repoAnalysisScope,
+  );
+}
+
+/// Run [work] — a git invocation that materializes the patch between two
+/// REVISIONS — under the analysis budget, declaring the exact blob bytes the
+/// patch spans.
+///
+/// The history-side counterpart of [admitGitDiffText], and separate from it
+/// on purpose. [admitGitDiffText] sizes a diff by stat-ing the changed paths
+/// in the WORKING TREE, which is the correct tape measure for a working-tree
+/// diff and a meaningless one for a commit out of history: the file may have
+/// grown tenfold since, or been deleted and so measure zero — an
+/// under-declaration, which is the direction that OOMs. Here the sizes come
+/// from the objects the patch actually spans, so the declaration is measured
+/// rather than estimated, in the sense [admitFileText] requires.
+///
+/// [blobOids] must enumerate BOTH sides of every changed path (the pre- and
+/// post-image), which is what `git diff-tree -r --raw` emits. Passing only
+/// one side halves the declaration for every modification. It is an
+/// ITERABLE, not a set, and repeats are meaningful: a blob that appears on
+/// three changed paths is printed three times in the patch, so it costs three
+/// times as much resident text. Deduplicating before summing — the obvious
+/// thing, since the sizing probe itself dedupes — undercounts every
+/// repository containing copied or identical files.
+///
+/// Declined ⇒ the caller must degrade or refuse. `manifold review v1.0..HEAD`
+/// on a year of history is exactly the input this stands in front of. It also
+/// declines when the size could not be MEASURED at all: an unmeasurable diff
+/// is not a free one, and treating a failed probe as a zero-byte declaration
+/// would open the gate widest exactly when the least is known — the failure
+/// mode this whole module exists to make unrepresentable.
+Future<Admitted<T>> admitGitPatchText<T>(
+  String repo,
+  Iterable<String> blobOids,
+  Future<T> Function() work,
+) async {
+  final occurrences = <String, int>{};
+  for (final oid in blobOids) {
+    occurrences[oid] = (occurrences[oid] ?? 0) + 1;
+  }
+  final sizes = await gitBlobSizesBatch(repo, occurrences.keys);
+  if (sizes == null) return const Admitted.declined();
+  var total = 0;
+  for (final entry in occurrences.entries) {
+    final size = sizes[entry.key];
+    if (size == null) return const Admitted.declined();
+    total += size * entry.value;
+  }
+  return AnalysisAdmission.instance.run(
+    total * kDiffTextResidentExpansion,
     work,
     scope: repoAnalysisScope,
   );

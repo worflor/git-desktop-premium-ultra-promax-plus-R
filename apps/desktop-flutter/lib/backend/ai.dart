@@ -41,6 +41,7 @@ import 'review_evidence.dart';
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_core.dart' show SpectralThermo, flowKGInteractionStrength;
+import 'logos_commit_axis.dart';
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 import 'logos_mind.dart';
@@ -60,6 +61,7 @@ import 'file_coupling.dart' show FileCouplingMatrix;
 import 'review_blast_radius.dart'
     show computeBlastRadius, formatBlastRadiusBlock;
 import 'review_shadow.dart' show formatShadowBlock, shadowFlagsForPaths;
+import 'review_target.dart';
 import 'review_grounding.dart'
     show GroundedFinding, formatClaimGroundingBlock, groundFindings;
 import 'review_ratchet_store.dart' show ReviewRatchetStore;
@@ -375,7 +377,10 @@ const _maxPromptChars = 260000;
 /// and the output is structurally equivalent to a full-diff emission.
 /// When it doesn't, the same machinery drops lower-φ hunks. No mode
 /// switch, no threshold; budget is the single dial.
-const _kDiffBudgetChars = 180000;
+const kDiffBudgetChars = 180000;
+
+/// Deprecated internal alias kept so this file's many uses read unchanged.
+const _kDiffBudgetChars = kDiffBudgetChars;
 
 /// Model-API reservations — character counts the prompt template
 /// itself eats, plus the response space we have to leave for the model.
@@ -685,8 +690,10 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       repositoryPath: repositoryPath,
       scopeLabel: scopeLabel,
       scopedPaths: scopedPaths,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
+      target: WorkingTreeTarget(
+        includeStaged: includeStaged,
+        includeUnstaged: includeUnstaged,
+      ),
       couplingMatrix: couplingMatrix,
     );
 
@@ -1789,8 +1796,13 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String modelValue,
   required String modelCategoryLabel,
   required String scopeLabel,
-  required bool includeStaged,
-  required bool includeUnstaged,
+  /// What is under review: the working tree, a commit, a range of commits,
+  /// or a patch somebody else prepared. Replaces the
+  /// `includeStaged`/`includeUnstaged` pair together with the
+  /// `rawDiffOverride`/`diffBranchName` escape hatch beside it — four
+  /// parameters whose legal combinations were stated nowhere, and where
+  /// setting a branch name without a raw diff silently did nothing.
+  required ReviewTarget target,
   String? reasoningEffort,
   bool fastMode = false,
   bool supportsReasoning = true,
@@ -1800,8 +1812,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required int guardrailStage,
   bool doubleCheckEnabled = false,
   bool readOnly = true,
-  String rawDiffOverride = '',
-  String diffBranchName = '',
   FileCouplingMatrix? couplingMatrix,
 }) {
   return LogosVisBus.instance.runInSession<GitResult<AiCommitReviewData>>(
@@ -1809,17 +1819,14 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
             repositoryPath: repositoryPath,
             modelValue: modelValue,
             modelCategoryLabel: modelCategoryLabel,
-            scopeLabel: scopeLabel,
-            includeStaged: includeStaged,
-            includeUnstaged: includeUnstaged,
+            requestedScopeLabel: scopeLabel,
+            target: target,
             scopedPaths: scopedPaths,
             customPrompt: customPrompt,
             commitDraft: commitDraft,
             guardrailStage: guardrailStage,
             doubleCheckEnabled: doubleCheckEnabled,
             readOnly: readOnly,
-            rawDiffOverride: rawDiffOverride,
-            diffBranchName: diffBranchName,
             couplingMatrix: couplingMatrix,
             reasoningEffort: reasoningEffort,
             fastMode: fastMode,
@@ -1831,17 +1838,17 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
   required String repositoryPath,
   required String modelValue,
   required String modelCategoryLabel,
-  required String scopeLabel,
-  required bool includeStaged,
-  required bool includeUnstaged,
+  /// What the caller ASKED to review. The resolver's description of what it
+  /// actually found replaces this the moment the bundle arrives — see the
+  /// `scopeLabel` local below.
+  required String requestedScopeLabel,
+  required ReviewTarget target,
   required List<String> scopedPaths,
   required String customPrompt,
   required String commitDraft,
   required int guardrailStage,
   required bool doubleCheckEnabled,
   required bool readOnly,
-  required String rawDiffOverride,
-  required String diffBranchName,
   required FileCouplingMatrix? couplingMatrix,
   String? reasoningEffort,
   bool fastMode = false,
@@ -1851,8 +1858,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
     if (repositoryPath.trim().isEmpty) {
       return const GitResult.err('Repository path is required.');
     }
-    final usingOverride = rawDiffOverride.trim().isNotEmpty;
-    if (!usingOverride && !includeStaged && !includeUnstaged) {
+    if (target is WorkingTreeTarget &&
+        !target.includeStaged &&
+        !target.includeUnstaged) {
       return const GitResult.err('No diff scope is available for review.');
     }
 
@@ -1872,14 +1880,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
 
     final diffContext = await _collectCommitMessageContext(
       repositoryPath: repositoryPath,
-      scopeLabel: scopeLabel,
+      scopeLabel: requestedScopeLabel,
       scopedPaths: scopedPaths,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
-      rawDiffOverride: usingOverride ? rawDiffOverride : null,
-      branchNameOverride: usingOverride
-          ? (diffBranchName.isNotEmpty ? diffBranchName : null)
-          : null,
+      target: target,
       couplingMatrix: couplingMatrix,
       includeShadowHistory: true, // review-only: scope the cold-git shadow scan
     );
@@ -1888,9 +1891,16 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
     }
 
     final bundle = diffContext.data!;
+    // From here down, the review names what it is REVIEWING rather than what
+    // it was asked for: `commit a1b2c3d - subject` instead of `HEAD~3`.
+    // Identical to the request for the working tree.
+    final scopeLabel = bundle.scopeLabel;
     final profile = _guardrailProfileForStage(guardrailStage);
     final draftSpec = _ReviewPromptSpec(
       branchName: bundle.branchName,
+      stance: bundle.stance,
+      revisits: bundle.revisits,
+      regionFacts: bundle.regionFacts,
       modelCategoryLabel: modelCategoryLabel,
       scopeLabel: scopeLabel,
       customPrompt: customPrompt,
@@ -2023,6 +2033,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
+          reviewedPaths: bundle.reviewedPaths,
           promptCharacters: draftPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
           usage: providerOutput.usage,
@@ -2040,6 +2051,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
 
     final verifySpec = _ReviewPromptSpec(
       branchName: bundle.branchName,
+      stance: bundle.stance,
+      revisits: bundle.revisits,
+      regionFacts: bundle.regionFacts,
       modelCategoryLabel: modelCategoryLabel,
       scopeLabel: scopeLabel,
       customPrompt: customPrompt,
@@ -2086,6 +2100,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
+        reviewedPaths: bundle.reviewedPaths,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
         usage: totalUsage,
@@ -2145,6 +2160,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
+          reviewedPaths: bundle.reviewedPaths,
           promptCharacters: draftPrompt.length + verifyPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
           usage: totalUsage,
@@ -2199,6 +2215,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
+        reviewedPaths: bundle.reviewedPaths,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
         usage: totalUsage,
@@ -4209,8 +4226,10 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       repositoryPath: repositoryPath,
       scopeLabel: scopeLabel,
       scopedPaths: scopedPaths,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
+      target: WorkingTreeTarget(
+        includeStaged: includeStaged,
+        includeUnstaged: includeUnstaged,
+      ),
       couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) return GitResult.err(diffContext.error!);
@@ -5880,19 +5899,18 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   required String repositoryPath,
   required String scopeLabel,
   required List<String> scopedPaths,
-  required bool includeStaged,
-  required bool includeUnstaged,
-  // Optional overrides used by PR-review flows (branches page) that
-  // already have a raw diff in hand and don't want the working-tree
-  // git-derivation. When [rawDiffOverride] is non-empty, the initial
-  // branch/status/stat/diff derivation is skipped and these overrides
-  // are routed directly into the downstream context-enrichment pipe.
-  // The logos-diffusion, project-sense, and prompt-builder phases are
-  // diff-source-agnostic so they run uniformly for either flow.
-  String? rawDiffOverride,
-  String? branchNameOverride,
-  String? statusSummaryOverride,
-  String? statSummaryOverride,
+  // WHAT is being reviewed. The working tree, a commit, a range of commits,
+  // or bytes somebody else already produced — one sealed type, switched over
+  // exhaustively below.
+  //
+  // This replaced six loose parameters (`includeStaged`, `includeUnstaged`,
+  // and four `*Override` strings) whose legal combinations were unstated:
+  // an override set without `rawDiffOverride` was silently ignored, and two
+  // of them were never passed by anyone. Everything from the diff text
+  // onwards — logos diffusion, the probe, hunk ranking, every prompt
+  // producer — was already source-agnostic, so the target only ever had to
+  // reach as far as the derivation right here.
+  required ReviewTarget target,
   // Optional semantic prior for the manifest builder. Null = skip
   // that enhancement (manifest still emits themes/moves from the
   // logos+engram signal). App-layer callers fetch from
@@ -5916,13 +5934,43 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final String statusSummary;
   final String statSummary;
   final String fullDiff;
+  // What the subject turned out to be. Defaults to the caller's request and
+  // is replaced by the resolver's description for every history target.
+  String resolvedLabel = scopeLabel;
+  var resolvedPaths = const <String>[];
+  // Where in history this sits. The working tree is the pending commit at the
+  // tip of the axis; everything else is located (or explicitly not) by the
+  // resolver.
+  AxisAnchor anchor = const WorkingTipAnchor();
 
-  if (rawDiffOverride != null && rawDiffOverride.trim().isNotEmpty) {
-    branchName = branchNameOverride ?? '(pr)';
-    statusSummary = statusSummaryOverride ?? '';
-    statSummary = statSummaryOverride ?? '';
-    fullDiff = rawDiffOverride;
+  if (target is! WorkingTreeTarget) {
+    // A commit, a range, or a prepared patch. One resolver, and it needs the
+    // engine only to ANCHOR the result — the diff itself is pure git, so a
+    // cold engine degrades evidence weighting and nothing else.
+    final axis = target is PreparedDiffTarget
+        ? LogosCommitAxis.emptyAxis
+        : (await resolveLogosGit(repositoryPath))?.stats.commitAxis ??
+            LogosCommitAxis.emptyAxis;
+    final resolved = await resolveReviewTarget(
+      repositoryPath: repositoryPath,
+      target: target,
+      scopedPaths: scopedPaths,
+      axis: axis,
+    );
+    if (!resolved.ok) {
+      return _CommitDiffContextResult.err(resolved.error!);
+    }
+    final scope = resolved.data!;
+    branchName = scope.branchName;
+    statusSummary = scope.statusSummary;
+    statSummary = scope.statSummary;
+    fullDiff = scope.diffText;
+    anchor = scope.anchor;
+    resolvedLabel = scope.label;
+    resolvedPaths = scope.paths;
   } else {
+    final includeStaged = target.includeStaged;
+    final includeUnstaged = target.includeUnstaged;
     final branch = await _runGitCommand(
       repositoryPath,
       const ['rev-parse', '--abbrev-ref', 'HEAD'],
@@ -6082,7 +6130,32 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final logos = await _runLogosDiffusion(
     repositoryPath: repositoryPath,
     diffText: fullDiff,
+    anchor: anchor,
   );
+
+  // What happened to these files AFTER the change under review. Only
+  // meaningful once something has landed, and only computable here, where
+  // the resolved paths and the engine's per-file history are both in hand.
+  final revisits = logos?.engine == null
+      ? const <MapEntry<String, int>>[]
+      : revisitsAfter(
+          paths: resolvedPaths,
+          afterIndex: anchor.bisectIndex,
+          perFileCommitIndices: logos!.engine.stats.perFileCommitIndices,
+        );
+
+  // A region audit has no diff to reason about, so its evidence is the
+  // repository's own standing on these files.
+  final facts = target is! RegionTarget || logos?.engine == null
+      ? const <RegionFact>[]
+      : regionFacts(
+          paths: resolvedPaths,
+          touches: logos!.engine.stats.touches,
+          perFileCommitIndices: logos.engine.stats.perFileCommitIndices,
+          volatility: logos.engine.stats.volatility,
+          integrityByPath: logos.engine.stats.integrityByPath,
+          reviewersByPath: logos.engine.stats.reviewersByPath,
+        );
   if (diag != null) {
     diag.logosDiffusionMicros = diffusionSw!.elapsedMicroseconds;
   }
@@ -6138,8 +6211,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     const _RelevanceNeighborhoodProducer(),
     _ChangeTypesProducer(
       scopedPaths: scopedPaths,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
+      target: target,
+      reviewedNameStatus: target is WorkingTreeTarget ? '' : statusSummary,
     ),
     const _StructuralVerificationProducer(),
     const _BlastRadiusProducer(),
@@ -6216,6 +6289,11 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   return _CommitDiffContextResult.ok(
     _CommitDiffContext(
       branchName: branchName.trim().isEmpty ? 'HEAD' : branchName.trim(),
+      scopeLabel: resolvedLabel,
+      reviewedPaths: resolvedPaths,
+      stance: target.stance,
+      revisits: revisits,
+      regionFacts: facts,
       statusSummary: statusSummary.trim(),
       statSummary: statSummary.trim(),
       diffBundle: enrichedBundle,
@@ -6310,35 +6388,34 @@ void _fillGatherDiagnostics(
 Future<GitResult<ReviewEvidenceData>> gatherReviewEvidence({
   required String repositoryPath,
   required String modelCategoryLabel,
-  required String scopeLabel,
-  required bool includeStaged,
-  required bool includeUnstaged,
+  /// What the caller asked to gather evidence about; the resolved
+  /// description supersedes it once the bundle arrives.
+  required String requestedScopeLabel,
+  /// What to gather evidence about. A [PreparedDiffTarget] is the
+  /// frozen-diff replay this dry-run was built for: the same bytes measured
+  /// again across engine rebuilds, now a named case rather than a magic
+  /// non-empty string.
+  required ReviewTarget target,
   List<String> scopedPaths = const [],
   String customPrompt = '',
   int guardrailStage = 2,
   FileCouplingMatrix? couplingMatrix,
-  // Frozen-diff replay for clean A/B: when set, the gather skips git
-  // derivation and runs on this exact diff text, so the identical input can
-  // be re-measured across engine rebuilds. Real gather path otherwise.
-  String rawDiffOverride = '',
 }) async {
   if (repositoryPath.trim().isEmpty) {
     return const GitResult.err('Repository path is required.');
   }
-  final usingOverride = rawDiffOverride.trim().isNotEmpty;
-  if (!usingOverride && !includeStaged && !includeUnstaged) {
+  if (target is WorkingTreeTarget &&
+      !target.includeStaged &&
+      !target.includeUnstaged) {
     return const GitResult.err('No diff scope is available for review.');
   }
   final diag = GatherDiagnostics();
   final totalSw = Stopwatch()..start();
   final diffContext = await _collectCommitMessageContext(
     repositoryPath: repositoryPath,
-    scopeLabel: scopeLabel,
+    scopeLabel: requestedScopeLabel,
     scopedPaths: scopedPaths,
-    includeStaged: includeStaged,
-    includeUnstaged: includeUnstaged,
-    rawDiffOverride: usingOverride ? rawDiffOverride : null,
-    branchNameOverride: usingOverride ? 'ab-frozen' : null,
+    target: target,
     couplingMatrix: couplingMatrix,
     includeShadowHistory: true, // review-only channel; match the real review
     diag: diag,
@@ -6347,9 +6424,13 @@ Future<GitResult<ReviewEvidenceData>> gatherReviewEvidence({
     return GitResult.err(diffContext.error!);
   }
   final bundle = diffContext.data!;
+  final scopeLabel = bundle.scopeLabel;
   final profile = _guardrailProfileForStage(guardrailStage);
   final draftSpec = _ReviewPromptSpec(
     branchName: bundle.branchName,
+    stance: bundle.stance,
+    revisits: bundle.revisits,
+    regionFacts: bundle.regionFacts,
     modelCategoryLabel: modelCategoryLabel,
     scopeLabel: scopeLabel,
     customPrompt: customPrompt,
@@ -6731,31 +6812,40 @@ Future<String> _collectChangeTypes({
     }
 
     final combined = results.join('\n');
-    if (combined.isEmpty) return '';
-
-    // Annotate with human-readable descriptions for the AI.
-    final lines = combined.split('\n').where((l) => l.trim().isNotEmpty);
-    final annotated = StringBuffer();
-    for (final line in lines) {
-      final status = line.isNotEmpty ? line[0] : '?';
-      final desc = switch (status) {
-        'A' => 'new file',
-        'M' => 'modified',
-        'D' => 'deleted',
-        'R' => 'renamed',
-        'C' => 'copied',
-        'T' => 'type changed',
-        _ => 'changed',
-      };
-      annotated.writeln('$line  ($desc)');
-    }
-    return annotated.toString();
+    return annotateNameStatus(combined);
   } catch (e) {
     // Emit the failure so the LLM knows the change-types channel was
     // attempted but didn't produce; otherwise a silent empty body
     // reads as "no changes to report" — a dangerous false signal.
     return '<engine_failure channel="change_types" reason="${_escapeFailureReason(e)}"/>\n';
   }
+}
+
+/// Annotate `--name-status` lines with human-readable descriptions.
+///
+/// Shared by both change-type sources so they cannot drift: the working tree
+/// derives its lines from `git diff [--cached] --name-status`, and a review
+/// of a commit or range already HAS the equivalent from its resolution. The
+/// history path must not re-derive from the working tree — that would
+/// describe today's uncommitted mess as though it were the change under
+/// review.
+String annotateNameStatus(String nameStatus) {
+  final lines = nameStatus.split('\n').where((l) => l.trim().isNotEmpty);
+  final annotated = StringBuffer();
+  for (final line in lines) {
+    final status = line.isNotEmpty ? line[0] : '?';
+    final desc = switch (status) {
+      'A' => 'new file',
+      'M' => 'modified',
+      'D' => 'deleted',
+      'R' => 'renamed',
+      'C' => 'copied',
+      'T' => 'type changed',
+      _ => 'changed',
+    };
+    annotated.writeln('$line  ($desc)');
+  }
+  return annotated.toString();
 }
 
 /// Escape an exception's string form for embedding as the `reason=`
@@ -7440,12 +7530,17 @@ class _RelevanceNeighborhoodProducer extends AiContextProducer {
 class _ChangeTypesProducer extends AiContextProducer {
   const _ChangeTypesProducer({
     required this.scopedPaths,
-    required this.includeStaged,
-    required this.includeUnstaged,
+    required this.target,
+    required this.reviewedNameStatus,
   });
   final List<String> scopedPaths;
-  final bool includeStaged;
-  final bool includeUnstaged;
+  final ReviewTarget target;
+
+  /// The `--name-status` of the change under review, for every target that
+  /// is not the working tree. Already resolved, so this producer never asks
+  /// git a second question — and, more importantly, never asks the WORKING
+  /// TREE what changed when the subject is a commit from last year.
+  final String reviewedNameStatus;
 
   @override
   String get id => 'change_types';
@@ -7460,12 +7555,21 @@ class _ChangeTypesProducer extends AiContextProducer {
       AiContextRequest req, int budgetChars) async {
     // budgetChars is informational — the underlying collector emits
     // its own naturally-bounded output (one line per touched file).
-    final body = await _collectChangeTypes(
-      repositoryPath: req.repositoryPath,
-      scopedPaths: scopedPaths,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
-    );
+    final body = switch (target) {
+      WorkingTreeTarget(:final includeStaged, :final includeUnstaged) =>
+        await _collectChangeTypes(
+          repositoryPath: req.repositoryPath,
+          scopedPaths: scopedPaths,
+          includeStaged: includeStaged,
+          includeUnstaged: includeUnstaged,
+        ),
+      // Settled code has no change types. Its transport marks every file as
+      // added, and annotating that would tell the auditor the entire
+      // repository is new — worse than saying nothing. The region's standing
+      // block carries its evidence instead.
+      RegionTarget() => '',
+      _ => annotateNameStatus(reviewedNameStatus),
+    };
     return AiContextSection(id: id, body: body);
   }
 }
@@ -7710,6 +7814,9 @@ double _diffFlowFraction(DiffProbe probe) {
 Future<LogosDiffusionResult?> _runLogosDiffusion({
   required String repositoryPath,
   required String diffText,
+  // Where the reviewed change sits in history. Uncommitted work is the
+  // default and behaves exactly as it always did.
+  AxisAnchor anchor = const WorkingTipAnchor(),
 }) async {
   try {
     final engine = await resolveLogosGit(repositoryPath);
@@ -7720,6 +7827,15 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       engine: engine,
     );
     if (probe.sourceWeights.isEmpty) return null;
+
+    // Hindsight, aimed rather than disclaimed: when the change under review
+    // is already in history, paths that were rewritten AFTER it pull harder
+    // on the diffusion. A no-op for uncommitted work.
+    final focusWeights = retrospectiveFocusWeights(
+      sourceWeights: probe.sourceWeights,
+      afterIndex: anchor.bisectIndex,
+      perFileCommitIndices: engine.stats.perFileCommitIndices,
+    );
 
     final orbit = await probeLogosBranchOrbit(repositoryPath);
     final resolvedT = (probe.suggestedTemperature ?? 1.0) *
@@ -7754,7 +7870,7 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     // (distribution has become self-consistent).
     // Cheap diffs converge in 1-2; complex ones take more passes.
     final recurrent = engine.gatherEvidenceRecurrent(
-      focusWeights: probe.sourceWeights,
+      focusWeights: focusWeights,
       axisLabelByPath: axisLabels,
       t: resolvedT,
       excludePaths: probe.primaryPaths,
@@ -9989,9 +10105,67 @@ String _buildCommitReviewPrompt({
   buffer.writeln(profile.reviewRadius);
   buffer.writeln(
     spec.passMode == _ReviewPassMode.verify
-        ? 'You are verifying a prior draft review for the same commit scope.'
-        : 'You are reviewing a proposed commit immediately before it is created.',
+        ? 'You are verifying a prior draft review for the same scope.'
+        : switch (spec.stance) {
+            ReviewStance.pending =>
+              'You are reviewing a proposed commit immediately before it is '
+                  'created.',
+            ReviewStance.landed =>
+              'You are reading a change that has already landed. The '
+                  'repository has moved on since; say what is true of this '
+                  'code now, and treat what happened to it afterwards as '
+                  'evidence about it.',
+            ReviewStance.proposed =>
+              'You are reviewing a change proposed from another branch. It is '
+                  'not in this history yet.',
+            ReviewStance.settled =>
+              'You are auditing settled code. Nothing here is a change and '
+                  'nothing is waiting on you — this is the software as it '
+                  'stands, and the question is what is wrong with it. The '
+                  'lines are presented as additions only because that is how '
+                  'a file is shown; read them as the code that is running.',
+          },
   );
+  // What the repository knows about this region, for an audit. Real
+  // measurements, so the auditor can spend its attention on the code that
+  // nothing has disturbed and nobody has checked rather than on whatever
+  // happens to be at the top of the file.
+  if (spec.regionFacts.isNotEmpty) {
+    final unreviewed =
+        spec.regionFacts.where((f) => !f.humanReviewed).toList();
+    final untouched =
+        spec.regionFacts.where((f) => f.lastTouchIndex == null).toList();
+    buffer.writeln('Standing of this region:');
+    if (unreviewed.isNotEmpty) {
+      buffer.writeln('  no human review has ever covered '
+          '${unreviewed.length} of ${spec.regionFacts.length} files here');
+    }
+    if (untouched.isNotEmpty) {
+      buffer.writeln('  nothing in recent history has touched '
+          '${untouched.length} of them at all');
+    }
+    for (final f in spec.regionFacts) {
+      final marks = <String>[
+        if (!f.humanReviewed) 'never reviewed',
+        if (f.lastTouchIndex == null) 'untouched in the window'
+        else '${f.touches} commit${f.touches == 1 ? '' : 's'}',
+        if (f.integrity < 0.5) 'reads as generated',
+      ];
+      buffer.writeln('  ${f.path} — ${marks.join(', ')}');
+    }
+  }
+
+  // Real commits, counted — not an inference the model is invited to make.
+  // A file rewritten repeatedly after a change is the cheapest strong hint
+  // that something in it needed fixing, and it is the whole reason reviewing
+  // history is worth doing at all.
+  if (spec.revisits.isNotEmpty) {
+    buffer.writeln('Revisited since:');
+    for (final r in spec.revisits) {
+      buffer.writeln(
+          '  ${r.key} — ${r.value} later commit${r.value == 1 ? '' : 's'}');
+    }
+  }
   buffer.writeln('</scope_and_jurisdiction>');
   buffer.writeln();
   buffer.writeln('<evidence_rules>');
@@ -13817,6 +13991,16 @@ class _ClaudeOAuthCredentials {
 
 class _CommitDiffContext {
   final String branchName;
+
+  /// What the review is actually about, as resolved.
+  ///
+  /// The caller passes in a label describing what it ASKED for; this is what
+  /// the resolver found — `commit a1b2c3d - subject`, `main...feature (12
+  /// commits)`, `merge 9f8e7d6 (first-parent)`. Prompts and results read this
+  /// one so a review never describes its subject as the request that produced
+  /// it.
+  final String scopeLabel;
+
   final String statusSummary;
   final String statSummary;
   final _DiffPromptBundle diffBundle;
@@ -13838,8 +14022,23 @@ class _CommitDiffContext {
   /// prompt body can't supply.
   final String rawDiff;
 
+  /// Paths the reviewed change touches, as resolved. Empty for the working
+  /// tree, whose caller already knows its own scope.
+  final List<String> reviewedPaths;
+
+  /// What tense this review is in — see [ReviewStance].
+  final ReviewStance stance;
+
+  /// For landed work: how often each reviewed path was revisited AFTER the
+  /// change, heaviest first. Empty for pending work, which has no "after".
+  final List<MapEntry<String, int>> revisits;
+
+  /// For a region audit: what the repository knows about each file in it.
+  final List<RegionFact> regionFacts;
+
   const _CommitDiffContext({
     required this.branchName,
+    required this.scopeLabel,
     required this.statusSummary,
     required this.statSummary,
     required this.diffBundle,
@@ -13852,6 +14051,10 @@ class _CommitDiffContext {
     this.logosEmissionRecord,
     this.engine,
     this.rawDiff = '',
+    this.reviewedPaths = const [],
+    this.stance = ReviewStance.pending,
+    this.revisits = const [],
+    this.regionFacts = const [],
   });
 }
 
@@ -13887,6 +14090,15 @@ class _ReviewPromptSpec {
   final String branchName;
   final String modelCategoryLabel;
   final String scopeLabel;
+
+  /// The tense the reviewer is reading in, and the evidence that only exists
+  /// in the past tense.
+  final ReviewStance stance;
+  final List<MapEntry<String, int>> revisits;
+
+  /// Per-file standing, for an audit of settled code. Empty for every
+  /// change-shaped review, which has a diff to focus on instead.
+  final List<RegionFact> regionFacts;
   final String customPrompt;
   final String commitDraft;
   final String statusSummary;
@@ -13904,6 +14116,9 @@ class _ReviewPromptSpec {
     required this.branchName,
     required this.modelCategoryLabel,
     required this.scopeLabel,
+    this.stance = ReviewStance.pending,
+    this.revisits = const [],
+    this.regionFacts = const [],
     required this.customPrompt,
     this.commitDraft = '',
     required this.statusSummary,

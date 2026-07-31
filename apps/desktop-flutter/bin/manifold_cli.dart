@@ -36,13 +36,17 @@ void main(List<String> args) async {
       if (gitRoot != null) params['repo'] = gitRoot;
     }
 
-    final slow =
-        const {'review', 'review-evidence', 'muse', 'impact', 'dream', 'deadcode'}
-            .contains(method);
+    final slow = const {
+      'review', 'review-evidence', 'muse', 'impact', 'dream', 'deadcode',
+      'index', 'shake', 'commit-message',
+    }.contains(method);
     if (slow) {
       final repo = params['repo'] as String? ?? '.';
       final short = repo.split('/').last.split('\\').last;
-      _status('$method · $short');
+      final subject = params['commit'] as String? ??
+          params['range'] as String? ??
+          (params['last'] == 'true' ? 'HEAD' : null);
+      _status('$method · $short${subject == null ? '' : ' · $subject'}');
     }
     final sw = Stopwatch()..start();
 
@@ -98,16 +102,30 @@ void main(List<String> args) async {
 String _statusLine = '';
 
 void _status(String text) {
+  final changed = text != _statusLine;
   _statusLine = text;
   if (_isTty) {
     stderr.write('\x1B[2m  $text\x1B[0m');
+  } else if (changed) {
+    // No terminal to animate a status line in place, so emit each DISTINCT
+    // phase as a plain, newline-terminated line. Without this, a piped caller
+    // (an agent capturing stderr) saw nothing at all for the whole run — a
+    // `review` could sit silent for minutes while the frames streamed past
+    // unrendered. The frames always arrive; only the drawing was TTY-gated.
+    // Deduped against the last line so a repeated phase does not spam, and on
+    // stderr so stdout stays clean for `--json`.
+    stderr.writeln('  $text');
   }
 }
 
 void _updateStatus(String text) {
+  final changed = text != _statusLine;
   _statusLine = text;
   if (_isTty) {
     stderr.write('\r\x1B[K\x1B[2m  $text\x1B[0m');
+  } else if (changed) {
+    // Off-TTY: one plain line per distinct phase (see [_status]).
+    stderr.writeln('  $text');
   }
 }
 
@@ -312,6 +330,25 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
     case 'review':
       _printReview(result, elapsedMs);
       break;
+    case 'index':
+      _printIndex(result, elapsedMs);
+      break;
+    case 'shake':
+      _printShake(result, elapsedMs);
+      break;
+    case 'commit-message':
+      // The message ALONE on stdout, so `manifold commit-message | git commit
+      // -F -` works and an agent can use the output without parsing anything.
+      // Everything else goes to stderr where it cannot contaminate it.
+      stdout.write(result['message'] ?? '');
+      if (!(result['message'] as String? ?? '').endsWith('\n')) {
+        stdout.writeln();
+      }
+      _printCommitMessageMeta(result, elapsedMs);
+      break;
+    case 'state':
+      _printState(result);
+      break;
     case 'review-evidence':
       _printEvidence(result, elapsedMs);
       break;
@@ -434,6 +471,258 @@ void _prettyPrint(String method, dynamic decoded, int elapsedMs) {
   }
 }
 
+/// Provenance for a generated commit message, on STDERR.
+///
+/// stdout carries the message and nothing else so it can be piped straight
+/// into `git commit -F -`; a byte of decoration there would end up in the
+/// commit. The reader still deserves to know which model wrote it.
+void _printCommitMessageMeta(Map<String, dynamic> result, int elapsedMs) {
+  if (!_isTty) return;
+  final files = result['files'] as Map<String, dynamic>?;
+  final model = (result['model'] as String? ?? '?').split('/').last;
+  final settings =
+      (result['settings'] as Map<String, dynamic>?)?['commitMessage']
+          as Map<String, dynamic>?;
+  final shape = settings == null
+      ? ''
+      : ' · ${settings['structure']}/${settings['voice']}';
+  stderr.writeln(_dim('  ${files?['reviewed'] ?? '?'}/${files?['total'] ?? '?'}'
+      ' files · $model$shape · ${_timeFmt(elapsedMs)}'));
+}
+
+void _printState(Map<String, dynamic> result) {
+  String slot(Map<String, dynamic>? m) {
+    if (m == null) return '?';
+    final model = (m['model'] as String? ?? '').trim();
+    final effort = m['effort'] as String?;
+    final fast = m['fast'] == true ? ' fast' : '';
+    return '${model.isEmpty ? '(none selected)' : model}'
+        '${effort == null ? '' : ' · $effort'}$fast';
+  }
+
+  final ai = result['ai'] as Map<String, dynamic>? ?? const {};
+  stdout.writeln(' ${_bold('AI')}  '
+      '${_dim('guardrail ${ai['guardrailStage']} · '
+          '${ai['readOnly'] == true ? 'read-only' : 'read-write'}'
+          '${ai['categoriesLoaded'] == true ? '' : ' · providers not yet '
+              'discovered'}')}');
+  stdout.writeln('');
+
+  final cm = result['commitMessage'] as Map<String, dynamic>?;
+  stdout.writeln(' ${_bold('commit-message')}  ${slot(cm)}');
+  if (cm != null) {
+    stdout.writeln(_dim('   ${cm['structure']} · ${cm['voice']} · '
+        '${cm['coverage']}'
+        '${cm['customPrompt'] == true ? ' · custom prompt' : ''}'));
+  }
+
+  final rv = result['review'] as Map<String, dynamic>?;
+  stdout.writeln(' ${_bold('review')}          ${slot(rv)}');
+  if (rv != null) {
+    stdout.writeln(_dim('   double-check '
+        '${rv['doubleCheck'] == true ? 'on' : 'off'}'
+        '${rv['customPrompt'] == true ? ' · custom prompt' : ''}'));
+  }
+
+  stdout.writeln(' ${_bold('shake')}           '
+      '${_dim('shares review settings')}');
+
+  final muse = result['muse'] as Map<String, dynamic>?;
+  if (muse != null) {
+    stdout.writeln(' ${_bold('muse')}');
+    stdout.writeln('   brainstorm      ${slot(
+        muse['brainstorm'] as Map<String, dynamic>?)}');
+    stdout.writeln('   synthesis       ${slot(
+        muse['synthesis'] as Map<String, dynamic>?)}');
+    final strands = muse['strands'] as List<dynamic>? ?? const [];
+    stdout.writeln('   strands         ${strands.map((e) {
+      final m = e as Map<String, dynamic>;
+      return m['count'] == 1 ? '${m['kind']}' : '${m['kind']}×${m['count']}';
+    }).join(', ')}');
+    if (muse['customPrompt'] == true) {
+      stdout.writeln(_dim('   custom prompt'));
+    }
+  }
+
+  final vocab = result['strandVocabulary'] as List<dynamic>? ?? const [];
+  if (vocab.isNotEmpty) {
+    stdout.writeln('');
+    stdout.writeln(_dim(' strands available: ${vocab.join(', ')}'));
+  }
+}
+
+/// Trim a long region name from the LEFT, keeping the tail.
+///
+/// A monorepo path is informative at its end and boilerplate at its start:
+/// `apps/desktop-flutter/lib/backend` and `apps/desktop-flutter/lib/features`
+/// differ in their last segment and agree for thirty characters before it.
+/// Cutting the front keeps the part that distinguishes one region from
+/// another. Not done in the planner — the label is the real name, and how
+/// much of it fits on a terminal line is the terminal's business.
+String _elideLeft(String s, int max) =>
+    s.length <= max ? s : '…${s.substring(s.length - max + 1)}';
+
+void _printShake(Map<String, dynamic> result, int elapsedMs) {
+  final domain = result['domainFiles'] as int? ?? 0;
+  final examined = result['examinedFiles'] as int? ?? 0;
+  final pendingFiles = result['pendingFiles'] as int? ?? 0;
+  final pendingRegions = result['pendingRegions'] as int? ?? 0;
+  final pct = domain == 0 ? 0 : (examined * 100 / domain).round();
+
+  stdout.writeln(
+    ' ${_bold('$examined/$domain')} files examined ${_dim('($pct%)')} · '
+    '$pendingRegions region${pendingRegions == 1 ? '' : 's'} pending '
+    '${_dim('($pendingFiles files)')} · ${_timeFmt(elapsedMs)}',
+  );
+  if (result['engineReady'] == false) {
+    stdout.writeln(_dim('   engine cold — grouping by directory, ordering by '
+        'path'));
+  }
+  // Said once instead of on all sixty-eight region names.
+  final prefix = result['commonPrefix']?.toString() ?? '';
+  if (prefix.isNotEmpty) {
+    stdout.writeln(_dim('   under $prefix/'));
+  }
+
+  // What was deliberately left out, always stated. A sweep that quietly skips
+  // things reports a coverage it does not have.
+  final excluded = result['excluded'] as Map<String, dynamic>? ?? const {};
+  final parts = <String>[];
+  for (final entry in excluded.entries) {
+    final count = (entry.value as Map<String, dynamic>?)?['count'] as int? ?? 0;
+    if (count > 0) parts.add('$count ${entry.key}');
+  }
+  if (parts.isNotEmpty) {
+    stdout.writeln(_dim('   excluded: ${parts.join(' · ')}'));
+  }
+  stdout.writeln('');
+
+  if (result['planOnly'] == true) {
+    final regions = result['regions'] as List<dynamic>? ?? const [];
+    if (regions.isEmpty) {
+      stdout.writeln(_dim(' Nothing pending — every file has been examined '
+          'at its current content.'));
+      return;
+    }
+    // "never examined" on every line distinguishes nothing; say it once when
+    // it is universal, and per-line only when it actually separates regions.
+    final allNew = regions.every((r) =>
+        (r as Map<String, dynamic>)['unexamined'] == true);
+    stdout.writeln('${_bold(' Next up')}'
+        '${allNew ? _dim('   (nothing here has been examined yet)') : ''}');
+    for (final r in regions) {
+      final rm = r as Map<String, dynamic>;
+      final files = rm['files'] as int? ?? 0;
+      final unreviewed = rm['neverHumanReviewed'] as int? ?? 0;
+      final marks = <String>[
+        if (!allNew && rm['unexamined'] == true) 'new',
+        // A count only earns its place when it is not simply "all of them".
+        if (unreviewed > 0 && unreviewed < files) '$unreviewed unreviewed',
+        if (unreviewed > 0 && unreviewed == files) 'none reviewed',
+      ];
+      stdout.writeln('   ${files.toString().padLeft(3)}  '
+          '${_elideLeft(rm['label'] as String, 54)}'
+          '${marks.isEmpty ? '' : ' ${_dim('· ${marks.join(' · ')}')}'}');
+    }
+    return;
+  }
+
+  final audited = result['audited'] as List<dynamic>? ?? const [];
+  if (audited.isEmpty) {
+    stdout.writeln(_dim(' Nothing to shake — the sweep is complete.'));
+    return;
+  }
+  for (final a in audited) {
+    final am = a as Map<String, dynamic>;
+    if (am['error'] != null) {
+      stdout.writeln(' ${_yellow('▲')} ${am['region']}  '
+          '${_dim(am['error'].toString())}');
+      continue;
+    }
+    stdout.writeln(' ${_bold('${am['score']}')}  ${am['verdict']} · '
+        '${am['region']}');
+    stdout.writeln('   ${am['summary']}');
+    stdout.writeln('');
+    for (final f in (am['findings'] as List<dynamic>? ?? const [])) {
+      final fm = f as Map<String, dynamic>;
+      final sev = (fm['severity'] as String?) ?? '';
+      final marker = sev == 'warn' || sev == 'critical' ? _yellow('▲') : '△';
+      stdout.writeln(' $marker ${_bold(fm['title'] as String)}  ${_dim(sev)}');
+      if (fm['file'] != null) stdout.writeln('   ${_dim(fm['file'] as String)}');
+      stdout.writeln('   ${fm['evidence']}');
+      final why = fm['why'] as String?;
+      if (why != null && why.isNotEmpty) {
+        stdout.writeln('   ${_dim('→ $why')}');
+      }
+      stdout.writeln('');
+    }
+    final obs = am['observations'] as List<dynamic>? ?? const [];
+    if (obs.isNotEmpty) {
+      stdout.writeln(
+          _dim(' ${obs.length} observation${obs.length == 1 ? '' : 's'}'));
+      for (final o in obs) {
+        stdout.writeln(' ${_dim('·')} ${(o as Map<String, dynamic>)['title']}');
+      }
+      stdout.writeln('');
+    }
+  }
+
+  if (result['complete'] == true) {
+    stdout.writeln(_dim(' Sweep complete — every file examined at its '
+        'current content.'));
+  } else {
+    stdout.writeln(_dim(' $pendingRegions region'
+        '${pendingRegions == 1 ? '' : 's'} still pending. Run again to '
+        'continue; the ledger remembers.'));
+  }
+}
+
+void _printIndex(Map<String, dynamic> result, int elapsedMs) {
+  final engine = result['engine'] as Map<String, dynamic>? ?? const {};
+  final coupling = result['coupling'] as Map<String, dynamic>? ?? const {};
+  final repo = result['repo']?.toString() ?? '?';
+  final short = repo.split('/').last.split('\\').last;
+
+  final state = result['checkOnly'] == true
+      ? 'checked'
+      : result['alreadyKnown'] == true
+          ? 'already indexed'
+          : 'indexed';
+  stdout.writeln(' ${_bold(short)}  ${_dim('$state · ${_timeFmt(elapsedMs)}')}');
+  stdout.writeln(_dim('   $repo'));
+  stdout.writeln('');
+
+  stdout.writeln('   ${'branch'.padRight(12)}${result['branch'] ?? '?'}');
+  stdout.writeln('   ${'commits'.padRight(12)}${result['commits'] ?? 0}');
+  stdout.writeln('   ${'tracked'.padRight(12)}${result['trackedFiles'] ?? 0} files');
+
+  if (engine['ready'] == true) {
+    stdout.writeln('   ${'engine'.padRight(12)}${engine['graphFiles']} files · '
+        '${engine['commitsOnAxis']} commits on axis '
+        '${_dim('(${_timeFmt(engine['ms'] as int? ?? 0)})')}');
+  } else {
+    stdout.writeln('   ${'engine'.padRight(12)}'
+        '${_yellow('unavailable')} ${_dim(engine['error']?.toString() ?? '')}');
+  }
+  stdout.writeln('   ${'coupling'.padRight(12)}'
+      '${coupling['ready'] == true ? 'ready' : _yellow('unavailable')}');
+
+  // The one property that makes reviewing history impossible.
+  if (result['shallow'] == true) {
+    stdout.writeln('');
+    stdout.writeln(_yellow(' ▲ shallow clone'));
+    stdout.writeln(_dim('   The oldest commits have no parent here, so they '
+        'cannot be reviewed.'));
+    stdout.writeln(_dim('   Run `git fetch --unshallow` to review the full '
+        'history.'));
+  }
+  if (result['commits'] == 0) {
+    stdout.writeln('');
+    stdout.writeln(_dim(' No commits yet — there is nothing to review until '
+        'the first one.'));
+  }
+}
+
 void _printReview(Map<String, dynamic> result, int elapsedMs) {
   // A result map without its core fields is a FAILURE, not a quiet
   // review — rendering it as "null · ?/? files · No findings." (observed
@@ -463,6 +752,12 @@ void _printReview(Map<String, dynamic> result, int elapsedMs) {
     '${coupling || symbols ? ' · ${coupling ? '✓' : '–'}c ${symbols ? '✓' : '–'}s' : ''}'
     '$tokenStr',
   );
+  // What was actually reviewed, as the resolver described it — "commit
+  // a1b2c3d — subject", "main...feature (12 commits)". Worth its own line
+  // because a review of the wrong revision looks exactly like a review of the
+  // right one.
+  final scope = result['scope']?.toString() ?? '';
+  if (scope.isNotEmpty) stdout.writeln(_dim('   $scope'));
   stdout.writeln('');
   stdout.writeln(' ${result['summary']}');
   stdout.writeln('');
@@ -681,10 +976,22 @@ Usage: manifold <command> [options]
 
 Commands:
   status                        Branch, ahead/behind, dirty files
+  state                         What Manifold is configured to do: models,
+                                strands, prompts, commit format
+  commit-message                Write the commit message for the current
+                                change (message alone on stdout)
+  index [--check]               Validate a repo, warm its engine, register it
+  shake [--plan] [--regions N]  Audit the CODEBASE region by region, resuming
+                                where the last run stopped (--plan: no AI call)
   review [--files <paths>]      AI code review (default: dirty files)
+  review --last                 Review the newest commit
+  review --commit <rev>         Review any single commit
+  review --range <A..B>         Review a range (A...B measures from merge base)
   review-evidence [--files ..]  Gathered review evidence + telemetry (no model call)
   deadcode                      Files no live surface imports (dead + test-zombies)
   muse [--files <paths>]        AI brainstorm (default: dirty files)
+  muse --strands <list>         Brainstorm with exactly these strands,
+                                e.g. `--strands vertigo,ghost` or `spark:3`
   blast-radius --files <paths>  Co-change neighbors
   suggest --files <paths>       Coupled files you might have missed
   coherence --files <paths>     How cohesive is a file set (0-1)
@@ -703,12 +1010,33 @@ Commands:
 Options:
   --json           Structured JSON-RPC output
   --repo <path>    Target repo (default: cwd)
+  --commit <rev>   Review one commit instead of the working tree
+  --range <spec>   Review a revision range: A..B compares the endpoints,
+                   A...B compares from their merge base
+  --last           Shorthand for --commit HEAD
+  --plan           shake: show the order and coverage, spend no model call
+  --regions <n>    shake: how many regions to audit this run (default 1)
+  --reset          shake: forget what has been examined and sweep afresh
+  --strands <list> muse: comma-separated strands to carry INSTEAD of the
+                   configured loadout; `name:count` asks for several
+  --existing <msg> commit-message: a draft to improve rather than replace
+
+Every AI command reports the settings it ran under under `settings` in
+--json output, so an agent never has to guess which model answered.
+                   (--commit, --range and --last name different revisions;
+                    pass at most one — together they are refused, never ranked)
   --limit <n>      Cap results
   --model <id>     Override model selection
   --budget <chars>  Token budget for context
   --version, -v    Print version and license summary
 
 File params accept: --files, --file, --path, --seeds, --changed.
+With --commit/--range they SCOPE the revision diff rather than select
+dirty files.
+
+Any command works on a repo Manifold has never been told about — point it
+at a git checkout and it resolves from the working directory. `index`
+registers one so it appears as a project.
 
 © 2026 Woflo Labs · GPL-3.0-or-later with the Manifold-Woflo exception; research components under WLCSL-1.0. See LICENSE.md.
 ''');

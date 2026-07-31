@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/analysis_admission.dart';
 import '../backend/git.dart';
@@ -132,10 +133,19 @@ class RepositoryState extends ChangeNotifier {
     // Purge any Manifold-managed worktree paths that leaked into recents
     // before desk switches stopped touching the list. Worktrees are not
     // distinct projects — they're desks of their parent repo.
+    // Collapse the same repository stored under two spellings. One list can
+    // legitimately hold both `C:\Users\...` (from the picker) and
+    // `C:/Users/...` (derived from git's own output), and they name one
+    // project. Runs here as well as at the write gate so a list that already
+    // grew a duplicate heals on load rather than showing it forever.
+    final seen = <String>{};
     final cleaned = stored
         .where(
-          (p) => !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'),
+          (path) =>
+              !path.replaceAll('\\', '/').contains('/.manifold/worktrees/'),
         )
+        .where((path) => seen.add(p.canonicalize(p.normalize(path))))
+        .map(p.normalize)
         .toList();
     _recentPaths = cleaned;
     if (cleaned.length != stored.length) {
@@ -143,6 +153,46 @@ class RepositoryState extends ChangeNotifier {
       await _saveRecents();
     }
     notifyListeners();
+  }
+
+  /// Add a path to the recents list without otherwise changing the repo
+  /// session — no active-repo switch, no analysis-scope bump.
+  ///
+  /// The inverse of [forgetRecent], and deliberately NOT [setActivePath]:
+  /// registering a repo from the CLI must not yank the window the user is
+  /// looking at over to a different project, and must not bump
+  /// `repoAnalysisScope` (which would supersede analysis already queued for
+  /// whatever they actually have open).
+  ///
+  /// Whether [path] names a repository already in the recents list.
+  ///
+  /// The single authority for that question, canonically rather than by
+  /// string equality — the same repo arrives spelled `C:\Users\...` from the
+  /// picker and `C:/Users/...` from git's own output. Callers must not
+  /// re-implement this with `recentPaths.contains`: doing so is what let a
+  /// repo be reported "new" by one code path and stored as a duplicate by
+  /// another.
+  bool knowsRecent(String path) {
+    if (path.isEmpty) return false;
+    final key = p.canonicalize(p.normalize(path));
+    return _recentPaths.any((existing) => p.canonicalize(existing) == key);
+  }
+
+  /// Returns true when the path was newly added, false when already known.
+  ///
+  /// "Already known" is decided CANONICALLY, not by string equality. The same
+  /// repository reaches this from two directions with two spellings: the
+  /// picker hands over a native `C:\Users\...`, while a path derived from
+  /// git's own output (`rev-parse --git-common-dir`) comes back with forward
+  /// slashes. Compared literally those are different strings, and the project
+  /// list grows a second entry for a repo it already had — observed the first
+  /// time `manifold index` ran against a repo the window was already open on.
+  Future<bool> rememberRecent(String path) async {
+    if (_disposed || path.isEmpty || knowsRecent(path)) return false;
+    _recentPaths = [p.normalize(path), ..._recentPaths].take(20).toList();
+    await _saveRecents();
+    notifyListeners();
+    return true;
   }
 
   /// Remove a path from the recents list without otherwise changing the

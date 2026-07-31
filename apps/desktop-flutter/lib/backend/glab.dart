@@ -266,12 +266,18 @@ Future<GitResult<void>> submitMrReview(
     if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
     return const GitResult.ok(null);
   }
-  // GitLab doesn't have request-changes as a review action —
-  // post a comment instead.
-  if (body.isNotEmpty) {
-    return commentOnMr(repoPath, number, body);
+  // GitLab has no request-changes review action, so the only way to say it
+  // is a comment — which needs words. Returning ok here reported a review
+  // that never reached GitLab: nothing was approved, nothing was commented,
+  // and the caller had no way to tell. A request that cannot be expressed
+  // must fail, not succeed quietly.
+  if (body.trim().isEmpty) {
+    return const GitResult.err(
+      'GitLab has no request-changes review action, so this is posted as a '
+      'comment — which needs a message. Add one, or approve instead.',
+    );
   }
-  return const GitResult.ok(null);
+  return commentOnMr(repoPath, number, body);
 }
 
 Future<GitResult<void>> mergeMr(

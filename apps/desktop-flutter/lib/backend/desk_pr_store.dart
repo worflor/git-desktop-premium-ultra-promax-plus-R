@@ -47,11 +47,26 @@ class DeskPrStore {
   /// ref tail under `refs/manifold/desks/`.
   ///
   /// Laws:
-  ///  * Injective over all non-empty strings —
-  ///    `decodeBranch(encodeBranch(s)) == s` for every non-empty `s`, no
-  ///    carve-outs. No trim, no normalization: leading/trailing
-  ///    whitespace (including a BOM) is payload and survives like any
-  ///    other character.
+  ///  * Injective over all non-empty strings that are WELL-FORMED UTF-16 —
+  ///    `decodeBranch(encodeBranch(s)) == s` for every such `s`. No trim, no
+  ///    normalization: leading/trailing whitespace (including a BOM) is
+  ///    payload and survives like any other character.
+  ///
+  ///    The domain restriction is real and was previously stated as "no
+  ///    carve-outs", which the implementation a few lines below has always
+  ///    contradicted: a LONE UNPAIRED SURROGATE is not UTF-8-representable,
+  ///    so it encodes to U+FFFD's bytes and therefore COLLIDES with a branch
+  ///    containing a literal U+FFFD. Since a desk's identity is keyed on this
+  ///    tail, two such names would address the same ref.
+  ///
+  ///    That is unreachable from any real branch: names arrive from git
+  ///    through `utf8.decode(..., allowMalformed: true)`, which emits U+FFFD
+  ///    and never a lone surrogate. Only a synthetic caller can construct
+  ///    one. The degradation is deliberate and pinned (see
+  ///    ref_namespace_safety_test's 'lone unpaired surrogate degrades without
+  ///    crashing'); what was wrong was the guarantee written above it, which
+  ///    promised an injectivity the code does not provide and invited callers
+  ///    to rely on it.
   ///
   /// This is byte-identical to the pre-redesign scheme for every tail
   /// the old encoder could actually store (its trims/strips and lossy

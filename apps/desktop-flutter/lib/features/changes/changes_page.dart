@@ -61,6 +61,7 @@ import '../../backend/logos_git.dart';
 import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/review_logos.dart' show ClaimShape;
 import '../../backend/review_ratchet_store.dart' show ReviewRatchetStore;
+import '../../backend/review_target.dart' show WorkingTreeTarget;
 import '../../backend/nudge_ledger.dart' show NudgeLedger;
 import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
@@ -5716,6 +5717,8 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     _snapshotReviewEffort[repoPath] = revEffort.effort;
     _snapshotReviewFast[repoPath] = revEffort.fast;
+    // Reviewing the change in progress: the working tree is just the pending
+    // commit at the tip of history, and says so.
     final result = await reviewCommit(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -5727,8 +5730,10 @@ class _ChangesPageState extends State<ChangesPage> {
       reasoningEffort: revEffort.effort,
       fastMode: revEffort.fast,
       supportsReasoning: selectedModel.supportsReasoning,
-      includeStaged: includeStaged,
-      includeUnstaged: includeUnstaged,
+      target: WorkingTreeTarget(
+        includeStaged: includeStaged,
+        includeUnstaged: includeUnstaged,
+      ),
       scopedPaths: included.map((file) => file.path).toList(),
       customPrompt: aiSettings.reviewCommitPrompt,
       commitDraft: _commitMsgCtrl.text.trim(),

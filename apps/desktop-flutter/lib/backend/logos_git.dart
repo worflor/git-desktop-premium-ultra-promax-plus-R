@@ -81,6 +81,7 @@ import 'package:meta/meta.dart';
 import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
 import 'file_coupling.dart';
+import 'logos_commit_axis.dart';
 import 'logos_core.dart';
 import 'logos_signature.dart';
 import 'logos_spectrogeometry.dart' as sg_lib;
@@ -799,6 +800,17 @@ class LogosGitStats {
   /// default.
   final Map<String, List<int>> perFileCommitIndices;
   final Map<String, List<double>> perFileCommitClock;
+
+  /// The commit coordinate [perFileCommitIndices] and [perFileCommitClock]
+  /// are expressed in: index i of either series addresses
+  /// `commitAxis.hashes[i]`.
+  ///
+  /// Defaults to [LogosCommitAxis.empty] so engines synthesised from hand-
+  /// written stats (tests, the light-weight paths) stay valid without
+  /// inventing history. An empty axis means "this engine cannot locate a
+  /// commit", which callers must handle anyway — the axis is windowed and
+  /// merge-free even when fully populated.
+  final LogosCommitAxis commitAxis;
   final Map<String, double> ritualnessByPath;
   final Map<String, double> integrityByPath;
   final Map<String, List<String>> integrityReasonsByPath;
@@ -826,6 +838,7 @@ class LogosGitStats {
     this.touchMass = const {},
     this.semanticCommitMass = 0.0,
     this.perFileCommitClock = const {},
+    this.commitAxis = LogosCommitAxis.emptyAxis,
     this.ritualnessByPath = const {},
     this.integrityByPath = const {},
     this.integrityReasonsByPath = const {},
@@ -852,6 +865,7 @@ class LogosGitStats {
     Map<String, double>? touchMass,
     double? semanticCommitMass,
     Map<String, List<double>>? perFileCommitClock,
+    LogosCommitAxis? commitAxis,
     Map<String, double>? ritualnessByPath,
     Map<String, double>? integrityByPath,
     Map<String, List<String>>? integrityReasonsByPath,
@@ -875,6 +889,7 @@ class LogosGitStats {
         touchMass: touchMass ?? this.touchMass,
         semanticCommitMass: semanticCommitMass ?? this.semanticCommitMass,
         perFileCommitClock: perFileCommitClock ?? this.perFileCommitClock,
+        commitAxis: commitAxis ?? this.commitAxis,
         ritualnessByPath: ritualnessByPath ?? this.ritualnessByPath,
         integrityByPath: integrityByPath ?? this.integrityByPath,
         integrityReasonsByPath:
@@ -2084,6 +2099,59 @@ class LogosGit {
   /// caller should fall back to direct edge inspection.
   SpectralBasis? spectralBasis({int k = kDefaultSpectralBasisK}) =>
       _getOrBuildSpectralBasis(k);
+
+  Map<String, int>? _communityByPath;
+
+  /// Which spectral community [path] belongs to, or null when the graph has
+  /// no opinion — a file the engine never saw, or a graph too small or too
+  /// degenerate for a basis.
+  ///
+  /// A null answer is expected and load-bearing, not a failure: every file
+  /// that history never touched is outside this graph, and those are exactly
+  /// the files a whole-repository audit most needs to reach. Callers group
+  /// them some other way rather than pretending they clustered.
+  ///
+  /// The number of communities is read off the EIGENGAP rather than decreed.
+  /// A fixed count is a guess about a repository the guesser has not seen;
+  /// the largest jump between consecutive excited eigenvalues is where the
+  /// graph itself stops being connected at that scale, which is the same
+  /// question asked of the data instead of the author. Computed once.
+  int? communityOf(String path) {
+    final cached = _communityByPath ??= _buildCommunities();
+    return cached[path];
+  }
+
+  Map<String, int> _buildCommunities() {
+    final basis = spectralBasis();
+    if (basis == null) return const {};
+    final paths = nodePaths;
+    if (paths.isEmpty) return const {};
+    final labels = basis.spectralCommunityLabels(_naturalCommunityCount(basis));
+    if (labels.length < paths.length) return const {};
+    return {
+      for (var i = 0; i < paths.length; i++) paths[i]: labels[i],
+    };
+  }
+
+  /// Communities implied by the spectrum: the count of excited modes lying
+  /// below the widest gap in the eigenvalue sequence.
+  static int _naturalCommunityCount(SpectralBasis basis) {
+    final values = basis.eigenvalues;
+    final start = basis.firstExcitedIndex;
+    if (values.length - start < 3) return 2;
+    var bestIndex = start;
+    var bestGap = double.negativeInfinity;
+    for (var i = start; i + 1 < values.length; i++) {
+      final gap = values[i + 1] - values[i];
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestIndex = i;
+      }
+    }
+    // At least two: a partition into one group is not a partition.
+    final count = bestIndex - start + 1;
+    return count < 2 ? 2 : count;
+  }
 
   /// Unified geometric fingerprint of this engine's graph at basis
   /// size `k`. Bundles RMT classification, persistence diagram,

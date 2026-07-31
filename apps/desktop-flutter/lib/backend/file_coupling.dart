@@ -371,8 +371,11 @@ class FileCouplingMatrix {
     if (pairs == 0) return 1.0;
     final raw = sum / pairs;
     // Pull toward neutral (0.5) proportional to how sparse the data
-    // is — replaces the old binary "< 50 commits = 0.5" gate.
-    final sat = math.max(50.0, _pathToId.length * 0.4);
+    // is — replaces the old binary "< 50 commits = 0.5" gate. Sized against
+    // files with real history, NOT the id space: the latter grows with the
+    // untracked files `withSpectral` layers in, which would make this
+    // repository's confidence depend on what happens to be uncommitted.
+    final sat = math.max(50.0, trackedFileCount * 0.4);
     final conf = math.min(1.0, commitsAnalyzed / sat);
     return 0.5 + (raw - 0.5) * conf;
   }
@@ -388,7 +391,24 @@ class FileCouplingMatrix {
   /// [hasJaccardRow].
   bool containsPath(String path) => _pathToId.containsKey(path);
 
-  int get trackedFileCount => _pathToId.length;
+  /// How many files this matrix actually has co-change HISTORY for.
+  ///
+  /// Not the id-space size. [withSpectral] appends the current change set's
+  /// untracked files to that space so their spectral overlap can be queried,
+  /// and those files contribute no history at all — counting them inflates
+  /// every denominator built on this number, so the confidence a repository
+  /// reports would drift with how many new files happened to be open. A
+  /// count of what history covers cannot depend on today's change set.
+  ///
+  /// Computed once: the matrix is immutable ([withSpectral] returns a new
+  /// one), so a row that is empty now is empty forever.
+  late final int trackedFileCount = () {
+    var n = 0;
+    for (var i = 0; i + 1 < _jRowPtr.length; i++) {
+      if (_jRowPtr[i + 1] > _jRowPtr[i]) n++;
+    }
+    return n;
+  }();
 
   /// Stricter companion to [containsPath]: `true` iff the file has at
   /// least one historical co-change edge in the jaccard CSR.

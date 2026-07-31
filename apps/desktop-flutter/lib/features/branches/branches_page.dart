@@ -65,6 +65,7 @@ import '../diff/diff_document.dart' show DiffDocument;
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../../backend/review_records.dart' show ReviewRoundInfo;
+import '../../backend/review_target.dart' show PreparedDiffTarget;
 import '../../backend/git_identity.dart' show kGitIdentityCommand;
 import '../review/review_chrome.dart'
     show ReviewChip, ReviewChipVariant, ReviewVerbPill;
@@ -5527,15 +5528,20 @@ class _BranchesPageState extends State<BranchesPage> {
       reasoningEffort: prEffort.effort,
       fastMode: prEffort.fast,
       supportsReasoning: selectedModel.supportsReasoning,
-      includeStaged: false,
-      includeUnstaged: false,
+      // The PR's diff comes off its own byte-gated spool, which this flow
+      // owns; saying so with a target is what lets the branch name reach the
+      // prompt intact. The four override parameters this replaced hard-coded
+      // "(pr)" as the branch whenever the name was not threaded through.
+      target: PreparedDiffTarget(
+        diffText: reviewDiff,
+        label: 'PR #${pr.number}: ${pr.title}',
+        branchName: pr.headRef,
+      ),
       scopedPaths: detail.files.map((f) => f.path).toList(),
       customPrompt: aiSettings.reviewCommitPrompt,
       guardrailStage: preferences.guardrailStage,
       doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
       readOnly: preferences.aiReadOnlyDefault,
-      rawDiffOverride: reviewDiff,
-      diffBranchName: pr.headRef,
       couplingMatrix: prCouplingMatrix,
     );
     if (!mounted) return;

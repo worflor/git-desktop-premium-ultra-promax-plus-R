@@ -95,15 +95,28 @@ class ManifoldPipeServer {
 
   void _processBuffer(Socket socket, List<int> buffer) {
     while (true) {
-      final total = frameTotalLength(buffer);
-      if (total < 0 || buffer.length < total) break;
-      final json = extractFrame(buffer);
-      buffer.removeRange(0, total);
-      if (json == null) {
-        _send(socket, encodeError(0, kParseError, 'malformed frame'));
-        continue;
+      switch (readFrame(buffer)) {
+        case FrameIncomplete():
+          return;
+        case FrameTooLarge(:final declaredBytes):
+          // The declared length is the only thing that says where the next
+          // frame begins, so a peer that lies about it leaves the stream
+          // unsynchronizable — there is nothing to skip TO. Answer, then
+          // drop the connection instead of buffering toward a length that
+          // will never arrive.
+          _send(
+            socket,
+            encodeError(0, kInvalidRequest,
+                'frame of $declaredBytes bytes exceeds the '
+                '$kMaxFrameBytes-byte limit'),
+          );
+          buffer.clear();
+          _cleanup(socket);
+          return;
+        case FrameReady(:final json, :final totalBytes):
+          buffer.removeRange(0, totalBytes);
+          _dispatch(socket, json);
       }
-      _dispatch(socket, json);
     }
   }
 

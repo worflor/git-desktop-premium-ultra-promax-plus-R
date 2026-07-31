@@ -23,6 +23,7 @@ import 'dart:convert';
 import 'file_coupling.dart';
 import 'gitea_api.dart' as gitea;
 import 'git_result.dart';
+import 'logos_commit_axis.dart';
 import 'logos_git.dart';
 import 'logos_git_integrity.dart';
 import 'remote_types.dart';
@@ -105,6 +106,17 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   var totalCommits = 0;
   var semanticCommitMass = 0.0;
 
+  // The commit axis, accumulated by the SAME walk that derives every
+  // per-file series below. Kept index-parallel with `commitIndex` so
+  // `perFileCommitIndices` entries address straight into it — that shared
+  // coordinate is the whole point (see logos_commit_axis.dart).
+  final axisHashes = <String>[];
+  final axisStep = <double>[];
+  final axisClock = <double>[];
+  final axisAuthor = <int>[];
+  final axisAuthors = <String>[];
+  final axisAuthorIds = <String, int>{};
+
   // EWMA half-life: 90 commits. λ = 1 − 2^(−1/90) ≈ 0.00767. Recent
   // commits outweigh old ones in the V-axis signal. Value is a physical
   // constant of the half-life; hoisted to a file-level final so the
@@ -159,6 +171,23 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     }
     semanticClock += step;
     semanticCommitMass += step;
+
+    // Record this commit's position. Placed after the `numstatLines.isEmpty`
+    // guard above so the axis stays index-parallel with `commitIndex` — a
+    // commit git reported with no file statistics never got an index, and so
+    // never gets an axis slot either. (An empty commit is therefore off-axis
+    // by construction, which is the honest answer: it has no file data for
+    // any of these series to describe.)
+    axisHashes.add(b.hash);
+    axisStep.add(step);
+    axisClock.add(semanticClock);
+    axisAuthor.add(b.authorEmail.isEmpty
+        ? -1
+        : axisAuthorIds.putIfAbsent(b.authorEmail, () {
+            axisAuthors.add(b.authorEmail);
+            return axisAuthors.length - 1;
+          }));
+
     for (final stat in b.numstatLines) {
       final parts = stat.split('\t');
       if (parts.length < 3) continue;
@@ -240,7 +269,16 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
         edges.length > 24 ? edges.sublist(0, 24) : List<LogosCommitHyperedge>.from(edges);
   });
 
+  final axis = LogosCommitAxis(
+    hashes: axisHashes,
+    stepAt: Float64List.fromList(axisStep),
+    clockAt: Float64List.fromList(axisClock),
+    authorAt: Int32List.fromList(axisAuthor),
+    authors: axisAuthors,
+  );
+
   return GitResult.ok(LogosGitStats(
+    commitAxis: axis,
     touches: semanticTouches,
     totalCommits: semanticTotalCommits,
     rawTouches: rawTouches,

@@ -90,6 +90,11 @@ const _contentReadBaseline = <String, int>{
   'lib/backend/ai_settings_store.dart': 5,
   'lib/backend/blob_loader.dart': 1,
   'lib/backend/command_telemetry_store.dart': 1,
+  // The shake ledger. Gated through admitFileText with a stat-declared
+  // size and a declined path that returns an empty ledger (costing
+  // re-examination, never a false claim of coverage) — the routing this
+  // law asks for before a baseline entry is earned.
+  'lib/backend/shake_ledger.dart': 1,
   'lib/backend/diff_logos_facade.dart': 1,
   'lib/backend/engram_file_index_cache.dart': 1,
   'lib/backend/file_coupling.dart': 1,

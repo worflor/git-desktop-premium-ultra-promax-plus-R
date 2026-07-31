@@ -1794,6 +1794,15 @@ class AiCommitReviewData {
   final String modelCategoryLabel;
   final int guardrailStage;
   final String scopeLabel;
+
+  /// The paths this review actually covered.
+  ///
+  /// For a commit or a range these come from the revision itself, and are the
+  /// only honest file count available: the working tree's status describes
+  /// today's uncommitted mess, which has nothing to do with a commit from
+  /// last year. Empty when the caller resolved no path list.
+  final List<String> reviewedPaths;
+
   final int promptCharacters;
   final int diffCharacters;
   final AiUsage usage;
@@ -1818,6 +1827,7 @@ class AiCommitReviewData {
     this.modelCategoryLabel = '',
     this.guardrailStage = 1,
     required this.scopeLabel,
+    this.reviewedPaths = const [],
     required this.promptCharacters,
     required this.diffCharacters,
     this.usage = AiUsage.empty,
