@@ -132,6 +132,11 @@ Every shot below is in a different theme. And that's only a fraction of them.
 </tr>
 </table>
 
+<p align="center">
+<img src="pics/review-multilingual.webp" alt="One code review shown as diagonal panels: the same threads rendered in English, Japanese, Russian, and Korean, each in a different theme" width="560"><br>
+<sub><b>Speaks your language.</b> one review, four themes, four of fourteen locales. the interface localizes; the code and your teammates' words stay exactly as written · Aether · Kirby · Petrichor · Nightwalker</sub>
+</p>
+
 ## Mine, and yours
 
 Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude inspired "Halo". Show off that you earned your fairy wings with Bibble or forget the world like a Nightwalker.
