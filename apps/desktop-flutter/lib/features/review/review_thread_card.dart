@@ -517,16 +517,19 @@ class _ReviewCommentBlock extends StatelessWidget {
           fontSize: ReviewType.body,
           height: 1.45,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
         em: TextStyle(
           color: t.textNormal,
           fontStyle: FontStyle.italic,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
         strong: TextStyle(
           color: t.textStrong,
           fontWeight: FontWeight.w700,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
         // Neutral, not accent: inline code is syntax, not state.
         // Accent stays scarce so chips and the turn pill keep their
@@ -549,6 +552,7 @@ class _ReviewCommentBlock extends StatelessWidget {
           fontSize: ReviewType.body,
           fontStyle: FontStyle.italic,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
         blockquoteDecoration: BoxDecoration(
           border: Border(
@@ -562,11 +566,13 @@ class _ReviewCommentBlock extends StatelessWidget {
           color: t.accentBright,
           decoration: TextDecoration.underline,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
         listBullet: TextStyle(
           color: t.textNormal,
           fontSize: ReviewType.body,
           fontFamily: geo.typography,
+          fontFamilyFallback: AppFonts.sansFallback,
         ),
       ),
     );

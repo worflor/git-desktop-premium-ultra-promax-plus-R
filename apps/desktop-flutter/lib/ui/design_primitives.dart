@@ -34,6 +34,25 @@ class AppFonts {
     'Noto Color Emoji',
     'monospace',
   ];
+
+  /// Fallback chain for proportional (prose) text — comment bodies, any
+  /// user-authored string that can carry non-Latin scripts. Named system
+  /// faces covering Cyrillic/Greek (Segoe UI), Japanese, Chinese, Korean,
+  /// a broad Linux Noto, then emoji and generic. Pair with a sans primary
+  /// via `fontFamilyFallback` so a Japanese or Cyrillic comment renders
+  /// real glyphs instead of tofu. Never triggers for Latin (the primary
+  /// already has those glyphs), so it changes nothing for existing text.
+  static const List<String> sansFallback = [
+    'Segoe UI',
+    'Noto Sans JP',
+    'Noto Sans SC',
+    'Malgun Gothic',
+    'Noto Sans',
+    'Segoe UI Emoji',
+    'Apple Color Emoji',
+    'Noto Color Emoji',
+    'sans-serif',
+  ];
 }
 
 /// Shared spacing scale. Use these constants for SizedBox / EdgeInsets
