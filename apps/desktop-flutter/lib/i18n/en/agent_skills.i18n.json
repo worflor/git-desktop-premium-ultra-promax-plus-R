@@ -1,0 +1,16 @@
+{
+  "heading": "Agent skills",
+  "blurb": "Your agents can wield Manifold's features too.",
+  "installSoon": "Install to client (soon)",
+  "copied": "Copied the {title} skill to the clipboard",
+  "savedTo": "Saved to {path}",
+  "saveFailed": "Could not save: {error}",
+  "saveDialog": "Save the {title} skill",
+  "question": {
+    "overview": "How the skills fit together",
+    "codeReview": "Is this change right?",
+    "muse": "What could this change become?",
+    "bugShaker": "What is wrong with settled code?",
+    "repoIntel": "What does this file connect to?"
+  }
+}

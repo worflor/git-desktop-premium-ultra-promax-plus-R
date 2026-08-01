@@ -48,6 +48,8 @@ class Translations with BaseTranslations<AppLocale, Translations> {
   }) => Translations(meta: meta ?? this.$meta);
 
   // Translations
+  late final Translations$agentSkills$en agentSkills =
+      Translations$agentSkills$en.internal(_root);
   late final Translations$app$en app = Translations$app$en.internal(_root);
   late final Translations$backend$en backend = Translations$backend$en.internal(
     _root,
@@ -87,6 +89,40 @@ class Translations with BaseTranslations<AppLocale, Translations> {
       Translations$settings$en.internal(_root);
   late final Translations$sync$en sync = Translations$sync$en.internal(_root);
   late final Translations$xray$en xray = Translations$xray$en.internal(_root);
+}
+
+// Path: agentSkills
+class Translations$agentSkills$en {
+  Translations$agentSkills$en.internal(this._root);
+
+  final Translations _root; // ignore: unused_field
+
+  // Translations
+
+  /// en: 'Agent skills'
+  String get heading => 'Agent skills';
+
+  /// en: 'Your agents can wield Manifold's features too.'
+  String get blurb => 'Your agents can wield Manifold\'s features too.';
+
+  /// en: 'Install to client (soon)'
+  String get installSoon => 'Install to client (soon)';
+
+  /// en: 'Copied the {title} skill to the clipboard'
+  String copied({required Object title}) =>
+      'Copied the ${title} skill to the clipboard';
+
+  /// en: 'Saved to {path}'
+  String savedTo({required Object path}) => 'Saved to ${path}';
+
+  /// en: 'Could not save: {error}'
+  String saveFailed({required Object error}) => 'Could not save: ${error}';
+
+  /// en: 'Save the {title} skill'
+  String saveDialog({required Object title}) => 'Save the ${title} skill';
+
+  late final Translations$agentSkills$question$en question =
+      Translations$agentSkills$question$en.internal(_root);
 }
 
 // Path: app
@@ -2607,6 +2643,30 @@ class Translations$xray$en {
       Translations$xray$trajectory$en.internal(_root);
   late final Translations$xray$verdict$en verdict =
       Translations$xray$verdict$en.internal(_root);
+}
+
+// Path: agentSkills.question
+class Translations$agentSkills$question$en {
+  Translations$agentSkills$question$en.internal(this._root);
+
+  final Translations _root; // ignore: unused_field
+
+  // Translations
+
+  /// en: 'How the skills fit together'
+  String get overview => 'How the skills fit together';
+
+  /// en: 'Is this change right?'
+  String get codeReview => 'Is this change right?';
+
+  /// en: 'What could this change become?'
+  String get muse => 'What could this change become?';
+
+  /// en: 'What is wrong with settled code?'
+  String get bugShaker => 'What is wrong with settled code?';
+
+  /// en: 'What does this file connect to?'
+  String get repoIntel => 'What does this file connect to?';
 }
 
 // Path: app.cheatsheet

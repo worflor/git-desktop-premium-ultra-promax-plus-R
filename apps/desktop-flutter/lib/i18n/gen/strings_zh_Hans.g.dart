@@ -49,6 +49,9 @@ class TranslationsZhHans extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$zh_Hans agentSkills =
+      _Translations$agentSkills$zh_Hans._(_root);
+  @override
   late final _Translations$app$zh_Hans app = _Translations$app$zh_Hans._(_root);
   @override
   late final _Translations$backend$zh_Hans backend =
@@ -104,6 +107,34 @@ class TranslationsZhHans extends Translations
   late final _Translations$xray$zh_Hans xray = _Translations$xray$zh_Hans._(
     _root,
   );
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$zh_Hans extends Translations$agentSkills$en {
+  _Translations$agentSkills$zh_Hans._(TranslationsZhHans root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsZhHans _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => '智能体技能';
+  @override
+  String get blurb => '你的智能体也能使用 Manifold 的功能。';
+  @override
+  String get installSoon => '安装到客户端（即将推出）';
+  @override
+  String copied({required Object title}) => '已将 ${title} 技能复制到剪贴板';
+  @override
+  String savedTo({required Object path}) => '已保存到 ${path}';
+  @override
+  String saveFailed({required Object error}) => '无法保存：${error}';
+  @override
+  String saveDialog({required Object title}) => '保存 ${title} 技能';
+  @override
+  late final _Translations$agentSkills$question$zh_Hans question =
+      _Translations$agentSkills$question$zh_Hans._(_root);
 }
 
 // Path: app
@@ -2210,6 +2241,28 @@ class _Translations$xray$zh_Hans extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$zh_Hans verdict =
       _Translations$xray$verdict$zh_Hans._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$zh_Hans
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$zh_Hans._(TranslationsZhHans root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsZhHans _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => '各技能如何协同';
+  @override
+  String get codeReview => '这次改动对吗？';
+  @override
+  String get muse => '这次改动能变成什么？';
+  @override
+  String get bugShaker => '既有代码有什么问题？';
+  @override
+  String get repoIntel => '这个文件与什么相连？';
 }
 
 // Path: app.cheatsheet

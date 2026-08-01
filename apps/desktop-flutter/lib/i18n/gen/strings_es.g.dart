@@ -49,6 +49,9 @@ class TranslationsEs extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$es agentSkills =
+      _Translations$agentSkills$es._(_root);
+  @override
   late final _Translations$app$es app = _Translations$app$es._(_root);
   @override
   late final _Translations$backend$es backend = _Translations$backend$es._(
@@ -102,6 +105,36 @@ class TranslationsEs extends Translations
   late final _Translations$sync$es sync = _Translations$sync$es._(_root);
   @override
   late final _Translations$xray$es xray = _Translations$xray$es._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$es extends Translations$agentSkills$en {
+  _Translations$agentSkills$es._(TranslationsEs root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsEs _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Habilidades del agente';
+  @override
+  String get blurb =>
+      'Tus agentes también pueden usar las funciones de Manifold.';
+  @override
+  String get installSoon => 'Instalar en el cliente (pronto)';
+  @override
+  String copied({required Object title}) =>
+      'Se copió la habilidad ${title} al portapapeles';
+  @override
+  String savedTo({required Object path}) => 'Guardado en ${path}';
+  @override
+  String saveFailed({required Object error}) => 'No se pudo guardar: ${error}';
+  @override
+  String saveDialog({required Object title}) => 'Guardar la habilidad ${title}';
+  @override
+  late final _Translations$agentSkills$question$es question =
+      _Translations$agentSkills$question$es._(_root);
 }
 
 // Path: app
@@ -2343,6 +2376,28 @@ class _Translations$xray$es extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$es verdict =
       _Translations$xray$verdict$es._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$es
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$es._(TranslationsEs root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsEs _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Cómo encajan las habilidades';
+  @override
+  String get codeReview => '¿Es correcto este cambio?';
+  @override
+  String get muse => '¿En qué podría convertirse este cambio?';
+  @override
+  String get bugShaker => '¿Qué falla en el código ya asentado?';
+  @override
+  String get repoIntel => '¿Con qué se conecta este archivo?';
 }
 
 // Path: app.cheatsheet

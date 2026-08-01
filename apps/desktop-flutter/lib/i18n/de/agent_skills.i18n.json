@@ -1,0 +1,16 @@
+{
+  "heading": "Agent-Skills",
+  "blurb": "Deine Agenten können Manifolds Funktionen ebenfalls nutzen.",
+  "installSoon": "In Client installieren (bald)",
+  "copied": "Skill {title} in die Zwischenablage kopiert",
+  "savedTo": "Gespeichert unter {path}",
+  "saveFailed": "Speichern fehlgeschlagen: {error}",
+  "saveDialog": "Skill {title} speichern",
+  "question": {
+    "overview": "Wie die Skills zusammenpassen",
+    "codeReview": "Stimmt diese Änderung?",
+    "muse": "Was könnte aus dieser Änderung werden?",
+    "bugShaker": "Was stimmt mit bestehendem Code nicht?",
+    "repoIntel": "Womit ist diese Datei verbunden?"
+  }
+}

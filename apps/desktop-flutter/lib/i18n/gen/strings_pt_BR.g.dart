@@ -49,6 +49,9 @@ class TranslationsPtBr extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$pt_BR agentSkills =
+      _Translations$agentSkills$pt_BR._(_root);
+  @override
   late final _Translations$app$pt_BR app = _Translations$app$pt_BR._(_root);
   @override
   late final _Translations$backend$pt_BR backend =
@@ -101,6 +104,36 @@ class TranslationsPtBr extends Translations
   late final _Translations$sync$pt_BR sync = _Translations$sync$pt_BR._(_root);
   @override
   late final _Translations$xray$pt_BR xray = _Translations$xray$pt_BR._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$pt_BR extends Translations$agentSkills$en {
+  _Translations$agentSkills$pt_BR._(TranslationsPtBr root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsPtBr _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Habilidades do agente';
+  @override
+  String get blurb => 'Seus agentes também podem usar os recursos do Manifold.';
+  @override
+  String get installSoon => 'Instalar no cliente (em breve)';
+  @override
+  String copied({required Object title}) =>
+      'Habilidade ${title} copiada para a área de transferência';
+  @override
+  String savedTo({required Object path}) => 'Salvo em ${path}';
+  @override
+  String saveFailed({required Object error}) =>
+      'Não foi possível salvar: ${error}';
+  @override
+  String saveDialog({required Object title}) => 'Salvar a habilidade ${title}';
+  @override
+  late final _Translations$agentSkills$question$pt_BR question =
+      _Translations$agentSkills$question$pt_BR._(_root);
 }
 
 // Path: app
@@ -2321,6 +2354,28 @@ class _Translations$xray$pt_BR extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$pt_BR verdict =
       _Translations$xray$verdict$pt_BR._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$pt_BR
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$pt_BR._(TranslationsPtBr root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsPtBr _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Como as habilidades se encaixam';
+  @override
+  String get codeReview => 'Essa mudança está certa?';
+  @override
+  String get muse => 'No que essa mudança pode se tornar?';
+  @override
+  String get bugShaker => 'O que há de errado no código já existente?';
+  @override
+  String get repoIntel => 'Com o que este arquivo se conecta?';
 }
 
 // Path: app.cheatsheet

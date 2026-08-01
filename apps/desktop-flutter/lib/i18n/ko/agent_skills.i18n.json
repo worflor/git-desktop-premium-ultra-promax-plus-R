@@ -1,0 +1,16 @@
+{
+  "heading": "에이전트 스킬",
+  "blurb": "에이전트도 Manifold의 기능을 사용할 수 있습니다.",
+  "installSoon": "클라이언트에 설치 (곧)",
+  "copied": "{title} 스킬을 클립보드에 복사했습니다",
+  "savedTo": "{path}에 저장했습니다",
+  "saveFailed": "저장하지 못했습니다: {error}",
+  "saveDialog": "{title} 스킬 저장",
+  "question": {
+    "overview": "스킬이 어떻게 맞물리는지",
+    "codeReview": "이 변경이 올바른가?",
+    "muse": "이 변경이 무엇이 될 수 있는가?",
+    "bugShaker": "기존 코드의 무엇이 잘못됐는가?",
+    "repoIntel": "이 파일은 무엇과 연결되는가?"
+  }
+}

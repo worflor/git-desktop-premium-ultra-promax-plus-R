@@ -108,6 +108,14 @@ class MaterialSurface extends StatelessWidget {
   final bool glaze;
   final Clip clipBehavior;
 
+  /// Test-only seam: when true, [build] skips the glass-shader and blur
+  /// [BackdropFilter] paths and renders the solid surface fill instead. The
+  /// software rasterizer `flutter test` runs on cannot composite a
+  /// BackdropFilter — it paints the yellow/black placeholder — so preview
+  /// harnesses set this to inspect the real fill, border, shadow, and content.
+  /// Never set in production: the live blur/glass only renders on the GPU.
+  static bool debugDisableBackdropFilter = false;
+
   const MaterialSurface({
     super.key,
     required this.child,
@@ -188,7 +196,8 @@ class MaterialSurface extends StatelessWidget {
     // bottom. Falls back to the simpler blur path only when Impeller
     // isn't available.
     final useShaderFilter = shader.mode != SurfaceMaterialMode.solid &&
-        ImageFilter.isShaderFilterSupported;
+        ImageFilter.isShaderFilterSupported &&
+        !debugDisableBackdropFilter;
 
     // For the shader-filter path the surface has no body fill — the shader
     // emits the full glass render (refracted backdrop + absorption + rim).
@@ -265,7 +274,7 @@ class MaterialSurface extends StatelessWidget {
       );
     }
 
-    if (runtime.filter == null) return content;
+    if (runtime.filter == null || debugDisableBackdropFilter) return content;
     return ClipRRect(
       borderRadius: BorderRadius.circular(resolvedRadius),
       clipBehavior: clipBehavior,

@@ -1,0 +1,16 @@
+{
+  "heading": "エージェントスキル",
+  "blurb": "あなたのエージェントも Manifold の機能を使えます。",
+  "installSoon": "クライアントに導入（近日）",
+  "copied": "{title} スキルをクリップボードにコピーしました",
+  "savedTo": "{path} に保存しました",
+  "saveFailed": "保存できませんでした: {error}",
+  "saveDialog": "{title} スキルを保存",
+  "question": {
+    "overview": "スキルの全体像",
+    "codeReview": "この変更は正しいか？",
+    "muse": "この変更は何になり得るか？",
+    "bugShaker": "既存コードの何が問題か？",
+    "repoIntel": "このファイルは何とつながるか？"
+  }
+}

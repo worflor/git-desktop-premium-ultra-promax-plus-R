@@ -1,0 +1,16 @@
+{
+  "heading": "Keahlian agen",
+  "blurb": "Agen kamu juga bisa memakai fitur Manifold.",
+  "installSoon": "Pasang ke klien (segera)",
+  "copied": "Menyalin keahlian {title} ke papan klip",
+  "savedTo": "Disimpan ke {path}",
+  "saveFailed": "Gagal menyimpan: {error}",
+  "saveDialog": "Simpan keahlian {title}",
+  "question": {
+    "overview": "Bagaimana keahlian saling terkait",
+    "codeReview": "Apakah perubahan ini benar?",
+    "muse": "Perubahan ini bisa menjadi apa?",
+    "bugShaker": "Apa yang salah pada kode yang sudah ada?",
+    "repoIntel": "Berkas ini terhubung ke apa?"
+  }
+}

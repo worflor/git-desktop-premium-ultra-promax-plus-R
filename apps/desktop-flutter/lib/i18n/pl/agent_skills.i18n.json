@@ -1,0 +1,16 @@
+{
+  "heading": "Umiejętności agenta",
+  "blurb": "Twoje agenty też mogą korzystać z funkcji Manifolda.",
+  "installSoon": "Zainstaluj w kliencie (wkrótce)",
+  "copied": "Skopiowano umiejętność {title} do schowka",
+  "savedTo": "Zapisano w {path}",
+  "saveFailed": "Nie udało się zapisać: {error}",
+  "saveDialog": "Zapisz umiejętność {title}",
+  "question": {
+    "overview": "Jak umiejętności łączą się w całość",
+    "codeReview": "Czy ta zmiana jest poprawna?",
+    "muse": "Czym może stać się ta zmiana?",
+    "bugShaker": "Co jest nie tak z istniejącym kodem?",
+    "repoIntel": "Z czym łączy się ten plik?"
+  }
+}

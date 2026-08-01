@@ -1,0 +1,16 @@
+{
+  "heading": "智能体技能",
+  "blurb": "你的智能体也能使用 Manifold 的功能。",
+  "installSoon": "安装到客户端（即将推出）",
+  "copied": "已将 {title} 技能复制到剪贴板",
+  "savedTo": "已保存到 {path}",
+  "saveFailed": "无法保存：{error}",
+  "saveDialog": "保存 {title} 技能",
+  "question": {
+    "overview": "各技能如何协同",
+    "codeReview": "这次改动对吗？",
+    "muse": "这次改动能变成什么？",
+    "bugShaker": "既有代码有什么问题？",
+    "repoIntel": "这个文件与什么相连？"
+  }
+}

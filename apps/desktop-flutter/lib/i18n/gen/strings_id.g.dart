@@ -49,6 +49,9 @@ class TranslationsId extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$id agentSkills =
+      _Translations$agentSkills$id._(_root);
+  @override
   late final _Translations$app$id app = _Translations$app$id._(_root);
   @override
   late final _Translations$backend$id backend = _Translations$backend$id._(
@@ -102,6 +105,35 @@ class TranslationsId extends Translations
   late final _Translations$sync$id sync = _Translations$sync$id._(_root);
   @override
   late final _Translations$xray$id xray = _Translations$xray$id._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$id extends Translations$agentSkills$en {
+  _Translations$agentSkills$id._(TranslationsId root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsId _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Keahlian agen';
+  @override
+  String get blurb => 'Agen kamu juga bisa memakai fitur Manifold.';
+  @override
+  String get installSoon => 'Pasang ke klien (segera)';
+  @override
+  String copied({required Object title}) =>
+      'Menyalin keahlian ${title} ke papan klip';
+  @override
+  String savedTo({required Object path}) => 'Disimpan ke ${path}';
+  @override
+  String saveFailed({required Object error}) => 'Gagal menyimpan: ${error}';
+  @override
+  String saveDialog({required Object title}) => 'Simpan keahlian ${title}';
+  @override
+  late final _Translations$agentSkills$question$id question =
+      _Translations$agentSkills$question$id._(_root);
 }
 
 // Path: app
@@ -2305,6 +2337,28 @@ class _Translations$xray$id extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$id verdict =
       _Translations$xray$verdict$id._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$id
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$id._(TranslationsId root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsId _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Bagaimana keahlian saling terkait';
+  @override
+  String get codeReview => 'Apakah perubahan ini benar?';
+  @override
+  String get muse => 'Perubahan ini bisa menjadi apa?';
+  @override
+  String get bugShaker => 'Apa yang salah pada kode yang sudah ada?';
+  @override
+  String get repoIntel => 'Berkas ini terhubung ke apa?';
 }
 
 // Path: app.cheatsheet

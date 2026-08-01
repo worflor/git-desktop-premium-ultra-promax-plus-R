@@ -49,6 +49,9 @@ class TranslationsKo extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$ko agentSkills =
+      _Translations$agentSkills$ko._(_root);
+  @override
   late final _Translations$app$ko app = _Translations$app$ko._(_root);
   @override
   late final _Translations$backend$ko backend = _Translations$backend$ko._(
@@ -102,6 +105,34 @@ class TranslationsKo extends Translations
   late final _Translations$sync$ko sync = _Translations$sync$ko._(_root);
   @override
   late final _Translations$xray$ko xray = _Translations$xray$ko._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$ko extends Translations$agentSkills$en {
+  _Translations$agentSkills$ko._(TranslationsKo root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsKo _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => '에이전트 스킬';
+  @override
+  String get blurb => '에이전트도 Manifold의 기능을 사용할 수 있습니다.';
+  @override
+  String get installSoon => '클라이언트에 설치 (곧)';
+  @override
+  String copied({required Object title}) => '${title} 스킬을 클립보드에 복사했습니다';
+  @override
+  String savedTo({required Object path}) => '${path}에 저장했습니다';
+  @override
+  String saveFailed({required Object error}) => '저장하지 못했습니다: ${error}';
+  @override
+  String saveDialog({required Object title}) => '${title} 스킬 저장';
+  @override
+  late final _Translations$agentSkills$question$ko question =
+      _Translations$agentSkills$question$ko._(_root);
 }
 
 // Path: app
@@ -2241,6 +2272,28 @@ class _Translations$xray$ko extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$ko verdict =
       _Translations$xray$verdict$ko._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$ko
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$ko._(TranslationsKo root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsKo _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => '스킬이 어떻게 맞물리는지';
+  @override
+  String get codeReview => '이 변경이 올바른가?';
+  @override
+  String get muse => '이 변경이 무엇이 될 수 있는가?';
+  @override
+  String get bugShaker => '기존 코드의 무엇이 잘못됐는가?';
+  @override
+  String get repoIntel => '이 파일은 무엇과 연결되는가?';
 }
 
 // Path: app.cheatsheet

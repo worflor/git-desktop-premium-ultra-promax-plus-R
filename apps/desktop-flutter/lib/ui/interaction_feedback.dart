@@ -57,19 +57,27 @@ class InteractionFeedback extends StatefulWidget {
 
 class _InteractionFeedbackState extends State<InteractionFeedback>
     with SingleTickerProviderStateMixin {
-  // Initial duration is overwritten in `_fire()` before the controller
-  // ever runs (`_ac.duration = context.motionRead(_durationFor(mode))`).
-  // We use the longest possible mode duration so a forgotten fire-without-
-  // reset has a sane upper bound rather than the framework default 0.
-  late final AnimationController _ac = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 460),
-  );
+  // Created lazily on first real use (a fire or the ripple build branch), so a
+  // control that is never interacted with never spins up a ticker. Crucially
+  // NOT a `late final` initialized in a field: dispose() would then TRIGGER
+  // that initializer for a never-used control, constructing an
+  // AnimationController — and its ticker's TickerMode lookup — mid-unmount,
+  // which the framework asserts against ("deactivated widget's ancestor is
+  // unsafe"). A transient overlay full of never-hovered buttons hit this on
+  // teardown. Access through [_ac]; dispose only what was actually created.
+  //
+  // Initial duration is overwritten in `_fire()` before the controller ever
+  // runs; the 460ms is a sane upper bound for a forgotten fire-without-reset.
+  AnimationController? _acRef;
+  AnimationController get _ac => _acRef ??= AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 460),
+      );
   Offset _origin = Offset.zero;
 
   @override
   void dispose() {
-    _ac.dispose();
+    _acRef?.dispose();
     super.dispose();
   }
 

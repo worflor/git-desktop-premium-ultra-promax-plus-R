@@ -49,6 +49,9 @@ class TranslationsDe extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$de agentSkills =
+      _Translations$agentSkills$de._(_root);
+  @override
   late final _Translations$app$de app = _Translations$app$de._(_root);
   @override
   late final _Translations$backend$de backend = _Translations$backend$de._(
@@ -102,6 +105,37 @@ class TranslationsDe extends Translations
   late final _Translations$sync$de sync = _Translations$sync$de._(_root);
   @override
   late final _Translations$xray$de xray = _Translations$xray$de._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$de extends Translations$agentSkills$en {
+  _Translations$agentSkills$de._(TranslationsDe root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsDe _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Agent-Skills';
+  @override
+  String get blurb =>
+      'Deine Agenten können Manifolds Funktionen ebenfalls nutzen.';
+  @override
+  String get installSoon => 'In Client installieren (bald)';
+  @override
+  String copied({required Object title}) =>
+      'Skill ${title} in die Zwischenablage kopiert';
+  @override
+  String savedTo({required Object path}) => 'Gespeichert unter ${path}';
+  @override
+  String saveFailed({required Object error}) =>
+      'Speichern fehlgeschlagen: ${error}';
+  @override
+  String saveDialog({required Object title}) => 'Skill ${title} speichern';
+  @override
+  late final _Translations$agentSkills$question$de question =
+      _Translations$agentSkills$question$de._(_root);
 }
 
 // Path: app
@@ -2341,6 +2375,28 @@ class _Translations$xray$de extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$de verdict =
       _Translations$xray$verdict$de._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$de
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$de._(TranslationsDe root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsDe _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Wie die Skills zusammenpassen';
+  @override
+  String get codeReview => 'Stimmt diese Änderung?';
+  @override
+  String get muse => 'Was könnte aus dieser Änderung werden?';
+  @override
+  String get bugShaker => 'Was stimmt mit bestehendem Code nicht?';
+  @override
+  String get repoIntel => 'Womit ist diese Datei verbunden?';
 }
 
 // Path: app.cheatsheet

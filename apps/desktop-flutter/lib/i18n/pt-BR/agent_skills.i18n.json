@@ -1,0 +1,16 @@
+{
+  "heading": "Habilidades do agente",
+  "blurb": "Seus agentes também podem usar os recursos do Manifold.",
+  "installSoon": "Instalar no cliente (em breve)",
+  "copied": "Habilidade {title} copiada para a área de transferência",
+  "savedTo": "Salvo em {path}",
+  "saveFailed": "Não foi possível salvar: {error}",
+  "saveDialog": "Salvar a habilidade {title}",
+  "question": {
+    "overview": "Como as habilidades se encaixam",
+    "codeReview": "Essa mudança está certa?",
+    "muse": "No que essa mudança pode se tornar?",
+    "bugShaker": "O que há de errado no código já existente?",
+    "repoIntel": "Com o que este arquivo se conecta?"
+  }
+}

@@ -65,6 +65,7 @@ import '../../ui/morph_text.dart';
 import '../../ui/motion.dart';
 import '../../ui/split_pill_button.dart';
 import '../../ui/tokens.dart';
+import 'agent_skills/skills_fab.dart';
 
 const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 
@@ -1555,7 +1556,18 @@ class _SettingsPageState extends State<SettingsPage>
               const _SettingsGap(),
               KeyedSubtree(
                 key: _sectionKeyModelSlots,
-                child: _SettingsSubtitle(context.t.settings.sectionLabels.modelSlots),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _SettingsSubtitle(
+                          context.t.settings.sectionLabels.modelSlots),
+                    ),
+                    // Agent skills live with the models: same subject, so the
+                    // affordance sits in this section's header rather than
+                    // floating over the page.
+                    const SkillsFab(),
+                  ],
+                ),
               ),
               const SizedBox(height: 8),
               Text(

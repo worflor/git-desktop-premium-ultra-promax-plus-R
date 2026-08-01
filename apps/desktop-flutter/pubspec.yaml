@@ -64,6 +64,9 @@ flutter:
     # Quantised GloVe-300 vocabulary (int16 with global scale=6.0).
     # ~11MB. Looked up via engram_glove.dart for per-sub-token vectors.
     - assets/engram/glove300.bin
+    # Agent-skill markdown, bundled so the Settings skills panel can copy /
+    # save the real, current text. Mirrors docs/agentic-skills/.
+    - assets/skills/
   fonts:
     - family: DM Sans
       fonts:

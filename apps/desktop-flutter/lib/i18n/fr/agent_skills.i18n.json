@@ -1,0 +1,16 @@
+{
+  "heading": "Compétences de l'agent",
+  "blurb": "Vos agents peuvent eux aussi utiliser les fonctionnalités de Manifold.",
+  "installSoon": "Installer dans le client (bientôt)",
+  "copied": "Compétence {title} copiée dans le presse-papiers",
+  "savedTo": "Enregistré dans {path}",
+  "saveFailed": "Échec de l'enregistrement : {error}",
+  "saveDialog": "Enregistrer la compétence {title}",
+  "question": {
+    "overview": "Comment les compétences s'articulent",
+    "codeReview": "Ce changement est-il correct ?",
+    "muse": "Que pourrait devenir ce changement ?",
+    "bugShaker": "Qu'est-ce qui cloche dans le code établi ?",
+    "repoIntel": "À quoi ce fichier est-il connecté ?"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "heading": "Competenze dell'agente",
+  "blurb": "Anche i tuoi agenti possono usare le funzioni di Manifold.",
+  "installSoon": "Installa nel client (a breve)",
+  "copied": "Competenza {title} copiata negli appunti",
+  "savedTo": "Salvato in {path}",
+  "saveFailed": "Impossibile salvare: {error}",
+  "saveDialog": "Salva la competenza {title}",
+  "question": {
+    "overview": "Come si combinano le competenze",
+    "codeReview": "Questa modifica è corretta?",
+    "muse": "Cosa potrebbe diventare questa modifica?",
+    "bugShaker": "Cosa non va nel codice consolidato?",
+    "repoIntel": "A cosa è collegato questo file?"
+  }
+}

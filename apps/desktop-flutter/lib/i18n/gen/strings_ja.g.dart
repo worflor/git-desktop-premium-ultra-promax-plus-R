@@ -49,6 +49,9 @@ class TranslationsJa extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$ja agentSkills =
+      _Translations$agentSkills$ja._(_root);
+  @override
   late final _Translations$app$ja app = _Translations$app$ja._(_root);
   @override
   late final _Translations$backend$ja backend = _Translations$backend$ja._(
@@ -102,6 +105,34 @@ class TranslationsJa extends Translations
   late final _Translations$sync$ja sync = _Translations$sync$ja._(_root);
   @override
   late final _Translations$xray$ja xray = _Translations$xray$ja._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$ja extends Translations$agentSkills$en {
+  _Translations$agentSkills$ja._(TranslationsJa root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsJa _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'エージェントスキル';
+  @override
+  String get blurb => 'あなたのエージェントも Manifold の機能を使えます。';
+  @override
+  String get installSoon => 'クライアントに導入（近日）';
+  @override
+  String copied({required Object title}) => '${title} スキルをクリップボードにコピーしました';
+  @override
+  String savedTo({required Object path}) => '${path} に保存しました';
+  @override
+  String saveFailed({required Object error}) => '保存できませんでした: ${error}';
+  @override
+  String saveDialog({required Object title}) => '${title} スキルを保存';
+  @override
+  late final _Translations$agentSkills$question$ja question =
+      _Translations$agentSkills$question$ja._(_root);
 }
 
 // Path: app
@@ -2250,6 +2281,28 @@ class _Translations$xray$ja extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$ja verdict =
       _Translations$xray$verdict$ja._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$ja
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$ja._(TranslationsJa root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsJa _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'スキルの全体像';
+  @override
+  String get codeReview => 'この変更は正しいか？';
+  @override
+  String get muse => 'この変更は何になり得るか？';
+  @override
+  String get bugShaker => '既存コードの何が問題か？';
+  @override
+  String get repoIntel => 'このファイルは何とつながるか？';
 }
 
 // Path: app.cheatsheet

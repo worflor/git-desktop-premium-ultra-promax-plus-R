@@ -1,0 +1,16 @@
+{
+  "heading": "Agent-skills",
+  "blurb": "Je agents kunnen de functies van Manifold ook gebruiken.",
+  "installSoon": "In client installeren (binnenkort)",
+  "copied": "Skill {title} naar het klembord gekopieerd",
+  "savedTo": "Opgeslagen in {path}",
+  "saveFailed": "Kon niet opslaan: {error}",
+  "saveDialog": "Skill {title} opslaan",
+  "question": {
+    "overview": "Hoe de skills samenhangen",
+    "codeReview": "Klopt deze wijziging?",
+    "muse": "Wat kan deze wijziging worden?",
+    "bugShaker": "Wat is er mis met bestaande code?",
+    "repoIntel": "Waarmee is dit bestand verbonden?"
+  }
+}

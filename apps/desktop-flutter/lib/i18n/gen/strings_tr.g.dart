@@ -49,6 +49,9 @@ class TranslationsTr extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$tr agentSkills =
+      _Translations$agentSkills$tr._(_root);
+  @override
   late final _Translations$app$tr app = _Translations$app$tr._(_root);
   @override
   late final _Translations$backend$tr backend = _Translations$backend$tr._(
@@ -102,6 +105,36 @@ class TranslationsTr extends Translations
   late final _Translations$sync$tr sync = _Translations$sync$tr._(_root);
   @override
   late final _Translations$xray$tr xray = _Translations$xray$tr._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$tr extends Translations$agentSkills$en {
+  _Translations$agentSkills$tr._(TranslationsTr root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsTr _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Aracı becerileri';
+  @override
+  String get blurb =>
+      'Aracılarınız da Manifold\'un özelliklerini kullanabilir.';
+  @override
+  String get installSoon => 'İstemciye kur (yakında)';
+  @override
+  String copied({required Object title}) =>
+      '${title} becerisi panoya kopyalandı';
+  @override
+  String savedTo({required Object path}) => '${path} konumuna kaydedildi';
+  @override
+  String saveFailed({required Object error}) => 'Kaydedilemedi: ${error}';
+  @override
+  String saveDialog({required Object title}) => '${title} becerisini kaydet';
+  @override
+  late final _Translations$agentSkills$question$tr question =
+      _Translations$agentSkills$question$tr._(_root);
 }
 
 // Path: app
@@ -2327,6 +2360,28 @@ class _Translations$xray$tr extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$tr verdict =
       _Translations$xray$verdict$tr._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$tr
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$tr._(TranslationsTr root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsTr _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Beceriler nasıl bir araya geliyor';
+  @override
+  String get codeReview => 'Bu değişiklik doğru mu?';
+  @override
+  String get muse => 'Bu değişiklik neye dönüşebilir?';
+  @override
+  String get bugShaker => 'Yerleşik kodun nesi yanlış?';
+  @override
+  String get repoIntel => 'Bu dosya neye bağlanıyor?';
 }
 
 // Path: app.cheatsheet

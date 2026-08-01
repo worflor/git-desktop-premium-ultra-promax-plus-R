@@ -49,6 +49,9 @@ class TranslationsPl extends Translations
 
   // Translations
   @override
+  late final _Translations$agentSkills$pl agentSkills =
+      _Translations$agentSkills$pl._(_root);
+  @override
   late final _Translations$app$pl app = _Translations$app$pl._(_root);
   @override
   late final _Translations$backend$pl backend = _Translations$backend$pl._(
@@ -102,6 +105,36 @@ class TranslationsPl extends Translations
   late final _Translations$sync$pl sync = _Translations$sync$pl._(_root);
   @override
   late final _Translations$xray$pl xray = _Translations$xray$pl._(_root);
+}
+
+// Path: agentSkills
+class _Translations$agentSkills$pl extends Translations$agentSkills$en {
+  _Translations$agentSkills$pl._(TranslationsPl root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsPl _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get heading => 'Umiejętności agenta';
+  @override
+  String get blurb => 'Twoje agenty też mogą korzystać z funkcji Manifolda.';
+  @override
+  String get installSoon => 'Zainstaluj w kliencie (wkrótce)';
+  @override
+  String copied({required Object title}) =>
+      'Skopiowano umiejętność ${title} do schowka';
+  @override
+  String savedTo({required Object path}) => 'Zapisano w ${path}';
+  @override
+  String saveFailed({required Object error}) =>
+      'Nie udało się zapisać: ${error}';
+  @override
+  String saveDialog({required Object title}) => 'Zapisz umiejętność ${title}';
+  @override
+  late final _Translations$agentSkills$question$pl question =
+      _Translations$agentSkills$question$pl._(_root);
 }
 
 // Path: app
@@ -2386,6 +2419,28 @@ class _Translations$xray$pl extends Translations$xray$en {
   @override
   late final _Translations$xray$verdict$pl verdict =
       _Translations$xray$verdict$pl._(_root);
+}
+
+// Path: agentSkills.question
+class _Translations$agentSkills$question$pl
+    extends Translations$agentSkills$question$en {
+  _Translations$agentSkills$question$pl._(TranslationsPl root)
+    : this._root = root,
+      super.internal(root);
+
+  final TranslationsPl _root; // ignore: unused_field
+
+  // Translations
+  @override
+  String get overview => 'Jak umiejętności łączą się w całość';
+  @override
+  String get codeReview => 'Czy ta zmiana jest poprawna?';
+  @override
+  String get muse => 'Czym może stać się ta zmiana?';
+  @override
+  String get bugShaker => 'Co jest nie tak z istniejącym kodem?';
+  @override
+  String get repoIntel => 'Z czym łączy się ten plik?';
 }
 
 // Path: app.cheatsheet

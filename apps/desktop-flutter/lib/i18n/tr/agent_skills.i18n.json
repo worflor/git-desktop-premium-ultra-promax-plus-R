@@ -1,0 +1,16 @@
+{
+  "heading": "Aracı becerileri",
+  "blurb": "Aracılarınız da Manifold'un özelliklerini kullanabilir.",
+  "installSoon": "İstemciye kur (yakında)",
+  "copied": "{title} becerisi panoya kopyalandı",
+  "savedTo": "{path} konumuna kaydedildi",
+  "saveFailed": "Kaydedilemedi: {error}",
+  "saveDialog": "{title} becerisini kaydet",
+  "question": {
+    "overview": "Beceriler nasıl bir araya geliyor",
+    "codeReview": "Bu değişiklik doğru mu?",
+    "muse": "Bu değişiklik neye dönüşebilir?",
+    "bugShaker": "Yerleşik kodun nesi yanlış?",
+    "repoIntel": "Bu dosya neye bağlanıyor?"
+  }
+}
