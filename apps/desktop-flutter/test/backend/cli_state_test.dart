@@ -167,4 +167,21 @@ void main() {
     expect(commands.containsKey('state'), isTrue);
     expect(commands.containsKey('commit-message'), isTrue);
   });
+
+  test('S14: every registered command is described in `help`', () async {
+    // `manifold help` is the machine-readable schema an agent reads to find
+    // out what exists. A command registered but undescribed is invisible to
+    // it — which is exactly how `shake`, `state`, `commit-message` and
+    // `review-evidence` all shipped or nearly shipped unlisted. The registry
+    // and the schema drift silently because nothing compares them; this does.
+    final help = await commands['help']!(const {}, _context());
+    final described = (help['commands'] as Map<String, dynamic>).keys.toSet();
+    final registered = commands.keys.toSet();
+
+    expect(registered.difference(described), isEmpty,
+        reason: 'registered but absent from `help`');
+    expect(described.difference(registered), isEmpty,
+        reason: 'described in `help` but not registered — a schema promising '
+            'a command that does not exist is worse than an absent one');
+  });
 }

@@ -11,6 +11,7 @@
     "codeReview": "Bu değişiklik doğru mu?",
     "muse": "Bu değişiklik neye dönüşebilir?",
     "bugShaker": "Yerleşik kodun nesi yanlış?",
+    "commitMessage": "Bu değişiklik ne yaptı?",
     "repoIntel": "Bu dosya neye bağlanıyor?"
   }
 }

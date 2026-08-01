@@ -2397,6 +2397,8 @@ class _Translations$agentSkills$question$fr
   @override
   String get bugShaker => 'Qu\'est-ce qui cloche dans le code établi ?';
   @override
+  String get commitMessage => 'Qu\'a fait ce changement ?';
+  @override
   String get repoIntel => 'À quoi ce fichier est-il connecté ?';
 }
 

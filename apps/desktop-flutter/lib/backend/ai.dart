@@ -651,6 +651,12 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   List<String> scopedPaths = const [],
   String customPrompt = '',
   String existingMessage = '',
+  /// Facts about the change that the diff cannot carry — intent, an issue
+  /// reference, the review finding it answers. Subject matter, not styling:
+  /// it reaches the prompt as the author's own notes and never as an
+  /// instruction channel, so the user's configured structure, voice and
+  /// coverage stay authoritative.
+  String authorContext = '',
   bool readOnly = true,
   // Commit format preferences. Caller (the commit composer) threads
   // these from PreferencesState; the prompt builder turns them into
@@ -670,6 +676,26 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
     }
     if (!includeStaged && !includeUnstaged) {
       return const GitResult.err('No diff scope is available for generation.');
+    }
+    // Bound the caller-supplied notes BEFORE assembly. Enforced here rather
+    // than at the CLI so every caller is covered by the same rule.
+    //
+    // Measured AS ASSEMBLED, which is the only measurement that means
+    // anything: escaping expands (`&` becomes `&amp;`, one character to
+    // five), so a note checked raw can be five times its checked size by the
+    // time it reaches the prompt. And measured TOGETHER, because the budget
+    // being protected is the prompt's, not each field's — two notes each just
+    // inside a per-field limit still add up to twice it.
+    final noteChars = escapeCallerPromptContent(authorContext.trim()).length +
+        escapeCallerPromptContent(existingMessage.trim()).length;
+    if (noteChars > kMaxCallerNoteChars) {
+      return GitResult.err(
+        'The supplied notes come to $noteChars characters once assembled, '
+        'past the $kMaxCallerNoteChars-character limit for --why and '
+        '--existing combined. They would crowd the diff out of the prompt and '
+        'the message would describe a change the model never saw. Summarise '
+        'the intent instead of pasting it.',
+      );
     }
 
     final modelParse = _parseModelValue(modelValue);
@@ -714,6 +740,7 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       scopeLabel: scopeLabel,
       customPrompt: customPrompt,
       existingMessage: existingMessage,
+      authorContext: authorContext,
       totalCommits: bundle.totalCommits,
       recentLog: bundle.recentLog,
       authorName: bundle.authorName,
@@ -9698,6 +9725,38 @@ Map<String, List<String>> extractMetadataOnlyChangesForTesting(
         String fullDiff) =>
     _extractMetadataOnlyChanges(fullDiff);
 
+/// @visibleForTesting: the assembled commit-message prompt.
+///
+/// Private to ai.dart, but one property of it is a promise the CLI makes out
+/// loud — that a caller supplying intent (`--why`) cannot reach the structure,
+/// voice or custom prompt the user configured. That separation is invisible
+/// from the outside and would rot silently, so it gets a direct test.
+@visibleForTesting
+String buildCommitMessagePromptForTesting({
+  String branchName = 'main',
+  String customPrompt = '',
+  String diffSummary = 'diff --git a/x b/x',
+  String existingMessage = '',
+  String authorContext = '',
+  CommitStructure structure = kDefaultCommitStructure,
+  CommitVoice voice = kDefaultCommitVoice,
+  CommitCoverage coverage = kDefaultCommitCoverage,
+}) =>
+    _buildCommitMessagePrompt(
+      branchName: branchName,
+      modelCategoryLabel: 'Quality',
+      scopeLabel: 'all included files',
+      customPrompt: customPrompt,
+      statusSummary: '',
+      statSummary: '',
+      diffSummary: diffSummary,
+      existingMessage: existingMessage,
+      authorContext: authorContext,
+      structure: structure,
+      voice: voice,
+      coverage: coverage,
+    );
+
 /// Walk a unified-diff and capture file-level metadata that the hunk
 /// packer silently drops:
 ///   • `Binary files a/X and b/X differ`
@@ -9820,6 +9879,68 @@ String _formatMetadataOnlyBlock(
   return buf.toString();
 }
 
+/// Largest caller-supplied note the commit-message prompt will carry.
+///
+/// Derived, not picked: it is the size the template reserves for ITSELF
+/// ([_kReviewOverheadChars]) — the scene, the schema, the framing. A note from
+/// the caller that outweighs the entire prompt scaffolding is not a note, it
+/// is a mistake, and almost always an agent that piped a file into the flag.
+///
+/// Refused rather than truncated. The diff is written LAST in the prompt and
+/// `_capPromptBody` trims from the end, so an oversized note does not simply
+/// cost tokens — it pushes the actual change out of the prompt and the model
+/// writes a message for a diff it never saw. Silently keeping half a note and
+/// none of the diff is the worst of the available outcomes; saying so is the
+/// best.
+///
+/// The budget is for `--why` and `--existing` TOGETHER, and is measured after
+/// escaping. Both details are load-bearing: a per-field limit lets two notes
+/// sum to twice it, and a pre-escape measurement understates a note full of
+/// ampersands by up to five times. A bound that can be exceeded by the thing
+/// it bounds is not a bound.
+///
+/// WHY THE DIFF CANNOT ACTUALLY BE DISPLACED, in numbers, because the question
+/// keeps coming up and prose alone never settled it:
+///
+///     diff          <= 180,000   ([_kDiffBudgetChars], the hunk packer's own
+///                                 budget — the diff arrives pre-packed)
+///     notes         <=  12,000   (this constant, both fields combined)
+///     scaffolding   ~=  12,000   ([_kReviewOverheadChars], measured)
+///     -------------------------
+///     worst case    ~= 204,000   against a 260,000 cap ([_maxPromptChars])
+///
+/// So ~56,000 characters of headroom remain in the worst legal case, and the
+/// trailing diff cannot be trimmed. That is arithmetic between four constants
+/// any of which could later move, so it is not left as a comment to be
+/// trusted: `W16` in commit_message_context_test.dart assembles the worst
+/// case and asserts the diff survives whole. Raise any of these past the cap
+/// and that test fails rather than the model quietly receiving half a change.
+const int kMaxCallerNoteChars = _kReviewOverheadChars;
+
+/// Neutralize markup in CALLER-supplied prompt content.
+///
+/// The prompt is XML-ish, and its sections are the only thing separating what
+/// the user configured from what a caller passed in. Written verbatim, a
+/// `--why` or `--existing` value containing `</author_context>` closes its own
+/// block and everything after it lands at the top level — including a
+/// replacement `<format>` section. The documented promise that a caller cannot
+/// reach the user's structure, voice, or coverage was, until this existed,
+/// merely a statement about where the text was *placed*.
+///
+/// Escaping the three characters that can form a tag makes the escape
+/// unrepresentable rather than discouraged. The content survives intact and
+/// reads normally to the model — `a < b` becomes `a &lt; b`, which is what
+/// every XML document in the world does.
+///
+/// Deliberately NOT applied to the user's own `customPrompt`: that block is
+/// their standing instruction channel, they are entitled to write anything in
+/// it, and escaping it would break the feature it exists for. The asymmetry is
+/// the boundary.
+String escapeCallerPromptContent(String raw) => raw
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
 String _buildCommitMessagePrompt({
   required String branchName,
   required String modelCategoryLabel,
@@ -9829,6 +9950,7 @@ String _buildCommitMessagePrompt({
   required String statSummary,
   required String diffSummary,
   String existingMessage = '',
+  String authorContext = '',
   int totalCommits = 0,
   String recentLog = '',
   String authorName = '',
@@ -9878,7 +10000,7 @@ String _buildCommitMessagePrompt({
   if (existingMessage.trim().isNotEmpty) {
     buffer.writeln();
     buffer.writeln('<existing_draft>');
-    buffer.writeln(existingMessage.trim());
+    buffer.writeln(escapeCallerPromptContent(existingMessage.trim()));
     buffer.writeln('</existing_draft>');
   }
   if (statusSummary.trim().isNotEmpty) {
@@ -9892,6 +10014,30 @@ String _buildCommitMessagePrompt({
     buffer.writeln('<diffstat>');
     buffer.writeln(statSummary.trim());
     buffer.writeln('</diffstat>');
+  }
+  if (authorContext.trim().isNotEmpty) {
+    // What the AUTHOR knows and the diff cannot show: why the change was made,
+    // the issue it closes, the review finding it answers.
+    //
+    // Deliberately NOT routed into <user_instructions>. That block is the
+    // user's own standing prompt, and <format> above carries the structure,
+    // voice and coverage they chose in settings.
+    //
+    // What this separation DOES guarantee: escaped content cannot close its
+    // own section or forge another, so a caller cannot write into <format> or
+    // <user_instructions>, and the user's instructions come last.
+    //
+    // What it does NOT guarantee, and no arrangement of text could: that a
+    // model ignores a sentence in this block that reads like an order. This
+    // is a structural boundary, not a semantic one. The framing below tells
+    // the model what the section IS; a caller determined to put instructions
+    // where notes belong can still influence the result, and the honest thing
+    // is to say so rather than imply a wall that is not there.
+    buffer.writeln();
+    buffer.writeln('<author_context description="what you know about this '
+        'change that the diff does not show">');
+    buffer.writeln(escapeCallerPromptContent(authorContext.trim()));
+    buffer.writeln('</author_context>');
   }
   if (customPrompt.trim().isNotEmpty) {
     buffer.writeln();

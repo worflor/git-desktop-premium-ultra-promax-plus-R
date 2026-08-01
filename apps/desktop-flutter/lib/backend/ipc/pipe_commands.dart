@@ -727,7 +727,13 @@ Future<Map<String, dynamic>> _help(
   return {
     'version': '1',
     'commands': {
+      'help': 'This schema: every command, its params, and the shared notes.',
       'ping': 'Health check. Returns engine readiness.',
+      'state':
+          'What the app is configured to do: model and effort per AI command, '
+              'muse strand loadout, prompts, commit format. Spends nothing and '
+              'forces no provider discovery. Every AI command echoes the same '
+              'block under `settings`.',
       'status': 'Branch, ahead/behind, dirty files.',
       'repos': 'List known repos with engine status.',
       'diff': 'Diff text. Params: file (optional).',
@@ -761,7 +767,25 @@ Future<Map<String, dynamic>> _help(
               '<rev>, --range <A..B> (endpoints) or <A...B> (from the merge '
               'base), or --last for the newest commit. Params: files '
               '(optional, scopes the diff), model (optional).',
-      'muse': 'AI brainstorm on current changes. Params: files (optional), model (optional).',
+      'review-evidence':
+          'The exact gather and prompt a review would send, stopping before '
+              'the model. No model call. Same subject/scope params as review, '
+              'plus diff (path to a frozen patch to replay).',
+      'shake':
+          'Audit the CODEBASE region by region — files as they exist at HEAD, '
+              'including code history never touched. Resumable: a per-repo '
+              'ledger makes repeated runs converge. Params: plan (order and '
+              'coverage, no model call), regions (how many this run, default '
+              '1), reset (forget the ledger), model (optional).',
+      'commit-message':
+          'Write the commit message for the current change, in the format the '
+              'user configured. Working tree only. Params: files (optional), '
+              'existing (a draft to improve), why (intent the diff cannot '
+              'show — subject matter, never formatting), model (optional).',
+      'muse':
+          'AI brainstorm on current changes. Params: files (optional), '
+              'strands (carry exactly these instead of the configured '
+              'loadout, e.g. `vertigo,ghost` or `spark:3`), model (optional).',
       'deadcode':
           'Files no live surface imports (fully-dead + test-zombies) plus '
           'load-bearing joints (delete → N files orphaned).',
@@ -769,8 +793,9 @@ Future<Map<String, dynamic>> _help(
     'notes':
         'All file params accept: --files, --file, --path, --paths, '
             '--seeds, --changed. Comma-separated or JSON array. '
-            'Engine commands wait up to 15s for warmup. '
-            'All commands are read-only.',
+            'Engine commands wait up to 15s for warmup (index and shake, '
+            '60s). Review targets a revision with commit, range, or last — '
+            'mutually exclusive. All commands are read-only.',
   };
 }
 
@@ -1829,6 +1854,11 @@ Future<Map<String, dynamic>> _commitMessage(
       scopedPaths: scopeFiles,
       customPrompt: ai.commitMessagePrompt,
       existingMessage: params['existing'] as String? ?? '',
+      // `--why`: the intent behind the change, which no diff carries. Named
+      // for the question rather than for "steering" on purpose — a flag that
+      // invites instructions gets instructions, and the user's format is not
+      // the caller's to change.
+      authorContext: params['why'] as String? ?? '',
       readOnly: true,
       structure: prefs.commitStructure,
       voice: prefs.commitVoice,

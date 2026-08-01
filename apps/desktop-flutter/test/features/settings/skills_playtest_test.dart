@@ -86,6 +86,26 @@ void main() {
             'usable on the next gesture.');
   });
 
+  testWidgets('panel text has a Material ancestor', (tester) async {
+    // An OverlayEntry is inserted above the page's Scaffold, so it inherits no
+    // Material. Text without one renders with Flutter's yellow debug
+    // underlines — which shipped, because every preview harness pumped the
+    // panel INSIDE a Scaffold and never saw it.
+    await pumpHarness(tester, _page(), size: const Size(900, 700));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(SkillsFab));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.ancestor(
+        of: find.text('Code review'),
+        matching: find.byType(Material),
+      ),
+      findsWidgets,
+      reason: 'Overlay text with no Material ancestor gets yellow underlines.',
+    );
+  });
+
   testWidgets('the panel is anchored to the toggle, not the screen',
       (tester) async {
     await pumpHarness(tester, _page(), size: const Size(900, 700));

@@ -2432,6 +2432,8 @@ class _Translations$agentSkills$question$ru
   @override
   String get bugShaker => 'Что не так с устоявшимся кодом?';
   @override
+  String get commitMessage => 'Что сделали эти изменения?';
+  @override
   String get repoIntel => 'С чем связан этот файл?';
 }
 

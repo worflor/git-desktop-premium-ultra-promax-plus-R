@@ -2385,6 +2385,8 @@ class _Translations$agentSkills$question$nl
   @override
   String get bugShaker => 'Wat is er mis met bestaande code?';
   @override
+  String get commitMessage => 'Wat deed deze wijziging?';
+  @override
   String get repoIntel => 'Waarmee is dit bestand verbonden?';
 }
 

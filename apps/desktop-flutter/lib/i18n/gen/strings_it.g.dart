@@ -2394,6 +2394,8 @@ class _Translations$agentSkills$question$it
   @override
   String get bugShaker => 'Cosa non va nel codice consolidato?';
   @override
+  String get commitMessage => 'Che cosa ha fatto questa modifica?';
+  @override
   String get repoIntel => 'A cosa è collegato questo file?';
 }
 

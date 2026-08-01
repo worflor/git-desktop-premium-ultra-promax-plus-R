@@ -26,6 +26,8 @@ String _questionFor(BuildContext context, AgentSkill skill) {
       return q.muse;
     case 'bug-shaker':
       return q.bugShaker;
+    case 'commit-message':
+      return q.commitMessage;
     case 'repo-intel':
       return q.repoIntel;
     default:

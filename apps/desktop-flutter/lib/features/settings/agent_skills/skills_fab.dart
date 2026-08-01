@@ -110,14 +110,21 @@ class _SkillsFabState extends State<SkillsFab>
               targetAnchor: Alignment.topRight,
               followerAnchor: Alignment.topRight,
               offset: const Offset(10, 0),
-              child: AnimatedBuilder(
-                animation: _ctrl,
-                builder: (_, __) => SkillsBloomOverlay(
-                  reveal: _ctrl.value,
-                  skills: kAgentSkills,
-                  onCopy: _copy,
-                  onSave: _save,
-                  onToggle: _closeBloom,
+              // An OverlayEntry sits ABOVE the page's Scaffold, so nothing in
+              // it has a Material ancestor — and text without one renders with
+              // Flutter's yellow debug underlines. Transparent, so the panel's
+              // own glass is still what you see.
+              child: Material(
+                type: MaterialType.transparency,
+                child: AnimatedBuilder(
+                  animation: _ctrl,
+                  builder: (_, __) => SkillsBloomOverlay(
+                    reveal: _ctrl.value,
+                    skills: kAgentSkills,
+                    onCopy: _copy,
+                    onSave: _save,
+                    onToggle: _closeBloom,
+                  ),
                 ),
               ),
             ),

@@ -994,10 +994,13 @@ Commands:
                                 e.g. `--strands vertigo,ghost` or `spark:3`
   blast-radius --files <paths>  Co-change neighbors
   suggest --files <paths>       Coupled files you might have missed
+  context --files <paths>       Reading list by coupling, under --budget chars
   coherence --files <paths>     How cohesive is a file set (0-1)
   profile --file <path>         Volatility, integrity, centrality
+  explain --file <path>         One-line characterization of a file
   test-map --files <paths>      Tests coupled to source files
   who-knows --file <path>       Expert authors for a file
+  recent --files <paths>        Recent commits near a file and its neighbors
   search --query <text>         Semantic code search
   architecture                  Spectral subsystem map
   dream                         Logos phrase for current diff
@@ -1020,6 +1023,10 @@ Options:
   --strands <list> muse: comma-separated strands to carry INSTEAD of the
                    configured loadout; `name:count` asks for several
   --existing <msg> commit-message: a draft to improve rather than replace
+  --why <text>     commit-message: why this change was made — intent, an
+                   issue reference, the finding it answers. Subject matter
+                   the diff cannot show, not formatting (that stays the
+                   user's setting)
 
 Every AI command reports the settings it ran under under `settings` in
 --json output, so an agent never has to guess which model answered.

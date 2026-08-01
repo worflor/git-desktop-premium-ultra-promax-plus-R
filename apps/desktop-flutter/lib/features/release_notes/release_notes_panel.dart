@@ -435,6 +435,19 @@ List<_AboutEntry> _aboutEntries(BuildContext context) {
 }
 
 const _changelog = <_ReleaseNote>[
+  // TODO(release): decide 0.2.1 vs 0.3.0, and set `date` to the ACTUAL ship
+  // day before building — it compiles into the artifact.
+  _ReleaseNote(
+    version: 'v0.2.1',
+    date: '2026-08-01',
+    bullets: [
+      'your agents can wield Manifold\'s features too. the `manifold` CLI drops your coding agent onto the same warm engine the GUI runs on: code review, muse, repo intel, grounded in the coupling graph instead of grep. and the app hands you ready-made Agent Skills for it, up by the model slots in settings, that you copy or save straight into Cursor, Claude Code, Copilot. take what you want, leave the rest. everything, at your discretion.',
+      'the skills: code review, muse, bug shaker, generate-commit-message, and read-only repo intel (blast radius, coupling, who knows a file). each is a plain markdown doc, in the app and in the repo. english on purpose, since that\'s what the models read best.',
+      'bug shaker is the new one, CLI-only for now (`manifold shake`, no GUI button yet). it\'s the whole-codebase counterpart to code review: instead of "is this change right," it asks "what\'s wrong with the code that\'s already here," the files nobody has touched in years where bugs get comfortable. goes region by region and remembers where it stopped, so you can chip at a big repo across runs.',
+      'the CLI has been around, but it grew up: a stack of new subcommands and flags, and it can answer for itself now. `review` aims at a commit, a range, or your last commit, not just the working tree. `manifold state` says how it\'s configured so an agent stops guessing. `commit-message` writes one to stdout, straight into `git commit`. muse carries whatever strands you name. all read-only, all warm.',
+      'non-latin review comments render as real glyphs now instead of tofu boxes. if a teammate reviewed in japanese, you can actually read it.',
+    ],
+  ),
   _ReleaseNote(
     version: 'v0.2.0',
     date: '2026-07-30',

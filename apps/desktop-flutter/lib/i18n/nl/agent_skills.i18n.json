@@ -11,6 +11,7 @@
     "codeReview": "Klopt deze wijziging?",
     "muse": "Wat kan deze wijziging worden?",
     "bugShaker": "Wat is er mis met bestaande code?",
+    "commitMessage": "Wat deed deze wijziging?",
     "repoIntel": "Waarmee is dit bestand verbonden?"
   }
 }

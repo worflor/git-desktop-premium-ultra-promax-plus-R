@@ -95,6 +95,13 @@ manifold commit-message | git commit -F -
 Provenance (files, model, format) goes to stderr, where it can't end up in the
 commit.
 
+`--why <text>` adds what the diff can't show — intent, an issue reference, the
+finding it answers. Its content cannot escape into the format block or the
+user's standing prompt, so it can't rewrite their configuration; it is still
+prose a model reads, so putting instructions there is a convention you break at
+your own cost, not something the tool prevents. Oversized notes are refused
+rather than truncated.
+
 ### Choosing muse strands
 
 The muse carries a *quiver* of strands, each a different walker: `ghost`

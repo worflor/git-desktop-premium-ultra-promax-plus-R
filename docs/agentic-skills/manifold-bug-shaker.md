@@ -33,7 +33,8 @@ The question it answers is "what is hiding in code no one has looked at?"
   call. Look before you spend.
 - **Model:** shake uses the same **Quality** category and double-check setting as
   `review` (see the umbrella's "Choosing the model"). `--model <id>` overrides
-  the specific model within that category.
+  the specific model within that category. `manifold state` reports what is
+  configured, and every sweep echoes it under `settings`.
 
 Read-only: it reads blobs from the object store and calls a model. It audits
 HEAD's content regardless of what is currently uncommitted.
@@ -95,3 +96,4 @@ Run `shake` repeatedly to walk the whole tree; the ledger remembers between runs
 
 - Review a specific change or commit: [code review](manifold-code-review.md).
 - Brainstorm where a change could go: [muse](manifold-muse.md).
+- Write the message for a change: [commit message](manifold-commit-message.md).

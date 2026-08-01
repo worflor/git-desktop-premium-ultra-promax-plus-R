@@ -11,6 +11,7 @@
     "codeReview": "Ce changement est-il correct ?",
     "muse": "Que pourrait devenir ce changement ?",
     "bugShaker": "Qu'est-ce qui cloche dans le code établi ?",
+    "commitMessage": "Qu'a fait ce changement ?",
     "repoIntel": "À quoi ce fichier est-il connecté ?"
   }
 }

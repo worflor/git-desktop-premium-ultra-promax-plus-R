@@ -2293,6 +2293,8 @@ class _Translations$agentSkills$question$ko
   @override
   String get bugShaker => '기존 코드의 무엇이 잘못됐는가?';
   @override
+  String get commitMessage => '이 변경은 무엇을 했는가?';
+  @override
   String get repoIntel => '이 파일은 무엇과 연결되는가?';
 }
 

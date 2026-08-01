@@ -2358,6 +2358,8 @@ class _Translations$agentSkills$question$id
   @override
   String get bugShaker => 'Apa yang salah pada kode yang sudah ada?';
   @override
+  String get commitMessage => 'Perubahan ini melakukan apa?';
+  @override
   String get repoIntel => 'Berkas ini terhubung ke apa?';
 }
 

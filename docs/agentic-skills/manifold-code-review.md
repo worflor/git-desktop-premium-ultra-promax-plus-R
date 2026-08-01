@@ -81,6 +81,9 @@ review settings, which runs a second verification call: better findings, roughly
 double the time and cost. You cannot toggle it from the CLI; the result's
 `doubleCheck` field reports whether it ran.
 
+`manifold state` shows the model, effort, and double-check setting before you
+spend, and every review echoes the same block under `settings`.
+
 ## Reading the result
 
 Add `--json` and read `.result`:
@@ -148,4 +151,5 @@ when you will act on the result.
 
 - Whole-codebase audit of settled code: [bug shaker](manifold-bug-shaker.md).
 - Where a change could go: [muse](manifold-muse.md).
+- Write the message once it passes: [commit message](manifold-commit-message.md).
 - Ripple only, no model: `manifold blast-radius --files <paths>` or `manifold impact --diff <text>`.

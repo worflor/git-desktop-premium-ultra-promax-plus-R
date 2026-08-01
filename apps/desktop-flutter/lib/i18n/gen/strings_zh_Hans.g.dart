@@ -2262,6 +2262,8 @@ class _Translations$agentSkills$question$zh_Hans
   @override
   String get bugShaker => '既有代码有什么问题？';
   @override
+  String get commitMessage => '这次改动做了什么？';
+  @override
   String get repoIntel => '这个文件与什么相连？';
 }
 

@@ -11,6 +11,7 @@
     "codeReview": "Apakah perubahan ini benar?",
     "muse": "Perubahan ini bisa menjadi apa?",
     "bugShaker": "Apa yang salah pada kode yang sudah ada?",
+    "commitMessage": "Perubahan ini melakukan apa?",
     "repoIntel": "Berkas ini terhubung ke apa?"
   }
 }

@@ -2396,6 +2396,8 @@ class _Translations$agentSkills$question$de
   @override
   String get bugShaker => 'Was stimmt mit bestehendem Code nicht?';
   @override
+  String get commitMessage => 'Was hat diese Änderung bewirkt?';
+  @override
   String get repoIntel => 'Womit ist diese Datei verbunden?';
 }
 

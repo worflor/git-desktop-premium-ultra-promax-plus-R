@@ -1,9 +1,9 @@
 # Agentic skills
 
-Manifold ships `manifold`, a command-line bridge into the running desktop app.
-It connects to an open window over a loopback socket and prints what that
-window's engine returns. The window has already paid for the git derivation,
-the Logos diffusion, and the spectral basis, so the CLI answers warm.
+The Manifold desktop app ships a CLI: `manifold`, a bridge into its own running
+window. It connects over a loopback socket and prints what that window's engine
+returns. The window has already paid for the git derivation, the Logos
+diffusion, and the spectral basis, so the CLI answers warm.
 
 That makes Manifold something a coding agent can *wield*. Point an agent at a
 repo the user has open and it can ask the same engine the UI asks: what does
@@ -94,13 +94,18 @@ detected model in settings.
   at, and the review's "double-check" pass. If a run uses a different model than
   you expected, that is the user's config in Settings, not something to force
   from the command line.
+- **You never have to guess what that config is.** `manifold state` reports the
+  model, effort, and prompt behind every AI command, the muse's strand loadout,
+  and the commit-message format. Every AI command also echoes the same block
+  under `settings` in `--json`, so the answer arrives with the result that came
+  from it.
 - **The escape hatch:** if the configured model is out of quota or down,
   `review-evidence` hands you the exact prompt `review` would have sent, to run
   on a model you control (see the code-review skill).
 
 ## The fleet
 
-Four skills. The first three spend a model call the user configured; the fourth
+Five skills. The first four spend a model call the user configured; the fifth
 is free.
 
 | Skill | Command(s) | Question it answers |
@@ -108,6 +113,7 @@ is free.
 | [Code review](agentic-skills/manifold-code-review.md) | `manifold review` | Is this change right? |
 | [Muse](agentic-skills/manifold-muse.md) | `manifold muse` | What could this change become? |
 | [Bug shaker](agentic-skills/manifold-bug-shaker.md) | `manifold shake` | What is wrong with code nobody has touched in years? |
+| [Commit message](agentic-skills/manifold-commit-message.md) | `manifold commit-message` | What did this change do, in the user's words? |
 | [Repo intel](agentic-skills/manifold-repo-intel.md) | `blast-radius`, `context`, `suggest`, … | What does this file connect to, and what should I read or touch? (no model call) |
 
 Repo intel makes an agent's *own* edits structure-aware: `blast-radius`,
@@ -115,6 +121,10 @@ Repo intel makes an agent's *own* edits structure-aware: `blast-radius`,
 `recent`, `test-map`, `profile` / `explain`, `search`, `deadcode`. `index`
 (validate + warm + register) sits alongside. Run `manifold help` for the schema
 or `manifold --help` for the list.
+
+`manifold state` needs no skill of its own: it answers what the app is
+configured to do, and every AI command echoes the same block, so read it
+whenever a result surprises you.
 
 ## Why pipe a command instead of reading files yourself
 

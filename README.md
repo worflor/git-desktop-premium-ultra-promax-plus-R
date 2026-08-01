@@ -47,6 +47,7 @@ What that looks like in practice:
 - See through a repo with X-Ray. Trace a feature across the tree. Find a file's
   structural siblings. Surface hotspots or keystone files.
 - Bring your own model. Route the AI features through Cursor, Copilot, Codex, OpenRouter, or opencode.
+- Hand your agents the keys. There's a `manifold` CLI bridge into the running app, so your coding agent can wield the same warm engine: grounded code review, muse, a whole-codebase bug shaker, and read-only repo intel (blast radius, coupling, who-knows). Ready-made **[agent skills](docs/agentic-skills.md)** ship in the repo, and the app hands them to you in Settings → Model Slots → *Agent skills* (copy or save any of them).
 - Plus the stuff a mature client needs: a scrubbable history timeline (Orrery, preview), image, video, and binary diffs, and a command palette tying it together.
 - Speaks 14 languages. AI-drafted so every locale is complete from day one, human-corrected wherever a native speaker has stepped in, and the language picker tells you honestly which is which.
 

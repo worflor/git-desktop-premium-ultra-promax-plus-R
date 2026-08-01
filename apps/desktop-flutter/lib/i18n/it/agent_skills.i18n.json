@@ -11,6 +11,7 @@
     "codeReview": "Questa modifica è corretta?",
     "muse": "Cosa potrebbe diventare questa modifica?",
     "bugShaker": "Cosa non va nel codice consolidato?",
+    "commitMessage": "Che cosa ha fatto questa modifica?",
     "repoIntel": "A cosa è collegato questo file?"
   }
 }

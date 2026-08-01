@@ -11,6 +11,7 @@
     "codeReview": "这次改动对吗？",
     "muse": "这次改动能变成什么？",
     "bugShaker": "既有代码有什么问题？",
+    "commitMessage": "这次改动做了什么？",
     "repoIntel": "这个文件与什么相连？"
   }
 }

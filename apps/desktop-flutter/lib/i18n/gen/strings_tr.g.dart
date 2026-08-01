@@ -2381,6 +2381,8 @@ class _Translations$agentSkills$question$tr
   @override
   String get bugShaker => 'Yerleşik kodun nesi yanlış?';
   @override
+  String get commitMessage => 'Bu değişiklik ne yaptı?';
+  @override
   String get repoIntel => 'Bu dosya neye bağlanıyor?';
 }
 

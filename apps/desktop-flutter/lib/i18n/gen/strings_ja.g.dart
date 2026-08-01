@@ -2302,6 +2302,8 @@ class _Translations$agentSkills$question$ja
   @override
   String get bugShaker => '既存コードの何が問題か？';
   @override
+  String get commitMessage => 'この変更は何をしたか？';
+  @override
   String get repoIntel => 'このファイルは何とつながるか？';
 }
 

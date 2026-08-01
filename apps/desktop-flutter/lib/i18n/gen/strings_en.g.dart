@@ -2665,6 +2665,9 @@ class Translations$agentSkills$question$en {
   /// en: 'What is wrong with settled code?'
   String get bugShaker => 'What is wrong with settled code?';
 
+  /// en: 'What did this change do?'
+  String get commitMessage => 'What did this change do?';
+
   /// en: 'What does this file connect to?'
   String get repoIntel => 'What does this file connect to?';
 }

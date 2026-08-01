@@ -43,7 +43,7 @@ class AgentSkill {
 }
 
 /// The shipped skill set. Order is the display order in the bloom: the overview
-/// first as the entry point, then the four skills. Kept in sync with
+/// first as the entry point, then the five skills. Kept in sync with
 /// `docs/agentic-skills/` and the `assets/skills/` bundle.
 const List<AgentSkill> kAgentSkills = [
   AgentSkill(
@@ -73,6 +73,13 @@ const List<AgentSkill> kAgentSkills = [
     question: 'What is wrong with settled code?',
     glyph: Icons.pest_control_outlined,
     asset: 'assets/skills/manifold-bug-shaker.md',
+  ),
+  AgentSkill(
+    id: 'commit-message',
+    title: 'Commit message',
+    question: 'What did this change do?',
+    glyph: Icons.edit_note_outlined,
+    asset: 'assets/skills/manifold-commit-message.md',
   ),
   AgentSkill(
     id: 'repo-intel',
