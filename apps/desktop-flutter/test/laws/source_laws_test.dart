@@ -165,13 +165,17 @@ const _processSpawnBaseline = <String, int>{
 /// itself is the seam and is exempt). Durable app-state writes belong on
 /// writeFileAtomic/writeFileAtomicString — the torn-snapshot bug class (B20).
 const _rawWriteBaseline = <String, int>{
-  'lib/backend/ai.dart': 3,
+  'lib/backend/ai.dart': 2,
   'lib/backend/command_telemetry_store.dart': 2,
   'lib/backend/engram_file_index_cache.dart': 1,
   'lib/backend/git.dart': 13,
   'lib/backend/ipc/pipe_server.dart': 2,
   'lib/backend/logos_git_calibration.dart': 1,
   'lib/backend/nudge_ledger.dart': 1,
+  // The scratch-blanking truncate inside deleteFileHeldByExitingChild. It is a
+  // disposable temp file being destroyed, not durable state — see the matching
+  // reason in _tornWriteExemptions.
+  'lib/backend/process_utils.dart': 1,
   'lib/backend/spectral_persistence.dart': 1,
   'lib/backend/system_paths.dart': 2,
   'lib/features/branches/branches_page.dart': 1,
@@ -230,6 +234,12 @@ const _tornWriteExemptions = <String, String>{
   'lib/backend/system_paths.dart':
       'throwaway shell/reveal scripts in a fresh systemTemp dir, executed '
       'once and abandoned — not state anything loads back',
+  'lib/backend/process_utils.dart':
+      'the only write is deleteFileHeldByExitingChild blanking a scratch file '
+      'in the same breath as unlinking it, to shrink how long a redirected '
+      'stdin payload sits on disk. It persists nothing and nothing loads it '
+      'back; a crash mid-blank leaves an orphaned temp file, which is the '
+      'condition the function exists to clear',
 };
 
 void main() {

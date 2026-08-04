@@ -13042,6 +13042,38 @@ Future<int> _awaitExit(
   }
 }
 
+/// Where the Windows stdin-redirect path drops its scratch `.tmp`/`.bat` pair.
+///
+/// Injectable because the machine-wide temp dir is shared with every other
+/// process on the box: a test that wants to assert "this run left nothing
+/// behind" cannot do it by scanning [Directory.systemTemp], since anything
+/// else running concurrently shows up in the same scan. Point this at a
+/// private directory and the question becomes answerable.
+@visibleForTesting
+Directory? debugStdinScratchDirOverride;
+
+Directory get _stdinScratchDir =>
+    debugStdinScratchDirOverride ?? Directory.systemTemp;
+
+/// Monotonic discriminator for scratch filenames. See [debugStdinScratchName].
+int _stdinScratchSeq = 0;
+
+/// Derives the filename for one stdin payload.
+///
+/// Split out because the property that matters is not observable from the
+/// outside once the file has been cleaned up: the name must be unique per run.
+/// It used to be `ai_stdin_<epochMs>_<labelHash>`, where both halves are shared
+/// by concurrent runs of the same command, so any two deriving a name inside
+/// the same millisecond got the identical path. They then share one file: the
+/// later write clobbers the earlier run's payload before the child reads it,
+/// and whichever finishes first unlinks the file the other is still reading
+/// from. The pid separates concurrent processes, the counter separates
+/// concurrent calls within one.
+@visibleForTesting
+String debugStdinScratchName(String commandLabel) =>
+    'ai_stdin_${DateTime.now().millisecondsSinceEpoch}_${pid}_'
+    '${_stdinScratchSeq++}_${commandLabel.hashCode.abs()}.tmp';
+
 Future<_CommandResult?> _runObservedProcess({
   required String commandLabel,
   required String scope,
@@ -13084,8 +13116,8 @@ Future<_CommandResult?> _runObservedProcess({
   try {
     if (Platform.isWindows && stdinPayload != null) {
       stdinTempFile = File(p.join(
-        Directory.systemTemp.path,
-        'ai_stdin_${DateTime.now().millisecondsSinceEpoch}_${commandLabel.hashCode.abs()}.tmp',
+        _stdinScratchDir.path,
+        debugStdinScratchName(commandLabel),
       ));
       stdinTempFile.writeAsStringSync(stdinPayload, flush: true);
     }
@@ -13314,21 +13346,19 @@ Future<_CommandResult?> _runObservedProcess({
     if (trackedCliPid != null) {
       _unregisterCliPid(trackedCliPid);
     }
-    // Clean up the stdin temp file + its .bat sibling. On Windows the
-    // prompt body lives on disk briefly; shrink the exposure window by
-    // overwriting with empty content before unlinking, and skip the
-    // sibling-delete attempt when no stdin file was created (avoids a
-    // pointless File('null.bat').deleteSync throwing every call).
+    // Clean up the stdin temp file + its .bat sibling. On Windows the prompt
+    // body lives on disk for the run, so it is blanked before being unlinked.
+    //
+    // Both steps have to tolerate the handle still being held: on the timeout
+    // path we get here right after killing the tree, and a grandchild that
+    // inherited the redirected stdin handle can outlive the exit we observed
+    // by a few milliseconds. A single attempt fails intermittently there, and
+    // swallowing that failure left the payload on disk permanently, which is
+    // exactly what the hygiene tests exist to prevent. Skipped entirely when
+    // no stdin file was created (avoids a pointless File('null.bat') delete).
     if (stdinTempFile != null) {
-      try {
-        stdinTempFile.writeAsStringSync('', flush: true);
-      } catch (_) {}
-      try {
-        stdinTempFile.deleteSync();
-      } catch (_) {}
-      try {
-        File('${stdinTempFile.path}.bat').deleteSync();
-      } catch (_) {}
+      await deleteFileHeldByExitingChild(stdinTempFile, blankFirst: true);
+      await deleteFileHeldByExitingChild(File('${stdinTempFile.path}.bat'));
     }
   }
 }

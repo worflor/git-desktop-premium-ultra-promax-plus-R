@@ -286,25 +286,66 @@ starting session
     });
   });
 
-  /// A child that prints [ticks] lines one second apart, then sleeps
-  /// [silentFor] seconds without saying anything. Dart is used as the
-  /// interpreter because the test host is guaranteed to have it.
-  Future<File> chatterScript(Directory dir, int ticks, int silentFor) async {
-    final f = File('${dir.path}${Platform.pathSeparator}chatter.dart');
-    await f.writeAsString('''
+  /// The chatter child, compiled ONCE to kernel and re-run with arguments.
+  ///
+  /// It used to be written out as a fresh `.dart` per test and launched with
+  /// `dart run`, which recompiles the script on every invocation — measured at
+  /// 13-15 seconds each on a loaded Windows host, since a script in a bare
+  /// temp dir has no package to cache kernel into. That cost is paid INSIDE
+  /// the child, so it is charged against the very budgets these tests assert
+  /// on: the first byte cannot arrive until compilation finishes, which pushes
+  /// the stall trip time up towards the total ceiling until the two stop being
+  /// distinguishable. W5 (total 30s, stall 10s) is where they finally met.
+  ///
+  /// Compiling once and passing the shape as argv makes startup ~1.8s and,
+  /// more importantly, roughly constant — so what the stopwatch measures is
+  /// the budget under test rather than the Dart front end.
+  late Directory chatterHome;
+  late File chatterDill;
+
+  setUpAll(() async {
+    chatterHome = await Directory.systemTemp.createTemp('stall_chatter_');
+    final src =
+        File('${chatterHome.path}${Platform.pathSeparator}chatter.dart');
+    await src.writeAsString('''
 import 'dart:io';
-Future<void> main() async {
-  for (var i = 0; i < $ticks; i++) {
+Future<void> main(List<String> args) async {
+  final ticks = int.parse(args[0]);
+  final silentFor = int.parse(args[1]);
+  for (var i = 0; i < ticks; i++) {
     stdout.writeln('tick \$i');
     await stdout.flush();
     await Future<void>.delayed(const Duration(seconds: 1));
   }
-  await Future<void>.delayed(const Duration(seconds: $silentFor));
+  await Future<void>.delayed(Duration(seconds: silentFor));
   stdout.writeln('done');
 }
 ''');
-    return f;
-  }
+    chatterDill =
+        File('${chatterHome.path}${Platform.pathSeparator}chatter.dill');
+    final r = await Process.run(
+      dart,
+      ['compile', 'kernel', src.path, '-o', chatterDill.path],
+    );
+    if (r.exitCode != 0 || !chatterDill.existsSync()) {
+      throw StateError(
+        'provider_stall_test: could not compile the chatter child — every '
+        'timing assertion below would be measuring the Dart front end '
+        'instead of the budget under test.\n${r.stdout}\n${r.stderr}',
+      );
+    }
+  });
+
+  tearDownAll(() async {
+    if (chatterHome.existsSync()) {
+      await chatterHome.delete(recursive: true);
+    }
+  });
+
+  /// Argv for a child that prints [ticks] lines one second apart, then sleeps
+  /// [silentFor] seconds without saying anything.
+  List<String> chatter(int ticks, int silentFor) =>
+      ['run', chatterDill.path, '$ticks', '$silentFor'];
 
   late Directory tmp;
   setUp(() async => tmp = await Directory.systemTemp.createTemp('stall_test'));
@@ -401,11 +442,10 @@ Future<void> main() async {
     // Talks every second and never stops, so the STALL can never fire
     // and the total ceiling is what ends it. It was streaming at the
     // moment we gave up, and the message must not say otherwise.
-    final script = await chatterScript(tmp, 60, 0);
     String? reason;
     final r = await runObservedProcessForTesting(
       dart,
-      ['run', script.path],
+      chatter(60, 0),
       timeout: const Duration(seconds: 25),
       stallTimeout: const Duration(seconds: 20),
       onGiveUp: (gave) => reason = gave.message,
@@ -549,11 +589,10 @@ Future<void> main() async {
     // is one second, so nothing is ever silent for long — and the run
     // outlives the budget, which is the whole point of measuring
     // SILENCE rather than duration.
-    final script = await chatterScript(tmp, 25, 0);
     final sw = Stopwatch()..start();
     final r = await runObservedProcessForTesting(
       dart,
-      ['run', script.path],
+      chatter(25, 0),
       timeout: const Duration(seconds: 120),
       stallTimeout: const Duration(seconds: 20),
     );
@@ -574,11 +613,10 @@ Future<void> main() async {
       // Talks briefly, then says nothing for two minutes. The total
       // ceiling is 150s and the stall budget 25s: being killed on the
       // budget rather than the ceiling IS the fix.
-      final script = await chatterScript(tmp, 2, 120);
       final sw = Stopwatch()..start();
       final r = await runObservedProcessForTesting(
         dart,
-        ['run', script.path],
+        chatter(2, 120),
         timeout: const Duration(seconds: 150),
         stallTimeout: const Duration(seconds: 25),
       );
@@ -597,23 +635,18 @@ Future<void> main() async {
   test('W3: without a stall budget the old behaviour is unchanged', () async {
     // Same silent script, no stall budget: it must run to completion
     // under the total ceiling, exactly as before this change.
-    final script = await chatterScript(tmp, 1, 3);
-    final r = await runObservedProcessForTesting(dart, [
-      'run',
-      script.path,
-    ], timeout: const Duration(seconds: 150));
+    final r = await runObservedProcessForTesting(dart, chatter(1, 3), timeout: const Duration(seconds: 150));
     expect(r, isNotNull);
     expect(r!.exitCode, 0);
     expect(r.stdout, contains('done'));
   });
 
   test('W4: the give-up reason names which ceiling tripped', () async {
-    final silent = await chatterScript(tmp, 1, 120);
     String? stallReason;
     var stalled = false;
     final r = await runObservedProcessForTesting(
       dart,
-      ['run', silent.path],
+      chatter(1, 120),
       timeout: const Duration(seconds: 150),
       stallTimeout: const Duration(seconds: 25),
       onGiveUp: (gave) {
@@ -650,12 +683,11 @@ Future<void> main() async {
     // Total 30s, stall 10s: the stall must trip FIRST, the way a
     // 3-minute-capped provider now gets a 90-second silence budget
     // instead of an unreachable 4-minute one.
-    final silent = await chatterScript(tmp, 1, 120);
     String? reason;
     final sw = Stopwatch()..start();
     final r = await runObservedProcessForTesting(
       dart,
-      ['run', silent.path],
+      chatter(1, 120),
       timeout: const Duration(seconds: 30),
       stallTimeout: const Duration(seconds: 10),
       onGiveUp: (gave) => reason = gave.message,
@@ -679,11 +711,10 @@ Future<void> main() async {
     // second. Under a 5-second poll nobody looked until 15s, by which
     // point BOTH had passed and silence — checked first — took the
     // blame.
-    final silent = await chatterScript(tmp, 1, 120);
     String? reason;
     final r = await runObservedProcessForTesting(
       dart,
-      ['run', silent.path],
+      chatter(1, 120),
       timeout: const Duration(seconds: 12),
       stallTimeout: const Duration(seconds: 13),
       onGiveUp: (gave) => reason = gave.message,
@@ -705,11 +736,10 @@ Future<void> main() async {
   test(
     'W6: a sub-minute budget renders as seconds, never "0 minutes"',
     () async {
-      final silent = await chatterScript(tmp, 1, 120);
       String? reason;
       final r = await runObservedProcessForTesting(
         dart,
-        ['run', silent.path],
+        chatter(1, 120),
         timeout: const Duration(seconds: 40),
         stallTimeout: const Duration(seconds: 12),
         onGiveUp: (gave) => reason = gave.message,

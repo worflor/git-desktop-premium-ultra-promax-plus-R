@@ -46,15 +46,24 @@ Future<void> _safeCleanup(Directory dir) async {
   }
 }
 
-/// Names of the stdin scratch files the Windows exec path drops in the system
-/// temp dir. Both the payload (`ai_stdin_*.tmp`) and its `.bat` sibling share
-/// the `ai_stdin_` prefix.
+/// Private scratch dir the exec path is pointed at for the hygiene group, set
+/// up in that group's setUp.
+///
+/// It used to scan [Directory.systemTemp] and diff the `ai_stdin_*` names
+/// before against after. That was wrong twice over. It is a shared namespace,
+/// so a concurrently running suite doing its own stdin run lands in the diff
+/// and fails a test that leaked nothing; and enumerating it is O(everything on
+/// the machine), which on a box with a large temp dir costs seconds per call,
+/// twice per test, which is what pushed these past the 30s deadline under load.
+/// A private directory answers the real question, and enumerating it is O(2).
+late Directory _scratchDir;
+
+/// Everything currently sitting in the injected scratch dir.
 Set<String> _stdinScratch() {
-  return Directory.systemTemp
+  return _scratchDir
       .listSync()
       .whereType<File>()
       .map((f) => f.uri.pathSegments.last)
-      .where((name) => name.startsWith('ai_stdin_'))
       .toSet();
 }
 
@@ -130,6 +139,16 @@ void main() {
   });
 
   group('stdin temp-file hygiene (Windows)', () {
+    setUp(() async {
+      _scratchDir = await Directory.systemTemp.createTemp('ai_stdin_scratch_');
+      debugStdinScratchDirOverride = _scratchDir;
+    });
+
+    tearDown(() async {
+      debugStdinScratchDirOverride = null;
+      await _safeCleanup(_scratchDir);
+    });
+
     test('a completed stdin command leaves no scratch files', () async {
       if (!Platform.isWindows) return;
       final before = _stdinScratch();
@@ -160,6 +179,54 @@ void main() {
       );
       expect(r, isNull); // null == genuine timeout
       expect(_stdinScratch().difference(before), isEmpty);
+    });
+
+    test('a batch of stdin runs cleans up after itself', () async {
+      if (!Platform.isWindows) return;
+      final before = _stdinScratch();
+      await Future.wait(
+        List.generate(
+          6,
+          (i) => runObservedProcessForTesting(
+            'findstr',
+            const ['marker'],
+            stdinPayload: 'marker_$i\n',
+            timeout: const Duration(seconds: 20),
+          ),
+        ).toList(),
+      );
+      expect(_stdinScratch().difference(before), isEmpty);
+    });
+  });
+
+  group('stdin scratch naming', () {
+    test('names are unique even when derived in the same millisecond', () {
+      // The name was `ai_stdin_<epochMs>_<commandLabel.hashCode>`: both halves
+      // are shared by concurrent runs of the same command, so any two deriving
+      // a name inside one millisecond got the SAME path and silently shared a
+      // file. Racing real subprocesses does not reliably reproduce that — the
+      // synchronous payload writes drift past the millisecond boundary on
+      // their own, so the collision window rarely lands and a timing test
+      // passes while the defect is present.
+      //
+      // The invariant is what is worth pinning, and it is exact: names must be
+      // distinct. Deriving a batch in a tight loop pins every one of them to
+      // the same millisecond by construction, which is precisely the case that
+      // used to collapse.
+      const label = 'ai.same-command';
+      final names = <String>{};
+      final sw = Stopwatch()..start();
+      var derived = 0;
+      while (sw.elapsedMilliseconds < 2) {
+        names.add(debugStdinScratchName(label));
+        derived++;
+      }
+      expect(derived, greaterThan(1),
+          reason: 'need at least two names inside the same millisecond band '
+              'for this to be testing anything');
+      expect(names.length, derived,
+          reason: 'derived $derived names but only ${names.length} distinct; '
+              'equal names mean two concurrent runs share one scratch file');
     });
   });
 }

@@ -61,6 +61,58 @@ Future<bool> _waitForExit(Process process, Duration timeout) async {
   }
 }
 
+/// How long to keep trying to remove a file a just-killed child may still hold.
+const Duration defaultHeldFileTimeout = Duration(seconds: 3);
+
+/// Remove a file that a process we just terminated may still have open,
+/// optionally blanking its contents first.
+///
+/// Windows releases handles asynchronously with respect to the exit we can
+/// observe. `taskkill /F /T` returning 0, and the parent's `exitCode` future
+/// completing, do not mean a grandchild that inherited a redirected handle has
+/// let go of it yet. A single unlink attempt therefore fails intermittently,
+/// and the usual `try { delete } catch (_) {}` converts that into a silent
+/// leak: the file survives, and for a redirected stdin payload that means the
+/// contents stay on disk indefinitely. Blanking has the identical race, so a
+/// one-shot blank is not a safety net either.
+///
+/// Retries both steps until [timeout] elapses. Returns whether the file is
+/// actually gone, so callers can tell a clean removal from a genuine residue
+/// instead of assuming success.
+Future<bool> deleteFileHeldByExitingChild(
+  File file, {
+  Duration timeout = defaultHeldFileTimeout,
+  bool blankFirst = false,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  var backoff = const Duration(milliseconds: 10);
+  var blanked = false;
+  while (true) {
+    // Shrink the exposure window as soon as the handle allows it, even if the
+    // unlink below has to wait another round.
+    if (blankFirst && !blanked) {
+      try {
+        file.writeAsStringSync('', flush: true);
+        blanked = true;
+      } catch (_) {
+        // Still held; try again on the next pass.
+      }
+    }
+    try {
+      if (!file.existsSync()) return true;
+      file.deleteSync();
+      return true;
+    } catch (_) {
+      if (!DateTime.now().isBefore(deadline)) {
+        // Out of budget. Report the truth rather than pretending.
+        return !file.existsSync();
+      }
+      await Future<void>.delayed(backoff);
+      if (backoff < const Duration(milliseconds: 160)) backoff *= 2;
+    }
+  }
+}
+
 /// Check whether a process with [pid] is still running.
 /// Windows: `tasklist /FI "PID eq ..."`. Unix: `kill -0`.
 Future<bool> isProcessAlive(int pid) async {
